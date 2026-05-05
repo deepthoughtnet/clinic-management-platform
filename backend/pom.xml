@@ -1,0 +1,57 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.2.5</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.deepthoughtnet.clinic</groupId>
+  <artifactId>clinic-management-platform</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <modules>
+    <module>api/api-bff</module>
+
+    <module>domains/ai-domain</module>
+    <module>domains/appointment-domain</module>
+    <module>domains/billing-domain</module>
+    <module>domains/clinic-domain</module>
+    <module>domains/consultation-domain</module>
+    <module>domains/identity-domain</module>
+    <module>domains/inventory-domain</module>
+    <module>domains/notification-domain</module>
+    <module>domains/patient-domain</module>
+    <module>domains/prescription-domain</module>
+    <module>domains/vaccination-domain</module>
+
+    <module>platform/platform-audit</module>
+    <module>platform/platform-contracts</module>
+    <module>platform/platform-core</module>
+    <module>platform/platform-idempotency</module>
+    <module>platform/platform-jobs</module>
+    <module>platform/platform-outbox</module>
+    <module>platform/platform-security-kc</module>
+    <module>platform/platform-security-spi</module>
+    <module>platform/platform-spring</module>
+    <module>platform/platform-storage-spi</module>
+
+    <module>providers/ai-gemini</module>
+    <module>providers/ai-spi</module>
+    <module>providers/notify-email</module>
+    <module>providers/notify-logging</module>
+    <module>providers/notify-spi</module>
+    <module>providers/storage-minio</module>
+  </modules>
+
+  <properties>
+    <java.version>21</java.version>
+  </properties>
+</project>

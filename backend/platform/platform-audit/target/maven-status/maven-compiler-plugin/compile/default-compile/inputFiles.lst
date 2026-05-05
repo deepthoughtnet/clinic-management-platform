@@ -1,0 +1,11 @@
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-audit/src/main/java/com/deepthoughtnet/clinic/platform/audit/AuditEventRecord.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-audit/src/main/java/com/deepthoughtnet/clinic/platform/audit/AuditEventAction.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-audit/src/main/java/com/deepthoughtnet/clinic/platform/audit/db/AuditEventEntity.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-audit/src/main/java/com/deepthoughtnet/clinic/platform/audit/AuditEventPublisher.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-audit/src/main/java/com/deepthoughtnet/clinic/platform/audit/AuditEntityType.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-audit/src/main/java/com/deepthoughtnet/clinic/platform/audit/AuditEventCommand.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-audit/src/main/java/com/deepthoughtnet/clinic/platform/audit/AuditEventHandler.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-audit/src/main/java/com/deepthoughtnet/clinic/platform/audit/AuditEventQueryService.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-audit/src/main/java/com/deepthoughtnet/clinic/platform/audit/impl/AuditEventJpaService.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-audit/src/main/java/com/deepthoughtnet/clinic/platform/audit/NoopAuditEventPublisher.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-audit/src/main/java/com/deepthoughtnet/clinic/platform/audit/db/AuditEventRepository.java

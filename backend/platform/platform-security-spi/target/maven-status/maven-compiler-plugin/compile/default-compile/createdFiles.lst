@@ -1,0 +1,5 @@
+com/deepthoughtnet/clinic/platform/security/RolePermissionMappings.class
+com/deepthoughtnet/clinic/platform/security/Permissions.class
+com/deepthoughtnet/clinic/platform/security/Roles.class
+com/deepthoughtnet/clinic/platform/security/PermissionEvaluator.class
+com/deepthoughtnet/clinic/platform/security/RolePermissionEvaluator.class

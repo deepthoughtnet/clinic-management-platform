@@ -1,0 +1,17 @@
+-------------------------------------------------------------------------------
+Test set: com.deepthoughtnet.clinic.ai.orchestration.service.impl.AiOrchestrationServiceImplTest
+-------------------------------------------------------------------------------
+Tests run: 4, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.495 s <<< FAILURE! -- in com.deepthoughtnet.clinic.ai.orchestration.service.impl.AiOrchestrationServiceImplTest
+com.deepthoughtnet.clinic.ai.orchestration.service.impl.AiOrchestrationServiceImplTest.coreHasNoClinicRepositoryDependencies -- Time elapsed: 0.011 s <<< FAILURE!
+org.opentest4j.AssertionFailedError: expected: <false> but was: <true>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertFalse.failNotFalse(AssertFalse.java:63)
+	at org.junit.jupiter.api.AssertFalse.assertFalse(AssertFalse.java:36)
+	at org.junit.jupiter.api.AssertFalse.assertFalse(AssertFalse.java:31)
+	at org.junit.jupiter.api.Assertions.assertFalse(Assertions.java:231)
+	at com.deepthoughtnet.clinic.ai.orchestration.service.impl.AiOrchestrationServiceImplTest.coreHasNoClinicRepositoryDependencies(AiOrchestrationServiceImplTest.java:152)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+

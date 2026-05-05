@@ -1,0 +1,5 @@
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-security-spi/src/main/java/com/deepthoughtnet/clinic/platform/security/Roles.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-security-spi/src/main/java/com/deepthoughtnet/clinic/platform/security/Permissions.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-security-spi/src/main/java/com/deepthoughtnet/clinic/platform/security/RolePermissionEvaluator.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-security-spi/src/main/java/com/deepthoughtnet/clinic/platform/security/RolePermissionMappings.java
+/home/iadmin/code/clinic-management-platform/backend/platform/platform-security-spi/src/main/java/com/deepthoughtnet/clinic/platform/security/PermissionEvaluator.java

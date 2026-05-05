@@ -1,0 +1,3 @@
+com/deepthoughtnet/clinic/platform/outbox/OutboxEventCommand.class
+com/deepthoughtnet/clinic/platform/outbox/NoopOutboxEventPublisher.class
+com/deepthoughtnet/clinic/platform/outbox/OutboxEventPublisher.class

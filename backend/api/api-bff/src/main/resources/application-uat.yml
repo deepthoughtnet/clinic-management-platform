@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: clinic-management-api
+  datasource:
+    url: jdbc:postgresql://postgres:5432/clinic_platform_uat
+    username: clinic
+    password: clinic
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://host.docker.internal:8181/realms/clinic-platform
+
+server:
+  port: 8089
+
+clinic:
+  keycloak:
+    admin:
+      enabled: true
+      serverUrl: http://host.docker.internal:8181
+      adminRealm: master
+      targetRealm: clinic-platform
+      clientId: clinic-provisioner
+      clientSecret: ${CLINIC_KEYCLOAK_CLIENT_SECRET:}
+      username: ${CLINIC_KEYCLOAK_ADMIN_USERNAME:admin}
+      password: ${CLINIC_KEYCLOAK_ADMIN_PASSWORD:admin}
+
+logging:
+  level:
+    root: INFO
+    com.deepthoughtnet.clinic: INFO
