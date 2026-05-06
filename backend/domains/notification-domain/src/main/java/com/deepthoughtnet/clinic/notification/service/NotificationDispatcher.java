@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.notification.service;
 import com.deepthoughtnet.clinic.notification.db.NotificationOutboxEntity;
 import com.deepthoughtnet.clinic.notification.db.NotificationOutboxRepository;
 import com.deepthoughtnet.clinic.notification.model.NotificationEventPayload;
+import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notify.NotificationMessage;
 import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,17 +24,20 @@ public class NotificationDispatcher {
 
     private final NotificationOutboxRepository repository;
     private final NotificationRecipientResolver recipientResolver;
+    private final NotificationHistoryService notificationHistoryService;
     private final NotificationProvider notificationProvider;
     private final ObjectMapper objectMapper;
 
     public NotificationDispatcher(
             NotificationOutboxRepository repository,
             NotificationRecipientResolver recipientResolver,
+            NotificationHistoryService notificationHistoryService,
             NotificationProvider notificationProvider,
             ObjectMapper objectMapper
     ) {
         this.repository = repository;
         this.recipientResolver = recipientResolver;
+        this.notificationHistoryService = notificationHistoryService;
         this.notificationProvider = notificationProvider;
         this.objectMapper = objectMapper;
     }
@@ -65,15 +69,15 @@ public class NotificationDispatcher {
                     event.getPayloadJson(),
                     NotificationEventPayload.class
             );
-            List<String> recipients = recipientResolver.resolveEmailsByRoles(
-                    event.getTenantId(),
-                    payload.recipientRoles()
-            );
+            List<String> recipients = payload.recipient() != null && !payload.recipient().isBlank()
+                    ? List.of(payload.recipient())
+                    : recipientResolver.resolveEmailsByRoles(event.getTenantId(), payload.recipientRoles() == null ? List.of() : payload.recipientRoles());
+            String channel = payload.channel() == null || payload.channel().isBlank() ? settings.channel() : payload.channel();
 
             for (String recipient : recipients) {
                 notificationProvider.send(new NotificationMessage(
                         event.getTenantId(),
-                        settings.channel(),
+                        channel,
                         recipient,
                         payload.subject(),
                         payload.body(),
@@ -82,15 +86,28 @@ public class NotificationDispatcher {
             }
 
             if (recipients.isEmpty()) {
+                if (payload.historyId() != null) {
+                    notificationHistoryService.markSkipped(event.getTenantId(), payload.historyId(), "No active recipient available");
+                }
                 log.info(
                         "Notification outbox event had no active email recipients. eventId={}, tenantId={}, eventType={}",
                         event.getId(),
                         event.getTenantId(),
                         event.getEventType()
                 );
+            } else if (payload.historyId() != null) {
+                notificationHistoryService.markSent(event.getTenantId(), payload.historyId());
             }
             event.markSucceeded();
         } catch (Exception ex) {
+            try {
+                NotificationEventPayload payload = objectMapper.readValue(event.getPayloadJson(), NotificationEventPayload.class);
+                if (payload.historyId() != null) {
+                    notificationHistoryService.markFailed(event.getTenantId(), payload.historyId(), safeMessage(ex));
+                }
+            } catch (Exception ignored) {
+                // preserve outbox failure handling even if payload cannot be parsed
+            }
             event.markFailed(
                     safeMessage(ex),
                     settings.maxAttempts(),

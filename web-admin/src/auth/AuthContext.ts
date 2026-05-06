@@ -5,9 +5,11 @@ export type AuthContextValue = {
   authenticated: boolean;
   username: string;
   rolesUpper: string[];
+  permissions: string[];
   tenantId: string | null;
   tenantName: string | null;
   accessToken: string | null;
+  hasPermission: (permission: string) => boolean;
   login: (prompt?: boolean) => Promise<void>;
   logout: () => Promise<void>;
 };

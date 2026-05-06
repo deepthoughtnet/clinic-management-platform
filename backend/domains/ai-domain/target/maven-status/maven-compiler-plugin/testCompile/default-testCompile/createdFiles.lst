@@ -1,8 +1,0 @@
-com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiProviderRouterImplTest.class
-com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiOrchestrationServiceImplTest.class
-com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiPromptTemplateRegistryServiceImplTest.class
-com/deepthoughtnet/clinic/ai/orchestration/service/impl/GroqAiProviderAdapterTest.class
-com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiOrchestrationServiceImplTest$2.class
-com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiOrchestrationServiceImplTest$1.class
-com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiProviderRouterImplTest$StubProvider.class
-com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiRequestAuditQueryServiceImplTest.class

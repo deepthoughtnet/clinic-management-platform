@@ -22,6 +22,55 @@ import TopBar from "./TopBar";
 const DRAWER_OPEN = 284;
 const DRAWER_CLOSED = 88;
 
+function formatPathLabel(pathname: string): string {
+  if (pathname === "/") {
+    return "Dashboard";
+  }
+  if (pathname.startsWith("/patients/new")) {
+    return "New Patient";
+  }
+  if (pathname.startsWith("/patients/") && pathname.endsWith("/edit")) {
+    return "Edit Patient";
+  }
+  if (pathname.startsWith("/patients/")) {
+    return "Patient Detail";
+  }
+  if (pathname.startsWith("/appointments")) {
+    return "Appointments";
+  }
+  if (pathname.startsWith("/queue")) {
+    return "Queue";
+  }
+  if (pathname.startsWith("/consultations/")) {
+    return "Consultation Workspace";
+  }
+  if (pathname.startsWith("/consultations")) {
+    return "Consultations";
+  }
+  if (pathname.startsWith("/prescriptions")) {
+    return "Prescriptions";
+  }
+  if (pathname.startsWith("/billing")) {
+    return "Billing";
+  }
+  if (pathname.startsWith("/notifications")) {
+    return "Notifications";
+  }
+  if (pathname.startsWith("/vaccinations")) {
+    return "Vaccinations";
+  }
+  if (pathname.startsWith("/inventory")) {
+    return "Inventory";
+  }
+  if (pathname.startsWith("/reports")) {
+    return "Reports";
+  }
+  const leaf = pathname.split("/").filter(Boolean).at(-1) || pathname;
+  return leaf
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
@@ -72,7 +121,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               Clinic Management
             </Typography>
             <Box sx={{ flex: 1 }} />
-            <Chip label={location.pathname === "/" ? "Dashboard" : location.pathname.slice(1)} variant="outlined" />
+            <Chip label={formatPathLabel(location.pathname)} variant="outlined" />
           </Toolbar>
         </AppBar>
 

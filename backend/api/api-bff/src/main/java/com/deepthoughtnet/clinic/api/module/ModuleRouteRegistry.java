@@ -1,21 +1,27 @@
 package com.deepthoughtnet.clinic.api.module;
 
-import com.deepthoughtnet.clinic.platform.core.module.ModuleKeys;
+import com.deepthoughtnet.clinic.platform.core.module.SaasModuleCode;
 import java.util.List;
 import org.springframework.stereotype.Component;
 
 @Component
 public class ModuleRouteRegistry {
     private static final List<RouteModule> ROUTES = List.of(
-            new RouteModule("/api/patients", ModuleKeys.PATIENTS),
-            new RouteModule("/api/appointments", ModuleKeys.APPOINTMENTS),
-            new RouteModule("/api/consultations", ModuleKeys.CONSULTATIONS),
-            new RouteModule("/api/prescriptions", ModuleKeys.PRESCRIPTIONS),
-            new RouteModule("/api/billing", ModuleKeys.BILLING),
-            new RouteModule("/api/vaccinations", ModuleKeys.VACCINATIONS),
-            new RouteModule("/api/inventory", ModuleKeys.INVENTORY),
-            new RouteModule("/api/reports", ModuleKeys.REPORTS),
-            new RouteModule("/api/ai", ModuleKeys.AI_SUPPORT)
+            new RouteModule("/api/appointments", SaasModuleCode.APPOINTMENTS.name()),
+            new RouteModule("/api/consultations", SaasModuleCode.CONSULTATION.name()),
+            new RouteModule("/api/prescriptions", SaasModuleCode.PRESCRIPTION.name()),
+            new RouteModule("/api/bills", SaasModuleCode.BILLING.name()),
+            new RouteModule("/api/receipts", SaasModuleCode.BILLING.name()),
+            new RouteModule("/api/vaccines", SaasModuleCode.VACCINATION.name()),
+            new RouteModule("/api/vaccinations", SaasModuleCode.VACCINATION.name()),
+            new RouteModule("/api/medicines", SaasModuleCode.INVENTORY.name()),
+            new RouteModule("/api/inventory", SaasModuleCode.INVENTORY.name()),
+            new RouteModule("/api/ai", SaasModuleCode.AI_COPILOT.name()),
+            new RouteModule("/api/dashboard", SaasModuleCode.APPOINTMENTS.name()),
+            new RouteModule("/api/patients", SaasModuleCode.APPOINTMENTS.name()),
+            new RouteModule("/api/doctors", SaasModuleCode.APPOINTMENTS.name()),
+            new RouteModule("/api/notifications", SaasModuleCode.APPOINTMENTS.name()),
+            new RouteModule("/api/reports", SaasModuleCode.APPOINTMENTS.name())
     );
 
     public String moduleForPath(String path) {

@@ -1,3 +1,0 @@
-/home/iadmin/code/clinic-management-platform/backend/platform/platform-outbox/src/main/java/com/deepthoughtnet/clinic/platform/outbox/OutboxEventPublisher.java
-/home/iadmin/code/clinic-management-platform/backend/platform/platform-outbox/src/main/java/com/deepthoughtnet/clinic/platform/outbox/NoopOutboxEventPublisher.java
-/home/iadmin/code/clinic-management-platform/backend/platform/platform-outbox/src/main/java/com/deepthoughtnet/clinic/platform/outbox/OutboxEventCommand.java

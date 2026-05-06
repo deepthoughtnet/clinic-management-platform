@@ -1,0 +1,241 @@
+{
+  "realm": "clinic-management",
+  "enabled": true,
+  "displayName": "Clinic Management Platform",
+  "registrationAllowed": false,
+  "rememberMe": true,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "verifyEmail": false,
+  "bruteForceProtected": false,
+  "sslRequired": "external",
+  "roles": {
+    "realm": [
+      {
+        "name": "PLATFORM_ADMIN",
+        "description": "Platform administrator"
+      },
+      {
+        "name": "CLINIC_ADMIN",
+        "description": "Clinic tenant administrator"
+      },
+      {
+        "name": "DOCTOR",
+        "description": "Doctor user"
+      },
+      {
+        "name": "RECEPTIONIST",
+        "description": "Clinic receptionist or front desk representative"
+      },
+      {
+        "name": "BILLING_USER",
+        "description": "Billing and payment user"
+      },
+      {
+        "name": "PHARMACIST",
+        "description": "Pharmacy or medicine counter user"
+      },
+      {
+        "name": "LAB_ASSISTANT",
+        "description": "Lab assistant user"
+      },
+      {
+        "name": "AUDITOR",
+        "description": "Read-only audit and compliance user"
+      },
+      {
+        "name": "SERVICE_AGENT",
+        "description": "Non-human service or automation account"
+      },
+      {
+        "name": "VIEWER",
+        "description": "Read-only viewer"
+      },
+      {
+        "name": "ADMIN",
+        "description": "Generic admin compatibility role"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "clinic-web-admin",
+      "name": "Clinic Web Admin",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*",
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    },
+    {
+      "clientId": "clinic-provisioner",
+      "name": "Clinic Provisioner",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "secret": "clinic-provisioner-secret",
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "platform.admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Platform",
+      "lastName": "Admin",
+      "email": "platform.admin@clinic.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "PLATFORM_ADMIN",
+        "ADMIN"
+      ]
+    },
+    {
+      "username": "clinic.admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Clinic",
+      "lastName": "Admin",
+      "email": "clinic.admin@clinic.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "CLINIC_ADMIN",
+        "ADMIN"
+      ]
+    },
+    {
+      "username": "doctor",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Doctor",
+      "email": "doctor@clinic.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "DOCTOR"
+      ]
+    },
+    {
+      "username": "receptionist",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Receptionist",
+      "email": "receptionist@clinic.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "RECEPTIONIST"
+      ]
+    },
+    {
+      "username": "billing",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Billing",
+      "email": "billing@clinic.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "BILLING_USER"
+      ]
+    },
+    {
+      "username": "auditor",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Auditor",
+      "email": "auditor@clinic.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password@123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "AUDITOR"
+      ]
+    }
+  ]
+}

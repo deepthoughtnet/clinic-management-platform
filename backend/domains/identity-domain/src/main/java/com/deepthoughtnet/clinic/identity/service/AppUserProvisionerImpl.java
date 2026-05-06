@@ -26,6 +26,17 @@ public class AppUserProvisionerImpl implements AppUserProvisioner {
                     u.updateProfile(email, safeName);
                     return u.getId();
                 })
-                .orElseGet(() -> repo.save(AppUserEntity.create(tenantId, keycloakSub, email, safeName)).getId());
+                .orElseGet(() -> {
+                    if (email != null && !email.isBlank()) {
+                        return repo.findByTenantIdAndEmailIgnoreCase(tenantId, email)
+                                .map(u -> {
+                                    u.setKeycloakSub(keycloakSub);
+                                    u.updateProfile(email, safeName);
+                                    return u.getId();
+                                })
+                                .orElseGet(() -> repo.save(AppUserEntity.create(tenantId, keycloakSub, email, safeName)).getId());
+                    }
+                    return repo.save(AppUserEntity.create(tenantId, keycloakSub, email, safeName)).getId();
+                });
     }
 }

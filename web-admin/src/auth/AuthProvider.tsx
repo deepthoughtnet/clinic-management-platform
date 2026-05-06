@@ -8,6 +8,7 @@ type MeResponse = {
   tenantId?: string | null;
   subject?: string | null;
   tenantRole?: string | null;
+  permissions?: string[] | null;
   tokenRoles?: string[] | null;
   activeTenantMemberships?: Array<{
     tenantId: string;
@@ -44,6 +45,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const [accessToken, setAccessToken] = React.useState<string | null>(null);
   const [username, setUsername] = React.useState("Guest");
   const [rolesUpper, setRolesUpper] = React.useState<string[]>([]);
+  const [permissions, setPermissions] = React.useState<string[]>([]);
   const [tenantId, setTenantId] = React.useState<string | null>(null);
   const [tenantName, setTenantName] = React.useState<string | null>(null);
 
@@ -72,6 +74,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             const me = await fetchMe(token, extractTenantIdClaim(payload) || undefined);
             if (!cancelled) {
               setTenantId(me.tenantId || extractTenantIdClaim(payload));
+              setPermissions((me.permissions || []).map((permission) => permission.toLowerCase()));
               setTenantName(
                 me.activeTenantMemberships?.find((membership) => membership.tenantId === me.tenantId)?.tenantName || null
               );
@@ -101,9 +104,12 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       authenticated,
       username,
       rolesUpper,
+      permissions,
       tenantId,
       tenantName,
       accessToken,
+      hasPermission: (permission: string) =>
+        permissions.includes(permission.trim().toLowerCase()),
       login: async () => {
         await keycloak.login({ prompt: "login" });
       },
@@ -111,7 +117,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         await keycloak.logout({ redirectUri: window.location.origin });
       },
     }),
-    [initialized, authenticated, username, rolesUpper, tenantId, tenantName, accessToken]
+    [initialized, authenticated, username, rolesUpper, permissions, tenantId, tenantName, accessToken]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

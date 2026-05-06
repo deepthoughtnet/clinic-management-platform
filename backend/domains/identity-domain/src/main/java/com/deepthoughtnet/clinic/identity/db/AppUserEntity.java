@@ -81,4 +81,9 @@ public class AppUserEntity {
         this.displayName = displayName;
         this.updatedAt = OffsetDateTime.now();
     }
+
+    public void setKeycloakSub(String keycloakSub) {
+        this.keycloakSub = keycloakSub;
+        this.updatedAt = OffsetDateTime.now();
+    }
 }

@@ -11,6 +11,7 @@ import com.deepthoughtnet.clinic.notification.db.NotificationOutboxEntity;
 import com.deepthoughtnet.clinic.notification.db.NotificationOutboxRepository;
 import com.deepthoughtnet.clinic.notification.model.NotificationEventPayload;
 import com.deepthoughtnet.clinic.notification.service.NotificationDispatcher.NotificationDispatchSettings;
+import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notify.NotificationMessage;
 import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,10 +29,12 @@ class NotificationDispatcherTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final NotificationOutboxRepository repository = mock(NotificationOutboxRepository.class);
     private final NotificationRecipientResolver recipientResolver = mock(NotificationRecipientResolver.class);
+    private final NotificationHistoryService notificationHistoryService = mock(NotificationHistoryService.class);
     private final NotificationProvider notificationProvider = mock(NotificationProvider.class);
     private final NotificationDispatcher dispatcher = new NotificationDispatcher(
             repository,
             recipientResolver,
+            notificationHistoryService,
             notificationProvider,
             objectMapper
     );

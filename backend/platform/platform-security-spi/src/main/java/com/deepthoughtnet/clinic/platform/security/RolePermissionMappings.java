@@ -6,6 +6,44 @@ import java.util.Map;
 import java.util.Set;
 
 public final class RolePermissionMappings {
+    private static final Set<String> CLINIC_FUNDAMENTAL_PERMISSIONS = Set.of(
+            Permissions.CLINIC_READ,
+            Permissions.CLINIC_UPDATE,
+            Permissions.USER_READ,
+            Permissions.USER_MANAGE,
+            Permissions.PATIENT_CREATE,
+            Permissions.PATIENT_READ,
+            Permissions.PATIENT_UPDATE,
+            Permissions.APPOINTMENT_MANAGE,
+            Permissions.CONSULTATION_CREATE,
+            Permissions.CONSULTATION_READ,
+            Permissions.CONSULTATION_UPDATE,
+            Permissions.PRESCRIPTION_CREATE,
+            Permissions.PRESCRIPTION_READ,
+            Permissions.PRESCRIPTION_PRINT,
+            Permissions.PRESCRIPTION_SEND,
+            Permissions.BILLING_CREATE,
+            Permissions.PAYMENT_COLLECT,
+            Permissions.VACCINATION_MANAGE,
+            Permissions.INVENTORY_MANAGE,
+            Permissions.REPORT_READ,
+            Permissions.AUDIT_READ,
+            Permissions.SETTINGS_MANAGE,
+            Permissions.TENANT_USERS_READ,
+            Permissions.TENANT_USERS_MANAGE,
+            Permissions.TENANT_USERS_ROLE_ASSIGN,
+            Permissions.TENANT_USERS_RESET_PASSWORD
+    );
+
+    private static final Set<String> PLATFORM_ADMIN_BASE_PERMISSIONS = Set.of(
+            Permissions.PLATFORM_TENANTS_READ,
+            Permissions.PLATFORM_TENANTS_MANAGE,
+            Permissions.NOTIFICATION_READ,
+            Permissions.NOTIFICATION_MANAGE,
+            Permissions.NOTIFICATION_SEND,
+            Permissions.NOTIFICATION_RETRY
+    );
+
     private static final Set<String> CLINIC_GENERATION_MANAGER_PERMISSIONS = Set.of(
             Permissions.CLINIC_GENERATION_CUSTOMER_READ,
             Permissions.CLINIC_GENERATION_CUSTOMER_MANAGE,
@@ -118,83 +156,138 @@ public final class RolePermissionMappings {
             Permissions.AI_COPILOT_READ
     );
 
-    private static final Set<String> TENANT_ADMIN_PERMISSIONS = Set.of(
-            Permissions.DASHBOARD_READ,
+    private static final Set<String> CLINIC_ADMIN_PERMISSIONS = union(
+            CLINIC_FUNDAMENTAL_PERMISSIONS,
+            Set.of(
+                    Permissions.CLINIC_DOCUMENT_UPLOAD,
+                    Permissions.CLINIC_DOCUMENT_AGENT_UPLOAD,
+                    Permissions.CLINIC_DOCUMENT_READ,
+                    Permissions.CLINIC_EXTRACTION_RUN,
+                    Permissions.CLINIC_EXTRACTION_JOBS_READ,
+                    Permissions.CLINIC_EXTRACTION_JOBS_MANAGE,
+                    Permissions.CLINIC_REVIEW,
+                    Permissions.CLINIC_SUBMIT_FOR_APPROVAL,
+                    Permissions.CLINIC_APPROVE,
+                    Permissions.CLINIC_REJECT,
+                    Permissions.CLINIC_AUDIT_READ,
+                    Permissions.CLINIC_DOCTOR_READ,
+                    Permissions.CLINIC_DOCTOR_MANAGE,
+                    Permissions.CLINIC_DOCTOR_RESUBMISSION,
+                    Permissions.CLINIC_ARCHIVE,
+                    Permissions.CLINIC_DASHBOARD_READ,
+                    Permissions.INVENTORY_MANAGE
+            )
+    );
+
+    private static final Set<String> DOCTOR_PERMISSIONS = Set.of(
+            Permissions.PATIENT_READ,
+            Permissions.APPOINTMENT_MANAGE,
+            Permissions.CONSULTATION_CREATE,
+            Permissions.CONSULTATION_UPDATE,
+            Permissions.PRESCRIPTION_CREATE,
+            Permissions.PRESCRIPTION_PRINT,
+            Permissions.PRESCRIPTION_SEND
+    );
+
+    private static final Set<String> RECEPTIONIST_PERMISSIONS = Set.of(
             Permissions.CLINIC_READ,
-            Permissions.CLINIC_DOCUMENT_UPLOAD,
-            Permissions.CLINIC_DOCUMENT_AGENT_UPLOAD,
-            Permissions.CLINIC_DOCUMENT_READ,
-            Permissions.AGENT_INTAKE_CREATE,
-            Permissions.AGENT_INTAKE_READ,
-            Permissions.AGENT_INTAKE_SOURCE_READ,
-            Permissions.AGENT_INTAKE_SOURCE_MANAGE,
-            Permissions.AGENT_INTAKE_RUN,
-            Permissions.AGENT_INTAKE_RUN_READ,
-            Permissions.AGENT_INTAKE_RETRY,
-            Permissions.AGENT_INTAKE_ITEM_IGNORE,
-            Permissions.CLINIC_EXTRACTION_RUN,
-            Permissions.CLINIC_EXTRACTION_JOBS_READ,
-            Permissions.CLINIC_EXTRACTION_JOBS_MANAGE,
-            Permissions.CLINIC_REVIEW,
-            Permissions.CLINIC_SUBMIT_FOR_APPROVAL,
-            Permissions.CLINIC_APPROVE,
-            Permissions.CLINIC_REJECT,
-            Permissions.CLINIC_AUDIT_READ,
-            Permissions.CLINIC_DOCTOR_READ,
-            Permissions.CLINIC_DOCTOR_MANAGE,
-            Permissions.CLINIC_DOCTOR_RESUBMISSION,
-            Permissions.CLINIC_ARCHIVE,
-            Permissions.CLINIC_DASHBOARD_READ,
-            Permissions.TENANT_USERS_READ,
-            Permissions.TENANT_USERS_MANAGE,
-            Permissions.TENANT_USERS_ROLE_ASSIGN,
-            Permissions.TENANT_USERS_RESET_PASSWORD,
-            Permissions.NOTIFICATION_READ,
-            Permissions.NOTIFICATION_MANAGE,
-            Permissions.NOTIFICATION_SEND,
-            Permissions.NOTIFICATION_RETRY,
-            Permissions.AUDIT_READ,
-            Permissions.AUDIT_EXPORT,
-            Permissions.DECISIONING_POLICY_READ,
-            Permissions.DECISIONING_POLICY_MANAGE,
-            Permissions.DECISIONING_EXECUTION_READ,
-            Permissions.DECISIONING_EXECUTION_RUN,
-            Permissions.DECISIONING_EXECUTION_OVERRIDE,
-            Permissions.AI_COPILOT_CLINIC_READ,
-            Permissions.AI_COPILOT_CLINIC_RUN,
-            Permissions.AI_COPILOT_RECONCILIATION_READ,
-            Permissions.AI_COPILOT_RECONCILIATION_RUN,
-            Permissions.AI_COPILOT_READ,
-            Permissions.AI_COPILOT_RUN,
-            Permissions.CLINIC_GENERATION_CUSTOMER_READ,
-            Permissions.CLINIC_GENERATION_CUSTOMER_MANAGE,
-            Permissions.CLINIC_GENERATION_ITEM_READ,
-            Permissions.CLINIC_GENERATION_ITEM_MANAGE,
-            Permissions.CLINIC_GENERATION_CLINIC_READ,
-            Permissions.CLINIC_GENERATION_CLINIC_CREATE,
-            Permissions.CLINIC_GENERATION_CLINIC_UPDATE,
-            Permissions.CLINIC_GENERATION_CLINIC_SUBMIT,
-            Permissions.CLINIC_GENERATION_CLINIC_APPROVE,
-            Permissions.CLINIC_GENERATION_CLINIC_REJECT,
-            Permissions.CLINIC_GENERATION_CLINIC_ISSUE,
-            Permissions.CLINIC_GENERATION_CLINIC_CANCEL,
-            Permissions.CLINIC_GENERATION_CLINIC_PDF,
-            Permissions.CLINIC_GENERATION_CLINIC_SEND,
-            Permissions.CLINIC_GENERATION_NUMBERING_READ,
-            Permissions.CLINIC_GENERATION_NUMBERING_MANAGE,
-            Permissions.RECONCILIATION_BATCH_READ,
-            Permissions.RECONCILIATION_BATCH_MANAGE,
-            Permissions.RECONCILIATION_STATEMENT_UPLOAD,
-            Permissions.RECONCILIATION_RUN,
-            Permissions.RECONCILIATION_MATCH_READ,
-            Permissions.RECONCILIATION_MATCH_MANAGE,
-            Permissions.RECONCILIATION_EXCEPTION_READ,
-            Permissions.RECONCILIATION_EXCEPTION_MANAGE
+            Permissions.PATIENT_CREATE,
+            Permissions.PATIENT_READ,
+            Permissions.PATIENT_UPDATE,
+            Permissions.APPOINTMENT_MANAGE,
+            Permissions.BILLING_CREATE
+    );
+
+    private static final Set<String> BILLING_USER_PERMISSIONS = Set.of(
+            Permissions.PATIENT_READ,
+            Permissions.BILLING_CREATE,
+            Permissions.PAYMENT_COLLECT
+    );
+
+    private static final Set<String> PHARMACIST_PERMISSIONS = Set.of(
+            Permissions.PATIENT_READ,
+            Permissions.PRESCRIPTION_READ,
+            Permissions.BILLING_CREATE,
+            Permissions.INVENTORY_MANAGE
+    );
+
+    private static final Set<String> LAB_ASSISTANT_PERMISSIONS = Set.of(
+            Permissions.PATIENT_READ,
+            Permissions.CONSULTATION_READ,
+            Permissions.BILLING_CREATE
+    );
+
+    private static final Set<String> VIEWER_PERMISSIONS = Set.of(
+            Permissions.CLINIC_READ,
+            Permissions.PATIENT_READ,
+            Permissions.REPORT_READ
+    );
+
+    private static final Set<String> TENANT_ADMIN_PERMISSIONS = union(
+            CLINIC_ADMIN_PERMISSIONS,
+            Set.of(
+                    Permissions.DASHBOARD_READ,
+                    Permissions.AGENT_INTAKE_CREATE,
+                    Permissions.AGENT_INTAKE_READ,
+                    Permissions.AGENT_INTAKE_SOURCE_READ,
+                    Permissions.AGENT_INTAKE_SOURCE_MANAGE,
+                    Permissions.AGENT_INTAKE_RUN,
+                    Permissions.AGENT_INTAKE_RUN_READ,
+                    Permissions.AGENT_INTAKE_RETRY,
+                    Permissions.AGENT_INTAKE_ITEM_IGNORE,
+                    Permissions.NOTIFICATION_READ,
+                    Permissions.NOTIFICATION_MANAGE,
+                    Permissions.NOTIFICATION_SEND,
+                    Permissions.NOTIFICATION_RETRY,
+                    Permissions.AUDIT_EXPORT,
+                    Permissions.CLINIC_GENERATION_CUSTOMER_READ,
+                    Permissions.CLINIC_GENERATION_CUSTOMER_MANAGE,
+                    Permissions.CLINIC_GENERATION_ITEM_READ,
+                    Permissions.CLINIC_GENERATION_ITEM_MANAGE,
+                    Permissions.CLINIC_GENERATION_CLINIC_READ,
+                    Permissions.CLINIC_GENERATION_CLINIC_CREATE,
+                    Permissions.CLINIC_GENERATION_CLINIC_UPDATE,
+                    Permissions.CLINIC_GENERATION_CLINIC_SUBMIT,
+                    Permissions.CLINIC_GENERATION_CLINIC_APPROVE,
+                    Permissions.CLINIC_GENERATION_CLINIC_REJECT,
+                    Permissions.CLINIC_GENERATION_CLINIC_ISSUE,
+                    Permissions.CLINIC_GENERATION_CLINIC_CANCEL,
+                    Permissions.CLINIC_GENERATION_CLINIC_PDF,
+                    Permissions.CLINIC_GENERATION_CLINIC_SEND,
+                    Permissions.CLINIC_GENERATION_NUMBERING_READ,
+                    Permissions.CLINIC_GENERATION_NUMBERING_MANAGE,
+                    Permissions.RECONCILIATION_BATCH_READ,
+                    Permissions.RECONCILIATION_BATCH_MANAGE,
+                    Permissions.RECONCILIATION_STATEMENT_UPLOAD,
+                    Permissions.RECONCILIATION_RUN,
+                    Permissions.RECONCILIATION_MATCH_READ,
+                    Permissions.RECONCILIATION_MATCH_MANAGE,
+                    Permissions.RECONCILIATION_EXCEPTION_READ,
+                    Permissions.RECONCILIATION_EXCEPTION_MANAGE,
+                    Permissions.DECISIONING_POLICY_READ,
+                    Permissions.DECISIONING_POLICY_MANAGE,
+                    Permissions.DECISIONING_EXECUTION_READ,
+                    Permissions.DECISIONING_EXECUTION_RUN,
+                    Permissions.DECISIONING_EXECUTION_OVERRIDE,
+                    Permissions.AI_COPILOT_CLINIC_READ,
+                    Permissions.AI_COPILOT_CLINIC_RUN,
+                    Permissions.AI_COPILOT_RECONCILIATION_READ,
+                    Permissions.AI_COPILOT_RECONCILIATION_RUN,
+                    Permissions.AI_COPILOT_READ,
+                    Permissions.AI_COPILOT_RUN
+            )
+    );
+
+    private static final Set<String> PLATFORM_ADMIN_PERMISSIONS = union(
+            PLATFORM_ADMIN_BASE_PERMISSIONS,
+            CLINIC_ADMIN_PERMISSIONS,
+            TENANT_ADMIN_PERMISSIONS
     );
 
     private static final Set<String> CLINIC_READ_PERMISSIONS = Set.of(
             Permissions.DASHBOARD_READ,
             Permissions.CLINIC_READ,
+            Permissions.CLINIC_UPDATE,
             Permissions.CLINIC_DOCUMENT_READ,
             Permissions.AGENT_INTAKE_READ,
             Permissions.AGENT_INTAKE_SOURCE_READ,
@@ -212,12 +305,14 @@ public final class RolePermissionMappings {
             Permissions.RECONCILIATION_EXCEPTION_READ,
             Permissions.DECISIONING_POLICY_READ,
             Permissions.DECISIONING_EXECUTION_READ,
-            Permissions.AI_COPILOT_READ
+            Permissions.AI_COPILOT_READ,
+            Permissions.REPORT_READ
     );
 
     private static final Set<String> AUDITOR_PERMISSIONS = Set.of(
             Permissions.DASHBOARD_READ,
             Permissions.CLINIC_READ,
+            Permissions.REPORT_READ,
             Permissions.CLINIC_DOCUMENT_READ,
             Permissions.AGENT_INTAKE_READ,
             Permissions.AGENT_INTAKE_SOURCE_READ,
@@ -270,7 +365,14 @@ public final class RolePermissionMappings {
     private static final Map<String, Set<String>> ROLE_PERMISSIONS = Map.ofEntries(
             Map.entry(Roles.ADMIN, TENANT_ADMIN_PERMISSIONS),
             Map.entry(Roles.TENANT_ADMIN, TENANT_ADMIN_PERMISSIONS),
-            Map.entry(Roles.CLINIC_ADMIN, TENANT_ADMIN_PERMISSIONS),
+            Map.entry(Roles.PLATFORM_ADMIN, PLATFORM_ADMIN_PERMISSIONS),
+            Map.entry(Roles.PLATFORM_TENANT_SUPPORT, PLATFORM_TENANT_SUPPORT_PERMISSIONS),
+            Map.entry(Roles.CLINIC_ADMIN, CLINIC_ADMIN_PERMISSIONS),
+            Map.entry(Roles.DOCTOR, DOCTOR_PERMISSIONS),
+            Map.entry(Roles.RECEPTIONIST, RECEPTIONIST_PERMISSIONS),
+            Map.entry(Roles.BILLING_USER, BILLING_USER_PERMISSIONS),
+            Map.entry(Roles.PHARMACIST, PHARMACIST_PERMISSIONS),
+            Map.entry(Roles.LAB_ASSISTANT, LAB_ASSISTANT_PERMISSIONS),
             Map.entry(Roles.CLINIC_REVIEWER, Set.of(
                     Permissions.DASHBOARD_READ,
                     Permissions.CLINIC_READ,
@@ -334,7 +436,7 @@ public final class RolePermissionMappings {
             Map.entry(Roles.DECISIONING_VIEWER, DECISIONING_VIEWER_PERMISSIONS),
             Map.entry(Roles.AUDITOR, AUDITOR_PERMISSIONS),
             Map.entry(Roles.CLINIC_AUDITOR, AUDITOR_PERMISSIONS),
-            Map.entry(Roles.VIEWER, CLINIC_READ_PERMISSIONS),
+            Map.entry(Roles.VIEWER, VIEWER_PERMISSIONS),
             Map.entry(Roles.CLINIC_VIEWER, CLINIC_READ_PERMISSIONS),
             Map.entry(Roles.AGENT_OPERATOR, Set.of(
                     Permissions.AGENT_INTAKE_SOURCE_READ,
@@ -343,13 +445,6 @@ public final class RolePermissionMappings {
                     Permissions.AGENT_INTAKE_RETRY,
                     Permissions.AGENT_INTAKE_ITEM_IGNORE
             )),
-            Map.entry(Roles.PLATFORM_ADMIN, Set.of(
-                    Permissions.PLATFORM_TENANTS_READ,
-                    Permissions.PLATFORM_TENANTS_MANAGE,
-                    Permissions.NOTIFICATION_READ,
-                    Permissions.NOTIFICATION_MANAGE
-            )),
-            Map.entry(Roles.PLATFORM_TENANT_SUPPORT, PLATFORM_TENANT_SUPPORT_PERMISSIONS),
             Map.entry(Roles.SERVICE_AGENT, Set.of(
                     Permissions.CLINIC_DOCUMENT_UPLOAD,
                     Permissions.CLINIC_DOCUMENT_AGENT_UPLOAD,
@@ -413,5 +508,16 @@ public final class RolePermissionMappings {
 
     private static String normalizePermission(String permission) {
         return permission.trim().toLowerCase(Locale.ROOT);
+    }
+
+    @SafeVarargs
+    private static Set<String> union(Set<String>... sets) {
+        Set<String> permissions = new java.util.LinkedHashSet<>();
+        for (Set<String> set : sets) {
+            if (set != null) {
+                permissions.addAll(set);
+            }
+        }
+        return Collections.unmodifiableSet(permissions);
     }
 }

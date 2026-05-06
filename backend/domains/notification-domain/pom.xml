@@ -21,15 +21,21 @@
     </properties>
 
     <dependencies>
-        <dependency>
-            <groupId>com.deepthoughtnet.clinic</groupId>
-            <artifactId>platform-contracts</artifactId>
-            <version>${project.version}</version>
-        </dependency>
+    <dependency>
+        <groupId>com.deepthoughtnet.clinic</groupId>
+        <artifactId>platform-contracts</artifactId>
+        <version>${project.version}</version>
+    </dependency>
 
-        <dependency>
-            <groupId>com.deepthoughtnet.clinic</groupId>
-            <artifactId>notify-spi</artifactId>
+    <dependency>
+        <groupId>com.deepthoughtnet.clinic</groupId>
+        <artifactId>platform-audit</artifactId>
+        <version>${project.version}</version>
+    </dependency>
+
+    <dependency>
+        <groupId>com.deepthoughtnet.clinic</groupId>
+        <artifactId>notify-spi</artifactId>
             <version>${project.version}</version>
         </dependency>
 

@@ -1,0 +1,213 @@
+package com.deepthoughtnet.clinic.api.notifications;
+
+import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
+import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
+import com.deepthoughtnet.clinic.billing.service.model.ReceiptRecord;
+import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
+import com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord;
+import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
+import com.deepthoughtnet.clinic.patient.db.PatientEntity;
+import com.deepthoughtnet.clinic.patient.db.PatientRepository;
+import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
+import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
+import com.deepthoughtnet.clinic.consultation.service.model.ConsultationStatus;
+import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
+import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
+import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+@Service
+public class NotificationActionService {
+    private final NotificationHistoryService notificationHistoryService;
+    private final PrescriptionService prescriptionService;
+    private final BillingService billingService;
+    private final AppointmentService appointmentService;
+    private final ConsultationService consultationService;
+    private final VaccinationService vaccinationService;
+    private final PlatformTenantManagementService tenantManagementService;
+    private final PatientRepository patientRepository;
+
+    public NotificationActionService(
+            NotificationHistoryService notificationHistoryService,
+            PrescriptionService prescriptionService,
+            BillingService billingService,
+            AppointmentService appointmentService,
+            ConsultationService consultationService,
+            VaccinationService vaccinationService,
+            PlatformTenantManagementService tenantManagementService,
+            PatientRepository patientRepository
+    ) {
+        this.notificationHistoryService = notificationHistoryService;
+        this.prescriptionService = prescriptionService;
+        this.billingService = billingService;
+        this.appointmentService = appointmentService;
+        this.consultationService = consultationService;
+        this.vaccinationService = vaccinationService;
+        this.tenantManagementService = tenantManagementService;
+        this.patientRepository = patientRepository;
+    }
+
+    public NotificationHistoryRecord sendPrescription(UUID tenantId, UUID prescriptionId, String channel, UUID actorAppUserId) {
+        PrescriptionRecord prescription = prescriptionService.findById(tenantId, prescriptionId)
+                .orElseThrow(() -> new IllegalArgumentException("Prescription not found"));
+        PatientEntity patient = patient(tenantId, prescription.patientId());
+        String normalizedChannel = normalizeChannel(channel);
+        String recipient = resolveRecipient(patient, normalizedChannel);
+        String subject = "Prescription " + prescription.prescriptionNumber();
+        String message = buildPrescriptionMessage(prescription, patient);
+        NotificationHistoryRecord notification = notificationHistoryService.queue(
+                tenantId,
+                patient.getId(),
+                "PRESCRIPTION_SENT",
+                normalizedChannel,
+                recipient,
+                subject,
+                message,
+                "PRESCRIPTION",
+                prescription.id(),
+                actorAppUserId
+        );
+        prescriptionService.markSent(tenantId, prescriptionId, actorAppUserId);
+        return notification;
+    }
+
+    public NotificationHistoryRecord sendReceipt(UUID tenantId, UUID receiptId, String channel, UUID actorAppUserId) {
+        ReceiptRecord receipt = billingService.findReceipt(tenantId, receiptId)
+                .orElseThrow(() -> new IllegalArgumentException("Receipt not found"));
+        BillRecord bill = billingService.findById(tenantId, receipt.billId())
+                .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
+        PatientEntity patient = patient(tenantId, bill.patientId());
+        String normalizedChannel = normalizeChannel(channel);
+        String recipient = resolveRecipient(patient, normalizedChannel);
+        String subject = "Receipt " + receipt.receiptNumber();
+        String message = "Receipt " + receipt.receiptNumber() + " for bill " + bill.billNumber() + " amount " + receipt.amount();
+        return notificationHistoryService.queue(
+                tenantId,
+                patient.getId(),
+                "RECEIPT_SENT",
+                normalizedChannel,
+                recipient,
+                subject,
+                message,
+                "RECEIPT",
+                receipt.id(),
+                actorAppUserId
+        );
+    }
+
+    public int queueAppointmentReminders(UUID tenantId, LocalDate appointmentDate, UUID actorAppUserId) {
+        return appointmentService.search(tenantId, new com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria(null, null, appointmentDate, null, null))
+                .stream()
+                .mapToInt(appointment -> queueAppointmentReminder(tenantId, appointment.id(), actorAppUserId))
+                .sum();
+    }
+
+    public int queueFollowUpReminders(UUID tenantId, LocalDate dueDate, UUID actorAppUserId) {
+        return consultationService.list(tenantId).stream()
+                .filter(record -> record.followUpDate() != null && !record.followUpDate().isAfter(dueDate))
+                .filter(record -> record.status() == ConsultationStatus.COMPLETED || record.status() == ConsultationStatus.DRAFT)
+                .mapToInt(record -> queueFollowUpReminder(tenantId, record, actorAppUserId))
+                .sum();
+    }
+
+    public int queueVaccinationReminders(UUID tenantId, UUID actorAppUserId) {
+        return vaccinationService.listDue(tenantId).stream()
+                .mapToInt(vaccination -> {
+                    PatientEntity patient = patient(tenantId, vaccination.patientId());
+                    String channel = normalizeChannel("email");
+                    String recipient = resolveRecipient(patient, channel);
+                    notificationHistoryService.queue(
+                            tenantId,
+                            patient.getId(),
+                            "VACCINATION_REMINDER",
+                            channel,
+                            recipient,
+                            "Vaccination reminder",
+                            "Vaccination due for " + vaccination.vaccineName(),
+                            "PATIENT_VACCINATION",
+                            vaccination.id(),
+                            actorAppUserId
+                    );
+                    return 1;
+                }).sum();
+    }
+
+    private int queueAppointmentReminder(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
+        var appointment = appointmentService.findById(tenantId, appointmentId);
+        PatientEntity patient = patient(tenantId, appointment.patientId());
+        String channel = normalizeChannel("email");
+        String recipient = resolveRecipient(patient, channel);
+        notificationHistoryService.queue(
+                tenantId,
+                patient.getId(),
+                "APPOINTMENT_REMINDER",
+                channel,
+                recipient,
+                "Appointment reminder",
+                "Appointment scheduled for " + appointment.appointmentDate() + (appointment.appointmentTime() == null ? "" : " at " + appointment.appointmentTime()),
+                "APPOINTMENT",
+                appointment.id(),
+                actorAppUserId
+        );
+        return 1;
+    }
+
+    private int queueFollowUpReminder(UUID tenantId, ConsultationRecord consultation, UUID actorAppUserId) {
+        PatientEntity patient = patient(tenantId, consultation.patientId());
+        String channel = normalizeChannel("email");
+        String recipient = resolveRecipient(patient, channel);
+        notificationHistoryService.queue(
+                tenantId,
+                patient.getId(),
+                "FOLLOW_UP_REMINDER",
+                channel,
+                recipient,
+                "Follow-up reminder",
+                "Follow-up due on " + consultation.followUpDate() + " for consultation " + consultation.id(),
+                "CONSULTATION",
+                consultation.id(),
+                actorAppUserId
+        );
+        return 1;
+    }
+
+    private PatientEntity patient(UUID tenantId, UUID patientId) {
+        return patientRepository.findByTenantIdAndId(tenantId, patientId)
+                .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
+    }
+
+    private String resolveRecipient(PatientEntity patient, String channel) {
+        if ("whatsapp".equals(channel) || "sms".equals(channel)) {
+            if (StringUtils.hasText(patient.getMobile())) {
+                return patient.getMobile();
+            }
+            throw new IllegalArgumentException("Patient mobile number is required for WhatsApp/SMS notifications");
+        }
+        if (StringUtils.hasText(patient.getEmail())) {
+            return patient.getEmail();
+        }
+        if (StringUtils.hasText(patient.getMobile())) {
+            return patient.getMobile();
+        }
+        throw new IllegalArgumentException("Patient contact is required");
+    }
+
+    private String normalizeChannel(String channel) {
+        if (!StringUtils.hasText(channel)) {
+            return "email";
+        }
+        return channel.trim().toLowerCase();
+    }
+
+    private String buildPrescriptionMessage(PrescriptionRecord prescription, PatientEntity patient) {
+        return "Prescription " + prescription.prescriptionNumber()
+                + " is ready for " + patient.getFirstName() + " " + patient.getLastName()
+                + ". Follow advice: " + (prescription.advice() == null ? "Please review with the doctor." : prescription.advice());
+    }
+}

@@ -149,9 +149,8 @@ class AiOrchestrationServiceImplTest {
     void coreHasNoClinicRepositoryDependencies() {
         for (Field field : AiOrchestrationServiceImpl.class.getDeclaredFields()) {
             String typeName = field.getType().getName();
-            assertFalse(typeName.contains(".clinic."));
-            assertFalse(typeName.contains(".reconciliation."));
-            assertFalse(typeName.contains(".aicopilot.db."));
+            assertFalse(typeName.contains(".db."));
+            assertFalse(typeName.contains(".repository."));
         }
     }
 

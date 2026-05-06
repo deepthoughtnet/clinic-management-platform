@@ -1,8 +1,9 @@
 package com.deepthoughtnet.clinic.api.security;
 
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
-import com.deepthoughtnet.clinic.platform.core.security.PermissionEvaluator;
-import com.deepthoughtnet.clinic.platform.core.security.RolePermissionEvaluator;
+import com.deepthoughtnet.clinic.platform.security.PermissionEvaluator;
+import com.deepthoughtnet.clinic.platform.security.RolePermissionEvaluator;
+import com.deepthoughtnet.clinic.platform.security.Roles;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -87,6 +88,10 @@ public class PermissionChecker {
             if (authorities != null) {
                 authorities.stream().map(GrantedAuthority::getAuthority).forEach(authority -> addRole(roles, authority));
             }
+        }
+
+        if (context != null && context.tenantId() != null && roles.contains(Roles.PLATFORM_ADMIN)) {
+            addRole(roles, Roles.PLATFORM_TENANT_SUPPORT);
         }
 
         return roles;

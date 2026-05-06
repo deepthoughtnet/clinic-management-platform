@@ -1,0 +1,287 @@
+package com.deepthoughtnet.clinic.patient.service;
+
+import com.deepthoughtnet.clinic.patient.db.PatientEntity;
+import com.deepthoughtnet.clinic.patient.db.PatientRepository;
+import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
+import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
+import com.deepthoughtnet.clinic.patient.service.model.PatientSearchCriteria;
+import com.deepthoughtnet.clinic.patient.service.model.PatientUpsertCommand;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.Period;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+
+@Service
+public class PatientService {
+    private static final String ENTITY_TYPE = "PATIENT";
+
+    private final PatientRepository repository;
+    private final AuditEventPublisher auditEventPublisher;
+    private final ObjectMapper objectMapper;
+
+    public PatientService(PatientRepository repository, AuditEventPublisher auditEventPublisher, ObjectMapper objectMapper) {
+        this.repository = repository;
+        this.auditEventPublisher = auditEventPublisher;
+        this.objectMapper = objectMapper;
+    }
+
+    @Transactional(readOnly = true)
+    public List<PatientRecord> search(UUID tenantId, PatientSearchCriteria criteria) {
+        requireTenant(tenantId);
+        PatientSearchCriteria safeCriteria = criteria == null ? new PatientSearchCriteria(null, null, null, null) : criteria;
+        return repository.search(
+                tenantId,
+                normalizeNullable(safeCriteria.patientNumber()),
+                normalizeNullable(safeCriteria.mobile()),
+                normalizeNullable(safeCriteria.name()),
+                safeCriteria.active()
+        ).stream().map(this::toRecord).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<PatientRecord> findById(UUID tenantId, UUID id) {
+        requireTenant(tenantId);
+        if (id == null) {
+            throw new IllegalArgumentException("id is required");
+        }
+        return repository.findByTenantIdAndId(tenantId, id).map(this::toRecord);
+    }
+
+    @Transactional
+    public PatientRecord create(UUID tenantId, PatientUpsertCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        validate(command);
+        ensureUniqueActiveMobile(tenantId, command.mobile(), null);
+
+        String patientNumber = generatePatientNumber(tenantId);
+        PatientEntity entity = PatientEntity.create(tenantId, patientNumber);
+        applyCommand(entity, command);
+        PatientEntity saved = repository.save(entity);
+
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                ENTITY_TYPE,
+                saved.getId(),
+                "patient.created",
+                actorAppUserId,
+                OffsetDateTime.now(),
+                "Created patient " + saved.getPatientNumber(),
+                detailsJson(saved)
+        ));
+
+        return toRecord(saved);
+    }
+
+    @Transactional
+    public PatientRecord update(UUID tenantId, UUID id, PatientUpsertCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        if (id == null) {
+            throw new IllegalArgumentException("id is required");
+        }
+        validate(command);
+        PatientEntity entity = repository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
+        ensureUniqueActiveMobile(tenantId, command.mobile(), id);
+
+        applyCommand(entity, command);
+        PatientEntity saved = repository.save(entity);
+
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                ENTITY_TYPE,
+                saved.getId(),
+                "patient.updated",
+                actorAppUserId,
+                OffsetDateTime.now(),
+                "Updated patient " + saved.getPatientNumber(),
+                detailsJson(saved)
+        ));
+
+        return toRecord(saved);
+    }
+
+    @Transactional
+    public PatientRecord deactivate(UUID tenantId, UUID id, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        if (id == null) {
+            throw new IllegalArgumentException("id is required");
+        }
+        PatientEntity entity = repository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
+        entity.update(
+                entity.getFirstName(),
+                entity.getLastName(),
+                entity.getGender(),
+                entity.getDateOfBirth(),
+                entity.getAgeYears(),
+                entity.getMobile(),
+                entity.getEmail(),
+                entity.getAddressLine1(),
+                entity.getAddressLine2(),
+                entity.getCity(),
+                entity.getState(),
+                entity.getCountry(),
+                entity.getPostalCode(),
+                entity.getEmergencyContactName(),
+                entity.getEmergencyContactMobile(),
+                entity.getBloodGroup(),
+                entity.getAllergies(),
+                entity.getExistingConditions(),
+                entity.getNotes(),
+                false
+        );
+        PatientEntity saved = repository.save(entity);
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                ENTITY_TYPE,
+                saved.getId(),
+                "patient.deactivated",
+                actorAppUserId,
+                OffsetDateTime.now(),
+                "Deactivated patient " + saved.getPatientNumber(),
+                detailsJson(saved)
+        ));
+        return toRecord(saved);
+    }
+
+    private void applyCommand(PatientEntity entity, PatientUpsertCommand command) {
+        Integer ageYears = command.ageYears();
+        if (ageYears == null && command.dateOfBirth() != null) {
+            ageYears = Period.between(command.dateOfBirth(), LocalDate.now()).getYears();
+        }
+        entity.update(
+                normalize(command.firstName()),
+                normalize(command.lastName()),
+                command.gender() == null ? PatientGender.UNKNOWN : command.gender(),
+                command.dateOfBirth(),
+                ageYears,
+                normalize(command.mobile()),
+                normalizeNullable(command.email()),
+                normalizeNullable(command.addressLine1()),
+                normalizeNullable(command.addressLine2()),
+                normalizeNullable(command.city()),
+                normalizeNullable(command.state()),
+                normalizeNullable(command.country()),
+                normalizeNullable(command.postalCode()),
+                normalizeNullable(command.emergencyContactName()),
+                normalizeNullable(command.emergencyContactMobile()),
+                normalizeNullable(command.bloodGroup()),
+                normalizeNullable(command.allergies()),
+                normalizeNullable(command.existingConditions()),
+                normalizeNullable(command.notes()),
+                command.active()
+        );
+    }
+
+    private PatientRecord toRecord(PatientEntity entity) {
+        return new PatientRecord(
+                entity.getId(),
+                entity.getTenantId(),
+                entity.getPatientNumber(),
+                entity.getFirstName(),
+                entity.getLastName(),
+                entity.getGender(),
+                entity.getDateOfBirth(),
+                entity.getAgeYears(),
+                entity.getMobile(),
+                entity.getEmail(),
+                entity.getAddressLine1(),
+                entity.getAddressLine2(),
+                entity.getCity(),
+                entity.getState(),
+                entity.getCountry(),
+                entity.getPostalCode(),
+                entity.getEmergencyContactName(),
+                entity.getEmergencyContactMobile(),
+                entity.getBloodGroup(),
+                entity.getAllergies(),
+                entity.getExistingConditions(),
+                entity.getNotes(),
+                entity.isActive(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt()
+        );
+    }
+
+    private void ensureUniqueActiveMobile(UUID tenantId, String mobile, UUID currentPatientId) {
+        if (!StringUtils.hasText(mobile)) {
+            throw new IllegalArgumentException("mobile is required");
+        }
+        repository.findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, mobile.trim())
+                .ifPresent(existing -> {
+                    if (currentPatientId == null || !existing.getId().equals(currentPatientId)) {
+                        throw new IllegalArgumentException("Active patient with the same mobile already exists");
+                    }
+                });
+    }
+
+    private String generatePatientNumber(UUID tenantId) {
+        for (int attempt = 0; attempt < 8; attempt++) {
+            String candidate = "PAT-" + UUID.randomUUID().toString().replace("-", "").substring(0, 10).toUpperCase();
+            if (!repository.existsByTenantIdAndPatientNumber(tenantId, candidate)) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Unable to generate unique patient number");
+    }
+
+    private void validate(PatientUpsertCommand command) {
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        requireText(command.firstName(), "firstName");
+        requireText(command.lastName(), "lastName");
+        if (command.gender() == null) {
+            throw new IllegalArgumentException("gender is required");
+        }
+        requireText(command.mobile(), "mobile");
+    }
+
+    private void requireTenant(UUID tenantId) {
+        if (tenantId == null) {
+            throw new IllegalArgumentException("tenantId is required");
+        }
+    }
+
+    private void requireText(String value, String field) {
+        if (!StringUtils.hasText(value)) {
+            throw new IllegalArgumentException(field + " is required");
+        }
+    }
+
+    private String normalize(String value) {
+        return value == null ? null : value.trim();
+    }
+
+    private String normalizeNullable(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String detailsJson(PatientEntity entity) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("id", entity.getId());
+        details.put("tenantId", entity.getTenantId());
+        details.put("patientNumber", entity.getPatientNumber());
+        details.put("firstName", entity.getFirstName());
+        details.put("lastName", entity.getLastName());
+        details.put("gender", entity.getGender());
+        details.put("mobile", entity.getMobile());
+        details.put("active", entity.isActive());
+        try {
+            return objectMapper.writeValueAsString(details);
+        } catch (JsonProcessingException ex) {
+            return "{\"patientNumber\":\"" + entity.getPatientNumber() + "\"}";
+        }
+    }
+}

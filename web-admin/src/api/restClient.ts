@@ -35,3 +35,48 @@ export async function httpGet<T>(path: string, opts?: ApiOpts): Promise<T> {
   });
   return parseResponse<T>(res);
 }
+
+export async function httpPut<T>(path: string, body: unknown, opts?: ApiOpts): Promise<T> {
+  const res = await fetch(`${baseUrl(opts?.apiBase)}${path}`, {
+    method: "PUT",
+    headers: {
+      ...(opts?.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+      ...(opts?.tenantId ? { "X-Tenant-Id": opts.tenantId } : {}),
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: opts?.signal,
+  });
+  return parseResponse<T>(res);
+}
+
+export async function httpPatch<T>(path: string, body?: unknown, opts?: ApiOpts): Promise<T> {
+  const res = await fetch(`${baseUrl(opts?.apiBase)}${path}`, {
+    method: "PATCH",
+    headers: {
+      ...(opts?.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+      ...(opts?.tenantId ? { "X-Tenant-Id": opts.tenantId } : {}),
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      Accept: "application/json",
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    signal: opts?.signal,
+  });
+  return parseResponse<T>(res);
+}
+
+export async function httpPost<T>(path: string, body: unknown, opts?: ApiOpts): Promise<T> {
+  const res = await fetch(`${baseUrl(opts?.apiBase)}${path}`, {
+    method: "POST",
+    headers: {
+      ...(opts?.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+      ...(opts?.tenantId ? { "X-Tenant-Id": opts.tenantId } : {}),
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: opts?.signal,
+  });
+  return parseResponse<T>(res);
+}

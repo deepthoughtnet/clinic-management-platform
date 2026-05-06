@@ -3,7 +3,7 @@ spring:
     name: clinic-management-api
 
   datasource:
-    url: jdbc:postgresql://localhost:5436/clinic_platform
+    url: jdbc:postgresql://localhost:5437/clinic_management
     username: clinic
     password: clinic
 
@@ -20,7 +20,7 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: http://localhost:8181/realms/clinic-platform
+          issuer-uri: http://localhost:8182/realms/clinic-management
 
   servlet:
     multipart:
@@ -34,15 +34,31 @@ clinic:
   keycloak:
     admin:
       enabled: true
-      serverUrl: http://localhost:8181
+      serverUrl: http://localhost:8182
       adminRealm: master
-      targetRealm: clinic-platform
-      clientId: clinic-provisioner
+      targetRealm: clinic-management
+      clientId: admin-cli
       clientSecret: ${CLINIC_KEYCLOAK_CLIENT_SECRET:}
       username: ${CLINIC_KEYCLOAK_ADMIN_USERNAME:admin}
       password: ${CLINIC_KEYCLOAK_ADMIN_PASSWORD:admin}
 
+  storage:
+    minio:
+      endpoint: ${CLINIC_MINIO_ENDPOINT:http://localhost:9005}
+      access-key: ${CLINIC_MINIO_ACCESS_KEY:minio}
+      secret-key: ${CLINIC_MINIO_SECRET_KEY:minio123}
+      bucket: ${CLINIC_MINIO_BUCKET:clinic-documents}
+      auto-create-bucket: ${CLINIC_MINIO_AUTO_CREATE_BUCKET:true}
+
   notifications:
+    enabled: ${CLINIC_NOTIFICATIONS_ENABLED:true}
+    channel: ${CLINIC_NOTIFICATIONS_CHANNEL:email}
+    dispatcher:
+      enabled: ${CLINIC_NOTIFICATIONS_DISPATCHER_ENABLED:true}
+      pollingIntervalMs: ${CLINIC_NOTIFICATIONS_RETRY_INTERVAL_MS:30000}
+      maxAttempts: ${CLINIC_NOTIFICATIONS_MAX_RETRIES:3}
+      retryBackoffMs: ${CLINIC_NOTIFICATIONS_RETRY_BACKOFF_MS:60000}
+      batchSize: ${CLINIC_NOTIFICATIONS_BATCH_SIZE:25}
     scheduler:
       enabled: ${CLINIC_NOTIFICATIONS_SCHEDULER_ENABLED:true}
       fixedDelay: ${CLINIC_NOTIFICATIONS_SCHEDULER_FIXED_DELAY:PT5M}

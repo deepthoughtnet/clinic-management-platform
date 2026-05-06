@@ -1,6 +1,5 @@
 package com.deepthoughtnet.clinic.ai.orchestration.service.impl;
 
-import com.deepthoughtnet.clinic.ai.orchestration.db.AiRequestAuditEntity;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiPromptTemplateRegistryService;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiProviderRouter;

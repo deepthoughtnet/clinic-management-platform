@@ -58,12 +58,52 @@
     </dependency>
     <dependency>
       <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>clinic-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>patient-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>appointment-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>consultation-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
       <artifactId>notification-domain</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
       <groupId>com.deepthoughtnet.clinic</groupId>
       <artifactId>ai-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>prescription-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>billing-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>inventory-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>vaccination-domain</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

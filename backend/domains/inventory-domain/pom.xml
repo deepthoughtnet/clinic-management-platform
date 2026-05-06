@@ -14,4 +14,20 @@
   <artifactId>inventory-domain</artifactId>
   <name>clinic :: inventory-domain</name>
   <packaging>jar</packaging>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>platform-audit</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+  </dependencies>
 </project>

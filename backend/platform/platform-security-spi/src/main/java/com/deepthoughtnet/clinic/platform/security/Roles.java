@@ -6,6 +6,11 @@ public final class Roles {
     public static final String PLATFORM_ADMIN = "PLATFORM_ADMIN";
     public static final String PLATFORM_TENANT_SUPPORT = "PLATFORM_TENANT_SUPPORT";
     public static final String CLINIC_ADMIN = "CLINIC_ADMIN";
+    public static final String DOCTOR = "DOCTOR";
+    public static final String RECEPTIONIST = "RECEPTIONIST";
+    public static final String BILLING_USER = "BILLING_USER";
+    public static final String PHARMACIST = "PHARMACIST";
+    public static final String LAB_ASSISTANT = "LAB_ASSISTANT";
     public static final String CLINIC_REVIEWER = "CLINIC_REVIEWER";
     public static final String CLINIC_APPROVER = "CLINIC_APPROVER";
     public static final String CLINIC_AUDITOR = "CLINIC_AUDITOR";

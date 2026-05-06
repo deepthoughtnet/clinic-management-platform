@@ -6,7 +6,21 @@ import AppShell from "../layout/AppShell";
 import { AuthContext } from "../auth/AuthContext";
 import { useAuth } from "../auth/useAuth";
 import DashboardPage from "../pages/DashboardPage";
-import PlaceholderPage from "../pages/PlaceholderPage";
+import ClinicProfilePage from "../pages/settings/ClinicProfilePage";
+import UsersRolesPage from "../pages/settings/UsersRolesPage";
+import PatientsPage from "../pages/patients/PatientsPage";
+import PatientFormPage from "../pages/patients/PatientFormPage";
+import PatientDetailPage from "../pages/patients/PatientDetailPage";
+import AppointmentsPage from "../pages/appointments/AppointmentsPage";
+import QueuePage from "../pages/appointments/QueuePage";
+import ConsultationsPage from "../pages/consultations/ConsultationsPage";
+import ConsultationWorkspacePage from "../pages/consultations/ConsultationWorkspacePage";
+import PrescriptionsPage from "../pages/prescriptions/PrescriptionsPage";
+import BillsPage from "../pages/billing/BillsPage";
+import NotificationsPage from "../pages/notifications/NotificationsPage";
+import InventoryPage from "../pages/inventory/InventoryPage";
+import ReportsPage from "../pages/reports/ReportsPage";
+import VaccinationsPage from "../pages/vaccinations/VaccinationsPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const auth = React.useContext(AuthContext);
@@ -74,15 +88,23 @@ function AuthedApp() {
     <AppShell>
       <Routes>
         <Route path="/" element={<DashboardPage />} />
-        <Route path="/patients" element={<PlaceholderPage title="Patients" description="Patient registration, profiles, and clinical history will live here." />} />
-        <Route path="/appointments" element={<PlaceholderPage title="Appointments" description="Scheduling, waiting lists, and clinician calendars will live here." />} />
-        <Route path="/consultations" element={<PlaceholderPage title="Consultations" description="Encounter notes, assessments, and visit summaries will live here." />} />
-        <Route path="/prescriptions" element={<PlaceholderPage title="Prescriptions" description="Medication orders, refill workflows, and review queues will live here." />} />
-        <Route path="/billing" element={<PlaceholderPage title="Billing" description="Claims, payments, and payment follow-up will live here." />} />
-        <Route path="/vaccinations" element={<PlaceholderPage title="Vaccinations" description="Immunization schedules and registry tracking will live here." />} />
-        <Route path="/inventory" element={<PlaceholderPage title="Inventory" description="Supplies, stock movement, and reorder points will live here." />} />
-        <Route path="/reports" element={<PlaceholderPage title="Reports" description="Operational and clinical reporting will live here." />} />
-        <Route path="/settings" element={<PlaceholderPage title="Settings" description="Tenant, user, and integration settings will live here." />} />
+        <Route path="/patients" element={<PatientsPage />} />
+        <Route path="/patients/new" element={<PatientFormPage mode="create" />} />
+        <Route path="/patients/:id" element={<PatientDetailPage />} />
+        <Route path="/patients/:id/edit" element={<PatientFormPage mode="edit" />} />
+        <Route path="/appointments" element={<AppointmentsPage />} />
+        <Route path="/queue" element={<QueuePage />} />
+        <Route path="/consultations" element={<ConsultationsPage />} />
+        <Route path="/consultations/:id" element={<ConsultationWorkspacePage />} />
+        <Route path="/prescriptions" element={<PrescriptionsPage />} />
+        <Route path="/billing" element={<BillsPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/vaccinations" element={<VaccinationsPage />} />
+        <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/settings" element={<Navigate to="/settings/clinic-profile" replace />} />
+        <Route path="/settings/clinic-profile" element={<ClinicProfilePage />} />
+        <Route path="/settings/users-roles" element={<UsersRolesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Box sx={{ display: "none" }}>{auth.username}</Box>

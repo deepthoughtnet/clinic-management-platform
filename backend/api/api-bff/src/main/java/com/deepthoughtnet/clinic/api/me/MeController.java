@@ -3,8 +3,11 @@ package com.deepthoughtnet.clinic.api.me;
 import com.deepthoughtnet.clinic.api.me.dto.MeResponse;
 import com.deepthoughtnet.clinic.identity.service.ActiveTenantMembershipService;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
+import com.deepthoughtnet.clinic.identity.service.model.ActiveTenantMembershipRecord;
+import com.deepthoughtnet.clinic.identity.service.model.TenantModulesRecord;
 import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import java.util.List;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -29,10 +32,10 @@ public class MeController {
     @PreAuthorize("isAuthenticated()")
     public MeResponse me() {
         var ctx = RequestContextHolder.require();
-        var activeMemberships = activeTenantMembershipService.listActiveMemberships(ctx.keycloakSub())
-                .stream()
+        List<ActiveTenantMembershipRecord> memberships = activeTenantMembershipService.listActiveMemberships(ctx.keycloakSub());
+        List<MeResponse.ActiveTenantMembershipResponse> activeMemberships = memberships.stream()
                 .map(membership -> new MeResponse.ActiveTenantMembershipResponse(
-                        membership.tenantId(),
+                        membership.tenantId() == null ? null : membership.tenantId().toString(),
                         membership.tenantCode(),
                         membership.tenantName(),
                         membership.role(),
@@ -57,8 +60,8 @@ public class MeController {
                 });
 
         return new MeResponse(
-                ctx.tenantId() == null ? null : ctx.tenantId().value(),
-                ctx.appUserId(),
+                ctx.tenantId() == null ? null : ctx.tenantId().value().toString(),
+                ctx.appUserId() == null ? null : ctx.appUserId().toString(),
                 ctx.keycloakSub(),
                 ctx.tokenRoles(),
                 ctx.tenantRole(),
@@ -70,21 +73,21 @@ public class MeController {
     }
 
     private MeResponse.TenantModulesResponse toResponse(
-            com.deepthoughtnet.clinic.identity.service.model.TenantModulesRecord modules
+            TenantModulesRecord modules
     ) {
         if (modules == null) {
             return null;
         }
         return new MeResponse.TenantModulesResponse(
-                modules.dashboard(),
-                modules.patients(),
-                modules.appointments(),
-                modules.consultations(),
-                modules.prescriptions(),
-                modules.billing(),
-                modules.vaccinations(),
-                modules.inventory(),
-                modules.reports()
+                modules.clinicAutomation(),
+                modules.clinicGeneration(),
+                modules.reconciliation(),
+                modules.decisioning(),
+                modules.aiCopilot(),
+                modules.agentIntake(),
+                modules.gstFiling(),
+                modules.doctorIntelligence(),
+                modules.teleCalling()
         );
     }
 }

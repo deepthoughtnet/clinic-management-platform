@@ -1,7 +1,0 @@
-com/deepthoughtnet/clinic/platform/spring/web/RequestContextFilter.class
-com/deepthoughtnet/clinic/platform/spring/context/TenantHeaders.class
-com/deepthoughtnet/clinic/platform/spring/graphql/RequestContextGraphQlInterceptor.class
-com/deepthoughtnet/clinic/platform/spring/context/CorrelationId.class
-com/deepthoughtnet/clinic/platform/spring/security/TenantRoleAuthorityFilter.class
-com/deepthoughtnet/clinic/platform/spring/context/RequestContextHolder.class
-com/deepthoughtnet/clinic/platform/spring/security/TenantRoleAuthorityFilter$1.class

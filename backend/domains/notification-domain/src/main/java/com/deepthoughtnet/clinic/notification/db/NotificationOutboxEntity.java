@@ -68,6 +68,12 @@ public class NotificationOutboxEntity {
     @Column(name = "next_attempt_at")
     private OffsetDateTime nextAttemptAt;
 
+    @Column(name = "retry_count")
+    private Integer retryCount;
+
+    @Column(name = "next_retry_at")
+    private OffsetDateTime nextRetryAt;
+
     @Column(name = "last_error", columnDefinition = "text")
     private String lastError;
 
@@ -117,6 +123,8 @@ public class NotificationOutboxEntity {
         entity.status = "PENDING";
         entity.attemptCount = 0;
         entity.nextAttemptAt = availableAt == null ? now : availableAt;
+        entity.retryCount = 0;
+        entity.nextRetryAt = entity.nextAttemptAt;
         entity.createdAt = now;
         entity.updatedAt = now;
         return entity;
@@ -135,6 +143,8 @@ public class NotificationOutboxEntity {
     public String getStatus() { return status; }
     public int getAttemptCount() { return attemptCount; }
     public OffsetDateTime getNextAttemptAt() { return nextAttemptAt; }
+    public Integer getRetryCount() { return retryCount; }
+    public OffsetDateTime getNextRetryAt() { return nextRetryAt; }
     public String getLastError() { return lastError; }
     public OffsetDateTime getProcessedAt() { return processedAt; }
     public OffsetDateTime getIgnoredAt() { return ignoredAt; }
@@ -146,6 +156,7 @@ public class NotificationOutboxEntity {
     public void markProcessing() {
         this.status = "PROCESSING";
         this.attemptCount = this.attemptCount + 1;
+        this.retryCount = this.attemptCount;
         this.lastError = null;
         this.updatedAt = OffsetDateTime.now();
     }
@@ -155,6 +166,7 @@ public class NotificationOutboxEntity {
         this.status = "SENT";
         this.processedAt = now;
         this.nextAttemptAt = null;
+        this.nextRetryAt = null;
         this.lastError = null;
         this.updatedAt = now;
     }
@@ -165,6 +177,8 @@ public class NotificationOutboxEntity {
         this.nextAttemptAt = "PENDING".equals(this.status)
                 ? now.plus(backoff.multipliedBy(Math.max(1, attemptCount)))
                 : null;
+        this.nextRetryAt = this.nextAttemptAt;
+        this.retryCount = this.attemptCount;
         this.lastError = errorMessage;
         this.updatedAt = now;
     }
@@ -173,6 +187,7 @@ public class NotificationOutboxEntity {
         OffsetDateTime now = OffsetDateTime.now();
         this.status = "PENDING";
         this.nextAttemptAt = now;
+        this.nextRetryAt = now;
         this.processedAt = null;
         this.ignoredAt = null;
         this.ignoredByAppUserId = null;
@@ -183,6 +198,7 @@ public class NotificationOutboxEntity {
         OffsetDateTime now = OffsetDateTime.now();
         this.status = "IGNORED";
         this.nextAttemptAt = null;
+        this.nextRetryAt = null;
         this.ignoredAt = now;
         this.ignoredByAppUserId = ignoredByAppUserId;
         this.updatedAt = now;

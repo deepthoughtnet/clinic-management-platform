@@ -7,8 +7,10 @@ import com.deepthoughtnet.clinic.identity.service.model.TenantModulesCommand;
 import com.deepthoughtnet.clinic.identity.service.model.TenantModulesRecord;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Service
 public class PlatformTenantManagementService {
 
     private final TenantRepository tenantRepository;

@@ -14,15 +14,26 @@ public class ModuleEntitlementConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(interceptor)
-                .addPathPatterns(
-                        "/api/patients/**",
+                registry.addInterceptor(interceptor)
+                        .addPathPatterns(
+                                "/api/patients/**",
                         "/api/appointments/**",
+                        "/api/doctors/**",
                         "/api/consultations/**",
                         "/api/prescriptions/**",
-                        "/api/billing/**",
+                        "/api/bills/**",
+                        "/api/receipts/**",
+                        "/api/dashboard",
+                        "/api/dashboard/**",
+                        "/api/notifications",
+                        "/api/notifications/**",
+                        "/api/vaccines/**",
                         "/api/vaccinations/**",
+                        "/api/medicines",
+                        "/api/medicines/**",
+                        "/api/inventory",
                         "/api/inventory/**",
+                        "/api/reports",
                         "/api/reports/**",
                         "/api/ai/**"
                 );

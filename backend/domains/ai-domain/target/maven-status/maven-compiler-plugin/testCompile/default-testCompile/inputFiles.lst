@@ -1,5 +1,0 @@
-/home/iadmin/code/clinic-management-platform/backend/domains/ai-domain/src/test/java/com/deepthoughtnet/clinic/ai/orchestration/service/impl/GroqAiProviderAdapterTest.java
-/home/iadmin/code/clinic-management-platform/backend/domains/ai-domain/src/test/java/com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiRequestAuditQueryServiceImplTest.java
-/home/iadmin/code/clinic-management-platform/backend/domains/ai-domain/src/test/java/com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiOrchestrationServiceImplTest.java
-/home/iadmin/code/clinic-management-platform/backend/domains/ai-domain/src/test/java/com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiProviderRouterImplTest.java
-/home/iadmin/code/clinic-management-platform/backend/domains/ai-domain/src/test/java/com/deepthoughtnet/clinic/ai/orchestration/service/impl/AiPromptTemplateRegistryServiceImplTest.java

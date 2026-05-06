@@ -14,4 +14,59 @@
   <artifactId>billing-domain</artifactId>
   <name>clinic :: billing-domain</name>
   <packaging>jar</packaging>
+
+  <properties>
+    <pdfbox.version>3.0.2</pdfbox.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>platform-audit</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>clinic-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>patient-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>appointment-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>consultation-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>inventory-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.pdfbox</groupId>
+      <artifactId>pdfbox</artifactId>
+      <version>${pdfbox.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+  </dependencies>
 </project>
