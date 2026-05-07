@@ -1,21 +1,52 @@
 import * as React from "react";
 import { keycloak } from "./keycloak";
-import { initKeycloakOnce } from "./keycloakInit";
+import { initKeycloakOnce, resetKeycloakInit } from "./keycloakInit";
 import { decodeJwtPayload, extractRolesUpper, extractTenantIdClaim, extractUsername } from "./tokenUtils";
-import { AuthContext, type AuthContextValue } from "./AuthContext";
+import { AuthContext, type AuthContextValue, type SelectedTenant } from "./AuthContext";
 
 type MeResponse = {
+  email?: string | null;
+  username?: string | null;
+  platformAdmin?: boolean | null;
   tenantId?: string | null;
+  appUserId?: string | null;
   subject?: string | null;
   tenantRole?: string | null;
   permissions?: string[] | null;
   tokenRoles?: string[] | null;
-  activeTenantMemberships?: Array<{
-    tenantId: string;
+  memberships?: Array<{
+    tenantId?: string | null;
+    id?: string | null;
     tenantCode?: string | null;
+    code?: string | null;
     tenantName?: string | null;
+    name?: string | null;
+    role?: string | null;
+    status?: string | null;
+    active?: boolean | null;
+  }> | null;
+  activeTenantMemberships?: Array<{
+    tenantId?: string | null;
+    id?: string | null;
+    tenantCode?: string | null;
+    code?: string | null;
+    tenantName?: string | null;
+    name?: string | null;
+    role?: string | null;
+    status?: string | null;
+    active?: boolean | null;
   }> | null;
 };
+type ActiveMembership = {
+  tenantId: string;
+  tenantCode?: string | null;
+  tenantName?: string | null;
+  role?: string | null;
+  status?: string | null;
+};
+
+const SELECTED_TENANT_STORAGE_KEY = "clinic_selected_tenant";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function baseUrl(): string {
   return (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
@@ -39,6 +70,93 @@ async function fetchMe(token: string, tenantId?: string | null, signal?: AbortSi
   return (await response.json()) as MeResponse;
 }
 
+function parseStoredSelectedTenant(): SelectedTenant | null {
+  try {
+    const raw = localStorage.getItem(SELECTED_TENANT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SelectedTenant>;
+    if (
+      typeof parsed.id !== "string" ||
+      typeof parsed.code !== "string" ||
+      typeof parsed.name !== "string" ||
+      !isValidClinicTenantShape(parsed)
+    ) {
+      localStorage.removeItem(SELECTED_TENANT_STORAGE_KEY);
+      return null;
+    }
+    return {
+      id: parsed.id,
+      code: parsed.code,
+      name: parsed.name,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function storeSelectedTenant(tenant: SelectedTenant | null): void {
+  if (!tenant || !isValidClinicTenantShape(tenant)) {
+    localStorage.removeItem(SELECTED_TENANT_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(SELECTED_TENANT_STORAGE_KEY, JSON.stringify(tenant));
+}
+
+function isSystemTenantValue(value?: string | null): boolean {
+  const normalized = (value || "").trim().toUpperCase();
+  return normalized.startsWith("DEFAULT-ROLES") || normalized.includes("DEFAULT-ROLES-");
+}
+
+function isValidClinicTenantShape(tenant: Partial<SelectedTenant> | Membership): boolean {
+  const id = "tenantId" in tenant ? tenant.tenantId : tenant.id;
+  const code = "tenantCode" in tenant ? tenant.tenantCode : tenant.code;
+  const name = "tenantName" in tenant ? tenant.tenantName : tenant.name;
+  return Boolean(id && UUID_RE.test(id) && !isSystemTenantValue(code) && !isSystemTenantValue(name) && !isSystemTenantValue(id));
+}
+
+type Membership = {
+  tenantId: string;
+  tenantCode: string | null;
+  tenantName: string | null;
+  role?: string | null;
+  status?: string | null;
+  active?: boolean | null;
+};
+
+function normalizeMemberships(me: MeResponse): Membership[] {
+  const source = (me.activeTenantMemberships || me.memberships || []) as Array<Record<string, unknown>>;
+  const normalized: Membership[] = [];
+  for (const membership of source) {
+    const tenantId = typeof membership.tenantId === "string"
+      ? membership.tenantId
+      : typeof membership.id === "string"
+        ? membership.id
+        : null;
+    if (!tenantId) continue;
+    const tenantCode = typeof membership.tenantCode === "string"
+      ? membership.tenantCode
+      : typeof membership.code === "string"
+        ? membership.code
+        : null;
+    const tenantName = typeof membership.tenantName === "string"
+      ? membership.tenantName
+      : typeof membership.name === "string"
+        ? membership.name
+        : null;
+    const normalizedMembership = {
+      tenantId,
+      tenantCode,
+      tenantName,
+      role: typeof membership.role === "string" ? membership.role : null,
+      status: typeof membership.status === "string" ? membership.status : null,
+      active: membership.active === true,
+    };
+    if (!isValidClinicTenantShape(normalizedMembership)) continue;
+    normalized.push(normalizedMembership);
+  }
+  return normalized;
+}
+
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
   const [initialized, setInitialized] = React.useState(false);
   const [authenticated, setAuthenticated] = React.useState(false);
@@ -46,57 +164,194 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const [username, setUsername] = React.useState("Guest");
   const [rolesUpper, setRolesUpper] = React.useState<string[]>([]);
   const [permissions, setPermissions] = React.useState<string[]>([]);
-  const [tenantId, setTenantId] = React.useState<string | null>(null);
-  const [tenantName, setTenantName] = React.useState<string | null>(null);
+  const [selectedTenant, setSelectedTenant] = React.useState<SelectedTenant | null>(null);
+  const [appUserId, setAppUserId] = React.useState<string | null>(null);
+  const [tenantRole, setTenantRole] = React.useState<string | null>(null);
+  const [activeTenantMemberships, setActiveTenantMemberships] = React.useState<ActiveMembership[]>([]);
+  const [initError, setInitError] = React.useState<string | null>(null);
+  const [initVersion, setInitVersion] = React.useState(0);
+
+  const hydrateFromToken = React.useCallback((token: string | null) => {
+    const payload = token ? decodeJwtPayload(token) : null;
+    const tokenRoles = payload ? extractRolesUpper(payload) : [];
+    const tokenUser = payload ? extractUsername(payload) : "Guest";
+    const tokenTenant = payload ? extractTenantIdClaim(payload) : null;
+
+    setAccessToken(token);
+    setRolesUpper(tokenRoles);
+    setUsername(tokenUser);
+    setSelectedTenant((current) => {
+      if (current) return current;
+      if (!tokenTenant) return null;
+      const tenant = { id: tokenTenant, code: tokenTenant, name: tokenTenant };
+      return isValidClinicTenantShape(tenant) ? tenant : null;
+    });
+  }, []);
+
+  const clearSession = React.useCallback(() => {
+    storeSelectedTenant(null);
+    setAuthenticated(false);
+    setAccessToken(null);
+    setUsername("Guest");
+    setRolesUpper([]);
+    setPermissions([]);
+    setSelectedTenant(null);
+    setAppUserId(null);
+    setTenantRole(null);
+    setActiveTenantMemberships([]);
+  }, []);
 
   React.useEffect(() => {
     let cancelled = false;
+    let refreshInterval: number | null = null;
 
-    initKeycloakOnce()
-      .then(async (authenticated) => {
-        if (cancelled) return;
-        setAuthenticated(authenticated);
+    async function bootstrap() {
+      setInitialized(false);
+      setInitError(null);
 
-        if (!authenticated) {
-          setInitialized(true);
-          return;
-        }
-
-        const token = keycloak.token || null;
-        setAccessToken(token);
-        const payload = token ? decodeJwtPayload(token) : null;
-        setUsername(extractUsername(payload));
-        setRolesUpper(extractRolesUpper(payload));
-        setTenantId(extractTenantIdClaim(payload));
-
-        if (token) {
-          try {
-            const me = await fetchMe(token, extractTenantIdClaim(payload) || undefined);
-            if (!cancelled) {
-              setTenantId(me.tenantId || extractTenantIdClaim(payload));
-              setPermissions((me.permissions || []).map((permission) => permission.toLowerCase()));
-              setTenantName(
-                me.activeTenantMemberships?.find((membership) => membership.tenantId === me.tenantId)?.tenantName || null
-              );
-            }
-          } catch {
-            // Keep the JWT-derived session usable even if /api/me is temporarily unavailable.
+      try {
+        const timeout = window.setTimeout(() => {
+          if (!cancelled) {
+            setInitError("Authentication initialization is taking too long. Verify Keycloak URL/realm/client and browser network logs.");
+            setInitialized(true);
+            setAuthenticated(false);
           }
+        }, 6000);
+
+        const ok = await initKeycloakOnce();
+        window.clearTimeout(timeout);
+        if (cancelled) return;
+
+        setAuthenticated(ok);
+        const token = keycloak.token || null;
+        hydrateFromToken(token);
+
+        if (ok && token) {
+          const payload = decodeJwtPayload(token);
+          const tokenRolesUpper = extractRolesUpper(payload);
+          const tokenTenantId = extractTenantIdClaim(payload);
+          const storedTenant = parseStoredSelectedTenant();
+          const tokenTenant = tokenTenantId ? { id: tokenTenantId, code: tokenTenantId, name: tokenTenantId } : null;
+          const initialTenantId = storedTenant?.id || (tokenTenant && isValidClinicTenantShape(tokenTenant) ? tokenTenant.id : null);
+
+          try {
+            const me = await fetchMe(token, initialTenantId || undefined);
+            if (!cancelled) {
+              const memberships = normalizeMemberships(me);
+              setActiveTenantMemberships(memberships);
+              const isPlatformAdmin = Boolean(me.platformAdmin)
+                || tokenRolesUpper.includes("PLATFORM_ADMIN")
+                || (me.tokenRoles || []).some((role) => String(role).toUpperCase() === "PLATFORM_ADMIN");
+              const activeMemberships = memberships.filter((membership) => {
+                if (membership.active === true) return true;
+                return (membership.status || "").toUpperCase() === "ACTIVE";
+              });
+
+              let resolved: SelectedTenant | null = null;
+              if (storedTenant && activeMemberships.some((membership) => membership.tenantId === storedTenant.id)) {
+                const match = activeMemberships.find((membership) => membership.tenantId === storedTenant.id);
+                if (match) {
+                  resolved = {
+                    id: match.tenantId,
+                    code: match.tenantCode || storedTenant.code || match.tenantId,
+                    name: match.tenantName || storedTenant.name || match.tenantCode || match.tenantId,
+                  };
+                }
+              }
+
+              if (!resolved) {
+                const meTenant = (me.tenantId && activeMemberships.find((membership) => membership.tenantId === me.tenantId)) || null;
+                if (meTenant) {
+                  resolved = {
+                    id: meTenant.tenantId,
+                    code: meTenant.tenantCode || meTenant.tenantId,
+                    name: meTenant.tenantName || meTenant.tenantCode || meTenant.tenantId,
+                  };
+                }
+              }
+
+              if (!resolved && !isPlatformAdmin && activeMemberships.length === 1) {
+                const only = activeMemberships[0];
+                resolved = {
+                  id: only.tenantId,
+                  code: only.tenantCode || only.tenantId,
+                  name: only.tenantName || only.tenantCode || only.tenantId,
+                };
+              }
+
+              if (!resolved && !isPlatformAdmin && tokenTenantId && activeMemberships.some((membership) => membership.tenantId === tokenTenantId)) {
+                const match = activeMemberships.find((membership) => membership.tenantId === tokenTenantId);
+                if (match) {
+                  resolved = {
+                    id: match.tenantId,
+                    code: match.tenantCode || match.tenantId,
+                    name: match.tenantName || match.tenantCode || match.tenantId,
+                  };
+                }
+              }
+
+              if (!isPlatformAdmin && activeMemberships.length === 0) {
+                setInitError("No active clinic membership found. Contact clinic administrator.");
+                resolved = null;
+              } else if (!isPlatformAdmin && activeMemberships.length > 1 && !resolved) {
+                resolved = null;
+              }
+
+              let effectiveMe = me;
+              if (resolved?.id && me.tenantId !== resolved.id) {
+                try {
+                  effectiveMe = await fetchMe(token, resolved.id);
+                } catch {
+                  effectiveMe = me;
+                }
+              }
+
+              setSelectedTenant(resolved);
+              setAppUserId(effectiveMe.appUserId || null);
+              setTenantRole(effectiveMe.tenantRole || null);
+              setPermissions((effectiveMe.permissions || []).map((permission) => permission.toLowerCase()));
+              storeSelectedTenant(resolved);
+            }
+          } catch (err) {
+            if (!cancelled) {
+              setInitError(err instanceof Error ? err.message : "Failed to load /api/me");
+            }
+          }
+
+          refreshInterval = window.setInterval(async () => {
+            try {
+              if (!keycloak.authenticated) return;
+              await keycloak.updateToken(30);
+              const newToken = keycloak.token || null;
+              hydrateFromToken(newToken);
+              setAuthenticated(!!newToken);
+            } catch {
+              if (!cancelled) {
+                clearSession();
+              }
+            }
+          }, 10_000);
         }
 
         setInitialized(true);
-      })
-      .catch(() => {
+      } catch (err) {
         if (!cancelled) {
+          clearSession();
           setInitialized(true);
-          setAuthenticated(false);
+          setInitError(err instanceof Error ? err.message : "Keycloak init failed");
         }
-      });
+      }
+    }
+
+    void bootstrap();
 
     return () => {
       cancelled = true;
+      if (refreshInterval) {
+        window.clearInterval(refreshInterval);
+      }
     };
-  }, []);
+  }, [clearSession, hydrateFromToken, initVersion]);
 
   const value = React.useMemo<AuthContextValue>(
     () => ({
@@ -105,19 +360,33 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       username,
       rolesUpper,
       permissions,
-      tenantId,
-      tenantName,
+      selectedTenant,
+      tenantId: selectedTenant?.id || null,
+      tenantName: selectedTenant?.name || null,
+      appUserId,
+      tenantRole,
+      activeTenantMemberships,
       accessToken,
-      hasPermission: (permission: string) =>
-        permissions.includes(permission.trim().toLowerCase()),
+      initError,
+      selectTenant: (tenant) => {
+        setSelectedTenant(tenant);
+        storeSelectedTenant(tenant);
+      },
+      retryInit: () => {
+        resetKeycloakInit();
+        setInitVersion((v) => v + 1);
+      },
+      clearSession,
+      hasPermission: (permission: string) => permissions.includes(permission.trim().toLowerCase()),
       login: async () => {
         await keycloak.login({ prompt: "login" });
       },
       logout: async () => {
-        await keycloak.logout({ redirectUri: window.location.origin });
+        clearSession();
+        await keycloak.logout({ redirectUri: `${window.location.origin}/login` });
       },
     }),
-    [initialized, authenticated, username, rolesUpper, permissions, tenantId, tenantName, accessToken]
+    [initialized, authenticated, username, rolesUpper, permissions, selectedTenant, activeTenantMemberships, accessToken, initError, appUserId, tenantRole, clearSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

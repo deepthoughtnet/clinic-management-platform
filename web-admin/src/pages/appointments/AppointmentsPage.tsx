@@ -74,6 +74,7 @@ export default function AppointmentsPage() {
   const [error, setError] = React.useState<string | null>(null);
 
   const doctorOptions = users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
+  const isDoctor = (auth.tenantRole || "").toUpperCase() === "DOCTOR";
 
   React.useEffect(() => {
     let cancelled = false;
@@ -201,7 +202,7 @@ export default function AppointmentsPage() {
       {error ? <Alert severity="error">{error}</Alert> : null}
 
       <Grid container spacing={2}>
-        <Grid size={{ xs: 12, lg: 5 }}>
+        {!isDoctor ? <Grid size={{ xs: 12, lg: 5 }}>
           <Card>
             <CardContent>
               <Stack spacing={2}>
@@ -256,7 +257,7 @@ export default function AppointmentsPage() {
               </Stack>
             </CardContent>
           </Card>
-        </Grid>
+        </Grid> : null}
 
         <Grid size={{ xs: 12, lg: 7 }}>
           <Card>

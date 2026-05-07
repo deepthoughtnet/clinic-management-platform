@@ -441,16 +441,12 @@ public class AppointmentService {
         }
         boolean allowed = switch (current) {
             case BOOKED -> target == AppointmentStatus.WAITING
-                    || target == AppointmentStatus.IN_CONSULTATION
-                    || target == AppointmentStatus.COMPLETED
                     || target == AppointmentStatus.CANCELLED
                     || target == AppointmentStatus.NO_SHOW;
             case WAITING -> target == AppointmentStatus.IN_CONSULTATION
-                    || target == AppointmentStatus.COMPLETED
                     || target == AppointmentStatus.CANCELLED
                     || target == AppointmentStatus.NO_SHOW;
-            case IN_CONSULTATION -> target == AppointmentStatus.COMPLETED
-                    || target == AppointmentStatus.CANCELLED;
+            case IN_CONSULTATION -> target == AppointmentStatus.COMPLETED;
             case COMPLETED, CANCELLED, NO_SHOW -> false;
         };
         if (!allowed) {

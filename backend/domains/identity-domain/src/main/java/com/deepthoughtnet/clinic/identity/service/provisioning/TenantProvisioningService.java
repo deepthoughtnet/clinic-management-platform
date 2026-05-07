@@ -51,7 +51,18 @@ public class TenantProvisioningService {
         planRepo.findById(planId).orElseThrow(() -> new IllegalArgumentException("Unknown planId: " + planId));
 
         TenantEntity tenant = tenantRepo.findByCode(code)
-                .orElseGet(() -> tenantRepo.save(TenantEntity.create(code, req.tenantName().trim(), planId)));
+                .orElseGet(() -> tenantRepo.saveAndFlush(TenantEntity.create(code, req.tenantName().trim(), planId)));
+
+        if (!StringUtils.hasText(req.adminEmail())) {
+            return new TenantProvisioningResult(
+                    tenant.getId(),
+                    tenant.getCode(),
+                    tenant.getPlanId(),
+                    null,
+                    null,
+                    null
+            );
+        }
 
         // Create/find Keycloak user (userId == sub)
         String kcUserId = keycloak.createOrGetTenantAdminUserId(
@@ -61,8 +72,8 @@ public class TenantProvisioningService {
                 req.tempPassword()
         );
 
-        // Ensure realm ADMIN role
-        keycloak.ensureRealmRole(kcUserId, "ADMIN");
+        // Ensure clinic admin realm role for tenant admin bootstrap user.
+        keycloak.ensureRealmRole(kcUserId, "CLINIC_ADMIN");
 
         // Upsert app_user
         UUID appUserId = appUserProvisioner.upsertAndReturnId(
@@ -72,9 +83,9 @@ public class TenantProvisioningService {
                 req.adminDisplayName()
         );
 
-        // Ensure tenant_membership ADMIN exists
+        // Ensure tenant_membership CLINIC_ADMIN exists
         membershipRepo.findByTenantIdAndAppUserId(tenant.getId(), appUserId)
-                .orElseGet(() -> membershipRepo.save(TenantMembershipEntity.create(tenant.getId(), appUserId, "ADMIN")));
+                .orElseGet(() -> membershipRepo.save(TenantMembershipEntity.create(tenant.getId(), appUserId, "CLINIC_ADMIN")));
 
         return new TenantProvisioningResult(
                 tenant.getId(),
@@ -90,7 +101,6 @@ public class TenantProvisioningService {
         if (req == null) throw new IllegalArgumentException("request is required");
         if (!StringUtils.hasText(req.tenantCode())) throw new IllegalArgumentException("tenantCode is required");
         if (!StringUtils.hasText(req.tenantName())) throw new IllegalArgumentException("tenantName is required");
-        if (!StringUtils.hasText(req.adminEmail())) throw new IllegalArgumentException("adminEmail is required");
     }
 
     private String normalizePlan(String planId) {

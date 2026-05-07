@@ -15,10 +15,10 @@ public interface TenantMembershipRepository extends JpaRepository<TenantMembersh
             select m
             from TenantMembershipEntity m
             join AppUserEntity u on u.id = m.appUserId and u.tenantId = m.tenantId
-            where u.keycloakSub = :keycloakSub
+            where (u.keycloakSub = :keycloakSub or (:email is not null and lower(u.email) = lower(:email)))
               and upper(u.status) = 'ACTIVE'
               and upper(m.status) = 'ACTIVE'
             order by m.createdAt asc
             """)
-    List<TenantMembershipEntity> findActiveByKeycloakSub(String keycloakSub);
+    List<TenantMembershipEntity> findActiveByIdentity(String keycloakSub, String email);
 }

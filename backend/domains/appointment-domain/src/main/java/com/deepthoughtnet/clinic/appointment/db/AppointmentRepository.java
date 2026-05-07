@@ -19,7 +19,15 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
             LocalDate appointmentDate
     );
 
+    List<AppointmentEntity> findByTenantIdAndDoctorUserId(UUID tenantId, UUID doctorUserId);
+
     List<AppointmentEntity> findByTenantIdAndPatientIdOrderByAppointmentDateDescAppointmentTimeDescCreatedAtDesc(UUID tenantId, UUID patientId);
+
+    boolean existsByTenantIdAndIdAndDoctorUserId(UUID tenantId, UUID id, UUID doctorUserId);
+
+    boolean existsByTenantIdAndPatientIdAndDoctorUserId(UUID tenantId, UUID patientId, UUID doctorUserId);
+
+    boolean existsByTenantIdAndIdAndPatientIdAndDoctorUserId(UUID tenantId, UUID id, UUID patientId, UUID doctorUserId);
 
     @Query("""
             select coalesce(max(a.tokenNumber), 0)

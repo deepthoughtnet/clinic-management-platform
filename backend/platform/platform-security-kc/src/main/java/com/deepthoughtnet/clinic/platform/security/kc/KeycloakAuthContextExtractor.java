@@ -71,19 +71,19 @@ public class KeycloakAuthContextExtractor implements AuthContextExtractor {
         Jwt jwt = jwtOrNull();
         if (jwt == null) return null;
 
-        // Preferred: tenant_id in token claim (best-in-class SaaS)
+        // Explicit tenant selection must win over a token claim. The claim can be stale
+        // when a user switches clinic context after authentication.
+        if (tenantHeaderValue != null && !tenantHeaderValue.isBlank()) {
+            return tryParseTenant(tenantHeaderValue);
+        }
+
+        // Fallback: tenant_id in token claim for single-tenant sessions.
         Object claim = jwt.getClaim(TenantHeaders.TENANT_CLAIM);
         if (claim != null) {
             TenantId fromClaim = tryParseTenant(String.valueOf(claim));
             if (fromClaim != null) {
                 return fromClaim;
             }
-        }
-
-        // Fallback: tenant header may be a UUID or tenant code. Membership/role resolution
-        // remains authoritative after tenant selection.
-        if (tenantHeaderValue != null && !tenantHeaderValue.isBlank()) {
-            return tryParseTenant(tenantHeaderValue);
         }
 
         return null;

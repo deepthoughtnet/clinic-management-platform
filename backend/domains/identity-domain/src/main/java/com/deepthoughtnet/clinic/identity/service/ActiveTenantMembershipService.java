@@ -26,12 +26,14 @@ public class ActiveTenantMembershipService {
     }
 
     @Transactional(readOnly = true)
-    public List<ActiveTenantMembershipRecord> listActiveMemberships(String keycloakSub) {
-        if (!StringUtils.hasText(keycloakSub)) {
+    public List<ActiveTenantMembershipRecord> listActiveMemberships(String keycloakSub, String email) {
+        String normalizedSub = StringUtils.hasText(keycloakSub) ? keycloakSub.trim() : null;
+        String normalizedEmail = StringUtils.hasText(email) ? email.trim() : null;
+        if (normalizedSub == null && normalizedEmail == null) {
             return List.of();
         }
 
-        var memberships = membershipRepository.findActiveByKeycloakSub(keycloakSub.trim());
+        var memberships = membershipRepository.findActiveByIdentity(normalizedSub, normalizedEmail);
         var tenantsById = tenantRepository.findAllById(
                         memberships.stream().map(membership -> membership.getTenantId()).toList()
                 )

@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.patient;
 
 import com.deepthoughtnet.clinic.api.patient.dto.AppointmentSummaryResponse;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
+import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.api.patient.dto.PatientDetailResponse;
 import com.deepthoughtnet.clinic.api.patient.dto.PatientRequest;
 import com.deepthoughtnet.clinic.api.patient.dto.PatientResponse;
@@ -42,17 +43,20 @@ public class PatientController {
     private final AppointmentService appointmentService;
     private final ConsultationService consultationService;
     private final PrescriptionService prescriptionService;
+    private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
     public PatientController(
             PatientService patientService,
             AppointmentService appointmentService,
             ConsultationService consultationService,
-            PrescriptionService prescriptionService
+            PrescriptionService prescriptionService,
+            DoctorAssignmentSecurityService doctorAssignmentSecurityService
     ) {
         this.patientService = patientService;
         this.appointmentService = appointmentService;
         this.consultationService = consultationService;
         this.prescriptionService = prescriptionService;
+        this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
     }
 
     @GetMapping
@@ -64,8 +68,10 @@ public class PatientController {
             @RequestParam(required = false) Boolean active
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        List<UUID> visiblePatientIds = doctorAssignmentSecurityService.visiblePatientIds(tenantId);
         return patientService.search(tenantId, new PatientSearchCriteria(patientNumber, mobile, name, active))
                 .stream()
+                .filter(patient -> !doctorAssignmentSecurityService.isDoctor() || visiblePatientIds.contains(patient.id()))
                 .map(this::toResponse)
                 .toList();
     }
@@ -83,6 +89,7 @@ public class PatientController {
     @PreAuthorize("@permissionChecker.hasPermission('patient.read')")
     public PatientDetailResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requirePatientAccess(tenantId, id);
         PatientRecord patient = patientService.findById(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
         List<AppointmentRecord> appointments = appointmentService.listByPatient(tenantId, id);
@@ -109,6 +116,7 @@ public class PatientController {
     @PreAuthorize("@permissionChecker.hasPermission('patient.read')")
     public List<ConsultationResponse> listConsultations(@PathVariable UUID patientId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requirePatientAccess(tenantId, patientId);
         return consultationService.listByPatient(tenantId, patientId).stream().map(this::toConsultationResponse).toList();
     }
 
@@ -116,6 +124,7 @@ public class PatientController {
     @PreAuthorize("@permissionChecker.hasPermission('patient.read')")
     public List<com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionResponse> listPrescriptions(@PathVariable UUID patientId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requirePatientAccess(tenantId, patientId);
         return prescriptionService.listByPatient(tenantId, patientId).stream().map(this::toPrescriptionResponse).toList();
     }
 
@@ -165,6 +174,8 @@ public class PatientController {
                 request.bloodGroup(),
                 request.allergies(),
                 request.existingConditions(),
+                request.longTermMedications(),
+                request.surgicalHistory(),
                 request.notes(),
                 request.active()
         );
@@ -193,6 +204,8 @@ public class PatientController {
                 record.bloodGroup(),
                 record.allergies(),
                 record.existingConditions(),
+                record.longTermMedications(),
+                record.surgicalHistory(),
                 record.notes(),
                 record.active(),
                 record.createdAt(),
@@ -262,11 +275,16 @@ public class PatientController {
                 record.consultationId() == null ? null : record.consultationId().toString(),
                 record.appointmentId() == null ? null : record.appointmentId().toString(),
                 record.prescriptionNumber(),
+                record.versionNumber(),
+                record.parentPrescriptionId() == null ? null : record.parentPrescriptionId().toString(),
+                record.correctionReason(),
+                record.flowType(),
                 record.diagnosisSnapshot(),
                 record.advice(),
                 record.followUpDate(),
                 record.status(),
                 record.finalizedAt(),
+                record.finalizedByDoctorUserId() == null ? null : record.finalizedByDoctorUserId().toString(),
                 record.printedAt(),
                 record.sentAt(),
                 record.createdAt(),

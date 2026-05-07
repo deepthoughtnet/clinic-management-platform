@@ -27,6 +27,7 @@ function statusColor(status: Prescription["status"]) {
     case "SENT":
       return "success";
     case "DRAFT":
+    case "PREVIEWED":
       return "warning";
     case "CANCELLED":
       return "default";

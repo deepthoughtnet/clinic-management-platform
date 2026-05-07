@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.consultation;
 
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationRequest;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
+import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationUpsertCommand;
@@ -24,15 +25,20 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/consultations")
 public class ConsultationController {
     private final ConsultationService consultationService;
+    private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
-    public ConsultationController(ConsultationService consultationService) {
+    public ConsultationController(ConsultationService consultationService, DoctorAssignmentSecurityService doctorAssignmentSecurityService) {
         this.consultationService = consultationService;
+        this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
     }
 
     @GetMapping
     @PreAuthorize("@permissionChecker.hasPermission('consultation.read')")
     public List<ConsultationResponse> list() {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        if (doctorAssignmentSecurityService.isDoctor()) {
+            return consultationService.listByDoctor(tenantId, doctorAssignmentSecurityService.currentDoctorUserId()).stream().map(this::toResponse).toList();
+        }
         return consultationService.list(tenantId).stream().map(this::toResponse).toList();
     }
 
@@ -41,6 +47,7 @@ public class ConsultationController {
     @PreAuthorize("@permissionChecker.hasPermission('consultation.create')")
     public ConsultationResponse create(@RequestBody ConsultationRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationCommandAccess(tenantId, request.patientId(), request.doctorUserId(), request.appointmentId());
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(consultationService.createDraft(tenantId, toCommand(request), actorAppUserId));
     }
@@ -49,6 +56,7 @@ public class ConsultationController {
     @PreAuthorize("@permissionChecker.hasPermission('consultation.read')")
     public ConsultationResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationAccess(tenantId, id);
         return toResponse(consultationService.findById(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Consultation not found")));
     }
@@ -57,6 +65,8 @@ public class ConsultationController {
     @PreAuthorize("@permissionChecker.hasPermission('consultation.update')")
     public ConsultationResponse update(@PathVariable UUID id, @RequestBody ConsultationRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationAccess(tenantId, id);
+        doctorAssignmentSecurityService.requireConsultationCommandAccess(tenantId, request.patientId(), request.doctorUserId(), request.appointmentId());
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(consultationService.update(tenantId, id, toCommand(request), actorAppUserId));
     }
@@ -65,6 +75,7 @@ public class ConsultationController {
     @PreAuthorize("@permissionChecker.hasPermission('consultation.update')")
     public ConsultationResponse complete(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireDoctorCanCompleteConsultation(tenantId, id);
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(consultationService.complete(tenantId, id, actorAppUserId));
     }
@@ -73,6 +84,7 @@ public class ConsultationController {
     @PreAuthorize("@permissionChecker.hasPermission('consultation.update')")
     public ConsultationResponse cancel(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationAccess(tenantId, id);
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(consultationService.cancel(tenantId, id, actorAppUserId));
     }

@@ -92,6 +92,12 @@ public class PatientEntity {
     @Column(name = "existing_conditions", length = 512)
     private String existingConditions;
 
+    @Column(name = "long_term_medications", columnDefinition = "text")
+    private String longTermMedications;
+
+    @Column(name = "surgical_history", columnDefinition = "text")
+    private String surgicalHistory;
+
     @Column(columnDefinition = "text")
     private String notes;
 
@@ -136,6 +142,8 @@ public class PatientEntity {
             String bloodGroup,
             String allergies,
             String existingConditions,
+            String longTermMedications,
+            String surgicalHistory,
             String notes,
             boolean active
     ) {
@@ -157,6 +165,8 @@ public class PatientEntity {
         this.bloodGroup = bloodGroup;
         this.allergies = allergies;
         this.existingConditions = existingConditions;
+        this.longTermMedications = longTermMedications;
+        this.surgicalHistory = surgicalHistory;
         this.notes = notes;
         this.active = active;
         this.updatedAt = OffsetDateTime.now();
@@ -244,6 +254,14 @@ public class PatientEntity {
 
     public String getExistingConditions() {
         return existingConditions;
+    }
+
+    public String getLongTermMedications() {
+        return longTermMedications;
+    }
+
+    public String getSurgicalHistory() {
+        return surgicalHistory;
     }
 
     public String getNotes() {

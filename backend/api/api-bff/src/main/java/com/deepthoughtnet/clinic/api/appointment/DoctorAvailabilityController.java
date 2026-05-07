@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.appointment;
 
 import com.deepthoughtnet.clinic.api.appointment.dto.DoctorAvailabilityRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.DoctorAvailabilityResponse;
+import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityUpsertCommand;
@@ -24,9 +25,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/doctors")
 public class DoctorAvailabilityController {
     private final AppointmentService appointmentService;
+    private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
-    public DoctorAvailabilityController(AppointmentService appointmentService) {
+    public DoctorAvailabilityController(AppointmentService appointmentService, DoctorAssignmentSecurityService doctorAssignmentSecurityService) {
         this.appointmentService = appointmentService;
+        this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
     }
 
     @GetMapping("/availability")
@@ -40,7 +43,8 @@ public class DoctorAvailabilityController {
     @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
     public List<com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse> queueToday(@PathVariable UUID doctorUserId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        return appointmentService.listQueueToday(tenantId, doctorUserId).stream()
+        UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(doctorUserId);
+        return appointmentService.listQueueToday(tenantId, effectiveDoctorUserId).stream()
                 .map(record -> new com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse(
                         record.id() == null ? null : record.id().toString(),
                         record.tenantId() == null ? null : record.tenantId().toString(),

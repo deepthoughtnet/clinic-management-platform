@@ -57,6 +57,23 @@ public class ReportingFacade {
     public DashboardSummaryResponse dashboardSummary(UUID tenantId) {
         List<com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord> todayAppointments = appointmentService.listToday(tenantId);
         List<ConsultationRecord> consultations = consultationService.list(tenantId);
+        return dashboardSummary(tenantId, todayAppointments, consultations);
+    }
+
+    public DashboardSummaryResponse dashboardSummary(UUID tenantId, UUID doctorUserId) {
+        List<com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord> todayAppointments = appointmentService.search(
+                tenantId,
+                new com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria(doctorUserId, null, LocalDate.now(), null, null)
+        );
+        List<ConsultationRecord> consultations = consultationService.listByDoctor(tenantId, doctorUserId);
+        return dashboardSummary(tenantId, todayAppointments, consultations);
+    }
+
+    private DashboardSummaryResponse dashboardSummary(
+            UUID tenantId,
+            List<com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord> todayAppointments,
+            List<ConsultationRecord> consultations
+    ) {
         List<BillRecord> bills = billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null));
         BigDecimal todayRevenue = BigDecimal.ZERO;
         for (BillRecord bill : bills) {

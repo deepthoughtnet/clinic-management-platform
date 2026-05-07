@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.notifications;
 
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
+import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTemplateService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.ReceiptRecord;
@@ -14,7 +15,11 @@ import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationStatus;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
+import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionPdf;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
+import com.deepthoughtnet.clinic.notify.NotificationAttachment;
+import com.deepthoughtnet.clinic.notify.NotificationMessage;
+import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
 import java.time.LocalDate;
 import java.util.List;
@@ -32,6 +37,8 @@ public class NotificationActionService {
     private final VaccinationService vaccinationService;
     private final PlatformTenantManagementService tenantManagementService;
     private final PatientRepository patientRepository;
+    private final NotificationProvider notificationProvider;
+    private final PrescriptionTemplateService prescriptionTemplateService;
 
     public NotificationActionService(
             NotificationHistoryService notificationHistoryService,
@@ -41,7 +48,9 @@ public class NotificationActionService {
             ConsultationService consultationService,
             VaccinationService vaccinationService,
             PlatformTenantManagementService tenantManagementService,
-            PatientRepository patientRepository
+            PatientRepository patientRepository,
+            NotificationProvider notificationProvider,
+            PrescriptionTemplateService prescriptionTemplateService
     ) {
         this.notificationHistoryService = notificationHistoryService;
         this.prescriptionService = prescriptionService;
@@ -51,6 +60,8 @@ public class NotificationActionService {
         this.vaccinationService = vaccinationService;
         this.tenantManagementService = tenantManagementService;
         this.patientRepository = patientRepository;
+        this.notificationProvider = notificationProvider;
+        this.prescriptionTemplateService = prescriptionTemplateService;
     }
 
     public NotificationHistoryRecord sendPrescription(UUID tenantId, UUID prescriptionId, String channel, UUID actorAppUserId) {
@@ -73,6 +84,20 @@ public class NotificationActionService {
                 prescription.id(),
                 actorAppUserId
         );
+        if ("email".equals(normalizedChannel)) {
+            PrescriptionPdf pdf = prescriptionService.generatePdf(tenantId, prescriptionId, actorAppUserId, prescriptionTemplateService.toPdfConfig(prescriptionTemplateService.getActive(tenantId)));
+            notificationProvider.send(new NotificationMessage(
+                    tenantId,
+                    "EMAIL",
+                    recipient,
+                    subject,
+                    message,
+                    "{\"sourceType\":\"PRESCRIPTION\",\"sourceId\":\"" + prescription.id() + "\"}",
+                    null,
+                    List.of(new NotificationAttachment(pdf.filename(), "application/pdf", pdf.content()))
+            ));
+            notificationHistoryService.markSent(tenantId, notification.id());
+        }
         prescriptionService.markSent(tenantId, prescriptionId, actorAppUserId);
         return notification;
     }

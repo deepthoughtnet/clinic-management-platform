@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -111,17 +112,7 @@ public class TenantUserManagementService {
                 StringUtils.hasText(email)
         );
 
-        AppUserEntity user = appUserRepository.findByTenantIdAndKeycloakSub(command.tenantId(), keycloakSub)
-                .map(existing -> {
-                    existing.updateProfile(email, displayNameFor(email, username, displayName));
-                    return existing;
-                })
-                .orElseGet(() -> appUserRepository.save(AppUserEntity.create(
-                        command.tenantId(),
-                        keycloakSub,
-                        email,
-                        displayNameFor(email, username, displayName)
-                )));
+        AppUserEntity user = upsertTenantUser(command.tenantId(), keycloakSub, email, username, displayName);
 
         TenantMembershipEntity membership = membershipRepository.findByTenantIdAndAppUserId(
                         command.tenantId(),
@@ -164,6 +155,25 @@ public class TenantUserManagementService {
         TenantMembershipEntity membership = findMembership(tenantId, appUserId);
         membership.setStatus(active ? "ACTIVE" : "DISABLED");
         return toRecord(user, membership, active ? "MEMBERSHIP_REACTIVATED" : "MEMBERSHIP_DISABLED");
+    }
+
+    @Transactional
+    public TenantUserRecord resetPassword(UUID tenantId, UUID appUserId, String tempPassword, boolean temporary) {
+        requireTenant(tenantId);
+        if (appUserId == null) {
+            throw new IllegalArgumentException("appUserId is required");
+        }
+        if (!StringUtils.hasText(tempPassword)) {
+            throw new IllegalArgumentException("tempPassword is required");
+        }
+
+        AppUserEntity user = findTenantUser(tenantId, appUserId);
+        if (!StringUtils.hasText(user.getKeycloakSub())) {
+            throw new IllegalArgumentException("Cannot reset password: keycloakSub is missing for user");
+        }
+        keycloakAdminProvisioner.resetPassword(user.getKeycloakSub(), tempPassword.trim(), temporary);
+        TenantMembershipEntity membership = findMembership(tenantId, appUserId);
+        return toRecord(user, membership, "PASSWORD_RESET");
     }
 
     private AppUserEntity findTenantUser(UUID tenantId, UUID appUserId) {
@@ -236,5 +246,56 @@ public class TenantUserManagementService {
             return email.trim();
         }
         return username == null ? "User" : username.trim();
+    }
+
+    private AppUserEntity upsertTenantUser(UUID tenantId, String keycloakSub, String email, String username, String displayName) {
+        String resolvedName = displayNameFor(email, username, displayName);
+        String normalizedSub = StringUtils.hasText(keycloakSub) ? keycloakSub.trim() : null;
+
+        if (normalizedSub != null) {
+            var bySub = appUserRepository.findByTenantIdAndKeycloakSub(tenantId, normalizedSub);
+            if (bySub.isPresent()) {
+                AppUserEntity existing = bySub.get();
+                existing.updateProfile(email, resolvedName);
+                return existing;
+            }
+        }
+
+        if (StringUtils.hasText(email)) {
+            var byEmail = appUserRepository.findByTenantIdAndEmailIgnoreCase(tenantId, email);
+            if (byEmail.isPresent()) {
+                AppUserEntity existing = byEmail.get();
+                if (normalizedSub != null) {
+                    existing.setKeycloakSub(normalizedSub);
+                }
+                existing.updateProfile(email, resolvedName);
+                return existing;
+            }
+        }
+
+        try {
+            return appUserRepository.save(AppUserEntity.create(tenantId, normalizedSub, email, resolvedName));
+        } catch (DataIntegrityViolationException ex) {
+            if (normalizedSub != null) {
+                var existingBySub = appUserRepository.findByTenantIdAndKeycloakSub(tenantId, normalizedSub);
+                if (existingBySub.isPresent()) {
+                    AppUserEntity existing = existingBySub.get();
+                    existing.updateProfile(email, resolvedName);
+                    return existing;
+                }
+            }
+            if (StringUtils.hasText(email)) {
+                var existingByEmail = appUserRepository.findByTenantIdAndEmailIgnoreCase(tenantId, email);
+                if (existingByEmail.isPresent()) {
+                    AppUserEntity existing = existingByEmail.get();
+                    if (normalizedSub != null) {
+                        existing.setKeycloakSub(normalizedSub);
+                    }
+                    existing.updateProfile(email, resolvedName);
+                    return existing;
+                }
+            }
+            throw ex;
+        }
     }
 }

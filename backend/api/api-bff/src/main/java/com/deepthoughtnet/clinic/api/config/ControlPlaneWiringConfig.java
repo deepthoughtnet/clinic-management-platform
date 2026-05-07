@@ -3,6 +3,11 @@ package com.deepthoughtnet.clinic.api.config;
 import com.deepthoughtnet.clinic.identity.service.keycloak.KeycloakAdminProvisioner;
 import com.deepthoughtnet.clinic.identity.service.keycloak.KeycloakAdminProvisionerImpl;
 import com.deepthoughtnet.clinic.identity.service.keycloak.NoopKeycloakAdminProvisioner;
+import com.deepthoughtnet.clinic.identity.service.provisioning.TenantProvisioningService;
+import com.deepthoughtnet.clinic.identity.db.TenantRepository;
+import com.deepthoughtnet.clinic.identity.db.TenantPlanRepository;
+import com.deepthoughtnet.clinic.identity.db.TenantMembershipRepository;
+import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.KeycloakBuilder;
@@ -90,5 +95,22 @@ public class ControlPlaneWiringConfig {
         if (value == null || value.isBlank()) {
             throw new IllegalStateException("Missing required property: " + key);
         }
+    }
+
+    @Bean
+    public TenantProvisioningService tenantProvisioningService(
+            TenantRepository tenantRepository,
+            TenantPlanRepository tenantPlanRepository,
+            AppUserProvisioner appUserProvisioner,
+            TenantMembershipRepository tenantMembershipRepository,
+            KeycloakAdminProvisioner keycloakAdminProvisioner
+    ) {
+        return new TenantProvisioningService(
+                tenantRepository,
+                tenantPlanRepository,
+                appUserProvisioner,
+                tenantMembershipRepository,
+                keycloakAdminProvisioner
+        );
     }
 }

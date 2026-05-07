@@ -72,6 +72,30 @@ public class AiPromptTemplateCatalog {
                     "Summarize the reconciliation batch using the supplied statement, match, exception, and cash summary facts.",
                     List.of("Use the summary as a review aid", "Verify source data before acting"),
                     List.of("Summaries are advisory only")),
+            entry("clinic.patient.summary.v1", AiProductCode.CLINIC, AiTaskType.PATIENT_HISTORY_SUMMARY,
+                    "Summarize patient history with active conditions, medications, allergies, and follow-up risks.",
+                    List.of("Verify the timeline against EHR records", "Prioritize allergy and chronic-condition interactions"),
+                    List.of("This is an AI-generated draft. Doctor must verify before use.")),
+            entry("clinic.consultation.structure-notes.v1", AiProductCode.CLINIC, AiTaskType.CONSULTATION_NOTE_STRUCTURING,
+                    "Structure consultation notes into standardized medical sections.",
+                    List.of("Review SOAP formatting and missing sections", "Confirm clinically relevant negatives"),
+                    List.of("This is an AI-generated draft. Doctor must verify before use.")),
+            entry("clinic.consultation.suggest-diagnosis.v1", AiProductCode.CLINIC, AiTaskType.SYMPTOMS_DIAGNOSIS_DRAFT,
+                    "Suggest possible differential diagnoses based on symptoms, findings, and context.",
+                    List.of("Review red flags and urgent exclusions", "Use diagnostics to confirm before final diagnosis"),
+                    List.of("This is an AI-generated draft. Doctor must verify before use.")),
+            entry("clinic.prescription.suggest-template.v1", AiProductCode.CLINIC, AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION,
+                    "Suggest a prescription template using diagnosis, allergies, and current medications.",
+                    List.of("Check contraindications and interactions", "Adjust dose and duration based on patient profile"),
+                    List.of("This is an AI-generated draft. Doctor must verify before use.")),
+            entry("clinic.patient.instructions.v1", AiProductCode.CLINIC, AiTaskType.PATIENT_INSTRUCTIONS_DRAFT,
+                    "Draft patient-friendly instructions from diagnosis and prescription context.",
+                    List.of("Confirm dosage schedule and warning signs", "Ensure language matches patient comprehension level"),
+                    List.of("This is an AI-generated draft. Doctor must verify before use.")),
+            entry("clinic.allergy.condition.warning.v1", AiProductCode.CLINIC, AiTaskType.ALLERGY_CONDITION_WARNING,
+                    "Highlight possible allergy and pre-existing-condition warnings from supplied context.",
+                    List.of("Review alerts against medication history", "Confirm severity and alternatives"),
+                    List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("generic.summary.v1", AiProductCode.GENERIC, AiTaskType.SUMMARY,
                     "Summarize the supplied business context.",
                     List.of("Use the summary as a decision aid", "Verify the underlying facts before action"),
@@ -109,6 +133,12 @@ public class AiPromptTemplateCatalog {
             case SUMMARY -> templateCode != null && templateCode.equals("clinic.reconciliation.batch.summary.v1")
                     ? defaults.get("clinic.reconciliation.batch.summary.v1")
                     : defaults.get("generic.summary.v1");
+            case PATIENT_HISTORY_SUMMARY -> defaults.get("clinic.patient.summary.v1");
+            case CONSULTATION_NOTE_STRUCTURING -> defaults.get("clinic.consultation.structure-notes.v1");
+            case SYMPTOMS_DIAGNOSIS_DRAFT -> defaults.get("clinic.consultation.suggest-diagnosis.v1");
+            case PRESCRIPTION_TEMPLATE_SUGGESTION -> defaults.get("clinic.prescription.suggest-template.v1");
+            case PATIENT_INSTRUCTIONS_DRAFT -> defaults.get("clinic.patient.instructions.v1");
+            case ALLERGY_CONDITION_WARNING -> defaults.get("clinic.allergy.condition.warning.v1");
             case GENERIC_CLASSIFICATION -> defaults.get("generic.classification.v1");
             case GENERIC_EXTRACTION -> defaults.get("generic.extraction.v1");
             case GENERIC_RECOMMENDATION -> defaults.get("generic.recommendation.v1");

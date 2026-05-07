@@ -48,6 +48,8 @@ type FormState = {
   bloodGroup: string;
   allergies: string;
   existingConditions: string;
+  longTermMedications: string;
+  surgicalHistory: string;
   notes: string;
   active: boolean;
 };
@@ -71,6 +73,8 @@ const emptyForm = (): FormState => ({
   bloodGroup: "",
   allergies: "",
   existingConditions: "",
+  longTermMedications: "",
+  surgicalHistory: "",
   notes: "",
   active: true,
 });
@@ -92,6 +96,8 @@ function patientToForm(patient: PatientInput): FormState {
     bloodGroup: patient.bloodGroup || "",
     allergies: patient.allergies || "",
     existingConditions: patient.existingConditions || "",
+    longTermMedications: patient.longTermMedications || "",
+    surgicalHistory: patient.surgicalHistory || "",
     notes: patient.notes || "",
   };
 }
@@ -116,6 +122,8 @@ function formToInput(form: FormState): PatientInput {
     bloodGroup: form.bloodGroup.trim() || null,
     allergies: form.allergies.trim() || null,
     existingConditions: form.existingConditions.trim() || null,
+    longTermMedications: form.longTermMedications.trim() || null,
+    surgicalHistory: form.surgicalHistory.trim() || null,
     notes: form.notes.trim() || null,
     active: form.active,
   };
@@ -281,6 +289,8 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
               <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Blood group" value={form.bloodGroup} onChange={updateField("bloodGroup")} disabled={!canEdit || saving} /></Grid>
               <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Allergies" value={form.allergies} onChange={updateField("allergies")} disabled={!canEdit || saving} /></Grid>
               <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Existing conditions" value={form.existingConditions} onChange={updateField("existingConditions")} disabled={!canEdit || saving} /></Grid>
+              <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Long-term medications" value={form.longTermMedications} onChange={updateField("longTermMedications")} disabled={!canEdit || saving} /></Grid>
+              <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Surgeries / history" value={form.surgicalHistory} onChange={updateField("surgicalHistory")} disabled={!canEdit || saving} /></Grid>
               <Grid size={12}><TextField fullWidth multiline minRows={4} label="Notes" value={form.notes} onChange={updateField("notes")} disabled={!canEdit || saving} /></Grid>
               <Grid size={{ xs: 12, md: 6 }}>
                 <FormControlLabel

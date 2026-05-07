@@ -22,3 +22,4 @@ local/data/
 .env.*
 web-admin/.env
 web-admin/.env.*
+web-admin/node_modules/

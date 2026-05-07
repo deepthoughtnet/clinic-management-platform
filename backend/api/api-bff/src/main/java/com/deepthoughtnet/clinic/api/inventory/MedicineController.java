@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.inventory;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineUpsertCommand;
+import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.List;
 import java.util.UUID;
@@ -22,24 +23,39 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/medicines")
 public class MedicineController {
     private final InventoryService inventoryService;
+    private final PermissionChecker permissionChecker;
 
-    public MedicineController(InventoryService inventoryService) {
+    public MedicineController(InventoryService inventoryService, PermissionChecker permissionChecker) {
         this.inventoryService = inventoryService;
+        this.permissionChecker = permissionChecker;
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read') or @permissionChecker.hasPermission('vaccination.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('medicine.read') or @permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read') or @permissionChecker.hasPermission('vaccination.manage')")
     public List<MedicineRecord> list() {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        return inventoryService.listMedicines(tenantId);
+        List<MedicineRecord> medicines = inventoryService.listMedicines(tenantId);
+        if (permissionChecker.hasPermission("inventory.manage")
+                || permissionChecker.hasPermission("report.read")
+                || permissionChecker.hasPermission("vaccination.manage")) {
+            return medicines;
+        }
+        return medicines.stream().filter(MedicineRecord::active).toList();
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read') or @permissionChecker.hasPermission('vaccination.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('medicine.read') or @permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read') or @permissionChecker.hasPermission('vaccination.manage')")
     public MedicineRecord get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        return inventoryService.findMedicine(tenantId, id)
+        MedicineRecord medicine = inventoryService.findMedicine(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
+        if (!medicine.active()
+                && !permissionChecker.hasPermission("inventory.manage")
+                && !permissionChecker.hasPermission("report.read")
+                && !permissionChecker.hasPermission("vaccination.manage")) {
+            throw new IllegalArgumentException("Medicine not found");
+        }
+        return medicine;
     }
 
     @PostMapping

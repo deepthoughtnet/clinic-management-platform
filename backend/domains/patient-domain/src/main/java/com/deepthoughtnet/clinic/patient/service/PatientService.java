@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -40,13 +42,40 @@ public class PatientService {
     public List<PatientRecord> search(UUID tenantId, PatientSearchCriteria criteria) {
         requireTenant(tenantId);
         PatientSearchCriteria safeCriteria = criteria == null ? new PatientSearchCriteria(null, null, null, null) : criteria;
-        return repository.search(
-                tenantId,
-                normalizeNullable(safeCriteria.patientNumber()),
-                normalizeNullable(safeCriteria.mobile()),
-                normalizeNullable(safeCriteria.name()),
-                safeCriteria.active()
-        ).stream().map(this::toRecord).toList();
+        String patientNumber = normalizeNullable(safeCriteria.patientNumber());
+        String mobile = normalizeNullable(safeCriteria.mobile());
+        String name = normalizeNullable(safeCriteria.name());
+        Boolean active = safeCriteria.active();
+
+        Specification<PatientEntity> spec = (root, query, cb) -> {
+            var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
+            predicates.add(cb.equal(root.get("tenantId"), tenantId));
+
+            if (patientNumber != null) {
+                predicates.add(cb.equal(cb.lower(root.get("patientNumber")), patientNumber.toLowerCase()));
+            }
+            if (mobile != null) {
+                predicates.add(cb.equal(cb.lower(root.get("mobile")), mobile.toLowerCase()));
+            }
+            if (active != null) {
+                predicates.add(cb.equal(root.get("active"), active));
+            }
+            if (name != null) {
+                String nameLike = "%" + name.toLowerCase() + "%";
+                var fullName = cb.lower(cb.concat(cb.concat(cb.coalesce(root.get("firstName"), ""), " "), cb.coalesce(root.get("lastName"), "")));
+                predicates.add(cb.or(
+                        cb.like(fullName, nameLike),
+                        cb.like(cb.lower(root.get("firstName")), nameLike),
+                        cb.like(cb.lower(root.get("lastName")), nameLike)
+                ));
+            }
+            return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
+        };
+
+        return repository.findAll(spec, Sort.by(Sort.Direction.DESC, "createdAt"))
+                .stream()
+                .map(this::toRecord)
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -138,6 +167,8 @@ public class PatientService {
                 entity.getBloodGroup(),
                 entity.getAllergies(),
                 entity.getExistingConditions(),
+                entity.getLongTermMedications(),
+                entity.getSurgicalHistory(),
                 entity.getNotes(),
                 false
         );
@@ -179,6 +210,8 @@ public class PatientService {
                 normalizeNullable(command.bloodGroup()),
                 normalizeNullable(command.allergies()),
                 normalizeNullable(command.existingConditions()),
+                normalizeNullable(command.longTermMedications()),
+                normalizeNullable(command.surgicalHistory()),
                 normalizeNullable(command.notes()),
                 command.active()
         );
@@ -207,6 +240,8 @@ public class PatientService {
                 entity.getBloodGroup(),
                 entity.getAllergies(),
                 entity.getExistingConditions(),
+                entity.getLongTermMedications(),
+                entity.getSurgicalHistory(),
                 entity.getNotes(),
                 entity.isActive(),
                 entity.getCreatedAt(),

@@ -7,6 +7,9 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 @Configuration
 @EntityScan(basePackages = {
         "com.deepthoughtnet.clinic.platform.audit.db",
+        "com.deepthoughtnet.clinic.api.clinicaldocument.db",
+        "com.deepthoughtnet.clinic.api.prescriptiontemplate.db",
+        "com.deepthoughtnet.clinic.api.reliability.db",
         "com.deepthoughtnet.clinic.notification.db",
         "com.deepthoughtnet.clinic.identity.db",
         "com.deepthoughtnet.clinic.ai.orchestration.db",
@@ -21,6 +24,9 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 })
 @EnableJpaRepositories(basePackages = {
         "com.deepthoughtnet.clinic.platform.audit.db",
+        "com.deepthoughtnet.clinic.api.clinicaldocument.db",
+        "com.deepthoughtnet.clinic.api.prescriptiontemplate.db",
+        "com.deepthoughtnet.clinic.api.reliability.db",
         "com.deepthoughtnet.clinic.notification.db",
         "com.deepthoughtnet.clinic.identity.db",
         "com.deepthoughtnet.clinic.ai.orchestration.db",

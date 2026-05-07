@@ -108,6 +108,11 @@ public class TenantEntity {
         touch();
     }
 
+    public void updatePlanId(String planId) {
+        this.planId = (planId == null || planId.isBlank()) ? this.planId : planId.trim().toUpperCase(Locale.ROOT);
+        touch();
+    }
+
     public void configureModules(
             boolean clinicAutomation,
             boolean clinicGeneration,

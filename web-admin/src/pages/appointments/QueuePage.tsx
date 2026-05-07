@@ -18,11 +18,14 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TextField,
   Typography,
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
 import { getClinicUsers, getDoctorQueueToday, startConsultationFromAppointment, updateAppointmentStatus, type Appointment, type ClinicUser } from "../../api/clinicApi";
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function statusColor(status: Appointment["status"]) {
   switch (status) {
@@ -39,27 +42,57 @@ function statusColor(status: Appointment["status"]) {
   }
 }
 
+function isValidTenantId(tenantId: string | null | undefined) {
+  if (!tenantId) {
+    return false;
+  }
+  return UUID_PATTERN.test(tenantId) && !tenantId.toUpperCase().startsWith("DEFAULT-ROLES");
+}
+
 export default function QueuePage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [doctorUserId, setDoctorUserId] = React.useState("");
   const [queue, setQueue] = React.useState<Appointment[]>([]);
+  const [queueSearch, setQueueSearch] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [savingId, setSavingId] = React.useState<string | null>(null);
 
   const doctors = users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
+  const tenantRole = (auth.tenantRole || "").toUpperCase();
+  const isDoctor = tenantRole === "DOCTOR";
+  const isClinicAdmin = tenantRole === "CLINIC_ADMIN";
+  const isReceptionist = tenantRole === "RECEPTIONIST";
+  const canStartConsultation = isDoctor && auth.hasPermission("consultation.create");
+  const canManageDeskStatus = (isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage");
+  const tenantReady = isValidTenantId(auth.tenantId);
+  const visibleQueue = queue.filter((appointment) => {
+    const term = queueSearch.trim().toLowerCase();
+    if (!term) return true;
+    return [
+      appointment.tokenNumber?.toString(),
+      appointment.patientName,
+      appointment.patientNumber,
+      appointment.reason,
+      appointment.status,
+    ].filter(Boolean).some((value) => String(value).toLowerCase().includes(term));
+  });
 
   React.useEffect(() => {
     let cancelled = false;
     async function loadUsers() {
-      if (!auth.accessToken || !auth.tenantId) {
+      if (!auth.accessToken || !tenantReady || !auth.tenantId) {
         setLoading(false);
         return;
       }
       setLoading(true);
       try {
+        if (isDoctor && auth.appUserId) {
+          setDoctorUserId(auth.appUserId);
+          return;
+        }
         const rows = await getClinicUsers(auth.accessToken, auth.tenantId);
         if (!cancelled) {
           setUsers(rows);
@@ -68,7 +101,8 @@ export default function QueuePage() {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load doctors");
+          setError("Unable to load doctors. Please verify clinic selection and try again.");
+          console.error("Queue doctor load failed", err);
         }
       } finally {
         if (!cancelled) {
@@ -80,12 +114,12 @@ export default function QueuePage() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken, auth.tenantId]);
+  }, [auth.accessToken, auth.tenantId, auth.appUserId, isDoctor, tenantReady]);
 
   React.useEffect(() => {
     let cancelled = false;
     async function loadQueue() {
-      if (!auth.accessToken || !auth.tenantId || !doctorUserId) {
+      if (!auth.accessToken || !tenantReady || !auth.tenantId || !doctorUserId) {
         setQueue([]);
         return;
       }
@@ -98,7 +132,8 @@ export default function QueuePage() {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load queue");
+          setError("Unable to load queue. Please verify clinic selection and network connection.");
+          console.error("Queue load failed", err);
         }
       } finally {
         if (!cancelled) {
@@ -110,10 +145,10 @@ export default function QueuePage() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken, auth.tenantId, doctorUserId]);
+  }, [auth.accessToken, auth.tenantId, doctorUserId, tenantReady]);
 
-  if (!auth.tenantId) {
-    return <Alert severity="warning">No tenant is selected for this session.</Alert>;
+  if (!tenantReady) {
+    return <Alert severity="warning">Invalid selected clinic. Please reselect your clinic before opening the queue.</Alert>;
   }
 
   const updateStatus = async (appointmentId: string, status: Appointment["status"]) => {
@@ -127,7 +162,8 @@ export default function QueuePage() {
       const refreshed = await getDoctorQueueToday(auth.accessToken, auth.tenantId, doctorUserId);
       setQueue(refreshed);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update status");
+      setError("Queue action failed. Please refresh and verify the appointment status.");
+      console.error("Queue status update failed", err);
     } finally {
       setSavingId(null);
     }
@@ -143,7 +179,8 @@ export default function QueuePage() {
       const consultation = await startConsultationFromAppointment(auth.accessToken, auth.tenantId, appointmentId);
       navigate(`/consultations/${consultation.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start consultation");
+      setError("Unable to start consultation. Confirm the patient is checked in and assigned to you.");
+      console.error("Consultation start failed", err);
     } finally {
       setSavingId(null);
     }
@@ -166,27 +203,46 @@ export default function QueuePage() {
       <Card>
         <CardContent>
           <Stack spacing={2}>
-            <FormControl sx={{ maxWidth: 420 }}>
-              <InputLabel id="queue-doctor-label">Doctor</InputLabel>
-              <Select
-                labelId="queue-doctor-label"
-                label="Doctor"
-                value={doctorUserId}
-                onChange={(e) => setDoctorUserId(String(e.target.value))}
-              >
-                {doctors.map((doctor) => (
-                  <MenuItem key={doctor.appUserId} value={doctor.appUserId}>
-                    {doctor.displayName || doctor.email || doctor.appUserId}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            {isDoctor ? (
+              <Alert severity="info">Showing only queue items assigned to you.</Alert>
+            ) : (
+              <FormControl sx={{ maxWidth: 420 }}>
+                <InputLabel id="queue-doctor-label">Assigned doctor</InputLabel>
+                <Select
+                  labelId="queue-doctor-label"
+                  label="Assigned doctor"
+                  value={doctorUserId}
+                  onChange={(e) => setDoctorUserId(String(e.target.value))}
+                >
+                  {doctors.map((doctor) => (
+                    <MenuItem key={doctor.appUserId} value={doctor.appUserId}>
+                      {doctor.displayName || doctor.email || doctor.appUserId}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
+
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Chip label={`Booked ${queue.filter((item) => item.status === "BOOKED").length}`} color="warning" variant="outlined" />
+              <Chip label={`Waiting ${queue.filter((item) => item.status === "WAITING").length}`} color="warning" />
+              <Chip label={`In consultation ${queue.filter((item) => item.status === "IN_CONSULTATION").length}`} color="info" />
+              <Chip label={`Completed ${queue.filter((item) => item.status === "COMPLETED").length}`} color="success" />
+            </Stack>
+            <TextField
+              size="small"
+              label="Find queue patient"
+              placeholder="Search by token, UHID, patient name, status, or reason"
+              value={queueSearch}
+              onChange={(event) => setQueueSearch(event.target.value)}
+              sx={{ maxWidth: 520 }}
+            />
 
             {loading ? (
               <Box sx={{ display: "grid", placeItems: "center", minHeight: 220 }}>
                 <CircularProgress />
               </Box>
-            ) : queue.length === 0 ? (
+            ) : visibleQueue.length === 0 ? (
               <Alert severity="info">No queue items were found for the selected doctor today.</Alert>
             ) : (
               <Table size="small">
@@ -201,7 +257,7 @@ export default function QueuePage() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {queue.map((appointment) => (
+                  {visibleQueue.map((appointment) => (
                     <TableRow key={appointment.id}>
                       <TableCell>{appointment.tokenNumber ?? "-"}</TableCell>
                       <TableCell>
@@ -214,24 +270,31 @@ export default function QueuePage() {
                       <TableCell>{appointment.reason || "-"}</TableCell>
                       <TableCell align="right">
                         <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
-                          <Button size="small" disabled={savingId === appointment.id} onClick={() => void startConsultation(appointment.id)}>
-                            Start Consultation
-                          </Button>
-                          <Button size="small" disabled={savingId === appointment.id} onClick={() => void updateStatus(appointment.id, "WAITING")}>
-                            Waiting
-                          </Button>
-                          <Button size="small" disabled={savingId === appointment.id} onClick={() => void updateStatus(appointment.id, "IN_CONSULTATION")}>
-                            In Consult
-                          </Button>
-                          <Button size="small" disabled={savingId === appointment.id} onClick={() => void updateStatus(appointment.id, "COMPLETED")}>
-                            Complete
-                          </Button>
-                          <Button size="small" disabled={savingId === appointment.id} onClick={() => void updateStatus(appointment.id, "CANCELLED")}>
+                          {canStartConsultation && appointment.status === "WAITING" ? (
+                            <Button size="small" disabled={savingId === appointment.id} onClick={() => void startConsultation(appointment.id)}>
+                              Start Consultation
+                            </Button>
+                          ) : null}
+                          {canStartConsultation && appointment.status === "IN_CONSULTATION" ? (
+                            <Button size="small" disabled={savingId === appointment.id} onClick={() => void startConsultation(appointment.id)}>
+                              Continue Consultation
+                            </Button>
+                          ) : null}
+                          {canManageDeskStatus && appointment.status === "BOOKED" ? <Button size="small" disabled={savingId === appointment.id} onClick={() => void updateStatus(appointment.id, "WAITING")}>
+                            Check In
+                          </Button> : null}
+                          {canManageDeskStatus && (appointment.status === "BOOKED" || appointment.status === "WAITING") ? <Button size="small" disabled={savingId === appointment.id} onClick={() => void updateStatus(appointment.id, "CANCELLED")}>
                             Cancel
-                          </Button>
-                          <Button size="small" disabled={savingId === appointment.id} onClick={() => void updateStatus(appointment.id, "NO_SHOW")}>
+                          </Button> : null}
+                          {canManageDeskStatus && (appointment.status === "BOOKED" || appointment.status === "WAITING") ? <Button size="small" disabled={savingId === appointment.id} onClick={() => void updateStatus(appointment.id, "NO_SHOW")}>
                             No Show
-                          </Button>
+                          </Button> : null}
+                          {!(
+                            (canStartConsultation && (appointment.status === "WAITING" || appointment.status === "IN_CONSULTATION")) ||
+                            (canManageDeskStatus && (appointment.status === "BOOKED" || appointment.status === "WAITING"))
+                          ) ? (
+                            <Typography variant="caption" color="text.secondary">No actions</Typography>
+                          ) : null}
                         </Stack>
                       </TableCell>
                     </TableRow>

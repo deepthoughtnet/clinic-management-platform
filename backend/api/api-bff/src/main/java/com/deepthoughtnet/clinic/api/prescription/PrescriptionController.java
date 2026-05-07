@@ -4,6 +4,8 @@ import com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionRequest;
 import com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionMedicineRequest;
 import com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionTestRequest;
 import com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionResponse;
+import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTemplateService;
+import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineCommand;
@@ -35,16 +37,28 @@ import org.springframework.web.bind.annotation.RestController;
 public class PrescriptionController {
     private final PrescriptionService prescriptionService;
     private final NotificationActionService notificationActionService;
+    private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
+    private final PrescriptionTemplateService prescriptionTemplateService;
 
-    public PrescriptionController(PrescriptionService prescriptionService, NotificationActionService notificationActionService) {
+    public PrescriptionController(
+            PrescriptionService prescriptionService,
+            NotificationActionService notificationActionService,
+            DoctorAssignmentSecurityService doctorAssignmentSecurityService,
+            PrescriptionTemplateService prescriptionTemplateService
+    ) {
         this.prescriptionService = prescriptionService;
         this.notificationActionService = notificationActionService;
+        this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
+        this.prescriptionTemplateService = prescriptionTemplateService;
     }
 
     @GetMapping
     @PreAuthorize("@permissionChecker.hasPermission('prescription.read')")
     public List<PrescriptionResponse> list() {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        if (doctorAssignmentSecurityService.isDoctor()) {
+            return prescriptionService.listByDoctor(tenantId, doctorAssignmentSecurityService.currentDoctorUserId()).stream().map(this::toResponse).toList();
+        }
         return prescriptionService.list(tenantId).stream().map(this::toResponse).toList();
     }
 
@@ -53,6 +67,7 @@ public class PrescriptionController {
     @PreAuthorize("@permissionChecker.hasPermission('prescription.create')")
     public PrescriptionResponse create(@RequestBody PrescriptionRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationCommandAccess(tenantId, request.patientId(), request.doctorUserId(), request.appointmentId());
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(prescriptionService.createDraft(tenantId, toCommand(request), actorAppUserId));
     }
@@ -61,6 +76,7 @@ public class PrescriptionController {
     @PreAuthorize("@permissionChecker.hasPermission('prescription.read')")
     public PrescriptionResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        prescriptionService.findById(tenantId, id).ifPresent(record -> doctorAssignmentSecurityService.requirePatientAccess(tenantId, record.patientId()));
         return toResponse(prescriptionService.findById(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Prescription not found")));
     }
@@ -69,6 +85,7 @@ public class PrescriptionController {
     @PreAuthorize("@permissionChecker.hasPermission('prescription.create')")
     public PrescriptionResponse update(@PathVariable UUID id, @RequestBody PrescriptionRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationCommandAccess(tenantId, request.patientId(), request.doctorUserId(), request.appointmentId());
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(prescriptionService.updateDraft(tenantId, id, toCommand(request), actorAppUserId));
     }
@@ -77,8 +94,35 @@ public class PrescriptionController {
     @PreAuthorize("@permissionChecker.hasPermission('prescription.create')")
     public PrescriptionResponse finalizePrescription(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        prescriptionService.findById(tenantId, id).ifPresent(record -> doctorAssignmentSecurityService.requirePatientAccess(tenantId, record.patientId()));
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(prescriptionService.finalizePrescription(tenantId, id, actorAppUserId));
+    }
+
+    @PostMapping("/{id}/preview")
+    @PreAuthorize("@permissionChecker.hasPermission('prescription.create')")
+    public PrescriptionResponse previewPrescription(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        prescriptionService.findById(tenantId, id).ifPresent(record -> doctorAssignmentSecurityService.requirePatientAccess(tenantId, record.patientId()));
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toResponse(prescriptionService.previewPrescription(tenantId, id, actorAppUserId));
+    }
+
+    @PostMapping("/{id}/corrections")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("@permissionChecker.hasPermission('prescription.create')")
+    public PrescriptionResponse createCorrection(@PathVariable UUID id, @RequestBody CorrectionRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationCommandAccess(tenantId, request.prescription().patientId(), request.prescription().doctorUserId(), request.prescription().appointmentId());
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toResponse(prescriptionService.createCorrectionVersion(
+                tenantId,
+                id,
+                toCommand(request.prescription()),
+                actorAppUserId,
+                request.flowType() == null ? "SAME_DAY_CORRECTION" : request.flowType(),
+                request.correctionReason()
+        ));
     }
 
     @PostMapping("/{id}/print")
@@ -116,6 +160,7 @@ public class PrescriptionController {
     @PreAuthorize("@permissionChecker.hasPermission('prescription.read')")
     public PrescriptionResponse getByConsultation(@PathVariable UUID consultationId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationAccess(tenantId, consultationId);
         return toResponse(prescriptionService.findByConsultationId(tenantId, consultationId)
                 .orElseThrow(() -> new IllegalArgumentException("Prescription not found")));
     }
@@ -125,7 +170,7 @@ public class PrescriptionController {
     public ResponseEntity<byte[]> downloadPdf(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        PrescriptionPdf pdf = prescriptionService.generatePdf(tenantId, id, actorAppUserId);
+        PrescriptionPdf pdf = prescriptionService.generatePdf(tenantId, id, actorAppUserId, prescriptionTemplateService.toPdfConfig(prescriptionTemplateService.getActive(tenantId)));
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_PDF)
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(pdf.filename()).build().toString())
@@ -158,11 +203,16 @@ public class PrescriptionController {
                 record.consultationId() == null ? null : record.consultationId().toString(),
                 record.appointmentId() == null ? null : record.appointmentId().toString(),
                 record.prescriptionNumber(),
+                record.versionNumber(),
+                record.parentPrescriptionId() == null ? null : record.parentPrescriptionId().toString(),
+                record.correctionReason(),
+                record.flowType(),
                 record.diagnosisSnapshot(),
                 record.advice(),
                 record.followUpDate(),
                 record.status(),
                 record.finalizedAt(),
+                record.finalizedByDoctorUserId() == null ? null : record.finalizedByDoctorUserId().toString(),
                 record.printedAt(),
                 record.sentAt(),
                 record.createdAt(),
@@ -173,5 +223,8 @@ public class PrescriptionController {
     }
 
     public record SendNotificationRequest(String channel) {
+    }
+
+    public record CorrectionRequest(String correctionReason, String flowType, PrescriptionRequest prescription) {
     }
 }

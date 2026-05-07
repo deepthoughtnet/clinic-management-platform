@@ -38,6 +38,11 @@ public class NoopKeycloakAdminProvisioner implements KeycloakAdminProvisioner {
     }
 
     @Override
+    public void resetPassword(String userId, String tempPassword, boolean temporary) {
+        throw new IllegalStateException(DISABLED_MESSAGE);
+    }
+
+    @Override
     public void deleteUser(String userId) {
         // best-effort no-op in disabled mode
     }

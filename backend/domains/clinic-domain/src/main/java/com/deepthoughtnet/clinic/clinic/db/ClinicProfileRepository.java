@@ -6,4 +6,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface ClinicProfileRepository extends JpaRepository<ClinicProfileEntity, UUID> {
     Optional<ClinicProfileEntity> findByTenantId(UUID tenantId);
+    boolean existsByEmailIgnoreCase(String email);
 }

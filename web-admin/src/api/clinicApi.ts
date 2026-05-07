@@ -1,11 +1,11 @@
-import { httpGet, httpPatch, httpPost, httpPut } from "./restClient";
+import { httpGet, httpPatch, httpPost, httpPostForm, httpPut } from "./restClient";
 
 export type PatientGender = "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
 export type AppointmentStatus = "BOOKED" | "WAITING" | "IN_CONSULTATION" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 export type AppointmentType = "WALK_IN" | "SCHEDULED" | "FOLLOW_UP" | "VACCINATION";
 export type ConsultationStatus = "DRAFT" | "COMPLETED" | "CANCELLED";
 export type TemperatureUnit = "CELSIUS" | "FAHRENHEIT";
-export type PrescriptionStatus = "DRAFT" | "FINALIZED" | "PRINTED" | "SENT" | "CANCELLED";
+export type PrescriptionStatus = "DRAFT" | "PREVIEWED" | "FINALIZED" | "PRINTED" | "SENT" | "CANCELLED";
 export type MedicineType = "TABLET" | "SYRUP" | "INJECTION" | "DROP" | "OINTMENT" | "CAPSULE" | "OTHER";
 export type Timing = "BEFORE_FOOD" | "AFTER_FOOD" | "WITH_FOOD" | "ANYTIME";
 export type NotificationStatus = "PENDING" | "SENT" | "FAILED" | "SKIPPED";
@@ -19,6 +19,50 @@ export type NotificationEventType =
   | "VACCINATION_REMINDER"
   | "APPOINTMENT_REMINDER";
 export type InventoryTransactionType = "OPENING" | "PURCHASE" | "SALE" | "ADJUSTMENT" | "RETURN";
+export type ClinicalDocumentType =
+  | "LAB_REPORT"
+  | "PRESCRIPTION"
+  | "X_RAY"
+  | "MRI_CT"
+  | "REFERRAL"
+  | "DISCHARGE_SUMMARY"
+  | "INSURANCE"
+  | "VACCINATION"
+  | "OTHER";
+
+export type ClinicalDocument = {
+  id: string;
+  patientId: string;
+  consultationId: string | null;
+  appointmentId: string | null;
+  uploadedByAppUserId: string;
+  documentType: ClinicalDocumentType;
+  originalFilename: string;
+  mediaType: string;
+  sizeBytes: number;
+  checksumSha256: string;
+  notes: string | null;
+  referredDoctor: string | null;
+  referredHospital: string | null;
+  referralNotes: string | null;
+  aiExtractionStatus: string | null;
+  ocrStatus: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PatientTimelineItem = {
+  id: string;
+  itemType: "DOCUMENT" | "CONSULTATION" | "PRESCRIPTION" | string;
+  title: string;
+  subtitle: string | null;
+  occurredAt: string;
+  status: string | null;
+  documentType: ClinicalDocumentType | null;
+  documentId: string | null;
+  consultationId: string | null;
+  prescriptionId: string | null;
+};
 
 export type DashboardSummary = {
   todayAppointments: number;
@@ -120,6 +164,8 @@ export type Patient = {
   bloodGroup: string | null;
   allergies: string | null;
   existingConditions: string | null;
+  longTermMedications: string | null;
+  surgicalHistory: string | null;
   notes: string | null;
   active: boolean;
   createdAt: string;
@@ -270,11 +316,16 @@ export type Prescription = {
   consultationId: string;
   appointmentId: string | null;
   prescriptionNumber: string;
+  versionNumber: number | null;
+  parentPrescriptionId: string | null;
+  correctionReason: string | null;
+  flowType: string | null;
   diagnosisSnapshot: string | null;
   advice: string | null;
   followUpDate: string | null;
   status: PrescriptionStatus;
   finalizedAt: string | null;
+  finalizedByDoctorUserId: string | null;
   printedAt: string | null;
   sentAt: string | null;
   createdAt: string;
@@ -505,6 +556,17 @@ export type PrescriptionInput = {
   recommendedTests: PrescriptionTest[];
 };
 
+export type AiDraftResponse = {
+  enabled: boolean;
+  fallbackUsed: boolean;
+  message: string;
+  draft: string | null;
+  structuredData: Record<string, unknown>;
+  confidence: number | null;
+  suggestedActions: string[];
+  warnings: string[];
+};
+
 export type PatientSearchParams = {
   patientNumber?: string;
   mobile?: string;
@@ -526,6 +588,41 @@ export async function getClinicUsers(token: string, tenantId: string) {
 
 export async function getClinicRoles(token: string, tenantId: string) {
   return httpGet<ClinicRole[]>("/api/clinic/roles", { token, tenantId });
+}
+
+export async function createTenantUser(token: string, tenantId: string, body: {
+  email: string;
+  username?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  role: string;
+  temporaryPassword?: string | null;
+  active: boolean;
+}) {
+  return httpPost<ClinicUser>("/api/tenant/users", {
+    email: body.email,
+    username: body.username ?? null,
+    firstName: body.firstName ?? null,
+    lastName: body.lastName ?? null,
+    role: body.role,
+    temporaryPassword: body.temporaryPassword ?? null,
+    active: body.active,
+  }, { token, tenantId });
+}
+
+export async function updateTenantUser(token: string, tenantId: string, appUserId: string, body: {
+  active: boolean;
+  role?: string | null;
+}) {
+  return httpPut<ClinicUser>(`/api/tenant/users/${appUserId}`, body, { token, tenantId });
+}
+
+export async function assignTenantUserRole(token: string, tenantId: string, appUserId: string, role: string) {
+  return httpPost<ClinicUser>(`/api/tenant/users/${appUserId}/roles`, { role }, { token, tenantId });
+}
+
+export async function resetTenantUserPassword(token: string, tenantId: string, appUserId: string, tempPassword: string, temporary = true) {
+  return httpPost<ClinicUser>(`/api/tenant/users/${appUserId}/reset-password`, { tempPassword, temporary }, { token, tenantId });
 }
 
 export async function searchPatients(token: string, tenantId: string, params: PatientSearchParams = {}) {
@@ -673,6 +770,18 @@ export async function updatePrescription(token: string, tenantId: string, id: st
 
 export async function finalizePrescription(token: string, tenantId: string, id: string) {
   return httpPatch<Prescription>(`/api/prescriptions/${id}/finalize`, undefined, { token, tenantId });
+}
+
+export async function previewPrescription(token: string, tenantId: string, id: string) {
+  return httpPost<Prescription>(`/api/prescriptions/${id}/preview`, undefined, { token, tenantId });
+}
+
+export async function createPrescriptionCorrection(token: string, tenantId: string, id: string, body: {
+  correctionReason: string;
+  flowType: "SAME_DAY_CORRECTION" | "FOLLOW_UP";
+  prescription: PrescriptionInput;
+}) {
+  return httpPost<Prescription>(`/api/prescriptions/${id}/corrections`, body, { token, tenantId });
 }
 
 export async function printPrescription(token: string, tenantId: string, id: string) {
@@ -861,6 +970,67 @@ export async function sendPrescription(token: string, tenantId: string, id: stri
   return httpPost<Prescription>(`/api/prescriptions/${id}/send`, { channel }, { token, tenantId });
 }
 
+export async function aiPatientSummary(token: string, tenantId: string, body: {
+  patientId: string;
+  patientName?: string | null;
+  historyText?: string | null;
+  activeConditions?: string | null;
+  currentMedications?: string | null;
+  allergies?: string | null;
+  recentVisits?: string | null;
+}) {
+  return httpPost<AiDraftResponse>("/api/ai/patient-summary", body, { token, tenantId });
+}
+
+export async function aiStructureConsultationNotes(token: string, tenantId: string, body: {
+  consultationId: string;
+  patientId: string;
+  doctorNotes?: string | null;
+  symptoms?: string | null;
+  vitals?: string | null;
+  observations?: string | null;
+}) {
+  return httpPost<AiDraftResponse>("/api/ai/consultation/structure-notes", body, { token, tenantId });
+}
+
+export async function aiSuggestDiagnosis(token: string, tenantId: string, body: {
+  consultationId: string;
+  patientId: string;
+  symptoms?: string | null;
+  findings?: string | null;
+  doctorNotes?: string | null;
+  knownConditions?: string | null;
+  allergies?: string | null;
+}) {
+  return httpPost<AiDraftResponse>("/api/ai/consultation/suggest-diagnosis", body, { token, tenantId });
+}
+
+export async function aiSuggestPrescriptionTemplate(token: string, tenantId: string, body: {
+  consultationId: string;
+  patientId: string;
+  diagnosis?: string | null;
+  symptoms?: string | null;
+  allergies?: string | null;
+  currentMedications?: string | null;
+  doctorNotes?: string | null;
+}) {
+  return httpPost<AiDraftResponse>("/api/ai/prescription/suggest-template", body, { token, tenantId });
+}
+
+export async function aiPatientInstructions(token: string, tenantId: string, body: {
+  consultationId: string;
+  patientId: string;
+  diagnosis?: string | null;
+  prescription?: string | null;
+  instructionsContext?: string | null;
+  language?: string | null;
+  literacyLevel?: string | null;
+  allergies?: string | null;
+  warnings?: string | null;
+}) {
+  return httpPost<AiDraftResponse>("/api/ai/patient-instructions", body, { token, tenantId });
+}
+
 export async function sendReceipt(token: string, tenantId: string, id: string, channel: string = "email") {
   return httpPost<Receipt>(`/api/receipts/${id}/send?channel=${encodeURIComponent(channel)}`, undefined, { token, tenantId });
 }
@@ -979,4 +1149,197 @@ export async function createInventoryTransaction(token: string, tenantId: string
 
 export async function getLowStock(token: string, tenantId: string) {
   return httpGet<LowStockItem[]>("/api/inventory/low-stock", { token, tenantId });
+}
+
+export type PlatformTenant = {
+  id: string;
+  code: string;
+  name: string;
+  planId?: string | null;
+  status: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  modules?: Record<string, boolean> | null;
+};
+
+export type PlatformPlan = {
+  id: string;
+  name: string;
+  features?: string | null;
+};
+
+export type PlatformTenantDetail = {
+  tenant: PlatformTenant;
+  clinicProfile?: {
+    clinicName: string;
+    displayName: string;
+    city?: string | null;
+    country?: string | null;
+    email?: string | null;
+    phone?: string | null;
+  } | null;
+  latestSubscription?: {
+    planId: string;
+    status: string;
+    startDate: string;
+    endDate?: string | null;
+    trial?: boolean;
+  } | null;
+  modules: Record<string, boolean>;
+  userCount: number;
+  adminCount: number;
+};
+
+export async function getPlatformTenants(token: string) {
+  return httpGet<PlatformTenant[]>("/api/platform/tenants", { token });
+}
+
+export async function getPlatformTenant(token: string, tenantId: string) {
+  return httpGet<PlatformTenantDetail>(`/api/platform/tenants/${tenantId}`, { token });
+}
+
+export async function createPlatformTenant(token: string, body: {
+  clinicName: string;
+  tenantCode: string;
+  displayName?: string | null;
+  city: string;
+  state?: string | null;
+  country: string;
+  postalCode?: string | null;
+  phone?: string | null;
+  clinicEmail?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  planId?: string | null;
+  modules?: Record<string, boolean> | null;
+  adminEmail?: string | null;
+  adminFirstName?: string | null;
+  adminLastName?: string | null;
+  tempPassword?: string | null;
+}) {
+  return httpPost<PlatformTenantDetail>("/api/platform/tenants", body, { token });
+}
+
+export async function updatePlatformTenantStatus(token: string, tenantId: string, active: boolean) {
+  return httpPatch<PlatformTenant>(`/api/platform/tenants/${tenantId}/status`, { active }, { token });
+}
+
+export async function updatePlatformTenantPlan(token: string, tenantId: string, planId: string) {
+  return httpPut<PlatformTenant>(`/api/platform/tenants/${tenantId}/plan`, { planId }, { token });
+}
+
+export async function getPlatformPlans(token: string) {
+  return httpGet<PlatformPlan[]>("/api/platform/plans", { token });
+}
+
+export async function getPlatformTenantModules(token: string, tenantId: string) {
+  return httpGet<Record<string, boolean>>(`/api/platform/tenants/${tenantId}/modules`, { token });
+}
+
+export async function updatePlatformTenantModules(token: string, tenantId: string, modules: Record<string, boolean>) {
+  return httpPut<PlatformTenant>(`/api/platform/tenants/${tenantId}/modules`, modules, { token });
+}
+
+export async function createPlatformTenantAdminUser(token: string, tenantId: string, body: {
+  email: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  tempPassword?: string | null;
+}) {
+  return httpPost(`/api/platform/tenants/${tenantId}/admin-user`, body, { token });
+}
+
+export async function getPatientDocuments(token: string, tenantId: string, patientId: string) {
+  return httpGet<ClinicalDocument[]>(`/api/patients/${patientId}/documents`, { token, tenantId });
+}
+
+export async function uploadPatientDocument(token: string, tenantId: string, patientId: string, body: {
+  file: File;
+  documentType: ClinicalDocumentType;
+  consultationId?: string | null;
+  appointmentId?: string | null;
+  notes?: string | null;
+  referredDoctor?: string | null;
+  referredHospital?: string | null;
+  referralNotes?: string | null;
+}) {
+  const formData = new FormData();
+  formData.append("file", body.file);
+  formData.append("documentType", body.documentType);
+  if (body.consultationId) formData.append("consultationId", body.consultationId);
+  if (body.appointmentId) formData.append("appointmentId", body.appointmentId);
+  if (body.notes) formData.append("notes", body.notes);
+  if (body.referredDoctor) formData.append("referredDoctor", body.referredDoctor);
+  if (body.referredHospital) formData.append("referredHospital", body.referredHospital);
+  if (body.referralNotes) formData.append("referralNotes", body.referralNotes);
+  return httpPostForm<ClinicalDocument>(`/api/patients/${patientId}/documents`, formData, { token, tenantId });
+}
+
+export async function getPatientDocumentDownloadUrl(token: string, tenantId: string, documentId: string) {
+  return httpGet<{ url: string; expiresInSeconds: string }>(`/api/patient-documents/${documentId}/download-url`, { token, tenantId });
+}
+
+export async function getPatientTimeline(token: string, tenantId: string, patientId: string) {
+  return httpGet<PatientTimelineItem[]>(`/api/patients/${patientId}/timeline`, { token, tenantId });
+}
+
+export type PrescriptionTemplateConfig = {
+  id: string | null;
+  tenantId: string;
+  templateVersion: number;
+  active: boolean;
+  clinicLogoDocumentId: string | null;
+  headerText: string | null;
+  footerText: string | null;
+  primaryColor: string | null;
+  accentColor: string | null;
+  disclaimer: string | null;
+  doctorSignatureText: string | null;
+  showQrCode: boolean;
+  watermarkText: string | null;
+  changedByAppUserId: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type PrescriptionTemplateInput = {
+  clinicLogoDocumentId?: string | null;
+  headerText?: string | null;
+  footerText?: string | null;
+  primaryColor?: string | null;
+  accentColor?: string | null;
+  disclaimer?: string | null;
+  doctorSignatureText?: string | null;
+  showQrCode?: boolean;
+  watermarkText?: string | null;
+};
+
+export async function getPrescriptionTemplate(token: string, tenantId: string) {
+  return httpGet<PrescriptionTemplateConfig>("/api/settings/prescription-template", { token, tenantId });
+}
+
+export async function getPrescriptionTemplateHistory(token: string, tenantId: string) {
+  return httpGet<PrescriptionTemplateConfig[]>("/api/settings/prescription-template/history", { token, tenantId });
+}
+
+export async function updatePrescriptionTemplate(token: string, tenantId: string, body: PrescriptionTemplateInput) {
+  return httpPut<PrescriptionTemplateConfig>("/api/settings/prescription-template", body, { token, tenantId });
+}
+
+export async function previewPrescriptionTemplate(token: string, tenantId: string, body: PrescriptionTemplateInput) {
+  const response = await fetch(`${(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "")}/api/settings/prescription-template/preview`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Tenant-Id": tenantId,
+      "Content-Type": "application/json",
+      Accept: "application/pdf",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
+  }
+  return { blob: await response.blob() };
 }

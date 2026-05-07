@@ -159,6 +159,8 @@ public final class RolePermissionMappings {
     private static final Set<String> CLINIC_ADMIN_PERMISSIONS = union(
             CLINIC_FUNDAMENTAL_PERMISSIONS,
             Set.of(
+                    Permissions.CLINIC_PROFILE_READ,
+                    Permissions.CLINIC_PROFILE_UPDATE,
                     Permissions.CLINIC_DOCUMENT_UPLOAD,
                     Permissions.CLINIC_DOCUMENT_AGENT_UPLOAD,
                     Permissions.CLINIC_DOCUMENT_READ,
@@ -180,27 +182,57 @@ public final class RolePermissionMappings {
     );
 
     private static final Set<String> DOCTOR_PERMISSIONS = Set.of(
+            Permissions.DASHBOARD_READ,
+            Permissions.CLINIC_DASHBOARD_READ,
+            Permissions.CLINIC_READ,
+            Permissions.CLINIC_PROFILE_READ,
             Permissions.PATIENT_READ,
+            Permissions.USER_READ,
             Permissions.APPOINTMENT_MANAGE,
+            Permissions.QUEUE_READ,
+            Permissions.QUEUE_UPDATE,
             Permissions.CONSULTATION_CREATE,
+            Permissions.CONSULTATION_READ,
             Permissions.CONSULTATION_UPDATE,
             Permissions.PRESCRIPTION_CREATE,
+            Permissions.PRESCRIPTION_READ,
+            Permissions.PRESCRIPTION_FINALIZE,
             Permissions.PRESCRIPTION_PRINT,
-            Permissions.PRESCRIPTION_SEND
+            Permissions.PRESCRIPTION_SEND,
+            Permissions.MEDICINE_READ,
+            Permissions.CLINIC_DOCUMENT_UPLOAD,
+            Permissions.CLINIC_DOCUMENT_READ
     );
 
     private static final Set<String> RECEPTIONIST_PERMISSIONS = Set.of(
+            Permissions.DASHBOARD_READ,
+            Permissions.CLINIC_DASHBOARD_READ,
             Permissions.CLINIC_READ,
+            Permissions.CLINIC_PROFILE_READ,
+            Permissions.USER_READ,
             Permissions.PATIENT_CREATE,
             Permissions.PATIENT_READ,
             Permissions.PATIENT_UPDATE,
             Permissions.APPOINTMENT_MANAGE,
-            Permissions.BILLING_CREATE
+            Permissions.QUEUE_READ,
+            Permissions.QUEUE_UPDATE,
+            Permissions.VACCINATION_MANAGE,
+            Permissions.BILLING_CREATE,
+            Permissions.PRESCRIPTION_READ,
+            Permissions.PRESCRIPTION_PRINT,
+            Permissions.PRESCRIPTION_SEND,
+            Permissions.CLINIC_DOCUMENT_UPLOAD,
+            Permissions.CLINIC_DOCUMENT_READ
     );
 
     private static final Set<String> BILLING_USER_PERMISSIONS = Set.of(
+            Permissions.DASHBOARD_READ,
+            Permissions.CLINIC_DASHBOARD_READ,
+            Permissions.CLINIC_READ,
             Permissions.PATIENT_READ,
+            Permissions.BILLING_READ,
             Permissions.BILLING_CREATE,
+            Permissions.BILLING_RECEIPT,
             Permissions.PAYMENT_COLLECT
     );
 
@@ -280,6 +312,11 @@ public final class RolePermissionMappings {
 
     private static final Set<String> PLATFORM_ADMIN_PERMISSIONS = union(
             PLATFORM_ADMIN_BASE_PERMISSIONS,
+            Set.of(
+                    Permissions.PLATFORM_TENANT_READ,
+                    Permissions.PLATFORM_TENANT_CREATE,
+                    Permissions.PLATFORM_TENANT_UPDATE
+            ),
             CLINIC_ADMIN_PERMISSIONS,
             TENANT_ADMIN_PERMISSIONS
     );
@@ -312,6 +349,15 @@ public final class RolePermissionMappings {
     private static final Set<String> AUDITOR_PERMISSIONS = Set.of(
             Permissions.DASHBOARD_READ,
             Permissions.CLINIC_READ,
+            Permissions.CLINIC_PROFILE_READ,
+            Permissions.PATIENT_READ,
+            Permissions.APPOINTMENT_READ,
+            Permissions.QUEUE_READ,
+            Permissions.CONSULTATION_READ,
+            Permissions.PRESCRIPTION_READ,
+            Permissions.BILLING_READ,
+            Permissions.VACCINATION_READ,
+            Permissions.INVENTORY_READ,
             Permissions.REPORT_READ,
             Permissions.CLINIC_DOCUMENT_READ,
             Permissions.AGENT_INTAKE_READ,
@@ -340,6 +386,7 @@ public final class RolePermissionMappings {
     private static final Set<String> PLATFORM_TENANT_SUPPORT_PERMISSIONS = Set.of(
             Permissions.DASHBOARD_READ,
             Permissions.CLINIC_READ,
+            Permissions.CLINIC_PROFILE_READ,
             Permissions.CLINIC_DOCUMENT_READ,
             Permissions.CLINIC_EXTRACTION_JOBS_READ,
             Permissions.CLINIC_AUDIT_READ,

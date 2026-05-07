@@ -1,9 +1,10 @@
 import * as React from "react";
 import { Link as RouterLink } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Grid, Stack, Typography } from "@mui/material";
 
 import { useAuth } from "../auth/useAuth";
-import { getDashboardSummary, type DashboardSummary } from "../api/clinicApi";
+import { getDashboardSummary, getPlatformPlans, getPlatformTenants, type DashboardSummary } from "../api/clinicApi";
 
 type SummaryCard = {
   label: string;
@@ -48,9 +49,20 @@ function SummaryTile({ card }: { card: SummaryCard }) {
 
 export default function DashboardPage() {
   const auth = useAuth();
+  const navigate = useNavigate();
+  const isPlatformAdmin = auth.rolesUpper.includes("PLATFORM_ADMIN");
   const [summary, setSummary] = React.useState<DashboardSummary | null>(null);
+  const [platformTenants, setPlatformTenants] = React.useState<number>(0);
+  const [platformActiveTenants, setPlatformActiveTenants] = React.useState<number>(0);
+  const [platformPlans, setPlatformPlans] = React.useState<number>(0);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const canBilling = auth.hasPermission("billing.create") || auth.hasPermission("payment.collect");
+  const canConsultation = auth.hasPermission("consultation.read") || auth.hasPermission("consultation.create");
+  const canVaccination = auth.hasPermission("vaccination.manage") || auth.hasPermission("vaccination.read");
+  const canInventory = auth.hasPermission("inventory.manage") || auth.hasPermission("inventory.read");
+  const canReports = auth.hasPermission("report.read");
+  const isDoctor = (auth.tenantRole || "").toUpperCase() === "DOCTOR";
 
   React.useEffect(() => {
     let cancelled = false;
@@ -82,19 +94,93 @@ export default function DashboardPage() {
     };
   }, [auth.accessToken, auth.tenantId]);
 
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadPlatform() {
+      if (!auth.accessToken || !isPlatformAdmin || auth.tenantId) return;
+      try {
+        const [tenants, plans] = await Promise.all([
+          getPlatformTenants(auth.accessToken),
+          getPlatformPlans(auth.accessToken),
+        ]);
+        if (cancelled) return;
+        setPlatformTenants(tenants.length);
+        setPlatformActiveTenants(tenants.filter((tenant) => tenant.status?.toUpperCase() === "ACTIVE").length);
+        setPlatformPlans(plans.length);
+      } catch {
+        // Keep dashboard usable even when platform API is not available.
+      }
+    }
+    void loadPlatform();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken, auth.tenantId, isPlatformAdmin]);
+
   const cards: SummaryCard[] = summary
     ? [
-        { label: "Today appointments", value: summary.todayAppointments, tone: "primary", link: "/appointments" },
-        { label: "Waiting patients", value: summary.waitingPatients, tone: "warning", link: "/queue" },
-        { label: "In consultation", value: summary.inConsultationCount, tone: "info", link: "/queue" },
-        { label: "Completed consultations", value: summary.completedConsultations, tone: "success", link: "/consultations" },
-        { label: "Today revenue", value: formatMoney(summary.todayRevenue), tone: "success", link: "/billing" },
-        { label: "Pending dues", value: formatMoney(summary.pendingDues), tone: "error", link: "/billing" },
-        { label: "Follow-ups due", value: summary.followUpsDue, tone: "warning", link: "/reports" },
-        { label: "Vaccinations due", value: summary.vaccinationsDue, tone: "warning", link: "/vaccinations" },
-        { label: "Low stock medicines", value: summary.lowStockMedicines, tone: "error", link: "/inventory" },
+        { label: isDoctor ? "My appointments today" : "Today appointments", value: summary.todayAppointments, tone: "primary", link: "/appointments" },
+        { label: isDoctor ? "My waiting queue" : "Waiting patients", value: summary.waitingPatients, tone: "warning", link: "/queue" },
+        ...(canConsultation ? [
+          { label: isDoctor ? "My active consultations" : "In consultation", value: summary.inConsultationCount, tone: "info", link: "/queue" } as SummaryCard,
+          { label: isDoctor ? "My completed consultations" : "Completed consultations", value: summary.completedConsultations, tone: "success", link: "/consultations" } as SummaryCard,
+        ] : []),
+        ...(canBilling ? [
+          { label: "Today revenue", value: formatMoney(summary.todayRevenue), tone: "success", link: "/billing" } as SummaryCard,
+          { label: "Pending dues", value: formatMoney(summary.pendingDues), tone: "error", link: "/billing" } as SummaryCard,
+        ] : []),
+        ...(canReports ? [{ label: "Follow-ups due", value: summary.followUpsDue, tone: "warning", link: "/reports" } as SummaryCard] : []),
+        ...(canVaccination ? [{ label: "Vaccinations due", value: summary.vaccinationsDue, tone: "warning", link: "/vaccinations" } as SummaryCard] : []),
+        ...(canInventory ? [{ label: "Low stock medicines", value: summary.lowStockMedicines, tone: "error", link: "/inventory" } as SummaryCard] : []),
       ]
     : [];
+
+  if (!auth.tenantId && isPlatformAdmin) {
+    return (
+      <Stack spacing={2}>
+        <Alert
+          severity="info"
+          action={
+            auth.activeTenantMemberships.length === 1 ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() =>
+                  auth.selectTenant({
+                    id: auth.activeTenantMemberships[0].tenantId,
+                    code: auth.activeTenantMemberships[0].tenantCode || auth.activeTenantMemberships[0].tenantId,
+                    name: auth.activeTenantMemberships[0].tenantName || auth.activeTenantMemberships[0].tenantCode || auth.activeTenantMemberships[0].tenantId,
+                  })
+                }
+              >
+                Select {auth.activeTenantMemberships[0].tenantCode || "Tenant"}
+              </Button>
+            ) : (
+              <Button color="inherit" size="small" onClick={() => navigate("/platform/tenants")}>
+                Open Tenants
+              </Button>
+            )
+          }
+        >
+          Select a clinic tenant from Platform &gt; Tenants to work inside a clinic.
+        </Alert>
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+            <SummaryTile card={{ label: "Total tenants", value: platformTenants, tone: "primary", link: "/platform/tenants" }} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+            <SummaryTile card={{ label: "Active tenants", value: platformActiveTenants, tone: "success", link: "/platform/tenants" }} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+            <SummaryTile card={{ label: "Plans", value: platformPlans, tone: "info", link: "/platform/plans" }} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+            <SummaryTile card={{ label: "Need tenant selection", value: "Yes", tone: "warning", link: "/platform/tenants" }} />
+          </Grid>
+        </Grid>
+      </Stack>
+    );
+  }
 
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
@@ -108,7 +194,7 @@ export default function DashboardPage() {
             Dashboard
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Tenant-scoped clinical operations, revenue, and care signals.
+            {isDoctor ? "Your assigned queue, appointments, and consultation work." : "Tenant-scoped clinical operations, revenue, and care signals."}
           </Typography>
         </Box>
         <Chip label={auth.tenantName || "Clinic tenant"} variant="outlined" />

@@ -8,13 +8,19 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Divider,
+  FormControl,
   Grid,
+  InputLabel,
+  MenuItem,
+  Select,
   Stack,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableRow,
+  TextField,
   Typography,
 } from "@mui/material";
 
@@ -23,6 +29,10 @@ import {
   getPatient,
   getPatientVaccinations,
   getPatientNotifications,
+  getPatientDocuments,
+  getPatientDocumentDownloadUrl,
+  getPatientTimeline,
+  uploadPatientDocument,
   searchBills,
   type PatientDetail,
   type Appointment,
@@ -30,7 +40,11 @@ import {
   type Bill,
   type PatientVaccination,
   type NotificationHistory,
+  type ClinicalDocument,
+  type ClinicalDocumentType,
+  type PatientTimelineItem,
 } from "../../api/clinicApi";
+import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocumentViewer";
 
 function statusColor(status: Appointment["status"]) {
   switch (status) {
@@ -58,6 +72,22 @@ function consultationStatusColor(status: Consultation["status"]) {
   }
 }
 
+const DOCUMENT_TYPES: Array<{ value: ClinicalDocumentType; label: string }> = [
+  { value: "LAB_REPORT", label: "Lab Report" },
+  { value: "PRESCRIPTION", label: "Prescription" },
+  { value: "X_RAY", label: "X-Ray" },
+  { value: "MRI_CT", label: "MRI/CT" },
+  { value: "REFERRAL", label: "Referral" },
+  { value: "DISCHARGE_SUMMARY", label: "Discharge Summary" },
+  { value: "INSURANCE", label: "Insurance" },
+  { value: "VACCINATION", label: "Vaccination" },
+  { value: "OTHER", label: "Other" },
+];
+
+function documentTypeLabel(value: string | null | undefined): string {
+  return DOCUMENT_TYPES.find((type) => type.value === value)?.label || (value || "Document").replaceAll("_", " ");
+}
+
 export default function PatientDetailPage() {
   const auth = useAuth();
   const params = useParams();
@@ -67,6 +97,17 @@ export default function PatientDetailPage() {
   const [bills, setBills] = React.useState<Bill[]>([]);
   const [vaccinations, setVaccinations] = React.useState<PatientVaccination[]>([]);
   const [notifications, setNotifications] = React.useState<NotificationHistory[]>([]);
+  const [documents, setDocuments] = React.useState<ClinicalDocument[]>([]);
+  const [timeline, setTimeline] = React.useState<PatientTimelineItem[]>([]);
+  const [documentType, setDocumentType] = React.useState<ClinicalDocumentType>("LAB_REPORT");
+  const [documentFile, setDocumentFile] = React.useState<File | null>(null);
+  const [documentNotes, setDocumentNotes] = React.useState("");
+  const [referredDoctor, setReferredDoctor] = React.useState("");
+  const [referredHospital, setReferredHospital] = React.useState("");
+  const [referralNotes, setReferralNotes] = React.useState("");
+  const [uploadingDocument, setUploadingDocument] = React.useState(false);
+  const [viewerDocument, setViewerDocument] = React.useState<ClinicalDocument | null>(null);
+  const [viewerUrl, setViewerUrl] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -80,17 +121,21 @@ export default function PatientDetailPage() {
       setLoading(true);
       setError(null);
       try {
-        const [value, billRows, vaccinationRows, notificationRows] = await Promise.all([
+        const [value, billRows, vaccinationRows, notificationRows, documentRows, timelineRows] = await Promise.all([
           getPatient(auth.accessToken, auth.tenantId, id),
           searchBills(auth.accessToken, auth.tenantId, { patientId: id }),
           getPatientVaccinations(auth.accessToken, auth.tenantId, id),
           getPatientNotifications(auth.accessToken, auth.tenantId, id),
+          getPatientDocuments(auth.accessToken, auth.tenantId, id),
+          getPatientTimeline(auth.accessToken, auth.tenantId, id),
         ]);
         if (!cancelled) {
           setDetail(value);
           setBills(billRows);
           setVaccinations(vaccinationRows);
           setNotifications(notificationRows);
+          setDocuments(documentRows);
+          setTimeline(timelineRows);
         }
       } catch (err) {
         if (!cancelled) {
@@ -107,6 +152,54 @@ export default function PatientDetailPage() {
       cancelled = true;
     };
   }, [auth.accessToken, auth.tenantId, id]);
+
+  const refreshDocuments = async () => {
+    if (!auth.accessToken || !auth.tenantId || !id) return;
+    const [documentRows, timelineRows] = await Promise.all([
+      getPatientDocuments(auth.accessToken, auth.tenantId, id),
+      getPatientTimeline(auth.accessToken, auth.tenantId, id),
+    ]);
+    setDocuments(documentRows);
+    setTimeline(timelineRows);
+  };
+
+  const uploadDocument = async () => {
+    if (!auth.accessToken || !auth.tenantId || !id || !documentFile) return;
+    setUploadingDocument(true);
+    setError(null);
+    try {
+      await uploadPatientDocument(auth.accessToken, auth.tenantId, id, {
+        file: documentFile,
+        documentType,
+        notes: documentNotes,
+        referredDoctor: documentType === "REFERRAL" ? referredDoctor : null,
+        referredHospital: documentType === "REFERRAL" ? referredHospital : null,
+        referralNotes: documentType === "REFERRAL" ? referralNotes : null,
+      });
+      setDocumentFile(null);
+      setDocumentNotes("");
+      setReferredDoctor("");
+      setReferredHospital("");
+      setReferralNotes("");
+      await refreshDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload clinical document");
+    } finally {
+      setUploadingDocument(false);
+    }
+  };
+
+  const openDocument = async (document: ClinicalDocument) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setViewerDocument(document);
+    setViewerUrl(null);
+    try {
+      const response = await getPatientDocumentDownloadUrl(auth.accessToken, auth.tenantId, document.id);
+      setViewerUrl(response.url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to open document preview");
+    }
+  };
 
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
@@ -172,6 +265,8 @@ export default function PatientDetailPage() {
                 <Typography variant="body2">Blood group: {patient.bloodGroup || "Not set"}</Typography>
                 <Typography variant="body2">Allergies: {patient.allergies || "None recorded"}</Typography>
                 <Typography variant="body2">Existing conditions: {patient.existingConditions || "None recorded"}</Typography>
+                <Typography variant="body2">Long-term medications: {patient.longTermMedications || "None recorded"}</Typography>
+                <Typography variant="body2">Surgeries/history: {patient.surgicalHistory || "None recorded"}</Typography>
                 <Typography variant="body2">Notes: {patient.notes || "None recorded"}</Typography>
                 <Chip size="small" label={patient.active ? "Active" : "Inactive"} color={patient.active ? "success" : "default"} />
               </Stack>
@@ -179,6 +274,87 @@ export default function PatientDetailPage() {
           </Card>
         </Grid>
       </Grid>
+
+      <Card>
+        <CardContent>
+          <Stack spacing={2}>
+            <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+              <Box>
+                <Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Documents & History</Typography>
+                <Typography variant="body2" color="text.secondary">Upload reports, referrals, discharge summaries, insurance papers, and imaging for this patient.</Typography>
+              </Box>
+              <Chip label={`${documents.length} document(s)`} size="small" color="info" />
+            </Box>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <Stack spacing={1.5}>
+                  <FormControl size="small" fullWidth>
+                    <InputLabel>Document type</InputLabel>
+                    <Select label="Document type" value={documentType} onChange={(event) => setDocumentType(event.target.value as ClinicalDocumentType)}>
+                      {DOCUMENT_TYPES.map((type) => <MenuItem key={type.value} value={type.value}>{type.label}</MenuItem>)}
+                    </Select>
+                  </FormControl>
+                  <Button component="label" variant="outlined" disabled={uploadingDocument}>
+                    {documentFile ? documentFile.name : "Select PDF/Image"}
+                    <input hidden type="file" accept="application/pdf,image/png,image/jpeg,.jpg,.jpeg,.pdf,.png" onChange={(event) => setDocumentFile(event.target.files?.[0] || null)} />
+                  </Button>
+                  <TextField size="small" label="Notes" value={documentNotes} onChange={(event) => setDocumentNotes(event.target.value)} multiline minRows={2} />
+                  {documentType === "REFERRAL" ? (
+                    <>
+                      <TextField size="small" label="Referred doctor" value={referredDoctor} onChange={(event) => setReferredDoctor(event.target.value)} />
+                      <TextField size="small" label="Referred hospital" value={referredHospital} onChange={(event) => setReferredHospital(event.target.value)} />
+                      <TextField size="small" label="Referral notes" value={referralNotes} onChange={(event) => setReferralNotes(event.target.value)} multiline minRows={2} />
+                    </>
+                  ) : null}
+                  <Button variant="contained" disabled={!documentFile || uploadingDocument} onClick={uploadDocument}>
+                    {uploadingDocument ? "Uploading..." : "Upload document"}
+                  </Button>
+                  <Typography variant="caption" color="text.secondary">Supported: PDF, JPG, JPEG, PNG. Future AI/OCR status is tracked with each document.</Typography>
+                </Stack>
+              </Grid>
+              <Grid size={{ xs: 12, md: 8 }}>
+                <Stack spacing={1.5}>
+                  {documents.length === 0 ? (
+                    <Alert severity="info">No clinical documents have been uploaded for this patient.</Alert>
+                  ) : documents.slice(0, 8).map((document) => (
+                    <Box key={document.id} sx={{ p: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 2, display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+                      <Box>
+                        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+                          <Chip size="small" label={documentTypeLabel(document.documentType)} color={document.documentType === "REFERRAL" ? "secondary" : "default"} />
+                          <Typography variant="caption" color="text.secondary">{new Date(document.createdAt).toLocaleString()}</Typography>
+                        </Stack>
+                        <Typography variant="body2" sx={{ fontWeight: 800 }}>{document.originalFilename}</Typography>
+                        <Typography variant="caption" color="text.secondary">{document.notes || document.referralNotes || "No notes"} · OCR {document.ocrStatus || "PENDING"} · AI {document.aiExtractionStatus || "PENDING"}</Typography>
+                        {document.documentType === "REFERRAL" ? <Typography variant="caption" display="block" color="text.secondary">Referral: {[document.referredDoctor, document.referredHospital].filter(Boolean).join(" · ") || "Not specified"}</Typography> : null}
+                      </Box>
+                      <Button size="small" onClick={() => void openDocument(document)}>Preview</Button>
+                    </Box>
+                  ))}
+                </Stack>
+              </Grid>
+            </Grid>
+            <Divider />
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 900, mb: 1 }}>Patient Timeline</Typography>
+              {timeline.length === 0 ? (
+                <Alert severity="info">No clinical timeline events are available yet.</Alert>
+              ) : (
+                <Stack spacing={1}>
+                  {timeline.slice(0, 12).map((item) => (
+                    <Box key={`${item.itemType}-${item.id}`} sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "150px 1fr" }, gap: 1, p: 1, borderLeft: "3px solid", borderColor: item.itemType === "DOCUMENT" ? "info.main" : item.itemType === "PRESCRIPTION" ? "success.main" : "warning.main", bgcolor: "background.default", borderRadius: 1 }}>
+                      <Typography variant="caption" color="text.secondary">{new Date(item.occurredAt).toLocaleString()}</Typography>
+                      <Box>
+                        <Typography variant="body2" sx={{ fontWeight: 800 }}>{item.title}</Typography>
+                        <Typography variant="caption" color="text.secondary">{item.itemType} {item.subtitle ? `· ${item.subtitle}` : ""}</Typography>
+                      </Box>
+                    </Box>
+                  ))}
+                </Stack>
+              )}
+            </Box>
+          </Stack>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent>
@@ -392,6 +568,7 @@ export default function PatientDetailPage() {
           </Stack>
         </CardContent>
       </Card>
+      <ClinicalDocumentViewer open={!!viewerDocument} document={viewerDocument} url={viewerUrl} onClose={() => { setViewerDocument(null); setViewerUrl(null); }} />
     </Stack>
   );
 }

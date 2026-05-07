@@ -72,6 +72,14 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
 
             // Tenant not resolved:
             if (tenantId == null) {
+                if (tenantHeader != null && !tenantHeader.isBlank()) {
+                    response.sendError(
+                            HttpServletResponse.SC_BAD_REQUEST,
+                            "Invalid tenant context. Please reselect clinic."
+                    );
+                    return;
+                }
+
                 if ((platformOp && isPlatformAdmin) || isTenantlessMeRequest(request)) {
                     // Tenantless platform ops and /api/me bootstrap are allowed.
                     RequestContextHolder.set(new RequestContext(
@@ -123,7 +131,11 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
 
     private boolean isExplicitPlatformOperation(HttpServletRequest request) {
         String v = request.getHeader(PLATFORM_OP_HEADER);
-        return v != null && (v.equalsIgnoreCase("true") || v.equals("1") || v.equalsIgnoreCase("yes"));
+        if (v != null && (v.equalsIgnoreCase("true") || v.equals("1") || v.equalsIgnoreCase("yes"))) {
+            return true;
+        }
+        String uri = request.getRequestURI();
+        return uri != null && ("/api/platform".equals(uri) || uri.startsWith("/api/platform/"));
     }
 
     private boolean isTenantlessMeRequest(HttpServletRequest request) {

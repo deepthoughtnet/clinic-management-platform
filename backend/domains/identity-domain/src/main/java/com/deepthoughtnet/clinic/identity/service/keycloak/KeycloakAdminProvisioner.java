@@ -43,6 +43,11 @@ public interface KeycloakAdminProvisioner {
     void ensureRealmRole(String userId, String roleName);
 
     /**
+     * Resets credential for an existing user.
+     */
+    void resetPassword(String userId, String tempPassword, boolean temporary);
+
+    /**
      * Best-effort delete (used for compensation if DB write fails after KC user created).
      */
     void deleteUser(String userId);

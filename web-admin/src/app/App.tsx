@@ -21,6 +21,10 @@ import NotificationsPage from "../pages/notifications/NotificationsPage";
 import InventoryPage from "../pages/inventory/InventoryPage";
 import ReportsPage from "../pages/reports/ReportsPage";
 import VaccinationsPage from "../pages/vaccinations/VaccinationsPage";
+import PlaceholderPage from "../pages/PlaceholderPage";
+import TenantsPage from "../pages/platform/TenantsPage";
+import TenantDetailPage from "../pages/platform/TenantDetailPage";
+import PlansModulesPage from "../pages/platform/PlansModulesPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const auth = React.useContext(AuthContext);
@@ -28,6 +32,32 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
   if (!auth || !auth.initialized) {
     return <Box sx={{ p: 3 }}>Loading authentication…</Box>;
+  }
+
+  if (auth.initError) {
+    return (
+      <Box sx={{ p: 3, maxWidth: 720 }}>
+        <Paper elevation={0} sx={{ p: 3, border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
+          <Typography variant="h6" sx={{ fontWeight: 900, mb: 1.5 }}>
+            Authentication Error
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {auth.initError}
+          </Typography>
+          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            <Button variant="contained" onClick={() => auth.retryInit()}>
+              Retry
+            </Button>
+            <Button variant="outlined" onClick={() => auth.clearSession()}>
+              Clear Session
+            </Button>
+            <Button variant="text" onClick={() => auth.logout()}>
+              Logout
+            </Button>
+          </Box>
+        </Paper>
+      </Box>
+    );
   }
 
   if (!auth.authenticated) {
@@ -102,6 +132,13 @@ function AuthedApp() {
         <Route path="/vaccinations" element={<VaccinationsPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/platform/tenants" element={<TenantsPage />} />
+        <Route path="/platform/tenants/:tenantId" element={<TenantDetailPage />} />
+        <Route path="/platform/plans" element={<PlansModulesPage />} />
+        <Route
+          path="/platform/users"
+          element={<PlaceholderPage title="Users / Admins" description="Platform user administration can be enabled when backend APIs are exposed." />}
+        />
         <Route path="/settings" element={<Navigate to="/settings/clinic-profile" replace />} />
         <Route path="/settings/clinic-profile" element={<ClinicProfilePage />} />
         <Route path="/settings/users-roles" element={<UsersRolesPage />} />

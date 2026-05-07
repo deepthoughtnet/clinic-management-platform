@@ -4,12 +4,17 @@ let initPromise: Promise<boolean> | null = null;
 
 export function initKeycloakOnce() {
   if (!initPromise) {
-    initPromise = keycloak.init({
+    initPromise = Promise.resolve(keycloak.init({
       onLoad: "check-sso",
       pkceMethod: "S256",
-      silentCheckSsoRedirectUri: `${window.location.origin}/silent-check-sso.html`,
-    });
+      checkLoginIframe: false,
+      flow: "standard",
+    })).then((authenticated) => authenticated === true);
   }
 
   return initPromise;
+}
+
+export function resetKeycloakInit() {
+  initPromise = null;
 }

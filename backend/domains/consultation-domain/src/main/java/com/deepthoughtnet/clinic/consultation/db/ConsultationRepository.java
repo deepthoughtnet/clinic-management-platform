@@ -12,5 +12,13 @@ public interface ConsultationRepository extends JpaRepository<ConsultationEntity
 
     List<ConsultationEntity> findByTenantIdAndPatientIdOrderByCreatedAtDesc(UUID tenantId, UUID patientId);
 
+    List<ConsultationEntity> findByTenantIdAndDoctorUserId(UUID tenantId, UUID doctorUserId);
+
+    List<ConsultationEntity> findByTenantIdAndDoctorUserIdOrderByCreatedAtDesc(UUID tenantId, UUID doctorUserId);
+
+    boolean existsByTenantIdAndIdAndDoctorUserId(UUID tenantId, UUID id, UUID doctorUserId);
+
+    boolean existsByTenantIdAndPatientIdAndDoctorUserId(UUID tenantId, UUID patientId, UUID doctorUserId);
+
     List<ConsultationEntity> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
 }

@@ -17,8 +17,14 @@ import {
 import { useAuth } from "../../auth/useAuth";
 import {
   getClinicProfile,
+  getPrescriptionTemplate,
+  getPrescriptionTemplateHistory,
+  previewPrescriptionTemplate,
   type ClinicProfileInput,
+  type PrescriptionTemplateConfig,
+  type PrescriptionTemplateInput,
   updateClinicProfile,
+  updatePrescriptionTemplate,
 } from "../../api/clinicApi";
 
 type ClinicProfileFormState = {
@@ -37,6 +43,60 @@ type ClinicProfileFormState = {
   logoDocumentId: string;
   active: boolean;
 };
+
+type TemplateFormState = {
+  clinicLogoDocumentId: string;
+  headerText: string;
+  footerText: string;
+  primaryColor: string;
+  accentColor: string;
+  disclaimer: string;
+  doctorSignatureText: string;
+  showQrCode: boolean;
+  watermarkText: string;
+};
+
+function emptyTemplate(): TemplateFormState {
+  return {
+    clinicLogoDocumentId: "",
+    headerText: "",
+    footerText: "",
+    primaryColor: "#0f766e",
+    accentColor: "#14b8a6",
+    disclaimer: "",
+    doctorSignatureText: "",
+    showQrCode: true,
+    watermarkText: "",
+  };
+}
+
+function templateToForm(template: PrescriptionTemplateConfig): TemplateFormState {
+  return {
+    clinicLogoDocumentId: template.clinicLogoDocumentId || "",
+    headerText: template.headerText || "",
+    footerText: template.footerText || "",
+    primaryColor: template.primaryColor || "#0f766e",
+    accentColor: template.accentColor || "#14b8a6",
+    disclaimer: template.disclaimer || "",
+    doctorSignatureText: template.doctorSignatureText || "",
+    showQrCode: template.showQrCode,
+    watermarkText: template.watermarkText || "",
+  };
+}
+
+function templateInput(form: TemplateFormState): PrescriptionTemplateInput {
+  return {
+    clinicLogoDocumentId: form.clinicLogoDocumentId.trim() || null,
+    headerText: form.headerText.trim() || null,
+    footerText: form.footerText.trim() || null,
+    primaryColor: form.primaryColor.trim() || "#0f766e",
+    accentColor: form.accentColor.trim() || "#14b8a6",
+    disclaimer: form.disclaimer.trim() || null,
+    doctorSignatureText: form.doctorSignatureText.trim() || null,
+    showQrCode: form.showQrCode,
+    watermarkText: form.watermarkText.trim() || null,
+  };
+}
 
 function emptyForm(): ClinicProfileFormState {
   return {
@@ -99,6 +159,8 @@ export default function ClinicProfilePage() {
   const auth = useAuth();
   const canEdit = auth.hasPermission("clinic.update");
   const [form, setForm] = React.useState<ClinicProfileFormState>(emptyForm);
+  const [templateForm, setTemplateForm] = React.useState<TemplateFormState>(emptyTemplate);
+  const [templateHistory, setTemplateHistory] = React.useState<PrescriptionTemplateConfig[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -116,9 +178,15 @@ export default function ClinicProfilePage() {
       setLoading(true);
       setError(null);
       try {
-        const profile = await getClinicProfile(auth.accessToken, auth.tenantId);
+        const [profile, template, history] = await Promise.all([
+          getClinicProfile(auth.accessToken, auth.tenantId),
+          getPrescriptionTemplate(auth.accessToken, auth.tenantId),
+          getPrescriptionTemplateHistory(auth.accessToken, auth.tenantId),
+        ]);
         if (!cancelled) {
           setForm(toFormState(profile));
+          setTemplateForm(templateToForm(template));
+          setTemplateHistory(history);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to load clinic profile";
@@ -154,6 +222,13 @@ export default function ClinicProfilePage() {
     setForm((current) => ({ ...current, active: event.target.checked }));
   };
 
+  const updateTemplateField =
+    (field: Exclude<keyof TemplateFormState, "showQrCode">) =>
+    (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const value = event.target.value;
+      setTemplateForm((current) => ({ ...current, [field]: value }));
+    };
+
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!auth.accessToken || !auth.tenantId) {
@@ -171,6 +246,34 @@ export default function ClinicProfilePage() {
       setError(err instanceof Error ? err.message : "Failed to save clinic profile");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveTemplate = async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const saved = await updatePrescriptionTemplate(auth.accessToken, auth.tenantId, templateInput(templateForm));
+      setTemplateForm(templateToForm(saved));
+      setTemplateHistory(await getPrescriptionTemplateHistory(auth.accessToken, auth.tenantId));
+      setSuccess("Prescription template saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save prescription template");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const previewTemplate = async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setError(null);
+    try {
+      const { blob } = await previewPrescriptionTemplate(auth.accessToken, auth.tenantId, templateInput(templateForm));
+      window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to preview prescription template");
     }
   };
 
@@ -265,6 +368,67 @@ export default function ClinicProfilePage() {
               ) : null}
             </Stack>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent>
+          <Stack spacing={3}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 900 }}>Prescription Template & Branding</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Tenant-managed branding for prescription PDFs and delivery. Saving creates a new template version for auditability.
+              </Typography>
+            </Box>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField fullWidth label="Logo document ID" value={templateForm.clinicLogoDocumentId} onChange={updateTemplateField("clinicLogoDocumentId")} disabled={!canEdit || saving} />
+              </Grid>
+              <Grid size={{ xs: 6, md: 3 }}>
+                <TextField fullWidth label="Primary color" value={templateForm.primaryColor} onChange={updateTemplateField("primaryColor")} disabled={!canEdit || saving} />
+              </Grid>
+              <Grid size={{ xs: 6, md: 3 }}>
+                <TextField fullWidth label="Accent color" value={templateForm.accentColor} onChange={updateTemplateField("accentColor")} disabled={!canEdit || saving} />
+              </Grid>
+              <Grid size={12}>
+                <TextField fullWidth multiline minRows={2} label="Clinic header" value={templateForm.headerText} onChange={updateTemplateField("headerText")} disabled={!canEdit || saving} />
+              </Grid>
+              <Grid size={12}>
+                <TextField fullWidth multiline minRows={2} label="Clinic footer" value={templateForm.footerText} onChange={updateTemplateField("footerText")} disabled={!canEdit || saving} />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField fullWidth multiline minRows={2} label="Disclaimer" value={templateForm.disclaimer} onChange={updateTemplateField("disclaimer")} disabled={!canEdit || saving} />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField fullWidth multiline minRows={2} label="Doctor signature text" value={templateForm.doctorSignatureText} onChange={updateTemplateField("doctorSignatureText")} disabled={!canEdit || saving} />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField fullWidth label="Watermark text" value={templateForm.watermarkText} onChange={updateTemplateField("watermarkText")} disabled={!canEdit || saving} />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControlLabel
+                  control={<Switch checked={templateForm.showQrCode} onChange={(event) => setTemplateForm((current) => ({ ...current, showQrCode: event.target.checked }))} disabled={!canEdit || saving} />}
+                  label="Show QR code placeholder"
+                />
+              </Grid>
+            </Grid>
+            <Box sx={{ p: 2, border: "1px solid", borderColor: "divider", borderRadius: 2, background: `linear-gradient(135deg, ${templateForm.primaryColor || "#0f766e"}, ${templateForm.accentColor || "#14b8a6"})`, color: "white" }}>
+              <Typography variant="h6" sx={{ fontWeight: 900 }}>{form.displayName || form.clinicName || "Clinic Name"}</Typography>
+              <Typography variant="body2">{templateForm.headerText || "Header text preview"}</Typography>
+              <Typography variant="caption">{templateForm.footerText || "Footer text preview"}</Typography>
+            </Box>
+            {templateHistory.length ? (
+              <Typography variant="caption" color="text.secondary">
+                Latest template version: {templateHistory[0]?.templateVersion ?? 0}. Previous versions are retained for audit review.
+              </Typography>
+            ) : null}
+            {canEdit ? (
+              <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1, flexWrap: "wrap" }}>
+                <Button type="button" variant="outlined" disabled={saving} onClick={() => void previewTemplate()}>Preview PDF</Button>
+                <Button type="button" variant="contained" disabled={saving} onClick={() => void saveTemplate()}>{saving ? "Saving..." : "Save Template"}</Button>
+              </Box>
+            ) : null}
+          </Stack>
         </CardContent>
       </Card>
     </Stack>

@@ -23,8 +23,7 @@ import java.util.UUID;
                 @Index(name = "ix_prescriptions_tenant_status", columnList = "tenant_id,status")
         },
         uniqueConstraints = {
-                @UniqueConstraint(name = "uq_prescriptions_tenant_number", columnNames = {"tenant_id", "prescription_number"}),
-                @UniqueConstraint(name = "uq_prescriptions_tenant_consultation", columnNames = {"tenant_id", "consultation_id"})
+                @UniqueConstraint(name = "uq_prescriptions_tenant_number", columnNames = {"tenant_id", "prescription_number"})
         }
 )
 public class PrescriptionEntity {
@@ -49,6 +48,21 @@ public class PrescriptionEntity {
 
     @Column(name = "prescription_number", nullable = false, length = 64)
     private String prescriptionNumber;
+
+    @Column(name = "version_number", nullable = false)
+    private Integer versionNumber = 1;
+
+    @Column(name = "parent_prescription_id")
+    private UUID parentPrescriptionId;
+
+    @Column(name = "correction_reason", columnDefinition = "text")
+    private String correctionReason;
+
+    @Column(name = "flow_type", length = 32)
+    private String flowType;
+
+    @Column(name = "finalized_by_doctor_user_id")
+    private UUID finalizedByDoctorUserId;
 
     @Column(name = "diagnosis_snapshot", columnDefinition = "text")
     private String diagnosisSnapshot;
@@ -109,8 +123,23 @@ public class PrescriptionEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
-    public void finalizePrescription() {
+    public void preview() {
+        if (this.status == PrescriptionStatus.DRAFT) {
+            this.status = PrescriptionStatus.PREVIEWED;
+            this.updatedAt = OffsetDateTime.now();
+        }
+    }
+
+    public void makeCorrectionVersion(UUID parentPrescriptionId, int versionNumber, String correctionReason, String flowType) {
+        this.parentPrescriptionId = parentPrescriptionId;
+        this.versionNumber = versionNumber;
+        this.correctionReason = correctionReason;
+        this.flowType = flowType;
+    }
+
+    public void finalizePrescription(UUID finalizedByDoctorUserId) {
         this.status = PrescriptionStatus.FINALIZED;
+        this.finalizedByDoctorUserId = finalizedByDoctorUserId;
         this.finalizedAt = OffsetDateTime.now();
         this.updatedAt = this.finalizedAt;
     }
@@ -139,6 +168,11 @@ public class PrescriptionEntity {
     public UUID getConsultationId() { return consultationId; }
     public UUID getAppointmentId() { return appointmentId; }
     public String getPrescriptionNumber() { return prescriptionNumber; }
+    public Integer getVersionNumber() { return versionNumber; }
+    public UUID getParentPrescriptionId() { return parentPrescriptionId; }
+    public String getCorrectionReason() { return correctionReason; }
+    public String getFlowType() { return flowType; }
+    public UUID getFinalizedByDoctorUserId() { return finalizedByDoctorUserId; }
     public String getDiagnosisSnapshot() { return diagnosisSnapshot; }
     public String getAdvice() { return advice; }
     public LocalDate getFollowUpDate() { return followUpDate; }

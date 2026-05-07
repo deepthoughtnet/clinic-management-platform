@@ -4,6 +4,9 @@ import java.util.List;
 import java.util.Set;
 
 public record MeResponse(
+        String email,
+        String username,
+        boolean platformAdmin,
         String tenantId,
         String appUserId,
         String subject,
@@ -12,6 +15,7 @@ public record MeResponse(
         Set<String> permissions,
         TenantModulesResponse modules,
         String correlationId,
+        List<ActiveTenantMembershipResponse> memberships,
         List<ActiveTenantMembershipResponse> activeTenantMemberships
 ) {
     public record TenantModulesResponse(
@@ -32,6 +36,7 @@ public record MeResponse(
             String tenantName,
             String role,
             String status,
+            boolean active,
             TenantModulesResponse modules
     ) {}
 }

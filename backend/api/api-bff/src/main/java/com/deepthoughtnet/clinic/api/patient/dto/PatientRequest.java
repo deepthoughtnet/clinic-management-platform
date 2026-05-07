@@ -22,6 +22,8 @@ public record PatientRequest(
         String bloodGroup,
         String allergies,
         String existingConditions,
+        String longTermMedications,
+        String surgicalHistory,
         String notes,
         boolean active
 ) {

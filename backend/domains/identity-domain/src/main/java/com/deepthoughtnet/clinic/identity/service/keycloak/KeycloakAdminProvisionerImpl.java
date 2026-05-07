@@ -1,14 +1,18 @@
 package com.deepthoughtnet.clinic.identity.service.keycloak;
 
+import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.keycloak.admin.client.Keycloak;
+import org.keycloak.admin.client.resource.RoleResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 
 /**
@@ -19,6 +23,7 @@ import org.springframework.util.StringUtils;
  * - tenant_id is mapped from a user attribute "tenant_id" via a protocol mapper.
  */
 public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
+    private static final Logger log = LoggerFactory.getLogger(KeycloakAdminProvisionerImpl.class);
 
     private final Keycloak keycloakAdmin;
     private final String realm;
@@ -85,8 +90,8 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
                 rr.users().get(existing.getId()).update(existing);
             }
 
-            // Ensure role (realm role TENANT_ADMIN)
-            ensureRealmRole(existing.getId(), "TENANT_ADMIN");
+            // Ensure tenant admin role for clinic realm.
+            ensureRealmRole(existing.getId(), "CLINIC_ADMIN");
 
             // Optional: reset password
             if (StringUtils.hasText(tempPassword)) {
@@ -114,7 +119,7 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
 
         String userId = extractCreatedId(resp);
         ensureTenantAttribute(rr, userId, tenantId);
-        ensureRealmRole(userId, "TENANT_ADMIN");
+        ensureRealmRole(userId, "CLINIC_ADMIN");
 
         if (StringUtils.hasText(tempPassword)) {
             resetTemporaryPassword(rr, userId, tempPassword);
@@ -244,12 +249,53 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
 
         RealmResource rr = keycloakAdmin.realm(realm);
 
-        RoleRepresentation role = rr.roles().get(roleName).toRepresentation();
+        RoleRepresentation role = getOrCreateRealmRole(rr, roleName);
 
         List<RoleRepresentation> current = rr.users().get(userId).roles().realmLevel().listAll();
         boolean has = current != null && current.stream().anyMatch(r -> roleName.equalsIgnoreCase(r.getName()));
         if (!has) {
             rr.users().get(userId).roles().realmLevel().add(List.of(role));
+        }
+    }
+
+    @Override
+    public void resetPassword(String userId, String tempPassword, boolean temporary) {
+        if (!StringUtils.hasText(userId)) {
+            throw new IllegalArgumentException("userId is required");
+        }
+        if (!StringUtils.hasText(tempPassword)) {
+            throw new IllegalArgumentException("tempPassword is required");
+        }
+        RealmResource rr = keycloakAdmin.realm(realm);
+        var cred = new org.keycloak.representations.idm.CredentialRepresentation();
+        cred.setType(org.keycloak.representations.idm.CredentialRepresentation.PASSWORD);
+        cred.setTemporary(temporary);
+        cred.setValue(tempPassword);
+        rr.users().get(userId).resetPassword(cred);
+    }
+
+    private RoleRepresentation getOrCreateRealmRole(RealmResource rr, String roleName) {
+        try {
+            RoleResource roleResource = rr.roles().get(roleName);
+            return roleResource.toRepresentation();
+        } catch (NotFoundException ex) {
+            log.info("Creating missing realm role '{}' in targetRealm='{}'", roleName, realm);
+            RoleRepresentation role = new RoleRepresentation();
+            role.setName(roleName);
+            rr.roles().create(role);
+            try {
+                return rr.roles().get(roleName).toRepresentation();
+            } catch (Exception createLookupEx) {
+                throw new IllegalStateException(
+                        "Keycloak provisioning failed: role '" + roleName + "' missing in realm '" + realm + "'",
+                        createLookupEx
+                );
+            }
+        } catch (Exception ex) {
+            throw new IllegalStateException(
+                    "Keycloak provisioning failed: unable to access role '" + roleName + "' in realm '" + realm + "'",
+                    ex
+            );
         }
     }
 
@@ -283,11 +329,7 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
     }
 
     private void resetTemporaryPassword(RealmResource rr, String userId, String tempPassword) {
-        var cred = new org.keycloak.representations.idm.CredentialRepresentation();
-        cred.setType(org.keycloak.representations.idm.CredentialRepresentation.PASSWORD);
-        cred.setTemporary(Boolean.TRUE);
-        cred.setValue(tempPassword);
-        rr.users().get(userId).resetPassword(cred);
+        resetPassword(userId, tempPassword, true);
     }
 
     private static String extractCreatedId(Response resp) {

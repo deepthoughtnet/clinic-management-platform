@@ -8,11 +8,15 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface PrescriptionRepository extends JpaRepository<PrescriptionEntity, UUID> {
     Optional<PrescriptionEntity> findByTenantIdAndId(UUID tenantId, UUID id);
 
-    Optional<PrescriptionEntity> findByTenantIdAndConsultationId(UUID tenantId, UUID consultationId);
+    Optional<PrescriptionEntity> findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(UUID tenantId, UUID consultationId);
+
+    List<PrescriptionEntity> findByTenantIdAndConsultationIdOrderByVersionNumberDesc(UUID tenantId, UUID consultationId);
 
     Optional<PrescriptionEntity> findByTenantIdAndPrescriptionNumber(UUID tenantId, String prescriptionNumber);
 
     List<PrescriptionEntity> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
+
+    List<PrescriptionEntity> findByTenantIdAndDoctorUserIdOrderByCreatedAtDesc(UUID tenantId, UUID doctorUserId);
 
     List<PrescriptionEntity> findByTenantIdAndPatientIdOrderByCreatedAtDesc(UUID tenantId, UUID patientId);
 }

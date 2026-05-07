@@ -29,16 +29,13 @@ import org.springframework.security.access.prepost.PreAuthorize;
 @RequestMapping("/api/clinic")
 public class ClinicSettingsController {
     private static final List<String> SUPPORTED_ROLES = List.of(
-            Roles.PLATFORM_ADMIN,
             Roles.CLINIC_ADMIN,
             Roles.DOCTOR,
             Roles.RECEPTIONIST,
             Roles.BILLING_USER,
             Roles.PHARMACIST,
             Roles.LAB_ASSISTANT,
-            Roles.AUDITOR,
-            Roles.SERVICE_AGENT,
-            Roles.VIEWER
+            Roles.AUDITOR
     );
 
     private final ClinicProfileService clinicProfileService;
@@ -94,6 +91,7 @@ public class ClinicSettingsController {
     public List<ClinicUserResponse> getUsers() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return tenantUserManagementService.list(tenantId).stream()
+                .filter(user -> user.membershipRole() != null && SUPPORTED_ROLES.contains(user.membershipRole().trim().toUpperCase(Locale.ROOT)))
                 .map(this::toResponse)
                 .toList();
     }

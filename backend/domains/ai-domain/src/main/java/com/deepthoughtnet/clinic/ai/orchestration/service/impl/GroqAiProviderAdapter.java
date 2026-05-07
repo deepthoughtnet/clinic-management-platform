@@ -37,7 +37,13 @@ public class GroqAiProviderAdapter implements AiProvider {
                 || taskType == AiTaskType.DUPLICATE_EXPLANATION
                 || taskType == AiTaskType.DOCTOR_RESUBMISSION_SUGGESTION
                 || taskType == AiTaskType.GENERIC_RECOMMENDATION
-                || taskType == AiTaskType.GENERIC_CLASSIFICATION;
+                || taskType == AiTaskType.GENERIC_CLASSIFICATION
+                || taskType == AiTaskType.PATIENT_HISTORY_SUMMARY
+                || taskType == AiTaskType.CONSULTATION_NOTE_STRUCTURING
+                || taskType == AiTaskType.SYMPTOMS_DIAGNOSIS_DRAFT
+                || taskType == AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION
+                || taskType == AiTaskType.PATIENT_INSTRUCTIONS_DRAFT
+                || taskType == AiTaskType.ALLERGY_CONDITION_WARNING;
     }
 
     @Override

@@ -5,9 +5,11 @@ import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse;
 import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentStatusRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.WalkInAppointmentRequest;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
+import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatusUpdateCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.WalkInAppointmentCommand;
@@ -28,16 +30,23 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/appointments")
 public class AppointmentController {
     private final AppointmentService appointmentService;
     private final ConsultationService consultationService;
+    private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
-    public AppointmentController(AppointmentService appointmentService, ConsultationService consultationService) {
+    public AppointmentController(
+            AppointmentService appointmentService,
+            ConsultationService consultationService,
+            DoctorAssignmentSecurityService doctorAssignmentSecurityService
+    ) {
         this.appointmentService = appointmentService;
         this.consultationService = consultationService;
+        this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
     }
 
     @GetMapping
@@ -50,8 +59,9 @@ public class AppointmentController {
             @RequestParam(required = false) String type
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(doctorUserId);
         return appointmentService.search(tenantId, new AppointmentSearchCriteria(
-                doctorUserId,
+                effectiveDoctorUserId,
                 patientId,
                 appointmentDate,
                 status == null || status.isBlank() ? null : com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus.valueOf(status.trim().toUpperCase()),
@@ -94,6 +104,7 @@ public class AppointmentController {
     @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
     public AppointmentResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireAppointmentAccess(tenantId, id);
         return toResponse(appointmentService.findById(tenantId, id));
     }
 
@@ -101,6 +112,9 @@ public class AppointmentController {
     @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
     public AppointmentResponse updateStatus(@PathVariable UUID id, @RequestBody AppointmentStatusRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireAppointmentAccess(tenantId, id);
+        doctorAssignmentSecurityService.requireNonDoctorQueueStatusUpdate();
+        requireReceptionQueueTarget(request.status());
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(appointmentService.updateStatus(tenantId, id, new AppointmentStatusUpdateCommand(request.status()), actorAppUserId));
     }
@@ -110,6 +124,7 @@ public class AppointmentController {
     @PreAuthorize("@permissionChecker.hasPermission('consultation.create') and @permissionChecker.hasPermission('appointment.manage')")
     public ConsultationResponse startConsultation(@PathVariable UUID appointmentId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationStartAccess(tenantId, appointmentId);
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toConsultationResponse(consultationService.startFromAppointment(tenantId, appointmentId, actorAppUserId));
     }
@@ -118,6 +133,16 @@ public class AppointmentController {
     @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
     public List<AppointmentResponse> today() {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(null);
+        if (effectiveDoctorUserId != null) {
+            return appointmentService.search(tenantId, new AppointmentSearchCriteria(
+                    effectiveDoctorUserId,
+                    null,
+                    LocalDate.now(),
+                    null,
+                    null
+            )).stream().map(this::toResponse).toList();
+        }
         return appointmentService.listToday(tenantId).stream().map(this::toResponse).toList();
     }
 
@@ -170,5 +195,14 @@ public class AppointmentController {
                 record.createdAt(),
                 record.updatedAt()
         );
+    }
+
+    private void requireReceptionQueueTarget(AppointmentStatus status) {
+        if (status == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "status is required");
+        }
+        if (status != AppointmentStatus.WAITING && status != AppointmentStatus.CANCELLED && status != AppointmentStatus.NO_SHOW) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Queue desk can only check in, cancel, or mark no-show");
+        }
     }
 }

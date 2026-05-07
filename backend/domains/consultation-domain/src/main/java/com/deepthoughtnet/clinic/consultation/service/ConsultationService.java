@@ -66,6 +66,13 @@ public class ConsultationService {
     }
 
     @Transactional(readOnly = true)
+    public List<ConsultationRecord> listByDoctor(UUID tenantId, UUID doctorUserId) {
+        requireTenant(tenantId);
+        requireId(doctorUserId, "doctorUserId");
+        return mapRecords(tenantId, repository.findByTenantIdAndDoctorUserIdOrderByCreatedAtDesc(tenantId, doctorUserId));
+    }
+
+    @Transactional(readOnly = true)
     public Optional<ConsultationRecord> findById(UUID tenantId, UUID id) {
         requireTenant(tenantId);
         requireId(id, "id");
@@ -85,6 +92,7 @@ public class ConsultationService {
         validate(command, false);
         ensurePatientInTenant(tenantId, command.patientId());
         ensureDoctorInTenant(tenantId, command.doctorUserId());
+        ensureAppointmentAssignment(tenantId, command);
         if (command.appointmentId() != null && repository.findByTenantIdAndAppointmentId(tenantId, command.appointmentId()).isPresent()) {
             throw new IllegalArgumentException("Consultation already exists for this appointment");
         }
@@ -130,6 +138,7 @@ public class ConsultationService {
         ensureEditable(entity);
         ensurePatientInTenant(tenantId, command.patientId());
         ensureDoctorInTenant(tenantId, command.doctorUserId());
+        ensureAppointmentAssignment(tenantId, command);
 
         entity.update(
                 normalizeNullable(command.chiefComplaints()),
@@ -276,6 +285,14 @@ public class ConsultationService {
                 .orElseThrow(() -> new IllegalArgumentException("Doctor not found for tenant"));
         if (!"DOCTOR".equalsIgnoreCase(doctor.membershipRole())) {
             throw new IllegalArgumentException("Selected user is not a doctor");
+        }
+    }
+
+    private void ensureAppointmentAssignment(UUID tenantId, ConsultationUpsertCommand command) {
+        requireId(command.appointmentId(), "appointmentId");
+        AppointmentRecord appointment = appointmentService.findById(tenantId, command.appointmentId());
+        if (!appointment.patientId().equals(command.patientId()) || !appointment.doctorUserId().equals(command.doctorUserId())) {
+            throw new IllegalArgumentException("Consultation appointment must match the assigned patient and doctor");
         }
     }
 

@@ -22,6 +22,7 @@ import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicine
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionPdf;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
+import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTemplateConfig;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTestCommand;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTestRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionUpsertCommand;
@@ -92,6 +93,13 @@ public class PrescriptionService {
     }
 
     @Transactional(readOnly = true)
+    public List<PrescriptionRecord> listByDoctor(UUID tenantId, UUID doctorUserId) {
+        requireTenant(tenantId);
+        requireId(doctorUserId, "doctorUserId");
+        return mapRecords(tenantId, prescriptionRepository.findByTenantIdAndDoctorUserIdOrderByCreatedAtDesc(tenantId, doctorUserId));
+    }
+
+    @Transactional(readOnly = true)
     public Optional<PrescriptionRecord> findById(UUID tenantId, UUID id) {
         requireTenant(tenantId);
         requireId(id, "id");
@@ -102,7 +110,7 @@ public class PrescriptionService {
     public Optional<PrescriptionRecord> findByConsultationId(UUID tenantId, UUID consultationId) {
         requireTenant(tenantId);
         requireId(consultationId, "consultationId");
-        return prescriptionRepository.findByTenantIdAndConsultationId(tenantId, consultationId).map(entity -> toRecord(entity, tenantData(tenantId)));
+        return prescriptionRepository.findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(tenantId, consultationId).map(entity -> toRecord(entity, tenantData(tenantId)));
     }
 
     @Transactional(readOnly = true)
@@ -119,7 +127,7 @@ public class PrescriptionService {
         ConsultationRecord consultation = consultationService.findById(tenantId, command.consultationId())
                 .orElseThrow(() -> new IllegalArgumentException("Consultation not found"));
         ensurePatientAndDoctorMatch(tenantId, command, consultation);
-        if (prescriptionRepository.findByTenantIdAndConsultationId(tenantId, command.consultationId()).isPresent()) {
+        if (prescriptionRepository.findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(tenantId, command.consultationId()).isPresent()) {
             throw new IllegalArgumentException("Prescription already exists for this consultation");
         }
 
@@ -145,10 +153,12 @@ public class PrescriptionService {
         validate(command);
         PrescriptionEntity entity = prescriptionRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Prescription not found"));
-        ensureDraft(entity);
         ConsultationRecord consultation = consultationService.findById(tenantId, command.consultationId())
                 .orElseThrow(() -> new IllegalArgumentException("Consultation not found"));
         ensurePatientAndDoctorMatch(tenantId, command, consultation);
+        if (!isEditable(entity)) {
+            return createCorrectionVersion(tenantId, entity, command, actorAppUserId, "SAME_DAY_CORRECTION", "Correction after finalization");
+        }
         entity.update(normalizeNullable(command.diagnosisSnapshot()), normalizeNullable(command.advice()), command.followUpDate());
         PrescriptionEntity saved = prescriptionRepository.save(entity);
         replaceLines(tenantId, saved.getId(), command.medicines(), command.recommendedTests());
@@ -157,13 +167,31 @@ public class PrescriptionService {
     }
 
     @Transactional
+    public PrescriptionRecord createCorrectionVersion(UUID tenantId, UUID id, PrescriptionUpsertCommand command, UUID actorAppUserId, String flowType, String correctionReason) {
+        requireTenant(tenantId);
+        PrescriptionEntity parent = findEntity(tenantId, id);
+        return createCorrectionVersion(tenantId, parent, command, actorAppUserId, flowType, correctionReason);
+    }
+
+    @Transactional
     public PrescriptionRecord finalizePrescription(UUID tenantId, UUID id, UUID actorAppUserId) {
         requireTenant(tenantId);
         PrescriptionEntity entity = findEntity(tenantId, id);
-        ensureDraft(entity);
-        entity.finalizePrescription();
+        ensureEditable(entity);
+        entity.finalizePrescription(actorAppUserId);
         PrescriptionEntity saved = prescriptionRepository.save(entity);
         audit(tenantId, saved, "prescription.finalized", actorAppUserId, "Finalized prescription");
+        return toRecord(saved, tenantData(tenantId));
+    }
+
+    @Transactional
+    public PrescriptionRecord previewPrescription(UUID tenantId, UUID id, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        PrescriptionEntity entity = findEntity(tenantId, id);
+        ensureEditable(entity);
+        entity.preview();
+        PrescriptionEntity saved = prescriptionRepository.save(entity);
+        audit(tenantId, saved, "prescription.previewed", actorAppUserId, "Previewed prescription");
         return toRecord(saved, tenantData(tenantId));
     }
 
@@ -193,8 +221,8 @@ public class PrescriptionService {
     public PrescriptionRecord cancel(UUID tenantId, UUID id, UUID actorAppUserId) {
         requireTenant(tenantId);
         PrescriptionEntity entity = findEntity(tenantId, id);
-        if (entity.getStatus() != PrescriptionStatus.DRAFT) {
-            throw new IllegalArgumentException("Only draft prescriptions can be cancelled in this release");
+        if (entity.getStatus() != PrescriptionStatus.DRAFT && entity.getStatus() != PrescriptionStatus.PREVIEWED) {
+            throw new IllegalArgumentException("Only editable prescriptions can be cancelled in this release");
         }
         entity.cancel();
         PrescriptionEntity saved = prescriptionRepository.save(entity);
@@ -207,7 +235,27 @@ public class PrescriptionService {
         PrescriptionEntity entity = findEntity(tenantId, id);
         PrescriptionData data = tenantData(tenantId);
         audit(tenantId, entity, "prescription.pdf_generated", actorAppUserId, "Generated prescription PDF");
-        return createPdf(data.tenantName(), entity, data);
+        return createPdf(data.tenantName(), entity, data, PrescriptionTemplateConfig.defaults(), false);
+    }
+
+    @Transactional
+    public PrescriptionPdf generatePdf(UUID tenantId, UUID id, UUID actorAppUserId, PrescriptionTemplateConfig templateConfig) {
+        PrescriptionEntity entity = findEntity(tenantId, id);
+        PrescriptionData data = tenantData(tenantId);
+        audit(tenantId, entity, "prescription.pdf_generated", actorAppUserId, "Generated branded prescription PDF");
+        return createPdf(data.tenantName(), entity, data, templateConfig == null ? PrescriptionTemplateConfig.defaults() : templateConfig, false);
+    }
+
+    @Transactional(readOnly = true)
+    public PrescriptionPdf generateTemplatePreviewPdf(UUID tenantId, UUID prescriptionId, UUID actorAppUserId, PrescriptionTemplateConfig templateConfig) {
+        PrescriptionEntity entity = prescriptionId == null
+                ? null
+                : prescriptionRepository.findByTenantIdAndId(tenantId, prescriptionId).orElse(null);
+        PrescriptionData data = tenantData(tenantId);
+        if (entity != null) {
+            return createPdf(data.tenantName(), entity, data, templateConfig == null ? PrescriptionTemplateConfig.defaults() : templateConfig, true);
+        }
+        return createSamplePdf(data.tenantName(), data, templateConfig == null ? PrescriptionTemplateConfig.defaults() : templateConfig);
     }
 
     private PrescriptionEntity findEntity(UUID tenantId, UUID id) {
@@ -270,11 +318,16 @@ public class PrescriptionService {
                 entity.getConsultationId(),
                 entity.getAppointmentId(),
                 entity.getPrescriptionNumber(),
+                entity.getVersionNumber(),
+                entity.getParentPrescriptionId(),
+                entity.getCorrectionReason(),
+                entity.getFlowType(),
                 entity.getDiagnosisSnapshot(),
                 entity.getAdvice(),
                 entity.getFollowUpDate(),
                 entity.getStatus(),
                 entity.getFinalizedAt(),
+                entity.getFinalizedByDoctorUserId(),
                 entity.getPrintedAt(),
                 entity.getSentAt(),
                 entity.getCreatedAt(),
@@ -345,9 +398,39 @@ public class PrescriptionService {
         }
     }
 
-    private void ensureDraft(PrescriptionEntity entity) {
-        if (entity.getStatus() != PrescriptionStatus.DRAFT) {
-            throw new IllegalArgumentException("Prescription can only be modified while in draft");
+    private PrescriptionRecord createCorrectionVersion(UUID tenantId, PrescriptionEntity parent, PrescriptionUpsertCommand command, UUID actorAppUserId, String flowType, String correctionReason) {
+        if (parent.getStatus() == PrescriptionStatus.DRAFT || parent.getStatus() == PrescriptionStatus.PREVIEWED) {
+            throw new IllegalArgumentException("Editable prescriptions do not need a correction version");
+        }
+        PrescriptionEntity entity = PrescriptionEntity.create(
+                tenantId,
+                command.patientId(),
+                command.doctorUserId(),
+                command.consultationId(),
+                command.appointmentId() != null ? command.appointmentId() : parent.getAppointmentId(),
+                generatePrescriptionNumber(tenantId)
+        );
+        int nextVersion = prescriptionRepository.findByTenantIdAndConsultationIdOrderByVersionNumberDesc(tenantId, parent.getConsultationId())
+                .stream()
+                .map(PrescriptionEntity::getVersionNumber)
+                .filter(version -> version != null)
+                .findFirst()
+                .orElse(1) + 1;
+        entity.makeCorrectionVersion(parent.getId(), nextVersion, normalizeNullable(correctionReason), normalizeNullable(flowType));
+        applyCommand(entity, command);
+        PrescriptionEntity saved = prescriptionRepository.save(entity);
+        replaceLines(tenantId, saved.getId(), command.medicines(), command.recommendedTests());
+        audit(tenantId, saved, "prescription.version.created", actorAppUserId, "Created prescription correction version");
+        return toRecord(saved, tenantData(tenantId));
+    }
+
+    private boolean isEditable(PrescriptionEntity entity) {
+        return entity.getStatus() == PrescriptionStatus.DRAFT || entity.getStatus() == PrescriptionStatus.PREVIEWED;
+    }
+
+    private void ensureEditable(PrescriptionEntity entity) {
+        if (!isEditable(entity)) {
+            throw new IllegalArgumentException("Finalized prescriptions are immutable; create a correction or follow-up version");
         }
     }
 
@@ -432,7 +515,7 @@ public class PrescriptionService {
         throw new IllegalStateException("Unable to generate unique prescription number");
     }
 
-    private PrescriptionPdf createPdf(String tenantName, PrescriptionEntity entity, PrescriptionData data) {
+    private PrescriptionPdf createPdf(String tenantName, PrescriptionEntity entity, PrescriptionData data, PrescriptionTemplateConfig template, boolean preview) {
         PrescriptionRecord record = toRecord(entity, data);
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PDPage page = new PDPage(PDRectangle.A4);
@@ -440,8 +523,16 @@ public class PrescriptionService {
             try (PDPageContentStream content = new PDPageContentStream(document, page)) {
                 float margin = 40;
                 float y = page.getMediaBox().getHeight() - margin;
-                writeLine(content, tenantName, 16, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+                drawHeaderBand(content, page, template);
+                if (StringUtils.hasText(template.watermarkText())) {
+                    writeLine(content, template.watermarkText(), 42, 170, 430, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+                }
+                writeLine(content, tenantName, 18, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
                 y -= 18;
+                if (StringUtils.hasText(template.headerText())) {
+                    y = writeWrapped(content, template.headerText(), 9, margin, y, 520);
+                    y -= 4;
+                }
                 if (StringUtils.hasText(data.clinicDisplayName())) {
                     writeLine(content, data.clinicDisplayName(), 11, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
                     y -= 14;
@@ -497,12 +588,57 @@ public class PrescriptionService {
                     y -= 4;
                     writeLine(content, "Follow up: " + record.followUpDate(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
                 }
+                y -= 30;
+                if (StringUtils.hasText(template.doctorSignatureText())) {
+                    writeLine(content, template.doctorSignatureText(), 10, 360, Math.max(y, 92), new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+                }
+                if (template.showQrCode()) {
+                    drawQrPlaceholder(content, 472, 70);
+                }
+                if (StringUtils.hasText(template.disclaimer())) {
+                    writeWrapped(content, "Disclaimer: " + template.disclaimer(), 7, margin, 54, 420);
+                }
+                if (StringUtils.hasText(template.footerText())) {
+                    writeLine(content, template.footerText(), 8, margin, 32, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+                }
             }
             document.save(output);
-            return new PrescriptionPdf(safeFilename(record.prescriptionNumber()) + ".pdf", output.toByteArray());
+            return new PrescriptionPdf((preview ? "preview-" : "") + safeFilename(record.prescriptionNumber()) + ".pdf", output.toByteArray());
         } catch (IOException ex) {
             throw new IllegalStateException("Unable to generate prescription PDF", ex);
         }
+    }
+
+    private PrescriptionPdf createSamplePdf(String tenantName, PrescriptionData data, PrescriptionTemplateConfig template) {
+        PrescriptionEntity sample = PrescriptionEntity.create(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null, "RX-PREVIEW");
+        sample.update("Sample diagnosis", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(7));
+        PrescriptionData emptyData = new PrescriptionData(Map.of(), Map.of(), data.tenantName(), data.clinicDisplayName(), data.clinicDisplayName(), data.clinicAddress());
+        return createPdf(tenantName, sample, emptyData, template, true);
+    }
+
+    private void drawHeaderBand(PDPageContentStream content, PDPage page, PrescriptionTemplateConfig template) throws IOException {
+        float[] rgb = parseRgb(template.primaryColor(), 15, 118, 110);
+        content.setNonStrokingColor(rgb[0], rgb[1], rgb[2]);
+        content.addRect(0, page.getMediaBox().getHeight() - 20, page.getMediaBox().getWidth(), 20);
+        content.fill();
+        content.setNonStrokingColor(0, 0, 0);
+    }
+
+    private void drawQrPlaceholder(PDPageContentStream content, float x, float y) throws IOException {
+        content.setStrokingColor(0, 0, 0);
+        content.addRect(x, y, 58, 58);
+        content.stroke();
+        writeLine(content, "QR", 16, x + 17, y + 23, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+    }
+
+    private float[] parseRgb(String hex, int fallbackR, int fallbackG, int fallbackB) {
+        if (!StringUtils.hasText(hex) || !hex.matches("^#[0-9A-Fa-f]{6}$")) {
+            return new float[]{fallbackR / 255f, fallbackG / 255f, fallbackB / 255f};
+        }
+        int r = Integer.parseInt(hex.substring(1, 3), 16);
+        int g = Integer.parseInt(hex.substring(3, 5), 16);
+        int b = Integer.parseInt(hex.substring(5, 7), 16);
+        return new float[]{r / 255f, g / 255f, b / 255f};
     }
 
     private float writeWrapped(PDPageContentStream content, String text, float fontSize, float x, float y, float maxWidth) throws IOException {
