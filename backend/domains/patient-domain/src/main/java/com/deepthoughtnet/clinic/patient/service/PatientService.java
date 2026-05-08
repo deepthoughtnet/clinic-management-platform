@@ -55,7 +55,10 @@ public class PatientService {
                 predicates.add(cb.equal(cb.lower(root.get("patientNumber")), patientNumber.toLowerCase()));
             }
             if (mobile != null) {
-                predicates.add(cb.equal(cb.lower(root.get("mobile")), mobile.toLowerCase()));
+                String mobileTerm = mobile.toLowerCase();
+                predicates.add(mobileTerm.length() >= 6
+                        ? cb.like(cb.lower(root.get("mobile")), mobileTerm + "%")
+                        : cb.equal(cb.lower(root.get("mobile")), mobileTerm));
             }
             if (active != null) {
                 predicates.add(cb.equal(root.get("active"), active));
@@ -193,7 +196,7 @@ public class PatientService {
         }
         entity.update(
                 normalize(command.firstName()),
-                normalize(command.lastName()),
+                normalizeOptionalText(command.lastName()),
                 command.gender() == null ? PatientGender.UNKNOWN : command.gender(),
                 command.dateOfBirth(),
                 ageYears,
@@ -276,11 +279,14 @@ public class PatientService {
             throw new IllegalArgumentException("command is required");
         }
         requireText(command.firstName(), "firstName");
-        requireText(command.lastName(), "lastName");
         if (command.gender() == null) {
             throw new IllegalArgumentException("gender is required");
         }
         requireText(command.mobile(), "mobile");
+        String mobile = command.mobile().trim();
+        if (!mobile.matches("\\+?[0-9]{7,15}")) {
+            throw new IllegalArgumentException("mobile must be a valid phone number");
+        }
     }
 
     private void requireTenant(UUID tenantId) {
@@ -301,6 +307,10 @@ public class PatientService {
 
     private String normalizeNullable(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeOptionalText(String value) {
+        return StringUtils.hasText(value) ? value.trim() : "";
     }
 
     private String detailsJson(PatientEntity entity) {

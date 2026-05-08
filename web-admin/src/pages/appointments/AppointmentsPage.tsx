@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -31,6 +31,7 @@ import {
   createAppointment,
   createWalkInAppointment,
   getClinicUsers,
+  getPatient,
   getTodayAppointments,
   searchPatients,
   type Appointment,
@@ -59,6 +60,7 @@ function statusColor(status: Appointment["status"]) {
 export default function AppointmentsPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [appointments, setAppointments] = React.useState<Appointment[]>([]);
   const [patientResults, setPatientResults] = React.useState<Patient[]>([]);
@@ -111,6 +113,34 @@ export default function AppointmentsPage() {
       cancelled = true;
     };
   }, [auth.accessToken, auth.tenantId]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadPreselectedPatient() {
+      const patientId = searchParams.get("patientId");
+      if (!auth.accessToken || !auth.tenantId || !patientId) {
+        return;
+      }
+      try {
+        const detail = await getPatient(auth.accessToken, auth.tenantId, patientId);
+        if (!cancelled) {
+          setSelectedPatient(detail.patient);
+          setPatientQuery(`${detail.patient.firstName} ${detail.patient.lastName || ""}`.trim());
+          if (searchParams.get("type") === "WALK_IN") {
+            setType("WALK_IN");
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Patient registered. Select the patient again to create an appointment.");
+        }
+      }
+    }
+    void loadPreselectedPatient();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken, auth.tenantId, searchParams]);
 
   React.useEffect(() => {
     let cancelled = false;
