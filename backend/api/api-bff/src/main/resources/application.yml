@@ -32,7 +32,7 @@ server:
 
 clinic:
   ai:
-    enabled: ${CLINIC_AI_ENABLED:false}
+    enabled: ${CLINIC_AI_ENABLED:true}
 
   keycloak:
     admin:

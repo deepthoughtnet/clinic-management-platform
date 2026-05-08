@@ -1,6 +1,8 @@
 package com.deepthoughtnet.clinic.api.clinicaldocument;
 
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
+import com.deepthoughtnet.clinic.api.clinicaldocument.ai.service.ClinicalDocumentAiExtractionService;
+import com.deepthoughtnet.clinic.api.clinicaldocument.dto.AiExtractionReviewRequest;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.ClinicalDocumentResponse;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.DocumentDownloadUrlResponse;
 import com.deepthoughtnet.clinic.api.clinicaldocument.dto.PatientTimelineItemResponse;
@@ -22,6 +24,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -36,6 +39,7 @@ public class ClinicalDocumentController {
     private static final Duration DOWNLOAD_TTL = Duration.ofMinutes(10);
 
     private final ClinicalDocumentService documentService;
+    private final ClinicalDocumentAiExtractionService aiExtractionService;
     private final PatientService patientService;
     private final ConsultationService consultationService;
     private final PrescriptionService prescriptionService;
@@ -43,12 +47,14 @@ public class ClinicalDocumentController {
 
     public ClinicalDocumentController(
             ClinicalDocumentService documentService,
+            ClinicalDocumentAiExtractionService aiExtractionService,
             PatientService patientService,
             ConsultationService consultationService,
             PrescriptionService prescriptionService,
             DoctorAssignmentSecurityService doctorAssignmentSecurityService
     ) {
         this.documentService = documentService;
+        this.aiExtractionService = aiExtractionService;
         this.patientService = patientService;
         this.consultationService = consultationService;
         this.prescriptionService = prescriptionService;
@@ -95,6 +101,33 @@ public class ClinicalDocumentController {
                 referredHospital,
                 referralNotes
         ));
+        aiExtractionService.queueExtraction(tenantId, record.id(), actorAppUserId);
+        return toResponse(record);
+    }
+
+    @PostMapping("/patient-documents/{documentId}/ai-extraction/review")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.update') or @permissionChecker.hasPermission('consultation.complete')")
+    public ClinicalDocumentResponse reviewAiExtraction(@PathVariable UUID documentId, @RequestBody AiExtractionReviewRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        ClinicalDocumentRecord record = aiExtractionService.review(
+                tenantId,
+                documentId,
+                actorAppUserId,
+                request.approved(),
+                request.saveToPatientHistory(),
+                request.reviewNotes()
+        );
+        return toResponse(record);
+    }
+
+    @PostMapping("/patient-documents/{documentId}/ai-extraction/reprocess")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.update') or @permissionChecker.hasPermission('consultation.complete')")
+    public ClinicalDocumentResponse reprocessAiExtraction(@PathVariable UUID documentId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        aiExtractionService.queueExtraction(tenantId, documentId, actorAppUserId);
+        ClinicalDocumentRecord record = documentService.get(tenantId, documentId);
         return toResponse(record);
     }
 
@@ -170,7 +203,11 @@ public class ClinicalDocumentController {
                 record.id().toString(), record.patientId().toString(), record.consultationId() == null ? null : record.consultationId().toString(),
                 record.appointmentId() == null ? null : record.appointmentId().toString(), record.uploadedByAppUserId().toString(), record.documentType().name(),
                 record.originalFilename(), record.mediaType(), record.sizeBytes(), record.checksumSha256(), record.notes(), record.referredDoctor(),
-                record.referredHospital(), record.referralNotes(), record.aiExtractionStatus(), record.ocrStatus(), record.createdAt().toString(), record.updatedAt().toString()
+                record.referredHospital(), record.referralNotes(), record.aiExtractionStatus(), record.aiExtractionProvider(), record.aiExtractionModel(),
+                record.aiExtractionConfidence(), record.aiExtractionSummary(), record.aiExtractionStructuredJson(), record.aiExtractionReviewNotes(),
+                record.aiExtractionReviewedByAppUserId() == null ? null : record.aiExtractionReviewedByAppUserId().toString(),
+                record.aiExtractionReviewedAt() == null ? null : record.aiExtractionReviewedAt().toString(), record.ocrStatus(),
+                record.createdAt().toString(), record.updatedAt().toString()
         );
     }
 }

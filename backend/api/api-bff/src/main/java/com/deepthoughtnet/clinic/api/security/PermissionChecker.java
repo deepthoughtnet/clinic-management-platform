@@ -56,6 +56,13 @@ public class PermissionChecker {
         return false;
     }
 
+    public boolean hasRole(String role) {
+        if (role == null || role.isBlank()) {
+            return false;
+        }
+        return currentRoles().contains(role.trim().toUpperCase(Locale.ROOT));
+    }
+
     public Set<String> currentPermissions() {
         return permissionsForRoles(currentRoles());
     }

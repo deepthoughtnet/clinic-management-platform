@@ -1,5 +1,6 @@
 package com.deepthoughtnet.clinic.api.clinicaldocument.db;
 
+import java.math.BigDecimal;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -78,6 +79,30 @@ public class ClinicalDocumentEntity {
     @Column(name = "ai_extraction_status", length = 32)
     private String aiExtractionStatus;
 
+    @Column(name = "ai_extraction_provider", length = 64)
+    private String aiExtractionProvider;
+
+    @Column(name = "ai_extraction_model", length = 128)
+    private String aiExtractionModel;
+
+    @Column(name = "ai_extraction_confidence", precision = 5, scale = 4)
+    private BigDecimal aiExtractionConfidence;
+
+    @Column(name = "ai_extraction_summary", columnDefinition = "text")
+    private String aiExtractionSummary;
+
+    @Column(name = "ai_extraction_structured_json", columnDefinition = "text")
+    private String aiExtractionStructuredJson;
+
+    @Column(name = "ai_extraction_review_notes", columnDefinition = "text")
+    private String aiExtractionReviewNotes;
+
+    @Column(name = "ai_extraction_reviewed_by_app_user_id")
+    private UUID aiExtractionReviewedByAppUserId;
+
+    @Column(name = "ai_extraction_reviewed_at")
+    private OffsetDateTime aiExtractionReviewedAt;
+
     @Column(name = "ocr_status", length = 32)
     private String ocrStatus;
 
@@ -130,6 +155,14 @@ public class ClinicalDocumentEntity {
         entity.referredHospital = referredHospital;
         entity.referralNotes = referralNotes;
         entity.aiExtractionStatus = "PENDING";
+        entity.aiExtractionProvider = null;
+        entity.aiExtractionModel = null;
+        entity.aiExtractionConfidence = null;
+        entity.aiExtractionSummary = null;
+        entity.aiExtractionStructuredJson = null;
+        entity.aiExtractionReviewNotes = null;
+        entity.aiExtractionReviewedByAppUserId = null;
+        entity.aiExtractionReviewedAt = null;
         entity.ocrStatus = "PENDING";
         entity.createdAt = now;
         entity.updatedAt = now;
@@ -153,8 +186,60 @@ public class ClinicalDocumentEntity {
     public String getReferredHospital() { return referredHospital; }
     public String getReferralNotes() { return referralNotes; }
     public String getAiExtractionStatus() { return aiExtractionStatus; }
+    public String getAiExtractionProvider() { return aiExtractionProvider; }
+    public String getAiExtractionModel() { return aiExtractionModel; }
+    public BigDecimal getAiExtractionConfidence() { return aiExtractionConfidence; }
+    public String getAiExtractionSummary() { return aiExtractionSummary; }
+    public String getAiExtractionStructuredJson() { return aiExtractionStructuredJson; }
+    public String getAiExtractionReviewNotes() { return aiExtractionReviewNotes; }
+    public UUID getAiExtractionReviewedByAppUserId() { return aiExtractionReviewedByAppUserId; }
+    public OffsetDateTime getAiExtractionReviewedAt() { return aiExtractionReviewedAt; }
     public String getOcrStatus() { return ocrStatus; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public int getVersion() { return version; }
+
+    public void markAiExtractionQueued() {
+        this.aiExtractionStatus = "QUEUED";
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void markAiExtractionProcessing(String ocrStatus) {
+        this.aiExtractionStatus = "PROCESSING";
+        this.ocrStatus = ocrStatus;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void markAiExtractionSucceeded(String provider,
+                                          String model,
+                                          BigDecimal confidence,
+                                          String summary,
+                                          String structuredJson,
+                                          String reviewStatus,
+                                          String ocrStatus) {
+        this.aiExtractionProvider = provider;
+        this.aiExtractionModel = model;
+        this.aiExtractionConfidence = confidence;
+        this.aiExtractionSummary = summary;
+        this.aiExtractionStructuredJson = structuredJson;
+        this.aiExtractionStatus = reviewStatus;
+        this.ocrStatus = ocrStatus;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void markAiExtractionFailed(String provider, String model, String errorMessage) {
+        this.aiExtractionProvider = provider;
+        this.aiExtractionModel = model;
+        this.aiExtractionStatus = "FAILED";
+        this.aiExtractionSummary = errorMessage;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void markAiExtractionReviewed(UUID reviewedByAppUserId, String reviewNotes, String reviewStatus) {
+        this.aiExtractionReviewedByAppUserId = reviewedByAppUserId;
+        this.aiExtractionReviewedAt = OffsetDateTime.now();
+        this.aiExtractionReviewNotes = reviewNotes;
+        this.aiExtractionStatus = reviewStatus;
+        this.updatedAt = OffsetDateTime.now();
+    }
 }

@@ -91,7 +91,7 @@ public class PrescriptionController {
     }
 
     @PatchMapping("/{id}/finalize")
-    @PreAuthorize("@permissionChecker.hasPermission('prescription.create')")
+    @PreAuthorize("@permissionChecker.hasPermission('prescription.finalize')")
     public PrescriptionResponse finalizePrescription(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         prescriptionService.findById(tenantId, id).ifPresent(record -> doctorAssignmentSecurityService.requirePatientAccess(tenantId, record.patientId()));

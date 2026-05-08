@@ -1,5 +1,6 @@
 package com.deepthoughtnet.clinic.api.clinicaldocument.service;
 
+import java.math.BigDecimal;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -22,6 +23,14 @@ public record ClinicalDocumentRecord(
         String referredHospital,
         String referralNotes,
         String aiExtractionStatus,
+        String aiExtractionProvider,
+        String aiExtractionModel,
+        BigDecimal aiExtractionConfidence,
+        String aiExtractionSummary,
+        String aiExtractionStructuredJson,
+        String aiExtractionReviewNotes,
+        UUID aiExtractionReviewedByAppUserId,
+        OffsetDateTime aiExtractionReviewedAt,
         String ocrStatus,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt

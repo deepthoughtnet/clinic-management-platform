@@ -9,6 +9,8 @@ public final class Roles {
     public static final String DOCTOR = "DOCTOR";
     public static final String RECEPTIONIST = "RECEPTIONIST";
     public static final String BILLING_USER = "BILLING_USER";
+    public static final String PHARMA = "PHARMA";
+    public static final String PHARMACY = "PHARMACY";
     public static final String PHARMACIST = "PHARMACIST";
     public static final String LAB_ASSISTANT = "LAB_ASSISTANT";
     public static final String CLINIC_REVIEWER = "CLINIC_REVIEWER";

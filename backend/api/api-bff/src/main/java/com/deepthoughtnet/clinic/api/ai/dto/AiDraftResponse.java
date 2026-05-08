@@ -8,6 +8,8 @@ public record AiDraftResponse(
         boolean enabled,
         boolean fallbackUsed,
         String message,
+        String provider,
+        String model,
         String draft,
         Map<String, Object> structuredData,
         BigDecimal confidence,

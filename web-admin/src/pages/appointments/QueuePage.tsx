@@ -23,7 +23,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
-import { getClinicUsers, getDoctorQueueToday, startConsultationFromAppointment, updateAppointmentStatus, type Appointment, type ClinicUser } from "../../api/clinicApi";
+import { getClinicUsers, getDoctorQueueToday, startConsultationFromAppointment, updateAppointmentPriority, updateAppointmentStatus, type Appointment, type ClinicUser, type AppointmentPriority } from "../../api/clinicApi";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -38,6 +38,21 @@ function statusColor(status: Appointment["status"]) {
       return "warning";
     case "CANCELLED":
     case "NO_SHOW":
+      return "default";
+  }
+}
+
+function priorityColor(priority: AppointmentPriority | null | undefined) {
+  switch (priority) {
+    case "URGENT":
+    case "MANUAL_PRIORITY":
+      return "error";
+    case "ELDERLY":
+    case "CHILD":
+      return "secondary";
+    case "FOLLOW_UP":
+      return "info";
+    default:
       return "default";
   }
 }
@@ -77,6 +92,7 @@ export default function QueuePage() {
       appointment.patientNumber,
       appointment.reason,
       appointment.status,
+      appointment.priority,
     ].filter(Boolean).some((value) => String(value).toLowerCase().includes(term));
   });
 
@@ -186,6 +202,24 @@ export default function QueuePage() {
     }
   };
 
+  const changePriority = async (appointmentId: string, nextPriority: AppointmentPriority) => {
+    if (!auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    setSavingId(appointmentId);
+    setError(null);
+    try {
+      await updateAppointmentPriority(auth.accessToken, auth.tenantId, appointmentId, nextPriority);
+      const refreshed = await getDoctorQueueToday(auth.accessToken, auth.tenantId, doctorUserId);
+      setQueue(refreshed);
+    } catch (err) {
+      setError("Unable to update priority. Please refresh and try again.");
+      console.error("Queue priority update failed", err);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   return (
     <Stack spacing={3}>
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
@@ -247,29 +281,52 @@ export default function QueuePage() {
             ) : (
               <Table size="small">
                 <TableHead>
-                  <TableRow>
-                    <TableCell>Token</TableCell>
-                    <TableCell>Patient</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Type</TableCell>
-                    <TableCell>Reason</TableCell>
-                    <TableCell align="right">Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
+                    <TableRow>
+                      <TableCell>Token</TableCell>
+                      <TableCell>Patient</TableCell>
+                      <TableCell>Priority</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell>Type</TableCell>
+                      <TableCell>Arrival</TableCell>
+                      <TableCell>Reason</TableCell>
+                      <TableCell align="right">Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
                   {visibleQueue.map((appointment) => (
-                    <TableRow key={appointment.id}>
-                      <TableCell>{appointment.tokenNumber ?? "-"}</TableCell>
-                      <TableCell>
-                        <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)} sx={{ justifyContent: "flex-start", p: 0, minWidth: 0 }}>
-                          {appointment.patientName || appointment.patientNumber || appointment.patientId}
-                        </Button>
-                      </TableCell>
-                      <TableCell><Chip size="small" label={appointment.status} color={statusColor(appointment.status)} /></TableCell>
-                      <TableCell>{appointment.type}</TableCell>
-                      <TableCell>{appointment.reason || "-"}</TableCell>
-                      <TableCell align="right">
-                        <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
+                      <TableRow key={appointment.id}>
+                        <TableCell>{appointment.tokenNumber ?? "-"}</TableCell>
+                        <TableCell>
+                          <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)} sx={{ justifyContent: "flex-start", p: 0, minWidth: 0 }}>
+                            {appointment.patientName || appointment.patientNumber || appointment.patientId}
+                          </Button>
+                        </TableCell>
+                        <TableCell>
+                          {canManageDeskStatus ? (
+                            <FormControl size="small" fullWidth sx={{ minWidth: 160 }}>
+                              <Select
+                                value={appointment.priority || "NORMAL"}
+                                onChange={(event) => void changePriority(appointment.id, event.target.value as AppointmentPriority)}
+                                disabled={savingId === appointment.id}
+                              >
+                                <MenuItem value="NORMAL">NORMAL</MenuItem>
+                                <MenuItem value="FOLLOW_UP">FOLLOW_UP</MenuItem>
+                                <MenuItem value="CHILD">CHILD</MenuItem>
+                                <MenuItem value="ELDERLY">ELDERLY</MenuItem>
+                                <MenuItem value="URGENT">URGENT</MenuItem>
+                                <MenuItem value="MANUAL_PRIORITY">MANUAL_PRIORITY</MenuItem>
+                              </Select>
+                            </FormControl>
+                          ) : (
+                            <Chip size="small" label={appointment.priority || "NORMAL"} color={priorityColor(appointment.priority)} variant="outlined" />
+                          )}
+                        </TableCell>
+                        <TableCell><Chip size="small" label={appointment.status} color={statusColor(appointment.status)} /></TableCell>
+                        <TableCell>{appointment.type}</TableCell>
+                        <TableCell>{appointment.status === "BOOKED" ? "Not checked in" : appointment.status === "WAITING" ? "Checked in" : appointment.status}</TableCell>
+                        <TableCell>{appointment.reason || "-"}</TableCell>
+                        <TableCell align="right">
+                          <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
                           {canStartConsultation && appointment.status === "WAITING" ? (
                             <Button size="small" disabled={savingId === appointment.id} onClick={() => void startConsultation(appointment.id)}>
                               Start Consultation

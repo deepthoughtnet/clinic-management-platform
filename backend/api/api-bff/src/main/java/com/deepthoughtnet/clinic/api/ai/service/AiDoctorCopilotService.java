@@ -8,6 +8,8 @@ import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationResponse;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProductCode;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,11 +22,14 @@ public class AiDoctorCopilotService {
     private static final String SAFETY_NOTICE = "This is an AI-generated draft. Doctor must verify before use.";
 
     private final AiOrchestrationService aiOrchestrationService;
+    private final ObjectMapper objectMapper;
     private final boolean enabled;
 
     public AiDoctorCopilotService(AiOrchestrationService aiOrchestrationService,
+                                  ObjectMapper objectMapper,
                                   @Value("${clinic.ai.enabled:false}") boolean enabled) {
         this.aiOrchestrationService = aiOrchestrationService;
+        this.objectMapper = objectMapper;
         this.enabled = enabled;
     }
 
@@ -66,6 +71,8 @@ public class AiDoctorCopilotService {
                 true,
                 response.fallbackUsed(),
                 response.fallbackUsed() ? "AI fallback response used; verify manually." : "AI draft generated.",
+                response.provider(),
+                response.model(),
                 response.outputText(),
                 structured,
                 response.confidence(),
@@ -78,9 +85,14 @@ public class AiDoctorCopilotService {
         if (json == null || json.isBlank()) {
             return Map.of();
         }
-        Map<String, Object> structured = new LinkedHashMap<>();
-        structured.put("raw", json);
-        return structured;
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(json, new TypeReference<>() {});
+            return parsed == null ? Map.of("raw", json) : new LinkedHashMap<>(parsed);
+        } catch (Exception ex) {
+            Map<String, Object> structured = new LinkedHashMap<>();
+            structured.put("raw", json);
+            return structured;
+        }
     }
 
     private AiDraftResponse disabledResponse() {
@@ -88,6 +100,8 @@ public class AiDoctorCopilotService {
                 false,
                 false,
                 "AI copilot is disabled for this environment.",
+                null,
+                null,
                 null,
                 Map.of(),
                 null,

@@ -29,6 +29,9 @@ public record ConsultationResponse(
         Double weightKg,
         Double heightCm,
         Integer spo2,
+        Integer respiratoryRate,
+        Double bmi,
+        String bmiCategory,
         OffsetDateTime completedAt,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt

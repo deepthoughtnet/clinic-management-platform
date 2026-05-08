@@ -258,14 +258,20 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
     let cancelled = false;
     const handle = window.setTimeout(async () => {
       const mobile = mobileDigits(form.mobile);
-      if (mode !== "create" || continueNew || !auth.accessToken || !auth.tenantId || mobile.length < 6) {
+      const name = `${form.firstName} ${form.lastName}`.trim();
+      if (mode !== "create" || continueNew || !auth.accessToken || !auth.tenantId) {
+        setDuplicates([]);
+        setCheckingDuplicates(false);
+        return;
+      }
+      if (mobile.length < 6 && name.length < 2) {
         setDuplicates([]);
         setCheckingDuplicates(false);
         return;
       }
       setCheckingDuplicates(true);
       try {
-        const rows = await searchPatients(auth.accessToken, auth.tenantId, { mobile, active: true });
+        const rows = await searchPatients(auth.accessToken, auth.tenantId, mobile.length >= 6 ? { mobile, active: true } : { name, active: true });
         if (!cancelled) {
           setDuplicates(rows.slice(0, 5));
         }
@@ -283,7 +289,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [auth.accessToken, auth.tenantId, continueNew, form.mobile, mode]);
+  }, [auth.accessToken, auth.tenantId, continueNew, form.firstName, form.lastName, form.mobile, mode]);
 
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
@@ -334,9 +340,9 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
         : await updatePatient(auth.accessToken, auth.tenantId, id, payload);
       setSuccess("Patient registered successfully.");
       if (next === "appointment") {
-        navigate(`/appointments?patientId=${saved.id}`);
+        navigate(`/appointments?patientId=${saved.id}`, { state: { patient: saved } });
       } else if (next === "queue") {
-        navigate(`/appointments?patientId=${saved.id}&type=WALK_IN`);
+        navigate(`/appointments?patientId=${saved.id}&type=WALK_IN`, { state: { patient: saved } });
       } else {
         navigate(`/patients/${saved.id}`);
       }
@@ -378,7 +384,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
             {mode === "create" ? "New Patient" : "Edit Patient"}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Fast walk-in registration. Start with mobile number to prevent duplicates.
+            Fast family registration. Start with mobile number to check for existing family members.
           </Typography>
         </Box>
         <Button type="button" variant="outlined" onClick={() => navigate("/patients")}>Back to Patients</Button>
@@ -591,7 +597,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
               </Stack>
             </Stack>
             <Divider sx={{ mt: 1.5 }} />
-            <Typography variant="caption" color="text.secondary">Tenant-scoped duplicate prevention uses active mobile number as the primary key signal.</Typography>
+            <Typography variant="caption" color="text.secondary">Mobile stays searchable across family members; duplicate warnings are advisory, not blocking.</Typography>
           </CardContent>
         </Card>
       ) : null}

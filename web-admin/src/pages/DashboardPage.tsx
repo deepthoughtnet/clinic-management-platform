@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Grid, Stack, Typography } from "@mui/material";
 
 import { useAuth } from "../auth/useAuth";
-import { getDashboardSummary, getPlatformPlans, getPlatformTenants, type DashboardSummary } from "../api/clinicApi";
+import { getDashboardSummary, getPlatformPlans, getPlatformTenants, getRecentAiRequests, type AiRecentRequestRecord, type DashboardSummary } from "../api/clinicApi";
 
 type SummaryCard = {
   label: string;
@@ -55,13 +55,15 @@ export default function DashboardPage() {
   const [platformTenants, setPlatformTenants] = React.useState<number>(0);
   const [platformActiveTenants, setPlatformActiveTenants] = React.useState<number>(0);
   const [platformPlans, setPlatformPlans] = React.useState<number>(0);
+  const [recentAiRequests, setRecentAiRequests] = React.useState<AiRecentRequestRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const canBilling = auth.hasPermission("billing.create") || auth.hasPermission("payment.collect");
+  const canBilling = auth.hasPermission("billing.read") || auth.hasPermission("billing.create") || auth.hasPermission("payment.collect");
   const canConsultation = auth.hasPermission("consultation.read") || auth.hasPermission("consultation.create");
   const canVaccination = auth.hasPermission("vaccination.manage") || auth.hasPermission("vaccination.read");
   const canInventory = auth.hasPermission("inventory.manage") || auth.hasPermission("inventory.read");
   const canReports = auth.hasPermission("report.read");
+  const canAiCopilot = auth.hasPermission("ai_copilot.read") || auth.hasPermission("ai_copilot.run") || auth.hasPermission("ai_copilot.clinic.read") || auth.hasPermission("ai_copilot.clinic.run");
   const isDoctor = (auth.tenantRole || "").toUpperCase() === "DOCTOR";
 
   React.useEffect(() => {
@@ -93,6 +95,30 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, [auth.accessToken, auth.tenantId]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadAiRecent() {
+      if (!auth.accessToken || !auth.tenantId || !canAiCopilot) {
+        setRecentAiRequests([]);
+        return;
+      }
+      try {
+        const rows = await getRecentAiRequests(auth.accessToken, auth.tenantId);
+        if (!cancelled) {
+          setRecentAiRequests(rows);
+        }
+      } catch {
+        if (!cancelled) {
+          setRecentAiRequests([]);
+        }
+      }
+    }
+    void loadAiRecent();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken, auth.tenantId, canAiCopilot]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -132,6 +158,7 @@ export default function DashboardPage() {
         ...(canReports ? [{ label: "Follow-ups due", value: summary.followUpsDue, tone: "warning", link: "/reports" } as SummaryCard] : []),
         ...(canVaccination ? [{ label: "Vaccinations due", value: summary.vaccinationsDue, tone: "warning", link: "/vaccinations" } as SummaryCard] : []),
         ...(canInventory ? [{ label: "Low stock medicines", value: summary.lowStockMedicines, tone: "error", link: "/inventory" } as SummaryCard] : []),
+        ...(canAiCopilot ? [{ label: "AI Co-pilot", value: "Enabled", tone: "info", link: "/consultations" } as SummaryCard] : []),
       ]
     : [];
 
@@ -207,13 +234,45 @@ export default function DashboardPage() {
           <CircularProgress />
         </Box>
       ) : (
-        <Grid container spacing={2}>
-          {cards.map((card) => (
-            <Grid key={card.label} size={{ xs: 12, sm: 6, lg: 4 }}>
-              <SummaryTile card={card} />
-            </Grid>
-          ))}
-        </Grid>
+        <Stack spacing={2}>
+          <Grid container spacing={2}>
+            {cards.map((card) => (
+              <Grid key={card.label} size={{ xs: 12, sm: 6, lg: 4 }}>
+                <SummaryTile card={card} />
+              </Grid>
+            ))}
+          </Grid>
+          {canAiCopilot ? (
+            <Card>
+              <CardContent>
+                <Stack spacing={1.5}>
+                  <Typography variant="h6" sx={{ fontWeight: 800 }}>Recent AI Activity</Typography>
+                  {!recentAiRequests.length ? (
+                    <Alert severity="info">No recent AI requests are available yet.</Alert>
+                  ) : (
+                    <Stack spacing={1}>
+                      {recentAiRequests.slice(0, 5).map((row) => (
+                        <Box key={row.auditId} sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", p: 1, border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+                          <Box>
+                            <Typography variant="body2" sx={{ fontWeight: 800 }}>{row.taskType.replaceAll("_", " ")}</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {row.provider || "Provider pending"}{row.model ? ` • ${row.model}` : ""}{row.useCaseCode ? ` • ${row.useCaseCode}` : ""}
+                            </Typography>
+                          </Box>
+                          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                            <Chip size="small" label={row.status} color={row.status === "SUCCESS" ? "success" : row.status === "FALLBACK" ? "warning" : "default"} />
+                            {row.confidence != null ? <Chip size="small" label={`Confidence ${(row.confidence * 100).toFixed(0)}%`} /> : null}
+                            {row.fallbackUsed ? <Chip size="small" label="Fallback used" /> : null}
+                          </Stack>
+                        </Box>
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : null}
+        </Stack>
       )}
     </Stack>
   );

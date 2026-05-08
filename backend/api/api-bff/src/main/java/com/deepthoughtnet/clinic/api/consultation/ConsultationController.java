@@ -72,7 +72,7 @@ public class ConsultationController {
     }
 
     @PatchMapping("/{id}/complete")
-    @PreAuthorize("@permissionChecker.hasPermission('consultation.update')")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.complete')")
     public ConsultationResponse complete(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requireDoctorCanCompleteConsultation(tenantId, id);
@@ -107,7 +107,8 @@ public class ConsultationController {
                 request.temperatureUnit(),
                 request.weightKg(),
                 request.heightCm(),
-                request.spo2()
+                request.spo2(),
+                request.respiratoryRate()
         );
     }
 
@@ -136,6 +137,9 @@ public class ConsultationController {
                 record.weightKg(),
                 record.heightCm(),
                 record.spo2(),
+                record.respiratoryRate(),
+                com.deepthoughtnet.clinic.consultation.service.ConsultationVitalsCalculator.calculateBmi(record.weightKg(), record.heightCm()),
+                com.deepthoughtnet.clinic.consultation.service.ConsultationVitalsCalculator.bmiCategory(record.weightKg(), record.heightCm()),
                 record.completedAt(),
                 record.createdAt(),
                 record.updatedAt()

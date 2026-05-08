@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.appointment.db.AppointmentEntity;
 import com.deepthoughtnet.clinic.appointment.db.AppointmentRepository;
 import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityRepository;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatusUpdateCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
@@ -121,7 +122,7 @@ class AppointmentServiceStatusTransitionTest {
 
     private AppointmentEntity appointment(AppointmentStatus status) {
         AppointmentEntity entity = AppointmentEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID);
-        entity.update(LocalDate.now(), null, 1, "OPD visit", AppointmentType.SCHEDULED, status);
+        entity.update(LocalDate.now(), null, 1, "OPD visit", AppointmentType.SCHEDULED, status, AppointmentPriority.NORMAL);
         return entity;
     }
 }

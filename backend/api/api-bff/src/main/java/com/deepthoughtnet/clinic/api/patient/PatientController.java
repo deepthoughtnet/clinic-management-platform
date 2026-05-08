@@ -226,6 +226,7 @@ public class PatientController {
                 record.tokenNumber(),
                 record.reason(),
                 record.type(),
+                record.priority(),
                 record.status(),
                 record.createdAt(),
                 record.updatedAt()
@@ -257,6 +258,9 @@ public class PatientController {
                 record.weightKg(),
                 record.heightCm(),
                 record.spo2(),
+                record.respiratoryRate(),
+                com.deepthoughtnet.clinic.consultation.service.ConsultationVitalsCalculator.calculateBmi(record.weightKg(), record.heightCm()),
+                com.deepthoughtnet.clinic.consultation.service.ConsultationVitalsCalculator.bmiCategory(record.weightKg(), record.heightCm()),
                 record.completedAt(),
                 record.createdAt(),
                 record.updatedAt()

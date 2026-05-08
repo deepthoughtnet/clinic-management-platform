@@ -37,6 +37,8 @@ export default function ConsultationsPage() {
   const [rows, setRows] = React.useState<Consultation[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const tenantRole = (auth.tenantRole || "").toUpperCase();
+  const canOpenWorkspace = tenantRole === "DOCTOR" || tenantRole === "CLINIC_ADMIN";
 
   React.useEffect(() => {
     let cancelled = false;
@@ -102,7 +104,7 @@ export default function ConsultationsPage() {
                   <TableCell>Status</TableCell>
                   <TableCell>Chief complaint</TableCell>
                   <TableCell>Created</TableCell>
-                  <TableCell align="right">Actions</TableCell>
+                  {canOpenWorkspace ? <TableCell align="right">Actions</TableCell> : null}
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -122,11 +124,13 @@ export default function ConsultationsPage() {
                     <TableCell><Chip size="small" label={row.status} color={statusColor(row.status)} /></TableCell>
                     <TableCell>{row.chiefComplaints || "-"}</TableCell>
                     <TableCell>{new Date(row.createdAt).toLocaleString()}</TableCell>
-                    <TableCell align="right">
-                      <Button size="small" onClick={() => navigate(`/consultations/${row.id}`)}>
-                        Open Workspace
-                      </Button>
-                    </TableCell>
+                    {canOpenWorkspace ? (
+                      <TableCell align="right">
+                        <Button size="small" onClick={() => navigate(`/consultations/${row.id}`)}>
+                          Open Workspace
+                        </Button>
+                      </TableCell>
+                    ) : null}
                   </TableRow>
                 ))}
               </TableBody>

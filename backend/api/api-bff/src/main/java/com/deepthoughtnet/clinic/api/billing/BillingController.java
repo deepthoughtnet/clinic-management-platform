@@ -47,7 +47,7 @@ public class BillingController {
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('patient.read')")
     public List<BillResponse> list(
             @RequestParam(required = false) UUID patientId,
             @RequestParam(required = false) String status
@@ -67,14 +67,14 @@ public class BillingController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('patient.read')")
     public BillResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toResponse(billingService.findById(tenantId, id).orElseThrow(() -> new IllegalArgumentException("Bill not found")));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.create')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.update') or @permissionChecker.hasPermission('billing.create')")
     public BillResponse update(@PathVariable UUID id, @RequestBody BillRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
@@ -113,21 +113,21 @@ public class BillingController {
     }
 
     @GetMapping("/{billId}/payments")
-    @PreAuthorize("@permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
     public List<PaymentResponse> listPayments(@PathVariable UUID billId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return billingService.listPayments(tenantId, billId).stream().map(this::toPaymentResponse).toList();
     }
 
     @GetMapping("/{billId}/receipts")
-    @PreAuthorize("@permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.receipt') or @permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
     public List<ReceiptResponse> listReceipts(@PathVariable UUID billId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return billingService.listReceipts(tenantId, billId).stream().map(this::toReceiptResponse).toList();
     }
 
     @GetMapping(value = "/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
-    @PreAuthorize("@permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.receipt') or @permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('patient.read')")
     public ResponseEntity<byte[]> downloadBillPdf(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();

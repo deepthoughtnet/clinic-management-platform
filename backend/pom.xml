@@ -45,6 +45,8 @@
 
     <module>providers/ai-gemini</module>
     <module>providers/ai-spi</module>
+    <module>providers/ocr-spi</module>
+    <module>providers/ocr-tesseract</module>
     <module>providers/notify-email</module>
     <module>providers/notify-logging</module>
     <module>providers/notify-spi</module>

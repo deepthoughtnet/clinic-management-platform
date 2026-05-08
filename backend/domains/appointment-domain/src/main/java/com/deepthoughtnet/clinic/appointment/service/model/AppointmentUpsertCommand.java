@@ -11,6 +11,7 @@ public record AppointmentUpsertCommand(
         LocalTime appointmentTime,
         String reason,
         AppointmentType type,
-        AppointmentStatus status
+        AppointmentStatus status,
+        AppointmentPriority priority
 ) {
 }

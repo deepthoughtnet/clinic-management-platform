@@ -28,6 +28,7 @@ public record ConsultationRecord(
         Double weightKg,
         Double heightCm,
         Integer spo2,
+        Integer respiratoryRate,
         OffsetDateTime completedAt,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt

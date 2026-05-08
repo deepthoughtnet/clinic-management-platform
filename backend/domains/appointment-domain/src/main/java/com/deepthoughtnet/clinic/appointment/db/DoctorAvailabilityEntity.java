@@ -48,8 +48,17 @@ public class DoctorAvailabilityEntity {
     @Column(name = "end_time", nullable = false)
     private LocalTime endTime;
 
+    @Column(name = "break_start_time")
+    private LocalTime breakStartTime;
+
+    @Column(name = "break_end_time")
+    private LocalTime breakEndTime;
+
     @Column(name = "consultation_duration_minutes", nullable = false)
     private Integer consultationDurationMinutes;
+
+    @Column(name = "max_patients_per_slot")
+    private Integer maxPatientsPerSlot;
 
     @Column(nullable = false)
     private boolean active = true;
@@ -73,11 +82,23 @@ public class DoctorAvailabilityEntity {
         return entity;
     }
 
-    public void update(DayOfWeek dayOfWeek, LocalTime startTime, LocalTime endTime, Integer consultationDurationMinutes, boolean active) {
+    public void update(
+            DayOfWeek dayOfWeek,
+            LocalTime startTime,
+            LocalTime endTime,
+            LocalTime breakStartTime,
+            LocalTime breakEndTime,
+            Integer consultationDurationMinutes,
+            Integer maxPatientsPerSlot,
+            boolean active
+    ) {
         this.dayOfWeek = dayOfWeek;
         this.startTime = startTime;
         this.endTime = endTime;
+        this.breakStartTime = breakStartTime;
+        this.breakEndTime = breakEndTime;
         this.consultationDurationMinutes = consultationDurationMinutes;
+        this.maxPatientsPerSlot = maxPatientsPerSlot;
         this.active = active;
         this.updatedAt = OffsetDateTime.now();
     }
@@ -106,8 +127,20 @@ public class DoctorAvailabilityEntity {
         return endTime;
     }
 
+    public LocalTime getBreakStartTime() {
+        return breakStartTime;
+    }
+
+    public LocalTime getBreakEndTime() {
+        return breakEndTime;
+    }
+
     public Integer getConsultationDurationMinutes() {
         return consultationDurationMinutes;
+    }
+
+    public Integer getMaxPatientsPerSlot() {
+        return maxPatientsPerSlot;
     }
 
     public boolean isActive() {

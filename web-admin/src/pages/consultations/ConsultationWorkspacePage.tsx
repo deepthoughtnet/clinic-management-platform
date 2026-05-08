@@ -30,6 +30,7 @@ import AddRoundedIcon from "@mui/icons-material/AddRounded";
 
 import { useAuth } from "../../auth/useAuth";
 import {
+  aiClinicalSummary,
   aiPatientInstructions,
   aiStructureConsultationNotes,
   aiSuggestDiagnosis,
@@ -53,6 +54,7 @@ import {
   startConsultationFromAppointment,
   updateConsultation,
   updatePrescription,
+  type AiDraftResponse,
   type Consultation,
   type ConsultationInput,
   type Medicine,
@@ -82,6 +84,7 @@ type ConsultationFormState = {
   weightKg: string;
   heightCm: string;
   spo2: string;
+  respiratoryRate: string;
 };
 
 type MedicineRow = PrescriptionMedicine & { localId: string };
@@ -127,6 +130,7 @@ const DIAGNOSIS_CHIPS = ["Viral Fever", "Upper Respiratory Infection", "Gastriti
 const FOLLOWUP_CHIPS = ["3 days", "5 days", "7 days", "15 days", "1 month"];
 const TEST_CHIPS = ["CBC", "Urine Routine", "Blood Sugar", "X-Ray", "ECG"];
 const ADVICE_CHIPS = ["Hydration", "Rest", "Steam inhalation", "Avoid oily/spicy food", "Monitor warning signs", "Continue current medicines"];
+const AI_DISABLED_MESSAGE = "AI assistance is not enabled for this clinic. Please contact your clinic administrator.";
 
 const FREQUENCIES = ["1-0-0", "0-1-0", "0-0-1", "1-0-1", "1-1-1"];
 const DURATIONS = ["3 days", "5 days", "7 days", "10 days", "15 days"];
@@ -213,6 +217,28 @@ function statusColor(status: Consultation["status"] | Prescription["status"]) {
   }
 }
 
+function calculateBmi(weightKg: string, heightCm: string) {
+  const weight = Number(weightKg);
+  const height = Number(heightCm);
+  if (!weightKg || !heightCm || Number.isNaN(weight) || Number.isNaN(height) || weight <= 0 || height <= 0) {
+    return null;
+  }
+  const meters = height / 100;
+  if (meters <= 0) {
+    return null;
+  }
+  const bmi = weight / (meters * meters);
+  return Number.isFinite(bmi) ? bmi : null;
+}
+
+function bmiCategory(bmi: number | null) {
+  if (bmi == null) return null;
+  if (bmi < 18.5) return "Underweight";
+  if (bmi < 25) return "Normal";
+  if (bmi < 30) return "Overweight";
+  return "Obese";
+}
+
 function emptyConsultationForm(record?: Consultation | null): ConsultationFormState {
   return {
     chiefComplaints: record?.chiefComplaints || "",
@@ -229,6 +255,7 @@ function emptyConsultationForm(record?: Consultation | null): ConsultationFormSt
     weightKg: record?.weightKg?.toString() || "",
     heightCm: record?.heightCm?.toString() || "",
     spo2: record?.spo2?.toString() || "",
+    respiratoryRate: record?.respiratoryRate?.toString() || "",
   };
 }
 
@@ -289,6 +316,7 @@ function toConsultationInput(form: ConsultationFormState, consultation: Consulta
     weightKg: form.weightKg ? Number(form.weightKg) : null,
     heightCm: form.heightCm ? Number(form.heightCm) : null,
     spo2: form.spo2 ? Number(form.spo2) : null,
+    respiratoryRate: form.respiratoryRate ? Number(form.respiratoryRate) : null,
   };
 }
 
@@ -489,6 +517,7 @@ export default function ConsultationWorkspacePage() {
   const [autosaveStatus, setAutosaveStatus] = React.useState<AutosaveStatus>("idle");
   const [aiBusy, setAiBusy] = React.useState(false);
   const [aiAvailable, setAiAvailable] = React.useState(true);
+  const [clinicalSummary, setClinicalSummary] = React.useState<AiDraftResponse | null>(null);
   const [medicineCatalogWarning, setMedicineCatalogWarning] = React.useState<string | null>(null);
   const [viewerDocument, setViewerDocument] = React.useState<ClinicalDocument | null>(null);
   const [viewerUrl, setViewerUrl] = React.useState<string | null>(null);
@@ -548,6 +577,7 @@ export default function ConsultationWorkspacePage() {
       setLoading(true);
       setError(null);
       setMedicineCatalogWarning(null);
+      setClinicalSummary(null);
       try {
         const [medicines, consult] = await Promise.all([
           getMedicines(auth.accessToken, auth.tenantId).catch(() => {
@@ -646,10 +676,18 @@ export default function ConsultationWorkspacePage() {
 
   if (!auth.tenantId) return <Alert severity="warning">No tenant is selected for this session.</Alert>;
 
-  const readOnly = consultation ? consultation.status !== "DRAFT" : false;
+  const canEditConsultation = auth.hasPermission("consultation.update");
+  const canCompleteConsultation = auth.hasPermission("consultation.complete");
+  const canFinalizePrescription = auth.hasPermission("prescription.finalize");
+  const canRunAi = auth.hasPermission("ai_copilot.run") || auth.hasPermission("ai_copilot.clinic.run");
+  const readOnly = consultation ? consultation.status !== "DRAFT" || !canEditConsultation : !canEditConsultation;
   const prescriptionReadOnly = readOnly || (prescription ? !["DRAFT", "PREVIEWED"].includes(prescription.status) : false);
   const patientRow = patient?.patient;
   const lastConsultation = patient?.previousConsultations?.find((row) => row.id !== consultation?.id);
+  const currentBmi = calculateBmi(consultationForm.weightKg, consultationForm.heightCm);
+  const currentBmiCategory = bmiCategory(currentBmi);
+  const lastBmi = calculateBmi(lastConsultation?.weightKg?.toString() || "", lastConsultation?.heightCm?.toString() || "");
+  const lastBmiCategory = bmiCategory(lastBmi);
   const recentMedicineNames = Array.from(new Set(previousPrescriptions.flatMap((rx) => rx.medicines.map((med) => med.medicineName)).filter(Boolean))).slice(0, 10);
   const filteredMedicines = medicineCatalog
     .filter((medicine) => medicine.active !== false)
@@ -1008,7 +1046,7 @@ export default function ConsultationWorkspacePage() {
           patientId: consultation.patientId,
           doctorNotes: consultationForm.chiefComplaints,
           symptoms: consultationForm.symptoms,
-          vitals: `BP:${consultationForm.bloodPressureSystolic}/${consultationForm.bloodPressureDiastolic}, Pulse:${consultationForm.pulseRate}, Temp:${consultationForm.temperature}`,
+          vitals: `BP:${consultationForm.bloodPressureSystolic}/${consultationForm.bloodPressureDiastolic}, Pulse:${consultationForm.pulseRate}, Resp:${consultationForm.respiratoryRate}, Temp:${consultationForm.temperature}, BMI:${currentBmi ? currentBmi.toFixed(1) : "-"}`,
           observations: consultationForm.clinicalNotes,
         });
         if (draft.draft) setConsultationForm((current) => ({ ...current, clinicalNotes: `${current.clinicalNotes.trim()}\n\nAI Draft:\n${draft.draft}`.trim() }));
@@ -1038,7 +1076,7 @@ export default function ConsultationWorkspacePage() {
       const message = err instanceof Error ? err.message : "AI action failed";
       if (message.includes("HTTP 403") || message.includes("HTTP 404")) {
         setAiAvailable(false);
-        setError("AI module is not enabled for your clinic.");
+        setError(AI_DISABLED_MESSAGE);
       } else {
         setError("AI assistance is temporarily unavailable.");
       }
@@ -1068,11 +1106,42 @@ export default function ConsultationWorkspacePage() {
       const message = err instanceof Error ? err.message : "AI action failed";
       if (message.includes("HTTP 403") || message.includes("HTTP 404")) {
         setAiAvailable(false);
-        setError("AI module is not enabled for your clinic.");
+        setError(AI_DISABLED_MESSAGE);
       } else {
         setError("AI assistance is temporarily unavailable.");
       }
       console.error("AI prescription suggestion failed", err);
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const generateClinicalSummary = async () => {
+    if (!auth.accessToken || !auth.tenantId || !consultation || !patient) return;
+    setAiBusy(true);
+    setError(null);
+    try {
+      const draft = await aiClinicalSummary(auth.accessToken, auth.tenantId, {
+        patientId: consultation.patientId,
+        patientName: `${patient.patient.firstName} ${patient.patient.lastName}`.trim(),
+        historyText: patient.patient.notes || "",
+        chronicHistory: [patient.patient.existingConditions, patient.patient.longTermMedications, patient.patient.surgicalHistory].filter(Boolean).join(" • "),
+        recentConsultationSummary: lastConsultation ? `${lastConsultation.createdAt}: ${lastConsultation.diagnosis || "Consultation"}${lastConsultation.advice ? ` | Advice: ${lastConsultation.advice}` : ""}` : "",
+        recentConsultations: (patient.previousConsultations || []).slice(0, 5).map((row) => `${row.createdAt}: ${row.diagnosis || "Consultation"}${row.advice ? ` | ${row.advice}` : ""}`),
+        currentMedications: patient.patient.longTermMedications ? [patient.patient.longTermMedications] : [],
+        allergies: patient.patient.allergies ? [patient.patient.allergies] : [],
+      });
+      setClinicalSummary(draft);
+      setInfo("Clinical summary generated. Doctor must verify before use.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "AI action failed";
+      if (message.includes("HTTP 403") || message.includes("HTTP 404")) {
+        setAiAvailable(false);
+        setError(AI_DISABLED_MESSAGE);
+      } else {
+        setError("AI assistance is temporarily unavailable.");
+      }
+      console.error("AI clinical summary failed", err);
     } finally {
       setAiBusy(false);
     }
@@ -1146,7 +1215,7 @@ export default function ConsultationWorkspacePage() {
           <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" justifyContent={{ xs: "flex-start", xl: "flex-end" }}>
             <Button type="button" size="small" variant="outlined" onClick={() => void backToQueue()}>Back to Queue</Button>
             <Button type="button" size="small" disabled={saving || readOnly} onClick={() => void manualSaveDraft()}>Save Draft</Button>
-            <Button type="button" size="small" color="secondary" disabled={saving || readOnly} onClick={() => void completeCurrentConsultation()}>Complete</Button>
+            {canCompleteConsultation ? <Button type="button" size="small" color="secondary" disabled={saving || readOnly} onClick={() => void completeCurrentConsultation()}>Complete</Button> : null}
             <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void printCurrentPrescription()}>Print</Button>
           </Stack>
         </Stack>
@@ -1167,7 +1236,7 @@ export default function ConsultationWorkspacePage() {
             <Tab label="Prescription" />
             <Tab label="History" />
             <Tab label="Investigations" />
-            <Tab label="AI Assist" />
+            {canRunAi ? <Tab label="AI Assist" /> : null}
           </Tabs>
         </CardContent>
       </Card>
@@ -1218,7 +1287,7 @@ export default function ConsultationWorkspacePage() {
                       setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, customDiagnosis) }));
                       setCustomDiagnosis("");
                     }}>Add</Button>
-                    {aiAvailable ? <Button type="button" variant="outlined" disabled={aiBusy || readOnly} onClick={() => void runAiAction("diagnosis")}>AI Suggest</Button> : null}
+                    {canRunAi && aiAvailable ? <Button type="button" variant="outlined" disabled={aiBusy || readOnly} onClick={() => void runAiAction("diagnosis")}>AI Suggest</Button> : null}
                   </Stack>
                   <TextField size="small" fullWidth label="Selected diagnosis" value={consultationForm.diagnosis} onChange={(e) => setConsultationForm((c) => ({ ...c, diagnosis: e.target.value }))} disabled={readOnly} />
                 </Stack>
@@ -1252,6 +1321,9 @@ export default function ConsultationWorkspacePage() {
                     <Grid size={{ xs: 6, md: 4 }}><TextField size="small" fullWidth label="Pulse" value={consultationForm.pulseRate} onChange={(e) => setConsultationForm((c) => ({ ...c, pulseRate: e.target.value }))} disabled={readOnly} /></Grid>
                     <Grid size={{ xs: 6, md: 4 }}><TextField size="small" fullWidth label="Temp" value={consultationForm.temperature} onChange={(e) => setConsultationForm((c) => ({ ...c, temperature: e.target.value }))} disabled={readOnly} /></Grid>
                     <Grid size={{ xs: 6, md: 4 }}><TextField size="small" fullWidth label="SpO2" value={consultationForm.spo2} onChange={(e) => setConsultationForm((c) => ({ ...c, spo2: e.target.value }))} disabled={readOnly} /></Grid>
+                    <Grid size={{ xs: 6, md: 4 }}><TextField size="small" fullWidth label="Resp. Rate" value={consultationForm.respiratoryRate} onChange={(e) => setConsultationForm((c) => ({ ...c, respiratoryRate: e.target.value }))} disabled={readOnly} /></Grid>
+                    <Grid size={{ xs: 6, md: 4 }}><TextField size="small" fullWidth label="Weight (kg)" value={consultationForm.weightKg} onChange={(e) => setConsultationForm((c) => ({ ...c, weightKg: e.target.value }))} disabled={readOnly} /></Grid>
+                    <Grid size={{ xs: 6, md: 4 }}><TextField size="small" fullWidth label="Height (cm)" value={consultationForm.heightCm} onChange={(e) => setConsultationForm((c) => ({ ...c, heightCm: e.target.value }))} disabled={readOnly} /></Grid>
                     <Grid size={{ xs: 6, md: 4 }}>
                       <FormControl fullWidth size="small">
                         <InputLabel id="temp-unit-label">Unit</InputLabel>
@@ -1263,6 +1335,12 @@ export default function ConsultationWorkspacePage() {
                       </FormControl>
                     </Grid>
                   </Grid>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    <Chip size="small" label={`BMI ${currentBmi ? currentBmi.toFixed(1) : "-"}`} variant="outlined" />
+                    <Chip size="small" label={currentBmiCategory || "BMI n/a"} variant="outlined" />
+                    <Chip size="small" label={`Last BMI ${lastBmi ? lastBmi.toFixed(1) : "-"}`} variant="outlined" />
+                    <Chip size="small" label={lastBmiCategory || "Last BMI n/a"} variant="outlined" />
+                  </Stack>
                   <QuickChipGroup disabled={readOnly} chips={FOLLOWUP_CHIPS} color="secondary" onPick={applyFollowUp} />
                   <TextField size="small" label="Follow-up date" type="date" value={consultationForm.followUpDate} disabled={readOnly} onChange={(e) => setConsultationForm((c) => ({ ...c, followUpDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
                 </Stack>
@@ -1325,7 +1403,7 @@ export default function ConsultationWorkspacePage() {
                       <Button type="button" size="small" startIcon={<AddRoundedIcon />} disabled={prescriptionReadOnly} onClick={addManualMedicine}>Manual row</Button>
                       <Button type="button" size="small" variant="outlined" disabled={saving || prescriptionReadOnly} onClick={() => void persistPrescription()}>Save Rx</Button>
                       <Button type="button" size="small" variant="outlined" disabled={saving || prescriptionReadOnly} onClick={() => void previewCurrentPrescription()}>Preview</Button>
-                      <Button type="button" size="small" color="secondary" disabled={saving || prescriptionReadOnly} onClick={() => void finalizeCurrentPrescription()}>Finalize</Button>
+                      {canFinalizePrescription ? <Button type="button" size="small" color="secondary" disabled={saving || prescriptionReadOnly} onClick={() => void finalizeCurrentPrescription()}>Finalize</Button> : null}
                     </Stack>
                   </Box>
 
@@ -1380,7 +1458,7 @@ export default function ConsultationWorkspacePage() {
       {activeTab === 2 ? (
         <Grid container spacing={1.5}>
           <Grid size={{ xs: 12, md: 4 }}>
-            <Card><CardContent><Typography variant="h6">Clinical Snapshot</Typography><Typography variant="body2"><b>Last diagnosis:</b> {lastConsultation?.diagnosis || "-"}</Typography><Typography variant="body2"><b>Chronic:</b> {patientRow?.existingConditions || "Not recorded"}</Typography><Typography variant="body2" color={patientRow?.allergies ? "error" : "text.primary"}><b>Allergies:</b> {patientRow?.allergies || "Not recorded"}</Typography><Typography variant="body2"><b>Long-term meds:</b> {patientRow?.longTermMedications || "Not recorded"}</Typography><Typography variant="body2"><b>History:</b> {patientRow?.surgicalHistory || "Not recorded"}</Typography></CardContent></Card>
+            <Card><CardContent><Typography variant="h6">Clinical Snapshot</Typography><Typography variant="body2"><b>Last diagnosis:</b> {lastConsultation?.diagnosis || "-"}</Typography><Typography variant="body2"><b>Last vitals:</b> {lastConsultation ? `BP ${lastConsultation.bloodPressureSystolic || "-"} / ${lastConsultation.bloodPressureDiastolic || "-"}, Pulse ${lastConsultation.pulseRate || "-"}, Temp ${lastConsultation.temperature || "-"}, Resp ${lastConsultation.respiratoryRate || "-"}` : "Not recorded"}</Typography><Typography variant="body2"><b>Last BMI:</b> {lastBmi ? `${lastBmi.toFixed(1)} (${lastBmiCategory || "n/a"})` : "Not recorded"}</Typography><Typography variant="body2"><b>Chronic:</b> {patientRow?.existingConditions || "Not recorded"}</Typography><Typography variant="body2" color={patientRow?.allergies ? "error" : "text.primary"}><b>Allergies:</b> {patientRow?.allergies || "Not recorded"}</Typography><Typography variant="body2"><b>Long-term meds:</b> {patientRow?.longTermMedications || "Not recorded"}</Typography><Typography variant="body2"><b>History:</b> {patientRow?.surgicalHistory || "Not recorded"}</Typography></CardContent></Card>
           </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
             <Card><CardContent><Typography variant="h6">Previous Consultations</Typography>{!patient?.previousConsultations?.length ? <Alert severity="info">No previous consultations.</Alert> : <List dense>{patient.previousConsultations.slice(0, 8).map((row) => <ListItemButton key={row.id} onClick={() => navigate(`/consultations/${row.id}`)}><ListItemText primary={row.diagnosis || "No diagnosis"} secondary={`${compactDate(row.createdAt)} • ${row.status}`} /></ListItemButton>)}</List>}</CardContent></Card>
@@ -1405,10 +1483,42 @@ export default function ConsultationWorkspacePage() {
         </Grid>
       ) : null}
 
-      {activeTab === 4 ? (
+      {canRunAi && activeTab === 4 ? (
         <Grid container spacing={1.5}>
           <Grid size={{ xs: 12, md: 6 }}>
-            <Card><CardContent><Stack spacing={1.25}><Typography variant="h6">AI Clinical Assist</Typography>{!aiAvailable ? <Alert severity="warning">AI module is not enabled for your clinic.</Alert> : null}<Button type="button" disabled={aiBusy || readOnly || !aiAvailable} onClick={() => void runAiAction("diagnosis")}>Suggest diagnosis</Button><Button type="button" variant="outlined" disabled={aiBusy || readOnly || !aiAvailable} onClick={() => void runAiAction("notes")}>Structure notes</Button><Button type="button" variant="outlined" disabled={aiBusy || !aiAvailable} onClick={() => void applyAiPrescriptionTemplate()}>Suggest prescription template</Button><Button type="button" variant="outlined" disabled={aiBusy || !aiAvailable} onClick={() => void runAiAction("instructions")}>Patient-friendly instructions</Button>{aiBusy ? <Typography variant="caption" color="text.secondary">AI assistance is preparing suggestions...</Typography> : null}</Stack></CardContent></Card>
+            <Stack spacing={1.5}>
+              <Card>
+                <CardContent>
+                  <Stack spacing={1.25}>
+                    <Typography variant="h6">AI Clinical Assist</Typography>
+                    {!aiAvailable ? <Alert severity="warning">{AI_DISABLED_MESSAGE}</Alert> : null}
+                    <Button type="button" disabled={aiBusy || readOnly || !aiAvailable} onClick={() => void runAiAction("diagnosis")}>Suggest diagnosis</Button>
+                    <Button type="button" variant="outlined" disabled={aiBusy || readOnly || !aiAvailable} onClick={() => void runAiAction("notes")}>Structure notes</Button>
+                    <Button type="button" variant="outlined" disabled={aiBusy || prescriptionReadOnly || !aiAvailable} onClick={() => void applyAiPrescriptionTemplate()}>Suggest prescription template</Button>
+                    <Button type="button" variant="outlined" disabled={aiBusy || !aiAvailable} onClick={() => void runAiAction("instructions")}>Patient-friendly instructions</Button>
+                    {aiBusy ? <Typography variant="caption" color="text.secondary">AI assistance is preparing suggestions...</Typography> : null}
+                  </Stack>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent>
+                  <Stack spacing={1.25}>
+                    <Typography variant="h6">Clinical Summary</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Previous visit summary, chronic history, and recent consultation summary are generated as assistive context only.
+                    </Typography>
+                    <Button type="button" variant="contained" disabled={aiBusy || !aiAvailable} onClick={() => void generateClinicalSummary()}>Generate summary</Button>
+                    {clinicalSummary ? (
+                      <Stack spacing={1}>
+                        <Chip size="small" color={clinicalSummary.fallbackUsed ? "warning" : "success"} label={clinicalSummary.fallbackUsed ? "Fallback used" : "AI ready"} />
+                        <Typography variant="body2">{clinicalSummary.draft || clinicalSummary.message}</Typography>
+                        {clinicalSummary.suggestedActions?.length ? <Typography variant="caption" color="text.secondary">{clinicalSummary.suggestedActions.join(" · ")}</Typography> : null}
+                      </Stack>
+                    ) : null}
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Stack>
           </Grid>
           <Grid size={{ xs: 12, md: 6 }}>
             <Card><CardContent><Typography variant="h6">Context Sent to AI</Typography><Typography variant="body2" color="text.secondary">Symptoms, diagnosis, vitals, allergies, chronic conditions, notes, and draft prescription are used contextually. Doctor verification is required before use.</Typography></CardContent></Card>

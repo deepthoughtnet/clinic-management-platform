@@ -2,11 +2,14 @@ package com.deepthoughtnet.clinic.api.appointment;
 
 import com.deepthoughtnet.clinic.api.appointment.dto.DoctorAvailabilityRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.DoctorAvailabilityResponse;
+import com.deepthoughtnet.clinic.api.appointment.dto.DoctorAvailabilitySlotResponse;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityUpsertCommand;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -39,6 +42,14 @@ public class DoctorAvailabilityController {
         return appointmentService.listAvailabilities(tenantId).stream().map(this::toResponse).toList();
     }
 
+    @GetMapping("/{doctorUserId}/slots")
+    @PreAuthorize("@permissionChecker.hasPermission('appointment.read') or @permissionChecker.hasPermission('appointment.manage')")
+    public List<DoctorAvailabilitySlotResponse> slots(@PathVariable UUID doctorUserId, @org.springframework.web.bind.annotation.RequestParam("date") LocalDate date) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(doctorUserId);
+        return appointmentService.listSlots(tenantId, effectiveDoctorUserId, date).stream().map(this::toSlotResponse).toList();
+    }
+
     @GetMapping("/{doctorUserId}/queue/today")
     @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
     public List<com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse> queueToday(@PathVariable UUID doctorUserId) {
@@ -58,6 +69,7 @@ public class DoctorAvailabilityController {
                         record.tokenNumber(),
                         record.reason(),
                         record.type(),
+                        record.priority(),
                         record.status(),
                         record.createdAt(),
                         record.updatedAt()
@@ -95,7 +107,10 @@ public class DoctorAvailabilityController {
                 request.dayOfWeek(),
                 request.startTime(),
                 request.endTime(),
+                request.breakStartTime(),
+                request.breakEndTime(),
                 request.consultationDurationMinutes(),
+                request.maxPatientsPerSlot(),
                 request.active()
         );
     }
@@ -109,10 +124,34 @@ public class DoctorAvailabilityController {
                 record.dayOfWeek(),
                 record.startTime(),
                 record.endTime(),
+                record.breakStartTime(),
+                record.breakEndTime(),
                 record.consultationDurationMinutes(),
+                record.maxPatientsPerSlot(),
                 record.active(),
                 record.createdAt(),
                 record.updatedAt()
+        );
+    }
+
+    private DoctorAvailabilitySlotResponse toSlotResponse(DoctorAvailabilitySlotRecord record) {
+        return new DoctorAvailabilitySlotResponse(
+                record.doctorUserId() == null ? null : record.doctorUserId().toString(),
+                record.doctorName(),
+                record.appointmentDate(),
+                record.slotTime(),
+                record.slotEndTime(),
+                record.status(),
+                record.bookedCount(),
+                record.maxPatientsPerSlot(),
+                record.selectable(),
+                record.appointmentId() == null ? null : record.appointmentId().toString(),
+                record.patientId() == null ? null : record.patientId().toString(),
+                record.patientNumber(),
+                record.patientName(),
+                record.tokenNumber(),
+                record.appointmentStatus(),
+                record.reason()
         );
     }
 }

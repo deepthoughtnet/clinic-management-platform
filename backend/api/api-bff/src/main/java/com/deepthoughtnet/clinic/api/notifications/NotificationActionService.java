@@ -21,7 +21,11 @@ import com.deepthoughtnet.clinic.notify.NotificationAttachment;
 import com.deepthoughtnet.clinic.notify.NotificationMessage;
 import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
+import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -127,8 +131,13 @@ public class NotificationActionService {
     }
 
     public int queueAppointmentReminders(UUID tenantId, LocalDate appointmentDate, UUID actorAppUserId) {
-        return appointmentService.search(tenantId, new com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria(null, null, appointmentDate, null, null))
+        LocalDate windowDate = appointmentDate;
+        OffsetDateTime now = OffsetDateTime.now();
+        return appointmentService.search(tenantId, new com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria(null, null, windowDate, null, null))
                 .stream()
+                .filter(appointment -> appointment.status() == com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus.BOOKED)
+                .filter(appointment -> appointment.appointmentTime() != null)
+                .filter(appointment -> shouldSendReminder(now, appointment.appointmentDate(), appointment.appointmentTime()))
                 .mapToInt(appointment -> queueAppointmentReminder(tenantId, appointment.id(), actorAppUserId))
                 .sum();
     }
@@ -181,6 +190,15 @@ public class NotificationActionService {
                 actorAppUserId
         );
         return 1;
+    }
+
+    private boolean shouldSendReminder(OffsetDateTime now, LocalDate appointmentDate, java.time.LocalTime appointmentTime) {
+        LocalDateTime appointmentDateTime = LocalDateTime.of(appointmentDate, appointmentTime);
+        OffsetDateTime target = appointmentDateTime.atZone(ZoneId.systemDefault()).toOffsetDateTime();
+        Duration diff = Duration.between(now, target);
+        Duration targetWindow = Duration.ofHours(2);
+        Duration slack = Duration.ofMinutes(15);
+        return !diff.isNegative() && diff.minus(targetWindow).abs().compareTo(slack) <= 0;
     }
 
     private int queueFollowUpReminder(UUID tenantId, ConsultationRecord consultation, UUID actorAppUserId) {

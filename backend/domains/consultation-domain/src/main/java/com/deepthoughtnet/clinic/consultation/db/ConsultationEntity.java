@@ -91,6 +91,9 @@ public class ConsultationEntity {
     @Column(name = "spo2")
     private Integer spo2;
 
+    @Column(name = "respiratory_rate")
+    private Integer respiratoryRate;
+
     @Column(name = "completed_at")
     private OffsetDateTime completedAt;
 
@@ -129,7 +132,8 @@ public class ConsultationEntity {
             TemperatureUnit temperatureUnit,
             Double weightKg,
             Double heightCm,
-            Integer spo2
+            Integer spo2,
+            Integer respiratoryRate
     ) {
         this.chiefComplaints = chiefComplaints;
         this.symptoms = symptoms;
@@ -145,6 +149,7 @@ public class ConsultationEntity {
         this.weightKg = weightKg;
         this.heightCm = heightCm;
         this.spo2 = spo2;
+        this.respiratoryRate = respiratoryRate;
         this.updatedAt = OffsetDateTime.now();
     }
 
@@ -179,6 +184,7 @@ public class ConsultationEntity {
     public Double getWeightKg() { return weightKg; }
     public Double getHeightCm() { return heightCm; }
     public Integer getSpo2() { return spo2; }
+    public Integer getRespiratoryRate() { return respiratoryRate; }
     public OffsetDateTime getCompletedAt() { return completedAt; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }

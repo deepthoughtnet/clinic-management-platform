@@ -76,9 +76,21 @@ public class AiPromptTemplateCatalog {
                     "Summarize patient history with active conditions, medications, allergies, and follow-up risks.",
                     List.of("Verify the timeline against EHR records", "Prioritize allergy and chronic-condition interactions"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
+            entry("clinic.clinical.document-extraction.v1", AiProductCode.CLINIC, AiTaskType.CLINICAL_DOCUMENT_EXTRACTION,
+                    "Extract structured clinical findings from the supplied OCR text and document context. Return JSON with keys such as documentType, diagnosisText, medicines, allergies, abnormalFindings, referralDoctor, followUpSuggestions, keyLabValues, and confidenceNotes. Do not diagnose; only extract and summarize what the source shows.",
+                    List.of("Verify extracted facts against the source document", "Review any low-confidence or ambiguous fields before saving", "Keep the extracted data advisory until a clinician reviews it"),
+                    List.of("Extraction output is advisory until reviewed", "OCR and provider limits may affect accuracy")),
+            entry("clinic.clinical.summary.v1", AiProductCode.CLINIC, AiTaskType.CLINICAL_SUMMARY,
+                    "Summarize prior visits and chronic context in clinician-friendly language. Focus on previous visit summary, chronic history summary, and recent consultation summary.",
+                    List.of("Confirm the summary against the chart", "Use the summary as a review aid only"),
+                    List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.structure-notes.v1", AiProductCode.CLINIC, AiTaskType.CONSULTATION_NOTE_STRUCTURING,
                     "Structure consultation notes into standardized medical sections.",
                     List.of("Review SOAP formatting and missing sections", "Confirm clinically relevant negatives"),
+                    List.of("This is an AI-generated draft. Doctor must verify before use.")),
+            entry("clinic.consultation.copilot.v1", AiProductCode.CLINIC, AiTaskType.CONSULTATION_COPILOT,
+                    "Assist the doctor by suggesting possible diagnosis categories, investigation suggestions, follow-up suggestions, and draft prescription ideas based on symptoms, findings, notes, and vitals. Return structured JSON when possible. Do not finalize prescriptions or diagnoses.",
+                    List.of("Review red flags and urgent exclusions", "Approve or reject each suggestion manually"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.suggest-diagnosis.v1", AiProductCode.CLINIC, AiTaskType.SYMPTOMS_DIAGNOSIS_DRAFT,
                     "Suggest possible differential diagnoses based on symptoms, findings, and context.",
@@ -134,7 +146,10 @@ public class AiPromptTemplateCatalog {
                     ? defaults.get("clinic.reconciliation.batch.summary.v1")
                     : defaults.get("generic.summary.v1");
             case PATIENT_HISTORY_SUMMARY -> defaults.get("clinic.patient.summary.v1");
+            case CLINICAL_DOCUMENT_EXTRACTION -> defaults.get("clinic.clinical.document-extraction.v1");
+            case CLINICAL_SUMMARY -> defaults.get("clinic.clinical.summary.v1");
             case CONSULTATION_NOTE_STRUCTURING -> defaults.get("clinic.consultation.structure-notes.v1");
+            case CONSULTATION_COPILOT -> defaults.get("clinic.consultation.copilot.v1");
             case SYMPTOMS_DIAGNOSIS_DRAFT -> defaults.get("clinic.consultation.suggest-diagnosis.v1");
             case PRESCRIPTION_TEMPLATE_SUGGESTION -> defaults.get("clinic.prescription.suggest-template.v1");
             case PATIENT_INSTRUCTIONS_DRAFT -> defaults.get("clinic.patient.instructions.v1");

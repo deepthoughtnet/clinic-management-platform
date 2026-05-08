@@ -380,7 +380,7 @@ public class BillingService {
             entity.markPartiallyPaid();
         } else if (paid.compareTo(ZERO) > 0 && due.compareTo(ZERO) == 0) {
             entity.markPaid();
-        } else if (entity.getStatus() != BillStatus.DRAFT && entity.getStatus() != BillStatus.ISSUED) {
+        } else if (entity.getStatus() != BillStatus.DRAFT && entity.getStatus() != BillStatus.UNPAID && entity.getStatus() != BillStatus.ISSUED) {
             entity.issue();
         }
         billRepository.save(entity);

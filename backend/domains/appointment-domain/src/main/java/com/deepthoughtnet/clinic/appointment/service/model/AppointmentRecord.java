@@ -18,6 +18,7 @@ public record AppointmentRecord(
         Integer tokenNumber,
         String reason,
         AppointmentType type,
+        AppointmentPriority priority,
         AppointmentStatus status,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt

@@ -163,6 +163,10 @@ public class DoctorAssignmentSecurityService {
     }
 
     private String normalizeRole(String role) {
-        return role == null ? null : role.trim().toUpperCase(Locale.ROOT);
+        if (role == null) {
+            return null;
+        }
+        String normalized = role.trim().replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT);
+        return normalized.startsWith("ROLE_") ? normalized.substring(5) : normalized;
     }
 }

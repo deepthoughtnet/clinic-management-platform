@@ -7,7 +7,10 @@ public record DoctorAvailabilityRequest(
         DayOfWeek dayOfWeek,
         LocalTime startTime,
         LocalTime endTime,
+        LocalTime breakStartTime,
+        LocalTime breakEndTime,
         Integer consultationDurationMinutes,
+        Integer maxPatientsPerSlot,
         boolean active
 ) {
 }

@@ -32,6 +32,8 @@ import {
   getPatientDocuments,
   getPatientDocumentDownloadUrl,
   getPatientTimeline,
+  reviewClinicalDocumentExtraction,
+  reprocessClinicalDocumentExtraction,
   uploadPatientDocument,
   searchBills,
   type PatientDetail,
@@ -108,6 +110,7 @@ export default function PatientDetailPage() {
   const [uploadingDocument, setUploadingDocument] = React.useState(false);
   const [viewerDocument, setViewerDocument] = React.useState<ClinicalDocument | null>(null);
   const [viewerUrl, setViewerUrl] = React.useState<string | null>(null);
+  const [reviewBusy, setReviewBusy] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -201,6 +204,41 @@ export default function PatientDetailPage() {
     }
   };
 
+  const reviewDocument = async (approved: boolean) => {
+    if (!auth.accessToken || !auth.tenantId || !viewerDocument) return;
+    const notes = window.prompt(approved ? "Review notes (optional)" : "Reason for rejection", viewerDocument.aiExtractionReviewNotes || "") ?? "";
+    setReviewBusy(true);
+    setError(null);
+    try {
+      const updated = await reviewClinicalDocumentExtraction(auth.accessToken, auth.tenantId, viewerDocument.id, {
+        approved,
+        saveToPatientHistory: approved,
+        reviewNotes: notes.trim() || null,
+      });
+      setViewerDocument(updated);
+      await refreshDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save AI review");
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
+  const reprocessDocument = async () => {
+    if (!auth.accessToken || !auth.tenantId || !viewerDocument) return;
+    setReviewBusy(true);
+    setError(null);
+    try {
+      const updated = await reprocessClinicalDocumentExtraction(auth.accessToken, auth.tenantId, viewerDocument.id);
+      setViewerDocument(updated);
+      await refreshDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reprocess AI extraction");
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
   }
@@ -275,6 +313,33 @@ export default function PatientDetailPage() {
         </Grid>
       </Grid>
 
+      {viewerDocument ? (
+        <Card>
+          <CardContent>
+            <Stack spacing={1.25}>
+              <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+                <Typography variant="h6" sx={{ fontWeight: 800 }}>AI Extraction Review</Typography>
+                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                  <Chip size="small" label={`OCR ${viewerDocument.ocrStatus || "PENDING"}`} />
+                  <Chip size="small" color={viewerDocument.aiExtractionStatus === "APPROVED" ? "success" : viewerDocument.aiExtractionStatus === "REJECTED" ? "error" : "warning"} label={`AI ${viewerDocument.aiExtractionStatus || "PENDING"}`} />
+                  {viewerDocument.aiExtractionConfidence != null ? <Chip size="small" label={`Confidence ${(viewerDocument.aiExtractionConfidence * 100).toFixed(0)}%`} /> : null}
+                </Stack>
+              </Box>
+              <Typography variant="body2" color="text.secondary">
+                {viewerDocument.aiExtractionProvider ? `${viewerDocument.aiExtractionProvider}${viewerDocument.aiExtractionModel ? ` • ${viewerDocument.aiExtractionModel}` : ""}` : "Queued for extraction."}
+              </Typography>
+              <Typography variant="body2">{viewerDocument.aiExtractionSummary || "No AI summary available yet."}</Typography>
+              {viewerDocument.aiExtractionStructuredJson ? <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", fontFamily: "monospace" }}>{viewerDocument.aiExtractionStructuredJson}</Typography> : null}
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                <Button variant="contained" disabled={reviewBusy || viewerDocument.aiExtractionStatus === "APPROVED"} onClick={() => void reviewDocument(true)}>Approve & Save</Button>
+                <Button variant="outlined" color="error" disabled={reviewBusy || viewerDocument.aiExtractionStatus === "REJECTED"} onClick={() => void reviewDocument(false)}>Reject</Button>
+                <Button variant="outlined" disabled={reviewBusy} onClick={() => void reprocessDocument()}>Reprocess</Button>
+              </Stack>
+            </Stack>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardContent>
           <Stack spacing={2}>
@@ -324,7 +389,9 @@ export default function PatientDetailPage() {
                           <Typography variant="caption" color="text.secondary">{new Date(document.createdAt).toLocaleString()}</Typography>
                         </Stack>
                         <Typography variant="body2" sx={{ fontWeight: 800 }}>{document.originalFilename}</Typography>
-                        <Typography variant="caption" color="text.secondary">{document.notes || document.referralNotes || "No notes"} · OCR {document.ocrStatus || "PENDING"} · AI {document.aiExtractionStatus || "PENDING"}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {document.notes || document.referralNotes || "No notes"} · OCR {document.ocrStatus || "PENDING"} · AI {document.aiExtractionStatus || "PENDING"}{document.aiExtractionConfidence != null ? ` · ${(document.aiExtractionConfidence * 100).toFixed(0)}%` : ""}
+                        </Typography>
                         {document.documentType === "REFERRAL" ? <Typography variant="caption" display="block" color="text.secondary">Referral: {[document.referredDoctor, document.referredHospital].filter(Boolean).join(" · ") || "Not specified"}</Typography> : null}
                       </Box>
                       <Button size="small" onClick={() => void openDocument(document)}>Preview</Button>

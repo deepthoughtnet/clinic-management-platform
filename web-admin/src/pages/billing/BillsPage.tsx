@@ -39,7 +39,6 @@ import {
   createBill,
   getBillPdf,
   getReceiptPdf,
-  getClinicUsers,
   issueBill,
   listBillPayments,
   listBillReceipts,
@@ -50,7 +49,6 @@ import {
   type BillInput,
   type BillItemType,
   type BillLine,
-  type ClinicUser,
   type Payment,
   type PaymentMode,
   type Patient,
@@ -148,6 +146,7 @@ function statusColor(status: Bill["status"]) {
       return "success";
     case "PARTIALLY_PAID":
       return "warning";
+    case "UNPAID":
     case "ISSUED":
       return "info";
     case "DRAFT":
@@ -170,7 +169,6 @@ export default function BillsPage() {
   const [payments, setPayments] = React.useState<Payment[]>([]);
   const [receipts, setReceipts] = React.useState<Receipt[]>([]);
   const [patients, setPatients] = React.useState<Patient[]>([]);
-  const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [patientQuery, setPatientQuery] = React.useState("");
   const [patientSearchResults, setPatientSearchResults] = React.useState<Patient[]>([]);
   const [billFilterPatient, setBillFilterPatient] = React.useState("");
@@ -183,6 +181,10 @@ export default function BillsPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
   const [workingId, setWorkingId] = React.useState<string | null>(null);
+  const canCreateBill = auth.hasPermission("billing.create");
+  const canUpdateBill = auth.hasPermission("billing.update") || auth.hasPermission("billing.create");
+  const canCollectPayment = auth.hasPermission("payment.collect");
+  const canSendReceipt = canCollectPayment || auth.hasPermission("notification.send");
 
   const loadBills = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) {
@@ -205,15 +207,13 @@ export default function BillsPage() {
       setLoading(true);
       setError(null);
       try {
-        const [billRows, patientRows, userRows] = await Promise.all([
+        const [billRows, patientRows] = await Promise.all([
           searchBills(auth.accessToken, auth.tenantId, {}),
           searchPatients(auth.accessToken, auth.tenantId, { active: true }),
-          getClinicUsers(auth.accessToken, auth.tenantId),
         ]);
         if (!cancelled) {
           setBills(billRows);
           setPatients(patientRows);
-          setUsers(userRows);
         }
       } catch (err) {
         if (!cancelled) {
@@ -484,7 +484,7 @@ export default function BillsPage() {
       {success ? <Alert severity="success">{success}</Alert> : null}
 
       <Grid container spacing={2}>
-        <Grid size={{ xs: 12, lg: 5 }}>
+        {canCreateBill ? <Grid size={{ xs: 12, lg: 5 }}>
           <Card>
             <CardContent>
               <Stack spacing={2}>
@@ -601,9 +601,9 @@ export default function BillsPage() {
               </Stack>
             </CardContent>
           </Card>
-        </Grid>
+        </Grid> : null}
 
-        <Grid size={{ xs: 12, lg: 7 }}>
+        <Grid size={{ xs: 12, lg: canCreateBill ? 7 : 12 }}>
           <Card>
             <CardContent>
               <Stack spacing={2}>
@@ -625,6 +625,7 @@ export default function BillsPage() {
                       >
                         <MenuItem value="">All</MenuItem>
                         <MenuItem value="DRAFT">DRAFT</MenuItem>
+                        <MenuItem value="UNPAID">UNPAID</MenuItem>
                         <MenuItem value="ISSUED">ISSUED</MenuItem>
                         <MenuItem value="PARTIALLY_PAID">PARTIALLY_PAID</MenuItem>
                         <MenuItem value="PAID">PAID</MenuItem>
@@ -683,18 +684,18 @@ export default function BillsPage() {
                               <Button size="small" onClick={() => void selectBill(bill)}>
                                 View
                               </Button>
-                              <Button size="small" onClick={() => void issueCurrentBill(bill)} disabled={workingId === bill.id || bill.status !== "DRAFT"}>
+                              {canUpdateBill ? <Button size="small" onClick={() => void issueCurrentBill(bill)} disabled={workingId === bill.id || bill.status !== "DRAFT"}>
                                 Issue
-                              </Button>
-                              <Button size="small" onClick={() => void openPaymentDialog(bill)}>
+                              </Button> : null}
+                              {canCollectPayment ? <Button size="small" onClick={() => void openPaymentDialog(bill)} disabled={bill.status === "PAID" || bill.status === "CANCELLED" || bill.dueAmount <= 0}>
                                 Pay
-                              </Button>
+                              </Button> : null}
                               <Button size="small" onClick={() => void openBillPdf(bill)}>
                                 PDF
                               </Button>
-                              <Button size="small" onClick={() => void cancelCurrentBill(bill)} disabled={workingId === bill.id || bill.status === "PAID"}>
+                              {canUpdateBill ? <Button size="small" onClick={() => void cancelCurrentBill(bill)} disabled={workingId === bill.id || bill.status === "PAID"}>
                                 Cancel
-                              </Button>
+                              </Button> : null}
                             </Stack>
                           </TableCell>
                         </TableRow>
@@ -829,12 +830,12 @@ export default function BillsPage() {
                                   <Button size="small" disabled={workingId === receipt.id} onClick={() => void openReceiptPdf(receipt)}>
                                     PDF
                                   </Button>
-                                  <Button size="small" disabled={workingId === receipt.id} onClick={() => void sendReceiptAction(receipt, "email")}>
+                                  {canSendReceipt ? <Button size="small" disabled={workingId === receipt.id} onClick={() => void sendReceiptAction(receipt, "email")}>
                                     Email
-                                  </Button>
-                                  <Button size="small" disabled={workingId === receipt.id} onClick={() => void sendReceiptAction(receipt, "whatsapp")}>
+                                  </Button> : null}
+                                  {canSendReceipt ? <Button size="small" disabled={workingId === receipt.id} onClick={() => void sendReceiptAction(receipt, "whatsapp")}>
                                     WhatsApp
-                                  </Button>
+                                  </Button> : null}
                                 </Stack>
                               </TableCell>
                             </TableRow>

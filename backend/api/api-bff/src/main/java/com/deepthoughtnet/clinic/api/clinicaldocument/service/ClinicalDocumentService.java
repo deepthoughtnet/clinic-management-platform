@@ -6,6 +6,7 @@ import com.deepthoughtnet.clinic.platform.audit.AuditEntityType;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
+import java.math.BigDecimal;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -159,7 +160,10 @@ public class ClinicalDocumentService {
                 entity.getId(), entity.getTenantId(), entity.getPatientId(), entity.getConsultationId(), entity.getAppointmentId(),
                 entity.getUploadedByAppUserId(), entity.getDocumentType(), entity.getOriginalFilename(), entity.getMediaType(),
                 entity.getSizeBytes(), entity.getChecksumSha256(), entity.getStorageKey(), entity.getNotes(), entity.getReferredDoctor(),
-                entity.getReferredHospital(), entity.getReferralNotes(), entity.getAiExtractionStatus(), entity.getOcrStatus(), entity.getCreatedAt(), entity.getUpdatedAt()
+                entity.getReferredHospital(), entity.getReferralNotes(), entity.getAiExtractionStatus(), entity.getAiExtractionProvider(),
+                entity.getAiExtractionModel(), entity.getAiExtractionConfidence(), entity.getAiExtractionSummary(),
+                entity.getAiExtractionStructuredJson(), entity.getAiExtractionReviewNotes(), entity.getAiExtractionReviewedByAppUserId(),
+                entity.getAiExtractionReviewedAt(), entity.getOcrStatus(), entity.getCreatedAt(), entity.getUpdatedAt()
         );
     }
 }

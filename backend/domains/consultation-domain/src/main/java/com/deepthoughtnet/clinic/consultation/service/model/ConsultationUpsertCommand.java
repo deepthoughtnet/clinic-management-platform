@@ -20,6 +20,7 @@ public record ConsultationUpsertCommand(
         TemperatureUnit temperatureUnit,
         Double weightKg,
         Double heightCm,
-        Integer spo2
+        Integer spo2,
+        Integer respiratoryRate
 ) {
 }

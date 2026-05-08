@@ -9,6 +9,8 @@ public final class RolePermissionMappings {
     private static final Set<String> CLINIC_FUNDAMENTAL_PERMISSIONS = Set.of(
             Permissions.CLINIC_READ,
             Permissions.CLINIC_UPDATE,
+            Permissions.DASHBOARD_READ,
+            Permissions.CLINIC_DASHBOARD_READ,
             Permissions.USER_READ,
             Permissions.USER_MANAGE,
             Permissions.PATIENT_CREATE,
@@ -18,11 +20,15 @@ public final class RolePermissionMappings {
             Permissions.CONSULTATION_CREATE,
             Permissions.CONSULTATION_READ,
             Permissions.CONSULTATION_UPDATE,
+            Permissions.CONSULTATION_COMPLETE,
             Permissions.PRESCRIPTION_CREATE,
             Permissions.PRESCRIPTION_READ,
             Permissions.PRESCRIPTION_PRINT,
             Permissions.PRESCRIPTION_SEND,
             Permissions.BILLING_CREATE,
+            Permissions.BILLING_READ,
+            Permissions.BILLING_UPDATE,
+            Permissions.BILLING_RECEIPT,
             Permissions.PAYMENT_COLLECT,
             Permissions.VACCINATION_MANAGE,
             Permissions.INVENTORY_MANAGE,
@@ -163,8 +169,12 @@ public final class RolePermissionMappings {
                     Permissions.CLINIC_PROFILE_UPDATE,
                     Permissions.CLINIC_DOCUMENT_UPLOAD,
                     Permissions.CLINIC_DOCUMENT_AGENT_UPLOAD,
-                    Permissions.CLINIC_DOCUMENT_READ,
-                    Permissions.CLINIC_EXTRACTION_RUN,
+            Permissions.CLINIC_DOCUMENT_READ,
+            Permissions.AI_COPILOT_CLINIC_READ,
+            Permissions.AI_COPILOT_CLINIC_RUN,
+            Permissions.AI_COPILOT_READ,
+            Permissions.AI_COPILOT_RUN,
+            Permissions.CLINIC_EXTRACTION_RUN,
                     Permissions.CLINIC_EXTRACTION_JOBS_READ,
                     Permissions.CLINIC_EXTRACTION_JOBS_MANAGE,
                     Permissions.CLINIC_REVIEW,
@@ -194,6 +204,7 @@ public final class RolePermissionMappings {
             Permissions.CONSULTATION_CREATE,
             Permissions.CONSULTATION_READ,
             Permissions.CONSULTATION_UPDATE,
+            Permissions.CONSULTATION_COMPLETE,
             Permissions.PRESCRIPTION_CREATE,
             Permissions.PRESCRIPTION_READ,
             Permissions.PRESCRIPTION_FINALIZE,
@@ -201,7 +212,11 @@ public final class RolePermissionMappings {
             Permissions.PRESCRIPTION_SEND,
             Permissions.MEDICINE_READ,
             Permissions.CLINIC_DOCUMENT_UPLOAD,
-            Permissions.CLINIC_DOCUMENT_READ
+            Permissions.CLINIC_DOCUMENT_READ,
+            Permissions.AI_COPILOT_CLINIC_READ,
+            Permissions.AI_COPILOT_CLINIC_RUN,
+            Permissions.AI_COPILOT_READ,
+            Permissions.AI_COPILOT_RUN
     );
 
     private static final Set<String> RECEPTIONIST_PERMISSIONS = Set.of(
@@ -217,7 +232,9 @@ public final class RolePermissionMappings {
             Permissions.QUEUE_READ,
             Permissions.QUEUE_UPDATE,
             Permissions.VACCINATION_MANAGE,
+            Permissions.BILLING_READ,
             Permissions.BILLING_CREATE,
+            Permissions.BILLING_RECEIPT,
             Permissions.PRESCRIPTION_READ,
             Permissions.PRESCRIPTION_PRINT,
             Permissions.PRESCRIPTION_SEND,
@@ -229,18 +246,26 @@ public final class RolePermissionMappings {
             Permissions.DASHBOARD_READ,
             Permissions.CLINIC_DASHBOARD_READ,
             Permissions.CLINIC_READ,
+            Permissions.USER_READ,
             Permissions.PATIENT_READ,
             Permissions.BILLING_READ,
             Permissions.BILLING_CREATE,
+            Permissions.BILLING_UPDATE,
             Permissions.BILLING_RECEIPT,
-            Permissions.PAYMENT_COLLECT
+            Permissions.PAYMENT_COLLECT,
+            Permissions.REPORT_READ
     );
 
     private static final Set<String> PHARMACIST_PERMISSIONS = Set.of(
+            Permissions.DASHBOARD_READ,
+            Permissions.CLINIC_DASHBOARD_READ,
             Permissions.PATIENT_READ,
             Permissions.PRESCRIPTION_READ,
+            Permissions.MEDICINE_READ,
             Permissions.BILLING_CREATE,
-            Permissions.INVENTORY_MANAGE
+            Permissions.INVENTORY_READ,
+            Permissions.INVENTORY_MANAGE,
+            Permissions.REPORT_READ
     );
 
     private static final Set<String> LAB_ASSISTANT_PERMISSIONS = Set.of(
@@ -350,12 +375,14 @@ public final class RolePermissionMappings {
             Permissions.DASHBOARD_READ,
             Permissions.CLINIC_READ,
             Permissions.CLINIC_PROFILE_READ,
+            Permissions.USER_READ,
             Permissions.PATIENT_READ,
             Permissions.APPOINTMENT_READ,
             Permissions.QUEUE_READ,
             Permissions.CONSULTATION_READ,
             Permissions.PRESCRIPTION_READ,
             Permissions.BILLING_READ,
+            Permissions.BILLING_RECEIPT,
             Permissions.VACCINATION_READ,
             Permissions.INVENTORY_READ,
             Permissions.REPORT_READ,
@@ -418,6 +445,8 @@ public final class RolePermissionMappings {
             Map.entry(Roles.DOCTOR, DOCTOR_PERMISSIONS),
             Map.entry(Roles.RECEPTIONIST, RECEPTIONIST_PERMISSIONS),
             Map.entry(Roles.BILLING_USER, BILLING_USER_PERMISSIONS),
+            Map.entry(Roles.PHARMA, PHARMACIST_PERMISSIONS),
+            Map.entry(Roles.PHARMACY, PHARMACIST_PERMISSIONS),
             Map.entry(Roles.PHARMACIST, PHARMACIST_PERMISSIONS),
             Map.entry(Roles.LAB_ASSISTANT, LAB_ASSISTANT_PERMISSIONS),
             Map.entry(Roles.CLINIC_REVIEWER, Set.of(

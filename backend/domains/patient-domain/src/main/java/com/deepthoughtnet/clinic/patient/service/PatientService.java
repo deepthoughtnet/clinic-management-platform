@@ -94,7 +94,6 @@ public class PatientService {
     public PatientRecord create(UUID tenantId, PatientUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
         validate(command);
-        ensureUniqueActiveMobile(tenantId, command.mobile(), null);
 
         String patientNumber = generatePatientNumber(tenantId);
         PatientEntity entity = PatientEntity.create(tenantId, patientNumber);
@@ -124,7 +123,6 @@ public class PatientService {
         validate(command);
         PatientEntity entity = repository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
-        ensureUniqueActiveMobile(tenantId, command.mobile(), id);
 
         applyCommand(entity, command);
         PatientEntity saved = repository.save(entity);
@@ -250,18 +248,6 @@ public class PatientService {
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
-    }
-
-    private void ensureUniqueActiveMobile(UUID tenantId, String mobile, UUID currentPatientId) {
-        if (!StringUtils.hasText(mobile)) {
-            throw new IllegalArgumentException("mobile is required");
-        }
-        repository.findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, mobile.trim())
-                .ifPresent(existing -> {
-                    if (currentPatientId == null || !existing.getId().equals(currentPatientId)) {
-                        throw new IllegalArgumentException("Active patient with the same mobile already exists");
-                    }
-                });
     }
 
     private String generatePatientNumber(UUID tenantId) {

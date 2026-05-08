@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.appointment.db;
 
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -53,6 +54,10 @@ public class AppointmentEntity {
     @Column(name = "token_number")
     private Integer tokenNumber;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 24)
+    private AppointmentPriority priority = AppointmentPriority.NORMAL;
+
     @Column(length = 512)
     private String reason;
 
@@ -90,7 +95,8 @@ public class AppointmentEntity {
             Integer tokenNumber,
             String reason,
             AppointmentType type,
-            AppointmentStatus status
+            AppointmentStatus status,
+            AppointmentPriority priority
     ) {
         this.appointmentDate = appointmentDate;
         this.appointmentTime = appointmentTime;
@@ -98,6 +104,7 @@ public class AppointmentEntity {
         this.reason = reason;
         this.type = type;
         this.status = status;
+        this.priority = priority == null ? AppointmentPriority.NORMAL : priority;
         this.updatedAt = OffsetDateTime.now();
     }
 
@@ -127,6 +134,10 @@ public class AppointmentEntity {
 
     public Integer getTokenNumber() {
         return tokenNumber;
+    }
+
+    public AppointmentPriority getPriority() {
+        return priority;
     }
 
     public String getReason() {

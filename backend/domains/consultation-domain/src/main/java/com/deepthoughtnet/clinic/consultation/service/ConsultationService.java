@@ -122,7 +122,7 @@ public class ConsultationService {
 
         appointmentService.updateStatus(tenantId, appointmentId, new AppointmentStatusUpdateCommand(AppointmentStatus.IN_CONSULTATION), actorAppUserId);
         ConsultationEntity entity = ConsultationEntity.create(tenantId, appointment.patientId(), appointment.doctorUserId(), appointmentId);
-        entity.update(null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        entity.update(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         ConsultationEntity saved = repository.save(entity);
         audit(tenantId, saved, "consultation.created", actorAppUserId, "Started consultation from appointment");
         return toRecord(saved, tenantData(tenantId));
@@ -154,7 +154,8 @@ public class ConsultationService {
                 command.temperatureUnit(),
                 command.weightKg(),
                 command.heightCm(),
-                command.spo2()
+                command.spo2(),
+                command.respiratoryRate()
         );
         ConsultationEntity saved = repository.save(entity);
         audit(tenantId, saved, "consultation.updated", actorAppUserId, "Updated consultation draft");
@@ -208,7 +209,8 @@ public class ConsultationService {
                 command.temperatureUnit(),
                 command.weightKg(),
                 command.heightCm(),
-                command.spo2()
+                command.spo2(),
+                command.respiratoryRate()
         );
     }
 
@@ -239,6 +241,7 @@ public class ConsultationService {
                 entity.getWeightKg(),
                 entity.getHeightCm(),
                 entity.getSpo2(),
+                entity.getRespiratoryRate(),
                 entity.getCompletedAt(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
@@ -332,6 +335,7 @@ public class ConsultationService {
         details.put("status", entity.getStatus());
         details.put("diagnosis", entity.getDiagnosis());
         details.put("followUpDate", entity.getFollowUpDate());
+        details.put("respiratoryRate", entity.getRespiratoryRate());
         details.put("completedAt", entity.getCompletedAt());
         try {
             return objectMapper.writeValueAsString(details);

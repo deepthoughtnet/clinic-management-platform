@@ -3,6 +3,7 @@ import { httpGet, httpPatch, httpPost, httpPostForm, httpPut } from "./restClien
 export type PatientGender = "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
 export type AppointmentStatus = "BOOKED" | "WAITING" | "IN_CONSULTATION" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
 export type AppointmentType = "WALK_IN" | "SCHEDULED" | "FOLLOW_UP" | "VACCINATION";
+export type AppointmentPriority = "URGENT" | "MANUAL_PRIORITY" | "FOLLOW_UP" | "CHILD" | "ELDERLY" | "NORMAL";
 export type ConsultationStatus = "DRAFT" | "COMPLETED" | "CANCELLED";
 export type TemperatureUnit = "CELSIUS" | "FAHRENHEIT";
 export type PrescriptionStatus = "DRAFT" | "PREVIEWED" | "FINALIZED" | "PRINTED" | "SENT" | "CANCELLED";
@@ -46,6 +47,14 @@ export type ClinicalDocument = {
   referredHospital: string | null;
   referralNotes: string | null;
   aiExtractionStatus: string | null;
+  aiExtractionProvider: string | null;
+  aiExtractionModel: string | null;
+  aiExtractionConfidence: number | null;
+  aiExtractionSummary: string | null;
+  aiExtractionStructuredJson: string | null;
+  aiExtractionReviewNotes: string | null;
+  aiExtractionReviewedByAppUserId: string | null;
+  aiExtractionReviewedAt: string | null;
   ocrStatus: string | null;
   createdAt: string;
   updatedAt: string;
@@ -194,6 +203,7 @@ export type Appointment = {
   tokenNumber: number | null;
   reason: string | null;
   type: AppointmentType;
+  priority: AppointmentPriority;
   status: AppointmentStatus;
   createdAt: string;
   updatedAt: string;
@@ -207,6 +217,7 @@ export type AppointmentInput = {
   reason: string | null;
   type: AppointmentType;
   status: AppointmentStatus | null;
+  priority: AppointmentPriority | null;
 };
 
 export type WalkInAppointmentInput = {
@@ -214,6 +225,7 @@ export type WalkInAppointmentInput = {
   doctorUserId: string;
   appointmentDate: string;
   reason: string | null;
+  priority: AppointmentPriority | null;
 };
 
 export type DoctorAvailability = {
@@ -224,7 +236,10 @@ export type DoctorAvailability = {
   dayOfWeek: string;
   startTime: string;
   endTime: string;
+  breakStartTime: string | null;
+  breakEndTime: string | null;
   consultationDurationMinutes: number;
+  maxPatientsPerSlot: number | null;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -234,8 +249,32 @@ export type DoctorAvailabilityInput = {
   dayOfWeek: string;
   startTime: string;
   endTime: string;
+  breakStartTime: string | null;
+  breakEndTime: string | null;
   consultationDurationMinutes: number;
+  maxPatientsPerSlot: number | null;
   active: boolean;
+};
+
+export type DoctorAvailabilitySlotStatus = "AVAILABLE" | "BOOKED" | "UNAVAILABLE";
+
+export type DoctorAvailabilitySlot = {
+  doctorUserId: string;
+  doctorName: string | null;
+  appointmentDate: string;
+  slotTime: string;
+  slotEndTime: string;
+  status: DoctorAvailabilitySlotStatus;
+  bookedCount: number;
+  maxPatientsPerSlot: number;
+  selectable: boolean;
+  appointmentId: string | null;
+  patientId: string | null;
+  patientNumber: string | null;
+  patientName: string | null;
+  tokenNumber: number | null;
+  appointmentStatus: AppointmentStatus | null;
+  reason: string | null;
 };
 
 export type Consultation = {
@@ -262,6 +301,9 @@ export type Consultation = {
   weightKg: number | null;
   heightCm: number | null;
   spo2: number | null;
+  respiratoryRate: number | null;
+  bmi: number | null;
+  bmiCategory: string | null;
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -285,6 +327,7 @@ export type ConsultationInput = {
   weightKg: number | null;
   heightCm: number | null;
   spo2: number | null;
+  respiratoryRate: number | null;
 };
 
 export type PrescriptionMedicine = {
@@ -334,7 +377,7 @@ export type Prescription = {
   recommendedTests: PrescriptionTest[];
 };
 
-export type BillStatus = "DRAFT" | "ISSUED" | "PARTIALLY_PAID" | "PAID" | "CANCELLED";
+export type BillStatus = "DRAFT" | "UNPAID" | "ISSUED" | "PARTIALLY_PAID" | "PAID" | "CANCELLED";
 export type BillItemType = "CONSULTATION" | "MEDICINE" | "TEST" | "VACCINATION" | "PROCEDURE" | "OTHER";
 export type PaymentMode = "CASH" | "UPI" | "CARD" | "BANK_TRANSFER" | "OTHER";
 
@@ -560,11 +603,45 @@ export type AiDraftResponse = {
   enabled: boolean;
   fallbackUsed: boolean;
   message: string;
+  provider: string | null;
+  model: string | null;
   draft: string | null;
   structuredData: Record<string, unknown>;
   confidence: number | null;
   suggestedActions: string[];
   warnings: string[];
+};
+
+export type AiRecentRequestRecord = {
+  auditId: string;
+  productCode: string;
+  tenantId: string;
+  actorAppUserId: string | null;
+  useCaseCode: string | null;
+  taskType: string;
+  promptTemplateCode: string | null;
+  promptTemplateVersion: string | null;
+  provider: string | null;
+  model: string | null;
+  status: string;
+  confidence: number | null;
+  latencyMs: number | null;
+  fallbackUsed: boolean;
+  inputSummary: string | null;
+  outputSummary: string | null;
+  correlationId: string | null;
+  createdAt: string;
+};
+
+export type AiClinicalSummaryInput = {
+  patientId: string;
+  patientName?: string | null;
+  historyText?: string | null;
+  chronicHistory?: string | null;
+  recentConsultationSummary?: string | null;
+  recentConsultations?: string[];
+  currentMedications?: string[];
+  allergies?: string[];
 };
 
 export type PatientSearchParams = {
@@ -696,6 +773,10 @@ export async function updateAppointmentStatus(token: string, tenantId: string, i
   return httpPatch<Appointment>(`/api/appointments/${id}/status`, { status }, { token, tenantId });
 }
 
+export async function updateAppointmentPriority(token: string, tenantId: string, id: string, priority: AppointmentPriority) {
+  return httpPatch<Appointment>(`/api/appointments/${id}/priority`, { priority }, { token, tenantId });
+}
+
 export async function getTodayAppointments(token: string, tenantId: string) {
   return httpGet<Appointment[]>("/api/appointments/today", { token, tenantId });
 }
@@ -706,6 +787,10 @@ export async function getDoctorQueueToday(token: string, tenantId: string, docto
 
 export async function getDoctorAvailability(token: string, tenantId: string) {
   return httpGet<DoctorAvailability[]>("/api/doctors/availability", { token, tenantId });
+}
+
+export async function getDoctorSlots(token: string, tenantId: string, doctorUserId: string, date: string) {
+  return httpGet<DoctorAvailabilitySlot[]>(`/api/doctors/${doctorUserId}/slots?date=${encodeURIComponent(date)}`, { token, tenantId });
 }
 
 export async function createDoctorAvailability(token: string, tenantId: string, doctorUserId: string, body: DoctorAvailabilityInput) {
@@ -982,6 +1067,10 @@ export async function aiPatientSummary(token: string, tenantId: string, body: {
   return httpPost<AiDraftResponse>("/api/ai/patient-summary", body, { token, tenantId });
 }
 
+export async function aiClinicalSummary(token: string, tenantId: string, body: AiClinicalSummaryInput) {
+  return httpPost<AiDraftResponse>("/api/ai/clinical-summary", body, { token, tenantId });
+}
+
 export async function aiStructureConsultationNotes(token: string, tenantId: string, body: {
   consultationId: string;
   patientId: string;
@@ -1029,6 +1118,22 @@ export async function aiPatientInstructions(token: string, tenantId: string, bod
   warnings?: string | null;
 }) {
   return httpPost<AiDraftResponse>("/api/ai/patient-instructions", body, { token, tenantId });
+}
+
+export async function reviewClinicalDocumentExtraction(token: string, tenantId: string, documentId: string, body: {
+  approved: boolean;
+  saveToPatientHistory: boolean;
+  reviewNotes?: string | null;
+}) {
+  return httpPost<ClinicalDocument>(`/api/patient-documents/${documentId}/ai-extraction/review`, body, { token, tenantId });
+}
+
+export async function reprocessClinicalDocumentExtraction(token: string, tenantId: string, documentId: string) {
+  return httpPost<ClinicalDocument>(`/api/patient-documents/${documentId}/ai-extraction/reprocess`, undefined, { token, tenantId });
+}
+
+export async function getRecentAiRequests(token: string, tenantId: string) {
+  return httpGet<AiRecentRequestRecord[]>("/api/ai/audit/recent", { token, tenantId });
 }
 
 export async function sendReceipt(token: string, tenantId: string, id: string, channel: string = "email") {

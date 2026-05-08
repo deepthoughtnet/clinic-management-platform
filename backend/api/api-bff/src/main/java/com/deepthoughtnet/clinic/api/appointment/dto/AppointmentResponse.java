@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.appointment.dto;
 
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -19,6 +20,7 @@ public record AppointmentResponse(
         Integer tokenNumber,
         String reason,
         AppointmentType type,
+        AppointmentPriority priority,
         AppointmentStatus status,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt

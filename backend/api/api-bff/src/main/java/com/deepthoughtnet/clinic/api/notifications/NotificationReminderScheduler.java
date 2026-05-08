@@ -26,12 +26,12 @@ public class NotificationReminderScheduler {
         this.properties = properties;
     }
 
-    @Scheduled(fixedDelayString = "${clinic.notifications.scheduler.fixedDelay:PT1H}")
+    @Scheduled(fixedDelayString = "${clinic.notifications.scheduler.fixedDelay:PT5M}")
     public void run() {
         int queued = 0;
         LocalDate today = LocalDate.now();
         for (var tenant : tenantManagementService.list()) {
-            queued += notificationActionService.queueAppointmentReminders(tenant.id(), today.plusDays(1), null);
+            queued += notificationActionService.queueAppointmentReminders(tenant.id(), null, null);
             queued += notificationActionService.queueFollowUpReminders(tenant.id(), today, null);
             queued += notificationActionService.queueVaccinationReminders(tenant.id(), null);
         }

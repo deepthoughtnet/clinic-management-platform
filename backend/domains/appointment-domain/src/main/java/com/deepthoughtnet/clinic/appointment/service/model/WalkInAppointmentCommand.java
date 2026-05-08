@@ -7,6 +7,7 @@ public record WalkInAppointmentCommand(
         UUID patientId,
         UUID doctorUserId,
         LocalDate appointmentDate,
-        String reason
+        String reason,
+        AppointmentPriority priority
 ) {
 }

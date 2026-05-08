@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.appointment;
 
 import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentRequest;
+import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentPriorityRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse;
 import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentStatusRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.WalkInAppointmentRequest;
@@ -50,7 +51,7 @@ public class AppointmentController {
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('appointment.read') or @permissionChecker.hasPermission('appointment.manage')")
     public List<AppointmentResponse> search(
             @RequestParam(required = false) UUID doctorUserId,
             @RequestParam(required = false) UUID patientId,
@@ -75,6 +76,7 @@ public class AppointmentController {
     public AppointmentResponse create(@RequestBody AppointmentRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        boolean allowOverbooking = doctorAssignmentSecurityService.isClinicAdmin();
         return toResponse(appointmentService.createScheduled(tenantId, new AppointmentUpsertCommand(
                 request.patientId(),
                 request.doctorUserId(),
@@ -82,8 +84,9 @@ public class AppointmentController {
                 request.appointmentTime(),
                 request.reason(),
                 request.type(),
-                request.status()
-        ), actorAppUserId));
+                request.status(),
+                request.priority()
+        ), actorAppUserId, allowOverbooking));
     }
 
     @PostMapping("/walk-in")
@@ -92,16 +95,18 @@ public class AppointmentController {
     public AppointmentResponse createWalkIn(@RequestBody WalkInAppointmentRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        boolean allowOverbooking = doctorAssignmentSecurityService.isClinicAdmin();
         return toResponse(appointmentService.createWalkIn(tenantId, new WalkInAppointmentCommand(
                 request.patientId(),
                 request.doctorUserId(),
                 request.appointmentDate(),
-                request.reason()
-        ), actorAppUserId));
+                request.reason(),
+                request.priority()
+        ), actorAppUserId, allowOverbooking));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('appointment.read') or @permissionChecker.hasPermission('appointment.manage')")
     public AppointmentResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requireAppointmentAccess(tenantId, id);
@@ -119,9 +124,21 @@ public class AppointmentController {
         return toResponse(appointmentService.updateStatus(tenantId, id, new AppointmentStatusUpdateCommand(request.status()), actorAppUserId));
     }
 
+    @PatchMapping("/{id}/priority")
+    @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
+    public AppointmentResponse updatePriority(@PathVariable UUID id, @RequestBody AppointmentPriorityRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireNonDoctorQueueStatusUpdate();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        if (request == null || request.priority() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "priority is required");
+        }
+        return toResponse(appointmentService.updatePriority(tenantId, id, request.priority(), actorAppUserId));
+    }
+
     @PostMapping("/{appointmentId}/start-consultation")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasPermission('consultation.create') and @permissionChecker.hasPermission('appointment.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.create') and @permissionChecker.hasPermission('appointment.manage') and @permissionChecker.hasRole('DOCTOR')")
     public ConsultationResponse startConsultation(@PathVariable UUID appointmentId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requireConsultationStartAccess(tenantId, appointmentId);
@@ -130,7 +147,7 @@ public class AppointmentController {
     }
 
     @GetMapping("/today")
-    @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('appointment.read') or @permissionChecker.hasPermission('appointment.manage')")
     public List<AppointmentResponse> today() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(null);
@@ -160,6 +177,7 @@ public class AppointmentController {
                 record.tokenNumber(),
                 record.reason(),
                 record.type(),
+                record.priority(),
                 record.status(),
                 record.createdAt(),
                 record.updatedAt()
@@ -191,6 +209,9 @@ public class AppointmentController {
                 record.weightKg(),
                 record.heightCm(),
                 record.spo2(),
+                record.respiratoryRate(),
+                com.deepthoughtnet.clinic.consultation.service.ConsultationVitalsCalculator.calculateBmi(record.weightKg(), record.heightCm()),
+                com.deepthoughtnet.clinic.consultation.service.ConsultationVitalsCalculator.bmiCategory(record.weightKg(), record.heightCm()),
                 record.completedAt(),
                 record.createdAt(),
                 record.updatedAt()

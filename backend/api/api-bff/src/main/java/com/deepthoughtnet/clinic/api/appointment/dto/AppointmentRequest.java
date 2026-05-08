@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.appointment.dto;
 
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -13,6 +14,7 @@ public record AppointmentRequest(
         LocalTime appointmentTime,
         String reason,
         AppointmentType type,
-        AppointmentStatus status
+        AppointmentStatus status,
+        AppointmentPriority priority
 ) {
 }

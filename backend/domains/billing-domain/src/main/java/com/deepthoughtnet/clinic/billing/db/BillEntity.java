@@ -118,7 +118,7 @@ public class BillEntity {
     }
 
     public void issue() {
-        this.status = BillStatus.ISSUED;
+        this.status = BillStatus.UNPAID;
         this.updatedAt = OffsetDateTime.now();
     }
 
