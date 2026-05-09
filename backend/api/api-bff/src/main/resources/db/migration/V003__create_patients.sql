@@ -22,8 +22,8 @@ create table if not exists patients (
     existing_conditions varchar(512),
     notes text,
     active boolean not null default true,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     constraint uq_patients_tenant_patient_number unique (tenant_id, patient_number)
 );
 

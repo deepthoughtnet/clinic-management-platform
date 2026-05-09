@@ -32,8 +32,10 @@ public class NotificationReminderScheduler {
         LocalDate today = LocalDate.now();
         for (var tenant : tenantManagementService.list()) {
             queued += notificationActionService.queueAppointmentReminders(tenant.id(), null, null);
+            queued += notificationActionService.queueMissedAppointmentReminders(tenant.id(), today, null);
             queued += notificationActionService.queueFollowUpReminders(tenant.id(), today, null);
             queued += notificationActionService.queueVaccinationReminders(tenant.id(), null);
+            queued += notificationActionService.queuePaymentReminders(tenant.id(), null);
         }
         if (queued > 0) {
             log.info("Queued {} reminder notification(s)", queued);

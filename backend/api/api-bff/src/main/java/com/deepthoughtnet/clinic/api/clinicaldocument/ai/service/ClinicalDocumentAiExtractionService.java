@@ -11,9 +11,6 @@ import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentRepository;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
-import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
-import com.deepthoughtnet.clinic.api.security.PermissionChecker;
-import com.deepthoughtnet.clinic.ai.orchestration.db.AgentExecutionLogEntity;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AgentExecutionLogService;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
@@ -29,18 +26,27 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ClinicalDocumentAiExtractionService {
+    private static final Logger log = LoggerFactory.getLogger(ClinicalDocumentAiExtractionService.class);
     private static final String ENTITY_TYPE = "CLINICAL_DOCUMENT_AI";
+    private static final Pattern LAB_PATTERN = Pattern.compile(
+            "(?i)\\b(hemoglobin|hb|glucose|blood sugar|cholesterol|hdl|ldl|triglycerides|bilirubin|alt|ast|alp|alk phos|creatinine)\\b[^\\d\\n]{0,20}([<>]?\\s*\\d+(?:\\.\\d+)?)"
+    );
 
     private final ClinicalAiJobRepository jobRepository;
     private final ClinicalDocumentRepository documentRepository;
@@ -87,7 +93,8 @@ public class ClinicalDocumentAiExtractionService {
                 .orElseThrow(() -> new IllegalArgumentException("Document not found"));
         Optional<ClinicalAiJobEntity> existing = jobRepository.findFirstByTenantIdAndDocumentIdAndJobTypeOrderByCreatedAtDesc(
                 tenantId, documentId, ClinicalAiJobType.DOCUMENT_EXTRACTION);
-        if (existing.isPresent() && existing.get().getStatus() == ClinicalAiJobStatus.QUEUED) {
+        if (existing.isPresent() && (existing.get().getStatus() == ClinicalAiJobStatus.QUEUED
+                || existing.get().getStatus() == ClinicalAiJobStatus.PROCESSING)) {
             return existing.get();
         }
         ClinicalAiJobEntity job = ClinicalAiJobEntity.queued(
@@ -161,6 +168,7 @@ public class ClinicalDocumentAiExtractionService {
             input.put("ocrProvider", textResult.provider());
             input.put("ocrStatus", textResult.status());
             input.put("ocrText", textResult.text());
+            input.put("possibleAbnormalFindings", abnormalFindings(textResult.text()));
             input.put("patient", patientSummary(document.getTenantId(), document.getPatientId()));
 
             List<AiEvidenceReference> evidence = List.of(new AiEvidenceReference(
@@ -181,7 +189,15 @@ public class ClinicalDocumentAiExtractionService {
                     evidence
             );
 
-            String resultJson = toJson(response.structuredData());
+            Map<String, Object> structuredData = new LinkedHashMap<>();
+            if (response.structuredData() != null) {
+                structuredData.putAll(response.structuredData());
+            }
+            structuredData.putIfAbsent("documentType", document.getDocumentType().name());
+            structuredData.putIfAbsent("possibleAbnormalFindings", abnormalFindings(textResult.text()));
+            structuredData.putIfAbsent("ocrProvider", textResult.provider());
+            structuredData.putIfAbsent("ocrStatus", textResult.status());
+            String resultJson = toJson(structuredData);
             String summary = response.draft();
             BigDecimal confidence = response.confidence();
             String reviewStatus = response.enabled() ? "REVIEW_REQUIRED" : "DISABLED";
@@ -197,7 +213,11 @@ public class ClinicalDocumentAiExtractionService {
             );
             documentRepository.save(document);
 
-            job.markSucceeded(response.provider(), response.model(), textResult.provider(), confidence, summary, resultJson);
+            if (response.enabled()) {
+                job.markReviewRequired(response.provider(), response.model(), textResult.provider(), confidence, summary, resultJson);
+            } else {
+                job.markSucceeded(response.provider(), response.model(), textResult.provider(), confidence, summary, resultJson, reviewStatus, null, null, null);
+            }
             jobRepository.save(job);
 
             agentExecutionLogService.record(
@@ -225,20 +245,38 @@ public class ClinicalDocumentAiExtractionService {
             documentRepository.save(document);
             job.markFailed(ex.getMessage(), retryable, retryBackoffMs);
             jobRepository.save(job);
-            throw ex;
+            log.warn("Clinical AI extraction failed safely. jobId={}, tenantId={}, documentId={}, retryable={}, error={}",
+                    job.getId(), job.getTenantId(), job.getDocumentId(), retryable, ex.getMessage(), ex);
         }
     }
 
     @Transactional
-    public ClinicalDocumentRecord review(UUID tenantId, UUID documentId, UUID reviewerAppUserId, boolean approved, boolean saveToPatientHistory, String reviewNotes) {
+    public ClinicalDocumentRecord review(UUID tenantId,
+                                        UUID documentId,
+                                        UUID reviewerAppUserId,
+                                        boolean approved,
+                                        boolean saveToPatientHistory,
+                                        String reviewNotes,
+                                        String acceptedStructuredJson,
+                                        String overrideReason,
+                                        String editedSummary) {
         ClinicalDocumentEntity document = documentRepository.findByTenantIdAndId(tenantId, documentId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found"));
         String reviewStatus = approved ? "APPROVED" : "REJECTED";
-        document.markAiExtractionReviewed(reviewerAppUserId, reviewNotes, reviewStatus);
+        String acceptedJson = approved ? normalizeJson(acceptedStructuredJson, document.getAiExtractionStructuredJson()) : null;
+        String effectiveReviewNotes = reviewNotes == null || reviewNotes.isBlank() ? editedSummary : reviewNotes;
+        document.markAiExtractionReviewed(reviewerAppUserId, effectiveReviewNotes, reviewStatus, acceptedJson, overrideReason);
         ClinicalDocumentEntity saved = documentRepository.save(document);
 
+        jobRepository.findFirstByTenantIdAndDocumentIdAndJobTypeOrderByCreatedAtDesc(tenantId, documentId, ClinicalAiJobType.DOCUMENT_EXTRACTION)
+                .ifPresent(job -> {
+                    job.markReviewed(reviewerAppUserId, approved, effectiveReviewNotes, reviewStatus,
+                            approved ? reviewerAppUserId : null);
+                    jobRepository.save(job);
+                });
+
         if (approved && saveToPatientHistory) {
-            pushToPatientHistory(saved, reviewNotes, reviewerAppUserId);
+            pushToPatientHistory(saved, effectiveReviewNotes, reviewerAppUserId);
         }
 
         auditEventPublisher.record(new AuditEventCommand(
@@ -249,7 +287,7 @@ public class ClinicalDocumentAiExtractionService {
                 reviewerAppUserId,
                 OffsetDateTime.now(),
                 "Reviewed clinical AI extraction",
-                "{\"approved\":%s}".formatted(approved)
+                toJson(reviewAuditPayload(approved, reviewStatus, overrideReason, acceptedJson))
         ));
         return documentService.get(tenantId, documentId);
     }
@@ -300,23 +338,62 @@ public class ClinicalDocumentAiExtractionService {
         return builder.toString();
     }
 
+    private List<String> abnormalFindings(String text) {
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        Matcher matcher = LAB_PATTERN.matcher(text);
+        List<String> findings = new ArrayList<>();
+        while (matcher.find() && findings.size() < 8) {
+            findings.add("Possible abnormal finding detected: " + matcher.group(1) + " " + matcher.group(2));
+        }
+        return findings;
+    }
+
+    private String normalizeJson(String acceptedStructuredJson, String fallbackJson) {
+        if (acceptedStructuredJson != null && !acceptedStructuredJson.isBlank()) {
+            return acceptedStructuredJson.trim();
+        }
+        return fallbackJson;
+    }
+
+    private Map<String, Object> reviewAuditPayload(boolean approved, String reviewStatus, String overrideReason, String acceptedJson) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("approved", approved);
+        payload.put("reviewStatus", reviewStatus);
+        payload.put("overrideReason", overrideReason);
+        payload.put("hasAcceptedStructuredJson", acceptedJson != null && !acceptedJson.isBlank());
+        return payload;
+    }
+
     private Map<String, Object> patientSummary(UUID tenantId, UUID patientId) {
-        PatientRecord patient = patientService.findById(tenantId, patientId).orElse(null);
-        if (patient == null) {
+        if (tenantId == null || patientId == null) {
+            log.warn("Skipping patient summary for AI extraction due to missing tenantId/patientId. tenantId={}, patientId={}",
+                    tenantId, patientId);
             return Map.of();
         }
-        return Map.of(
-                "patientId", patient.id().toString(),
-                "patientNumber", patient.patientNumber(),
-                "patientName", patient.fullName(),
-                "ageYears", patient.ageYears(),
-                "gender", patient.gender().name(),
-                "mobile", patient.mobile(),
-                "allergies", patient.allergies(),
-                "existingConditions", patient.existingConditions(),
-                "longTermMedications", patient.longTermMedications(),
-                "surgicalHistory", patient.surgicalHistory()
-        );
+        PatientRecord patient = patientService.findById(tenantId, patientId).orElse(null);
+        if (patient == null) {
+            log.warn("Skipping patient summary for AI extraction because patient was not found. tenantId={}, patientId={}",
+                    tenantId, patientId);
+            return Map.of();
+        }
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("patientId", safeString(patient.id()));
+        summary.put("patientNumber", safeString(patient.patientNumber()));
+        summary.put("patientName", safeString(patient.fullName()));
+        summary.put("ageYears", patient.ageYears() == null ? "" : patient.ageYears());
+        summary.put("gender", patient.gender() == null ? "" : patient.gender().name());
+        summary.put("mobile", safeString(patient.mobile()));
+        summary.put("allergies", safeString(patient.allergies()));
+        summary.put("existingConditions", safeString(patient.existingConditions()));
+        summary.put("longTermMedications", safeString(patient.longTermMedications()));
+        summary.put("surgicalHistory", safeString(patient.surgicalHistory()));
+        return summary;
+    }
+
+    private String safeString(Object value) {
+        return value == null ? "" : value.toString();
     }
 
     private String toJson(Object value) {

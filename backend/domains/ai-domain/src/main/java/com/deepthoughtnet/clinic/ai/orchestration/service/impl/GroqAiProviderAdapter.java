@@ -8,6 +8,8 @@ import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderRequest;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderResponse;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderStatus;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
@@ -15,6 +17,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class GroqAiProviderAdapter implements AiProvider {
     private static final String PROVIDER_NAME = "GROQ";
+    private static final Logger log = LoggerFactory.getLogger(GroqAiProviderAdapter.class);
 
     private final ObjectProvider<LlmClient> groqClientProvider;
 
@@ -48,10 +51,16 @@ public class GroqAiProviderAdapter implements AiProvider {
 
     @Override
     public AiProviderResponse complete(AiProviderRequest request) {
+        long started = System.currentTimeMillis();
         LlmClient client = groqClientProvider == null ? null : groqClientProvider.getIfAvailable();
         if (client == null) {
+            log.warn("Groq provider unavailable. requestId={}", request == null ? null : request.requestId());
             throw new IllegalStateException("Groq provider is not configured");
         }
+        log.info("Calling Groq provider. requestId={}, chars={}, hasAttachment={}",
+                request == null ? null : request.requestId(),
+                request == null || request.userPrompt() == null ? 0 : request.userPrompt().length(),
+                false);
         LlmResponse response = client.generate(new LlmRequest(
                 request.systemPrompt(),
                 request.userPrompt(),
@@ -62,8 +71,16 @@ public class GroqAiProviderAdapter implements AiProvider {
                 request.request() == null ? null : request.request().maxTokens()
         ));
         if (response == null || response.text() == null || response.text().isBlank()) {
+            log.warn("LLM provider returned empty content. provider=GROQ, requestId={}", request == null ? null : request.requestId());
             throw new IllegalStateException("Groq returned an empty response");
         }
+        log.info("Groq response received. requestId={}, latencyMs={}, responseChars={}, tokenUsage={}",
+                request == null ? null : request.requestId(),
+                System.currentTimeMillis() - started,
+                response.text().trim().length(),
+                response.tokenUsage() == null ? "n/a" : ("prompt=" + response.tokenUsage().promptTokens()
+                        + ",completion=" + response.tokenUsage().completionTokens()
+                        + ",total=" + response.tokenUsage().totalTokens()));
         return new AiProviderResponse(
                 response.provider() == null ? providerName() : response.provider(),
                 response.model(),

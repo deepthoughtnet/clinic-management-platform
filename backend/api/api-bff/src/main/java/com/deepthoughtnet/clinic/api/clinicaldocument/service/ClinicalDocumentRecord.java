@@ -29,6 +29,8 @@ public record ClinicalDocumentRecord(
         String aiExtractionSummary,
         String aiExtractionStructuredJson,
         String aiExtractionReviewNotes,
+        String aiExtractionAcceptedJson,
+        String aiExtractionOverrideReason,
         UUID aiExtractionReviewedByAppUserId,
         OffsetDateTime aiExtractionReviewedAt,
         String ocrStatus,

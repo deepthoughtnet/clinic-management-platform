@@ -10,11 +10,11 @@ create table if not exists prescriptions (
     advice text,
     follow_up_date date,
     status varchar(24) not null,
-    finalized_at timestamptz,
-    printed_at timestamptz,
-    sent_at timestamptz,
-    created_at timestamptz not null,
-    updated_at timestamptz not null
+    finalized_at timestamp with time zone,
+    printed_at timestamp with time zone,
+    sent_at timestamp with time zone,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null
 );
 
 create unique index if not exists uq_prescriptions_tenant_number on prescriptions (tenant_id, prescription_number);

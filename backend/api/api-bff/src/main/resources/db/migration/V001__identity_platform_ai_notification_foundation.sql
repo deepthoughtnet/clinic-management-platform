@@ -4,7 +4,7 @@ create table if not exists tenant_plans (
     max_drivers integer,
     max_devices integer,
     max_routes integer,
-    features jsonb not null default '{}'::jsonb
+    features json not null default '{}'
 );
 
 create table if not exists tenants (
@@ -22,8 +22,8 @@ create table if not exists tenants (
     module_gst_filing boolean not null default false,
     module_doctor_intelligence boolean not null default false,
     module_tele_calling boolean not null default false,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     constraint tenants_code_key unique (code),
     constraint fk_tenants_plan_id foreign key (plan_id) references tenant_plans(id)
 );
@@ -36,8 +36,8 @@ create table if not exists app_users (
     display_name varchar(256),
     driver_id uuid,
     status varchar(32) not null,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     constraint uq_users_tenant_sub unique (tenant_id, keycloak_sub),
     constraint fk_app_users_tenant foreign key (tenant_id) references tenants(id)
 );
@@ -52,8 +52,8 @@ create table if not exists tenant_memberships (
     app_user_id uuid not null,
     role varchar(64) not null,
     status varchar(32) not null,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     constraint uq_membership_tenant_user unique (tenant_id, app_user_id),
     constraint fk_tenant_memberships_tenant foreign key (tenant_id) references tenants(id),
     constraint fk_tenant_memberships_app_user foreign key (app_user_id) references app_users(id)
@@ -69,10 +69,10 @@ create table if not exists audit_events (
     entity_id uuid not null,
     action varchar(96) not null,
     actor_app_user_id uuid,
-    occurred_at timestamptz not null,
+    occurred_at timestamp with time zone not null,
     summary text,
     details_json text,
-    created_at timestamptz not null
+    created_at timestamp with time zone not null
 );
 
 create index if not exists ix_audit_events_tenant_entity
@@ -93,13 +93,13 @@ create table if not exists notification_outbox (
     payload_json text not null,
     status varchar(32) not null,
     attempt_count integer not null default 0,
-    next_attempt_at timestamptz,
+    next_attempt_at timestamp with time zone,
     last_error text,
-    processed_at timestamptz,
-    ignored_at timestamptz,
+    processed_at timestamp with time zone,
+    ignored_at timestamp with time zone,
     ignored_by_app_user_id uuid,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     version integer not null default 0,
     constraint uq_notification_outbox_dedup unique (deduplication_key)
 );
@@ -127,8 +127,8 @@ create table if not exists ai_prompt_templates (
     system_prompt text not null,
     user_prompt_template text not null,
     status varchar(255) not null,
-    created_at timestamptz not null,
-    updated_at timestamptz not null
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null
 );
 
 create index if not exists ix_ai_prompt_templates_code_scope
@@ -160,7 +160,7 @@ create table if not exists ai_request_audit (
     fallback_used boolean not null default false,
     error_message text,
     correlation_id varchar(255),
-    created_at timestamptz not null
+    created_at timestamp with time zone not null
 );
 
 create index if not exists ix_ai_request_audit_product on ai_request_audit (product_code);
@@ -179,7 +179,7 @@ create table if not exists agent_execution_log (
     suggestion_json text,
     status varchar(255) not null,
     executed_by uuid,
-    created_at timestamptz not null
+    created_at timestamp with time zone not null
 );
 
 create index if not exists ix_agent_execution_log_tenant on agent_execution_log (tenant_id);
@@ -190,13 +190,8 @@ create index if not exists ix_agent_execution_log_created_at on agent_execution_
 
 insert into tenant_plans (id, name, max_drivers, max_devices, max_routes, features)
 values
-    ('TRIAL', 'Trial', 10, 25, 20, '{}'::jsonb),
-    ('BASIC', 'Basic', 50, 100, 100, '{}'::jsonb),
-    ('PRO', 'Pro', 250, 500, 500, '{}'::jsonb),
-    ('ENTERPRISE', 'Enterprise', null, null, null, '{}'::jsonb)
-on conflict (id) do update set
-    name = excluded.name,
-    max_drivers = excluded.max_drivers,
-    max_devices = excluded.max_devices,
-    max_routes = excluded.max_routes,
-    features = excluded.features;
+    ('TRIAL', 'Trial', 10, 25, 20, '{}'),
+    ('BASIC', 'Basic', 50, 100, 100, '{}'),
+    ('PRO', 'Pro', 250, 500, 500, '{}'),
+    ('ENTERPRISE', 'Enterprise', null, null, null, '{}')
+on conflict (id) do nothing;

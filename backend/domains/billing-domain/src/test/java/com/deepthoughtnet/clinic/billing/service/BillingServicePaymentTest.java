@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.billing.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -102,6 +103,21 @@ class BillingServicePaymentTest {
         assertThat(bill.getStatus()).isEqualTo(BillStatus.PAID);
         assertThat(bill.getPaidAmount()).isEqualByComparingTo("100.00");
         assertThat(bill.getDueAmount()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void recordPaymentRequiresReferenceForNonCash() {
+        List<PaymentEntity> payments = new ArrayList<>();
+        BillEntity bill = billWithTotal(new BigDecimal("100.00"), payments);
+
+        assertThatThrownBy(() -> service.recordPayment(
+                tenantId,
+                bill.getId(),
+                new PaymentCommand(LocalDate.now(), new BigDecimal("10.00"), PaymentMode.UPI, null, null),
+                actorId
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("referenceNumber is required for non-cash payments");
     }
 
     private BillEntity billWithTotal(BigDecimal total, List<PaymentEntity> payments) {

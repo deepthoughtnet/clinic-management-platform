@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.appointment.db;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -28,6 +29,15 @@ public interface AppointmentRepository extends JpaRepository<AppointmentEntity, 
     boolean existsByTenantIdAndPatientIdAndDoctorUserId(UUID tenantId, UUID patientId, UUID doctorUserId);
 
     boolean existsByTenantIdAndIdAndPatientIdAndDoctorUserId(UUID tenantId, UUID id, UUID patientId, UUID doctorUserId);
+
+    boolean existsByTenantIdAndDoctorUserIdAndPatientIdAndAppointmentDateAndAppointmentTimeAndStatusNotIn(
+            UUID tenantId,
+            UUID doctorUserId,
+            UUID patientId,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            List<com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus> excludedStatuses
+    );
 
     @Query("""
             select coalesce(max(a.tokenNumber), 0)

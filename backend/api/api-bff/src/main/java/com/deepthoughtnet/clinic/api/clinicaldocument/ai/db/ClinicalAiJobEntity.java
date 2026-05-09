@@ -75,6 +75,24 @@ public class ClinicalAiJobEntity {
     @Column(name = "summary_text", columnDefinition = "text")
     private String summaryText;
 
+    @Column(name = "review_status", length = 32)
+    private String reviewStatus;
+
+    @Column(name = "review_notes", columnDefinition = "text")
+    private String reviewNotes;
+
+    @Column(name = "reviewed_by_app_user_id")
+    private UUID reviewedByAppUserId;
+
+    @Column(name = "approved_by_app_user_id")
+    private UUID approvedByAppUserId;
+
+    @Column(name = "reviewed_at")
+    private OffsetDateTime reviewedAt;
+
+    @Column(name = "approved_at")
+    private OffsetDateTime approvedAt;
+
     @Column(name = "attempt_count", nullable = false)
     private int attemptCount;
 
@@ -198,6 +216,30 @@ public class ClinicalAiJobEntity {
         return summaryText;
     }
 
+    public String getReviewStatus() {
+        return reviewStatus;
+    }
+
+    public String getReviewNotes() {
+        return reviewNotes;
+    }
+
+    public UUID getReviewedByAppUserId() {
+        return reviewedByAppUserId;
+    }
+
+    public UUID getApprovedByAppUserId() {
+        return approvedByAppUserId;
+    }
+
+    public OffsetDateTime getReviewedAt() {
+        return reviewedAt;
+    }
+
+    public OffsetDateTime getApprovedAt() {
+        return approvedAt;
+    }
+
     public int getAttemptCount() {
         return attemptCount;
     }
@@ -245,7 +287,37 @@ public class ClinicalAiJobEntity {
         this.updatedAt = now;
     }
 
-    public void markSucceeded(String provider, String model, String ocrProvider, BigDecimal confidence, String summaryText, String resultJson) {
+    public void markReviewRequired(String provider, String model, String ocrProvider, BigDecimal confidence, String summaryText, String resultJson) {
+        OffsetDateTime now = OffsetDateTime.now();
+        this.status = ClinicalAiJobStatus.REVIEW_REQUIRED;
+        this.provider = provider;
+        this.model = model;
+        this.ocrProvider = ocrProvider;
+        this.confidence = confidence;
+        this.summaryText = summaryText;
+        this.resultJson = resultJson;
+        this.completedAt = now;
+        this.errorMessage = null;
+        this.nextAttemptAt = null;
+        this.reviewStatus = "REVIEW_REQUIRED";
+        this.reviewNotes = null;
+        this.reviewedByAppUserId = null;
+        this.approvedByAppUserId = null;
+        this.reviewedAt = null;
+        this.approvedAt = null;
+        this.updatedAt = now;
+    }
+
+    public void markSucceeded(String provider,
+                              String model,
+                              String ocrProvider,
+                              BigDecimal confidence,
+                              String summaryText,
+                              String resultJson,
+                              String reviewStatus,
+                              UUID reviewedByAppUserId,
+                              UUID approvedByAppUserId,
+                              String reviewNotes) {
         OffsetDateTime now = OffsetDateTime.now();
         this.status = ClinicalAiJobStatus.SUCCEEDED;
         this.provider = provider;
@@ -257,6 +329,12 @@ public class ClinicalAiJobEntity {
         this.completedAt = now;
         this.errorMessage = null;
         this.nextAttemptAt = null;
+        this.reviewStatus = reviewStatus;
+        this.reviewedByAppUserId = reviewedByAppUserId;
+        this.approvedByAppUserId = approvedByAppUserId;
+        this.reviewNotes = reviewNotes;
+        this.reviewedAt = reviewedByAppUserId == null ? null : now;
+        this.approvedAt = approvedByAppUserId == null ? null : now;
         this.updatedAt = now;
     }
 
@@ -266,6 +344,18 @@ public class ClinicalAiJobEntity {
         this.errorMessage = errorMessage;
         this.completedAt = now;
         this.nextAttemptAt = retryable ? now.plusNanos(retryDelayMillis * 1_000_000L) : null;
+        this.updatedAt = now;
+    }
+
+    public void markReviewed(UUID reviewerAppUserId, boolean approved, String reviewNotes, String reviewStatus, UUID approvedByAppUserId) {
+        OffsetDateTime now = OffsetDateTime.now();
+        this.reviewedByAppUserId = reviewerAppUserId;
+        this.reviewedAt = now;
+        this.reviewNotes = reviewNotes;
+        this.reviewStatus = reviewStatus;
+        this.approvedByAppUserId = approvedByAppUserId;
+        this.approvedAt = approvedByAppUserId == null ? null : now;
+        this.status = approved ? ClinicalAiJobStatus.SUCCEEDED : ClinicalAiJobStatus.FAILED;
         this.updatedAt = now;
     }
 }

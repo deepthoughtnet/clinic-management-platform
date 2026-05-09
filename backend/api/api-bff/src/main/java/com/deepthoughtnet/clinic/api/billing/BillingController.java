@@ -26,6 +26,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -36,8 +37,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
 
 @RestController
+@Validated
 @RequestMapping("/api/bills")
 public class BillingController {
     private final BillingService billingService;
@@ -53,14 +56,14 @@ public class BillingController {
             @RequestParam(required = false) String status
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        BillStatus billStatus = status == null || status.isBlank() ? null : BillStatus.valueOf(status.trim().toUpperCase());
+        BillStatus billStatus = parseStatus(status);
         return billingService.list(tenantId, new BillingSearchCriteria(patientId, billStatus)).stream().map(this::toResponse).toList();
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('billing.create')")
-    public BillResponse create(@RequestBody BillRequest request) {
+    public BillResponse create(@Valid @RequestBody BillRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(billingService.createDraft(tenantId, toCommand(request), actorAppUserId));
@@ -75,7 +78,7 @@ public class BillingController {
 
     @PutMapping("/{id}")
     @PreAuthorize("@permissionChecker.hasPermission('billing.update') or @permissionChecker.hasPermission('billing.create')")
-    public BillResponse update(@PathVariable UUID id, @RequestBody BillRequest request) {
+    public BillResponse update(@PathVariable UUID id, @Valid @RequestBody BillRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(billingService.updateDraft(tenantId, id, toCommand(request), actorAppUserId));
@@ -100,7 +103,7 @@ public class BillingController {
     @PostMapping("/{billId}/payments")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('payment.collect')")
-    public PaymentResponse addPayment(@PathVariable UUID billId, @RequestBody PaymentRequest request) {
+    public PaymentResponse addPayment(@PathVariable UUID billId, @Valid @RequestBody PaymentRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toPaymentResponse(billingService.recordPayment(tenantId, billId, new PaymentCommand(
@@ -224,5 +227,16 @@ public class BillingController {
                 record.amount(),
                 record.createdAt()
         );
+    }
+
+    private BillStatus parseStatus(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return BillStatus.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Invalid bill status");
+        }
     }
 }

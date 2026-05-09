@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.ai.orchestration.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -152,6 +153,81 @@ class AiOrchestrationServiceImplTest {
             assertFalse(typeName.contains(".db."));
             assertFalse(typeName.contains(".repository."));
         }
+    }
+
+    @Test
+    void parsesFencedJsonResponse() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+
+        AiOrchestrationRequest request = request();
+        AiPromptTemplateDefinition template = template();
+        when(registry.resolve(request)).thenReturn(template);
+        when(router.resolveCandidates(AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION)).thenReturn(List.of(
+                provider("GEMINI", "```json\n{\"summary\":\"Structured summary\",\"followUpSuggestions\":[\"Review in 48h\"]}\n```", AiProviderStatus.AVAILABLE)
+        ));
+
+        AiOrchestrationResponse response = service.complete(request);
+        assertEquals("Structured summary", response.outputText());
+        assertNotNull(response.structuredJson());
+        assertTrue(response.suggestedActions().stream().anyMatch(v -> v.contains("Review in 48h")));
+    }
+
+    @Test
+    void fallsBackToStructuredEnvelopeForPlainTextResponse() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+
+        AiOrchestrationRequest request = request();
+        AiPromptTemplateDefinition template = template();
+        when(registry.resolve(request)).thenReturn(template);
+        when(router.resolveCandidates(AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION)).thenReturn(List.of(
+                provider("GEMINI", "Here are some possible differential diagnoses...", AiProviderStatus.AVAILABLE)
+        ));
+
+        AiOrchestrationResponse response = service.complete(request);
+        assertEquals("Here are some possible differential diagnoses...", response.outputText());
+        assertNotNull(response.structuredJson());
+        assertTrue(response.structuredJson().contains("AI returned unstructured text. Please review carefully."));
+        assertTrue(response.limitations().stream().anyMatch(v -> v.contains("unstructured text")));
+    }
+
+    @Test
+    void handlesEmptyResponseWithSafetyFallback() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+
+        AiOrchestrationRequest request = request();
+        AiPromptTemplateDefinition template = template();
+        when(registry.resolve(request)).thenReturn(template);
+        when(router.resolveCandidates(AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION)).thenReturn(List.of(
+                provider("GEMINI", "   ", AiProviderStatus.AVAILABLE)
+        ));
+
+        AiOrchestrationResponse response = service.complete(request);
+        assertNotEquals(null, response.structuredJson());
+        assertTrue(response.limitations().stream().anyMatch(v -> v.contains("unstructured text")));
+    }
+
+    private AiPromptTemplateDefinition template() {
+        return new AiPromptTemplateDefinition(
+                "clinic.reconciliation.exception.explain.v1",
+                "v1",
+                AiProductCode.CLINIC,
+                AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION,
+                "system prompt",
+                "Answer {{evidenceSummary}}",
+                com.deepthoughtnet.clinic.platform.contracts.ai.AiPromptTemplateStatus.ACTIVE,
+                "fallback summary",
+                List.of("Check the statement"),
+                List.of("Advisory only")
+        );
     }
 
     private AiOrchestrationRequest request() {

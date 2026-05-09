@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/api/medicines")
@@ -61,7 +62,7 @@ public class MedicineController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('vaccination.manage')")
-    public MedicineRecord create(@RequestBody MedicineUpsertCommand request) {
+    public MedicineRecord create(@Valid @RequestBody MedicineUpsertCommand request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return inventoryService.createMedicine(tenantId, request, actorAppUserId);
@@ -69,7 +70,7 @@ public class MedicineController {
 
     @PutMapping("/{id}")
     @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('vaccination.manage')")
-    public MedicineRecord update(@PathVariable UUID id, @RequestBody MedicineUpsertCommand request) {
+    public MedicineRecord update(@PathVariable UUID id, @Valid @RequestBody MedicineUpsertCommand request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return inventoryService.updateMedicine(tenantId, id, request, actorAppUserId);

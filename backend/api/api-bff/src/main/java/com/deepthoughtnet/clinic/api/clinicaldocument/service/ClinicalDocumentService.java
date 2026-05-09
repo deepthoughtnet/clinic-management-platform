@@ -13,6 +13,7 @@ import java.time.OffsetDateTime;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -23,7 +24,15 @@ import org.springframework.http.HttpStatus;
 @Service
 public class ClinicalDocumentService {
     private static final long MAX_SIZE_BYTES = 25L * 1024L * 1024L;
-    private static final Set<String> ALLOWED_MEDIA_TYPES = Set.of("application/pdf", "image/jpeg", "image/png");
+    private static final Map<String, String> MEDIA_TYPE_BY_EXTENSION = Map.of(
+            "pdf", "application/pdf",
+            "jpg", "image/jpeg",
+            "jpeg", "image/jpeg",
+            "png", "image/png"
+    );
+    private static final Set<String> BLOCKED_EXTENSIONS = Set.of(
+            "exe", "dll", "bat", "cmd", "com", "msi", "ps1", "vbs", "js", "jar", "sh", "php", "pl", "scr", "hta", "apk", "bin"
+    );
 
     private final ClinicalDocumentRepository repository;
     private final ObjectStorageService storageService;
@@ -58,13 +67,16 @@ public class ClinicalDocumentService {
     @Transactional
     public ClinicalDocumentRecord upload(ClinicalDocumentUploadCommand command) {
         validate(command);
-        String mediaType = normalizeMediaType(command.mediaType(), command.originalFilename());
+        String fileName = sanitizeFilename(command.originalFilename());
+        String extension = fileExtension(fileName);
+        String mediaType = normalizeMediaType(command.mediaType(), fileName);
         String checksum = sha256(command.bytes());
-        String storageKey = storageService.buildDocumentStorageKey(command.tenantId(), command.originalFilename());
+        String storageKey = storageService.buildDocumentStorageKey(command.tenantId(), fileName);
         if (repository.existsByTenantIdAndStorageKey(command.tenantId(), storageKey)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Document storage key already exists");
         }
 
+        validateFileType(extension, mediaType);
         storageService.putObject(storageKey, mediaType, command.bytes());
         try {
             ClinicalDocumentEntity saved = repository.save(ClinicalDocumentEntity.create(
@@ -74,7 +86,7 @@ public class ClinicalDocumentService {
                     command.appointmentId(),
                     command.uploadedByAppUserId(),
                     command.documentType(),
-                    command.originalFilename().trim(),
+                    fileName,
                     mediaType,
                     command.bytes().length,
                     checksum,
@@ -122,10 +134,10 @@ public class ClinicalDocumentService {
         if (command.bytes().length > MAX_SIZE_BYTES) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Document must be 25 MB or smaller");
         }
-        String mediaType = normalizeMediaType(command.mediaType(), command.originalFilename());
-        if (!ALLOWED_MEDIA_TYPES.contains(mediaType)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only PDF, JPG, JPEG, and PNG documents are supported");
-        }
+        String fileName = sanitizeFilename(command.originalFilename());
+        String extension = fileExtension(fileName);
+        String mediaType = normalizeMediaType(command.mediaType(), fileName);
+        validateFileType(extension, mediaType);
     }
 
     private String normalizeMediaType(String mediaType, String filename) {
@@ -136,11 +148,46 @@ public class ClinicalDocumentService {
         if (!value.isBlank()) {
             return value;
         }
-        String lower = filename == null ? "" : filename.toLowerCase(Locale.ROOT);
-        if (lower.endsWith(".pdf")) return "application/pdf";
-        if (lower.endsWith(".png")) return "image/png";
-        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-        return "application/octet-stream";
+        String extension = fileExtension(filename);
+        return MEDIA_TYPE_BY_EXTENSION.getOrDefault(extension, "application/octet-stream");
+    }
+
+    private void validateFileType(String extension, String mediaType) {
+        if (extension.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "File extension is required");
+        }
+        if (BLOCKED_EXTENSIONS.contains(extension)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Executable files are not allowed");
+        }
+        if (!MEDIA_TYPE_BY_EXTENSION.containsKey(extension)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only PDF, JPG, JPEG, and PNG files are allowed");
+        }
+        String expectedMediaType = MEDIA_TYPE_BY_EXTENSION.get(extension);
+        if (!expectedMediaType.equals(mediaType)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "File type does not match the allowed MIME types");
+        }
+    }
+
+    private String sanitizeFilename(String filename) {
+        String value = filename == null ? "" : filename.trim();
+        if (value.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Filename is required");
+        }
+        String normalized = value.replace('\\', '/');
+        int index = normalized.lastIndexOf('/');
+        return index >= 0 ? normalized.substring(index + 1) : normalized;
+    }
+
+    private String fileExtension(String filename) {
+        if (filename == null || filename.isBlank()) {
+            return "";
+        }
+        String lower = filename.toLowerCase(Locale.ROOT);
+        int index = lower.lastIndexOf('.');
+        if (index < 0 || index == lower.length() - 1) {
+            return "";
+        }
+        return lower.substring(index + 1);
     }
 
     private String sha256(byte[] bytes) {
@@ -162,7 +209,7 @@ public class ClinicalDocumentService {
                 entity.getSizeBytes(), entity.getChecksumSha256(), entity.getStorageKey(), entity.getNotes(), entity.getReferredDoctor(),
                 entity.getReferredHospital(), entity.getReferralNotes(), entity.getAiExtractionStatus(), entity.getAiExtractionProvider(),
                 entity.getAiExtractionModel(), entity.getAiExtractionConfidence(), entity.getAiExtractionSummary(),
-                entity.getAiExtractionStructuredJson(), entity.getAiExtractionReviewNotes(), entity.getAiExtractionReviewedByAppUserId(),
+                entity.getAiExtractionStructuredJson(), entity.getAiExtractionReviewNotes(), entity.getAiExtractionAcceptedJson(), entity.getAiExtractionOverrideReason(), entity.getAiExtractionReviewedByAppUserId(),
                 entity.getAiExtractionReviewedAt(), entity.getOcrStatus(), entity.getCreatedAt(), entity.getUpdatedAt()
         );
     }

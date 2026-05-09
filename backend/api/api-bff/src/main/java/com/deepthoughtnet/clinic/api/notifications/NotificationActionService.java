@@ -172,6 +172,27 @@ public class NotificationActionService {
                 }).sum();
     }
 
+    public int queuePaymentReminders(UUID tenantId, UUID actorAppUserId) {
+        return billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null)).stream()
+                .filter(bill -> bill.dueAmount() != null && bill.dueAmount().compareTo(java.math.BigDecimal.ZERO) > 0)
+                .filter(bill -> bill.status() == com.deepthoughtnet.clinic.billing.service.model.BillStatus.UNPAID
+                        || bill.status() == com.deepthoughtnet.clinic.billing.service.model.BillStatus.PARTIALLY_PAID
+                        || bill.status() == com.deepthoughtnet.clinic.billing.service.model.BillStatus.ISSUED)
+                .mapToInt(bill -> queuePaymentReminder(tenantId, bill, actorAppUserId))
+                .sum();
+    }
+
+    public int queueMissedAppointmentReminders(UUID tenantId, LocalDate missedBeforeDate, UUID actorAppUserId) {
+        LocalDate cutoff = missedBeforeDate == null ? LocalDate.now() : missedBeforeDate;
+        return appointmentService.search(tenantId, new com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria(null, null, null, null, null))
+                .stream()
+                .filter(appointment -> appointment.appointmentDate() != null && appointment.appointmentDate().isBefore(cutoff))
+                .filter(appointment -> appointment.status() == com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus.BOOKED
+                        || appointment.status() == com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus.WAITING)
+                .mapToInt(appointment -> queueMissedAppointmentReminder(tenantId, appointment.id(), actorAppUserId))
+                .sum();
+    }
+
     private int queueAppointmentReminder(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
         var appointment = appointmentService.findById(tenantId, appointmentId);
         PatientEntity patient = patient(tenantId, appointment.patientId());
@@ -215,6 +236,45 @@ public class NotificationActionService {
                 "Follow-up due on " + consultation.followUpDate() + " for consultation " + consultation.id(),
                 "CONSULTATION",
                 consultation.id(),
+                actorAppUserId
+        );
+        return 1;
+    }
+
+    private int queuePaymentReminder(UUID tenantId, BillRecord bill, UUID actorAppUserId) {
+        PatientEntity patient = patient(tenantId, bill.patientId());
+        String channel = normalizeChannel("email");
+        String recipient = resolveRecipient(patient, channel);
+        notificationHistoryService.queue(
+                tenantId,
+                patient.getId(),
+                "PAYMENT_REMINDER",
+                channel,
+                recipient,
+                "Payment reminder",
+                "Outstanding bill " + bill.billNumber() + " due amount " + bill.dueAmount(),
+                "BILL",
+                bill.id(),
+                actorAppUserId
+        );
+        return 1;
+    }
+
+    private int queueMissedAppointmentReminder(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
+        var appointment = appointmentService.findById(tenantId, appointmentId);
+        PatientEntity patient = patient(tenantId, appointment.patientId());
+        String channel = normalizeChannel("email");
+        String recipient = resolveRecipient(patient, channel);
+        notificationHistoryService.queue(
+                tenantId,
+                patient.getId(),
+                "MISSED_APPOINTMENT_REMINDER",
+                channel,
+                recipient,
+                "Missed appointment reminder",
+                "Appointment on " + appointment.appointmentDate() + " was not completed. Please reschedule.",
+                "APPOINTMENT",
+                appointment.id(),
                 actorAppUserId
         );
         return 1;

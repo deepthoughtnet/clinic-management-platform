@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -23,8 +24,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
 
 @RestController
+@Validated
 @RequestMapping("/api/doctors")
 public class DoctorAvailabilityController {
     private final AppointmentService appointmentService;
@@ -62,8 +65,10 @@ public class DoctorAvailabilityController {
                         record.patientId() == null ? null : record.patientId().toString(),
                         record.patientNumber(),
                         record.patientName(),
+                        record.patientMobile(),
                         record.doctorUserId() == null ? null : record.doctorUserId().toString(),
                         record.doctorName(),
+                        record.consultationId() == null ? null : record.consultationId().toString(),
                         record.appointmentDate(),
                         record.appointmentTime(),
                         record.tokenNumber(),
@@ -80,7 +85,7 @@ public class DoctorAvailabilityController {
     @PostMapping("/{doctorUserId}/availability")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
-    public DoctorAvailabilityResponse create(@PathVariable UUID doctorUserId, @RequestBody DoctorAvailabilityRequest request) {
+    public DoctorAvailabilityResponse create(@PathVariable UUID doctorUserId, @Valid @RequestBody DoctorAvailabilityRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(appointmentService.createAvailability(tenantId, doctorUserId, toCommand(request), actorAppUserId));
@@ -88,7 +93,7 @@ public class DoctorAvailabilityController {
 
     @PutMapping("/availability/{id}")
     @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
-    public DoctorAvailabilityResponse update(@PathVariable UUID id, @RequestBody DoctorAvailabilityRequest request) {
+    public DoctorAvailabilityResponse update(@PathVariable UUID id, @Valid @RequestBody DoctorAvailabilityRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(appointmentService.updateAvailability(tenantId, id, toCommand(request), actorAppUserId));

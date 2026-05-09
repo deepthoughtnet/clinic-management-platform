@@ -7,6 +7,34 @@ export type ApiOpts = {
   platformOperation?: boolean;
 };
 
+export type ApiErrorResponse = {
+  timestamp?: string;
+  path?: string;
+  status?: number;
+  code?: string;
+  message?: string;
+  correlationId?: string | null;
+  requestId?: string | null;
+};
+
+export class ApiClientError extends Error {
+  status: number;
+  code: string | null;
+  path: string | null;
+  correlationId: string | null;
+  requestId: string | null;
+
+  constructor(message: string, details: { status: number; code?: string | null; path?: string | null; correlationId?: string | null; requestId?: string | null }) {
+    super(message);
+    this.name = "ApiClientError";
+    this.status = details.status;
+    this.code = details.code ?? null;
+    this.path = details.path ?? null;
+    this.correlationId = details.correlationId ?? null;
+    this.requestId = details.requestId ?? null;
+  }
+}
+
 const SELECTED_TENANT_STORAGE_KEY = "clinic_selected_tenant";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -69,11 +97,22 @@ function buildHeaders(path: string, opts?: ApiOpts, withContentType = true): Hea
   const token = opts?.token ?? getStoredToken();
   const tenantId = resolveTenantId(opts);
   const platformOp = isPlatformOperation(path, opts);
+  const sendTenantHeader = !(platformOp || opts?.requireTenant === false);
+  const headerTenantId = sendTenantHeader ? requireTenantId(tenantId) : null;
+
+  console.info("[api] request context", {
+    path,
+    platformOperation: platformOp,
+    requireTenant: opts?.requireTenant !== false,
+    selectedTenantId: tenantId,
+    xTenantId: headerTenantId,
+    hasAuthorization: Boolean(token),
+  });
 
   return {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(platformOp ? { "X-Platform-Op": "true" } : {}),
-    ...(platformOp || opts?.requireTenant === false ? {} : { "X-Tenant-Id": requireTenantId(tenantId) }),
+    ...(headerTenantId ? { "X-Tenant-Id": headerTenantId } : {}),
     ...(withContentType ? { "Content-Type": "application/json" } : {}),
     Accept: "application/json",
   };
@@ -87,8 +126,30 @@ function buildMultipartHeaders(path: string, opts?: ApiOpts): HeadersInit {
 
 async function parseResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`HTTP ${res.status}: ${body || res.statusText}`);
+    const bodyText = await res.text();
+    let payload: ApiErrorResponse | null = null;
+    if (bodyText) {
+      try {
+        payload = JSON.parse(bodyText) as ApiErrorResponse;
+      } catch {
+        payload = null;
+      }
+    }
+
+    const reference = payload?.correlationId || payload?.requestId || null;
+    const message =
+      sanitizeErrorMessage(
+        payload?.message?.trim() ||
+        (bodyText && bodyText.trim() && !looksLikeMarkup(bodyText) ? bodyText.trim() : res.statusText || "Request failed"),
+      ) + (reference ? ` (ref: ${reference})` : "");
+
+    throw new ApiClientError(message, {
+      status: res.status,
+      code: payload?.code ?? null,
+      path: payload?.path ?? null,
+      correlationId: payload?.correlationId ?? null,
+      requestId: payload?.requestId ?? payload?.correlationId ?? null,
+    });
   }
 
   if (res.status === 204) {
@@ -97,6 +158,29 @@ async function parseResponse<T>(res: Response): Promise<T> {
 
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
+}
+
+function looksLikeMarkup(text: string): boolean {
+  const trimmed = text.trimStart().toLowerCase();
+  return trimmed.startsWith("<!doctype") || trimmed.startsWith("<html") || trimmed.startsWith("<body");
+}
+
+function sanitizeErrorMessage(message: string): string {
+  const normalized = message.trim();
+  if (!normalized) {
+    return "Request failed";
+  }
+  if (
+    normalized.startsWith("org.") ||
+    normalized.startsWith("java.") ||
+    normalized.includes("Exception:") ||
+    normalized.includes("Stack trace") ||
+    normalized.includes("at ") ||
+    normalized.includes("SQLSTATE")
+  ) {
+    return "Request failed";
+  }
+  return normalized;
 }
 
 export async function httpGet<T>(path: string, opts?: ApiOpts): Promise<T> {

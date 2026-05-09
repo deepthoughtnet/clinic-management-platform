@@ -11,6 +11,7 @@ public record AiClinicalSummaryRequest(
         String recentConsultationSummary,
         List<String> recentConsultations,
         List<String> currentMedications,
-        List<String> allergies
+        List<String> allergies,
+        String uploadedReportsSummary
 ) {
 }

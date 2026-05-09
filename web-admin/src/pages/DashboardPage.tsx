@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Grid, Stack, Typography } from "@mui/material";
 
 import { useAuth } from "../auth/useAuth";
-import { getDashboardSummary, getPlatformPlans, getPlatformTenants, getRecentAiRequests, type AiRecentRequestRecord, type DashboardSummary } from "../api/clinicApi";
+import { getAiClinicalAnalytics, getDashboardSummary, getPlatformPlans, getPlatformTenants, getRecentAiRequests, type AiClinicalAnalytics, type AiRecentRequestRecord, type DashboardSummary } from "../api/clinicApi";
 
 type SummaryCard = {
   label: string;
@@ -56,6 +56,7 @@ export default function DashboardPage() {
   const [platformActiveTenants, setPlatformActiveTenants] = React.useState<number>(0);
   const [platformPlans, setPlatformPlans] = React.useState<number>(0);
   const [recentAiRequests, setRecentAiRequests] = React.useState<AiRecentRequestRecord[]>([]);
+  const [aiAnalytics, setAiAnalytics] = React.useState<AiClinicalAnalytics | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const canBilling = auth.hasPermission("billing.read") || auth.hasPermission("billing.create") || auth.hasPermission("payment.collect");
@@ -101,16 +102,22 @@ export default function DashboardPage() {
     async function loadAiRecent() {
       if (!auth.accessToken || !auth.tenantId || !canAiCopilot) {
         setRecentAiRequests([]);
+        setAiAnalytics(null);
         return;
       }
       try {
-        const rows = await getRecentAiRequests(auth.accessToken, auth.tenantId);
+        const [rows, analytics] = await Promise.all([
+          getRecentAiRequests(auth.accessToken, auth.tenantId),
+          getAiClinicalAnalytics(auth.accessToken, auth.tenantId),
+        ]);
         if (!cancelled) {
           setRecentAiRequests(rows);
+          setAiAnalytics(analytics);
         }
       } catch {
         if (!cancelled) {
           setRecentAiRequests([]);
+          setAiAnalytics(null);
         }
       }
     }
@@ -158,6 +165,11 @@ export default function DashboardPage() {
         ...(canReports ? [{ label: "Follow-ups due", value: summary.followUpsDue, tone: "warning", link: "/reports" } as SummaryCard] : []),
         ...(canVaccination ? [{ label: "Vaccinations due", value: summary.vaccinationsDue, tone: "warning", link: "/vaccinations" } as SummaryCard] : []),
         ...(canInventory ? [{ label: "Low stock medicines", value: summary.lowStockMedicines, tone: "error", link: "/inventory" } as SummaryCard] : []),
+        ...(canReports || canBilling ? [
+          { label: "Pending reminders", value: summary.pendingNotifications, tone: "warning", link: "/notifications" } as SummaryCard,
+          { label: "Reminder failures", value: summary.failedNotifications, tone: "error", link: "/notifications" } as SummaryCard,
+          { label: "Reminders sent today", value: summary.sentNotificationsToday, tone: "success", link: "/notifications" } as SummaryCard,
+        ] : []),
         ...(canAiCopilot ? [{ label: "AI Co-pilot", value: "Enabled", tone: "info", link: "/consultations" } as SummaryCard] : []),
       ]
     : [];
@@ -247,6 +259,22 @@ export default function DashboardPage() {
               <CardContent>
                 <Stack spacing={1.5}>
                   <Typography variant="h6" sx={{ fontWeight: 800 }}>Recent AI Activity</Typography>
+                  {aiAnalytics ? (
+                    <Grid container spacing={1}>
+                      <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                        <SummaryTile card={{ label: "AI requests", value: aiAnalytics.requestCount, tone: "info" }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                        <SummaryTile card={{ label: "Pending review", value: aiAnalytics.reviewRequiredCount, tone: "warning" }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                        <SummaryTile card={{ label: "Acceptance rate", value: `${(aiAnalytics.acceptanceRate * 100).toFixed(0)}%`, tone: "success" }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                        <SummaryTile card={{ label: "Average confidence", value: `${(aiAnalytics.averageConfidence * 100).toFixed(0)}%`, tone: "primary" }} />
+                      </Grid>
+                    </Grid>
+                  ) : null}
                   {!recentAiRequests.length ? (
                     <Alert severity="info">No recent AI requests are available yet.</Alert>
                   ) : (

@@ -8,17 +8,18 @@ import com.deepthoughtnet.clinic.platform.core.security.TenantRoleResolver;
 import com.deepthoughtnet.clinic.platform.spring.context.CorrelationId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.deepthoughtnet.clinic.platform.spring.context.TenantHeaders;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.core.Ordered;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 @Slf4j
@@ -29,11 +30,13 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
     private final AuthContextExtractor auth;
     private final AppUserProvisioner provisioner;
     private final TenantRoleResolver roleResolver;
+    private final ObjectMapper objectMapper;
 
-    public RequestContextFilter(AuthContextExtractor auth, AppUserProvisioner provisioner, TenantRoleResolver roleResolver) {
+    public RequestContextFilter(AuthContextExtractor auth, AppUserProvisioner provisioner, TenantRoleResolver roleResolver, ObjectMapper objectMapper) {
         this.auth = auth;
         this.provisioner = provisioner;
         this.roleResolver = roleResolver;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -62,21 +65,29 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
 
             String tenantHeader = request.getHeader(TenantHeaders.TENANT_HEADER);
             TenantId tenantId = auth.resolveTenantId(tenantHeader);
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "Request context bootstrap path={} method={} sub={} email={} tenantHeader={} resolvedTenant={}",
+                        request.getRequestURI(),
+                        request.getMethod(),
+                        sub,
+                        auth.email(),
+                        tenantHeader,
+                        tenantId == null ? null : tenantId.value()
+                );
+            }
 
             // Platform op gate:
             boolean platformOp = isExplicitPlatformOperation(request);
             if (platformOp && !isPlatformAdmin) {
-                response.sendError(HttpServletResponse.SC_FORBIDDEN, "X-Platform-Op requires PLATFORM_ADMIN");
+                writeError(response, request, HttpServletResponse.SC_FORBIDDEN, "forbidden", "You do not have permission to perform this action");
                 return;
             }
 
             // Tenant not resolved:
             if (tenantId == null) {
                 if (tenantHeader != null && !tenantHeader.isBlank()) {
-                    response.sendError(
-                            HttpServletResponse.SC_BAD_REQUEST,
-                            "Invalid tenant context. Please reselect clinic."
-                    );
+                    writeError(response, request, HttpServletResponse.SC_BAD_REQUEST, "bad_request", "Invalid tenant context. Please reselect clinic.");
                     return;
                 }
 
@@ -95,10 +106,7 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
                 }
 
                 // ✅ Do NOT throw -> return clean 401
-                response.sendError(
-                        HttpServletResponse.SC_UNAUTHORIZED,
-                        "Tenant not resolved (missing tenant_id claim or X-Tenant-Id header)"
-                );
+                writeError(response, request, HttpServletResponse.SC_UNAUTHORIZED, "unauthorized", "Tenant not resolved. Select a clinic tenant first.");
                 return;
             }
 
@@ -140,6 +148,26 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
 
     private boolean isTenantlessMeRequest(HttpServletRequest request) {
         return "GET".equalsIgnoreCase(request.getMethod()) && "/api/me".equals(request.getRequestURI());
+    }
+
+    private void writeError(HttpServletResponse response, HttpServletRequest request, int status, String code, String message) throws IOException {
+        if (response.isCommitted()) {
+            return;
+        }
+        response.resetBuffer();
+        response.setStatus(status);
+        response.setContentType("application/json");
+        String correlationId = CorrelationId.ensure(request.getHeader(CorrelationId.HEADER));
+        response.setHeader(CorrelationId.HEADER, correlationId);
+        LinkedHashMap<String, Object> body = new LinkedHashMap<>();
+        body.put("timestamp", java.time.OffsetDateTime.now().toString());
+        body.put("path", request.getRequestURI());
+        body.put("status", status);
+        body.put("code", code);
+        body.put("message", message);
+        body.put("correlationId", correlationId);
+        body.put("requestId", correlationId);
+        response.getWriter().write(objectMapper.writeValueAsString(body));
     }
 
     private static String safe(String v) {

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@Validated
 @RequestMapping("/api/inventory")
 public class InventoryController {
     private final InventoryService inventoryService;
@@ -39,7 +41,7 @@ public class InventoryController {
     @PostMapping("/stocks")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
-    public StockRecord createStock(@RequestBody StockUpsertCommand request) {
+    public StockRecord createStock(@jakarta.validation.Valid @RequestBody StockUpsertCommand request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return inventoryService.createStock(tenantId, request, actorAppUserId);
@@ -47,7 +49,7 @@ public class InventoryController {
 
     @PutMapping("/stocks/{id}")
     @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
-    public StockRecord updateStock(@PathVariable UUID id, @RequestBody StockUpsertCommand request) {
+    public StockRecord updateStock(@PathVariable UUID id, @jakarta.validation.Valid @RequestBody StockUpsertCommand request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return inventoryService.updateStock(tenantId, id, request, actorAppUserId);
@@ -56,7 +58,7 @@ public class InventoryController {
     @PostMapping("/transactions")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('billing.create')")
-    public InventoryTransactionRecord createTransaction(@RequestBody InventoryTransactionCommand request) {
+    public InventoryTransactionRecord createTransaction(@jakarta.validation.Valid @RequestBody InventoryTransactionCommand request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return inventoryService.createTransaction(tenantId, request, actorAppUserId);

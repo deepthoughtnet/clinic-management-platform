@@ -24,6 +24,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -35,8 +36,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.http.HttpStatus;
+import jakarta.validation.Valid;
 
 @RestController
+@Validated
 @RequestMapping("/api/patients")
 public class PatientController {
     private final PatientService patientService;
@@ -79,7 +82,7 @@ public class PatientController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('patient.create')")
-    public PatientResponse create(@RequestBody PatientRequest request) {
+    public PatientResponse create(@Valid @RequestBody PatientRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(patientService.create(tenantId, toCommand(request), actorAppUserId));
@@ -130,7 +133,7 @@ public class PatientController {
 
     @PutMapping("/{id}")
     @PreAuthorize("@permissionChecker.hasPermission('patient.update')")
-    public PatientResponse update(@PathVariable UUID id, @RequestBody PatientRequest request) {
+    public PatientResponse update(@PathVariable UUID id, @Valid @RequestBody PatientRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(patientService.update(tenantId, id, toCommand(request), actorAppUserId));
@@ -283,6 +286,9 @@ public class PatientController {
                 record.parentPrescriptionId() == null ? null : record.parentPrescriptionId().toString(),
                 record.correctionReason(),
                 record.flowType(),
+                record.correctedAt(),
+                record.supersededByPrescriptionId() == null ? null : record.supersededByPrescriptionId().toString(),
+                record.supersededAt(),
                 record.diagnosisSnapshot(),
                 record.advice(),
                 record.followUpDate(),

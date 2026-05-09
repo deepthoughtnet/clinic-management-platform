@@ -12,6 +12,8 @@ import com.deepthoughtnet.clinic.consultation.service.model.ConsultationStatus;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.inventory.service.model.LowStockRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
+import com.deepthoughtnet.clinic.notification.service.NotificationCenterService;
+import com.deepthoughtnet.clinic.notification.service.NotificationSummary;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
 import java.math.BigDecimal;
@@ -35,6 +37,7 @@ public class ReportingFacade {
     private final PrescriptionService prescriptionService;
     private final InventoryService inventoryService;
     private final PatientRepository patientRepository;
+    private final NotificationCenterService notificationCenterService;
 
     public ReportingFacade(
             AppointmentService appointmentService,
@@ -43,7 +46,8 @@ public class ReportingFacade {
             VaccinationService vaccinationService,
             PrescriptionService prescriptionService,
             InventoryService inventoryService,
-            PatientRepository patientRepository
+            PatientRepository patientRepository,
+            NotificationCenterService notificationCenterService
     ) {
         this.appointmentService = appointmentService;
         this.consultationService = consultationService;
@@ -52,6 +56,7 @@ public class ReportingFacade {
         this.prescriptionService = prescriptionService;
         this.inventoryService = inventoryService;
         this.patientRepository = patientRepository;
+        this.notificationCenterService = notificationCenterService;
     }
 
     public DashboardSummaryResponse dashboardSummary(UUID tenantId) {
@@ -91,6 +96,7 @@ public class ReportingFacade {
                 .filter(record -> record.followUpDate() != null && !record.followUpDate().isAfter(LocalDate.now()))
                 .count();
         long lowStockMedicines = inventoryService.listLowStock(tenantId).size();
+        NotificationSummary notificationSummary = notificationCenterService.summarize(tenantId);
         return new DashboardSummaryResponse(
                 todayAppointments.size(),
                 todayAppointments.stream().filter(appointment -> appointment.status() == com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus.WAITING).count(),
@@ -100,7 +106,10 @@ public class ReportingFacade {
                 pendingDues,
                 followUpsDue,
                 vaccinationService.listDue(tenantId).size(),
-                lowStockMedicines
+                lowStockMedicines,
+                notificationSummary.pendingCount(),
+                notificationSummary.failedCount(),
+                notificationSummary.sentTodayCount()
         );
     }
 

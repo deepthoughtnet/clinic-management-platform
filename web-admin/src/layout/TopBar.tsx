@@ -111,15 +111,17 @@ export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => voi
                 sx={{ minWidth: 250 }}
                 onChange={(event) => {
                   const selected = tenantOptions.find((item) => item.tenantId === event.target.value);
-                  auth.selectTenant(
-                    selected
-                      ? {
-                          id: selected.tenantId,
-                          code: selected.tenantCode || selected.tenantId,
-                          name: selected.tenantName || selected.tenantCode || selected.tenantId,
-                        }
-                      : null
-                  );
+                  const nextTenant = selected
+                    ? {
+                        id: selected.tenantId,
+                        code: selected.tenantCode || selected.tenantId,
+                        name: selected.tenantName || selected.tenantCode || selected.tenantId,
+                      }
+                    : null;
+                  auth.selectTenant(nextTenant);
+                  if (nextTenant && location.pathname.startsWith("/platform")) {
+                    navigate("/");
+                  }
                 }}
               >
                 <MenuItem value="">{isPlatformAdmin ? "Platform mode (no clinic selected)" : "Select clinic tenant"}</MenuItem>

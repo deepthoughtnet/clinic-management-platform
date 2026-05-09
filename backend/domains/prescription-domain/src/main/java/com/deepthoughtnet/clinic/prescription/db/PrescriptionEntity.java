@@ -9,6 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -19,6 +20,8 @@ import java.util.UUID;
         indexes = {
                 @Index(name = "ix_prescriptions_tenant_patient", columnList = "tenant_id,patient_id"),
                 @Index(name = "ix_prescriptions_tenant_consultation", columnList = "tenant_id,consultation_id"),
+                @Index(name = "ix_prescriptions_tenant_parent", columnList = "tenant_id,parent_prescription_id"),
+                @Index(name = "ix_prescriptions_tenant_superseded_by", columnList = "tenant_id,superseded_by_prescription_id"),
                 @Index(name = "ix_prescriptions_tenant_doctor", columnList = "tenant_id,doctor_user_id"),
                 @Index(name = "ix_prescriptions_tenant_status", columnList = "tenant_id,status")
         },
@@ -61,6 +64,15 @@ public class PrescriptionEntity {
     @Column(name = "flow_type", length = 32)
     private String flowType;
 
+    @Column(name = "corrected_at")
+    private OffsetDateTime correctedAt;
+
+    @Column(name = "superseded_by_prescription_id")
+    private UUID supersededByPrescriptionId;
+
+    @Column(name = "superseded_at")
+    private OffsetDateTime supersededAt;
+
     @Column(name = "finalized_by_doctor_user_id")
     private UUID finalizedByDoctorUserId;
 
@@ -91,6 +103,10 @@ public class PrescriptionEntity {
 
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt = OffsetDateTime.now();
+
+    @Version
+    @Column(nullable = false)
+    private int version;
 
     protected PrescriptionEntity() {
     }
@@ -137,6 +153,19 @@ public class PrescriptionEntity {
         this.flowType = flowType;
     }
 
+    public void markCorrected() {
+        this.status = PrescriptionStatus.CORRECTED;
+        this.correctedAt = OffsetDateTime.now();
+        this.updatedAt = this.correctedAt;
+    }
+
+    public void markSuperseded(UUID supersededByPrescriptionId) {
+        this.status = PrescriptionStatus.SUPERSEDED;
+        this.supersededByPrescriptionId = supersededByPrescriptionId;
+        this.supersededAt = OffsetDateTime.now();
+        this.updatedAt = this.supersededAt;
+    }
+
     public void finalizePrescription(UUID finalizedByDoctorUserId) {
         this.status = PrescriptionStatus.FINALIZED;
         this.finalizedByDoctorUserId = finalizedByDoctorUserId;
@@ -172,6 +201,9 @@ public class PrescriptionEntity {
     public UUID getParentPrescriptionId() { return parentPrescriptionId; }
     public String getCorrectionReason() { return correctionReason; }
     public String getFlowType() { return flowType; }
+    public OffsetDateTime getCorrectedAt() { return correctedAt; }
+    public UUID getSupersededByPrescriptionId() { return supersededByPrescriptionId; }
+    public OffsetDateTime getSupersededAt() { return supersededAt; }
     public UUID getFinalizedByDoctorUserId() { return finalizedByDoctorUserId; }
     public String getDiagnosisSnapshot() { return diagnosisSnapshot; }
     public String getAdvice() { return advice; }
@@ -182,4 +214,5 @@ public class PrescriptionEntity {
     public OffsetDateTime getSentAt() { return sentAt; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public int getVersion() { return version; }
 }

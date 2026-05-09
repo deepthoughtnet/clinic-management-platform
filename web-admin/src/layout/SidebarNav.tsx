@@ -59,6 +59,9 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
   if (tenantRole) {
     activeRoles.add(tenantRole);
   }
+  if (isPlatformAdmin && auth.tenantId) {
+    activeRoles.add("PLATFORM_TENANT_SUPPORT");
+  }
 
   const iconMap: Record<string, React.ReactNode> = {
     "platform-dashboard": <DashboardRoundedIcon fontSize="small" />,
@@ -84,7 +87,7 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
   const items = NAV.filter((item) => {
     if (item.platformOnly && !isPlatformAdmin) return false;
     if (item.requiresTenant && !auth.tenantId) return false;
-    if (item.rolesAny && item.rolesAny.length > 0 && !item.rolesAny.some((role) => activeRoles.has(role))) return false;
+    if (item.rolesAny && item.rolesAny.length > 0 && !item.rolesAny.some((role) => activeRoles.has(role)) && !(isPlatformAdmin && auth.tenantId)) return false;
     if (item.section === "Clinic" && isPlatformAdmin && !auth.tenantId) return false;
     if (item.section === "Settings" && isPlatformAdmin && !auth.tenantId) return false;
     return true;

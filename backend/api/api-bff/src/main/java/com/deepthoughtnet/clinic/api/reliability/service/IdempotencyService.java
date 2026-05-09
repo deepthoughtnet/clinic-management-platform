@@ -26,7 +26,7 @@ public class IdempotencyService {
             return Optional.empty();
         }
         String requestHash = hash(requestBody == null ? "" : requestBody);
-        return repository.findByTenantIdAndKey(tenantId, idempotencyKey)
+        return repository.findByTenantIdAndIdempotencyKey(tenantId, idempotencyKey)
                 .map(entity -> {
                     if (!requestHash.equals(entity.getRequestHash())) {
                         throw new BadRequestException("Idempotency key reused with different payload");
@@ -41,7 +41,7 @@ public class IdempotencyService {
             return;
         }
         String requestHash = hash(requestBody == null ? "" : requestBody);
-        repository.findByTenantIdAndKey(tenantId, idempotencyKey)
+        repository.findByTenantIdAndIdempotencyKey(tenantId, idempotencyKey)
                 .ifPresentOrElse(existing -> {
                     if (!requestHash.equals(existing.getRequestHash())) {
                         throw new BadRequestException("Idempotency key reused with different payload");

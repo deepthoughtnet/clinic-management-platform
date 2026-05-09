@@ -34,6 +34,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -290,7 +291,10 @@ public class AppointmentService {
     @Transactional(readOnly = true)
     public List<AppointmentRecord> listToday(UUID tenantId) {
         requireTenant(tenantId);
-        return mapAppointments(tenantId, appointmentRepository.findByTenantIdAndAppointmentDateOrderByAppointmentTimeAscCreatedAtAsc(tenantId, LocalDate.now()));
+        return mapAppointments(tenantId, appointmentRepository.findByTenantIdAndAppointmentDateOrderByAppointmentTimeAscCreatedAtAsc(tenantId, LocalDate.now()))
+                .stream()
+                .filter(record -> record.status() != AppointmentStatus.CANCELLED)
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -324,8 +328,10 @@ public class AppointmentService {
     public AppointmentRecord createScheduled(UUID tenantId, AppointmentUpsertCommand command, UUID actorAppUserId, boolean allowOverbooking) {
         requireTenant(tenantId);
         validateAppointment(command);
+        validateNotPast(command.appointmentDate(), command.appointmentTime());
         ensurePatientInTenant(tenantId, command.patientId());
         ensureDoctorInTenant(tenantId, command.doctorUserId());
+        ensureNoDuplicateActiveAppointment(tenantId, command.patientId(), command.doctorUserId(), command.appointmentDate(), command.appointmentTime());
         ensureScheduledSlotAvailable(tenantId, command, allowOverbooking);
 
         AppointmentEntity entity = AppointmentEntity.create(tenantId, command.patientId(), command.doctorUserId());
@@ -353,6 +359,7 @@ public class AppointmentService {
     public AppointmentRecord createWalkIn(UUID tenantId, WalkInAppointmentCommand command, UUID actorAppUserId, boolean allowOverbooking) {
         requireTenant(tenantId);
         validateWalkIn(command);
+        validateNotPast(command.appointmentDate(), null);
         ensurePatientInTenant(tenantId, command.patientId());
         ensureDoctorInTenant(tenantId, command.doctorUserId());
 
@@ -384,11 +391,17 @@ public class AppointmentService {
         AppointmentEntity entity = appointmentRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Appointment not found"));
         ensureTransitionAllowed(entity.getStatus(), command.status());
+        String normalizedComment = normalizeNullable(command.comment());
+        if (entity.getStatus() == AppointmentStatus.WAITING
+                && (command.status() == AppointmentStatus.CANCELLED || command.status() == AppointmentStatus.NO_SHOW)
+                && !StringUtils.hasText(normalizedComment)) {
+            throw new IllegalArgumentException("Reason/comment is required to cancel or mark no-show after check-in");
+        }
         entity.update(
                 entity.getAppointmentDate(),
                 entity.getAppointmentTime(),
                 entity.getTokenNumber(),
-                entity.getReason(),
+                normalizedComment == null ? entity.getReason() : normalizedComment,
                 entity.getType(),
                 command.status(),
                 entity.getPriority()
@@ -440,6 +453,54 @@ public class AppointmentService {
         return toRecord(saved, tenantUsersById(tenantId), patientsByIds(tenantId, List.of(saved.getPatientId())));
     }
 
+    @Transactional
+    public List<AppointmentRecord> reorderQueueToday(UUID tenantId, UUID doctorUserId, List<UUID> orderedAppointmentIds, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireDoctor(doctorUserId);
+        if (orderedAppointmentIds == null || orderedAppointmentIds.isEmpty()) {
+            throw new IllegalArgumentException("orderedAppointmentIds is required");
+        }
+        List<AppointmentEntity> queue = appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(
+                tenantId,
+                doctorUserId,
+                LocalDate.now()
+        );
+        List<AppointmentEntity> reorderable = queue.stream()
+                .filter(entity -> entity.getStatus() == AppointmentStatus.BOOKED || entity.getStatus() == AppointmentStatus.WAITING)
+                .toList();
+        Set<UUID> expected = reorderable.stream().map(AppointmentEntity::getId).collect(Collectors.toSet());
+        Set<UUID> requested = new java.util.LinkedHashSet<>(orderedAppointmentIds);
+        if (!expected.equals(requested) || orderedAppointmentIds.size() != expected.size()) {
+            throw new IllegalArgumentException("Queue reorder request must include all and only active reorderable queue items");
+        }
+        Map<UUID, AppointmentEntity> byId = reorderable.stream().collect(Collectors.toMap(AppointmentEntity::getId, Function.identity()));
+        int token = 1;
+        for (UUID appointmentId : orderedAppointmentIds) {
+            AppointmentEntity entity = byId.get(appointmentId);
+            entity.update(
+                    entity.getAppointmentDate(),
+                    entity.getAppointmentTime(),
+                    token++,
+                    entity.getReason(),
+                    entity.getType(),
+                    entity.getStatus(),
+                    entity.getPriority()
+            );
+            appointmentRepository.save(entity);
+        }
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                APPOINTMENT_ENTITY,
+                null,
+                "appointment.queue.reordered",
+                actorAppUserId,
+                OffsetDateTime.now(),
+                "Reordered doctor queue",
+                "{\"doctorUserId\":\"" + doctorUserId + "\"}"
+        ));
+        return listQueueToday(tenantId, doctorUserId);
+    }
+
     private List<AppointmentRecord> mapAppointments(UUID tenantId, List<AppointmentEntity> appointments) {
         Map<UUID, PatientEntity> patients = patientsByIds(tenantId, appointments.stream().map(AppointmentEntity::getPatientId).distinct().toList());
         Map<UUID, TenantUserRecord> users = tenantUsersById(tenantId);
@@ -455,8 +516,10 @@ public class AppointmentService {
                 entity.getPatientId(),
                 patient == null ? null : patient.getPatientNumber(),
                 patient == null ? null : patient.getFirstName() + " " + patient.getLastName(),
+                patient == null ? null : patient.getMobile(),
                 entity.getDoctorUserId(),
                 doctor == null ? null : doctor.displayName(),
+                null,
                 entity.getAppointmentDate(),
                 entity.getAppointmentTime(),
                 entity.getTokenNumber(),
@@ -657,7 +720,11 @@ public class AppointmentService {
         if (command.type() == AppointmentType.WALK_IN) {
             return;
         }
-        DoctorAvailabilitySlotRecord slot = listSlots(tenantId, command.doctorUserId(), command.appointmentDate()).stream()
+        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, command.doctorUserId(), command.appointmentDate());
+        if (slots.isEmpty()) {
+            return;
+        }
+        DoctorAvailabilitySlotRecord slot = slots.stream()
                 .filter(candidate -> candidate.slotTime().equals(command.appointmentTime()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Selected time is not available for the selected doctor"));
@@ -669,6 +736,30 @@ public class AppointmentService {
         }
         if (!StringUtils.hasText(command.reason()) && allowOverbooking && slot.bookedCount() >= slot.maxPatientsPerSlot()) {
             throw new IllegalArgumentException("Reason is required when overbooking a slot");
+        }
+    }
+
+    private void ensureNoDuplicateActiveAppointment(UUID tenantId, UUID patientId, UUID doctorUserId, LocalDate appointmentDate, LocalTime appointmentTime) {
+        boolean duplicate = appointmentRepository.existsByTenantIdAndDoctorUserIdAndPatientIdAndAppointmentDateAndAppointmentTimeAndStatusNotIn(
+                tenantId,
+                doctorUserId,
+                patientId,
+                appointmentDate,
+                appointmentTime,
+                List.of(AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW)
+        );
+        if (duplicate) {
+            throw new IllegalArgumentException("An active appointment already exists for the same patient, doctor, date, and time");
+        }
+    }
+
+    private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime) {
+        LocalDate today = LocalDate.now();
+        if (appointmentDate.isBefore(today)) {
+            throw new IllegalArgumentException("Appointment date/time cannot be in the past");
+        }
+        if (appointmentDate.isEqual(today) && appointmentTime != null && !appointmentTime.isAfter(LocalTime.now())) {
+            throw new IllegalArgumentException("Appointment date/time cannot be in the past");
         }
     }
 

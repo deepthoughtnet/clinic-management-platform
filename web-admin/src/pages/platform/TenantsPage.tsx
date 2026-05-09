@@ -190,6 +190,7 @@ export default function TenantsPage() {
       setOpenCreate(false);
       setForm(EMPTY_FORM);
       await load();
+      navigate("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create tenant");
     } finally {
@@ -311,9 +312,12 @@ export default function TenantsPage() {
                         <Button
                           size="small"
                           variant={isSelected ? "contained" : "outlined"}
-                          onClick={() => auth.selectTenant({ id: tenant.id, code: tenant.code, name: tenant.name })}
+                          onClick={() => {
+                            auth.selectTenant({ id: tenant.id, code: tenant.code, name: tenant.name });
+                            navigate("/");
+                          }}
                         >
-                          {isSelected ? "Selected" : "Select"}
+                          {isSelected ? "Open" : "Open Tenant"}
                         </Button>
                         <Button size="small" onClick={() => onStatusChange(tenant, !isActive)}>
                           {isActive ? "Deactivate" : "Activate"}

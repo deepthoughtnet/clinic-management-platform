@@ -1,7 +1,12 @@
 package com.deepthoughtnet.clinic.api.config;
 
+import com.deepthoughtnet.clinic.api.errors.ApiError;
+import com.deepthoughtnet.clinic.platform.spring.context.CorrelationId;
 import com.deepthoughtnet.clinic.platform.spring.security.TenantRoleAuthorityFilter;
 import com.deepthoughtnet.clinic.platform.spring.web.RequestContextFilter;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,6 +30,8 @@ import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.AccessDeniedHandler;
+import org.springframework.security.web.AuthenticationEntryPoint;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -44,10 +51,15 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             RequestContextFilter clinicRequestContextFilter,
-            TenantRoleAuthorityFilter clinicTenantRoleAuthorityFilter
+            TenantRoleAuthorityFilter clinicTenantRoleAuthorityFilter,
+            ObjectMapper objectMapper
     ) throws Exception {
         http.cors(cors -> {});
         http.csrf(csrf -> csrf.disable());
+        http.exceptionHandling(ex -> ex
+                .authenticationEntryPoint(authenticationEntryPoint(objectMapper))
+                .accessDeniedHandler(accessDeniedHandler(objectMapper))
+        );
 
         http.authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
@@ -70,6 +82,14 @@ public class SecurityConfig {
         http.addFilterAfter(clinicTenantRoleAuthorityFilter, RequestContextFilter.class);
 
         return http.build();
+    }
+
+    private AuthenticationEntryPoint authenticationEntryPoint(ObjectMapper objectMapper) {
+        return (request, response, authException) -> writeError(objectMapper, request, response, HttpServletResponse.SC_UNAUTHORIZED, "unauthorized", "Authentication is required");
+    }
+
+    private AccessDeniedHandler accessDeniedHandler(ObjectMapper objectMapper) {
+        return (request, response, accessDeniedException) -> writeError(objectMapper, request, response, HttpServletResponse.SC_FORBIDDEN, "forbidden", "You do not have permission to perform this action");
     }
 
     @Bean
@@ -141,6 +161,14 @@ public class SecurityConfig {
 
     private static String normalize(String value) {
         return value.replaceAll("/+$", "");
+    }
+
+    private void writeError(ObjectMapper objectMapper, HttpServletRequest request, HttpServletResponse response, int status, String code, String message) throws java.io.IOException {
+        String correlationId = CorrelationId.ensure(request.getHeader(CorrelationId.HEADER));
+        response.setStatus(status);
+        response.setContentType("application/json");
+        response.setHeader(CorrelationId.HEADER, correlationId);
+        response.getWriter().write(objectMapper.writeValueAsString(ApiError.of(status, code, message, request.getRequestURI(), correlationId)));
     }
 
     static String normalizeRole(String value) {

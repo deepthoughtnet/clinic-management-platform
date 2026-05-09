@@ -8,6 +8,7 @@ import { useAuth } from "../auth/useAuth";
 import DashboardPage from "../pages/DashboardPage";
 import ClinicProfilePage from "../pages/settings/ClinicProfilePage";
 import UsersRolesPage from "../pages/settings/UsersRolesPage";
+import DoctorDetailPage from "../pages/doctors/DoctorDetailPage";
 import PatientsPage from "../pages/patients/PatientsPage";
 import PatientFormPage from "../pages/patients/PatientFormPage";
 import PatientDetailPage from "../pages/patients/PatientDetailPage";
@@ -142,6 +143,7 @@ function AuthedApp() {
         <Route path="/settings" element={<Navigate to="/settings/clinic-profile" replace />} />
         <Route path="/settings/clinic-profile" element={<ClinicProfilePage />} />
         <Route path="/settings/users-roles" element={<UsersRolesPage />} />
+        <Route path="/doctors/:id" element={<DoctorDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Box sx={{ display: "none" }}>{auth.username}</Box>

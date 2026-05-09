@@ -16,6 +16,7 @@ class RolePermissionMappingsTest {
 
         assertThat(permissions).contains(
                 Permissions.PATIENT_CREATE,
+                Permissions.PATIENT_UPDATE,
                 Permissions.APPOINTMENT_MANAGE,
                 Permissions.QUEUE_READ,
                 Permissions.QUEUE_UPDATE

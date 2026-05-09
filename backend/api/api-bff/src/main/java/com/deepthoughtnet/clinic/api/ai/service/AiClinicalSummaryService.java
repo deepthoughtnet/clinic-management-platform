@@ -25,6 +25,7 @@ public class AiClinicalSummaryService {
         input.put("recentConsultations", request.recentConsultations());
         input.put("currentMedications", request.currentMedications());
         input.put("allergies", request.allergies());
+        input.put("uploadedReportsSummary", request.uploadedReportsSummary());
 
         return copilotService.draft(
                 AiTaskType.CLINICAL_SUMMARY,

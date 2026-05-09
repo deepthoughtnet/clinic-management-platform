@@ -23,7 +23,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
-import { getClinicUsers, getDoctorQueueToday, startConsultationFromAppointment, updateAppointmentPriority, updateAppointmentStatus, type Appointment, type ClinicUser, type AppointmentPriority } from "../../api/clinicApi";
+import { getClinicUsers, getDoctorQueueToday, reorderDoctorQueueToday, startConsultationFromAppointment, updateAppointmentPriority, updateAppointmentStatus, type Appointment, type ClinicUser, type AppointmentPriority } from "../../api/clinicApi";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -71,7 +71,8 @@ export default function QueuePage() {
   const [doctorUserId, setDoctorUserId] = React.useState("");
   const [queue, setQueue] = React.useState<Appointment[]>([]);
   const [queueSearch, setQueueSearch] = React.useState("");
-  const [loading, setLoading] = React.useState(true);
+  const [loadingDoctors, setLoadingDoctors] = React.useState(true);
+  const [loadingQueue, setLoadingQueue] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [savingId, setSavingId] = React.useState<string | null>(null);
 
@@ -82,7 +83,9 @@ export default function QueuePage() {
   const isReceptionist = tenantRole === "RECEPTIONIST";
   const canStartConsultation = isDoctor && auth.hasPermission("consultation.create");
   const canManageDeskStatus = (isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage");
+  const canReorderQueue = (isDoctor || isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage");
   const tenantReady = isValidTenantId(auth.tenantId);
+  const [draggingId, setDraggingId] = React.useState<string | null>(null);
   const visibleQueue = queue.filter((appointment) => {
     const term = queueSearch.trim().toLowerCase();
     if (!term) return true;
@@ -100,10 +103,10 @@ export default function QueuePage() {
     let cancelled = false;
     async function loadUsers() {
       if (!auth.accessToken || !tenantReady || !auth.tenantId) {
-        setLoading(false);
+        setLoadingDoctors(false);
         return;
       }
-      setLoading(true);
+      setLoadingDoctors(true);
       try {
         if (isDoctor && auth.appUserId) {
           setDoctorUserId(auth.appUserId);
@@ -122,7 +125,7 @@ export default function QueuePage() {
         }
       } finally {
         if (!cancelled) {
-          setLoading(false);
+          setLoadingDoctors(false);
         }
       }
     }
@@ -137,9 +140,10 @@ export default function QueuePage() {
     async function loadQueue() {
       if (!auth.accessToken || !tenantReady || !auth.tenantId || !doctorUserId) {
         setQueue([]);
+        setLoadingQueue(false);
         return;
       }
-      setLoading(true);
+      setLoadingQueue(true);
       setError(null);
       try {
         const rows = await getDoctorQueueToday(auth.accessToken, auth.tenantId, doctorUserId);
@@ -153,7 +157,7 @@ export default function QueuePage() {
         }
       } finally {
         if (!cancelled) {
-          setLoading(false);
+          setLoadingQueue(false);
         }
       }
     }
@@ -174,12 +178,42 @@ export default function QueuePage() {
     setSavingId(appointmentId);
     setError(null);
     try {
-      await updateAppointmentStatus(auth.accessToken, auth.tenantId, appointmentId, status);
+      let comment: string | null = null;
+      const current = queue.find((item) => item.id === appointmentId);
+      const requiresComment = (status === "CANCELLED" || status === "NO_SHOW") && current?.status === "WAITING";
+      if (requiresComment) {
+        comment = window.prompt("Cancellation/No-show reason is required after check-in.")?.trim() || null;
+        if (!comment) {
+          setError("Reason/comment is required after check-in.");
+          return;
+        }
+      }
+      await updateAppointmentStatus(auth.accessToken, auth.tenantId, appointmentId, status, comment);
       const refreshed = await getDoctorQueueToday(auth.accessToken, auth.tenantId, doctorUserId);
       setQueue(refreshed);
     } catch (err) {
       setError("Queue action failed. Please refresh and verify the appointment status.");
       console.error("Queue status update failed", err);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const reorderableIds = React.useMemo(
+    () => queue.filter((item) => item.status === "BOOKED" || item.status === "WAITING").map((item) => item.id),
+    [queue],
+  );
+
+  const reorderQueue = async (orderedIds: string[]) => {
+    if (!auth.accessToken || !auth.tenantId || !doctorUserId || !canReorderQueue) return;
+    setSavingId("__queue__");
+    setError(null);
+    try {
+      const refreshed = await reorderDoctorQueueToday(auth.accessToken, auth.tenantId, doctorUserId, orderedIds);
+      setQueue(refreshed);
+    } catch (err) {
+      setError("Unable to reorder queue. Please refresh and try again.");
+      console.error("Queue reorder failed", err);
     } finally {
       setSavingId(null);
     }
@@ -263,6 +297,11 @@ export default function QueuePage() {
               <Chip label={`In consultation ${queue.filter((item) => item.status === "IN_CONSULTATION").length}`} color="info" />
               <Chip label={`Completed ${queue.filter((item) => item.status === "COMPLETED").length}`} color="success" />
             </Stack>
+            {!doctorUserId ? (
+              <Alert severity="info">
+                {loadingDoctors ? "Loading available doctors..." : "Select a doctor to view the queue."}
+              </Alert>
+            ) : null}
             <TextField
               size="small"
               label="Find queue patient"
@@ -272,15 +311,21 @@ export default function QueuePage() {
               sx={{ maxWidth: 520 }}
             />
 
-            {loading ? (
+            {loadingQueue ? (
               <Box sx={{ display: "grid", placeItems: "center", minHeight: 220 }}>
-                <CircularProgress />
+                <Stack spacing={1} alignItems="center">
+                  <CircularProgress />
+                  <Typography variant="body2" color="text.secondary">
+                    Loading queue items...
+                  </Typography>
+                </Stack>
               </Box>
             ) : visibleQueue.length === 0 ? (
               <Alert severity="info">No queue items were found for the selected doctor today.</Alert>
             ) : (
-              <Table size="small">
-                <TableHead>
+              <Box sx={{ overflowX: "auto" }}>
+                <Table size="small" sx={{ minWidth: 920 }}>
+                  <TableHead>
                     <TableRow>
                       <TableCell>Token</TableCell>
                       <TableCell>Patient</TableCell>
@@ -294,7 +339,28 @@ export default function QueuePage() {
                   </TableHead>
                   <TableBody>
                   {visibleQueue.map((appointment) => (
-                      <TableRow key={appointment.id}>
+                      <TableRow
+                        key={appointment.id}
+                        draggable={canReorderQueue && (appointment.status === "BOOKED" || appointment.status === "WAITING")}
+                        onDragStart={() => setDraggingId(appointment.id)}
+                        onDragOver={(event) => {
+                          if (draggingId) {
+                            event.preventDefault();
+                          }
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          if (!draggingId || draggingId === appointment.id) return;
+                          if (!(appointment.status === "BOOKED" || appointment.status === "WAITING")) return;
+                          const next = reorderableIds.filter((id) => id !== draggingId);
+                          const targetIndex = next.indexOf(appointment.id);
+                          if (targetIndex < 0) return;
+                          next.splice(targetIndex, 0, draggingId);
+                          void reorderQueue(next);
+                          setDraggingId(null);
+                        }}
+                        onDragEnd={() => setDraggingId(null)}
+                      >
                         <TableCell>{appointment.tokenNumber ?? "-"}</TableCell>
                         <TableCell>
                           <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)} sx={{ justifyContent: "flex-start", p: 0, minWidth: 0 }}>
@@ -353,11 +419,12 @@ export default function QueuePage() {
                             <Typography variant="caption" color="text.secondary">No actions</Typography>
                           ) : null}
                         </Stack>
-                      </TableCell>
-                    </TableRow>
+                        </TableCell>
+                      </TableRow>
                   ))}
-                </TableBody>
-              </Table>
+                  </TableBody>
+                </Table>
+              </Box>
             )}
           </Stack>
         </CardContent>

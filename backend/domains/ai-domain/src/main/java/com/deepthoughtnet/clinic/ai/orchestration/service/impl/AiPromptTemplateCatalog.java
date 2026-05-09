@@ -33,6 +33,7 @@ public class AiPromptTemplateCatalog {
             {{evidenceSummary}}
 
             Answer the user's business question. Be advisory only. Do not mutate workflow state.
+            Return ONLY valid JSON. Do not include markdown. Do not include explanatory text before or after JSON.
             """;
 
     private final Map<String, AiPromptTemplateDefinition> defaults = Map.ofEntries(
@@ -77,23 +78,23 @@ public class AiPromptTemplateCatalog {
                     List.of("Verify the timeline against EHR records", "Prioritize allergy and chronic-condition interactions"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.clinical.document-extraction.v1", AiProductCode.CLINIC, AiTaskType.CLINICAL_DOCUMENT_EXTRACTION,
-                    "Extract structured clinical findings from the supplied OCR text and document context. Return JSON with keys such as documentType, diagnosisText, medicines, allergies, abnormalFindings, referralDoctor, followUpSuggestions, keyLabValues, and confidenceNotes. Do not diagnose; only extract and summarize what the source shows.",
-                    List.of("Verify extracted facts against the source document", "Review any low-confidence or ambiguous fields before saving", "Keep the extracted data advisory until a clinician reviews it"),
-                    List.of("Extraction output is advisory until reviewed", "OCR and provider limits may affect accuracy")),
+                    "Extract structured clinical findings from the supplied OCR text and document context. Return JSON with keys such as documentType, summary, diagnosesMentioned, medicines, allergies, chronicConditions, labValues, abnormalFindings, referralDoctor, referralHospital, followUpSuggestions, confidenceNotes, and reviewFlags. Do not diagnose; only extract and summarize what the source shows.",
+                    List.of("Verify extracted facts against the source document", "Review any low-confidence or ambiguous fields before saving", "Keep the extracted data advisory until a clinician reviews it", "Highlight possible abnormal findings without claiming a diagnosis"),
+                    List.of("Extraction output is advisory until reviewed", "OCR and provider limits may affect accuracy", "Do not auto-save critical clinical fields without clinician review")),
             entry("clinic.clinical.summary.v1", AiProductCode.CLINIC, AiTaskType.CLINICAL_SUMMARY,
-                    "Summarize prior visits and chronic context in clinician-friendly language. Focus on previous visit summary, chronic history summary, and recent consultation summary.",
-                    List.of("Confirm the summary against the chart", "Use the summary as a review aid only"),
+                    "Summarize prior visits and chronic context in clinician-friendly language. Focus on previous visit summary, chronic history summary, recent consultation summary, medicine history, and uploaded report themes.",
+                    List.of("Confirm the summary against the chart", "Use the summary as a review aid only", "Mention recurring conditions and follow-up gaps"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.structure-notes.v1", AiProductCode.CLINIC, AiTaskType.CONSULTATION_NOTE_STRUCTURING,
                     "Structure consultation notes into standardized medical sections.",
                     List.of("Review SOAP formatting and missing sections", "Confirm clinically relevant negatives"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.copilot.v1", AiProductCode.CLINIC, AiTaskType.CONSULTATION_COPILOT,
-                    "Assist the doctor by suggesting possible diagnosis categories, investigation suggestions, follow-up suggestions, and draft prescription ideas based on symptoms, findings, notes, and vitals. Return structured JSON when possible. Do not finalize prescriptions or diagnoses.",
+                    "Assist the doctor by suggesting possible diagnosis categories, investigation suggestions, and follow-up suggestions based on symptoms, findings, notes, and vitals. Return ONLY valid JSON with keys: summary, possibleDiagnosisCategories[{name,reason,confidence}], recommendedInvestigations, followUpSuggestions, safetyNotes. Do not include markdown. Do not include explanatory text before or after JSON. Do not finalize prescriptions or diagnoses.",
                     List.of("Review red flags and urgent exclusions", "Approve or reject each suggestion manually"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.suggest-diagnosis.v1", AiProductCode.CLINIC, AiTaskType.SYMPTOMS_DIAGNOSIS_DRAFT,
-                    "Suggest possible differential diagnoses based on symptoms, findings, and context.",
+                    "Suggest possible differential diagnosis categories based on symptoms, findings, and context. Return ONLY valid JSON with keys: summary, possibleDiagnosisCategories[{name,reason,confidence}], recommendedInvestigations, followUpSuggestions, safetyNotes. Do not include markdown. Do not include explanatory text before or after JSON.",
                     List.of("Review red flags and urgent exclusions", "Use diagnostics to confirm before final diagnosis"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.prescription.suggest-template.v1", AiProductCode.CLINIC, AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION,

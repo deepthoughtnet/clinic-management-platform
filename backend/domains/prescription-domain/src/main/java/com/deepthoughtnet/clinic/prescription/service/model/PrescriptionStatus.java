@@ -4,6 +4,8 @@ public enum PrescriptionStatus {
     DRAFT,
     PREVIEWED,
     FINALIZED,
+    CORRECTED,
+    SUPERSEDED,
     PRINTED,
     SENT,
     CANCELLED

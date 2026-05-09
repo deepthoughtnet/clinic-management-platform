@@ -1,15 +1,17 @@
 package com.deepthoughtnet.clinic.api.errors;
 
-import java.time.Instant;
+import java.time.OffsetDateTime;
 
 public record ApiError(
-        Instant timestamp,
+        OffsetDateTime timestamp,
+        String path,
         int status,
-        String error,
+        String code,
         String message,
-        String path
+        String correlationId,
+        String requestId
 ) {
-    public static ApiError of(int status, String error, String message, String path) {
-        return new ApiError(Instant.now(), status, error, message, path);
+    public static ApiError of(int status, String code, String message, String path, String correlationId) {
+        return new ApiError(OffsetDateTime.now(), path, status, code, message, correlationId, correlationId);
     }
 }

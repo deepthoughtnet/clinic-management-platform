@@ -14,9 +14,9 @@ create table if not exists notification_history (
     deduplication_key varchar(256) not null,
     outbox_event_id uuid null,
     attempt_count integer not null default 0,
-    sent_at timestamptz null,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    sent_at timestamp with time zone null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     constraint uq_notification_history_dedup unique (tenant_id, deduplication_key)
 );
 

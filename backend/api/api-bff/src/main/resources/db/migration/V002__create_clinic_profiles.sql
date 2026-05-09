@@ -15,8 +15,8 @@ create table if not exists clinic_profiles (
     gst_number varchar(128),
     logo_document_id uuid,
     active boolean not null default true,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     constraint uq_clinic_profiles_tenant unique (tenant_id)
 );
 

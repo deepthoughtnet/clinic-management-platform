@@ -97,6 +97,12 @@ public class ClinicalDocumentEntity {
     @Column(name = "ai_extraction_review_notes", columnDefinition = "text")
     private String aiExtractionReviewNotes;
 
+    @Column(name = "ai_extraction_accepted_json", columnDefinition = "text")
+    private String aiExtractionAcceptedJson;
+
+    @Column(name = "ai_extraction_override_reason", columnDefinition = "text")
+    private String aiExtractionOverrideReason;
+
     @Column(name = "ai_extraction_reviewed_by_app_user_id")
     private UUID aiExtractionReviewedByAppUserId;
 
@@ -161,6 +167,8 @@ public class ClinicalDocumentEntity {
         entity.aiExtractionSummary = null;
         entity.aiExtractionStructuredJson = null;
         entity.aiExtractionReviewNotes = null;
+        entity.aiExtractionAcceptedJson = null;
+        entity.aiExtractionOverrideReason = null;
         entity.aiExtractionReviewedByAppUserId = null;
         entity.aiExtractionReviewedAt = null;
         entity.ocrStatus = "PENDING";
@@ -192,6 +200,8 @@ public class ClinicalDocumentEntity {
     public String getAiExtractionSummary() { return aiExtractionSummary; }
     public String getAiExtractionStructuredJson() { return aiExtractionStructuredJson; }
     public String getAiExtractionReviewNotes() { return aiExtractionReviewNotes; }
+    public String getAiExtractionAcceptedJson() { return aiExtractionAcceptedJson; }
+    public String getAiExtractionOverrideReason() { return aiExtractionOverrideReason; }
     public UUID getAiExtractionReviewedByAppUserId() { return aiExtractionReviewedByAppUserId; }
     public OffsetDateTime getAiExtractionReviewedAt() { return aiExtractionReviewedAt; }
     public String getOcrStatus() { return ocrStatus; }
@@ -201,6 +211,17 @@ public class ClinicalDocumentEntity {
 
     public void markAiExtractionQueued() {
         this.aiExtractionStatus = "QUEUED";
+        this.aiExtractionProvider = null;
+        this.aiExtractionModel = null;
+        this.aiExtractionConfidence = null;
+        this.aiExtractionSummary = null;
+        this.aiExtractionStructuredJson = null;
+        this.aiExtractionReviewNotes = null;
+        this.aiExtractionAcceptedJson = null;
+        this.aiExtractionOverrideReason = null;
+        this.aiExtractionReviewedByAppUserId = null;
+        this.aiExtractionReviewedAt = null;
+        this.ocrStatus = "PENDING";
         this.updatedAt = OffsetDateTime.now();
     }
 
@@ -235,10 +256,12 @@ public class ClinicalDocumentEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
-    public void markAiExtractionReviewed(UUID reviewedByAppUserId, String reviewNotes, String reviewStatus) {
+    public void markAiExtractionReviewed(UUID reviewedByAppUserId, String reviewNotes, String reviewStatus, String acceptedJson, String overrideReason) {
         this.aiExtractionReviewedByAppUserId = reviewedByAppUserId;
         this.aiExtractionReviewedAt = OffsetDateTime.now();
         this.aiExtractionReviewNotes = reviewNotes;
+        this.aiExtractionAcceptedJson = acceptedJson;
+        this.aiExtractionOverrideReason = overrideReason;
         this.aiExtractionStatus = reviewStatus;
         this.updatedAt = OffsetDateTime.now();
     }

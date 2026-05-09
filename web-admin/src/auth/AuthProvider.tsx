@@ -97,9 +97,15 @@ function parseStoredSelectedTenant(): SelectedTenant | null {
 function storeSelectedTenant(tenant: SelectedTenant | null): void {
   if (!tenant || !isValidClinicTenantShape(tenant)) {
     localStorage.removeItem(SELECTED_TENANT_STORAGE_KEY);
+    console.info("[auth] selected tenant cleared", { storageKey: SELECTED_TENANT_STORAGE_KEY });
     return;
   }
   localStorage.setItem(SELECTED_TENANT_STORAGE_KEY, JSON.stringify(tenant));
+  console.info("[auth] selected tenant stored", {
+    storageKey: SELECTED_TENANT_STORAGE_KEY,
+    tenant,
+    storedValue: localStorage.getItem(SELECTED_TENANT_STORAGE_KEY),
+  });
 }
 
 function isSystemTenantValue(value?: string | null): boolean {
@@ -124,7 +130,9 @@ type Membership = {
 };
 
 function normalizeMemberships(me: MeResponse): Membership[] {
-  const source = (me.activeTenantMemberships || me.memberships || []) as Array<Record<string, unknown>>;
+  const source = ((me.activeTenantMemberships && me.activeTenantMemberships.length > 0)
+    ? me.activeTenantMemberships
+    : me.memberships || []) as Array<Record<string, unknown>>;
   const normalized: Membership[] = [];
   for (const membership of source) {
     const tenantId = typeof membership.tenantId === "string"
@@ -201,32 +209,73 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     setActiveTenantMemberships([]);
   }, []);
 
+  const refreshTenantContext = React.useCallback(async (tenant: SelectedTenant | null, tokenOverride?: string | null) => {
+    const token = tokenOverride ?? accessToken;
+    if (!token) {
+      console.warn("[auth] tenant context refresh skipped because no access token is available", { tenant });
+      return;
+    }
+
+    console.info("[auth] tenant context refresh started", {
+      selectedTenant: tenant,
+      activeMode: tenant ? "clinic" : "platform",
+    });
+
+    try {
+      console.info("[auth] /me request started", { tenantId: tenant?.id || null });
+      const me = await fetchMe(token, tenant?.id || undefined);
+      console.info("[auth] /me request completed", {
+        tenantId: me.tenantId || null,
+        tenantRole: me.tenantRole || null,
+        memberships: (me.activeTenantMemberships || me.memberships || []).length,
+      });
+
+      setActiveTenantMemberships(normalizeMemberships(me));
+      setSelectedTenant(tenant);
+      setAppUserId(me.appUserId || null);
+      setTenantRole(me.tenantRole || null);
+      setPermissions((me.permissions || []).map((permission) => permission.toLowerCase()));
+      setInitError(null);
+      console.info("[auth] tenant context refresh completed", {
+        activeMode: tenant ? "clinic" : "platform",
+        tenantId: tenant?.id || null,
+        tenantRole: me.tenantRole || null,
+      });
+    } catch (err) {
+      console.warn("[auth] tenant context refresh failed", err);
+      setInitError(err instanceof Error ? err.message : "Failed to switch tenant context");
+    }
+  }, [accessToken]);
+
   React.useEffect(() => {
     let cancelled = false;
     let refreshInterval: number | null = null;
 
     async function bootstrap() {
+      console.info("[auth] bootstrap started");
       setInitialized(false);
       setInitError(null);
 
-      try {
-        const timeout = window.setTimeout(() => {
-          if (!cancelled) {
-            setInitError("Authentication initialization is taking too long. Verify Keycloak URL/realm/client and browser network logs.");
-            setInitialized(true);
-            setAuthenticated(false);
-          }
-        }, 6000);
+      const bootstrapTimeout = window.setTimeout(() => {
+        if (!cancelled) {
+          console.warn("[auth] bootstrap exceeded timeout");
+          setInitError("Authentication initialization is taking too long. Verify Keycloak URL/realm/client and browser network logs.");
+        }
+      }, 10000);
 
+      try {
+        console.info("[auth] keycloak init started");
         const ok = await initKeycloakOnce();
-        window.clearTimeout(timeout);
         if (cancelled) return;
+        console.info("[auth] keycloak init completed", { authenticated: ok });
 
         setAuthenticated(ok);
         const token = keycloak.token || null;
+        console.info("[auth] token acquired", { hasToken: Boolean(token) });
         hydrateFromToken(token);
 
         if (ok && token) {
+          console.info("[auth] tenant bootstrap started");
           const payload = decodeJwtPayload(token);
           const tokenRolesUpper = extractRolesUpper(payload);
           const tokenTenantId = extractTenantIdClaim(payload);
@@ -235,85 +284,104 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
           const initialTenantId = storedTenant?.id || (tokenTenant && isValidClinicTenantShape(tokenTenant) ? tokenTenant.id : null);
 
           try {
-            const me = await fetchMe(token, initialTenantId || undefined);
-            if (!cancelled) {
-              const memberships = normalizeMemberships(me);
-              setActiveTenantMemberships(memberships);
-              const isPlatformAdmin = Boolean(me.platformAdmin)
-                || tokenRolesUpper.includes("PLATFORM_ADMIN")
-                || (me.tokenRoles || []).some((role) => String(role).toUpperCase() === "PLATFORM_ADMIN");
-              const activeMemberships = memberships.filter((membership) => {
-                if (membership.active === true) return true;
-                return (membership.status || "").toUpperCase() === "ACTIVE";
-              });
+            const meAbort = new AbortController();
+            const meTimeout = window.setTimeout(() => meAbort.abort(), 6000);
+            console.info("[auth] /me request started", { tenantId: initialTenantId || null });
+            try {
+              const me = await fetchMe(token, initialTenantId || undefined, meAbort.signal);
+              if (!cancelled) {
+                console.info("[auth] /me request completed", { memberships: (me.activeTenantMemberships || me.memberships || []).length });
+                const memberships = normalizeMemberships(me);
+                setActiveTenantMemberships(memberships);
+                const isPlatformAdmin = Boolean(me.platformAdmin)
+                  || tokenRolesUpper.includes("PLATFORM_ADMIN")
+                  || (me.tokenRoles || []).some((role) => String(role).toUpperCase() === "PLATFORM_ADMIN");
+                const activeMemberships = memberships.filter((membership) => {
+                  if (membership.active === true) return true;
+                  return (membership.status || "").toUpperCase() === "ACTIVE";
+                });
 
-              let resolved: SelectedTenant | null = null;
-              if (storedTenant && activeMemberships.some((membership) => membership.tenantId === storedTenant.id)) {
-                const match = activeMemberships.find((membership) => membership.tenantId === storedTenant.id);
-                if (match) {
+                let resolved: SelectedTenant | null = null;
+                if (isPlatformAdmin && storedTenant && me.tenantId === storedTenant.id) {
+                  resolved = storedTenant;
+                }
+
+                if (!resolved && storedTenant && activeMemberships.some((membership) => membership.tenantId === storedTenant.id)) {
+                  const match = activeMemberships.find((membership) => membership.tenantId === storedTenant.id);
+                  if (match) {
+                    resolved = {
+                      id: match.tenantId,
+                      code: match.tenantCode || storedTenant.code || match.tenantId,
+                      name: match.tenantName || storedTenant.name || match.tenantCode || match.tenantId,
+                    };
+                  }
+                }
+
+                if (!resolved) {
+                  const meTenant = (me.tenantId && activeMemberships.find((membership) => membership.tenantId === me.tenantId)) || null;
+                  if (meTenant) {
+                    resolved = {
+                      id: meTenant.tenantId,
+                      code: meTenant.tenantCode || meTenant.tenantId,
+                      name: meTenant.tenantName || meTenant.tenantCode || meTenant.tenantId,
+                    };
+                  }
+                }
+
+                if (!resolved && !isPlatformAdmin && activeMemberships.length === 1) {
+                  const only = activeMemberships[0];
                   resolved = {
-                    id: match.tenantId,
-                    code: match.tenantCode || storedTenant.code || match.tenantId,
-                    name: match.tenantName || storedTenant.name || match.tenantCode || match.tenantId,
+                    id: only.tenantId,
+                    code: only.tenantCode || only.tenantId,
+                    name: only.tenantName || only.tenantCode || only.tenantId,
                   };
                 }
-              }
 
-              if (!resolved) {
-                const meTenant = (me.tenantId && activeMemberships.find((membership) => membership.tenantId === me.tenantId)) || null;
-                if (meTenant) {
-                  resolved = {
-                    id: meTenant.tenantId,
-                    code: meTenant.tenantCode || meTenant.tenantId,
-                    name: meTenant.tenantName || meTenant.tenantCode || meTenant.tenantId,
-                  };
+                if (!resolved && !isPlatformAdmin && tokenTenantId && activeMemberships.some((membership) => membership.tenantId === tokenTenantId)) {
+                  const match = activeMemberships.find((membership) => membership.tenantId === tokenTenantId);
+                  if (match) {
+                    resolved = {
+                      id: match.tenantId,
+                      code: match.tenantCode || match.tenantId,
+                      name: match.tenantName || match.tenantCode || match.tenantId,
+                    };
+                  }
                 }
-              }
 
-              if (!resolved && !isPlatformAdmin && activeMemberships.length === 1) {
-                const only = activeMemberships[0];
-                resolved = {
-                  id: only.tenantId,
-                  code: only.tenantCode || only.tenantId,
-                  name: only.tenantName || only.tenantCode || only.tenantId,
-                };
-              }
-
-              if (!resolved && !isPlatformAdmin && tokenTenantId && activeMemberships.some((membership) => membership.tenantId === tokenTenantId)) {
-                const match = activeMemberships.find((membership) => membership.tenantId === tokenTenantId);
-                if (match) {
-                  resolved = {
-                    id: match.tenantId,
-                    code: match.tenantCode || match.tenantId,
-                    name: match.tenantName || match.tenantCode || match.tenantId,
-                  };
+                if (!isPlatformAdmin && activeMemberships.length === 0) {
+                  setInitError("No active clinic membership found. Contact clinic administrator.");
+                  resolved = null;
+                } else if (!isPlatformAdmin && activeMemberships.length > 1 && !resolved) {
+                  resolved = null;
                 }
-              }
 
-              if (!isPlatformAdmin && activeMemberships.length === 0) {
-                setInitError("No active clinic membership found. Contact clinic administrator.");
-                resolved = null;
-              } else if (!isPlatformAdmin && activeMemberships.length > 1 && !resolved) {
-                resolved = null;
-              }
-
-              let effectiveMe = me;
-              if (resolved?.id && me.tenantId !== resolved.id) {
-                try {
-                  effectiveMe = await fetchMe(token, resolved.id);
-                } catch {
-                  effectiveMe = me;
+                let effectiveMe = me;
+                if (resolved?.id && (me.tenantId !== resolved.id || !me.appUserId || !me.tenantRole)) {
+                  try {
+                    effectiveMe = await fetchMe(token, resolved.id);
+                  } catch {
+                    effectiveMe = me;
+                  }
                 }
-              }
 
-              setSelectedTenant(resolved);
-              setAppUserId(effectiveMe.appUserId || null);
-              setTenantRole(effectiveMe.tenantRole || null);
-              setPermissions((effectiveMe.permissions || []).map((permission) => permission.toLowerCase()));
-              storeSelectedTenant(resolved);
+                setSelectedTenant(resolved);
+                setAppUserId(effectiveMe.appUserId || null);
+                setTenantRole(effectiveMe.tenantRole || null);
+                setPermissions((effectiveMe.permissions || []).map((permission) => permission.toLowerCase()));
+                storeSelectedTenant(resolved);
+                console.info("[auth] tenant bootstrap completed", {
+                  activeMode: resolved ? "clinic" : "platform",
+                  selectedTenantId: resolved?.id || null,
+                  tenantRole: effectiveMe.tenantRole || null,
+                  permissions: (effectiveMe.permissions || []).length,
+                });
+              }
+            } finally {
+              window.clearTimeout(meTimeout);
             }
           } catch (err) {
             if (!cancelled) {
+              console.warn("[auth] /me request failed", err);
               setInitError(err instanceof Error ? err.message : "Failed to load /api/me");
             }
           }
@@ -332,13 +400,17 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             }
           }, 10_000);
         }
-
-        setInitialized(true);
       } catch (err) {
         if (!cancelled) {
           clearSession();
-          setInitialized(true);
+          console.warn("[auth] bootstrap failed", err);
           setInitError(err instanceof Error ? err.message : "Keycloak init failed");
+        }
+      } finally {
+        window.clearTimeout(bootstrapTimeout);
+        if (!cancelled) {
+          console.info("[auth] auth loading cleared");
+          setInitialized(true);
         }
       }
     }
@@ -369,8 +441,13 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       accessToken,
       initError,
       selectTenant: (tenant) => {
+        console.info("[auth] selectTenant invoked", {
+          tenant,
+          activeMode: tenant ? "clinic" : "platform",
+        });
         setSelectedTenant(tenant);
         storeSelectedTenant(tenant);
+        void refreshTenantContext(tenant);
       },
       retryInit: () => {
         resetKeycloakInit();
@@ -386,7 +463,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         await keycloak.logout({ redirectUri: `${window.location.origin}/login` });
       },
     }),
-    [initialized, authenticated, username, rolesUpper, permissions, selectedTenant, activeTenantMemberships, accessToken, initError, appUserId, tenantRole, clearSession]
+    [initialized, authenticated, username, rolesUpper, permissions, selectedTenant, activeTenantMemberships, accessToken, initError, appUserId, tenantRole, clearSession, refreshTenantContext]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

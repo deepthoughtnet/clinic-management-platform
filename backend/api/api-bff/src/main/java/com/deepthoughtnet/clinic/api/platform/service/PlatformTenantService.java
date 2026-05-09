@@ -266,7 +266,7 @@ public class PlatformTenantService {
     @Transactional(readOnly = true)
     public List<PlanResponse> listPlans() {
         return tenantPlanRepository.findAll().stream()
-                .map(plan -> new PlanResponse(plan.getId(), plan.getName(), plan.getFeatures()))
+                .map(plan -> new PlanResponse(plan.getId(), plan.getName(), serializePlanFeatures(plan.getFeatures())))
                 .toList();
     }
 
@@ -305,6 +305,14 @@ public class PlatformTenantService {
         tenantPlanRepository.findById(normalized)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown planId: " + normalized));
         return normalized;
+    }
+
+    private String serializePlanFeatures(Map<String, Object> features) {
+        try {
+            return objectMapper.writeValueAsString(features == null ? Map.of() : features);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize tenant plan features", e);
+        }
     }
 
     private void insertSubscription(UUID tenantId, String planId, boolean trial) {

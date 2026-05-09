@@ -11,6 +11,9 @@ public record DashboardSummaryResponse(
         BigDecimal pendingDues,
         long followUpsDue,
         long vaccinationsDue,
-        long lowStockMedicines
+        long lowStockMedicines,
+        long pendingNotifications,
+        long failedNotifications,
+        long sentNotificationsToday
 ) {
 }

@@ -35,12 +35,7 @@ insert into tenants (
     false,
     now(),
     now()
-)
-on conflict (id) do update set
-    code = excluded.code,
-    name = excluded.name,
-    status = excluded.status,
-    updated_at = now();
+);
 
 -- Also normalize by tenant code to keep a single canonical row.
 update tenants
@@ -90,15 +85,7 @@ insert into clinic_profiles (
     true,
     now(),
     now()
-)
-on conflict (tenant_id) do update set
-    clinic_name = excluded.clinic_name,
-    display_name = excluded.display_name,
-    city = excluded.city,
-    country = excluded.country,
-    email = excluded.email,
-    active = true,
-    updated_at = now();
+);
 
 -- 3) App users
 -- Note: keycloak_sub is seeded with email placeholder. Runtime provisioning updates
@@ -110,11 +97,7 @@ insert into app_users (id, tenant_id, keycloak_sub, email, display_name, driver_
 ('33333333-3333-3333-3333-333333333334', '11111111-1111-1111-1111-111111111111', 'receptionist@clinic.local',   'receptionist@clinic.local',   'Demo Receptionist', null, 'ACTIVE', now(), now()),
 ('33333333-3333-3333-3333-333333333335', '11111111-1111-1111-1111-111111111111', 'billing@clinic.local',        'billing@clinic.local',        'Demo Billing',   null, 'ACTIVE', now(), now()),
 ('33333333-3333-3333-3333-333333333336', '11111111-1111-1111-1111-111111111111', 'auditor@clinic.local',        'auditor@clinic.local',        'Demo Auditor',   null, 'ACTIVE', now(), now())
-on conflict (tenant_id, keycloak_sub) do update set
-    email = excluded.email,
-    display_name = excluded.display_name,
-    status = 'ACTIVE',
-    updated_at = now();
+;
 
 -- Keep existing records aligned by email (if keys were previously created differently).
 update app_users
@@ -135,34 +118,34 @@ insert into tenant_memberships (id, tenant_id, app_user_id, role, status, create
 select '44444444-4444-4444-4444-444444444441', '11111111-1111-1111-1111-111111111111', u.id, 'PLATFORM_ADMIN', 'ACTIVE', now(), now()
 from app_users u
 where u.tenant_id = '11111111-1111-1111-1111-111111111111' and lower(u.email) = 'platform.admin@clinic.local'
-on conflict (tenant_id, app_user_id) do update set role = excluded.role, status = 'ACTIVE', updated_at = now();
+;
 
 insert into tenant_memberships (id, tenant_id, app_user_id, role, status, created_at, updated_at)
 select '44444444-4444-4444-4444-444444444442', '11111111-1111-1111-1111-111111111111', u.id, 'CLINIC_ADMIN', 'ACTIVE', now(), now()
 from app_users u
 where u.tenant_id = '11111111-1111-1111-1111-111111111111' and lower(u.email) = 'clinic.admin@clinic.local'
-on conflict (tenant_id, app_user_id) do update set role = excluded.role, status = 'ACTIVE', updated_at = now();
+;
 
 insert into tenant_memberships (id, tenant_id, app_user_id, role, status, created_at, updated_at)
 select '44444444-4444-4444-4444-444444444443', '11111111-1111-1111-1111-111111111111', u.id, 'DOCTOR', 'ACTIVE', now(), now()
 from app_users u
 where u.tenant_id = '11111111-1111-1111-1111-111111111111' and lower(u.email) = 'doctor@clinic.local'
-on conflict (tenant_id, app_user_id) do update set role = excluded.role, status = 'ACTIVE', updated_at = now();
+;
 
 insert into tenant_memberships (id, tenant_id, app_user_id, role, status, created_at, updated_at)
 select '44444444-4444-4444-4444-444444444444', '11111111-1111-1111-1111-111111111111', u.id, 'RECEPTIONIST', 'ACTIVE', now(), now()
 from app_users u
 where u.tenant_id = '11111111-1111-1111-1111-111111111111' and lower(u.email) = 'receptionist@clinic.local'
-on conflict (tenant_id, app_user_id) do update set role = excluded.role, status = 'ACTIVE', updated_at = now();
+;
 
 insert into tenant_memberships (id, tenant_id, app_user_id, role, status, created_at, updated_at)
 select '44444444-4444-4444-4444-444444444445', '11111111-1111-1111-1111-111111111111', u.id, 'BILLING_USER', 'ACTIVE', now(), now()
 from app_users u
 where u.tenant_id = '11111111-1111-1111-1111-111111111111' and lower(u.email) = 'billing@clinic.local'
-on conflict (tenant_id, app_user_id) do update set role = excluded.role, status = 'ACTIVE', updated_at = now();
+;
 
 insert into tenant_memberships (id, tenant_id, app_user_id, role, status, created_at, updated_at)
 select '44444444-4444-4444-4444-444444444446', '11111111-1111-1111-1111-111111111111', u.id, 'AUDITOR', 'ACTIVE', now(), now()
 from app_users u
 where u.tenant_id = '11111111-1111-1111-1111-111111111111' and lower(u.email) = 'auditor@clinic.local'
-on conflict (tenant_id, app_user_id) do update set role = excluded.role, status = 'ACTIVE', updated_at = now();
+;

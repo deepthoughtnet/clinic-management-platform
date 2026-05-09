@@ -294,9 +294,10 @@ public class BillingService {
         ReceiptEntity receipt = receiptRepository.findByTenantIdAndId(tenantId, receiptId)
                 .orElseThrow(() -> new IllegalArgumentException("Receipt not found"));
         BillEntity bill = findBill(tenantId, receipt.getBillId());
+        PaymentEntity payment = paymentRepository.findByTenantIdAndId(tenantId, receipt.getPaymentId()).orElse(null);
         BillData data = tenantData(tenantId, List.of(bill.getPatientId()));
         auditReceipt(tenantId, receipt, actorAppUserId, "Generated receipt PDF");
-        return buildReceiptPdf(data.tenantName(), bill, receipt, data);
+        return buildReceiptPdf(data.tenantName(), bill, receipt, payment, data);
     }
 
     private BillEntity findBill(UUID tenantId, UUID billId) {
@@ -528,6 +529,9 @@ public class BillingService {
         if (command.paymentMode() == null) {
             throw new IllegalArgumentException("paymentMode is required");
         }
+        if (command.paymentMode() != PaymentMode.CASH && !StringUtils.hasText(command.referenceNumber())) {
+            throw new IllegalArgumentException("referenceNumber is required for non-cash payments");
+        }
     }
 
     private void auditBill(UUID tenantId, BillEntity entity, String action, UUID actorAppUserId, String message) {
@@ -735,7 +739,7 @@ public class BillingService {
         }
     }
 
-    private ReceiptPdf buildReceiptPdf(String tenantName, BillEntity bill, ReceiptEntity receipt, BillData data) {
+    private ReceiptPdf buildReceiptPdf(String tenantName, BillEntity bill, ReceiptEntity receipt, PaymentEntity payment, BillData data) {
         BillRecord record = toRecord(bill, data);
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PDPage page = new PDPage(PDRectangle.A4);
@@ -763,7 +767,11 @@ public class BillingService {
                 y -= 12;
                 writeLine(content, "Amount: " + receipt.getAmount(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
                 y -= 12;
-                writeLine(content, "Payment Ref: " + receipt.getPaymentId(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+                String paymentMode = payment == null || payment.getPaymentMode() == null ? "-" : payment.getPaymentMode().name();
+                String paymentReference = payment == null || !StringUtils.hasText(payment.getReferenceNumber()) ? "-" : payment.getReferenceNumber();
+                writeLine(content, "Payment Mode: " + paymentMode, 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+                y -= 12;
+                writeLine(content, "Payment Ref: " + paymentReference, 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
             }
             document.save(output);
             return new ReceiptPdf(safeFilename(receipt.getReceiptNumber()) + ".pdf", output.toByteArray());

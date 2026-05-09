@@ -12,6 +12,7 @@ import com.deepthoughtnet.clinic.platform.spring.web.RequestContextFilter;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Configuration
 public class RequestContextConfig {
@@ -29,9 +30,10 @@ public class RequestContextConfig {
     public RequestContextFilter clinicRequestContextFilter(
             AuthContextExtractor auth,
             AppUserProvisioner provisioner,
-            TenantRoleResolver tenantRoleResolver
+            TenantRoleResolver tenantRoleResolver,
+            ObjectMapper objectMapper
     ) {
-        return new RequestContextFilter(auth, provisioner, tenantRoleResolver);
+        return new RequestContextFilter(auth, provisioner, tenantRoleResolver, objectMapper);
     }
 
     @Bean

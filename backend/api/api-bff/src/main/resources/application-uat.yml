@@ -22,6 +22,41 @@ server:
   port: 8089
 
 clinic:
+  ai:
+    enabled: ${CLINIC_AI_ENABLED:false}
+    provider: ${CLINIC_AI_PROVIDER:DISABLED}
+    request-timeout-seconds: ${CLINIC_AI_REQUEST_TIMEOUT_SECONDS:60}
+    gemini:
+      enabled: ${CLINIC_GEMINI_ENABLED:false}
+      api-key: ${GEMINI_API_KEY:}
+      model: ${GEMINI_MODEL:gemini-1.5-flash}
+      base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
+      temperature: ${GEMINI_TEMPERATURE:0.1}
+      max-output-tokens: ${GEMINI_MAX_OUTPUT_TOKENS:2048}
+      timeout-seconds: ${GEMINI_TIMEOUT_SECONDS:${CLINIC_AI_REQUEST_TIMEOUT_SECONDS:60}}
+    groq:
+      enabled: ${CLINIC_GROQ_ENABLED:false}
+      api-key: ${GROQ_API_KEY:}
+      model: ${GROQ_MODEL:llama-3.1-70b-versatile}
+      base-url: ${GROQ_BASE_URL:https://api.groq.com/openai/v1}
+    jobs:
+      fixedDelay: ${CLINIC_AI_JOB_FIXED_DELAY:PT1M}
+      maxAttempts: ${CLINIC_AI_MAX_ATTEMPTS:3}
+      retryBackoffMs: ${CLINIC_AI_RETRY_BACKOFF_MS:60000}
+
+  ocr:
+    enabled: ${CLINIC_OCR_ENABLED:true}
+    provider: ${CLINIC_OCR_PROVIDER:TESSERACT}
+    tesseract:
+      executablePath: ${TESSERACT_EXECUTABLE_PATH:tesseract}
+      dataPath: ${TESSERACT_DATA_PATH:}
+      language: ${TESSERACT_LANGUAGE:eng}
+      renderDpi: ${TESSERACT_RENDER_DPI:200}
+      pageSegMode: ${TESSERACT_PAGE_SEG_MODE:1}
+      ocrEngineMode: ${TESSERACT_OCR_ENGINE_MODE:1}
+      requireDataPath: ${TESSERACT_REQUIRE_DATA_PATH:false}
+      maxPages: ${CLINIC_OCR_MAX_PAGES:10}
+
   keycloak:
     admin:
       enabled: true

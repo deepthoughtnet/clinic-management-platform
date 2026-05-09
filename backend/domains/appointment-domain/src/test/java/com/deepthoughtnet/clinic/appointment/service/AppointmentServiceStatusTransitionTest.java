@@ -90,7 +90,10 @@ class AppointmentServiceStatusTransitionTest {
     @Test
     void allowsCancellationAndNoShowOnlyBeforeConsultationStarts() {
         assertThat(updateStatus(AppointmentStatus.BOOKED, AppointmentStatus.CANCELLED)).isEqualTo(AppointmentStatus.CANCELLED);
-        assertThat(updateStatus(AppointmentStatus.WAITING, AppointmentStatus.NO_SHOW)).isEqualTo(AppointmentStatus.NO_SHOW);
+        AppointmentEntity waiting = appointment(AppointmentStatus.WAITING);
+        when(appointmentRepository.findByTenantIdAndId(TENANT_ID, waiting.getId())).thenReturn(Optional.of(waiting));
+        assertThat(service.updateStatus(TENANT_ID, waiting.getId(), new AppointmentStatusUpdateCommand(AppointmentStatus.NO_SHOW, "Patient absent"), ACTOR_ID).status())
+                .isEqualTo(AppointmentStatus.NO_SHOW);
 
         assertInvalidTransition(AppointmentStatus.IN_CONSULTATION, AppointmentStatus.CANCELLED);
         assertInvalidTransition(AppointmentStatus.IN_CONSULTATION, AppointmentStatus.NO_SHOW);
@@ -108,16 +111,29 @@ class AppointmentServiceStatusTransitionTest {
     private AppointmentStatus updateStatus(AppointmentStatus current, AppointmentStatus target) {
         AppointmentEntity entity = appointment(current);
         when(appointmentRepository.findByTenantIdAndId(TENANT_ID, entity.getId())).thenReturn(Optional.of(entity));
-        return service.updateStatus(TENANT_ID, entity.getId(), new AppointmentStatusUpdateCommand(target), ACTOR_ID).status();
+        return service.updateStatus(TENANT_ID, entity.getId(), new AppointmentStatusUpdateCommand(target, null), ACTOR_ID).status();
     }
 
     private void assertInvalidTransition(AppointmentStatus current, AppointmentStatus target) {
         AppointmentEntity entity = appointment(current);
         when(appointmentRepository.findByTenantIdAndId(TENANT_ID, entity.getId())).thenReturn(Optional.of(entity));
 
-        assertThatThrownBy(() -> service.updateStatus(TENANT_ID, entity.getId(), new AppointmentStatusUpdateCommand(target), ACTOR_ID))
+        assertThatThrownBy(() -> service.updateStatus(TENANT_ID, entity.getId(), new AppointmentStatusUpdateCommand(target, null), ACTOR_ID))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid appointment status transition");
+    }
+
+    @Test
+    void requiresCommentWhenCancellingAfterCheckIn() {
+        AppointmentEntity entity = appointment(AppointmentStatus.WAITING);
+        when(appointmentRepository.findByTenantIdAndId(TENANT_ID, entity.getId())).thenReturn(Optional.of(entity));
+
+        assertThatThrownBy(() -> service.updateStatus(TENANT_ID, entity.getId(), new AppointmentStatusUpdateCommand(AppointmentStatus.CANCELLED, " "), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("required");
+
+        assertThat(service.updateStatus(TENANT_ID, entity.getId(), new AppointmentStatusUpdateCommand(AppointmentStatus.CANCELLED, "Patient requested"), ACTOR_ID).status())
+                .isEqualTo(AppointmentStatus.CANCELLED);
     }
 
     private AppointmentEntity appointment(AppointmentStatus status) {

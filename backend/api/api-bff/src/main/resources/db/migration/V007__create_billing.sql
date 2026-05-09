@@ -14,8 +14,8 @@ create table if not exists bills (
     paid_amount numeric(18,2) not null default 0,
     due_amount numeric(18,2) not null default 0,
     notes text null,
-    created_at timestamptz not null,
-    updated_at timestamptz not null
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null
 );
 
 create unique index if not exists uq_bills_tenant_bill_number on bills (tenant_id, bill_number);
@@ -47,7 +47,7 @@ create table if not exists bill_payments (
     payment_mode varchar(24) not null,
     reference_number varchar(128) null,
     notes text null,
-    created_at timestamptz not null
+    created_at timestamp with time zone not null
 );
 
 create index if not exists ix_bill_payments_tenant_bill on bill_payments (tenant_id, bill_id);
@@ -61,7 +61,7 @@ create table if not exists bill_receipts (
     payment_id uuid not null references bill_payments(id) on delete cascade,
     receipt_date date not null,
     amount numeric(18,2) not null,
-    created_at timestamptz not null
+    created_at timestamp with time zone not null
 );
 
 create unique index if not exists uq_bill_receipts_tenant_receipt_number on bill_receipts (tenant_id, receipt_number);

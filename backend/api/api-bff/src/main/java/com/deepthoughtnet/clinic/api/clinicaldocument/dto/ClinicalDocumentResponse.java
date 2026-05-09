@@ -24,6 +24,8 @@ public record ClinicalDocumentResponse(
         String aiExtractionSummary,
         String aiExtractionStructuredJson,
         String aiExtractionReviewNotes,
+        String aiExtractionAcceptedJson,
+        String aiExtractionOverrideReason,
         String aiExtractionReviewedByAppUserId,
         String aiExtractionReviewedAt,
         String ocrStatus,

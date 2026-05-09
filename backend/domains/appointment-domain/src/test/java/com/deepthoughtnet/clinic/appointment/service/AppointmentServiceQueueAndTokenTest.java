@@ -1,9 +1,11 @@
 package com.deepthoughtnet.clinic.appointment.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.appointment.db.AppointmentEntity;
@@ -81,12 +83,14 @@ class AppointmentServiceQueueAndTokenTest {
 
     @Test
     void createWalkInGeneratesSequentialDailyTokens() {
-        when(appointmentRepository.findMaxTokenNumber(TENANT_ID, DOCTOR_ID, LocalDate.of(2026, 5, 8))).thenReturn(0, 1);
-        when(appointmentRepository.findMaxTokenNumber(TENANT_ID, DOCTOR_ID, LocalDate.of(2026, 5, 9))).thenReturn(0);
+        LocalDate firstDate = LocalDate.now().plusDays(1);
+        LocalDate secondDate = firstDate.plusDays(1);
+        when(appointmentRepository.findMaxTokenNumber(TENANT_ID, DOCTOR_ID, firstDate)).thenReturn(0, 1);
+        when(appointmentRepository.findMaxTokenNumber(TENANT_ID, DOCTOR_ID, secondDate)).thenReturn(0);
 
-        var first = service.createWalkIn(TENANT_ID, new WalkInAppointmentCommand(PATIENT_ONE_ID, DOCTOR_ID, LocalDate.of(2026, 5, 8), "Walk in", AppointmentPriority.NORMAL), ACTOR_ID, false);
-        var second = service.createWalkIn(TENANT_ID, new WalkInAppointmentCommand(PATIENT_TWO_ID, DOCTOR_ID, LocalDate.of(2026, 5, 8), "Walk in", AppointmentPriority.NORMAL), ACTOR_ID, false);
-        var nextDay = service.createWalkIn(TENANT_ID, new WalkInAppointmentCommand(PATIENT_ONE_ID, DOCTOR_ID, LocalDate.of(2026, 5, 9), "Walk in", AppointmentPriority.NORMAL), ACTOR_ID, false);
+        var first = service.createWalkIn(TENANT_ID, new WalkInAppointmentCommand(PATIENT_ONE_ID, DOCTOR_ID, firstDate, "Walk in", AppointmentPriority.NORMAL), ACTOR_ID, false);
+        var second = service.createWalkIn(TENANT_ID, new WalkInAppointmentCommand(PATIENT_TWO_ID, DOCTOR_ID, firstDate, "Walk in", AppointmentPriority.NORMAL), ACTOR_ID, false);
+        var nextDay = service.createWalkIn(TENANT_ID, new WalkInAppointmentCommand(PATIENT_ONE_ID, DOCTOR_ID, secondDate, "Walk in", AppointmentPriority.NORMAL), ACTOR_ID, false);
 
         assertThat(first.tokenNumber()).isEqualTo(1);
         assertThat(second.tokenNumber()).isEqualTo(2);
@@ -116,6 +120,36 @@ class AppointmentServiceQueueAndTokenTest {
                 AppointmentPriority.MANUAL_PRIORITY,
                 AppointmentPriority.NORMAL
         );
+    }
+
+    @Test
+    void listTodayExcludesCancelledAppointments() {
+        AppointmentEntity cancelled = appointment(PATIENT_ONE_ID, 1, AppointmentStatus.CANCELLED, AppointmentPriority.NORMAL);
+        AppointmentEntity waiting = appointment(PATIENT_TWO_ID, 2, AppointmentStatus.WAITING, AppointmentPriority.NORMAL);
+        when(appointmentRepository.findByTenantIdAndAppointmentDateOrderByAppointmentTimeAscCreatedAtAsc(TENANT_ID, LocalDate.now()))
+                .thenReturn(List.of(cancelled, waiting));
+
+        var today = service.listToday(TENANT_ID);
+
+        assertThat(today).extracting("status").containsExactly(AppointmentStatus.WAITING);
+    }
+
+    @Test
+    void reorderQueueTodayAllowsOnlyReorderableItemsAndReassignsTokens() {
+        AppointmentEntity first = appointment(PATIENT_ONE_ID, 1, AppointmentStatus.BOOKED, AppointmentPriority.NORMAL);
+        AppointmentEntity second = appointment(PATIENT_TWO_ID, 2, AppointmentStatus.WAITING, AppointmentPriority.NORMAL);
+        AppointmentEntity completed = appointment(PATIENT_ONE_ID, 3, AppointmentStatus.COMPLETED, AppointmentPriority.NORMAL);
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, LocalDate.now()))
+                .thenReturn(List.of(first, second, completed));
+
+        var reordered = service.reorderQueueToday(TENANT_ID, DOCTOR_ID, List.of(second.getId(), first.getId()), ACTOR_ID);
+        assertThat(reordered.stream().filter(row -> row.status() == AppointmentStatus.BOOKED || row.status() == AppointmentStatus.WAITING).map(row -> row.id()).toList())
+                .containsExactly(second.getId(), first.getId());
+
+        assertThatThrownBy(() -> service.reorderQueueToday(TENANT_ID, DOCTOR_ID, List.of(first.getId()), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("all and only");
+        verify(appointmentRepository).save(second);
     }
 
     private AppointmentEntity appointment(UUID patientId, Integer token, AppointmentStatus status, AppointmentPriority priority) {

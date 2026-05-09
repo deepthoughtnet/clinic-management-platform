@@ -86,8 +86,18 @@ const DOCUMENT_TYPES: Array<{ value: ClinicalDocumentType; label: string }> = [
   { value: "OTHER", label: "Other" },
 ];
 
+const ALLOWED_DOCUMENT_MIME_TYPES = new Set(["application/pdf", "image/jpeg", "image/png"]);
+const ALLOWED_DOCUMENT_EXTENSIONS = new Set(["pdf", "jpg", "jpeg", "png"]);
+const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+
 function documentTypeLabel(value: string | null | undefined): string {
   return DOCUMENT_TYPES.find((type) => type.value === value)?.label || (value || "Document").replaceAll("_", " ");
+}
+
+function documentExtension(name: string): string {
+  const lower = name.toLowerCase();
+  const index = lower.lastIndexOf(".");
+  return index >= 0 ? lower.slice(index + 1) : "";
 }
 
 export default function PatientDetailPage() {
@@ -111,8 +121,25 @@ export default function PatientDetailPage() {
   const [viewerDocument, setViewerDocument] = React.useState<ClinicalDocument | null>(null);
   const [viewerUrl, setViewerUrl] = React.useState<string | null>(null);
   const [reviewBusy, setReviewBusy] = React.useState(false);
+  const [reviewNotes, setReviewNotes] = React.useState("");
+  const [reviewOverrideReason, setReviewOverrideReason] = React.useState("");
+  const [reviewAcceptedJson, setReviewAcceptedJson] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const canUploadClinicalDocument = auth.hasPermission("clinic.document.upload");
+  const canReviewAiExtraction = auth.hasPermission("consultation.update") || auth.hasPermission("consultation.complete");
+
+  React.useEffect(() => {
+    if (!viewerDocument) {
+      setReviewNotes("");
+      setReviewOverrideReason("");
+      setReviewAcceptedJson("");
+      return;
+    }
+    setReviewNotes(viewerDocument.aiExtractionReviewNotes || "");
+    setReviewOverrideReason(viewerDocument.aiExtractionOverrideReason || "");
+    setReviewAcceptedJson(viewerDocument.aiExtractionAcceptedJson || viewerDocument.aiExtractionStructuredJson || "");
+  }, [viewerDocument]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -167,7 +194,20 @@ export default function PatientDetailPage() {
   };
 
   const uploadDocument = async () => {
+    if (!canUploadClinicalDocument) {
+      setError("You do not have permission to upload clinical documents.");
+      return;
+    }
     if (!auth.accessToken || !auth.tenantId || !id || !documentFile) return;
+    const extension = documentExtension(documentFile.name);
+    if (documentFile.size > MAX_DOCUMENT_BYTES) {
+      setError("Document files must be 25 MB or smaller.");
+      return;
+    }
+    if (!ALLOWED_DOCUMENT_EXTENSIONS.has(extension) || !ALLOWED_DOCUMENT_MIME_TYPES.has(documentFile.type || "")) {
+      setError("Only PDF, JPG, JPEG, and PNG documents are allowed.");
+      return;
+    }
     setUploadingDocument(true);
     setError(null);
     try {
@@ -205,15 +245,21 @@ export default function PatientDetailPage() {
   };
 
   const reviewDocument = async (approved: boolean) => {
+    if (!canReviewAiExtraction) {
+      setError("You do not have permission to review AI extraction results.");
+      return;
+    }
     if (!auth.accessToken || !auth.tenantId || !viewerDocument) return;
-    const notes = window.prompt(approved ? "Review notes (optional)" : "Reason for rejection", viewerDocument.aiExtractionReviewNotes || "") ?? "";
     setReviewBusy(true);
     setError(null);
     try {
       const updated = await reviewClinicalDocumentExtraction(auth.accessToken, auth.tenantId, viewerDocument.id, {
         approved,
         saveToPatientHistory: approved,
-        reviewNotes: notes.trim() || null,
+        reviewNotes: reviewNotes.trim() || null,
+        acceptedStructuredJson: approved ? reviewAcceptedJson.trim() || null : null,
+        overrideReason: reviewOverrideReason.trim() || null,
+        editedSummary: reviewNotes.trim() || null,
       });
       setViewerDocument(updated);
       await refreshDocuments();
@@ -271,7 +317,12 @@ export default function PatientDetailPage() {
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
           <Button variant="outlined" onClick={() => navigate("/patients")}>Back</Button>
           <Button variant="outlined" onClick={() => navigate(`/patients/${patient.id}/edit`)}>Edit</Button>
-          <Button variant="contained" component={RouterLink} to="/appointments">
+          <Button
+            variant="contained"
+            component={RouterLink}
+            to={`/appointments?patientId=${patient.id}`}
+            state={{ patient }}
+          >
             Create Appointment
           </Button>
         </Box>
@@ -328,13 +379,51 @@ export default function PatientDetailPage() {
               <Typography variant="body2" color="text.secondary">
                 {viewerDocument.aiExtractionProvider ? `${viewerDocument.aiExtractionProvider}${viewerDocument.aiExtractionModel ? ` • ${viewerDocument.aiExtractionModel}` : ""}` : "Queued for extraction."}
               </Typography>
+              <Alert severity="info">AI suggestions are assistive only and must be clinically reviewed.</Alert>
               <Typography variant="body2">{viewerDocument.aiExtractionSummary || "No AI summary available yet."}</Typography>
               {viewerDocument.aiExtractionStructuredJson ? <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", fontFamily: "monospace" }}>{viewerDocument.aiExtractionStructuredJson}</Typography> : null}
-              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                <Button variant="contained" disabled={reviewBusy || viewerDocument.aiExtractionStatus === "APPROVED"} onClick={() => void reviewDocument(true)}>Approve & Save</Button>
-                <Button variant="outlined" color="error" disabled={reviewBusy || viewerDocument.aiExtractionStatus === "REJECTED"} onClick={() => void reviewDocument(false)}>Reject</Button>
-                <Button variant="outlined" disabled={reviewBusy} onClick={() => void reprocessDocument()}>Reprocess</Button>
+              <Stack spacing={1}>
+                <TextField
+                  size="small"
+                  label="Clinician review notes"
+                  value={reviewNotes}
+                  onChange={(event) => setReviewNotes(event.target.value)}
+                  multiline
+                  minRows={2}
+                  disabled={!canReviewAiExtraction}
+                />
+                <TextField
+                  size="small"
+                  label="Override reason"
+                  value={reviewOverrideReason}
+                  onChange={(event) => setReviewOverrideReason(event.target.value)}
+                  multiline
+                  minRows={2}
+                  helperText="Use this when you materially change or reject the AI suggestion."
+                  disabled={!canReviewAiExtraction}
+                />
+                <TextField
+                  size="small"
+                  label="Accepted structured JSON"
+                  value={reviewAcceptedJson}
+                  onChange={(event) => setReviewAcceptedJson(event.target.value)}
+                  multiline
+                  minRows={4}
+                  helperText="Optional. Edited structured data that should be saved after review."
+                  disabled={!canReviewAiExtraction}
+                />
               </Stack>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                {canReviewAiExtraction ? <Button variant="contained" disabled={reviewBusy || viewerDocument.aiExtractionStatus === "APPROVED"} onClick={() => void reviewDocument(true)}>Approve & Save</Button> : null}
+                {canReviewAiExtraction ? <Button variant="outlined" color="error" disabled={reviewBusy || viewerDocument.aiExtractionStatus === "REJECTED"} onClick={() => void reviewDocument(false)}>Reject</Button> : null}
+                {canReviewAiExtraction ? <Button variant="outlined" disabled={reviewBusy} onClick={() => void reprocessDocument()}>Reprocess</Button> : null}
+              </Stack>
+              {!canReviewAiExtraction ? <Alert severity="info">You can view the extraction, but approval and reprocessing are restricted by role.</Alert> : null}
+              <Typography variant="caption" color="text.secondary">
+                Reviewed by {viewerDocument.aiExtractionReviewedByAppUserId || "n/a"}
+                {viewerDocument.aiExtractionReviewedAt ? ` • ${new Date(viewerDocument.aiExtractionReviewedAt).toLocaleString()}` : ""}
+                {viewerDocument.aiExtractionOverrideReason ? ` • Override: ${viewerDocument.aiExtractionOverrideReason}` : ""}
+              </Typography>
             </Stack>
           </CardContent>
         </Card>
@@ -352,30 +441,34 @@ export default function PatientDetailPage() {
             </Box>
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, md: 4 }}>
-                <Stack spacing={1.5}>
-                  <FormControl size="small" fullWidth>
-                    <InputLabel>Document type</InputLabel>
-                    <Select label="Document type" value={documentType} onChange={(event) => setDocumentType(event.target.value as ClinicalDocumentType)}>
-                      {DOCUMENT_TYPES.map((type) => <MenuItem key={type.value} value={type.value}>{type.label}</MenuItem>)}
-                    </Select>
-                  </FormControl>
-                  <Button component="label" variant="outlined" disabled={uploadingDocument}>
-                    {documentFile ? documentFile.name : "Select PDF/Image"}
-                    <input hidden type="file" accept="application/pdf,image/png,image/jpeg,.jpg,.jpeg,.pdf,.png" onChange={(event) => setDocumentFile(event.target.files?.[0] || null)} />
-                  </Button>
-                  <TextField size="small" label="Notes" value={documentNotes} onChange={(event) => setDocumentNotes(event.target.value)} multiline minRows={2} />
-                  {documentType === "REFERRAL" ? (
-                    <>
-                      <TextField size="small" label="Referred doctor" value={referredDoctor} onChange={(event) => setReferredDoctor(event.target.value)} />
-                      <TextField size="small" label="Referred hospital" value={referredHospital} onChange={(event) => setReferredHospital(event.target.value)} />
-                      <TextField size="small" label="Referral notes" value={referralNotes} onChange={(event) => setReferralNotes(event.target.value)} multiline minRows={2} />
-                    </>
-                  ) : null}
-                  <Button variant="contained" disabled={!documentFile || uploadingDocument} onClick={uploadDocument}>
-                    {uploadingDocument ? "Uploading..." : "Upload document"}
-                  </Button>
-                  <Typography variant="caption" color="text.secondary">Supported: PDF, JPG, JPEG, PNG. Future AI/OCR status is tracked with each document.</Typography>
-                </Stack>
+                {canUploadClinicalDocument ? (
+                  <Stack spacing={1.5}>
+                    <FormControl size="small" fullWidth>
+                      <InputLabel>Document type</InputLabel>
+                      <Select label="Document type" value={documentType} onChange={(event) => setDocumentType(event.target.value as ClinicalDocumentType)}>
+                        {DOCUMENT_TYPES.map((type) => <MenuItem key={type.value} value={type.value}>{type.label}</MenuItem>)}
+                      </Select>
+                    </FormControl>
+                    <Button component="label" variant="outlined" disabled={uploadingDocument}>
+                      {documentFile ? documentFile.name : "Select PDF/Image"}
+                      <input hidden type="file" accept="application/pdf,image/png,image/jpeg,.jpg,.jpeg,.pdf,.png" onChange={(event) => setDocumentFile(event.target.files?.[0] || null)} />
+                    </Button>
+                    <TextField size="small" label="Notes" value={documentNotes} onChange={(event) => setDocumentNotes(event.target.value)} multiline minRows={2} />
+                    {documentType === "REFERRAL" ? (
+                      <>
+                        <TextField size="small" label="Referred doctor" value={referredDoctor} onChange={(event) => setReferredDoctor(event.target.value)} />
+                        <TextField size="small" label="Referred hospital" value={referredHospital} onChange={(event) => setReferredHospital(event.target.value)} />
+                        <TextField size="small" label="Referral notes" value={referralNotes} onChange={(event) => setReferralNotes(event.target.value)} multiline minRows={2} />
+                      </>
+                    ) : null}
+                    <Button variant="contained" disabled={!documentFile || uploadingDocument} onClick={uploadDocument}>
+                      {uploadingDocument ? "Uploading..." : "Upload document"}
+                    </Button>
+                    <Typography variant="caption" color="text.secondary">Supported: PDF, JPG, JPEG, PNG. Future AI/OCR status is tracked with each document.</Typography>
+                  </Stack>
+                ) : (
+                  <Alert severity="info">You have read-only access to clinical documents.</Alert>
+                )}
               </Grid>
               <Grid size={{ xs: 12, md: 8 }}>
                 <Stack spacing={1.5}>

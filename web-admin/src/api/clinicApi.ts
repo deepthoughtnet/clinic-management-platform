@@ -6,7 +6,7 @@ export type AppointmentType = "WALK_IN" | "SCHEDULED" | "FOLLOW_UP" | "VACCINATI
 export type AppointmentPriority = "URGENT" | "MANUAL_PRIORITY" | "FOLLOW_UP" | "CHILD" | "ELDERLY" | "NORMAL";
 export type ConsultationStatus = "DRAFT" | "COMPLETED" | "CANCELLED";
 export type TemperatureUnit = "CELSIUS" | "FAHRENHEIT";
-export type PrescriptionStatus = "DRAFT" | "PREVIEWED" | "FINALIZED" | "PRINTED" | "SENT" | "CANCELLED";
+export type PrescriptionStatus = "DRAFT" | "PREVIEWED" | "FINALIZED" | "CORRECTED" | "SUPERSEDED" | "PRINTED" | "SENT" | "CANCELLED";
 export type MedicineType = "TABLET" | "SYRUP" | "INJECTION" | "DROP" | "OINTMENT" | "CAPSULE" | "OTHER";
 export type Timing = "BEFORE_FOOD" | "AFTER_FOOD" | "WITH_FOOD" | "ANYTIME";
 export type NotificationStatus = "PENDING" | "SENT" | "FAILED" | "SKIPPED";
@@ -18,7 +18,9 @@ export type NotificationEventType =
   | "RECEIPT_SENT"
   | "FOLLOW_UP_REMINDER"
   | "VACCINATION_REMINDER"
-  | "APPOINTMENT_REMINDER";
+  | "APPOINTMENT_REMINDER"
+  | "PAYMENT_REMINDER"
+  | "MISSED_APPOINTMENT_REMINDER";
 export type InventoryTransactionType = "OPENING" | "PURCHASE" | "SALE" | "ADJUSTMENT" | "RETURN";
 export type ClinicalDocumentType =
   | "LAB_REPORT"
@@ -53,11 +55,44 @@ export type ClinicalDocument = {
   aiExtractionSummary: string | null;
   aiExtractionStructuredJson: string | null;
   aiExtractionReviewNotes: string | null;
+  aiExtractionAcceptedJson: string | null;
+  aiExtractionOverrideReason: string | null;
   aiExtractionReviewedByAppUserId: string | null;
   aiExtractionReviewedAt: string | null;
   ocrStatus: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type AiClinicalAnalytics = {
+  tenantId: string;
+  from: string;
+  to: string;
+  requestCount: number;
+  successCount: number;
+  failedCount: number;
+  fallbackCount: number;
+  documentCount: number;
+  reviewRequiredCount: number;
+  approvedCount: number;
+  rejectedCount: number;
+  retryCount: number;
+  averageConfidence: number;
+  acceptanceRate: number;
+};
+
+export type AiStatus = {
+  tenantModuleEnabled: boolean;
+  runtimeEnabled: boolean;
+  provider: string;
+  providerConfigured: boolean;
+  geminiEnabled: boolean;
+  geminiConfigured: boolean;
+  ocrEnabled: boolean;
+  ocrProvider: string;
+  userCanUseAi: boolean;
+  effectiveStatus: string;
+  message: string;
 };
 
 export type PatientTimelineItem = {
@@ -83,6 +118,9 @@ export type DashboardSummary = {
   followUpsDue: number;
   vaccinationsDue: number;
   lowStockMedicines: number;
+  pendingNotifications: number;
+  failedNotifications: number;
+  sentNotificationsToday: number;
 };
 
 export type NotificationHistory = {
@@ -145,6 +183,29 @@ export type ClinicUser = {
   provisioningStatus: string | null;
 };
 
+export type DoctorProfile = {
+  doctorUserId: string;
+  doctorName: string | null;
+  email: string | null;
+  membershipRole: string | null;
+  mobile: string | null;
+  specialization: string | null;
+  qualification: string | null;
+  registrationNumber: string | null;
+  consultationRoom: string | null;
+  active: boolean;
+  updatedAt: string | null;
+};
+
+export type DoctorProfileInput = {
+  mobile: string | null;
+  specialization: string | null;
+  qualification: string | null;
+  registrationNumber: string | null;
+  consultationRoom: string | null;
+  active: boolean | null;
+};
+
 export type ClinicRole = {
   role: string;
   displayName: string;
@@ -196,8 +257,10 @@ export type Appointment = {
   patientId: string;
   patientNumber: string | null;
   patientName: string | null;
+  patientMobile: string | null;
   doctorUserId: string;
   doctorName: string | null;
+  consultationId: string | null;
   appointmentDate: string;
   appointmentTime: string | null;
   tokenNumber: number | null;
@@ -363,6 +426,9 @@ export type Prescription = {
   parentPrescriptionId: string | null;
   correctionReason: string | null;
   flowType: string | null;
+  correctedAt: string | null;
+  supersededByPrescriptionId: string | null;
+  supersededAt: string | null;
   diagnosisSnapshot: string | null;
   advice: string | null;
   followUpDate: string | null;
@@ -379,7 +445,7 @@ export type Prescription = {
 
 export type BillStatus = "DRAFT" | "UNPAID" | "ISSUED" | "PARTIALLY_PAID" | "PAID" | "CANCELLED";
 export type BillItemType = "CONSULTATION" | "MEDICINE" | "TEST" | "VACCINATION" | "PROCEDURE" | "OTHER";
-export type PaymentMode = "CASH" | "UPI" | "CARD" | "BANK_TRANSFER" | "OTHER";
+export type PaymentMode = "CASH" | "CARD" | "UPI" | "PAYTM" | "PHONEPE" | "GOOGLE_PAY" | "BANK_TRANSFER" | "CHEQUE" | "OTHER";
 
 export type BillLine = {
   id: string | null;
@@ -642,6 +708,7 @@ export type AiClinicalSummaryInput = {
   recentConsultations?: string[];
   currentMedications?: string[];
   allergies?: string[];
+  uploadedReportsSummary?: string | null;
 };
 
 export type PatientSearchParams = {
@@ -665,6 +732,14 @@ export async function getClinicUsers(token: string, tenantId: string) {
 
 export async function getClinicRoles(token: string, tenantId: string) {
   return httpGet<ClinicRole[]>("/api/clinic/roles", { token, tenantId });
+}
+
+export async function getDoctorProfile(token: string, tenantId: string, doctorUserId: string) {
+  return httpGet<DoctorProfile>(`/api/doctors/${doctorUserId}/profile`, { token, tenantId });
+}
+
+export async function updateDoctorProfile(token: string, tenantId: string, doctorUserId: string, body: DoctorProfileInput) {
+  return httpPut<DoctorProfile>(`/api/doctors/${doctorUserId}/profile`, body, { token, tenantId });
 }
 
 export async function createTenantUser(token: string, tenantId: string, body: {
@@ -769,8 +844,8 @@ export async function createWalkInAppointment(token: string, tenantId: string, b
   return httpPost<Appointment>("/api/appointments/walk-in", body, { token, tenantId });
 }
 
-export async function updateAppointmentStatus(token: string, tenantId: string, id: string, status: AppointmentStatus) {
-  return httpPatch<Appointment>(`/api/appointments/${id}/status`, { status }, { token, tenantId });
+export async function updateAppointmentStatus(token: string, tenantId: string, id: string, status: AppointmentStatus, comment?: string | null) {
+  return httpPatch<Appointment>(`/api/appointments/${id}/status`, { status, comment: comment || null }, { token, tenantId });
 }
 
 export async function updateAppointmentPriority(token: string, tenantId: string, id: string, priority: AppointmentPriority) {
@@ -783,6 +858,10 @@ export async function getTodayAppointments(token: string, tenantId: string) {
 
 export async function getDoctorQueueToday(token: string, tenantId: string, doctorUserId: string) {
   return httpGet<Appointment[]>(`/api/doctors/${doctorUserId}/queue/today`, { token, tenantId });
+}
+
+export async function reorderDoctorQueueToday(token: string, tenantId: string, doctorUserId: string, orderedAppointmentIds: string[]) {
+  return httpPost<Appointment[]>(`/api/appointments/queue/reorder?doctorUserId=${encodeURIComponent(doctorUserId)}`, { orderedAppointmentIds }, { token, tenantId });
 }
 
 export async function getDoctorAvailability(token: string, tenantId: string) {
@@ -843,6 +922,10 @@ export async function getPrescription(token: string, tenantId: string, id: strin
 
 export async function getConsultationPrescription(token: string, tenantId: string, consultationId: string) {
   return httpGet<Prescription>(`/api/prescriptions/consultations/${consultationId}`, { token, tenantId });
+}
+
+export async function getPrescriptionHistory(token: string, tenantId: string, prescriptionId: string) {
+  return httpGet<Prescription[]>(`/api/prescriptions/${prescriptionId}/history`, { token, tenantId });
 }
 
 export async function createPrescription(token: string, tenantId: string, body: PrescriptionInput) {
@@ -1124,6 +1207,9 @@ export async function reviewClinicalDocumentExtraction(token: string, tenantId: 
   approved: boolean;
   saveToPatientHistory: boolean;
   reviewNotes?: string | null;
+  acceptedStructuredJson?: string | null;
+  overrideReason?: string | null;
+  editedSummary?: string | null;
 }) {
   return httpPost<ClinicalDocument>(`/api/patient-documents/${documentId}/ai-extraction/review`, body, { token, tenantId });
 }
@@ -1134,6 +1220,14 @@ export async function reprocessClinicalDocumentExtraction(token: string, tenantI
 
 export async function getRecentAiRequests(token: string, tenantId: string) {
   return httpGet<AiRecentRequestRecord[]>("/api/ai/audit/recent", { token, tenantId });
+}
+
+export async function getAiClinicalAnalytics(token: string, tenantId: string) {
+  return httpGet<AiClinicalAnalytics>("/api/ai/analytics", { token, tenantId });
+}
+
+export async function getAiStatus(token: string, tenantId: string) {
+  return httpGet<AiStatus>("/api/ai/status", { token, tenantId });
 }
 
 export async function sendReceipt(token: string, tenantId: string, id: string, channel: string = "email") {

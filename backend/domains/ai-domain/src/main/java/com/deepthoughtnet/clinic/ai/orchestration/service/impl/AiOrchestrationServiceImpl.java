@@ -27,11 +27,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AiOrchestrationServiceImpl implements AiOrchestrationService {
+    private static final Logger log = LoggerFactory.getLogger(AiOrchestrationServiceImpl.class);
     private final AiPromptTemplateRegistryService templateRegistry;
     private final AiProviderRouter providerRouter;
     private final AiRequestAuditService auditService;
@@ -75,14 +78,27 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         );
         for (int i = 0; i < candidates.size(); i++) {
             AiProvider candidate = candidates.get(i);
+            long providerStarted = System.currentTimeMillis();
+            log.info("AI provider attempt. requestId={}, provider={}, attempt={}, taskType={}",
+                    requestId, candidate.providerName(), i + 1, request.taskType());
             try {
                 providerResponse = candidate.complete(providerRequest);
                 provider = candidate;
                 fallbackUsed = i > 0;
+                log.info("AI provider completed. requestId={}, provider={}, latencyMs={}, responseChars={}",
+                        requestId,
+                        candidate.providerName(),
+                        System.currentTimeMillis() - providerStarted,
+                        providerResponse == null || providerResponse.outputText() == null ? 0 : providerResponse.outputText().length());
                 response = toResponse(request, requestId, provider, providerResponse, template, request.evidence(),
                         started, fallbackUsed, fallbackUsed ? "Fallback provider was used. Please verify before acting." : null);
                 break;
             } catch (RuntimeException ex) {
+                log.warn("AI provider failed. requestId={}, provider={}, latencyMs={}, error={}",
+                        requestId,
+                        candidate.providerName(),
+                        System.currentTimeMillis() - providerStarted,
+                        safeMessage(ex));
                 if (firstFailure == null) {
                     firstFailure = ex;
                 }
@@ -270,13 +286,18 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
 
     private ParsedOutput parseProviderOutput(AiProviderResponse response) {
         if (response == null || response.outputText() == null || response.outputText().isBlank()) {
-            return ParsedOutput.empty();
+            log.warn("AI provider returned empty content. provider={}", response == null ? "unknown" : response.providerName());
+            String structured = fallbackStructuredJson("");
+            return new ParsedOutput("", structured, List.of(), List.of("AI returned unstructured text. Please review carefully."), response == null ? null : response.confidence(), "");
         }
         String raw = response.outputText().trim();
+        String jsonCandidate = extractJsonCandidate(raw);
         try {
-            JsonNode root = objectMapper.readTree(raw);
+            JsonNode root = objectMapper.readTree(jsonCandidate);
             if (!root.isObject()) {
-                return new ParsedOutput(raw, null, List.of(), List.of(), response.confidence(), raw);
+                log.warn("AI provider returned non-object JSON. provider={}", response.providerName());
+                String structured = fallbackStructuredJson(raw);
+                return new ParsedOutput(raw, structured, List.of(), List.of("AI returned unstructured text. Please review carefully."), response.confidence(), raw);
             }
             String answer = text(root, "answer");
             if (answer == null) {
@@ -286,13 +307,48 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 answer = text(root, "summary");
             }
             BigDecimal confidence = decimal(root, "confidence");
-            List<String> suggestions = strings(root, "suggestedActions");
-            List<String> limitations = strings(root, "limitations");
-            return new ParsedOutput(answer == null ? raw : answer, raw, suggestions, limitations,
+            List<String> suggestions = new ArrayList<>(strings(root, "suggestedActions"));
+            suggestions.addAll(strings(root, "recommendedInvestigations"));
+            suggestions.addAll(strings(root, "followUpSuggestions"));
+            List<String> limitations = new ArrayList<>(strings(root, "limitations"));
+            limitations.addAll(strings(root, "safetyNotes"));
+            return new ParsedOutput(answer == null ? raw : answer, root.toString(), suggestions, limitations,
                     confidence == null ? response.confidence() : confidence, raw);
         } catch (Exception ex) {
-            return new ParsedOutput(raw, null, List.of(), List.of(), response.confidence(), null);
+            log.warn("AI provider response parsing fallback used. provider={}, error={}, rawPreview=\"{}\"",
+                    response.providerName(), safeMessage(ex), trimTo(raw.replaceAll("[\\r\\n\\t]+", " "), 300));
+            String structured = fallbackStructuredJson(raw);
+            return new ParsedOutput(raw, structured, List.of(), List.of("AI returned unstructured text. Please review carefully."), response.confidence(), raw);
         }
+    }
+
+    private String extractJsonCandidate(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String trimmed = raw.trim();
+        int fenceStart = trimmed.indexOf("```json");
+        if (fenceStart < 0) {
+            fenceStart = trimmed.indexOf("```");
+        }
+        if (fenceStart >= 0) {
+            int openEnd = trimmed.indexOf('\n', fenceStart);
+            int fenceEnd = trimmed.indexOf("```", openEnd > -1 ? openEnd + 1 : fenceStart + 3);
+            if (openEnd > -1 && fenceEnd > openEnd) {
+                return trimmed.substring(openEnd + 1, fenceEnd).trim();
+            }
+        }
+        return trimmed;
+    }
+
+    private String fallbackStructuredJson(String summary) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", summary == null ? "" : summary.trim());
+        payload.put("possibleDiagnosisCategories", List.of());
+        payload.put("recommendedInvestigations", List.of());
+        payload.put("followUpSuggestions", List.of());
+        payload.put("safetyNotes", List.of("AI returned unstructured text. Please review carefully."));
+        return safeJson(payload);
     }
 
     private String requestHash(AiOrchestrationRequest request, AiPromptTemplateDefinition template, String evidenceSummary) {

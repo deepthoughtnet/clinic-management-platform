@@ -116,11 +116,11 @@ public class ConsultationService {
 
         ConsultationEntity existing = repository.findByTenantIdAndAppointmentId(tenantId, appointmentId).orElse(null);
         if (existing != null) {
-            appointmentService.updateStatus(tenantId, appointmentId, new AppointmentStatusUpdateCommand(AppointmentStatus.IN_CONSULTATION), actorAppUserId);
+            appointmentService.updateStatus(tenantId, appointmentId, new AppointmentStatusUpdateCommand(AppointmentStatus.IN_CONSULTATION, null), actorAppUserId);
             return toRecord(existing, tenantData(tenantId));
         }
 
-        appointmentService.updateStatus(tenantId, appointmentId, new AppointmentStatusUpdateCommand(AppointmentStatus.IN_CONSULTATION), actorAppUserId);
+        appointmentService.updateStatus(tenantId, appointmentId, new AppointmentStatusUpdateCommand(AppointmentStatus.IN_CONSULTATION, null), actorAppUserId);
         ConsultationEntity entity = ConsultationEntity.create(tenantId, appointment.patientId(), appointment.doctorUserId(), appointmentId);
         entity.update(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         ConsultationEntity saved = repository.save(entity);
@@ -172,7 +172,7 @@ public class ConsultationService {
         entity.complete();
         ConsultationEntity saved = repository.save(entity);
         if (saved.getAppointmentId() != null) {
-            appointmentService.updateStatus(tenantId, saved.getAppointmentId(), new AppointmentStatusUpdateCommand(AppointmentStatus.COMPLETED), actorAppUserId);
+            appointmentService.updateStatus(tenantId, saved.getAppointmentId(), new AppointmentStatusUpdateCommand(AppointmentStatus.COMPLETED, null), actorAppUserId);
         }
         audit(tenantId, saved, "consultation.completed", actorAppUserId, "Completed consultation");
         return toRecord(saved, tenantData(tenantId));
@@ -188,7 +188,7 @@ public class ConsultationService {
         entity.cancel();
         ConsultationEntity saved = repository.save(entity);
         if (saved.getAppointmentId() != null) {
-            appointmentService.updateStatus(tenantId, saved.getAppointmentId(), new AppointmentStatusUpdateCommand(AppointmentStatus.CANCELLED), actorAppUserId);
+            appointmentService.updateStatus(tenantId, saved.getAppointmentId(), new AppointmentStatusUpdateCommand(AppointmentStatus.CANCELLED, null), actorAppUserId);
         }
         audit(tenantId, saved, "consultation.cancelled", actorAppUserId, "Cancelled consultation");
         return toRecord(saved, tenantData(tenantId));

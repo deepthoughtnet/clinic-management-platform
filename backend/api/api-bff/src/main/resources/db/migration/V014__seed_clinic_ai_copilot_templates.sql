@@ -11,8 +11,7 @@ values (
     'ACTIVE',
     now(),
     now()
-)
-on conflict (id) do nothing;
+);
 
 insert into ai_prompt_templates (id, product_code, tenant_id, template_code, version, task_type, system_prompt, user_prompt_template, status, created_at, updated_at)
 values (
@@ -27,8 +26,7 @@ values (
     'ACTIVE',
     now(),
     now()
-)
-on conflict (id) do nothing;
+);
 
 insert into ai_prompt_templates (id, product_code, tenant_id, template_code, version, task_type, system_prompt, user_prompt_template, status, created_at, updated_at)
 values (
@@ -43,8 +41,7 @@ values (
     'ACTIVE',
     now(),
     now()
-)
-on conflict (id) do nothing;
+);
 
 insert into ai_prompt_templates (id, product_code, tenant_id, template_code, version, task_type, system_prompt, user_prompt_template, status, created_at, updated_at)
 values (
@@ -59,8 +56,7 @@ values (
     'ACTIVE',
     now(),
     now()
-)
-on conflict (id) do nothing;
+);
 
 insert into ai_prompt_templates (id, product_code, tenant_id, template_code, version, task_type, system_prompt, user_prompt_template, status, created_at, updated_at)
 values (
@@ -75,8 +71,7 @@ values (
     'ACTIVE',
     now(),
     now()
-)
-on conflict (id) do nothing;
+);
 
 insert into ai_prompt_templates (id, product_code, tenant_id, template_code, version, task_type, system_prompt, user_prompt_template, status, created_at, updated_at)
 values (
@@ -91,5 +86,4 @@ values (
     'ACTIVE',
     now(),
     now()
-)
-on conflict (id) do nothing;
+);

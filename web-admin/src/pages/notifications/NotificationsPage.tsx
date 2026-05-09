@@ -46,6 +46,8 @@ const EVENT_OPTIONS: Array<NotificationEventType | ""> = [
   "FOLLOW_UP_REMINDER",
   "VACCINATION_REMINDER",
   "APPOINTMENT_REMINDER",
+  "PAYMENT_REMINDER",
+  "MISSED_APPOINTMENT_REMINDER",
 ];
 
 function statusColor(status: NotificationHistory["status"]) {

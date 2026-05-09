@@ -7,8 +7,8 @@ create table if not exists doctor_availability (
     end_time time not null,
     consultation_duration_minutes integer not null,
     active boolean not null default true,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     constraint uq_doctor_availability_slot unique (tenant_id, doctor_user_id, day_of_week, start_time, end_time)
 );
 
@@ -26,8 +26,8 @@ create table if not exists appointments (
     reason varchar(512),
     type varchar(24) not null,
     status varchar(24) not null,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     constraint uq_appointments_token unique (tenant_id, doctor_user_id, appointment_date, token_number)
 );
 

@@ -5,10 +5,12 @@ import com.deepthoughtnet.clinic.api.clinicaldocument.ai.db.ClinicalAiJobReposit
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.model.ClinicalAiJobStatus;
 import java.time.OffsetDateTime;
 import java.util.List;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 @Service
+@ConditionalOnProperty(prefix = "clinic.ai", name = "enabled", havingValue = "true")
 public class ClinicalAiJobProcessor {
     private final ClinicalAiJobRepository repository;
     private final ClinicalDocumentAiExtractionService extractionService;

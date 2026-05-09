@@ -39,6 +39,8 @@ import {
   completeConsultation,
   createPrescriptionCorrection,
   createPrescription,
+  getAiStatus,
+  getAppointment,
   finalizePrescription,
   getConsultation,
   getConsultationPrescription,
@@ -47,20 +49,25 @@ import {
   getPatientDocumentDownloadUrl,
   getPatientDocuments,
   getPatientPrescriptions,
+  getPatientTimeline,
   getPrescriptionPdf,
+  getPrescriptionHistory,
   printPrescription,
   previewPrescription,
   sendPrescription,
   startConsultationFromAppointment,
   updateConsultation,
   updatePrescription,
+  type AiStatus,
   type AiDraftResponse,
+  type Appointment,
   type Consultation,
   type ConsultationInput,
   type Medicine,
   type MedicineType,
   type PatientDetail,
   type ClinicalDocument,
+  type PatientTimelineItem,
   type Prescription,
   type PrescriptionInput,
   type PrescriptionMedicine,
@@ -130,7 +137,8 @@ const DIAGNOSIS_CHIPS = ["Viral Fever", "Upper Respiratory Infection", "Gastriti
 const FOLLOWUP_CHIPS = ["3 days", "5 days", "7 days", "15 days", "1 month"];
 const TEST_CHIPS = ["CBC", "Urine Routine", "Blood Sugar", "X-Ray", "ECG"];
 const ADVICE_CHIPS = ["Hydration", "Rest", "Steam inhalation", "Avoid oily/spicy food", "Monitor warning signs", "Continue current medicines"];
-const AI_DISABLED_MESSAGE = "AI assistance is not enabled for this clinic. Please contact your clinic administrator.";
+const AI_DISABLED_MESSAGE = "AI assistance is not enabled or configured for this clinic.";
+const AI_PROVIDER_NOT_CONFIGURED_MESSAGE = "AI module is enabled for this clinic, but AI provider is not configured.";
 
 const FREQUENCIES = ["1-0-0", "0-1-0", "0-0-1", "1-0-1", "1-1-1"];
 const DURATIONS = ["3 days", "5 days", "7 days", "10 days", "15 days"];
@@ -390,6 +398,15 @@ function hasPrescriptionContent(form: PrescriptionFormState): boolean {
   );
 }
 
+function hasAtLeastOneCompleteMedicine(form: PrescriptionFormState): boolean {
+  return form.medicines.some((row) =>
+    row.medicineName.trim()
+    && row.dosage.trim()
+    && row.frequency.trim()
+    && row.duration.trim()
+  );
+}
+
 function appendTokenLine(base: string, token: string): string {
   const current = base.trim();
   if (!token.trim()) return base;
@@ -422,8 +439,102 @@ function formatPatientAgeGender(patient: PatientDetail["patient"] | undefined): 
   return `${age} / ${patient.gender || "-"}`;
 }
 
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => String(entry ?? "").trim()).filter(Boolean);
+}
+
+function formatAiDiagnosisSuggestion(draft: AiDraftResponse): { formatted: string; summary: string | null; unstructured: boolean } {
+  const structured = draft.structuredData || {};
+  const differentials = Array.isArray(structured["possibleDiagnosisCategories"]) ? structured["possibleDiagnosisCategories"] as Array<Record<string, unknown>> : [];
+  const investigations = asStringList(structured["recommendedInvestigations"]);
+  const followUp = asStringList(structured["followUpSuggestions"]);
+  const safety = asStringList(structured["safetyNotes"]);
+  const summary = typeof structured["summary"] === "string" ? structured["summary"].trim() : null;
+
+  if (!differentials.length && !investigations.length && !followUp.length && !safety.length) {
+    const plain = (draft.draft || draft.message || "").trim();
+    return {
+      formatted: plain || "AI suggestion unavailable.",
+      summary: plain || null,
+      unstructured: true,
+    };
+  }
+
+  const lines: string[] = ["Possible differential diagnoses:"];
+  differentials.forEach((item, index) => {
+    const name = String(item.name || "Condition");
+    const reason = String(item.reason || "").trim();
+    const confidence = String(item.confidence || "").trim();
+    const redFlags = asStringList(item.redFlags);
+    lines.push("");
+    lines.push(`${index + 1}. ${name}${confidence ? ` (${confidence})` : ""}`);
+    if (reason) lines.push(`   Reason: ${reason}`);
+    if (redFlags.length) lines.push(`   Red flags: ${redFlags.join(", ")}`);
+  });
+
+  if (investigations.length) {
+    lines.push("");
+    lines.push("Suggested investigations:");
+    investigations.forEach((item) => lines.push(`- ${item}`));
+  }
+  if (followUp.length) {
+    lines.push("");
+    lines.push("Follow-up:");
+    followUp.forEach((item) => lines.push(`- ${item}`));
+  }
+  if (safety.length) {
+    lines.push("");
+    lines.push("Safety:");
+    safety.forEach((item) => lines.push(`- ${item}`));
+  }
+
+  return {
+    formatted: lines.join("\n").trim(),
+    summary: summary || draft.draft || null,
+    unstructured: safety.some((item) => item.toLowerCase().includes("unstructured text")),
+  };
+}
+
 function compactDate(value?: string | null): string {
   return value ? new Date(value).toLocaleDateString() : "-";
+}
+
+function compactDateTime(value?: string | null): string {
+  return value ? new Date(value).toLocaleString() : "-";
+}
+
+function timelineTypeLabel(itemType: PatientTimelineItem["itemType"]) {
+  switch (itemType) {
+    case "CONSULTATION":
+      return "Consultation";
+    case "PRESCRIPTION":
+      return "Prescription";
+    case "DOCUMENT":
+      return "Document";
+    default:
+      return itemType;
+  }
+}
+
+function timelineColor(itemType: PatientTimelineItem["itemType"]) {
+  switch (itemType) {
+    case "CONSULTATION":
+      return "info";
+    case "PRESCRIPTION":
+      return "secondary";
+    case "DOCUMENT":
+      return "primary";
+    default:
+      return "default";
+  }
+}
+
+function prescriptionVersionTitle(row: Prescription) {
+  const parts = [`v${row.versionNumber || 1}`, row.status];
+  if (row.correctionReason) parts.push(row.correctionReason);
+  if (row.flowType) parts.push(row.flowType.replaceAll("_", " "));
+  return parts.filter(Boolean).join(" • ");
 }
 
 function SectionCard({
@@ -488,9 +599,12 @@ export default function ConsultationWorkspacePage() {
   const appointmentId = searchParams.get("appointmentId") || "";
 
   const [consultation, setConsultation] = React.useState<Consultation | null>(null);
+  const [appointment, setAppointment] = React.useState<Appointment | null>(null);
   const [patient, setPatient] = React.useState<PatientDetail | null>(null);
   const [previousPrescriptions, setPreviousPrescriptions] = React.useState<Prescription[]>([]);
   const [clinicalDocuments, setClinicalDocuments] = React.useState<ClinicalDocument[]>([]);
+  const [patientTimeline, setPatientTimeline] = React.useState<PatientTimelineItem[]>([]);
+  const [prescriptionHistory, setPrescriptionHistory] = React.useState<Prescription[]>([]);
   const [prescription, setPrescription] = React.useState<Prescription | null>(null);
   const [medicineCatalog, setMedicineCatalog] = React.useState<Medicine[]>([]);
 
@@ -510,6 +624,7 @@ export default function ConsultationWorkspacePage() {
     notes: false,
     advice: false,
     followup: true,
+    history: true,
   });
 
   const [loading, setLoading] = React.useState(true);
@@ -517,10 +632,15 @@ export default function ConsultationWorkspacePage() {
   const [autosaveStatus, setAutosaveStatus] = React.useState<AutosaveStatus>("idle");
   const [aiBusy, setAiBusy] = React.useState(false);
   const [aiAvailable, setAiAvailable] = React.useState(true);
+  const [aiStatusMessage, setAiStatusMessage] = React.useState<string | null>(null);
   const [clinicalSummary, setClinicalSummary] = React.useState<AiDraftResponse | null>(null);
+  const [aiDiagnosisSuggestion, setAiDiagnosisSuggestion] = React.useState<string | null>(null);
+  const [aiDiagnosisSummary, setAiDiagnosisSummary] = React.useState<string | null>(null);
+  const [aiDiagnosisUnstructured, setAiDiagnosisUnstructured] = React.useState(false);
   const [medicineCatalogWarning, setMedicineCatalogWarning] = React.useState<string | null>(null);
   const [viewerDocument, setViewerDocument] = React.useState<ClinicalDocument | null>(null);
   const [viewerUrl, setViewerUrl] = React.useState<string | null>(null);
+  const [selectedPrescriptionVersionId, setSelectedPrescriptionVersionId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
 
@@ -578,6 +698,9 @@ export default function ConsultationWorkspacePage() {
       setError(null);
       setMedicineCatalogWarning(null);
       setClinicalSummary(null);
+      setAiDiagnosisSuggestion(null);
+      setAiDiagnosisSummary(null);
+      setAiDiagnosisUnstructured(false);
       try {
         const [medicines, consult] = await Promise.all([
           getMedicines(auth.accessToken, auth.tenantId).catch(() => {
@@ -590,21 +713,28 @@ export default function ConsultationWorkspacePage() {
 
         setMedicineCatalog(medicines);
         setConsultation(consult);
+        const loadedAppointment = consult.appointmentId
+          ? await getAppointment(auth.accessToken, auth.tenantId, consult.appointmentId).catch(() => null)
+          : null;
+        if (cancelled) return;
+        setAppointment(loadedAppointment);
         const initialConsultationForm = emptyConsultationForm(consult);
         setConsultationForm(initialConsultationForm);
         savedConsultationSnapshotRef.current = serializeConsultationForm(initialConsultationForm);
         hydratedConsultationIdRef.current = consult.id;
 
-        const [detail, previousRx, documents] = await Promise.all([
+        const [detail, previousRx, documents, timelineRows] = await Promise.all([
           getPatient(auth.accessToken, auth.tenantId, consult.patientId),
           getPatientPrescriptions(auth.accessToken, auth.tenantId, consult.patientId),
           getPatientDocuments(auth.accessToken, auth.tenantId, consult.patientId),
+          getPatientTimeline(auth.accessToken, auth.tenantId, consult.patientId),
         ]);
         if (cancelled) return;
 
         setPatient(detail);
         setPreviousPrescriptions(previousRx.slice(0, 10));
         setClinicalDocuments(documents);
+        setPatientTimeline(timelineRows);
 
         try {
           const rx = await getConsultationPrescription(auth.accessToken, auth.tenantId, consult.id);
@@ -613,6 +743,11 @@ export default function ConsultationWorkspacePage() {
             const initialPrescriptionForm = emptyPrescriptionForm(rx, consult);
             setPrescriptionForm(initialPrescriptionForm);
             savedPrescriptionSnapshotRef.current = serializePrescriptionForm(initialPrescriptionForm);
+            const historyRows = await getPrescriptionHistory(auth.accessToken, auth.tenantId, rx.id).catch(() => [rx]);
+            if (!cancelled) {
+              setPrescriptionHistory(historyRows);
+              setSelectedPrescriptionVersionId(historyRows[historyRows.length - 1]?.id || rx.id);
+            }
           }
         } catch {
           if (!cancelled) {
@@ -620,6 +755,8 @@ export default function ConsultationWorkspacePage() {
             const initialPrescriptionForm = emptyPrescriptionForm(null, consult);
             setPrescriptionForm(initialPrescriptionForm);
             savedPrescriptionSnapshotRef.current = serializePrescriptionForm(initialPrescriptionForm);
+            setPrescriptionHistory([]);
+            setSelectedPrescriptionVersionId(null);
           }
         }
       } catch (err) {
@@ -634,6 +771,37 @@ export default function ConsultationWorkspacePage() {
       cancelled = true;
     };
   }, [auth.accessToken, auth.tenantId, consultationId, appointmentId, navigate]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadAiStatus() {
+      if (!auth.accessToken || !auth.tenantId) return;
+      const canRunAi = auth.hasPermission("ai_copilot.run") || auth.hasPermission("ai_copilot.clinic.run");
+      if (!canRunAi) {
+        if (!cancelled) {
+          setAiAvailable(false);
+          setAiStatusMessage("You do not have permission to use AI assistance.");
+        }
+        return;
+      }
+      try {
+        const status: AiStatus = await getAiStatus(auth.accessToken, auth.tenantId);
+        if (cancelled) return;
+        const ready = status.effectiveStatus === "READY";
+        setAiAvailable(ready);
+        setAiStatusMessage(ready ? null : (status.message || AI_DISABLED_MESSAGE));
+      } catch {
+        if (!cancelled) {
+          setAiAvailable(false);
+          setAiStatusMessage(AI_DISABLED_MESSAGE);
+        }
+      }
+    }
+    void loadAiStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, auth.accessToken, auth.tenantId]);
 
   React.useEffect(() => {
     if (!consultation || consultation.status !== "DRAFT" || hydratedConsultationIdRef.current !== consultation.id) {
@@ -679,16 +847,20 @@ export default function ConsultationWorkspacePage() {
   const canEditConsultation = auth.hasPermission("consultation.update");
   const canCompleteConsultation = auth.hasPermission("consultation.complete");
   const canFinalizePrescription = auth.hasPermission("prescription.finalize");
+  const canPrintPrescription = auth.hasPermission("prescription.print");
   const canRunAi = auth.hasPermission("ai_copilot.run") || auth.hasPermission("ai_copilot.clinic.run");
   const readOnly = consultation ? consultation.status !== "DRAFT" || !canEditConsultation : !canEditConsultation;
   const prescriptionReadOnly = readOnly || (prescription ? !["DRAFT", "PREVIEWED"].includes(prescription.status) : false);
   const patientRow = patient?.patient;
+  const currentAppointment = appointment;
   const lastConsultation = patient?.previousConsultations?.find((row) => row.id !== consultation?.id);
   const currentBmi = calculateBmi(consultationForm.weightKg, consultationForm.heightCm);
   const currentBmiCategory = bmiCategory(currentBmi);
   const lastBmi = calculateBmi(lastConsultation?.weightKg?.toString() || "", lastConsultation?.heightCm?.toString() || "");
   const lastBmiCategory = bmiCategory(lastBmi);
   const recentMedicineNames = Array.from(new Set(previousPrescriptions.flatMap((rx) => rx.medicines.map((med) => med.medicineName)).filter(Boolean))).slice(0, 10);
+  const activeTimeline = patientTimeline.length ? patientTimeline : [];
+  const selectedPrescriptionVersion = prescriptionHistory.find((row) => row.id === selectedPrescriptionVersionId) || prescriptionHistory[prescriptionHistory.length - 1] || null;
   const filteredMedicines = medicineCatalog
     .filter((medicine) => medicine.active !== false)
     .filter((medicine) => !medicineSearch.trim() || `${medicine.medicineName} ${medicine.strength || ""}`.toLowerCase().includes(medicineSearch.trim().toLowerCase()))
@@ -853,6 +1025,12 @@ export default function ConsultationWorkspacePage() {
 
   const completeCurrentConsultation = async () => {
     if (!auth.accessToken || !auth.tenantId || !consultation) return;
+    if (hasPrescriptionContent(prescriptionForm) && (!prescription || prescription.status === "DRAFT")) {
+      setError("Preview prescription before completing consultation.");
+      return;
+    }
+    const confirmComplete = window.confirm("Complete consultation now? Consultation notes become read-only after completion.");
+    if (!confirmComplete) return;
     const saved = await flushAutosave();
     if (!saved) return;
     setSaving(true);
@@ -887,8 +1065,9 @@ export default function ConsultationWorkspacePage() {
     const currentPrescription = prescriptionRef.current;
     const currentForm = prescriptionFormRef.current;
     if (!auth.accessToken || !auth.tenantId || !currentConsultation || currentConsultation.status !== "DRAFT") return currentPrescription;
-    if (currentPrescription && currentPrescription.status !== "DRAFT") return currentPrescription;
+    if (currentPrescription && currentPrescription.status !== "DRAFT" && currentPrescription.status !== "PREVIEWED") return currentPrescription;
     if (!currentPrescription && !hasPrescriptionContent(currentForm)) return null;
+    if (!hasAtLeastOneCompleteMedicine(currentForm)) return currentPrescription;
     const body = toPrescriptionInput(currentForm, currentConsultation);
     const saved = currentPrescription
       ? await updatePrescription(auth.accessToken, auth.tenantId, currentPrescription.id, body)
@@ -896,6 +1075,9 @@ export default function ConsultationWorkspacePage() {
     setPrescription(saved);
     prescriptionRef.current = saved;
     savedPrescriptionSnapshotRef.current = serializePrescriptionForm(currentForm);
+    const historyRows = await getPrescriptionHistory(auth.accessToken, auth.tenantId, saved.id).catch(() => [saved]);
+    setPrescriptionHistory(historyRows);
+    setSelectedPrescriptionVersionId(historyRows[historyRows.length - 1]?.id || saved.id);
     if (showInfo) setInfo("Prescription draft saved");
     return saved;
   };
@@ -919,19 +1101,35 @@ export default function ConsultationWorkspacePage() {
 
   const previewCurrentPrescription = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
+    if (!hasAtLeastOneCompleteMedicine(prescriptionForm) && !prescriptionForm.advice.trim()) {
+      setError("Add at least one medicine or advice before previewing.");
+      return;
+    }
+    const popup = window.open("", "_blank", "noopener,noreferrer");
     const saved = await persistPrescription();
-    if (!saved) return;
+    if (!saved) {
+      popup?.close();
+      return;
+    }
     setSaving(true);
     try {
       const previewed = await previewPrescription(auth.accessToken, auth.tenantId, saved.id);
       setPrescription(previewed);
       prescriptionRef.current = previewed;
+      const historyRows = await getPrescriptionHistory(auth.accessToken, auth.tenantId, previewed.id).catch(() => [previewed]);
+      setPrescriptionHistory(historyRows);
+      setSelectedPrescriptionVersionId(historyRows[historyRows.length - 1]?.id || previewed.id);
       const { blob } = await getPrescriptionPdf(auth.accessToken, auth.tenantId, previewed.id);
       const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
+      if (popup) {
+        popup.location.href = url;
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
       window.setTimeout(() => URL.revokeObjectURL(url), 60000);
       setInfo("Prescription preview opened. You can still edit before finalizing.");
     } catch (err) {
+      popup?.close();
       setError("Unable to preview prescription. Please try again.");
       console.error("Prescription preview failed", err);
     } finally {
@@ -964,6 +1162,9 @@ export default function ConsultationWorkspacePage() {
       setPrescription(corrected);
       prescriptionRef.current = corrected;
       savedPrescriptionSnapshotRef.current = serializePrescriptionForm(prescriptionForm);
+      const historyRows = await getPrescriptionHistory(auth.accessToken, auth.tenantId, corrected.id).catch(() => [corrected]);
+      setPrescriptionHistory(historyRows);
+      setSelectedPrescriptionVersionId(historyRows[historyRows.length - 1]?.id || corrected.id);
       setInfo(flowType === "FOLLOW_UP" ? "Follow-up prescription draft created" : "Correction draft created");
     } catch (err) {
       setError("Unable to create prescription correction. Please try again.");
@@ -981,6 +1182,9 @@ export default function ConsultationWorkspacePage() {
     try {
       const finalized = await finalizePrescription(auth.accessToken, auth.tenantId, saved.id);
       setPrescription(finalized);
+      const historyRows = await getPrescriptionHistory(auth.accessToken, auth.tenantId, finalized.id).catch(() => [finalized]);
+      setPrescriptionHistory(historyRows);
+      setSelectedPrescriptionVersionId(historyRows[historyRows.length - 1]?.id || finalized.id);
       setInfo("Prescription finalized");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to finalize prescription");
@@ -991,18 +1195,61 @@ export default function ConsultationWorkspacePage() {
 
   const printCurrentPrescription = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
+    if (!hasAtLeastOneCompleteMedicine(prescriptionForm) && !prescriptionForm.advice.trim()) {
+      setError("Add at least one medicine or advice before previewing.");
+      return;
+    }
+    const popup = window.open("", "_blank");
     const saved = await persistPrescription();
-    if (!saved) return;
+    if (!saved) {
+      popup?.close();
+      return;
+    }
+    setSaving(true);
     try {
       const { blob } = await getPrescriptionPdf(auth.accessToken, auth.tenantId, saved.id);
       const printed = await printPrescription(auth.accessToken, auth.tenantId, saved.id);
       setPrescription(printed);
+      const historyRows = await getPrescriptionHistory(auth.accessToken, auth.tenantId, printed.id).catch(() => [printed]);
+      setPrescriptionHistory(historyRows);
+      setSelectedPrescriptionVersionId(historyRows[historyRows.length - 1]?.id || printed.id);
       const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
+      if (popup) {
+        popup.location.href = url;
+        popup.onload = () => popup.print();
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
       window.setTimeout(() => URL.revokeObjectURL(url), 60000);
-      setInfo("Prescription PDF opened");
+      setInfo("Prescription PDF opened for printing");
     } catch (err) {
+      popup?.close();
       setError(err instanceof Error ? err.message : "Failed to open prescription PDF");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const downloadCurrentPrescription = async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    if (!hasAtLeastOneCompleteMedicine(prescriptionForm) && !prescriptionForm.advice.trim()) {
+      setError("Add at least one medicine or advice before previewing.");
+      return;
+    }
+    const saved = await persistPrescription();
+    if (!saved) return;
+    try {
+      const { blob, filename } = await getPrescriptionPdf(auth.accessToken, auth.tenantId, saved.id);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setInfo("Prescription PDF downloaded");
+    } catch (err) {
+      setError("Unable to download prescription PDF. Please try again.");
+      console.error("Prescription download failed", err);
     }
   };
 
@@ -1014,6 +1261,9 @@ export default function ConsultationWorkspacePage() {
     try {
       const sent = await sendPrescription(auth.accessToken, auth.tenantId, saved.id, channel);
       setPrescription(sent);
+      const historyRows = await getPrescriptionHistory(auth.accessToken, auth.tenantId, sent.id).catch(() => [sent]);
+      setPrescriptionHistory(historyRows);
+      setSelectedPrescriptionVersionId(historyRows[historyRows.length - 1]?.id || sent.id);
       setInfo(`Prescription sent via ${channel}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to send prescription via ${channel}`);
@@ -1037,7 +1287,15 @@ export default function ConsultationWorkspacePage() {
           knownConditions: patient.patient.existingConditions,
           allergies: patient.patient.allergies,
         });
-        if (draft.draft) setConsultationForm((current) => ({ ...current, diagnosis: appendTokenLine(current.diagnosis, draft.draft || "") }));
+        if (!draft.enabled) {
+          setAiAvailable(false);
+          setError(aiStatusMessage || AI_DISABLED_MESSAGE);
+          return;
+        }
+        const parsed = formatAiDiagnosisSuggestion(draft);
+        setAiDiagnosisSuggestion(parsed.formatted);
+        setAiDiagnosisSummary(parsed.summary);
+        setAiDiagnosisUnstructured(parsed.unstructured);
       }
 
       if (mode === "notes") {
@@ -1049,6 +1307,11 @@ export default function ConsultationWorkspacePage() {
           vitals: `BP:${consultationForm.bloodPressureSystolic}/${consultationForm.bloodPressureDiastolic}, Pulse:${consultationForm.pulseRate}, Resp:${consultationForm.respiratoryRate}, Temp:${consultationForm.temperature}, BMI:${currentBmi ? currentBmi.toFixed(1) : "-"}`,
           observations: consultationForm.clinicalNotes,
         });
+        if (!draft.enabled) {
+          setAiAvailable(false);
+          setError(aiStatusMessage || AI_DISABLED_MESSAGE);
+          return;
+        }
         if (draft.draft) setConsultationForm((current) => ({ ...current, clinicalNotes: `${current.clinicalNotes.trim()}\n\nAI Draft:\n${draft.draft}`.trim() }));
       }
 
@@ -1068,15 +1331,29 @@ export default function ConsultationWorkspacePage() {
           allergies: patient.patient.allergies,
           warnings: "Doctor must verify before use",
         });
+        if (!draft.enabled) {
+          setAiAvailable(false);
+          setError(aiStatusMessage || AI_DISABLED_MESSAGE);
+          return;
+        }
         if (draft.draft) setPrescriptionForm((current) => ({ ...current, advice: `${current.advice.trim()}\n\nPatient Instructions Draft:\n${draft.draft}`.trim() }));
       }
 
       setInfo("AI draft generated. Doctor must verify before use.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "AI action failed";
-      if (message.includes("HTTP 403") || message.includes("HTTP 404")) {
+      const normalized = message.toLowerCase();
+      if (
+        message.includes("HTTP 403")
+        || message.includes("HTTP 404")
+        || message.includes("HTTP 400")
+        || normalized.includes("not enabled")
+        || normalized.includes("not configured")
+        || normalized.includes("module_disabled")
+        || normalized.includes("enabled for this clinic")
+      ) {
         setAiAvailable(false);
-        setError(AI_DISABLED_MESSAGE);
+        setError(normalized.includes("enabled for this clinic") ? AI_PROVIDER_NOT_CONFIGURED_MESSAGE : (aiStatusMessage || AI_DISABLED_MESSAGE));
       } else {
         setError("AI assistance is temporarily unavailable.");
       }
@@ -1100,13 +1377,27 @@ export default function ConsultationWorkspacePage() {
         currentMedications: "",
         doctorNotes: consultationForm.clinicalNotes,
       });
+      if (!draft.enabled) {
+        setAiAvailable(false);
+        setError(aiStatusMessage || AI_DISABLED_MESSAGE);
+        return;
+      }
       if (draft.draft) setPrescriptionForm((current) => ({ ...current, advice: `${current.advice.trim()}\n\nAI Rx Suggestion:\n${draft.draft}`.trim() }));
       setInfo("AI prescription suggestion generated. Doctor must verify before use.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "AI action failed";
-      if (message.includes("HTTP 403") || message.includes("HTTP 404")) {
+      const normalized = message.toLowerCase();
+      if (
+        message.includes("HTTP 403")
+        || message.includes("HTTP 404")
+        || message.includes("HTTP 400")
+        || normalized.includes("not enabled")
+        || normalized.includes("not configured")
+        || normalized.includes("module_disabled")
+        || normalized.includes("enabled for this clinic")
+      ) {
         setAiAvailable(false);
-        setError(AI_DISABLED_MESSAGE);
+        setError(normalized.includes("enabled for this clinic") ? AI_PROVIDER_NOT_CONFIGURED_MESSAGE : (aiStatusMessage || AI_DISABLED_MESSAGE));
       } else {
         setError("AI assistance is temporarily unavailable.");
       }
@@ -1130,14 +1421,32 @@ export default function ConsultationWorkspacePage() {
         recentConsultations: (patient.previousConsultations || []).slice(0, 5).map((row) => `${row.createdAt}: ${row.diagnosis || "Consultation"}${row.advice ? ` | ${row.advice}` : ""}`),
         currentMedications: patient.patient.longTermMedications ? [patient.patient.longTermMedications] : [],
         allergies: patient.patient.allergies ? [patient.patient.allergies] : [],
+        uploadedReportsSummary: clinicalDocuments
+          .slice(0, 8)
+          .map((row) => `${row.documentType.replaceAll("_", " ")}: ${row.aiExtractionSummary || row.notes || row.referralNotes || row.originalFilename}`)
+          .join(" | "),
       });
+      if (!draft.enabled) {
+        setAiAvailable(false);
+        setError(aiStatusMessage || AI_DISABLED_MESSAGE);
+        return;
+      }
       setClinicalSummary(draft);
       setInfo("Clinical summary generated. Doctor must verify before use.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "AI action failed";
-      if (message.includes("HTTP 403") || message.includes("HTTP 404")) {
+      const normalized = message.toLowerCase();
+      if (
+        message.includes("HTTP 403")
+        || message.includes("HTTP 404")
+        || message.includes("HTTP 400")
+        || normalized.includes("not enabled")
+        || normalized.includes("not configured")
+        || normalized.includes("module_disabled")
+        || normalized.includes("enabled for this clinic")
+      ) {
         setAiAvailable(false);
-        setError(AI_DISABLED_MESSAGE);
+        setError(normalized.includes("enabled for this clinic") ? AI_PROVIDER_NOT_CONFIGURED_MESSAGE : (aiStatusMessage || AI_DISABLED_MESSAGE));
       } else {
         setError("AI assistance is temporarily unavailable.");
       }
@@ -1196,6 +1505,8 @@ export default function ConsultationWorkspacePage() {
               <Chip size="small" variant="outlined" label={`Long-term meds: ${patientRow?.longTermMedications || "None recorded"}`} />
               <Chip size="small" variant="outlined" label={`History: ${patientRow?.surgicalHistory || "None recorded"}`} />
               <Chip size="small" variant="outlined" label={`Last visit: ${compactDate(lastConsultation?.createdAt)}`} />
+              <Chip size="small" variant="outlined" label={`Current appointment: ${currentAppointment ? `${currentAppointment.status} • ${compactDate(currentAppointment.appointmentDate)}` : consultation.status}`} />
+              <Chip size="small" variant="outlined" label={`Active prescription: ${prescription ? `${prescription.status} v${prescription.versionNumber || 1}` : "None"}`} />
               <Chip size="small" variant="outlined" label={`Doctor: ${consultation.doctorName || consultation.doctorUserId}`} />
               <Chip
                 size="small"
@@ -1214,9 +1525,11 @@ export default function ConsultationWorkspacePage() {
           </Stack>
           <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" justifyContent={{ xs: "flex-start", xl: "flex-end" }}>
             <Button type="button" size="small" variant="outlined" onClick={() => void backToQueue()}>Back to Queue</Button>
-            <Button type="button" size="small" disabled={saving || readOnly} onClick={() => void manualSaveDraft()}>Save Draft</Button>
-            {canCompleteConsultation ? <Button type="button" size="small" color="secondary" disabled={saving || readOnly} onClick={() => void completeCurrentConsultation()}>Complete</Button> : null}
-            <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void printCurrentPrescription()}>Print</Button>
+            {canEditConsultation && !readOnly ? <Button type="button" size="small" disabled={saving} onClick={() => void manualSaveDraft()}>Save Draft</Button> : null}
+            {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void previewCurrentPrescription()}>Preview Rx</Button> : null}
+            {canCompleteConsultation && !readOnly ? <Button type="button" size="small" color="secondary" disabled={saving} onClick={() => void completeCurrentConsultation()}>Complete</Button> : null}
+            {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void printCurrentPrescription()}>Print Rx</Button> : null}
+            {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
           </Stack>
         </Stack>
       </CardContent>
@@ -1289,7 +1602,55 @@ export default function ConsultationWorkspacePage() {
                     }}>Add</Button>
                     {canRunAi && aiAvailable ? <Button type="button" variant="outlined" disabled={aiBusy || readOnly} onClick={() => void runAiAction("diagnosis")}>AI Suggest</Button> : null}
                   </Stack>
-                  <TextField size="small" fullWidth label="Selected diagnosis" value={consultationForm.diagnosis} onChange={(e) => setConsultationForm((c) => ({ ...c, diagnosis: e.target.value }))} disabled={readOnly} />
+                  {aiDiagnosisSuggestion ? (
+                    <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                      <CardContent sx={{ p: 1 }}>
+                        <Stack spacing={1}>
+                          <Typography variant="subtitle2">AI Suggested Differentials</Typography>
+                          {aiDiagnosisUnstructured ? <Alert severity="warning">AI returned unstructured text. Review before use.</Alert> : null}
+                          <Box
+                            sx={{
+                              maxHeight: 220,
+                              overflowY: "auto",
+                              overflowX: "hidden",
+                              p: 1,
+                              border: 1,
+                              borderColor: "divider",
+                              borderRadius: 1,
+                              whiteSpace: "pre-wrap",
+                              wordBreak: "break-word",
+                              fontSize: 13,
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            {aiDiagnosisSuggestion}
+                          </Box>
+                          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                            <Button type="button" size="small" variant="outlined" disabled={readOnly} onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: aiDiagnosisSuggestion }))}>Copy to diagnosis</Button>
+                            <Button type="button" size="small" variant="outlined" disabled={readOnly || !aiDiagnosisSummary} onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, aiDiagnosisSummary || "") }))}>Add summary</Button>
+                          </Stack>
+                        </Stack>
+                      </CardContent>
+                    </Card>
+                  ) : null}
+                  <TextField
+                    size="small"
+                    fullWidth
+                    multiline
+                    minRows={3}
+                    label="Selected diagnosis"
+                    value={consultationForm.diagnosis}
+                    onChange={(e) => setConsultationForm((c) => ({ ...c, diagnosis: e.target.value }))}
+                    disabled={readOnly}
+                    InputProps={{
+                      sx: {
+                        maxHeight: 220,
+                        overflowY: "auto",
+                        alignItems: "flex-start",
+                        "& textarea": { whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
+                      },
+                    }}
+                  />
                 </Stack>
               </SectionCard>
             </Stack>
@@ -1345,6 +1706,46 @@ export default function ConsultationWorkspacePage() {
                   <TextField size="small" label="Follow-up date" type="date" value={consultationForm.followUpDate} disabled={readOnly} onChange={(e) => setConsultationForm((c) => ({ ...c, followUpDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
                 </Stack>
               </SectionCard>
+
+              <SectionCard id="history" title="History at a glance" subtitle="Previous visits, prescriptions, and documents" expanded={expanded.history} onToggle={toggleSection}>
+                <Stack spacing={1}>
+                  {!activeTimeline.length ? (
+                    <Alert severity="info">No timeline events available for this patient.</Alert>
+                  ) : (
+                    <Stack spacing={0.75}>
+                      {activeTimeline.slice(0, 6).map((item) => (
+                        <Card
+                          key={item.id}
+                          variant="outlined"
+                          sx={{ boxShadow: "none", cursor: item.itemType === "DOCUMENT" || item.consultationId || item.prescriptionId ? "pointer" : "default" }}
+                          onClick={() => {
+                            if (item.itemType === "DOCUMENT" && item.documentId) {
+                              const document = clinicalDocuments.find((row) => row.id === item.documentId);
+                              if (document) void openClinicalDocument(document);
+                              return;
+                            }
+                            if (item.consultationId && item.consultationId !== consultation.id) {
+                              navigate(`/consultations/${item.consultationId}`);
+                            }
+                          }}
+                        >
+                          <CardContent sx={{ p: 1 }}>
+                            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                              <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+                                <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.2 }} noWrap>
+                                  {item.title}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary" noWrap>{item.subtitle || item.occurredAt}</Typography>
+                              </Stack>
+                              <Chip size="small" label={timelineTypeLabel(item.itemType)} color={timelineColor(item.itemType)} variant="outlined" />
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              </SectionCard>
             </Stack>
           </Grid>
         </Grid>
@@ -1391,66 +1792,158 @@ export default function ConsultationWorkspacePage() {
           </Grid>
 
           <Grid size={{ xs: 12, lg: 8 }}>
-            <Card>
-              <CardContent sx={{ p: 1.5 }}>
-                <Stack spacing={1.25}>
-                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
-                    <Box>
-                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Active Prescription</Typography>
-                      <Typography variant="caption" color="text.secondary">One-click medicines, compact rows, fast chips.</Typography>
-                    </Box>
-                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                      <Button type="button" size="small" startIcon={<AddRoundedIcon />} disabled={prescriptionReadOnly} onClick={addManualMedicine}>Manual row</Button>
-                      <Button type="button" size="small" variant="outlined" disabled={saving || prescriptionReadOnly} onClick={() => void persistPrescription()}>Save Rx</Button>
-                      <Button type="button" size="small" variant="outlined" disabled={saving || prescriptionReadOnly} onClick={() => void previewCurrentPrescription()}>Preview</Button>
-                      {canFinalizePrescription ? <Button type="button" size="small" color="secondary" disabled={saving || prescriptionReadOnly} onClick={() => void finalizeCurrentPrescription()}>Finalize</Button> : null}
-                    </Stack>
-                  </Box>
-
-                  {prescription && !["DRAFT", "PREVIEWED"].includes(prescription.status) ? (
-                    <Alert severity="info">
-                      Finalized prescriptions are immutable. Create a correction or follow-up draft to make changes.
-                      <Stack direction={{ xs: "column", md: "row" }} spacing={1} sx={{ mt: 1 }}>
-                        <TextField size="small" label="Correction reason" value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)} />
-                        <Button type="button" size="small" variant="outlined" onClick={() => void createCorrectionDraft("SAME_DAY_CORRECTION")}>Same-day correction</Button>
-                        <Button type="button" size="small" variant="outlined" onClick={() => void createCorrectionDraft("FOLLOW_UP")}>Follow-up draft</Button>
+            <Stack spacing={1.5}>
+              <Card>
+                <CardContent sx={{ p: 1.5 }}>
+                  <Stack spacing={1.25}>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                      <Box>
+                        <Typography variant="h6" sx={{ fontWeight: 900 }}>Active Prescription</Typography>
+                        <Typography variant="caption" color="text.secondary">One-click medicines, compact rows, fast chips.</Typography>
+                      </Box>
+                      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                        {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" startIcon={<AddRoundedIcon />} onClick={addManualMedicine}>Manual row</Button> : null}
+                        {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void persistPrescription()}>Save Rx</Button> : null}
+                        {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void previewCurrentPrescription()}>Preview</Button> : null}
+                        {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
+                        {canFinalizePrescription ? <Button type="button" size="small" color="secondary" disabled={saving || prescriptionReadOnly || prescription?.status === "DRAFT"} onClick={() => void finalizeCurrentPrescription()}>Finalize</Button> : null}
                       </Stack>
-                    </Alert>
-                  ) : null}
+                    </Box>
 
-                  <Grid container spacing={1}>
-                    <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label="Diagnosis snapshot" value={prescriptionForm.diagnosisSnapshot} disabled={prescriptionReadOnly} onChange={(e) => setPrescriptionForm((c) => ({ ...c, diagnosisSnapshot: e.target.value }))} /></Grid>
-                    <Grid size={{ xs: 12, md: 5 }}><TextField size="small" fullWidth label="Advice" value={prescriptionForm.advice} disabled={prescriptionReadOnly} onChange={(e) => setPrescriptionForm((c) => ({ ...c, advice: e.target.value }))} /></Grid>
-                    <Grid size={{ xs: 12, md: 3 }}><TextField size="small" fullWidth label="Follow-up" type="date" value={prescriptionForm.followUpDate} disabled={prescriptionReadOnly} onChange={(e) => setPrescriptionForm((c) => ({ ...c, followUpDate: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
-                  </Grid>
+                    {prescription && !["DRAFT", "PREVIEWED"].includes(prescription.status) && canFinalizePrescription ? (
+                      <Alert severity="info">
+                        Finalized prescriptions are immutable. Create a correction or follow-up draft to make changes.
+                        <Stack direction={{ xs: "column", md: "row" }} spacing={1} sx={{ mt: 1 }}>
+                          <TextField size="small" label="Correction reason" value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)} />
+                          <Button type="button" size="small" variant="outlined" onClick={() => void createCorrectionDraft("SAME_DAY_CORRECTION")}>Same-day correction</Button>
+                          <Button type="button" size="small" variant="outlined" onClick={() => void createCorrectionDraft("FOLLOW_UP")}>Follow-up draft</Button>
+                        </Stack>
+                      </Alert>
+                    ) : null}
 
-                  <Stack spacing={1}>
-                    {prescriptionForm.medicines.map((row, index) => (
-                      <Card key={row.localId} variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                        <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
-                          <Stack spacing={1}>
-                            <Grid container spacing={1} alignItems="center">
-                              <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label={`Medicine ${index + 1}`} value={row.medicineName} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { medicineName: e.target.value })} /></Grid>
-                              <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth label="Strength" value={row.strength || ""} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { strength: e.target.value })} /></Grid>
-                              <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth label="Dosage" value={row.dosage} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { dosage: e.target.value })} /></Grid>
-                              <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth label="Frequency" value={row.frequency} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { frequency: e.target.value })} /></Grid>
-                              <Grid size={{ xs: 6, md: 1.5 }}><TextField size="small" fullWidth label="Duration" value={row.duration} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { duration: e.target.value })} /></Grid>
-                              <Grid size={{ xs: 12, md: 0.5 }}><IconButton size="small" disabled={prescriptionReadOnly} onClick={() => setPrescriptionForm((c) => ({ ...c, medicines: c.medicines.filter((item) => item.localId !== row.localId) }))}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Grid>
-                            </Grid>
-                            <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap">
-                              {FREQUENCIES.map((chip) => <Chip key={chip} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={chip} onClick={() => updateMedicine(row.localId, { frequency: chip })} />)}
-                              {DURATIONS.map((chip) => <Chip key={chip} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} variant="outlined" label={chip} onClick={() => updateMedicine(row.localId, { duration: chip })} />)}
-                              {TIMINGS.map((chip) => <Chip key={chip.value} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} color={row.timing === chip.value ? "primary" : "default"} label={chip.label} onClick={() => updateMedicine(row.localId, { timing: chip.value })} />)}
+                    <Grid container spacing={1}>
+                      <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label="Diagnosis snapshot" value={prescriptionForm.diagnosisSnapshot} disabled={prescriptionReadOnly} onChange={(e) => setPrescriptionForm((c) => ({ ...c, diagnosisSnapshot: e.target.value }))} /></Grid>
+                      <Grid size={{ xs: 12, md: 5 }}><TextField size="small" fullWidth label="Advice" value={prescriptionForm.advice} disabled={prescriptionReadOnly} onChange={(e) => setPrescriptionForm((c) => ({ ...c, advice: e.target.value }))} /></Grid>
+                      <Grid size={{ xs: 12, md: 3 }}><TextField size="small" fullWidth label="Follow-up" type="date" value={prescriptionForm.followUpDate} disabled={prescriptionReadOnly} onChange={(e) => setPrescriptionForm((c) => ({ ...c, followUpDate: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
+                    </Grid>
+
+                    <Stack spacing={1}>
+                      {prescriptionForm.medicines.map((row, index) => (
+                        <Card key={row.localId} variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                          <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                            <Stack spacing={1}>
+                              <Grid container spacing={1} alignItems="center">
+                                <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label={`Medicine ${index + 1}`} value={row.medicineName} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { medicineName: e.target.value })} /></Grid>
+                                <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth label="Strength" value={row.strength || ""} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { strength: e.target.value })} /></Grid>
+                                <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth label="Dosage" value={row.dosage} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { dosage: e.target.value })} /></Grid>
+                                <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth label="Frequency" value={row.frequency} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { frequency: e.target.value })} /></Grid>
+                                <Grid size={{ xs: 6, md: 1.5 }}><TextField size="small" fullWidth label="Duration" value={row.duration} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { duration: e.target.value })} /></Grid>
+                                <Grid size={{ xs: 12, md: 0.5 }}><IconButton size="small" disabled={prescriptionReadOnly} onClick={() => setPrescriptionForm((c) => ({ ...c, medicines: c.medicines.filter((item) => item.localId !== row.localId) }))}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Grid>
+                              </Grid>
+                              <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap">
+                                {FREQUENCIES.map((chip) => <Chip key={chip} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={chip} onClick={() => updateMedicine(row.localId, { frequency: chip })} />)}
+                                {DURATIONS.map((chip) => <Chip key={chip} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} variant="outlined" label={chip} onClick={() => updateMedicine(row.localId, { duration: chip })} />)}
+                                {TIMINGS.map((chip) => <Chip key={chip.value} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} color={row.timing === chip.value ? "primary" : "default"} label={chip.label} onClick={() => updateMedicine(row.localId, { timing: chip.value })} />)}
+                              </Stack>
+                              <TextField size="small" fullWidth label="Instructions" value={row.instructions || ""} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { instructions: e.target.value })} placeholder="Auto or manual instructions" />
                             </Stack>
-                            <TextField size="small" fullWidth label="Instructions" value={row.instructions || ""} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { instructions: e.target.value })} placeholder="Auto or manual instructions" />
-                          </Stack>
-                        </CardContent>
-                      </Card>
-                    ))}
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </Stack>
                   </Stack>
-                </Stack>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+
+              <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                <CardContent sx={{ p: 1.5 }}>
+                  <Stack spacing={1.25}>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                      <Box>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Prescription version history</Typography>
+                        <Typography variant="caption" color="text.secondary">Finalized versions stay immutable and traceable.</Typography>
+                      </Box>
+                      {selectedPrescriptionVersion ? <Chip size="small" label={prescriptionVersionTitle(selectedPrescriptionVersion)} color="secondary" variant="outlined" /> : null}
+                    </Box>
+                    {!prescriptionHistory.length ? (
+                      <Alert severity="info">No prescription history yet.</Alert>
+                    ) : (
+                      <Grid container spacing={1}>
+                        <Grid size={{ xs: 12, md: 5 }}>
+                          <Stack spacing={0.75}>
+                            {prescriptionHistory.map((row) => (
+                              <Card
+                                key={row.id}
+                                variant="outlined"
+                                sx={{
+                                  boxShadow: "none",
+                                  cursor: "pointer",
+                                  borderColor: selectedPrescriptionVersion?.id === row.id ? "primary.main" : "divider",
+                                  bgcolor: selectedPrescriptionVersion?.id === row.id ? "action.hover" : "background.paper",
+                                }}
+                                onClick={() => setSelectedPrescriptionVersionId(row.id)}
+                              >
+                                <CardContent sx={{ p: 1 }}>
+                                  <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                                    <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+                                      <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap>{prescriptionVersionTitle(row)}</Typography>
+                                      <Typography variant="caption" color="text.secondary" noWrap>{compactDateTime(row.createdAt)}{row.followUpDate ? ` • Follow-up ${row.followUpDate}` : ""}</Typography>
+                                    </Stack>
+                                    <Chip size="small" label={row.status} color={row.status === "FINALIZED" ? "success" : row.status === "CORRECTED" ? "warning" : row.status === "SUPERSEDED" ? "default" : "primary"} variant="outlined" />
+                                  </Stack>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </Stack>
+                        </Grid>
+                        <Grid size={{ xs: 12, md: 7 }}>
+                          {selectedPrescriptionVersion ? (
+                            <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                              <CardContent sx={{ p: 1.5 }}>
+                                <Stack spacing={1}>
+                                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                                    <Chip size="small" label={`Version ${selectedPrescriptionVersion.versionNumber || 1}`} />
+                                    <Chip size="small" label={selectedPrescriptionVersion.status} color={selectedPrescriptionVersion.status === "FINALIZED" ? "success" : selectedPrescriptionVersion.status === "CORRECTED" ? "warning" : "default"} />
+                                    {selectedPrescriptionVersion.flowType ? <Chip size="small" label={selectedPrescriptionVersion.flowType.replaceAll("_", " ")} /> : null}
+                                  </Stack>
+                                  <Typography variant="body2"><b>Correction reason:</b> {selectedPrescriptionVersion.correctionReason || "-"}</Typography>
+                                  <Typography variant="body2"><b>Follow-up:</b> {selectedPrescriptionVersion.followUpDate || "-"}</Typography>
+                                  <Typography variant="body2"><b>Parent:</b> {selectedPrescriptionVersion.parentPrescriptionId || "-"}</Typography>
+                                  <Typography variant="body2"><b>Superseded by:</b> {selectedPrescriptionVersion.supersededByPrescriptionId || "-"}</Typography>
+                                  <Typography variant="body2"><b>Finalized at:</b> {compactDateTime(selectedPrescriptionVersion.finalizedAt)}</Typography>
+                                  <Typography variant="body2"><b>Created at:</b> {compactDateTime(selectedPrescriptionVersion.createdAt)}</Typography>
+                                  <Divider />
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Medicines</Typography>
+                                  {selectedPrescriptionVersion.medicines.length ? (
+                                    <Stack spacing={0.5}>
+                                      {selectedPrescriptionVersion.medicines.map((medicine, index) => (
+                                        <Typography key={`${medicine.medicineName}-${index}`} variant="body2">
+                                          {medicine.medicineName} {medicine.strength || ""} {medicine.dosage} {medicine.frequency} {medicine.duration}
+                                        </Typography>
+                                      ))}
+                                    </Stack>
+                                  ) : <Typography variant="body2" color="text.secondary">No medicines recorded.</Typography>}
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Tests</Typography>
+                                  {selectedPrescriptionVersion.recommendedTests.length ? (
+                                    <Stack spacing={0.5}>
+                                      {selectedPrescriptionVersion.recommendedTests.map((test, index) => (
+                                        <Typography key={`${test.testName}-${index}`} variant="body2">
+                                          {test.testName}{test.instructions ? ` - ${test.instructions}` : ""}
+                                        </Typography>
+                                      ))}
+                                    </Stack>
+                                  ) : <Typography variant="body2" color="text.secondary">No tests recorded.</Typography>}
+                                </Stack>
+                              </CardContent>
+                            </Card>
+                          ) : <Alert severity="info">Select a version to inspect the medico-legal trail.</Alert>}
+                        </Grid>
+                      </Grid>
+                    )}
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Stack>
           </Grid>
         </Grid>
       ) : null}
@@ -1467,7 +1960,19 @@ export default function ConsultationWorkspacePage() {
             <Card><CardContent><Typography variant="h6">Previous Prescriptions</Typography>{!previousPrescriptions.length ? <Alert severity="info">No previous prescriptions.</Alert> : <List dense>{previousPrescriptions.slice(0, 8).map((row) => <ListItemButton key={row.id} onClick={() => navigate(`/consultations/${row.consultationId}`)}><ListItemText primary={row.prescriptionNumber} secondary={`${compactDate(row.createdAt)} • ${row.status}`} /></ListItemButton>)}</List>}</CardContent></Card>
           </Grid>
           <Grid size={{ xs: 12 }}>
-            <Card><CardContent><Typography variant="h6">Uploaded Reports & Referrals</Typography>{!clinicalDocuments.length ? <Alert severity="info">No uploaded reports or referral documents.</Alert> : <List dense>{clinicalDocuments.slice(0, 10).map((row) => <ListItemButton key={row.id} onClick={() => void openClinicalDocument(row)}><ListItemText primary={`${row.documentType.replaceAll("_", " ")} • ${row.originalFilename}`} secondary={`${compactDate(row.createdAt)}${row.referredDoctor || row.referredHospital ? ` • Referral: ${[row.referredDoctor, row.referredHospital].filter(Boolean).join(" · ")}` : ""}`} /></ListItemButton>)}</List>}</CardContent></Card>
+            <Card><CardContent><Typography variant="h6">Uploaded Reports & Referrals</Typography>{!clinicalDocuments.length ? <Alert severity="info">No uploaded reports or referral documents.</Alert> : <List dense>{clinicalDocuments.slice(0, 10).map((row) => <ListItemButton key={row.id} onClick={() => void openClinicalDocument(row)}><ListItemText primary={`${row.documentType.replaceAll("_", " ")} • ${row.originalFilename}`} secondary={`${compactDate(row.createdAt)}${row.aiExtractionSummary ? ` • AI: ${row.aiExtractionSummary}` : ""}${row.referredDoctor || row.referredHospital ? ` • Referral: ${[row.referredDoctor, row.referredHospital].filter(Boolean).join(" · ")}` : ""}`} /></ListItemButton>)}</List>}</CardContent></Card>
+          </Grid>
+          <Grid size={{ xs: 12 }}>
+            <Card><CardContent><Typography variant="h6">Unified Patient Timeline</Typography>{!activeTimeline.length ? <Alert severity="info">No timeline events yet.</Alert> : <List dense>{activeTimeline.slice(0, 12).map((item) => <ListItemButton key={item.id} onClick={() => {
+              if (item.itemType === "DOCUMENT" && item.documentId) {
+                const document = clinicalDocuments.find((row) => row.id === item.documentId);
+                if (document) void openClinicalDocument(document);
+                return;
+              }
+              if (item.consultationId && item.consultationId !== consultation.id) {
+                navigate(`/consultations/${item.consultationId}`);
+              }
+            }}><ListItemText primary={`${timelineTypeLabel(item.itemType)} • ${item.title}`} secondary={`${item.subtitle || "-"} • ${compactDateTime(item.occurredAt)}`} /></ListItemButton>)}</List>}</CardContent></Card>
           </Grid>
         </Grid>
       ) : null}
@@ -1491,7 +1996,7 @@ export default function ConsultationWorkspacePage() {
                 <CardContent>
                   <Stack spacing={1.25}>
                     <Typography variant="h6">AI Clinical Assist</Typography>
-                    {!aiAvailable ? <Alert severity="warning">{AI_DISABLED_MESSAGE}</Alert> : null}
+                    {!aiAvailable ? <Alert severity="warning">{aiStatusMessage || AI_DISABLED_MESSAGE}</Alert> : null}
                     <Button type="button" disabled={aiBusy || readOnly || !aiAvailable} onClick={() => void runAiAction("diagnosis")}>Suggest diagnosis</Button>
                     <Button type="button" variant="outlined" disabled={aiBusy || readOnly || !aiAvailable} onClick={() => void runAiAction("notes")}>Structure notes</Button>
                     <Button type="button" variant="outlined" disabled={aiBusy || prescriptionReadOnly || !aiAvailable} onClick={() => void applyAiPrescriptionTemplate()}>Suggest prescription template</Button>
@@ -1511,8 +2016,40 @@ export default function ConsultationWorkspacePage() {
                     {clinicalSummary ? (
                       <Stack spacing={1}>
                         <Chip size="small" color={clinicalSummary.fallbackUsed ? "warning" : "success"} label={clinicalSummary.fallbackUsed ? "Fallback used" : "AI ready"} />
+                        {Array.isArray(clinicalSummary.structuredData["possibleDiagnosisCategories"]) && (clinicalSummary.structuredData["possibleDiagnosisCategories"] as Array<unknown>).length ? (
+                          <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                            <CardContent sx={{ p: 1 }}>
+                              <Typography variant="subtitle2">Possible Diagnosis Categories</Typography>
+                              {(clinicalSummary.structuredData["possibleDiagnosisCategories"] as Array<Record<string, unknown>>).map((row, idx) => (
+                                <Typography key={idx} variant="caption" display="block">
+                                  {String(row.name || "Category")} - {String(row.reason || "")} {row.confidence ? `(${String(row.confidence)})` : ""}
+                                </Typography>
+                              ))}
+                            </CardContent>
+                          </Card>
+                        ) : null}
+                        {Array.isArray(clinicalSummary.structuredData["recommendedInvestigations"]) && (clinicalSummary.structuredData["recommendedInvestigations"] as Array<unknown>).length ? (
+                          <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                            <CardContent sx={{ p: 1 }}>
+                              <Typography variant="subtitle2">Recommended Investigations</Typography>
+                              <Typography variant="caption">{(clinicalSummary.structuredData["recommendedInvestigations"] as Array<unknown>).map((v) => String(v)).join(" • ")}</Typography>
+                            </CardContent>
+                          </Card>
+                        ) : null}
+                        {Array.isArray(clinicalSummary.structuredData["followUpSuggestions"]) && (clinicalSummary.structuredData["followUpSuggestions"] as Array<unknown>).length ? (
+                          <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                            <CardContent sx={{ p: 1 }}>
+                              <Typography variant="subtitle2">Follow-up Suggestions</Typography>
+                              <Typography variant="caption">{(clinicalSummary.structuredData["followUpSuggestions"] as Array<unknown>).map((v) => String(v)).join(" • ")}</Typography>
+                            </CardContent>
+                          </Card>
+                        ) : null}
+                        {Array.isArray(clinicalSummary.structuredData["safetyNotes"]) && (clinicalSummary.structuredData["safetyNotes"] as Array<unknown>).some((v) => String(v).includes("unstructured")) ? (
+                          <Alert severity="warning">AI returned unstructured text. Review before use.</Alert>
+                        ) : null}
                         <Typography variant="body2">{clinicalSummary.draft || clinicalSummary.message}</Typography>
                         {clinicalSummary.suggestedActions?.length ? <Typography variant="caption" color="text.secondary">{clinicalSummary.suggestedActions.join(" · ")}</Typography> : null}
+                        {clinicalSummary.warnings?.length ? <Typography variant="caption" color="text.secondary">{clinicalSummary.warnings.join(" · ")}</Typography> : null}
                       </Stack>
                     ) : null}
                   </Stack>
@@ -1527,9 +2064,9 @@ export default function ConsultationWorkspacePage() {
       ) : null}
 
       <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="flex-end">
-        <Button type="button" variant="outlined" color="error" disabled={saving || readOnly} onClick={() => void cancelCurrentConsultation()}>Cancel Consultation</Button>
-        <Button type="button" variant="outlined" disabled={saving} onClick={() => void sendCurrentPrescription("email")}>Email Rx</Button>
-        <Button type="button" variant="outlined" disabled={saving} onClick={() => void sendCurrentPrescription("whatsapp")}>WhatsApp Rx</Button>
+        {canEditConsultation ? <Button type="button" variant="outlined" color="error" disabled={saving || readOnly} onClick={() => void cancelCurrentConsultation()}>Cancel Consultation</Button> : null}
+        {canFinalizePrescription ? <Button type="button" variant="outlined" disabled={saving} onClick={() => void sendCurrentPrescription("email")}>Email Rx</Button> : null}
+        {canFinalizePrescription ? <Button type="button" variant="outlined" disabled={saving} onClick={() => void sendCurrentPrescription("whatsapp")}>WhatsApp Rx</Button> : null}
       </Stack>
       <ClinicalDocumentViewer open={!!viewerDocument} document={viewerDocument} url={viewerUrl} onClose={() => { setViewerDocument(null); setViewerUrl(null); }} />
     </Stack>

@@ -10,6 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -103,6 +104,10 @@ public class ConsultationEntity {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt = OffsetDateTime.now();
 
+    @Version
+    @Column(nullable = false)
+    private int version;
+
     protected ConsultationEntity() {
     }
 
@@ -188,4 +193,5 @@ public class ConsultationEntity {
     public OffsetDateTime getCompletedAt() { return completedAt; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public int getVersion() { return version; }
 }

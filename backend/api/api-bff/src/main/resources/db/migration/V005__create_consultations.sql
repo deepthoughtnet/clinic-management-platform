@@ -19,9 +19,9 @@ create table if not exists consultations (
     weight_kg double precision,
     height_cm double precision,
     spo2 integer,
-    completed_at timestamptz,
-    created_at timestamptz not null,
-    updated_at timestamptz not null
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null
 );
 
 create index if not exists ix_consultations_tenant_patient on consultations (tenant_id, patient_id);

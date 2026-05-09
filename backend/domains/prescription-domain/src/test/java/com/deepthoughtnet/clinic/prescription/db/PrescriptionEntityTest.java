@@ -43,6 +43,21 @@ class PrescriptionEntityTest {
         assertThat(correction.getFlowType()).isEqualTo("SAME_DAY_CORRECTION");
     }
 
+    @Test
+    void correctedAndSupersededMetadataIsTrackedOnTheSameRow() {
+        PrescriptionEntity prescription = newPrescription();
+        UUID replacementId = UUID.randomUUID();
+
+        prescription.finalizePrescription(UUID.randomUUID());
+        prescription.markCorrected();
+        prescription.markSuperseded(replacementId);
+
+        assertThat(prescription.getStatus()).isEqualTo(PrescriptionStatus.SUPERSEDED);
+        assertThat(prescription.getSupersededByPrescriptionId()).isEqualTo(replacementId);
+        assertThat(prescription.getCorrectedAt()).isNotNull();
+        assertThat(prescription.getSupersededAt()).isNotNull();
+    }
+
     private static PrescriptionEntity newPrescription() {
         return PrescriptionEntity.create(
                 UUID.randomUUID(),

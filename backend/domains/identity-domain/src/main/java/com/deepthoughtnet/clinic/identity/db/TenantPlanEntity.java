@@ -4,6 +4,10 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Entity
 @Table(name = "tenant_plans")
@@ -25,18 +29,24 @@ public class TenantPlanEntity {
     @Column(name = "max_routes")
     private Integer maxRoutes;
 
-    /**
-     * Stored as JSONB in Postgres. We keep it as String in JPA to avoid extra deps.
-     */
-    @Column(nullable = false, columnDefinition = "jsonb")
-    private String features = "{}";
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(nullable = false)
+    private Map<String, Object> features = new LinkedHashMap<>();
 
     protected TenantPlanEntity() {}
+
+    public static TenantPlanEntity create(String id, String name, Map<String, Object> features) {
+        TenantPlanEntity entity = new TenantPlanEntity();
+        entity.id = id;
+        entity.name = name;
+        entity.features = features == null ? new LinkedHashMap<>() : new LinkedHashMap<>(features);
+        return entity;
+    }
 
     public String getId() { return id; }
     public String getName() { return name; }
     public Integer getMaxDrivers() { return maxDrivers; }
     public Integer getMaxDevices() { return maxDevices; }
     public Integer getMaxRoutes() { return maxRoutes; }
-    public String getFeatures() { return features; }
+    public Map<String, Object> getFeatures() { return features; }
 }

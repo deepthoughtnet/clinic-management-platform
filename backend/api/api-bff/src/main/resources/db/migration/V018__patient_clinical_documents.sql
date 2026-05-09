@@ -17,8 +17,8 @@ create table if not exists patient_clinical_documents (
     referral_notes text,
     ai_extraction_status varchar(32),
     ocr_status varchar(32),
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     version integer not null default 0,
     constraint uq_patient_clinical_documents_storage_key unique (tenant_id, storage_key)
 );

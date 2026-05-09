@@ -14,10 +14,16 @@ import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 
 @Service
+@ConditionalOnExpression(
+        "'${clinic.ocr.enabled:true}' == 'true' "
+                + "&& '${clinic.ocr.provider:TESSERACT}'.equalsIgnoreCase('TESSERACT')"
+)
 public class TesseractOcrProvider implements OcrProvider {
+    private final String executablePath;
     private final String dataPath;
     private final String language;
     private final int renderDpi;
@@ -27,6 +33,7 @@ public class TesseractOcrProvider implements OcrProvider {
     private final int maxPages;
 
     public TesseractOcrProvider(
+            @Value("${clinic.ocr.tesseract.executablePath:tesseract}") String executablePath,
             @Value("${clinic.ocr.tesseract.dataPath:}") String dataPath,
             @Value("${clinic.ocr.tesseract.language:eng}") String language,
             @Value("${clinic.ocr.tesseract.renderDpi:200}") int renderDpi,
@@ -35,6 +42,7 @@ public class TesseractOcrProvider implements OcrProvider {
             @Value("${clinic.ocr.tesseract.requireDataPath:false}") boolean requireDataPath,
             @Value("${clinic.ocr.tesseract.maxPages:10}") int maxPages
     ) {
+        this.executablePath = executablePath;
         this.dataPath = dataPath;
         this.language = language;
         this.renderDpi = renderDpi;
@@ -88,6 +96,9 @@ public class TesseractOcrProvider implements OcrProvider {
     private void validateConfiguration() {
         if (isBlank(language)) {
             throw new IllegalStateException("Tesseract OCR language is required");
+        }
+        if (isBlank(executablePath)) {
+            throw new IllegalStateException("Tesseract executable path is required: clinic.ocr.tesseract.executablePath");
         }
         if (renderDpi < 72 || renderDpi > 600) {
             throw new IllegalStateException("Tesseract renderDpi must be between 72 and 600");

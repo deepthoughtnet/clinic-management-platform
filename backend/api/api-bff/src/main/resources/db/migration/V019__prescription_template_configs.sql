@@ -13,8 +13,8 @@ create table if not exists prescription_template_configs (
     show_qr_code boolean not null default true,
     watermark_text varchar(255),
     changed_by_app_user_id uuid not null,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     version integer not null default 0
 );
 

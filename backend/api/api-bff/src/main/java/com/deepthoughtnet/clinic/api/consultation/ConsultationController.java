@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -20,8 +21,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
 
 @RestController
+@Validated
 @RequestMapping("/api/consultations")
 public class ConsultationController {
     private final ConsultationService consultationService;
@@ -45,7 +48,7 @@ public class ConsultationController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('consultation.create')")
-    public ConsultationResponse create(@RequestBody ConsultationRequest request) {
+    public ConsultationResponse create(@Valid @RequestBody ConsultationRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requireConsultationCommandAccess(tenantId, request.patientId(), request.doctorUserId(), request.appointmentId());
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
@@ -63,7 +66,7 @@ public class ConsultationController {
 
     @PutMapping("/{id}")
     @PreAuthorize("@permissionChecker.hasPermission('consultation.update')")
-    public ConsultationResponse update(@PathVariable UUID id, @RequestBody ConsultationRequest request) {
+    public ConsultationResponse update(@PathVariable UUID id, @Valid @RequestBody ConsultationRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requireConsultationAccess(tenantId, id);
         doctorAssignmentSecurityService.requireConsultationCommandAccess(tenantId, request.patientId(), request.doctorUserId(), request.appointmentId());

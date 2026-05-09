@@ -110,6 +110,19 @@ public class DoctorAssignmentSecurityService {
         }
     }
 
+    public void requireQueueReorderAccess(UUID doctorUserId) {
+        if (isDoctor()) {
+            UUID currentDoctorUserId = currentDoctorUserId();
+            if (!currentDoctorUserId.equals(doctorUserId)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Doctors can only reorder their own queue");
+            }
+            return;
+        }
+        if (!isClinicAdmin() && !isReceptionist()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only clinic administrators, receptionists, or assigned doctors can reorder queue");
+        }
+    }
+
     public void requireConsultationAccess(UUID tenantId, UUID consultationId) {
         if (!isDoctor()) {
             return;

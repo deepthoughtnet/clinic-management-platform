@@ -10,7 +10,11 @@ public interface PrescriptionRepository extends JpaRepository<PrescriptionEntity
 
     Optional<PrescriptionEntity> findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(UUID tenantId, UUID consultationId);
 
+    List<PrescriptionEntity> findByTenantIdAndConsultationIdOrderByVersionNumberAsc(UUID tenantId, UUID consultationId);
+
     List<PrescriptionEntity> findByTenantIdAndConsultationIdOrderByVersionNumberDesc(UUID tenantId, UUID consultationId);
+
+    Optional<PrescriptionEntity> findFirstByTenantIdAndParentPrescriptionIdOrderByVersionNumberDesc(UUID tenantId, UUID parentPrescriptionId);
 
     Optional<PrescriptionEntity> findByTenantIdAndPrescriptionNumber(UUID tenantId, String prescriptionNumber);
 

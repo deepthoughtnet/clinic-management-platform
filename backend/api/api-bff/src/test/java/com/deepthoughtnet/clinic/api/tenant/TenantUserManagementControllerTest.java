@@ -12,11 +12,13 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.CreateTenantUserCommand;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.security.Permissions;
 import com.deepthoughtnet.clinic.platform.security.RolePermissionMappings;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
 import java.util.Set;
 import java.util.UUID;
@@ -30,12 +32,14 @@ import org.mockito.ArgumentCaptor;
 class TenantUserManagementControllerTest {
     private final UUID tenantId = UUID.randomUUID();
     private TenantUserManagementService tenantUserManagementService;
+    private AuditEventPublisher auditEventPublisher;
     private TenantUserManagementController controller;
 
     @BeforeEach
     void setUp() {
         tenantUserManagementService = mock(TenantUserManagementService.class);
-        controller = new TenantUserManagementController(tenantUserManagementService);
+        auditEventPublisher = mock(AuditEventPublisher.class);
+        controller = new TenantUserManagementController(tenantUserManagementService, auditEventPublisher, new ObjectMapper());
         RequestContextHolder.set(new RequestContext(
                 TenantId.of(tenantId),
                 UUID.randomUUID(),
@@ -60,6 +64,7 @@ class TenantUserManagementControllerTest {
 
         ArgumentCaptor<CreateTenantUserCommand> captor = ArgumentCaptor.forClass(CreateTenantUserCommand.class);
         verify(tenantUserManagementService).createOrInvite(captor.capture());
+        verify(auditEventPublisher).record(any());
         assertEquals(role, captor.getValue().role());
         assertEquals("Temp@1234", captor.getValue().tempPassword());
     }

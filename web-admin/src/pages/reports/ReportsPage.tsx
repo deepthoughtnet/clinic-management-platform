@@ -93,7 +93,8 @@ export default function ReportsPage() {
   const [rows, setRows] = React.useState<ReportRow[]>([]);
   const [doctors, setDoctors] = React.useState<ClinicUser[]>([]);
   const [patients, setPatients] = React.useState<Patient[]>([]);
-  const [loading, setLoading] = React.useState(true);
+  const [loadingMeta, setLoadingMeta] = React.useState(true);
+  const [loadingReport, setLoadingReport] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [filters, setFilters] = React.useState({
     from: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().slice(0, 10),
@@ -107,19 +108,24 @@ export default function ReportsPage() {
     if (!auth.accessToken || !auth.tenantId) {
       return;
     }
-    const [doctorRows, patientRows] = await Promise.all([
-      getClinicUsers(auth.accessToken, auth.tenantId),
-      searchPatients(auth.accessToken, auth.tenantId, { active: null }),
-    ]);
-    setDoctors(doctorRows);
-    setPatients(patientRows);
+    setLoadingMeta(true);
+    try {
+      const [doctorRows, patientRows] = await Promise.all([
+        getClinicUsers(auth.accessToken, auth.tenantId),
+        searchPatients(auth.accessToken, auth.tenantId, { active: null }),
+      ]);
+      setDoctors(doctorRows);
+      setPatients(patientRows);
+    } finally {
+      setLoadingMeta(false);
+    }
   }, [auth.accessToken, auth.tenantId]);
 
   const loadReport = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) {
       return;
     }
-    setLoading(true);
+    setLoadingReport(true);
     setError(null);
     try {
       const params = {
@@ -163,15 +169,15 @@ export default function ReportsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load report");
     } finally {
-      setLoading(false);
+      setLoadingReport(false);
     }
   }, [auth.accessToken, auth.tenantId, filters, reportKey]);
 
   React.useEffect(() => {
     let cancelled = false;
-    async function bootstrap() {
+    async function bootstrapMeta() {
       if (!auth.accessToken || !auth.tenantId) {
-        setLoading(false);
+        setLoadingMeta(false);
         return;
       }
       try {
@@ -181,15 +187,19 @@ export default function ReportsPage() {
           setError("Failed to load report metadata");
         }
       }
-      if (!cancelled) {
-        await loadReport();
+      if (cancelled) {
+        return;
       }
     }
-    void bootstrap();
+    void bootstrapMeta();
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken, auth.tenantId, loadMeta, loadReport]);
+  }, [auth.accessToken, auth.tenantId, loadMeta]);
+
+  React.useEffect(() => {
+    void loadReport();
+  }, [loadReport]);
 
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
@@ -229,6 +239,7 @@ export default function ReportsPage() {
             <Typography variant="h6" sx={{ fontWeight: 800 }}>
               Filters
             </Typography>
+            {loadingMeta ? <Alert severity="info">Loading doctors and patients for filter options...</Alert> : null}
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, md: 3 }}>
                 <TextField fullWidth label="From" type="date" value={filters.from} onChange={(e) => setFilters((current) => ({ ...current, from: e.target.value }))} InputLabelProps={{ shrink: true }} />
@@ -243,6 +254,7 @@ export default function ReportsPage() {
                     labelId="report-doctor-label"
                     label="Doctor"
                     value={filters.doctorUserId}
+                    disabled={loadingMeta}
                     onChange={(e) => setFilters((current) => ({ ...current, doctorUserId: String(e.target.value) }))}
                   >
                     <MenuItem value="">All</MenuItem>
@@ -263,6 +275,7 @@ export default function ReportsPage() {
                     labelId="report-patient-label"
                     label="Patient"
                     value={filters.patientId}
+                    disabled={loadingMeta}
                     onChange={(e) => setFilters((current) => ({ ...current, patientId: String(e.target.value) }))}
                   >
                     <MenuItem value="">All</MenuItem>
@@ -295,31 +308,38 @@ export default function ReportsPage() {
 
       <Card>
         <CardContent>
-          {loading ? (
+          {loadingReport ? (
             <Box sx={{ display: "grid", placeItems: "center", minHeight: 240 }}>
-              <CircularProgress />
+              <Stack spacing={1} alignItems="center">
+                <CircularProgress />
+                <Typography variant="body2" color="text.secondary">
+                  Loading report data...
+                </Typography>
+              </Stack>
             </Box>
           ) : rows.length === 0 ? (
             <Alert severity="info">No rows returned for the selected report.</Alert>
           ) : (
-            <Table size="small">
-              <TableHead>
+            <Box sx={{ overflowX: "auto" }}>
+              <Table size="small" sx={{ minWidth: 960 }}>
+                <TableHead>
                 <TableRow>
                   {headers.map((header) => (
                     <TableCell key={header}>{header}</TableCell>
                   ))}
                 </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.map((row, index) => (
-                  <TableRow key={index} hover>
-                    {headers.map((header) => (
-                      <TableCell key={header}>{row[header] === null || row[header] === undefined ? "-" : String(row[header])}</TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHead>
+                <TableBody>
+                  {rows.map((row, index) => (
+                    <TableRow key={index} hover>
+                      {headers.map((header) => (
+                        <TableCell key={header}>{row[header] === null || row[header] === undefined ? "-" : String(row[header])}</TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
           )}
         </CardContent>
       </Card>

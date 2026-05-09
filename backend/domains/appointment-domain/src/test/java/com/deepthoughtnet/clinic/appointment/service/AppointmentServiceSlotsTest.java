@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.appointment.db.AppointmentEntity;
@@ -114,6 +115,58 @@ class AppointmentServiceSlotsTest {
                 false
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("fully booked");
+    }
+
+    @Test
+    void createScheduledAllowsManualTimeWhenNoAvailabilityScheduleExists() {
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of());
+
+        service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, APPOINTMENT_DATE, LocalTime.of(11, 30), "New visit", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
+                ACTOR_ID,
+                false
+        );
+
+        verify(appointmentRepository).save(any(AppointmentEntity.class));
+    }
+
+    @Test
+    void createScheduledRejectsBlankAppointmentTime() {
+        assertThatThrownBy(() -> service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, APPOINTMENT_DATE, null, "New visit", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
+                ACTOR_ID,
+                false
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("appointmentTime is required");
+    }
+
+    @Test
+    void createScheduledRejectsPastDateTime() {
+        LocalDate pastDate = LocalDate.now().minusDays(1);
+        assertThatThrownBy(() -> service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, pastDate, LocalTime.of(10, 0), "New visit", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
+                ACTOR_ID,
+                false
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot be in the past");
+    }
+
+    @Test
+    void createScheduledRejectsDuplicateActiveSameDoctorPatientAndSlot() {
+        when(appointmentRepository.existsByTenantIdAndDoctorUserIdAndPatientIdAndAppointmentDateAndAppointmentTimeAndStatusNotIn(
+                eq(TENANT_ID), eq(DOCTOR_ID), eq(PATIENT_ID), eq(APPOINTMENT_DATE), eq(LocalTime.of(11, 30)), any()))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, APPOINTMENT_DATE, LocalTime.of(11, 30), "New visit", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
+                ACTOR_ID,
+                false
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("already exists");
     }
 
     private DoctorAvailabilityEntity availability() {

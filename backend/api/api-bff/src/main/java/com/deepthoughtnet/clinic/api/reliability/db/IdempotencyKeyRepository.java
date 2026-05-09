@@ -5,5 +5,5 @@ import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface IdempotencyKeyRepository extends JpaRepository<IdempotencyKeyEntity, UUID> {
-    Optional<IdempotencyKeyEntity> findByTenantIdAndKey(UUID tenantId, String key);
+    Optional<IdempotencyKeyEntity> findByTenantIdAndIdempotencyKey(UUID tenantId, String idempotencyKey);
 }

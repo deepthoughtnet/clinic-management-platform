@@ -7,8 +7,8 @@ create table if not exists vaccines (
     recommended_gap_days integer null,
     default_price numeric(18,2) null,
     active boolean not null default true,
-    created_at timestamptz not null,
-    updated_at timestamptz not null
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null
 );
 
 create unique index if not exists uq_vaccines_tenant_name on vaccines (tenant_id, vaccine_name);
@@ -26,7 +26,7 @@ create table if not exists patient_vaccinations (
     batch_number varchar(128) null,
     notes text null,
     administered_by_user_id uuid null,
-    created_at timestamptz not null
+    created_at timestamp with time zone not null
 );
 
 create index if not exists ix_patient_vaccinations_tenant_patient on patient_vaccinations (tenant_id, patient_id);

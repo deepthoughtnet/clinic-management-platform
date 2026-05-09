@@ -99,8 +99,14 @@ export default function TenantDetailPage() {
           <Typography color="text.secondary" sx={{ fontFamily: "monospace" }}>{tenant.tenant.code}</Typography>
         </Box>
         <Stack direction="row" spacing={1}>
-          <Button variant={auth.selectedTenant?.id === tenant.tenant.id ? "contained" : "outlined"} onClick={() => auth.selectTenant({ id: tenant.tenant.id, code: tenant.tenant.code, name: tenant.tenant.name })}>
-            {auth.selectedTenant?.id === tenant.tenant.id ? "Selected" : "Select Tenant"}
+          <Button
+            variant={auth.selectedTenant?.id === tenant.tenant.id ? "contained" : "outlined"}
+            onClick={() => {
+              auth.selectTenant({ id: tenant.tenant.id, code: tenant.tenant.code, name: tenant.tenant.name });
+              navigate("/");
+            }}
+          >
+            {auth.selectedTenant?.id === tenant.tenant.id ? "Open Tenant" : "Select Tenant"}
           </Button>
           <Button onClick={async () => {
             if (!auth.accessToken) return;

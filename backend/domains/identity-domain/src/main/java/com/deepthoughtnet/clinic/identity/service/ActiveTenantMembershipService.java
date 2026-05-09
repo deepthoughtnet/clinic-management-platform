@@ -7,10 +7,12 @@ import com.deepthoughtnet.clinic.identity.service.model.TenantModulesRecord;
 import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+@Slf4j
 @Service
 public class ActiveTenantMembershipService {
 
@@ -40,7 +42,7 @@ public class ActiveTenantMembershipService {
                 .stream()
                 .collect(Collectors.toMap(tenant -> tenant.getId(), Function.identity()));
 
-        return memberships.stream()
+        var records = memberships.stream()
                 .map(membership -> {
                     var tenant = tenantsById.get(membership.getTenantId());
                     return new ActiveTenantMembershipRecord(
@@ -63,5 +65,15 @@ public class ActiveTenantMembershipService {
                     );
                 })
                 .toList();
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "Resolved active memberships for keycloakSub={} email={} count={} tenantIds={}",
+                    normalizedSub,
+                    normalizedEmail,
+                    records.size(),
+                    records.stream().map(ActiveTenantMembershipRecord::tenantId).toList()
+            );
+        }
+        return records;
     }
 }

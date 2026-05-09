@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -78,6 +79,7 @@ function isInvalidSelectedClinic(tenant: { id: string; code: string; name: strin
 
 export default function UsersRolesPage() {
   const auth = useAuth();
+  const navigate = useNavigate();
   const canManageUsers = auth.hasPermission("user.manage") || auth.hasPermission("tenant.users.manage");
   const canAssignRoles = auth.hasPermission("tenant.users.role.assign") || canManageUsers;
   const canResetPasswords = auth.hasPermission("tenant.users.reset.password") || canManageUsers;
@@ -294,6 +296,11 @@ export default function UsersRolesPage() {
                               {canResetPasswords ? (
                                 <Button size="small" variant="outlined" disabled={savingUserId === user.appUserId} onClick={() => void resetPassword(user)}>
                                   Reset Password
+                                </Button>
+                              ) : null}
+                              {(user.membershipRole || "").toUpperCase() === "DOCTOR" ? (
+                                <Button size="small" onClick={() => navigate(`/doctors/${user.appUserId}`)}>
+                                  Doctor Details
                                 </Button>
                               ) : null}
                             </Stack>

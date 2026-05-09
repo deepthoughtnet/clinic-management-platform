@@ -6,7 +6,7 @@ alter table patient_clinical_documents
     add column if not exists ai_extraction_structured_json text,
     add column if not exists ai_extraction_review_notes text,
     add column if not exists ai_extraction_reviewed_by_app_user_id uuid,
-    add column if not exists ai_extraction_reviewed_at timestamptz;
+    add column if not exists ai_extraction_reviewed_at timestamp with time zone;
 
 create table if not exists clinical_ai_jobs (
     id uuid primary key,
@@ -26,13 +26,13 @@ create table if not exists clinical_ai_jobs (
     result_json text,
     summary_text text,
     attempt_count integer not null default 0,
-    started_at timestamptz,
-    completed_at timestamptz,
-    next_attempt_at timestamptz,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    next_attempt_at timestamp with time zone,
     error_message text,
     requested_by_app_user_id uuid,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     version integer not null default 0
 );
 

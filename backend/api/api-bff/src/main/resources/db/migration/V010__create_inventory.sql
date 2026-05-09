@@ -11,8 +11,8 @@ create table if not exists medicine_catalogue (
     default_instructions text,
     default_price numeric(18,2),
     active boolean not null default true,
-    created_at timestamptz not null,
-    updated_at timestamptz not null,
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null,
     constraint uq_medicine_catalogue_tenant_name unique (tenant_id, medicine_name)
 );
 
@@ -30,8 +30,8 @@ create table if not exists inventory_stocks (
     unit_cost numeric(18,2),
     selling_price numeric(18,2),
     active boolean not null default true,
-    created_at timestamptz not null,
-    updated_at timestamptz not null
+    created_at timestamp with time zone not null,
+    updated_at timestamp with time zone not null
 );
 
 create index if not exists ix_inventory_stocks_tenant_medicine on inventory_stocks (tenant_id, medicine_id);
@@ -47,7 +47,7 @@ create table if not exists inventory_transactions (
     reference_type varchar(64),
     reference_id uuid,
     notes text,
-    created_at timestamptz not null
+    created_at timestamp with time zone not null
 );
 
 create index if not exists ix_inventory_transactions_tenant_medicine on inventory_transactions (tenant_id, medicine_id);

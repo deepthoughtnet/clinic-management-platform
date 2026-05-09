@@ -33,6 +33,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -157,6 +159,14 @@ public class PrescriptionService {
                 .orElseThrow(() -> new IllegalArgumentException("Consultation not found"));
         ensurePatientAndDoctorMatch(tenantId, command, consultation);
         if (!isEditable(entity)) {
+            PrescriptionEntity openCorrection = openCorrectionDraft(tenantId, entity.getId());
+            if (openCorrection != null) {
+                openCorrection.update(normalizeNullable(command.diagnosisSnapshot()), normalizeNullable(command.advice()), command.followUpDate());
+                PrescriptionEntity saved = prescriptionRepository.save(openCorrection);
+                replaceLines(tenantId, saved.getId(), command.medicines(), command.recommendedTests());
+                audit(tenantId, saved, "prescription.updated", actorAppUserId, "Updated prescription correction draft");
+                return toRecord(saved, tenantData(tenantId));
+            }
             return createCorrectionVersion(tenantId, entity, command, actorAppUserId, "SAME_DAY_CORRECTION", "Correction after finalization");
         }
         entity.update(normalizeNullable(command.diagnosisSnapshot()), normalizeNullable(command.advice()), command.followUpDate());
@@ -173,13 +183,28 @@ public class PrescriptionService {
         return createCorrectionVersion(tenantId, parent, command, actorAppUserId, flowType, correctionReason);
     }
 
+    @Transactional(readOnly = true)
+    public List<PrescriptionRecord> history(UUID tenantId, UUID id) {
+        requireTenant(tenantId);
+        PrescriptionEntity entity = findEntity(tenantId, id);
+        return mapRecords(tenantId, prescriptionRepository.findByTenantIdAndConsultationIdOrderByVersionNumberAsc(tenantId, entity.getConsultationId()));
+    }
+
     @Transactional
     public PrescriptionRecord finalizePrescription(UUID tenantId, UUID id, UUID actorAppUserId) {
         requireTenant(tenantId);
         PrescriptionEntity entity = findEntity(tenantId, id);
+        if (!isEditable(entity)) {
+            PrescriptionEntity openCorrection = openCorrectionDraft(tenantId, entity.getId());
+            if (openCorrection == null) {
+                throw new IllegalArgumentException("Finalized prescriptions are immutable; create a correction or follow-up version");
+            }
+            entity = openCorrection;
+        }
         ensureEditable(entity);
         entity.finalizePrescription(actorAppUserId);
         PrescriptionEntity saved = prescriptionRepository.save(entity);
+        supersedeParentIfNeeded(tenantId, saved, actorAppUserId);
         audit(tenantId, saved, "prescription.finalized", actorAppUserId, "Finalized prescription");
         return toRecord(saved, tenantData(tenantId));
     }
@@ -188,6 +213,13 @@ public class PrescriptionService {
     public PrescriptionRecord previewPrescription(UUID tenantId, UUID id, UUID actorAppUserId) {
         requireTenant(tenantId);
         PrescriptionEntity entity = findEntity(tenantId, id);
+        if (!isEditable(entity)) {
+            PrescriptionEntity openCorrection = openCorrectionDraft(tenantId, entity.getId());
+            if (openCorrection == null) {
+                throw new IllegalArgumentException("Finalized prescriptions are immutable; create a correction or follow-up version");
+            }
+            entity = openCorrection;
+        }
         ensureEditable(entity);
         entity.preview();
         PrescriptionEntity saved = prescriptionRepository.save(entity);
@@ -199,7 +231,9 @@ public class PrescriptionService {
     public PrescriptionRecord markPrinted(UUID tenantId, UUID id, UUID actorAppUserId) {
         requireTenant(tenantId);
         PrescriptionEntity entity = findEntity(tenantId, id);
-        ensurePrintable(entity);
+        if (!isPrintable(entity)) {
+            throw new IllegalArgumentException("Prescription cannot be printed in its current status");
+        }
         entity.markPrinted();
         PrescriptionEntity saved = prescriptionRepository.save(entity);
         audit(tenantId, saved, "prescription.printed", actorAppUserId, "Marked prescription printed");
@@ -210,7 +244,9 @@ public class PrescriptionService {
     public PrescriptionRecord markSent(UUID tenantId, UUID id, UUID actorAppUserId) {
         requireTenant(tenantId);
         PrescriptionEntity entity = findEntity(tenantId, id);
-        ensureSendable(entity);
+        if (!isSendable(entity)) {
+            throw new IllegalArgumentException("Prescription cannot be sent in its current status");
+        }
         entity.markSent();
         PrescriptionEntity saved = prescriptionRepository.save(entity);
         audit(tenantId, saved, "prescription.sent", actorAppUserId, "Marked prescription sent");
@@ -322,6 +358,9 @@ public class PrescriptionService {
                 entity.getParentPrescriptionId(),
                 entity.getCorrectionReason(),
                 entity.getFlowType(),
+                entity.getCorrectedAt(),
+                entity.getSupersededByPrescriptionId(),
+                entity.getSupersededAt(),
                 entity.getDiagnosisSnapshot(),
                 entity.getAdvice(),
                 entity.getFollowUpDate(),
@@ -368,8 +407,10 @@ public class PrescriptionService {
         String clinicName = clinic == null ? null : clinic.clinicName();
         String displayName = clinic == null ? null : clinic.displayName();
         String address = clinic == null ? null : formatAddress(clinic);
+        String phone = clinic == null ? null : clinic.phone();
+        String email = clinic == null ? null : clinic.email();
         String tenantName = StringUtils.hasText(displayName) ? displayName : (StringUtils.hasText(clinicName) ? clinicName : "Clinic");
-        return new PrescriptionData(patients, users, tenantName, clinicName, displayName, address);
+        return new PrescriptionData(patients, users, tenantName, clinicName, displayName, address, phone, email);
     }
 
     private List<UUID> patientIdsForTenant(UUID tenantId) {
@@ -402,6 +443,16 @@ public class PrescriptionService {
         if (parent.getStatus() == PrescriptionStatus.DRAFT || parent.getStatus() == PrescriptionStatus.PREVIEWED) {
             throw new IllegalArgumentException("Editable prescriptions do not need a correction version");
         }
+        PrescriptionEntity openCorrection = openCorrectionDraft(tenantId, parent.getId());
+        if (openCorrection != null) {
+            openCorrection.update(normalizeNullable(command.diagnosisSnapshot()), normalizeNullable(command.advice()), command.followUpDate());
+            PrescriptionEntity saved = prescriptionRepository.save(openCorrection);
+            replaceLines(tenantId, saved.getId(), command.medicines(), command.recommendedTests());
+            audit(tenantId, saved, "prescription.updated", actorAppUserId, "Updated prescription correction draft");
+            return toRecord(saved, tenantData(tenantId));
+        }
+        parent.markCorrected();
+        prescriptionRepository.save(parent);
         PrescriptionEntity entity = PrescriptionEntity.create(
                 tenantId,
                 command.patientId(),
@@ -420,6 +471,7 @@ public class PrescriptionService {
         applyCommand(entity, command);
         PrescriptionEntity saved = prescriptionRepository.save(entity);
         replaceLines(tenantId, saved.getId(), command.medicines(), command.recommendedTests());
+        audit(tenantId, parent, "prescription.corrected", actorAppUserId, "Marked prescription as corrected");
         audit(tenantId, saved, "prescription.version.created", actorAppUserId, "Created prescription correction version");
         return toRecord(saved, tenantData(tenantId));
     }
@@ -434,16 +486,36 @@ public class PrescriptionService {
         }
     }
 
-    private void ensurePrintable(PrescriptionEntity entity) {
-        if (entity.getStatus() == PrescriptionStatus.CANCELLED) {
-            throw new IllegalArgumentException("Cancelled prescription cannot be printed");
-        }
+    private boolean isPrintable(PrescriptionEntity entity) {
+        return entity.getStatus() != PrescriptionStatus.CANCELLED
+                && entity.getStatus() != PrescriptionStatus.CORRECTED
+                && entity.getStatus() != PrescriptionStatus.SUPERSEDED;
     }
 
-    private void ensureSendable(PrescriptionEntity entity) {
-        if (entity.getStatus() == PrescriptionStatus.CANCELLED) {
-            throw new IllegalArgumentException("Cancelled prescription cannot be marked sent");
+    private boolean isSendable(PrescriptionEntity entity) {
+        return entity.getStatus() != PrescriptionStatus.CANCELLED
+                && entity.getStatus() != PrescriptionStatus.CORRECTED
+                && entity.getStatus() != PrescriptionStatus.SUPERSEDED;
+    }
+
+    private PrescriptionEntity openCorrectionDraft(UUID tenantId, UUID parentPrescriptionId) {
+        return prescriptionRepository.findFirstByTenantIdAndParentPrescriptionIdOrderByVersionNumberDesc(tenantId, parentPrescriptionId)
+                .filter(this::isEditable)
+                .orElse(null);
+    }
+
+    private void supersedeParentIfNeeded(UUID tenantId, PrescriptionEntity child, UUID actorAppUserId) {
+        UUID parentPrescriptionId = child.getParentPrescriptionId();
+        if (parentPrescriptionId == null) {
+            return;
         }
+        PrescriptionEntity parent = prescriptionRepository.findByTenantIdAndId(tenantId, parentPrescriptionId).orElse(null);
+        if (parent == null || parent.getStatus() == PrescriptionStatus.SUPERSEDED) {
+            return;
+        }
+        parent.markSuperseded(child.getId());
+        prescriptionRepository.save(parent);
+        audit(tenantId, parent, "prescription.superseded", actorAppUserId, "Superseded by prescription correction");
     }
 
     private void validate(PrescriptionUpsertCommand command) {
@@ -494,7 +566,12 @@ public class PrescriptionService {
         details.put("doctorUserId", entity.getDoctorUserId());
         details.put("consultationId", entity.getConsultationId());
         details.put("prescriptionNumber", entity.getPrescriptionNumber());
+        details.put("versionNumber", entity.getVersionNumber());
         details.put("status", entity.getStatus());
+        details.put("parentPrescriptionId", entity.getParentPrescriptionId());
+        details.put("correctedAt", entity.getCorrectedAt());
+        details.put("supersededByPrescriptionId", entity.getSupersededByPrescriptionId());
+        details.put("supersededAt", entity.getSupersededAt());
         details.put("finalizedAt", entity.getFinalizedAt());
         details.put("printedAt", entity.getPrintedAt());
         details.put("sentAt", entity.getSentAt());
@@ -517,81 +594,50 @@ public class PrescriptionService {
 
     private PrescriptionPdf createPdf(String tenantName, PrescriptionEntity entity, PrescriptionData data, PrescriptionTemplateConfig template, boolean preview) {
         PrescriptionRecord record = toRecord(entity, data);
+        ConsultationRecord consultation = consultationService.findById(entity.getTenantId(), entity.getConsultationId()).orElse(null);
+        ConsultationRecord previousConsultation = consultationService.listByPatient(entity.getTenantId(), entity.getPatientId()).stream()
+                .filter(item -> !item.id().equals(entity.getConsultationId()))
+                .findFirst()
+                .orElse(null);
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PDPage page = new PDPage(PDRectangle.A4);
             document.addPage(page);
             try (PDPageContentStream content = new PDPageContentStream(document, page)) {
-                float margin = 40;
+                float margin = 36;
                 float y = page.getMediaBox().getHeight() - margin;
-                drawHeaderBand(content, page, template);
+                float[] primary = parseRgb(template.primaryColor(), 15, 118, 110);
+                float[] accent = parseRgb(template.accentColor(), 224, 242, 241);
+                drawHeaderBand(content, page, primary);
                 if (StringUtils.hasText(template.watermarkText())) {
                     writeLine(content, template.watermarkText(), 42, 170, 430, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
                 }
-                writeLine(content, tenantName, 18, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 18;
-                if (StringUtils.hasText(template.headerText())) {
-                    y = writeWrapped(content, template.headerText(), 9, margin, y, 520);
-                    y -= 4;
-                }
-                if (StringUtils.hasText(data.clinicDisplayName())) {
-                    writeLine(content, data.clinicDisplayName(), 11, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                    y -= 14;
-                }
-                if (StringUtils.hasText(data.clinicAddress())) {
-                    y = writeWrapped(content, data.clinicAddress(), 9, margin, y, 520);
-                }
-                y -= 8;
-                writeLine(content, "Prescription: " + record.prescriptionNumber(), 13, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 14;
-                writeLine(content, "Patient: " + safe(record.patientName()) + " | " + patientSummary(record, data), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-                y -= 12;
-                writeLine(content, "Doctor: " + safe(record.doctorName()), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-                y -= 12;
-                writeLine(content, "Date: " + OffsetDateTime.now().toLocalDate(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-                y -= 16;
-                if (StringUtils.hasText(record.diagnosisSnapshot())) {
-                    writeLine(content, "Diagnosis", 11, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                    y -= 12;
-                    y = writeWrapped(content, record.diagnosisSnapshot(), 9, margin, y, 520);
-                    y -= 8;
-                }
-                writeLine(content, "Medicines", 11, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 12;
-                for (PrescriptionMedicineRecord medicine : record.medicines()) {
-                    String text = String.format(
-                            "%s%s | %s | %s | %s | %s | %s",
-                            safe(medicine.medicineName()),
-                            medicine.strength() == null ? "" : " " + medicine.strength(),
-                            safe(medicine.dosage()),
-                            safe(medicine.frequency()),
-                            safe(medicine.duration()),
-                            medicine.timing() == null ? "ANYTIME" : medicine.timing().name(),
-                            medicine.instructions() == null ? "" : medicine.instructions()
-                    );
-                    y = writeWrapped(content, text, 9, margin, y, 520);
-                }
+                y = drawPremiumHeader(content, page, margin, y, tenantName, data, record, template, primary);
+                y = drawPatientInfoGrid(content, margin, y, 523, record, data, accent);
+                y -= 6;
+                y = drawSection(content, "History & Previous Records", margin, y, primary);
+                y = writeWrapped(content, historySummary(record, data, previousConsultation), 8.8f, margin, y, 523);
+                y -= 6;
+                y = drawSection(content, "Visit Summary", margin, y, primary);
+                y = writeWrapped(content, visitSummary(record, consultation), 8.8f, margin, y, 523);
+                y -= 6;
+                y = drawSection(content, "Prescription", margin, y, primary);
+                y = drawMedicineTable(content, margin, y, 523, record.medicines(), primary, accent);
+                y -= 4;
                 if (!record.recommendedTests().isEmpty()) {
-                    y -= 4;
-                    writeLine(content, "Recommended Tests", 11, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                    y -= 12;
+                    y = drawSection(content, "Investigations / Tests Recommended", margin, y, primary);
                     for (PrescriptionTestRecord test : record.recommendedTests()) {
-                        y = writeWrapped(content, safe(test.testName()) + (test.instructions() == null ? "" : " - " + test.instructions()), 9, margin, y, 520);
+                        y = writeWrapped(content, "• " + safe(test.testName()) + (test.instructions() == null ? "" : " - " + test.instructions()), 8.8f, margin, y, 523);
                     }
                 }
-                if (StringUtils.hasText(record.advice())) {
-                    y -= 4;
-                    writeLine(content, "Advice", 11, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                    y -= 12;
-                    y = writeWrapped(content, record.advice(), 9, margin, y, 520);
-                }
+                y -= 6;
+                y = drawSection(content, "Advice & Follow-up", margin, y, primary);
+                y = writeWrapped(content, "• " + (StringUtils.hasText(record.advice()) ? record.advice() : "No additional advice recorded."), 8.8f, margin, y, 523);
                 if (record.followUpDate() != null) {
-                    y -= 4;
-                    writeLine(content, "Follow up: " + record.followUpDate(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+                    y = writeWrapped(content, "• Follow-up Date: " + record.followUpDate(), 8.8f, margin, y, 523);
                 }
                 y -= 30;
-                if (StringUtils.hasText(template.doctorSignatureText())) {
-                    writeLine(content, template.doctorSignatureText(), 10, 360, Math.max(y, 92), new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                }
+                writeLine(content, "__________________________", 9, 390, Math.max(y, 96), new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+                writeLine(content, signatureText(template, record), 9, 390, Math.max(y, 84), new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
                 if (template.showQrCode()) {
                     drawQrPlaceholder(content, 472, 70);
                 }
@@ -601,6 +647,7 @@ public class PrescriptionService {
                 if (StringUtils.hasText(template.footerText())) {
                     writeLine(content, template.footerText(), 8, margin, 32, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
                 }
+                writeLine(content, "Generated: " + OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")), 8, margin, 20, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
             }
             document.save(output);
             return new PrescriptionPdf((preview ? "preview-" : "") + safeFilename(record.prescriptionNumber()) + ".pdf", output.toByteArray());
@@ -612,14 +659,13 @@ public class PrescriptionService {
     private PrescriptionPdf createSamplePdf(String tenantName, PrescriptionData data, PrescriptionTemplateConfig template) {
         PrescriptionEntity sample = PrescriptionEntity.create(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), null, "RX-PREVIEW");
         sample.update("Sample diagnosis", "Hydration, rest, and follow-up if symptoms worsen.", LocalDate.now().plusDays(7));
-        PrescriptionData emptyData = new PrescriptionData(Map.of(), Map.of(), data.tenantName(), data.clinicDisplayName(), data.clinicDisplayName(), data.clinicAddress());
+        PrescriptionData emptyData = new PrescriptionData(Map.of(), Map.of(), data.tenantName(), data.clinicDisplayName(), data.clinicDisplayName(), data.clinicAddress(), data.clinicPhone(), data.clinicEmail());
         return createPdf(tenantName, sample, emptyData, template, true);
     }
 
-    private void drawHeaderBand(PDPageContentStream content, PDPage page, PrescriptionTemplateConfig template) throws IOException {
-        float[] rgb = parseRgb(template.primaryColor(), 15, 118, 110);
+    private void drawHeaderBand(PDPageContentStream content, PDPage page, float[] rgb) throws IOException {
         content.setNonStrokingColor(rgb[0], rgb[1], rgb[2]);
-        content.addRect(0, page.getMediaBox().getHeight() - 20, page.getMediaBox().getWidth(), 20);
+        content.addRect(0, page.getMediaBox().getHeight() - 16, page.getMediaBox().getWidth(), 16);
         content.fill();
         content.setNonStrokingColor(0, 0, 0);
     }
@@ -690,6 +736,163 @@ public class PrescriptionService {
         return "Age: " + age + " | Gender: " + gender + " | Mobile: " + safe(patient.getMobile());
     }
 
+    private float drawPremiumHeader(PDPageContentStream content, PDPage page, float margin, float y, String tenantName, PrescriptionData data, PrescriptionRecord record, PrescriptionTemplateConfig template, float[] primary) throws IOException {
+        float iconX = margin;
+        float iconY = y - 38;
+        content.setStrokingColor(primary[0], primary[1], primary[2]);
+        content.addRect(iconX, iconY, 34, 34);
+        content.stroke();
+        writeLine(content, "+", 17, iconX + 12, iconY + 8, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        float textX = iconX + 42;
+        writeLine(content, StringUtils.hasText(data.clinicDisplayName()) ? data.clinicDisplayName() : tenantName, 15, textX, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        y -= 14;
+        writeLine(content, safe(record.doctorName()), 9.5f, textX, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        y -= 12;
+        if (StringUtils.hasText(template.doctorSignatureText())) {
+            writeLine(content, template.doctorSignatureText(), 8.8f, textX, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            y -= 12;
+        }
+        String contactLine = Stream.of(data.clinicPhone(), data.clinicEmail(), data.clinicAddress())
+                .filter(StringUtils::hasText)
+                .collect(Collectors.joining(" | "));
+        writeLine(content, contactLine, 8.5f, textX, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        y -= 8;
+        content.setStrokingColor(primary[0], primary[1], primary[2]);
+        content.moveTo(margin, y);
+        content.lineTo(page.getMediaBox().getWidth() - margin, y);
+        content.stroke();
+        content.setStrokingColor(0, 0, 0);
+        return y - 12;
+    }
+
+    private float drawPatientInfoGrid(PDPageContentStream content, float x, float y, float width, PrescriptionRecord record, PrescriptionData data, float[] accent) throws IOException {
+        float rowHeight = 16;
+        float[] col = new float[]{0.28f, 0.22f, 0.25f, 0.25f};
+        String[] headers = new String[]{"Patient Name", "Age / Gender", "Patient ID", "Visit Date"};
+        String[] values = new String[]{safe(record.patientName()), ageGender(record, data), safe(record.patientNumber()), OffsetDateTime.now().toLocalDate().toString()};
+        float currentX = x;
+        content.setNonStrokingColor(accent[0], accent[1], accent[2]);
+        content.addRect(x, y - rowHeight, width, rowHeight);
+        content.fill();
+        content.setNonStrokingColor(0, 0, 0);
+        for (int i = 0; i < headers.length; i++) {
+            float cellWidth = width * col[i];
+            content.addRect(currentX, y - rowHeight * 2, cellWidth, rowHeight * 2);
+            content.stroke();
+            writeLine(content, headers[i], 8.2f, currentX + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+            writeLine(content, values[i], 8.3f, currentX + 4, y - 27, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            currentX += cellWidth;
+        }
+        return y - (rowHeight * 2) - 6;
+    }
+
+    private float drawSection(PDPageContentStream content, String title, float x, float y, float[] primary) throws IOException {
+        content.setNonStrokingColor(primary[0], primary[1], primary[2]);
+        content.addRect(x, y - 10, 523, 10);
+        content.fill();
+        content.setNonStrokingColor(1f, 1f, 1f);
+        writeLine(content, title, 8.5f, x + 4, y - 8, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        content.setNonStrokingColor(0, 0, 0);
+        return y - 15;
+    }
+
+    private float drawMedicineTable(PDPageContentStream content, float x, float y, float width, List<PrescriptionMedicineRecord> medicines, float[] primary, float[] accent) throws IOException {
+        String[] headers = new String[]{"Medicine", "Dosage", "Instructions", "Duration"};
+        float[] col = new float[]{0.27f, 0.15f, 0.43f, 0.15f};
+        float rowHeight = 15;
+        content.setNonStrokingColor(primary[0], primary[1], primary[2]);
+        content.addRect(x, y - rowHeight, width, rowHeight);
+        content.fill();
+        content.setNonStrokingColor(1f, 1f, 1f);
+        float cx = x;
+        for (int i = 0; i < headers.length; i++) {
+            writeLine(content, headers[i], 8.2f, cx + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+            cx += width * col[i];
+        }
+        content.setNonStrokingColor(0, 0, 0);
+        y -= rowHeight;
+        if (medicines.isEmpty()) {
+            content.addRect(x, y - rowHeight, width, rowHeight);
+            content.stroke();
+            writeLine(content, "No medicines prescribed.", 8.5f, x + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE));
+            return y - rowHeight - 2;
+        }
+        for (int i = 0; i < medicines.size(); i++) {
+            PrescriptionMedicineRecord medicine = medicines.get(i);
+            if (i % 2 == 1) {
+                content.setNonStrokingColor(accent[0], accent[1], accent[2]);
+                content.addRect(x, y - rowHeight, width, rowHeight);
+                content.fill();
+                content.setNonStrokingColor(0, 0, 0);
+            }
+            content.addRect(x, y - rowHeight, width, rowHeight);
+            content.stroke();
+            String medicineName = Stream.of(safe(medicine.medicineName()), safe(medicine.strength())).filter(StringUtils::hasText).collect(Collectors.joining(" "));
+            String instruction = Stream.of(safe(medicine.frequency()), safe(medicine.instructions()), medicine.timing() == null ? null : medicine.timing().name().replace('_', ' ')).filter(StringUtils::hasText).collect(Collectors.joining(" | "));
+            cx = x;
+            writeLine(content, medicineName, 8f, cx + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            cx += width * col[0];
+            writeLine(content, safe(medicine.dosage()), 8f, cx + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            cx += width * col[1];
+            writeLine(content, instruction, 8f, cx + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            cx += width * col[2];
+            writeLine(content, safe(medicine.duration()), 8f, cx + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            y -= rowHeight;
+        }
+        return y - 2;
+    }
+
+    private String ageGender(PrescriptionRecord record, PrescriptionData data) {
+        PatientEntity patient = data.patients().get(record.patientId());
+        if (patient == null) {
+            return "N/A";
+        }
+        String age = patient.getAgeYears() == null ? "N/A" : String.valueOf(patient.getAgeYears());
+        String gender = patient.getGender() == null ? "UNKNOWN" : patient.getGender().name();
+        return age + " / " + gender;
+    }
+
+    private String historySummary(PrescriptionRecord record, PrescriptionData data, ConsultationRecord previousConsultation) {
+        PatientEntity patient = data.patients().get(record.patientId());
+        String summary = Stream.of(
+                previousConsultation == null ? null : "Last visit: " + previousConsultation.createdAt().toLocalDate(),
+                safeLine("Known allergies", patient == null ? null : patient.getAllergies()),
+                safeLine("Chronic conditions", patient == null ? null : patient.getExistingConditions()),
+                safeLine("Uploaded reports summary", patient == null ? null : patient.getNotes()),
+                safeLine("Previous diagnosis", previousConsultation == null ? null : previousConsultation.diagnosis()),
+                safeLine("Previous medications", patient == null ? null : patient.getLongTermMedications())
+        ).filter(StringUtils::hasText).collect(Collectors.joining(" | "));
+        return StringUtils.hasText(summary) ? summary : "No significant previous records available.";
+    }
+
+    private String visitSummary(PrescriptionRecord record, ConsultationRecord consultation) {
+        if (consultation == null) {
+            return safeLine("Diagnosis", record.diagnosisSnapshot());
+        }
+        String vitals = Stream.of(
+                consultation.bloodPressureSystolic() == null || consultation.bloodPressureDiastolic() == null ? null : "BP " + consultation.bloodPressureSystolic() + "/" + consultation.bloodPressureDiastolic(),
+                consultation.pulseRate() == null ? null : "Pulse " + consultation.pulseRate(),
+                consultation.temperature() == null ? null : "Temp " + consultation.temperature() + (consultation.temperatureUnit() == null ? "" : " " + consultation.temperatureUnit().name()),
+                consultation.spo2() == null ? null : "SpO2 " + consultation.spo2() + "%",
+                consultation.weightKg() == null ? null : "Weight " + consultation.weightKg() + "kg"
+        ).filter(StringUtils::hasText).collect(Collectors.joining(", "));
+        return Stream.of(
+                safeLine("Chief complaint", consultation.chiefComplaints()),
+                safeLine("Symptoms", consultation.symptoms()),
+                safeLine("Diagnosis", consultation.diagnosis()),
+                safeLine("Consultation notes", consultation.clinicalNotes()),
+                StringUtils.hasText(vitals) ? "Vitals: " + vitals : null
+        ).filter(StringUtils::hasText).collect(Collectors.joining(" | "));
+    }
+
+    private String signatureText(PrescriptionTemplateConfig template, PrescriptionRecord record) {
+        return StringUtils.hasText(template.doctorSignatureText()) ? template.doctorSignatureText() : safe(record.doctorName());
+    }
+
+    private String safeLine(String label, String value) {
+        return StringUtils.hasText(value) ? label + ": " + value.trim() : null;
+    }
+
     private String safe(String value) {
         return value == null ? "" : value;
     }
@@ -735,7 +938,9 @@ public class PrescriptionService {
             String tenantName,
             String clinicName,
             String clinicDisplayNameValue,
-            String clinicAddressValue
+            String clinicAddressValue,
+            String clinicPhone,
+            String clinicEmail
     ) {
         String clinicDisplayName() {
             return StringUtils.hasText(clinicDisplayNameValue) ? clinicDisplayNameValue : clinicName;

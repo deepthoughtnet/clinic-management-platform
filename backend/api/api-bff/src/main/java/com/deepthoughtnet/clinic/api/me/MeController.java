@@ -9,6 +9,7 @@ import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.List;
 import java.util.Locale;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -16,6 +17,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Slf4j
 @RestController
 public class MeController {
     private final ActiveTenantMembershipService activeTenantMembershipService;
@@ -42,6 +44,19 @@ public class MeController {
         boolean platformAdmin = ctx.tokenRoles() != null && ctx.tokenRoles().contains("PLATFORM_ADMIN");
 
         List<ActiveTenantMembershipRecord> memberships = activeTenantMembershipService.listActiveMemberships(ctx.keycloakSub(), email);
+        ActiveTenantMembershipRecord resolvedMembership = null;
+        if (!platformAdmin && ctx.tenantId() == null && memberships.size() == 1) {
+            resolvedMembership = memberships.get(0);
+        }
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "Resolved /api/me for subject={} email={} tenantHeaderResolved={} memberships={}",
+                    ctx.keycloakSub(),
+                    email,
+                    ctx.tenantId() == null ? null : ctx.tenantId().value(),
+                    memberships.size()
+            );
+        }
         List<MeResponse.ActiveTenantMembershipResponse> activeMemberships = memberships.stream()
                 .map(membership -> new MeResponse.ActiveTenantMembershipResponse(
                         membership.tenantId() == null ? null : membership.tenantId().toString(),
@@ -53,16 +68,19 @@ public class MeController {
                         toResponse(membership.modules())
                 ))
                 .toList();
+        String resolvedTenantId = ctx.tenantId() == null
+                ? (resolvedMembership == null || resolvedMembership.tenantId() == null ? null : resolvedMembership.tenantId().toString())
+                : ctx.tenantId().value().toString();
         var currentModules = activeMemberships.stream()
-                .filter(membership -> ctx.tenantId() != null && ctx.tenantId().value().equals(membership.tenantId()))
+                .filter(membership -> resolvedTenantId != null && resolvedTenantId.equals(membership.tenantId()))
                 .findFirst()
                 .map(MeResponse.ActiveTenantMembershipResponse::modules)
                 .orElseGet(() -> {
-                    if (ctx.tenantId() == null) {
+                    if (resolvedTenantId == null) {
                         return null;
                     }
                     try {
-                        var tenant = platformTenantManagementService.get(ctx.tenantId().value());
+                        var tenant = platformTenantManagementService.get(java.util.UUID.fromString(resolvedTenantId));
                         return toResponse(tenant.modules());
                     } catch (IllegalArgumentException ex) {
                         return null;
@@ -73,7 +91,7 @@ public class MeController {
                 email,
                 username,
                 platformAdmin,
-                ctx.tenantId() == null ? null : ctx.tenantId().value().toString(),
+                resolvedTenantId,
                 ctx.appUserId() == null ? null : ctx.appUserId().toString(),
                 ctx.keycloakSub(),
                 ctx.tokenRoles(),

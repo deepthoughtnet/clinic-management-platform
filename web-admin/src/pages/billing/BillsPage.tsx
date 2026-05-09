@@ -84,7 +84,7 @@ type PaymentFormState = {
 };
 
 const BILL_ITEM_TYPES: BillItemType[] = ["CONSULTATION", "MEDICINE", "TEST", "VACCINATION", "PROCEDURE", "OTHER"];
-const PAYMENT_MODES: PaymentMode[] = ["CASH", "UPI", "CARD", "BANK_TRANSFER", "OTHER"];
+const PAYMENT_MODES: PaymentMode[] = ["CASH", "CARD", "UPI", "PAYTM", "PHONEPE", "GOOGLE_PAY", "BANK_TRANSFER", "CHEQUE", "OTHER"];
 
 function emptyBillForm(): BillFormState {
   return {
@@ -399,6 +399,12 @@ export default function BillsPage() {
     setSaving(true);
     setError(null);
     setSuccess(null);
+    const requiresReference = paymentForm.paymentMode !== "CASH";
+    if (requiresReference && !paymentForm.referenceNumber.trim()) {
+      setSaving(false);
+      setError("Reference number is required for non-cash payments.");
+      return;
+    }
     try {
       await addBillPayment(auth.accessToken, auth.tenantId, selectedBill.id, {
         paymentDate: paymentForm.paymentDate,
@@ -872,7 +878,13 @@ export default function BillsPage() {
                 ))}
               </Select>
             </FormControl>
-            <TextField fullWidth label="Reference number" value={paymentForm.referenceNumber} onChange={(e) => setPaymentForm((current) => ({ ...current, referenceNumber: e.target.value }))} />
+            <TextField
+              fullWidth
+              label={paymentForm.paymentMode === "CASH" ? "Reference number (optional)" : "Reference number"}
+              required={paymentForm.paymentMode !== "CASH"}
+              value={paymentForm.referenceNumber}
+              onChange={(e) => setPaymentForm((current) => ({ ...current, referenceNumber: e.target.value }))}
+            />
             <TextField fullWidth label="Notes" multiline minRows={2} value={paymentForm.notes} onChange={(e) => setPaymentForm((current) => ({ ...current, notes: e.target.value }))} />
           </Stack>
         </DialogContent>

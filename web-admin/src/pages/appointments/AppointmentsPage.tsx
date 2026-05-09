@@ -159,6 +159,13 @@ function formatDate(value: string) {
   return new Date(`${value}T00:00:00`).toLocaleDateString();
 }
 
+function isPastDateTime(date: string, time: string | null | undefined) {
+  if (!date) return false;
+  const now = new Date();
+  const candidate = new Date(`${date}T${time && time.trim() ? time : "23:59"}:00`);
+  return candidate.getTime() < now.getTime();
+}
+
 function toPatientInput(form: QuickRegisterForm): PatientInput {
   return {
     firstName: form.firstName.trim(),
@@ -204,19 +211,22 @@ export default function AppointmentsPage() {
   const [searchParams] = useSearchParams();
 
   const statePatient = (location.state as AppointmentPageState | null)?.patient ?? null;
+  const doctorUserIdFromQuery = searchParams.get("doctorUserId") || "";
 
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [appointments, setAppointments] = React.useState<Appointment[]>([]);
   const [patientResults, setPatientResults] = React.useState<Patient[]>([]);
   const [patientQuery, setPatientQuery] = React.useState(statePatient ? patientSummary(statePatient) : "");
   const [selectedPatient, setSelectedPatient] = React.useState<Patient | null>(statePatient);
-  const [doctorUserId, setDoctorUserId] = React.useState("");
+  const [doctorUserId, setDoctorUserId] = React.useState(doctorUserIdFromQuery);
   const [appointmentDate, setAppointmentDate] = React.useState(new Date().toISOString().slice(0, 10));
   const [appointmentTime, setAppointmentTime] = React.useState("");
   const [type, setType] = React.useState<AppointmentType>("SCHEDULED");
   const [priority, setPriority] = React.useState<AppointmentPriority>("NORMAL");
   const [reason, setReason] = React.useState("");
+  const [calendarDate, setCalendarDate] = React.useState(new Date().toISOString().slice(0, 10));
   const [tab, setTab] = React.useState<AppointmentTab>("today");
+  const [listSearch, setListSearch] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [searchingPatients, setSearchingPatients] = React.useState(false);
@@ -234,6 +244,15 @@ export default function AppointmentsPage() {
   const today = new Date().toISOString().slice(0, 10);
 
   const selectedDoctorId = doctorFilter || doctorUserId || "";
+  const requiresAppointmentTime = type !== "WALK_IN";
+  const manualTimeAllowed = requiresAppointmentTime && Boolean(selectedDoctorId) && slots.length === 0;
+  const canCreateAppointment = Boolean(
+    selectedPatient
+    && doctorUserId
+    && appointmentDate
+    && (!requiresAppointmentTime || appointmentTime)
+    && !saving,
+  );
 
   const loadAppointments = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) {
@@ -244,14 +263,15 @@ export default function AppointmentsPage() {
     setLoading(true);
     setError(null);
     try {
-      const rows = await searchAppointments(auth.accessToken, auth.tenantId, doctorFilter ? { doctorUserId: doctorFilter } : {});
+      const effectiveDoctor = doctorFilter || doctorUserId || undefined;
+      const rows = await searchAppointments(auth.accessToken, auth.tenantId, effectiveDoctor ? { doctorUserId: effectiveDoctor } : {});
       setAppointments(rows);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load appointments");
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, auth.tenantId, doctorFilter]);
+  }, [auth.accessToken, auth.tenantId, doctorFilter, doctorUserId]);
 
   const loadSlots = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !selectedDoctorId || type === "WALK_IN") {
@@ -405,7 +425,7 @@ export default function AppointmentsPage() {
   }, [auth.accessToken, auth.tenantId, patientQuery]);
 
   const todayRows = React.useMemo(
-    () => appointments.filter((item) => item.appointmentDate === today),
+    () => appointments.filter((item) => item.appointmentDate === today && item.status !== "CANCELLED" && item.status !== "NO_SHOW"),
     [appointments, today],
   );
   const upcomingRows = React.useMemo(
@@ -433,6 +453,29 @@ export default function AppointmentsPage() {
         return archiveRows;
     }
   }, [archiveRows, completedRows, tab, todayRows, upcomingRows]);
+  const filteredVisibleAppointments = React.useMemo(() => {
+    const term = listSearch.trim().toLowerCase();
+    if (!term) return visibleAppointments;
+    return visibleAppointments.filter((appointment) => {
+      const token = appointment.tokenNumber == null ? "" : String(appointment.tokenNumber);
+      return [
+        appointment.id,
+        appointment.consultationId || "",
+        token,
+        appointment.patientName || "",
+        appointment.patientNumber || "",
+        appointment.patientMobile || "",
+        appointment.doctorName || "",
+        appointment.doctorUserId,
+      ].some((value) => value.toLowerCase().includes(term));
+    });
+  }, [listSearch, visibleAppointments]);
+  const calendarRows = React.useMemo(
+    () => appointments
+      .filter((item) => item.appointmentDate === calendarDate)
+      .sort((left, right) => (left.appointmentTime || "").localeCompare(right.appointmentTime || "")),
+    [appointments, calendarDate],
+  );
 
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
@@ -441,6 +484,14 @@ export default function AppointmentsPage() {
   const saveAppointment = async () => {
     if (!auth.accessToken || !auth.tenantId || !selectedPatient || !doctorUserId) {
       setError("Select a patient and doctor before saving.");
+      return;
+    }
+    if (type !== "WALK_IN" && !appointmentTime) {
+      setError("Select an available slot or enter an appointment time before saving.");
+      return;
+    }
+    if (isPastDateTime(appointmentDate, type === "WALK_IN" ? null : appointmentTime || null)) {
+      setError("Appointment date/time cannot be in the past.");
       return;
     }
 
@@ -524,6 +575,54 @@ export default function AppointmentsPage() {
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 
+      <Card variant="outlined">
+        <CardContent>
+          <Stack spacing={2}>
+            <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
+              <Box>
+                <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                  {isDoctor ? "My Calendar" : "Clinic Calendar"}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {isDoctor ? "Appointments assigned to you for the selected date." : "Clinic-wide appointment schedule for front-desk planning."}
+                </Typography>
+              </Box>
+              <TextField
+                type="date"
+                label="Calendar date"
+                value={calendarDate}
+                onChange={(event) => setCalendarDate(event.target.value)}
+                InputLabelProps={{ shrink: true }}
+                size="small"
+              />
+            </Box>
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Chip size="small" label={`${calendarRows.length} total`} variant="outlined" />
+              <Chip size="small" label={`${calendarRows.filter((item) => item.status === "BOOKED").length} booked`} color="warning" variant="outlined" />
+              <Chip size="small" label={`${calendarRows.filter((item) => item.status === "WAITING").length} checked in`} color="warning" />
+              <Chip size="small" label={`${calendarRows.filter((item) => item.status === "IN_CONSULTATION").length} in consultation`} color="info" />
+            </Stack>
+            {calendarRows.length === 0 ? (
+              <Alert severity="info">No appointments scheduled for this date.</Alert>
+            ) : (
+              <Stack direction="row" flexWrap="wrap" gap={1}>
+                {calendarRows.map((appointment) => (
+                  <Button
+                    key={appointment.id}
+                    variant="outlined"
+                    size="small"
+                    onClick={() => navigate(`/patients/${appointment.patientId}`)}
+                    sx={{ justifyContent: "flex-start" }}
+                  >
+                    {(appointment.appointmentTime || "No time") + " • " + (appointment.patientName || appointment.patientNumber || "Patient") + " • " + appointment.status}
+                  </Button>
+                ))}
+              </Stack>
+            )}
+          </Stack>
+        </CardContent>
+      </Card>
+
       <Grid container spacing={2}>
         {!isDoctor ? (
           <Grid size={{ xs: 12, lg: 5 }}>
@@ -602,8 +701,13 @@ export default function AppointmentsPage() {
                         onChange={(event) => setAppointmentTime(event.target.value)}
                         InputLabelProps={{ shrink: true }}
                         disabled={type === "WALK_IN"}
-                        inputProps={{ readOnly: type !== "WALK_IN" }}
-                        helperText={type === "WALK_IN" ? "Walk-ins are tokenized on arrival." : "Pick a slot below or review availability before booking."}
+                        helperText={
+                          type === "WALK_IN"
+                            ? "Walk-ins are tokenized on arrival."
+                            : manualTimeAllowed
+                              ? "No schedule is configured for this doctor/date. Enter the time manually."
+                              : "Pick a slot below or review availability before booking."
+                        }
                       />
                     </Grid>
                   </Grid>
@@ -625,7 +729,7 @@ export default function AppointmentsPage() {
                             </Stack>
                           </Box>
                           {slots.length === 0 ? (
-                            <Alert severity="info">No schedule was found for the selected doctor on this date.</Alert>
+                            <Alert severity="info">No schedule configured. Enter time manually or configure doctor availability.</Alert>
                           ) : (
                             <Stack direction="row" flexWrap="wrap" gap={1}>
                               {slots.map((slot) => {
@@ -672,7 +776,7 @@ export default function AppointmentsPage() {
                     </Select>
                   </FormControl>
                   <TextField label="Reason" value={reason} onChange={(event) => setReason(event.target.value)} multiline minRows={3} />
-                  <Button variant="contained" onClick={() => void saveAppointment()} disabled={saving || !selectedPatient || !doctorUserId}>
+                  <Button variant="contained" onClick={() => void saveAppointment()} disabled={!canCreateAppointment}>
                     {type === "WALK_IN" ? "Create Walk-In" : "Create Appointment"}
                   </Button>
                 </Stack>
@@ -689,6 +793,14 @@ export default function AppointmentsPage() {
                   <Typography variant="h6" sx={{ fontWeight: 800 }}>Appointment list</Typography>
                   <Button onClick={() => navigate("/queue")}>Go to Queue</Button>
                 </Box>
+                <TextField
+                  size="small"
+                  fullWidth
+                  label="Search Today/Appointments"
+                  value={listSearch}
+                  onChange={(event) => setListSearch(event.target.value)}
+                  placeholder="Appointment ID, token, consultation ID, patient, mobile, doctor"
+                />
 
                 <Tabs value={tab} onChange={(_, value) => setTab(value)}>
                   <Tab value="today" label={`Today (${todayRows.length})`} />
@@ -699,13 +811,19 @@ export default function AppointmentsPage() {
 
                 {loading ? (
                   <Box sx={{ display: "grid", placeItems: "center", minHeight: 220 }}>
-                    <CircularProgress />
+                    <Stack spacing={1} alignItems="center">
+                      <CircularProgress />
+                      <Typography variant="body2" color="text.secondary">
+                        Loading appointments...
+                      </Typography>
+                    </Stack>
                   </Box>
-                ) : visibleAppointments.length === 0 ? (
+                ) : filteredVisibleAppointments.length === 0 ? (
                   <Alert severity="info">No appointments were found for the selected tab.</Alert>
                 ) : (
-                  <Table size="small">
-                    <TableHead>
+                  <Box sx={{ overflowX: "auto" }}>
+                    <Table size="small" sx={{ minWidth: 920 }}>
+                      <TableHead>
                       <TableRow>
                         <TableCell>Patient</TableCell>
                         <TableCell>Doctor</TableCell>
@@ -717,9 +835,9 @@ export default function AppointmentsPage() {
                         <TableCell>Status</TableCell>
                         <TableCell>Actions</TableCell>
                       </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {visibleAppointments.map((appointment) => (
+                      </TableHead>
+                      <TableBody>
+                      {filteredVisibleAppointments.map((appointment) => (
                         <TableRow key={appointment.id}>
                           <TableCell>
                             <Stack spacing={0.25}>
@@ -727,6 +845,9 @@ export default function AppointmentsPage() {
                                 {appointment.patientName || appointment.patientNumber || appointment.patientId}
                               </Button>
                               <Typography variant="caption" color="text.secondary">{appointment.patientNumber}</Typography>
+                              <Typography variant="caption" color="text.secondary">{appointment.patientMobile || "-"}</Typography>
+                              <Typography variant="caption" color="text.secondary">Appt: {appointment.id}</Typography>
+                              <Typography variant="caption" color="text.secondary">Consult: {appointment.consultationId || "-"}</Typography>
                             </Stack>
                           </TableCell>
                           <TableCell>{appointment.doctorName || appointment.doctorUserId}</TableCell>
@@ -741,8 +862,9 @@ export default function AppointmentsPage() {
                           </TableCell>
                         </TableRow>
                       ))}
-                    </TableBody>
-                  </Table>
+                      </TableBody>
+                    </Table>
+                  </Box>
                 )}
               </Stack>
             </CardContent>

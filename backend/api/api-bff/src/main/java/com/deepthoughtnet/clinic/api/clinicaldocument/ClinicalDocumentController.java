@@ -22,6 +22,7 @@ import java.util.Locale;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,8 +33,10 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
+import jakarta.validation.Valid;
 
 @RestController
+@Validated
 @RequestMapping("/api")
 public class ClinicalDocumentController {
     private static final Duration DOWNLOAD_TTL = Duration.ofMinutes(10);
@@ -107,7 +110,7 @@ public class ClinicalDocumentController {
 
     @PostMapping("/patient-documents/{documentId}/ai-extraction/review")
     @PreAuthorize("@permissionChecker.hasPermission('consultation.update') or @permissionChecker.hasPermission('consultation.complete')")
-    public ClinicalDocumentResponse reviewAiExtraction(@PathVariable UUID documentId, @RequestBody AiExtractionReviewRequest request) {
+    public ClinicalDocumentResponse reviewAiExtraction(@PathVariable UUID documentId, @Valid @RequestBody AiExtractionReviewRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         ClinicalDocumentRecord record = aiExtractionService.review(
@@ -116,7 +119,10 @@ public class ClinicalDocumentController {
                 actorAppUserId,
                 request.approved(),
                 request.saveToPatientHistory(),
-                request.reviewNotes()
+                request.reviewNotes(),
+                request.acceptedStructuredJson(),
+                request.overrideReason(),
+                request.editedSummary()
         );
         return toResponse(record);
     }
@@ -156,14 +162,14 @@ public class ClinicalDocumentController {
         requirePatientExistsAndVisible(tenantId, patientId);
         List<PatientTimelineItemResponse> items = new ArrayList<>();
         documentService.listByPatient(tenantId, patientId).forEach(doc -> items.add(new PatientTimelineItemResponse(
-                doc.id().toString(), "DOCUMENT", documentTypeLabel(doc.documentType()), doc.originalFilename(), doc.createdAt().toString(), null,
+                doc.id().toString(), "DOCUMENT", documentTypeLabel(doc.documentType()), documentTimelineSubtitle(doc), doc.createdAt().toString(), null,
                 doc.documentType().name(), doc.id().toString(), doc.consultationId() == null ? null : doc.consultationId().toString(), null
         )));
         consultationService.listByPatient(tenantId, patientId).forEach(row -> items.add(new PatientTimelineItemResponse(
-                row.id().toString(), "CONSULTATION", row.diagnosis() == null || row.diagnosis().isBlank() ? "Consultation" : row.diagnosis(), row.status().name(), row.createdAt().toString(), row.status().name(), null, null, row.id().toString(), null
+                row.id().toString(), "CONSULTATION", row.diagnosis() == null || row.diagnosis().isBlank() ? "Consultation" : row.diagnosis(), consultationTimelineSubtitle(row), row.createdAt().toString(), row.status().name(), null, null, row.id().toString(), null
         )));
         prescriptionService.listByPatient(tenantId, patientId).forEach(row -> items.add(new PatientTimelineItemResponse(
-                row.id().toString(), "PRESCRIPTION", row.prescriptionNumber(), row.status().name(), row.createdAt().toString(), row.status().name(), "PRESCRIPTION", null, row.consultationId().toString(), row.id().toString()
+                row.id().toString(), "PRESCRIPTION", row.prescriptionNumber(), prescriptionTimelineSubtitle(row), row.createdAt().toString(), row.status().name(), "PRESCRIPTION", null, row.consultationId().toString(), row.id().toString()
         )));
         return items.stream().sorted(Comparator.comparing(PatientTimelineItemResponse::occurredAt).reversed()).limit(100).toList();
     }
@@ -175,12 +181,12 @@ public class ClinicalDocumentController {
 
     private ClinicalDocumentType parseType(String value) {
         if (value == null || value.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Document type is required");
+            throw new IllegalArgumentException("Document type is required");
         }
         try {
             return ClinicalDocumentType.valueOf(value.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported clinical document type");
+            throw new IllegalArgumentException("Unsupported clinical document type");
         }
     }
 
@@ -198,6 +204,44 @@ public class ClinicalDocumentController {
         };
     }
 
+    private String documentTimelineSubtitle(com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord record) {
+        StringBuilder subtitle = new StringBuilder();
+        subtitle.append(record.originalFilename());
+        if (record.referredDoctor() != null && !record.referredDoctor().isBlank()) {
+            subtitle.append(" | Dr. ").append(record.referredDoctor());
+        }
+        if (record.referredHospital() != null && !record.referredHospital().isBlank()) {
+            subtitle.append(" | ").append(record.referredHospital());
+        }
+        if (record.aiExtractionStatus() != null && !record.aiExtractionStatus().isBlank()) {
+            subtitle.append(" | AI ").append(record.aiExtractionStatus());
+            if (record.aiExtractionConfidence() != null) {
+                subtitle.append(" ").append(record.aiExtractionConfidence());
+            }
+        }
+        return subtitle.toString();
+    }
+
+    private String consultationTimelineSubtitle(com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord record) {
+        StringBuilder subtitle = new StringBuilder(record.status().name());
+        if (record.followUpDate() != null) {
+            subtitle.append(" | Follow-up ").append(record.followUpDate());
+        }
+        return subtitle.toString();
+    }
+
+    private String prescriptionTimelineSubtitle(com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord record) {
+        StringBuilder subtitle = new StringBuilder("v").append(record.versionNumber() == null ? 1 : record.versionNumber());
+        subtitle.append(" | ").append(record.status().name());
+        if (record.correctionReason() != null && !record.correctionReason().isBlank()) {
+            subtitle.append(" | ").append(record.correctionReason());
+        }
+        if (record.followUpDate() != null) {
+            subtitle.append(" | Follow-up ").append(record.followUpDate());
+        }
+        return subtitle.toString();
+    }
+
     private ClinicalDocumentResponse toResponse(ClinicalDocumentRecord record) {
         return new ClinicalDocumentResponse(
                 record.id().toString(), record.patientId().toString(), record.consultationId() == null ? null : record.consultationId().toString(),
@@ -205,6 +249,7 @@ public class ClinicalDocumentController {
                 record.originalFilename(), record.mediaType(), record.sizeBytes(), record.checksumSha256(), record.notes(), record.referredDoctor(),
                 record.referredHospital(), record.referralNotes(), record.aiExtractionStatus(), record.aiExtractionProvider(), record.aiExtractionModel(),
                 record.aiExtractionConfidence(), record.aiExtractionSummary(), record.aiExtractionStructuredJson(), record.aiExtractionReviewNotes(),
+                record.aiExtractionAcceptedJson(), record.aiExtractionOverrideReason(),
                 record.aiExtractionReviewedByAppUserId() == null ? null : record.aiExtractionReviewedByAppUserId().toString(),
                 record.aiExtractionReviewedAt() == null ? null : record.aiExtractionReviewedAt().toString(), record.ocrStatus(),
                 record.createdAt().toString(), record.updatedAt().toString()
