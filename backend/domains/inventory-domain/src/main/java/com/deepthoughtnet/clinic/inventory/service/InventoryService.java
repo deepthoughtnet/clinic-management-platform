@@ -17,6 +17,7 @@ public interface InventoryService {
     MedicineRecord createMedicine(UUID tenantId, MedicineUpsertCommand command, UUID actorAppUserId);
     MedicineRecord updateMedicine(UUID tenantId, UUID id, MedicineUpsertCommand command, UUID actorAppUserId);
     MedicineRecord deactivateMedicine(UUID tenantId, UUID id, UUID actorAppUserId);
+    MedicineRecord activateMedicine(UUID tenantId, UUID id, UUID actorAppUserId);
 
     List<StockRecord> listStocks(UUID tenantId);
     Optional<StockRecord> findStock(UUID tenantId, UUID id);
@@ -27,4 +28,6 @@ public interface InventoryService {
     InventoryTransactionRecord createTransaction(UUID tenantId, InventoryTransactionCommand command, UUID actorAppUserId);
 
     List<LowStockRecord> listLowStock(UUID tenantId);
+    List<StockRecord> listExpiredStocks(UUID tenantId);
+    List<StockRecord> listExpiringStocks(UUID tenantId, int days);
 }

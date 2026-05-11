@@ -7,8 +7,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.appointment.db.AppointmentRepository;
+import com.deepthoughtnet.clinic.appointment.db.AppointmentWaitlistRepository;
 import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityEntity;
 import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityRepository;
+import com.deepthoughtnet.clinic.appointment.db.DoctorUnavailabilityRepository;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
@@ -37,6 +39,10 @@ class AppointmentServiceDoctorCalendarTest {
     @Mock
     private DoctorAvailabilityRepository doctorAvailabilityRepository;
     @Mock
+    private DoctorUnavailabilityRepository doctorUnavailabilityRepository;
+    @Mock
+    private AppointmentWaitlistRepository appointmentWaitlistRepository;
+    @Mock
     private PatientRepository patientRepository;
     @Mock
     private TenantUserManagementService tenantUserManagementService;
@@ -50,6 +56,8 @@ class AppointmentServiceDoctorCalendarTest {
         service = new AppointmentService(
                 appointmentRepository,
                 doctorAvailabilityRepository,
+                doctorUnavailabilityRepository,
+                appointmentWaitlistRepository,
                 patientRepository,
                 tenantUserManagementService,
                 auditEventPublisher,

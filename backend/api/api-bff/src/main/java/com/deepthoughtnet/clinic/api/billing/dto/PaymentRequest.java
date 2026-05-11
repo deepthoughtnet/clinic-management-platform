@@ -3,6 +3,8 @@ package com.deepthoughtnet.clinic.api.billing.dto;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.util.UUID;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
@@ -10,6 +12,7 @@ import jakarta.validation.constraints.Size;
 public record PaymentRequest(
         @NotNull
         LocalDate paymentDate,
+        OffsetDateTime paymentDateTime,
         @NotNull @Positive
         BigDecimal amount,
         @NotNull
@@ -17,6 +20,7 @@ public record PaymentRequest(
         @Size(max = 128)
         String referenceNumber,
         @Size(max = 4000)
-        String notes
+        String notes,
+        UUID receivedBy
 ) {
 }

@@ -17,6 +17,7 @@ import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
 import com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria;
+import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
@@ -94,11 +95,18 @@ class NotificationActionServiceTest {
                         LocalDate.now(),
                         BillStatus.PARTIALLY_PAID,
                         new BigDecimal("100.00"),
+                        DiscountType.NONE,
                         BigDecimal.ZERO,
+                        BigDecimal.ZERO,
+                        null,
+                        null,
                         BigDecimal.ZERO,
                         new BigDecimal("100.00"),
                         new BigDecimal("25.00"),
+                        BigDecimal.ZERO,
+                        new BigDecimal("25.00"),
                         new BigDecimal("75.00"),
+                        null,
                         null,
                         OffsetDateTime.now(),
                         OffsetDateTime.now(),

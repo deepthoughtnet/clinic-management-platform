@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.appointment;
 import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentPriorityRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse;
+import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentRescheduleRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentStatusRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.QueueReorderRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.WalkInAppointmentRequest;
@@ -13,6 +14,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatusUpdateCommand;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRescheduleCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.WalkInAppointmentCommand;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
@@ -139,6 +141,21 @@ public class AppointmentController {
         doctorAssignmentSecurityService.requireNonDoctorQueueStatusUpdate();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(appointmentService.updatePriority(tenantId, id, request.priority(), actorAppUserId));
+    }
+
+    @PatchMapping("/{id}/reschedule")
+    @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
+    public AppointmentResponse reschedule(@PathVariable UUID id, @Valid @RequestBody AppointmentRescheduleRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireAppointmentAccess(tenantId, id);
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        boolean allowOverbooking = doctorAssignmentSecurityService.isClinicAdmin();
+        return toResponse(appointmentService.reschedule(tenantId, id, new AppointmentRescheduleCommand(
+                request.doctorUserId(),
+                request.appointmentDate(),
+                request.appointmentTime(),
+                request.reason()
+        ), actorAppUserId, allowOverbooking));
     }
 
     @PostMapping("/{appointmentId}/start-consultation")

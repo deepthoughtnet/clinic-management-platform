@@ -1,6 +1,8 @@
 package com.deepthoughtnet.clinic.billing.db;
 
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
+import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -22,7 +24,13 @@ public interface BillRepository extends JpaRepository<BillEntity, UUID> {
             where b.tenantId = :tenantId
               and (:patientId is null or b.patientId = :patientId)
               and (:status is null or b.status = :status)
+              and (:fromDate is null or b.billDate >= :fromDate)
+              and (:toDate is null or b.billDate <= :toDate)
+              and (:paymentMode is null or exists (
+                    select p.id from PaymentEntity p
+                    where p.tenantId = b.tenantId and p.billId = b.id and p.paymentMode = :paymentMode
+              ))
             order by b.billDate desc, b.createdAt desc
             """)
-    List<BillEntity> search(UUID tenantId, UUID patientId, BillStatus status);
+    List<BillEntity> search(UUID tenantId, UUID patientId, BillStatus status, LocalDate fromDate, LocalDate toDate, PaymentMode paymentMode);
 }

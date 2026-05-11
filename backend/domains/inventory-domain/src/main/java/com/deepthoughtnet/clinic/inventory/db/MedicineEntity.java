@@ -36,8 +36,26 @@ public class MedicineEntity {
     @Column(name = "medicine_type", nullable = false, length = 24)
     private String medicineType;
 
+    @Column(name = "generic_name", length = 256)
+    private String genericName;
+
+    @Column(name = "brand_name", length = 256)
+    private String brandName;
+
+    @Column(length = 128)
+    private String category;
+
+    @Column(name = "dosage_form", length = 64)
+    private String dosageForm;
+
     @Column(length = 128)
     private String strength;
+
+    @Column(length = 32)
+    private String unit;
+
+    @Column(length = 256)
+    private String manufacturer;
 
     @Column(name = "default_dosage", length = 128)
     private String defaultDosage;
@@ -56,6 +74,9 @@ public class MedicineEntity {
 
     @Column(name = "default_price", precision = 18, scale = 2)
     private BigDecimal defaultPrice;
+
+    @Column(name = "tax_rate", precision = 5, scale = 2)
+    private BigDecimal taxRate;
 
     @Column(nullable = false)
     private boolean active = true;
@@ -89,24 +110,38 @@ public class MedicineEntity {
     public void update(
             String medicineName,
             String medicineType,
+            String genericName,
+            String brandName,
+            String category,
+            String dosageForm,
             String strength,
+            String unit,
+            String manufacturer,
             String defaultDosage,
             String defaultFrequency,
             Integer defaultDurationDays,
             String defaultTiming,
             String defaultInstructions,
             BigDecimal defaultPrice,
+            BigDecimal taxRate,
             boolean active
     ) {
         this.medicineName = medicineName;
         this.medicineType = medicineType;
+        this.genericName = genericName;
+        this.brandName = brandName;
+        this.category = category;
+        this.dosageForm = dosageForm;
         this.strength = strength;
+        this.unit = unit;
+        this.manufacturer = manufacturer;
         this.defaultDosage = defaultDosage;
         this.defaultFrequency = defaultFrequency;
         this.defaultDurationDays = defaultDurationDays;
         this.defaultTiming = defaultTiming;
         this.defaultInstructions = defaultInstructions;
         this.defaultPrice = defaultPrice;
+        this.taxRate = taxRate;
         this.active = active;
         this.updatedAt = OffsetDateTime.now();
     }
@@ -115,13 +150,20 @@ public class MedicineEntity {
     public UUID getTenantId() { return tenantId; }
     public String getMedicineName() { return medicineName; }
     public String getMedicineType() { return medicineType; }
+    public String getGenericName() { return genericName; }
+    public String getBrandName() { return brandName; }
+    public String getCategory() { return category; }
+    public String getDosageForm() { return dosageForm; }
     public String getStrength() { return strength; }
+    public String getUnit() { return unit; }
+    public String getManufacturer() { return manufacturer; }
     public String getDefaultDosage() { return defaultDosage; }
     public String getDefaultFrequency() { return defaultFrequency; }
     public Integer getDefaultDurationDays() { return defaultDurationDays; }
     public String getDefaultTiming() { return defaultTiming; }
     public String getDefaultInstructions() { return defaultInstructions; }
     public BigDecimal getDefaultPrice() { return defaultPrice; }
+    public BigDecimal getTaxRate() { return taxRate; }
     public boolean isActive() { return active; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }

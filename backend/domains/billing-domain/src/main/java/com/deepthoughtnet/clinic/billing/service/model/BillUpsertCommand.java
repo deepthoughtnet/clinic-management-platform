@@ -10,7 +10,11 @@ public record BillUpsertCommand(
         UUID consultationId,
         UUID appointmentId,
         LocalDate billDate,
+        DiscountType discountType,
+        BigDecimal discountValue,
         BigDecimal discountAmount,
+        String discountReason,
+        UUID discountApprovedBy,
         BigDecimal taxAmount,
         String notes,
         List<BillLineCommand> lines

@@ -19,6 +19,11 @@ public record BillLineRequest(
         @PositiveOrZero
         BigDecimal unitPrice,
         UUID referenceId,
+        @PositiveOrZero
+        BigDecimal lineDiscountAmount,
+        @Size(max = 128)
+        String batchNumber,
+        UUID dispensationReferenceId,
         @Min(1)
         Integer sortOrder
 ) {

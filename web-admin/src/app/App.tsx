@@ -14,6 +14,7 @@ import PatientsPage from "../pages/patients/PatientsPage";
 import PatientFormPage from "../pages/patients/PatientFormPage";
 import PatientDetailPage from "../pages/patients/PatientDetailPage";
 import AppointmentsPage from "../pages/appointments/AppointmentsPage";
+import DayBoardPage from "../pages/appointments/DayBoardPage";
 import QueuePage from "../pages/appointments/QueuePage";
 import ConsultationsPage from "../pages/consultations/ConsultationsPage";
 import ConsultationWorkspacePage from "../pages/consultations/ConsultationWorkspacePage";
@@ -119,12 +120,14 @@ function AuthedApp() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<DashboardPage />} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/patients" element={<PatientsPage />} />
         <Route path="/patients/new" element={<PatientFormPage mode="create" />} />
         <Route path="/patients/:id" element={<PatientDetailPage />} />
         <Route path="/patients/:id/edit" element={<PatientFormPage mode="edit" />} />
         <Route path="/appointments" element={<AppointmentsPage />} />
+        <Route path="/appointments/day-board" element={<DayBoardPage />} />
         <Route path="/queue" element={<QueuePage />} />
         <Route path="/consultations" element={<ConsultationsPage />} />
         <Route path="/consultations/:id" element={<ConsultationWorkspacePage />} />

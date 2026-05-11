@@ -3,11 +3,15 @@ package com.deepthoughtnet.clinic.api.appointment;
 import com.deepthoughtnet.clinic.api.appointment.dto.DoctorAvailabilityRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.DoctorAvailabilityResponse;
 import com.deepthoughtnet.clinic.api.appointment.dto.DoctorAvailabilitySlotResponse;
+import com.deepthoughtnet.clinic.api.appointment.dto.DoctorUnavailabilityRequest;
+import com.deepthoughtnet.clinic.api.appointment.dto.DoctorUnavailabilityResponse;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityUpsertCommand;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityRecord;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityUpsertCommand;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.LocalDate;
 import java.util.List;
@@ -116,6 +120,45 @@ public class DoctorAvailabilityController {
         return toResponse(appointmentService.deactivateAvailability(tenantId, id, actorAppUserId));
     }
 
+    @GetMapping("/{doctorUserId}/unavailability")
+    @PreAuthorize("@permissionChecker.hasPermission('appointment.read') or @permissionChecker.hasPermission('appointment.manage')")
+    public List<DoctorUnavailabilityResponse> listUnavailability(@PathVariable UUID doctorUserId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(doctorUserId);
+        return appointmentService.listUnavailability(tenantId, effectiveDoctorUserId).stream()
+                .map(this::toUnavailabilityResponse)
+                .toList();
+    }
+
+    @PostMapping("/{doctorUserId}/unavailability")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
+    public DoctorUnavailabilityResponse createUnavailability(@PathVariable UUID doctorUserId, @Valid @RequestBody DoctorUnavailabilityRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(doctorUserId);
+        return toUnavailabilityResponse(appointmentService.createUnavailability(
+                tenantId,
+                effectiveDoctorUserId,
+                new DoctorUnavailabilityUpsertCommand(
+                        request.startAt(),
+                        request.endAt(),
+                        request.type(),
+                        request.reason(),
+                        request.active()
+                ),
+                actorAppUserId
+        ));
+    }
+
+    @PatchMapping("/unavailability/{id}/deactivate")
+    @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
+    public DoctorUnavailabilityResponse deactivateUnavailability(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toUnavailabilityResponse(appointmentService.deactivateUnavailability(tenantId, id, actorAppUserId));
+    }
+
     private DoctorAvailabilityUpsertCommand toCommand(DoctorAvailabilityRequest request) {
         return new DoctorAvailabilityUpsertCommand(
                 request.dayOfWeek(),
@@ -166,6 +209,21 @@ public class DoctorAvailabilityController {
                 record.tokenNumber(),
                 record.appointmentStatus(),
                 record.reason()
+        );
+    }
+
+    private DoctorUnavailabilityResponse toUnavailabilityResponse(DoctorUnavailabilityRecord record) {
+        return new DoctorUnavailabilityResponse(
+                record.id() == null ? null : record.id().toString(),
+                record.tenantId() == null ? null : record.tenantId().toString(),
+                record.doctorUserId() == null ? null : record.doctorUserId().toString(),
+                record.startAt(),
+                record.endAt(),
+                record.type(),
+                record.reason(),
+                record.active(),
+                record.createdAt(),
+                record.updatedAt()
         );
     }
 }

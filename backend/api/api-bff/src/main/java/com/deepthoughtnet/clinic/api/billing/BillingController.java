@@ -7,6 +7,8 @@ import com.deepthoughtnet.clinic.api.billing.dto.BillResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.PaymentRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.PaymentResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.ReceiptResponse;
+import com.deepthoughtnet.clinic.api.billing.dto.RefundRequest;
+import com.deepthoughtnet.clinic.api.billing.dto.RefundResponse;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillLineCommand;
 import com.deepthoughtnet.clinic.billing.service.model.BillPdf;
@@ -15,8 +17,12 @@ import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
 import com.deepthoughtnet.clinic.billing.service.model.BillUpsertCommand;
 import com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentCommand;
+import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
 import com.deepthoughtnet.clinic.billing.service.model.ReceiptRecord;
+import com.deepthoughtnet.clinic.billing.service.model.RefundCommand;
+import com.deepthoughtnet.clinic.billing.service.model.RefundRecord;
+import java.time.LocalDate;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.List;
 import java.util.UUID;
@@ -53,11 +59,15 @@ public class BillingController {
     @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('patient.read')")
     public List<BillResponse> list(
             @RequestParam(required = false) UUID patientId,
-            @RequestParam(required = false) String status
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) LocalDate fromDate,
+            @RequestParam(required = false) LocalDate toDate,
+            @RequestParam(required = false) String paymentMode
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         BillStatus billStatus = parseStatus(status);
-        return billingService.list(tenantId, new BillingSearchCriteria(patientId, billStatus)).stream().map(this::toResponse).toList();
+        PaymentMode mode = parsePaymentMode(paymentMode);
+        return billingService.list(tenantId, new BillingSearchCriteria(patientId, billStatus, fromDate, toDate, mode)).stream().map(this::toResponse).toList();
     }
 
     @PostMapping
@@ -108,10 +118,12 @@ public class BillingController {
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toPaymentResponse(billingService.recordPayment(tenantId, billId, new PaymentCommand(
                 request.paymentDate(),
+                request.paymentDateTime(),
                 request.amount(),
                 request.paymentMode(),
                 request.referenceNumber(),
-                request.notes()
+                request.notes(),
+                request.receivedBy()
         ), actorAppUserId));
     }
 
@@ -147,7 +159,11 @@ public class BillingController {
                 request.consultationId(),
                 request.appointmentId(),
                 request.billDate(),
-                request.discountAmount(),
+                request.discountType(),
+                request.discountValue(),
+                null,
+                request.discountReason(),
+                request.discountApprovedBy(),
                 request.taxAmount(),
                 request.notes(),
                 request.lines() == null ? List.of() : request.lines().stream().map(this::toCommand).toList()
@@ -161,7 +177,10 @@ public class BillingController {
                 request.quantity(),
                 request.unitPrice(),
                 request.referenceId(),
-                request.sortOrder()
+                request.sortOrder(),
+                request.lineDiscountAmount(),
+                request.batchNumber(),
+                request.dispensationReferenceId()
         );
     }
 
@@ -178,11 +197,18 @@ public class BillingController {
                 record.billDate(),
                 record.status(),
                 record.subtotalAmount(),
+                record.discountType(),
+                record.discountValue(),
                 record.discountAmount(),
+                record.discountReason(),
+                record.discountApprovedBy() == null ? null : record.discountApprovedBy().toString(),
                 record.taxAmount(),
                 record.totalAmount(),
                 record.paidAmount(),
+                record.refundedAmount(),
+                record.netPaidAmount(),
                 record.dueAmount(),
+                record.invoiceEmailedAt(),
                 record.notes(),
                 record.createdAt(),
                 record.updatedAt(),
@@ -194,6 +220,9 @@ public class BillingController {
                         line.unitPrice(),
                         line.totalPrice(),
                         line.referenceId() == null ? null : line.referenceId().toString(),
+                        line.lineDiscountAmount(),
+                        line.batchNumber(),
+                        line.dispensationReferenceId() == null ? null : line.dispensationReferenceId().toString(),
                         line.sortOrder()
                 )).toList()
         );
@@ -205,13 +234,55 @@ public class BillingController {
                 record.tenantId() == null ? null : record.tenantId().toString(),
                 record.billId() == null ? null : record.billId().toString(),
                 record.paymentDate(),
+                record.paymentDateTime(),
                 record.amount(),
                 record.paymentMode(),
                 record.referenceNumber(),
                 record.notes(),
+                record.receivedBy() == null ? null : record.receivedBy().toString(),
                 record.receiptId() == null ? null : record.receiptId().toString(),
                 record.receiptNumber(),
                 record.receiptDate(),
+                record.createdAt()
+        );
+    }
+
+    @PostMapping("/{billId}/refunds")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("@permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('payment.collect')")
+    public RefundResponse addRefund(@PathVariable UUID billId, @Valid @RequestBody RefundRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        RefundRecord record = billingService.refund(tenantId, billId, new RefundCommand(
+                request.paymentId(),
+                request.amount(),
+                request.reason(),
+                request.refundMode(),
+                request.notes(),
+                request.refundedAt()
+        ), actorAppUserId);
+        return toRefundResponse(record);
+    }
+
+    @GetMapping("/{billId}/refunds")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
+    public List<RefundResponse> listRefunds(@PathVariable UUID billId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return billingService.listRefunds(tenantId, billId).stream().map(this::toRefundResponse).toList();
+    }
+
+    private RefundResponse toRefundResponse(RefundRecord record) {
+        return new RefundResponse(
+                record.id() == null ? null : record.id().toString(),
+                record.billId() == null ? null : record.billId().toString(),
+                record.paymentId() == null ? null : record.paymentId().toString(),
+                record.tenantId() == null ? null : record.tenantId().toString(),
+                record.amount(),
+                record.reason(),
+                record.refundMode(),
+                record.refundedBy() == null ? null : record.refundedBy().toString(),
+                record.refundedAt(),
+                record.notes(),
                 record.createdAt()
         );
     }
@@ -237,6 +308,17 @@ public class BillingController {
             return BillStatus.valueOf(value.trim().toUpperCase());
         } catch (IllegalArgumentException ex) {
             throw new IllegalArgumentException("Invalid bill status");
+        }
+    }
+
+    private PaymentMode parsePaymentMode(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return PaymentMode.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Invalid payment mode");
         }
     }
 }

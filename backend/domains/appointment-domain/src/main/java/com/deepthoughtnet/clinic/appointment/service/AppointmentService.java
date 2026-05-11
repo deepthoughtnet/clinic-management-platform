@@ -2,8 +2,13 @@ package com.deepthoughtnet.clinic.appointment.service;
 
 import com.deepthoughtnet.clinic.appointment.db.AppointmentEntity;
 import com.deepthoughtnet.clinic.appointment.db.AppointmentRepository;
+import com.deepthoughtnet.clinic.appointment.db.AppointmentWaitlistEntity;
+import com.deepthoughtnet.clinic.appointment.db.AppointmentWaitlistRepository;
 import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityEntity;
 import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityRepository;
+import com.deepthoughtnet.clinic.appointment.db.DoctorUnavailabilityEntity;
+import com.deepthoughtnet.clinic.appointment.db.DoctorUnavailabilityRepository;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRescheduleCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria;
@@ -16,6 +21,12 @@ import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlo
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorCalendarReconcileResult;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityRecord;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityType;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityUpsertCommand;
+import com.deepthoughtnet.clinic.appointment.service.model.WaitlistCreateCommand;
+import com.deepthoughtnet.clinic.appointment.service.model.WaitlistRecord;
+import com.deepthoughtnet.clinic.appointment.service.model.WaitlistStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.WalkInAppointmentCommand;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
@@ -57,6 +68,8 @@ public class AppointmentService {
 
     private final AppointmentRepository appointmentRepository;
     private final DoctorAvailabilityRepository doctorAvailabilityRepository;
+    private final DoctorUnavailabilityRepository doctorUnavailabilityRepository;
+    private final AppointmentWaitlistRepository appointmentWaitlistRepository;
     private final PatientRepository patientRepository;
     private final TenantUserManagementService tenantUserManagementService;
     private final AuditEventPublisher auditEventPublisher;
@@ -65,6 +78,8 @@ public class AppointmentService {
     public AppointmentService(
             AppointmentRepository appointmentRepository,
             DoctorAvailabilityRepository doctorAvailabilityRepository,
+            DoctorUnavailabilityRepository doctorUnavailabilityRepository,
+            AppointmentWaitlistRepository appointmentWaitlistRepository,
             PatientRepository patientRepository,
             TenantUserManagementService tenantUserManagementService,
             AuditEventPublisher auditEventPublisher,
@@ -72,6 +87,8 @@ public class AppointmentService {
     ) {
         this.appointmentRepository = appointmentRepository;
         this.doctorAvailabilityRepository = doctorAvailabilityRepository;
+        this.doctorUnavailabilityRepository = doctorUnavailabilityRepository;
+        this.appointmentWaitlistRepository = appointmentWaitlistRepository;
         this.patientRepository = patientRepository;
         this.tenantUserManagementService = tenantUserManagementService;
         this.auditEventPublisher = auditEventPublisher;
@@ -112,6 +129,15 @@ public class AppointmentService {
                 doctorUserId,
                 appointmentDate
         );
+        OffsetDateTime dayStart = appointmentDate.atStartOfDay().atOffset(OffsetDateTime.now().getOffset());
+        OffsetDateTime dayEnd = appointmentDate.plusDays(1).atStartOfDay().atOffset(OffsetDateTime.now().getOffset());
+        List<DoctorUnavailabilityEntity> unavailabilityBlocks = doctorUnavailabilityRepository
+                .findByTenantIdAndDoctorUserIdAndActiveTrueAndStartAtLessThanAndEndAtGreaterThan(
+                        tenantId,
+                        doctorUserId,
+                        dayEnd,
+                        dayStart
+                );
         Map<LocalTime, List<AppointmentEntity>> bookingsByTime = appointments.stream()
                 .filter(appointment -> appointment.getAppointmentTime() != null)
                 .filter(appointment -> appointment.getStatus() != AppointmentStatus.CANCELLED && appointment.getStatus() != AppointmentStatus.NO_SHOW)
@@ -132,20 +158,30 @@ public class AppointmentService {
             while (!slotStart.plusMinutes(availability.getConsultationDurationMinutes()).isAfter(slotEnd)) {
                 LocalTime candidateEnd = slotStart.plusMinutes(availability.getConsultationDurationMinutes());
                 boolean inBreak = isWithinBreak(slotStart, availability.getBreakStartTime(), availability.getBreakEndTime());
+                boolean inLeave = isWithinUnavailability(appointmentDate, slotStart, candidateEnd, unavailabilityBlocks);
                 List<AppointmentEntity> booked = bookingsByTime.getOrDefault(slotStart, List.of());
                 DoctorAvailabilitySlotStatus status;
                 boolean selectable;
-                if (inBreak) {
-                    status = DoctorAvailabilitySlotStatus.UNAVAILABLE;
+                if (inBreak && !booked.isEmpty()) {
+                    status = DoctorAvailabilitySlotStatus.CONFLICTED;
+                    selectable = false;
+                } else if (inLeave && !booked.isEmpty()) {
+                    status = DoctorAvailabilitySlotStatus.CONFLICTED;
+                    selectable = false;
+                } else if (inBreak) {
+                    status = DoctorAvailabilitySlotStatus.BREAK;
+                    selectable = false;
+                } else if (inLeave) {
+                    status = DoctorAvailabilitySlotStatus.LEAVE;
                     selectable = false;
                 } else if (booked.isEmpty()) {
                     status = DoctorAvailabilitySlotStatus.AVAILABLE;
                     selectable = true;
                 } else if (booked.size() >= capacity) {
-                    status = DoctorAvailabilitySlotStatus.BOOKED;
+                    status = DoctorAvailabilitySlotStatus.FULL;
                     selectable = false;
                 } else {
-                    status = DoctorAvailabilitySlotStatus.BOOKED;
+                    status = DoctorAvailabilitySlotStatus.PARTIALLY_BOOKED;
                     selectable = true;
                 }
 
@@ -266,6 +302,60 @@ public class AppointmentService {
                 detailsJson(saved)
         ));
         return toRecord(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DoctorUnavailabilityRecord> listUnavailability(UUID tenantId, UUID doctorUserId) {
+        requireTenant(tenantId);
+        requireDoctor(doctorUserId);
+        return doctorUnavailabilityRepository.findByTenantIdAndDoctorUserIdOrderByStartAtAsc(tenantId, doctorUserId)
+                .stream()
+                .map(this::toUnavailabilityRecord)
+                .toList();
+    }
+
+    @Transactional
+    public DoctorUnavailabilityRecord createUnavailability(UUID tenantId, UUID doctorUserId, DoctorUnavailabilityUpsertCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireDoctor(doctorUserId);
+        validateUnavailability(command);
+        ensureDoctorInTenant(tenantId, doctorUserId);
+        ensureNoUnavailabilityOverlap(tenantId, doctorUserId, command.startAt(), command.endAt(), null);
+        DoctorUnavailabilityEntity entity = DoctorUnavailabilityEntity.create(tenantId, doctorUserId);
+        entity.update(command.startAt(), command.endAt(), command.type(), normalizeNullable(command.reason()), command.active());
+        DoctorUnavailabilityEntity saved = doctorUnavailabilityRepository.save(entity);
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                AVAILABILITY_ENTITY,
+                saved.getId(),
+                "doctor.unavailability.created",
+                actorAppUserId,
+                OffsetDateTime.now(),
+                "Created doctor unavailability",
+                detailsJson(saved)
+        ));
+        return toUnavailabilityRecord(saved);
+    }
+
+    @Transactional
+    public DoctorUnavailabilityRecord deactivateUnavailability(UUID tenantId, UUID id, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireId(id, "id");
+        DoctorUnavailabilityEntity entity = doctorUnavailabilityRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Doctor unavailability not found"));
+        entity.update(entity.getStartAt(), entity.getEndAt(), entity.getBlockType(), entity.getReason(), false);
+        DoctorUnavailabilityEntity saved = doctorUnavailabilityRepository.save(entity);
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                AVAILABILITY_ENTITY,
+                saved.getId(),
+                "doctor.unavailability.deactivated",
+                actorAppUserId,
+                OffsetDateTime.now(),
+                "Deactivated doctor unavailability",
+                detailsJson(saved)
+        ));
+        return toUnavailabilityRecord(saved);
     }
 
     @Transactional(readOnly = true)
@@ -579,6 +669,159 @@ public class AppointmentService {
     }
 
     @Transactional
+    public AppointmentRecord reschedule(UUID tenantId, UUID id, AppointmentRescheduleCommand command, UUID actorAppUserId, boolean allowOverbooking) {
+        requireTenant(tenantId);
+        requireId(id, "id");
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        requireDate(command.appointmentDate(), "appointmentDate");
+        requireTime(command.appointmentTime(), "appointmentTime");
+        validateNotPast(command.appointmentDate(), command.appointmentTime());
+
+        AppointmentEntity entity = appointmentRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Appointment not found"));
+        UUID targetDoctor = command.doctorUserId() == null ? entity.getDoctorUserId() : command.doctorUserId();
+        ensureDoctorInTenant(tenantId, targetDoctor);
+        ensureNoDuplicateActiveAppointment(tenantId, entity.getPatientId(), targetDoctor, command.appointmentDate(), command.appointmentTime());
+        ensureScheduledSlotAvailable(tenantId, new AppointmentUpsertCommand(
+                entity.getPatientId(),
+                targetDoctor,
+                command.appointmentDate(),
+                command.appointmentTime(),
+                command.reason(),
+                entity.getType(),
+                entity.getStatus(),
+                entity.getPriority()
+        ), allowOverbooking);
+        Integer token = entity.getType() == AppointmentType.WALK_IN
+                ? nextToken(tenantId, targetDoctor, command.appointmentDate())
+                : entity.getTokenNumber();
+        entity.update(
+                command.appointmentDate(),
+                command.appointmentTime(),
+                token,
+                normalizeNullable(command.reason()) == null ? entity.getReason() : normalizeNullable(command.reason()),
+                entity.getType(),
+                entity.getStatus(),
+                entity.getPriority()
+        );
+        entity.reassignDoctor(targetDoctor);
+        AppointmentEntity saved = appointmentRepository.save(entity);
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                APPOINTMENT_ENTITY,
+                saved.getId(),
+                "appointment.rescheduled",
+                actorAppUserId,
+                OffsetDateTime.now(),
+                "Rescheduled appointment",
+                detailsJson(saved)
+        ));
+        return toRecord(saved, tenantUsersById(tenantId), patientsByIds(tenantId, List.of(saved.getPatientId())));
+    }
+
+    @Transactional
+    public WaitlistRecord createWaitlist(UUID tenantId, WaitlistCreateCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        requireId(command.patientId(), "patientId");
+        requireDate(command.preferredDate(), "preferredDate");
+        ensurePatientInTenant(tenantId, command.patientId());
+        if (command.doctorUserId() != null) {
+            ensureDoctorInTenant(tenantId, command.doctorUserId());
+        }
+        AppointmentWaitlistEntity entity = AppointmentWaitlistEntity.create(tenantId, command.patientId(), command.doctorUserId());
+        entity.update(
+                command.preferredDate(),
+                command.preferredStartTime(),
+                command.preferredEndTime(),
+                normalizeNullable(command.reason()),
+                normalizeNullable(command.notes()),
+                WaitlistStatus.WAITING
+        );
+        AppointmentWaitlistEntity saved = appointmentWaitlistRepository.save(entity);
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                "APPOINTMENT_WAITLIST",
+                saved.getId(),
+                "appointment.waitlist.created",
+                actorAppUserId,
+                OffsetDateTime.now(),
+                "Created waitlist entry",
+                detailsJson(saved)
+        ));
+        return toWaitlistRecord(saved, tenantUsersById(tenantId), patientsByIds(tenantId, List.of(saved.getPatientId())));
+    }
+
+    @Transactional(readOnly = true)
+    public List<WaitlistRecord> listWaitlist(UUID tenantId, UUID doctorUserId, LocalDate preferredDate, WaitlistStatus status) {
+        requireTenant(tenantId);
+        WaitlistStatus effectiveStatus = status == null ? WaitlistStatus.WAITING : status;
+        List<AppointmentWaitlistEntity> rows;
+        if (doctorUserId != null && preferredDate != null) {
+            rows = appointmentWaitlistRepository.findByTenantIdAndDoctorUserIdAndPreferredDateAndStatusOrderByCreatedAtAsc(
+                    tenantId, doctorUserId, preferredDate, effectiveStatus);
+        } else if (preferredDate != null) {
+            rows = appointmentWaitlistRepository.findByTenantIdAndPreferredDateAndStatusOrderByCreatedAtAsc(
+                    tenantId, preferredDate, effectiveStatus);
+        } else {
+            rows = appointmentWaitlistRepository.findByTenantIdAndStatusOrderByCreatedAtAsc(tenantId, effectiveStatus);
+        }
+        Map<UUID, TenantUserRecord> users = tenantUsersById(tenantId);
+        Map<UUID, PatientEntity> patients = patientsByIds(tenantId, rows.stream().map(AppointmentWaitlistEntity::getPatientId).toList());
+        return rows.stream().map(row -> toWaitlistRecord(row, users, patients)).toList();
+    }
+
+    @Transactional
+    public WaitlistRecord updateWaitlistStatus(UUID tenantId, UUID id, WaitlistStatus status, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireId(id, "id");
+        if (status == null) {
+            throw new IllegalArgumentException("status is required");
+        }
+        AppointmentWaitlistEntity entity = appointmentWaitlistRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Waitlist entry not found"));
+        entity.update(entity.getPreferredDate(), entity.getPreferredStartTime(), entity.getPreferredEndTime(), entity.getReason(), entity.getNotes(), status);
+        AppointmentWaitlistEntity saved = appointmentWaitlistRepository.save(entity);
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                "APPOINTMENT_WAITLIST",
+                saved.getId(),
+                "appointment.waitlist.status.updated",
+                actorAppUserId,
+                OffsetDateTime.now(),
+                "Updated waitlist status",
+                detailsJson(saved)
+        ));
+        return toWaitlistRecord(saved, tenantUsersById(tenantId), patientsByIds(tenantId, List.of(saved.getPatientId())));
+    }
+
+    @Transactional
+    public AppointmentRecord convertWaitlistToAppointment(UUID tenantId, UUID waitlistId, AppointmentUpsertCommand command, UUID actorAppUserId, boolean allowOverbooking) {
+        requireTenant(tenantId);
+        requireId(waitlistId, "waitlistId");
+        AppointmentWaitlistEntity waitlist = appointmentWaitlistRepository.findByTenantIdAndId(tenantId, waitlistId)
+                .orElseThrow(() -> new IllegalArgumentException("Waitlist entry not found"));
+        AppointmentRecord appointment = createScheduled(tenantId, command, actorAppUserId, allowOverbooking);
+        waitlist.markBooked(appointment.id());
+        appointmentWaitlistRepository.save(waitlist);
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                "APPOINTMENT_WAITLIST",
+                waitlist.getId(),
+                "appointment.waitlist.converted",
+                actorAppUserId,
+                OffsetDateTime.now(),
+                "Converted waitlist to appointment",
+                detailsJson(waitlist)
+        ));
+        return appointment;
+    }
+
+    @Transactional
     public List<AppointmentRecord> reorderQueueToday(UUID tenantId, UUID doctorUserId, List<UUID> orderedAppointmentIds, UUID actorAppUserId) {
         requireTenant(tenantId);
         requireDoctor(doctorUserId);
@@ -841,6 +1084,21 @@ public class AppointmentService {
         }
     }
 
+    private void validateUnavailability(DoctorUnavailabilityUpsertCommand command) {
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        if (command.startAt() == null || command.endAt() == null) {
+            throw new IllegalArgumentException("startAt and endAt are required");
+        }
+        if (command.type() == null) {
+            throw new IllegalArgumentException("type is required");
+        }
+        if (!command.startAt().isBefore(command.endAt())) {
+            throw new IllegalArgumentException("startAt must be before endAt");
+        }
+    }
+
     private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking) {
         if (command.type() == AppointmentType.WALK_IN) {
             return;
@@ -853,8 +1111,16 @@ public class AppointmentService {
                 .filter(candidate -> candidate.slotTime().equals(command.appointmentTime()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Selected time is not available for the selected doctor"));
-        if (slot.status() == DoctorAvailabilitySlotStatus.UNAVAILABLE) {
+        if (slot.status() == DoctorAvailabilitySlotStatus.UNAVAILABLE
+                || slot.status() == DoctorAvailabilitySlotStatus.BREAK
+                || slot.status() == DoctorAvailabilitySlotStatus.LEAVE) {
             throw new IllegalArgumentException("Selected time is unavailable for the selected doctor");
+        }
+        if (slot.status() == DoctorAvailabilitySlotStatus.CONFLICTED) {
+            throw new IllegalArgumentException("Selected time has scheduling conflicts for the selected doctor");
+        }
+        if (slot.status() == DoctorAvailabilitySlotStatus.FULL && !allowOverbooking) {
+            throw new IllegalArgumentException("Selected time is already fully booked");
         }
         if (!slot.selectable() && !allowOverbooking) {
             throw new IllegalArgumentException("Selected time is already fully booked");
@@ -893,6 +1159,30 @@ public class AppointmentService {
             return false;
         }
         return !slotStart.isBefore(breakStart) && slotStart.isBefore(breakEnd);
+    }
+
+    private boolean isWithinUnavailability(LocalDate appointmentDate, LocalTime slotStart, LocalTime slotEnd, List<DoctorUnavailabilityEntity> blocks) {
+        if (blocks == null || blocks.isEmpty()) {
+            return false;
+        }
+        OffsetDateTime slotStartAt = appointmentDate.atTime(slotStart).atOffset(OffsetDateTime.now().getOffset());
+        OffsetDateTime slotEndAt = appointmentDate.atTime(slotEnd).atOffset(OffsetDateTime.now().getOffset());
+        return blocks.stream().anyMatch(block -> block.isActive()
+                && block.getStartAt().isBefore(slotEndAt)
+                && block.getEndAt().isAfter(slotStartAt));
+    }
+
+    private void ensureNoUnavailabilityOverlap(UUID tenantId, UUID doctorUserId, OffsetDateTime startAt, OffsetDateTime endAt, UUID skipId) {
+        List<DoctorUnavailabilityEntity> rows = doctorUnavailabilityRepository.findByTenantIdAndDoctorUserIdAndActiveTrueAndStartAtLessThanAndEndAtGreaterThan(
+                tenantId,
+                doctorUserId,
+                endAt,
+                startAt
+        );
+        boolean conflict = rows.stream().anyMatch(row -> skipId == null || !skipId.equals(row.getId()));
+        if (conflict) {
+            throw new IllegalArgumentException("Unavailability block overlaps an existing block");
+        }
     }
 
     private void ensureTransitionAllowed(AppointmentStatus current, AppointmentStatus target) {
@@ -959,6 +1249,80 @@ public class AppointmentService {
         details.put("consultationDurationMinutes", entity.getConsultationDurationMinutes());
         details.put("maxPatientsPerSlot", entity.getMaxPatientsPerSlot());
         details.put("active", entity.isActive());
+        try {
+            return objectMapper.writeValueAsString(details);
+        } catch (JsonProcessingException ex) {
+            return "{}";
+        }
+    }
+
+    private DoctorUnavailabilityRecord toUnavailabilityRecord(DoctorUnavailabilityEntity entity) {
+        return new DoctorUnavailabilityRecord(
+                entity.getId(),
+                entity.getTenantId(),
+                entity.getDoctorUserId(),
+                entity.getStartAt(),
+                entity.getEndAt(),
+                entity.getBlockType(),
+                entity.getReason(),
+                entity.isActive(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt()
+        );
+    }
+
+    private WaitlistRecord toWaitlistRecord(AppointmentWaitlistEntity entity, Map<UUID, TenantUserRecord> users, Map<UUID, PatientEntity> patients) {
+        PatientEntity patient = patients.get(entity.getPatientId());
+        TenantUserRecord doctor = entity.getDoctorUserId() == null ? null : users.get(entity.getDoctorUserId());
+        return new WaitlistRecord(
+                entity.getId(),
+                entity.getTenantId(),
+                entity.getPatientId(),
+                patient == null ? null : patient.getPatientNumber(),
+                patient == null ? null : patient.getFirstName() + " " + patient.getLastName(),
+                entity.getDoctorUserId(),
+                doctor == null ? null : doctor.displayName(),
+                entity.getPreferredDate(),
+                entity.getPreferredStartTime(),
+                entity.getPreferredEndTime(),
+                entity.getReason(),
+                entity.getNotes(),
+                entity.getStatus(),
+                entity.getBookedAppointmentId(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt()
+        );
+    }
+
+    private String detailsJson(DoctorUnavailabilityEntity entity) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("id", entity.getId());
+        details.put("tenantId", entity.getTenantId());
+        details.put("doctorUserId", entity.getDoctorUserId());
+        details.put("startAt", entity.getStartAt());
+        details.put("endAt", entity.getEndAt());
+        details.put("type", entity.getBlockType());
+        details.put("reason", entity.getReason());
+        details.put("active", entity.isActive());
+        try {
+            return objectMapper.writeValueAsString(details);
+        } catch (JsonProcessingException ex) {
+            return "{}";
+        }
+    }
+
+    private String detailsJson(AppointmentWaitlistEntity entity) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("id", entity.getId());
+        details.put("tenantId", entity.getTenantId());
+        details.put("patientId", entity.getPatientId());
+        details.put("doctorUserId", entity.getDoctorUserId());
+        details.put("preferredDate", entity.getPreferredDate());
+        details.put("preferredStartTime", entity.getPreferredStartTime());
+        details.put("preferredEndTime", entity.getPreferredEndTime());
+        details.put("reason", entity.getReason());
+        details.put("status", entity.getStatus());
+        details.put("bookedAppointmentId", entity.getBookedAppointmentId());
         try {
             return objectMapper.writeValueAsString(details);
         } catch (JsonProcessingException ex) {

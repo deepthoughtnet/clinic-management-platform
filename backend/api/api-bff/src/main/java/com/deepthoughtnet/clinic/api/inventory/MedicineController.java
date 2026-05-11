@@ -83,4 +83,12 @@ public class MedicineController {
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return inventoryService.deactivateMedicine(tenantId, id, actorAppUserId);
     }
+
+    @PatchMapping("/{id}/activate")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('vaccination.manage')")
+    public MedicineRecord activate(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return inventoryService.activateMedicine(tenantId, id, actorAppUserId);
+    }
 }

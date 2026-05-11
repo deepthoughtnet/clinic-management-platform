@@ -190,6 +190,9 @@ public class VaccinationService {
                             1,
                             price,
                             saved.getId(),
+                            null,
+                            BigDecimal.ZERO,
+                            normalizeNullable(command.batchNumber()),
                             null
                     ),
                     actorAppUserId

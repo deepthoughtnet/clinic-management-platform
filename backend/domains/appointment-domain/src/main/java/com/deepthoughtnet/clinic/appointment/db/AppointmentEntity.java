@@ -113,6 +113,11 @@ public class AppointmentEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    public void reassignDoctor(UUID doctorUserId) {
+        this.doctorUserId = doctorUserId;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public UUID getId() {
         return id;
     }

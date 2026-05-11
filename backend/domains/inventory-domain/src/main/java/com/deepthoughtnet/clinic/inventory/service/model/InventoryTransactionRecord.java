@@ -10,8 +10,10 @@ public record InventoryTransactionRecord(
         UUID stockBatchId,
         InventoryTransactionType transactionType,
         int quantity,
+        String reason,
         String referenceType,
         UUID referenceId,
+        UUID createdBy,
         String notes,
         OffsetDateTime createdAt
 ) {

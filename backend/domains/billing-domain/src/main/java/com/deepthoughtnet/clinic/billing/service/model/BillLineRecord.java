@@ -11,6 +11,9 @@ public record BillLineRecord(
         BigDecimal unitPrice,
         BigDecimal totalPrice,
         UUID referenceId,
-        Integer sortOrder
+        Integer sortOrder,
+        BigDecimal lineDiscountAmount,
+        String batchNumber,
+        UUID dispensationReferenceId
 ) {
 }

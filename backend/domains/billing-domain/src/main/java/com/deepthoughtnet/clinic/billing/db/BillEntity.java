@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.billing.db;
 
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
+import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -56,8 +57,21 @@ public class BillEntity {
     @Column(name = "subtotal_amount", nullable = false, precision = 18, scale = 2)
     private BigDecimal subtotalAmount = BigDecimal.ZERO;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "discount_type", nullable = false, length = 24)
+    private DiscountType discountType = DiscountType.NONE;
+
+    @Column(name = "discount_value", nullable = false, precision = 18, scale = 2)
+    private BigDecimal discountValue = BigDecimal.ZERO;
+
     @Column(name = "discount_amount", nullable = false, precision = 18, scale = 2)
     private BigDecimal discountAmount = BigDecimal.ZERO;
+
+    @Column(name = "discount_reason", columnDefinition = "text")
+    private String discountReason;
+
+    @Column(name = "discount_approved_by")
+    private UUID discountApprovedBy;
 
     @Column(name = "tax_amount", nullable = false, precision = 18, scale = 2)
     private BigDecimal taxAmount = BigDecimal.ZERO;
@@ -68,8 +82,17 @@ public class BillEntity {
     @Column(name = "paid_amount", nullable = false, precision = 18, scale = 2)
     private BigDecimal paidAmount = BigDecimal.ZERO;
 
+    @Column(name = "refunded_amount", nullable = false, precision = 18, scale = 2)
+    private BigDecimal refundedAmount = BigDecimal.ZERO;
+
+    @Column(name = "net_paid_amount", nullable = false, precision = 18, scale = 2)
+    private BigDecimal netPaidAmount = BigDecimal.ZERO;
+
     @Column(name = "due_amount", nullable = false, precision = 18, scale = 2)
     private BigDecimal dueAmount = BigDecimal.ZERO;
+
+    @Column(name = "invoice_emailed_at")
+    private OffsetDateTime invoiceEmailedAt;
 
     @Column(columnDefinition = "text")
     private String notes;
@@ -84,8 +107,7 @@ public class BillEntity {
     @Column(nullable = false)
     private int version;
 
-    protected BillEntity() {
-    }
+    protected BillEntity() {}
 
     public static BillEntity create(UUID tenantId, String billNumber, UUID patientId, UUID consultationId, UUID appointmentId, LocalDate billDate) {
         BillEntity entity = new BillEntity();
@@ -101,39 +123,59 @@ public class BillEntity {
         return entity;
     }
 
-    public void update(UUID patientId, UUID consultationId, UUID appointmentId, LocalDate billDate, String notes, BigDecimal discountAmount, BigDecimal taxAmount) {
+    public void update(
+            UUID patientId,
+            UUID consultationId,
+            UUID appointmentId,
+            LocalDate billDate,
+            String notes,
+            DiscountType discountType,
+            BigDecimal discountValue,
+            String discountReason,
+            UUID discountApprovedBy,
+            BigDecimal taxAmount
+    ) {
         this.patientId = patientId;
         this.consultationId = consultationId;
         this.appointmentId = appointmentId;
         this.billDate = billDate == null ? LocalDate.now() : billDate;
         this.notes = notes;
-        this.discountAmount = discountAmount == null ? BigDecimal.ZERO : discountAmount;
+        this.discountType = discountType == null ? DiscountType.NONE : discountType;
+        this.discountValue = discountValue == null ? BigDecimal.ZERO : discountValue;
+        this.discountReason = discountReason;
+        this.discountApprovedBy = discountApprovedBy;
         this.taxAmount = taxAmount == null ? BigDecimal.ZERO : taxAmount;
         this.updatedAt = OffsetDateTime.now();
     }
 
-    public void setFinancials(BigDecimal subtotalAmount, BigDecimal discountAmount, BigDecimal taxAmount, BigDecimal totalAmount, BigDecimal paidAmount, BigDecimal dueAmount) {
+    public void setFinancials(
+            BigDecimal subtotalAmount,
+            BigDecimal discountAmount,
+            BigDecimal taxAmount,
+            BigDecimal totalAmount,
+            BigDecimal paidAmount,
+            BigDecimal refundedAmount,
+            BigDecimal netPaidAmount,
+            BigDecimal dueAmount
+    ) {
         this.subtotalAmount = subtotalAmount == null ? BigDecimal.ZERO : subtotalAmount;
         this.discountAmount = discountAmount == null ? BigDecimal.ZERO : discountAmount;
         this.taxAmount = taxAmount == null ? BigDecimal.ZERO : taxAmount;
         this.totalAmount = totalAmount == null ? BigDecimal.ZERO : totalAmount;
         this.paidAmount = paidAmount == null ? BigDecimal.ZERO : paidAmount;
+        this.refundedAmount = refundedAmount == null ? BigDecimal.ZERO : refundedAmount;
+        this.netPaidAmount = netPaidAmount == null ? BigDecimal.ZERO : netPaidAmount;
         this.dueAmount = dueAmount == null ? BigDecimal.ZERO : dueAmount;
         this.updatedAt = OffsetDateTime.now();
     }
 
-    public void issue() {
-        this.status = BillStatus.UNPAID;
-        this.updatedAt = OffsetDateTime.now();
+    public void markInvoicedByEmail() {
+        this.invoiceEmailedAt = OffsetDateTime.now();
+        this.updatedAt = this.invoiceEmailedAt;
     }
 
-    public void markPartiallyPaid() {
-        this.status = BillStatus.PARTIALLY_PAID;
-        this.updatedAt = OffsetDateTime.now();
-    }
-
-    public void markPaid() {
-        this.status = BillStatus.PAID;
+    public void markStatus(BillStatus status) {
+        this.status = status;
         this.updatedAt = OffsetDateTime.now();
     }
 
@@ -151,11 +193,18 @@ public class BillEntity {
     public LocalDate getBillDate() { return billDate; }
     public BillStatus getStatus() { return status; }
     public BigDecimal getSubtotalAmount() { return subtotalAmount; }
+    public DiscountType getDiscountType() { return discountType; }
+    public BigDecimal getDiscountValue() { return discountValue; }
     public BigDecimal getDiscountAmount() { return discountAmount; }
+    public String getDiscountReason() { return discountReason; }
+    public UUID getDiscountApprovedBy() { return discountApprovedBy; }
     public BigDecimal getTaxAmount() { return taxAmount; }
     public BigDecimal getTotalAmount() { return totalAmount; }
     public BigDecimal getPaidAmount() { return paidAmount; }
+    public BigDecimal getRefundedAmount() { return refundedAmount; }
+    public BigDecimal getNetPaidAmount() { return netPaidAmount; }
     public BigDecimal getDueAmount() { return dueAmount; }
+    public OffsetDateTime getInvoiceEmailedAt() { return invoiceEmailedAt; }
     public String getNotes() { return notes; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }

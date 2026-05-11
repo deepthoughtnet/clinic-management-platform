@@ -42,6 +42,12 @@ public class InventoryTransactionEntity {
     @Column(name = "reference_id")
     private UUID referenceId;
 
+    @Column(name = "created_by")
+    private UUID createdBy;
+
+    @Column(name = "reason", columnDefinition = "text")
+    private String reason;
+
     @Column(columnDefinition = "text")
     private String notes;
 
@@ -59,6 +65,8 @@ public class InventoryTransactionEntity {
             int quantity,
             String referenceType,
             UUID referenceId,
+            UUID createdBy,
+            String reason,
             String notes
     ) {
         InventoryTransactionEntity entity = new InventoryTransactionEntity();
@@ -70,6 +78,8 @@ public class InventoryTransactionEntity {
         entity.quantity = quantity;
         entity.referenceType = referenceType;
         entity.referenceId = referenceId;
+        entity.createdBy = createdBy;
+        entity.reason = reason;
         entity.notes = notes;
         entity.createdAt = OffsetDateTime.now();
         return entity;
@@ -83,6 +93,8 @@ public class InventoryTransactionEntity {
     public int getQuantity() { return quantity; }
     public String getReferenceType() { return referenceType; }
     public UUID getReferenceId() { return referenceId; }
+    public UUID getCreatedBy() { return createdBy; }
+    public String getReason() { return reason; }
     public String getNotes() { return notes; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
 }

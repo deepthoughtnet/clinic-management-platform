@@ -35,14 +35,19 @@ import {
 import { useAuth } from "../../auth/useAuth";
 import {
   createAppointment,
+  createWaitlist,
   createPatient,
   createWalkInAppointment,
   getDoctorSlots,
+  getWaitlist,
   getClinicUsers,
   getPatient,
+  rescheduleAppointment,
   searchAppointments,
   searchPatients,
+  updateWaitlistStatus,
   type Appointment,
+  type AppointmentWaitlist,
   type DoctorAvailabilitySlot,
   type AppointmentPriority,
   type AppointmentType,
@@ -50,6 +55,7 @@ import {
   type Patient,
   type PatientGender,
   type PatientInput,
+  type WaitlistStatus,
 } from "../../api/clinicApi";
 
 type AppointmentTab = "today" | "upcoming" | "completed" | "archive";
@@ -236,6 +242,12 @@ export default function AppointmentsPage() {
   const [quickRegisterError, setQuickRegisterError] = React.useState<string | null>(null);
   const [quickRegisterForm, setQuickRegisterForm] = React.useState<QuickRegisterForm>(emptyQuickRegisterForm());
   const [error, setError] = React.useState<string | null>(null);
+  const [waitlist, setWaitlist] = React.useState<AppointmentWaitlist[]>([]);
+  const [rescheduleOpen, setRescheduleOpen] = React.useState(false);
+  const [rescheduleTarget, setRescheduleTarget] = React.useState<Appointment | null>(null);
+  const [rescheduleDate, setRescheduleDate] = React.useState(new Date().toISOString().slice(0, 10));
+  const [rescheduleTime, setRescheduleTime] = React.useState("");
+  const [rescheduleDoctorUserId, setRescheduleDoctorUserId] = React.useState("");
 
   const tenantRole = (auth.tenantRole || "").toUpperCase();
   const isDoctor = tenantRole === "DOCTOR";
@@ -285,6 +297,14 @@ export default function AppointmentsPage() {
       setSlots([]);
     }
   }, [appointmentDate, auth.accessToken, auth.tenantId, selectedDoctorId, type]);
+  const loadWaitlist = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    try {
+      setWaitlist(await getWaitlist(auth.accessToken, auth.tenantId, { doctorUserId: selectedDoctorId || undefined, preferredDate: appointmentDate, status: "WAITING" }));
+    } catch {
+      setWaitlist([]);
+    }
+  }, [appointmentDate, auth.accessToken, auth.tenantId, selectedDoctorId]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -329,6 +349,9 @@ export default function AppointmentsPage() {
   React.useEffect(() => {
     void loadSlots();
   }, [loadSlots]);
+  React.useEffect(() => {
+    void loadWaitlist();
+  }, [loadWaitlist]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -527,10 +550,73 @@ export default function AppointmentsPage() {
       setAppointmentTime("");
       await loadAppointments();
       await loadSlots();
+      await loadWaitlist();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save appointment");
     } finally {
       setSaving(false);
+    }
+  };
+  const addToWaitlist = async () => {
+    if (!auth.accessToken || !auth.tenantId || !selectedPatient || !selectedDoctorId) return;
+    try {
+      await createWaitlist(auth.accessToken, auth.tenantId, {
+        patientId: selectedPatient.id,
+        doctorUserId: selectedDoctorId,
+        preferredDate: appointmentDate,
+        preferredStartTime: appointmentTime || null,
+        preferredEndTime: null,
+        reason: reason.trim() || null,
+        notes: null,
+      });
+      await loadWaitlist();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add to waitlist");
+    }
+  };
+  const bookFromWaitlist = async (entry: AppointmentWaitlist) => {
+    if (!auth.accessToken || !auth.tenantId || !entry.id || !selectedDoctorId || !appointmentTime) return;
+    try {
+      await createAppointment(auth.accessToken, auth.tenantId, {
+        patientId: entry.patientId,
+        doctorUserId: selectedDoctorId,
+        appointmentDate,
+        appointmentTime,
+        reason: entry.reason,
+        type: "SCHEDULED",
+        status: null,
+        priority: "NORMAL",
+      });
+      await updateWaitlistStatus(auth.accessToken, auth.tenantId, entry.id, "BOOKED");
+      await loadAppointments();
+      await loadSlots();
+      await loadWaitlist();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to book from waitlist");
+    }
+  };
+  const openReschedule = (appointment: Appointment) => {
+    setRescheduleTarget(appointment);
+    setRescheduleDoctorUserId(appointment.doctorUserId);
+    setRescheduleDate(appointment.appointmentDate);
+    setRescheduleTime((appointment.appointmentTime || "").slice(0, 5));
+    setRescheduleOpen(true);
+  };
+  const saveReschedule = async () => {
+    if (!auth.accessToken || !auth.tenantId || !rescheduleTarget || !rescheduleTime || !rescheduleDate) return;
+    try {
+      await rescheduleAppointment(auth.accessToken, auth.tenantId, rescheduleTarget.id, {
+        doctorUserId: rescheduleDoctorUserId || null,
+        appointmentDate: rescheduleDate,
+        appointmentTime: rescheduleTime,
+        reason: "Rescheduled from calendar",
+      });
+      setRescheduleOpen(false);
+      setRescheduleTarget(null);
+      await loadAppointments();
+      await loadSlots();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reschedule appointment");
     }
   };
 
@@ -724,8 +810,11 @@ export default function AppointmentsPage() {
                             </Box>
                             <Stack direction="row" spacing={1} flexWrap="wrap">
                               <Chip size="small" label={`${slots.filter((slot) => slot.status === "AVAILABLE").length} available`} variant="outlined" />
-                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "BOOKED").length} booked`} variant="outlined" />
-                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "UNAVAILABLE").length} unavailable`} variant="outlined" />
+                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "PARTIALLY_BOOKED").length} partially booked`} variant="outlined" />
+                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "FULL").length} full`} color="error" variant="outlined" />
+                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "BREAK").length} break`} variant="outlined" />
+                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "LEAVE" || slot.status === "UNAVAILABLE").length} unavailable`} variant="outlined" />
+                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "CONFLICTED").length} conflicts`} color="error" variant="outlined" />
                             </Stack>
                           </Box>
                           {slots.length === 0 ? (
@@ -735,18 +824,18 @@ export default function AppointmentsPage() {
                               {slots.map((slot) => {
                                 const timeLabel = slot.slotTime.length >= 5 ? slot.slotTime.slice(0, 5) : slot.slotTime;
                                 const selected = appointmentTime === timeLabel;
-                                const label = slot.status === "BOOKED" && slot.selectable
+                                const label = slot.status === "PARTIALLY_BOOKED" && slot.selectable
                                   ? `${timeLabel} • ${slot.bookedCount}/${slot.maxPatientsPerSlot}`
-                                  : slot.status === "BOOKED"
-                                    ? `${timeLabel} • Full`
+                                  : slot.status === "FULL"
+                                    ? `${timeLabel} • ${slot.bookedCount}/${slot.maxPatientsPerSlot} full`
                                     : timeLabel;
                                 return (
                                   <Button
                                     key={`${slot.slotTime}-${slot.slotEndTime}`}
                                     size="small"
                                     variant={selected ? "contained" : "outlined"}
-                                    color={slot.status === "UNAVAILABLE" ? "inherit" : slot.status === "BOOKED" ? "warning" : "primary"}
-                                    disabled={slot.status === "UNAVAILABLE" || (!slot.selectable && slot.status === "BOOKED")}
+                                    color={slot.status === "FULL" ? "error" : (slot.status === "PARTIALLY_BOOKED" ? "warning" : (slot.status === "AVAILABLE" ? "primary" : "inherit"))}
+                                    disabled={slot.status !== "AVAILABLE" && !(slot.status === "PARTIALLY_BOOKED" && slot.selectable)}
                                     onClick={() => setAppointmentTime(timeLabel)}
                                   >
                                     {label}
@@ -759,6 +848,9 @@ export default function AppointmentsPage() {
                       </CardContent>
                     </Card>
                   ) : null}
+                  <Stack direction="row" spacing={1}>
+                    <Button variant="outlined" onClick={() => void addToWaitlist()} disabled={!selectedPatient || !selectedDoctorId || !appointmentDate}>Add to Waitlist</Button>
+                  </Stack>
                   <FormControl fullWidth>
                     <InputLabel id="appointment-type-label">Type</InputLabel>
                     <Select labelId="appointment-type-label" label="Type" value={type} onChange={(event) => setType(event.target.value as AppointmentType)}>
@@ -859,6 +951,7 @@ export default function AppointmentsPage() {
                           <TableCell><Chip size="small" label={appointment.status} color={statusColor(appointment.status)} /></TableCell>
                           <TableCell>
                             <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)}>Patient</Button>
+                            <Button size="small" onClick={() => openReschedule(appointment)}>Reschedule</Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -871,6 +964,20 @@ export default function AppointmentsPage() {
           </Card>
         </Grid>
       </Grid>
+      <Card variant="outlined">
+        <CardContent>
+          <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Waitlist</Typography>
+          {waitlist.length === 0 ? <Alert severity="info">No waiting entries for selected doctor/date.</Alert> : (
+            <Stack direction="row" flexWrap="wrap" gap={1}>
+              {waitlist.map((item) => (
+                <Button key={item.id} size="small" variant="outlined" onClick={() => void bookFromWaitlist(item)} disabled={!appointmentTime}>
+                  {(item.patientName || item.patientNumber || item.patientId)} • {item.preferredStartTime || "Any"} • {item.status}
+                </Button>
+              ))}
+            </Stack>
+          )}
+        </CardContent>
+      </Card>
 
       <Dialog open={quickRegisterOpen} onClose={() => setQuickRegisterOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Quick Register Patient</DialogTitle>
@@ -913,6 +1020,29 @@ export default function AppointmentsPage() {
         <DialogActions>
           <Button onClick={() => setQuickRegisterOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={() => void saveQuickPatient()} disabled={quickRegisterSaving}>Save patient</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={rescheduleOpen} onClose={() => setRescheduleOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Reschedule Appointment</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <FormControl fullWidth>
+              <InputLabel id="reschedule-doctor-label">Doctor</InputLabel>
+              <Select labelId="reschedule-doctor-label" label="Doctor" value={rescheduleDoctorUserId} onChange={(event) => setRescheduleDoctorUserId(String(event.target.value))}>
+                {doctorOptions.map((doctor) => (
+                  <MenuItem key={doctor.appUserId} value={doctor.appUserId}>
+                    {doctor.displayName || doctor.email || doctor.appUserId}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <TextField type="date" label="Date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)} InputLabelProps={{ shrink: true }} />
+            <TextField type="time" label="Time" value={rescheduleTime} onChange={(e) => setRescheduleTime(e.target.value)} InputLabelProps={{ shrink: true }} />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRescheduleOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={() => void saveReschedule()} disabled={!rescheduleDate || !rescheduleTime}>Save</Button>
         </DialogActions>
       </Dialog>
     </Stack>

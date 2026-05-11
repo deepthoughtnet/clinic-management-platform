@@ -22,6 +22,7 @@ import { getPlatformTenants } from "../api/clinicApi";
 
 function formatPathLabel(pathname: string): string {
   if (pathname === "/") return "Dashboard";
+  if (pathname === "/dashboard") return "Dashboard";
   if (pathname.startsWith("/platform/tenants")) return "Platform Tenants";
   if (pathname.startsWith("/platform/plans")) return "Plans / Modules";
   if (pathname.startsWith("/platform/users")) return "Users / Admins";

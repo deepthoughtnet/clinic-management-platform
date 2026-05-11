@@ -6,6 +6,8 @@ import AutoAwesomeMotionRoundedIcon from "@mui/icons-material/AutoAwesomeMotionR
 import GroupRoundedIcon from "@mui/icons-material/GroupRounded";
 import PeopleAltRoundedIcon from "@mui/icons-material/PeopleAltRounded";
 import EventRoundedIcon from "@mui/icons-material/EventRounded";
+import ViewWeekRoundedIcon from "@mui/icons-material/ViewWeekRounded";
+import CalendarMonthRoundedIcon from "@mui/icons-material/CalendarMonthRounded";
 import QueueRoundedIcon from "@mui/icons-material/QueueRounded";
 import MedicalServicesRoundedIcon from "@mui/icons-material/MedicalServicesRounded";
 import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
@@ -71,6 +73,8 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
     dashboard: <DashboardRoundedIcon fontSize="small" />,
     patients: <PeopleAltRoundedIcon fontSize="small" />,
     appointments: <EventRoundedIcon fontSize="small" />,
+    "day-board": <ViewWeekRoundedIcon fontSize="small" />,
+    "doctor-availability": <CalendarMonthRoundedIcon fontSize="small" />,
     queue: <QueueRoundedIcon fontSize="small" />,
     "queue-ops": <QueueRoundedIcon fontSize="small" />,
     consultations: <MedicalServicesRoundedIcon fontSize="small" />,

@@ -1,5 +1,6 @@
 package com.deepthoughtnet.clinic.api.billing.dto;
 
+import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -15,8 +16,12 @@ public record BillRequest(
         UUID consultationId,
         UUID appointmentId,
         LocalDate billDate,
-        BigDecimal discountAmount,
+        DiscountType discountType,
+        BigDecimal discountValue,
         BigDecimal taxAmount,
+        @Size(max = 1000)
+        String discountReason,
+        UUID discountApprovedBy,
         @Size(max = 4000)
         String notes,
         @NotEmpty @Valid

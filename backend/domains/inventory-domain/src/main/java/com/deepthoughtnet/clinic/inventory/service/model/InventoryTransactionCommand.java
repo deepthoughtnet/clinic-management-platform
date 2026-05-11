@@ -1,8 +1,8 @@
 package com.deepthoughtnet.clinic.inventory.service.model;
 
-import java.util.UUID;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import java.util.UUID;
 
 public record InventoryTransactionCommand(
         @NotNull
@@ -12,8 +12,10 @@ public record InventoryTransactionCommand(
         InventoryTransactionType transactionType,
         @Positive
         int quantity,
+        String reason,
         String referenceType,
         UUID referenceId,
+        UUID createdBy,
         String notes
 ) {
 }

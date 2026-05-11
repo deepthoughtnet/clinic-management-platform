@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.billing.dto;
 
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
+import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -18,11 +19,18 @@ public record BillResponse(
         LocalDate billDate,
         BillStatus status,
         BigDecimal subtotalAmount,
+        DiscountType discountType,
+        BigDecimal discountValue,
         BigDecimal discountAmount,
+        String discountReason,
+        String discountApprovedBy,
         BigDecimal taxAmount,
         BigDecimal totalAmount,
         BigDecimal paidAmount,
+        BigDecimal refundedAmount,
+        BigDecimal netPaidAmount,
         BigDecimal dueAmount,
+        OffsetDateTime invoiceEmailedAt,
         String notes,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,

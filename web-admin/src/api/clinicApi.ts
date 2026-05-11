@@ -21,7 +21,18 @@ export type NotificationEventType =
   | "APPOINTMENT_REMINDER"
   | "PAYMENT_REMINDER"
   | "MISSED_APPOINTMENT_REMINDER";
-export type InventoryTransactionType = "OPENING" | "PURCHASE" | "SALE" | "ADJUSTMENT" | "RETURN";
+export type InventoryTransactionType =
+  | "STOCK_IN"
+  | "DISPENSED"
+  | "ADJUSTMENT_IN"
+  | "ADJUSTMENT_OUT"
+  | "RETURN"
+  | "EXPIRED"
+  | "CANCELLED_DISPENSE"
+  | "OPENING"
+  | "PURCHASE"
+  | "SALE"
+  | "ADJUSTMENT";
 export type ClinicalDocumentType =
   | "LAB_REPORT"
   | "PRESCRIPTION"
@@ -121,6 +132,96 @@ export type DashboardSummary = {
   pendingNotifications: number;
   failedNotifications: number;
   sentNotificationsToday: number;
+};
+
+export type ClinicDashboard = {
+  startDate: string;
+  endDate: string;
+  tenantId: string | null;
+  appointmentSummary: {
+    totalToday: number;
+    scheduled: number;
+    checkedIn: number;
+    inConsultation: number;
+    completed: number;
+    noShow: number;
+    cancelled: number;
+  } | null;
+  queueSummary: {
+    waiting: number;
+    inConsultation: number;
+    completed: number;
+    noShow: number;
+    cancelled: number;
+    averageWaitTimeMinutes: number;
+  } | null;
+  consultationSummary: {
+    started: number;
+    completed: number;
+    activeNow: number;
+    consultationsWithPrescriptions: number;
+  } | null;
+  prescriptionSummary: {
+    prescriptionsGenerated: number;
+    consultationsWithPrescriptions: number;
+    avgPrescriptionsPerConsultation: number;
+  } | null;
+  billingSummary: {
+    billsCreated: number;
+    paidBills: number;
+    pendingBills: number;
+    totalBilled: number;
+    totalPaid: number;
+    pendingAmount: number;
+  } | null;
+  followUpSummary: {
+    dueInRange: number;
+    overdue: number;
+    upcomingNext7Days: number;
+  } | null;
+  doctorSummaries: Array<{
+    doctorUserId: string;
+    doctorName: string;
+    appointmentsToday: number;
+    checkedIn: number;
+    completed: number;
+    noShow: number;
+    cancelled: number;
+    nextAppointmentTime: string | null;
+    revenue: number;
+    prescriptionsGenerated: number;
+    consultationsCompleted: number;
+    avgConsultationLoad: number;
+  }>;
+  currentWaitingList: Array<{
+    appointmentId: string;
+    patientId: string;
+    patientName: string | null;
+    patientNumber: string | null;
+    doctorUserId: string | null;
+    doctorName: string | null;
+    tokenNumber: number | null;
+    appointmentTime: string | null;
+    waitingSince: string | null;
+    status: string;
+  }>;
+  recentUnpaidBills: Array<{
+    billId: string;
+    billNumber: string;
+    patientId: string;
+    patientName: string | null;
+    dueAmount: number;
+    billDate: string;
+    status: string | null;
+  }>;
+  recentActivity: Array<{
+    timestamp: string;
+    type: string;
+    title: string;
+    description: string;
+    relatedPatientName: string | null;
+    relatedDoctorName: string | null;
+  }>;
 };
 
 export type NotificationHistory = {
@@ -319,7 +420,7 @@ export type DoctorAvailabilityInput = {
   active: boolean;
 };
 
-export type DoctorAvailabilitySlotStatus = "AVAILABLE" | "BOOKED" | "UNAVAILABLE";
+export type DoctorAvailabilitySlotStatus = "AVAILABLE" | "PARTIALLY_BOOKED" | "FULL" | "BREAK" | "LEAVE" | "UNAVAILABLE" | "CONFLICTED";
 
 export type DoctorAvailabilitySlot = {
   doctorUserId: string;
@@ -338,6 +439,60 @@ export type DoctorAvailabilitySlot = {
   tokenNumber: number | null;
   appointmentStatus: AppointmentStatus | null;
   reason: string | null;
+};
+
+export type DoctorUnavailabilityType = "LEAVE" | "HOLIDAY" | "UNAVAILABLE" | "EMERGENCY_BLOCK";
+
+export type DoctorUnavailability = {
+  id: string;
+  tenantId: string;
+  doctorUserId: string;
+  startAt: string;
+  endAt: string;
+  type: DoctorUnavailabilityType;
+  reason: string | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DoctorUnavailabilityInput = {
+  startAt: string;
+  endAt: string;
+  type: DoctorUnavailabilityType;
+  reason: string | null;
+  active: boolean;
+};
+
+export type WaitlistStatus = "WAITING" | "CONTACTED" | "BOOKED" | "CANCELLED";
+
+export type AppointmentWaitlist = {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  patientNumber: string | null;
+  patientName: string | null;
+  doctorUserId: string | null;
+  doctorName: string | null;
+  preferredDate: string;
+  preferredStartTime: string | null;
+  preferredEndTime: string | null;
+  reason: string | null;
+  notes: string | null;
+  status: WaitlistStatus;
+  bookedAppointmentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AppointmentWaitlistInput = {
+  patientId: string;
+  doctorUserId: string | null;
+  preferredDate: string;
+  preferredStartTime: string | null;
+  preferredEndTime: string | null;
+  reason: string | null;
+  notes: string | null;
 };
 
 export type Consultation = {
@@ -582,13 +737,20 @@ export type PatientVaccinationInput = {
 export type MedicineInput = {
   medicineName: string;
   medicineType: MedicineType;
+  genericName: string | null;
+  brandName: string | null;
+  category: string | null;
+  dosageForm: string | null;
   strength: string | null;
+  unit: string | null;
+  manufacturer: string | null;
   defaultDosage: string | null;
   defaultFrequency: string | null;
   defaultDurationDays: number | null;
   defaultTiming: Timing | null;
   defaultInstructions: string | null;
   defaultPrice: number | null;
+  taxRate: number | null;
   active: boolean;
 };
 
@@ -603,9 +765,13 @@ export type StockInput = {
   medicineId: string;
   batchNumber: string | null;
   expiryDate: string | null;
+  purchaseDate: string | null;
+  supplierName: string | null;
+  quantityReceived: number | null;
   quantityOnHand: number;
   lowStockThreshold: number | null;
   unitCost: number | null;
+  purchasePrice: number | null;
   sellingPrice: number | null;
   active: boolean;
 };
@@ -626,8 +792,10 @@ export type InventoryTransaction = {
   stockBatchId: string | null;
   transactionType: InventoryTransactionType;
   quantity: number;
+  reason: string | null;
   referenceType: string | null;
   referenceId: string | null;
+  createdBy: string | null;
   notes: string | null;
   createdAt: string;
 };
@@ -637,8 +805,10 @@ export type InventoryTransactionInput = {
   stockBatchId: string | null;
   transactionType: InventoryTransactionType;
   quantity: number;
+  reason: string | null;
   referenceType: string | null;
   referenceId: string | null;
+  createdBy?: string | null;
   notes: string | null;
 };
 
@@ -852,6 +1022,15 @@ export async function updateAppointmentPriority(token: string, tenantId: string,
   return httpPatch<Appointment>(`/api/appointments/${id}/priority`, { priority }, { token, tenantId });
 }
 
+export async function rescheduleAppointment(
+  token: string,
+  tenantId: string,
+  id: string,
+  body: { doctorUserId: string | null; appointmentDate: string; appointmentTime: string; reason: string | null },
+) {
+  return httpPatch<Appointment>(`/api/appointments/${id}/reschedule`, body, { token, tenantId });
+}
+
 export async function getTodayAppointments(token: string, tenantId: string) {
   return httpGet<Appointment[]>("/api/appointments/today", { token, tenantId });
 }
@@ -882,6 +1061,39 @@ export async function updateDoctorAvailability(token: string, tenantId: string, 
 
 export async function deactivateDoctorAvailability(token: string, tenantId: string, id: string) {
   return httpPatch<DoctorAvailability>(`/api/doctors/availability/${id}/deactivate`, undefined, { token, tenantId });
+}
+
+export async function getDoctorUnavailability(token: string, tenantId: string, doctorUserId: string) {
+  return httpGet<DoctorUnavailability[]>(`/api/doctors/${doctorUserId}/unavailability`, { token, tenantId });
+}
+
+export async function createDoctorUnavailability(token: string, tenantId: string, doctorUserId: string, body: DoctorUnavailabilityInput) {
+  return httpPost<DoctorUnavailability>(`/api/doctors/${doctorUserId}/unavailability`, body, { token, tenantId });
+}
+
+export async function deactivateDoctorUnavailability(token: string, tenantId: string, id: string) {
+  return httpPatch<DoctorUnavailability>(`/api/doctors/unavailability/${id}/deactivate`, undefined, { token, tenantId });
+}
+
+export async function getWaitlist(
+  token: string,
+  tenantId: string,
+  params: { doctorUserId?: string; preferredDate?: string; status?: WaitlistStatus } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.doctorUserId) query.set("doctorUserId", params.doctorUserId);
+  if (params.preferredDate) query.set("preferredDate", params.preferredDate);
+  if (params.status) query.set("status", params.status);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<AppointmentWaitlist[]>(`/api/appointments/waitlist${suffix}`, { token, tenantId });
+}
+
+export async function createWaitlist(token: string, tenantId: string, body: AppointmentWaitlistInput) {
+  return httpPost<AppointmentWaitlist>("/api/appointments/waitlist", body, { token, tenantId });
+}
+
+export async function updateWaitlistStatus(token: string, tenantId: string, id: string, status: WaitlistStatus) {
+  return httpPatch<AppointmentWaitlist>(`/api/appointments/waitlist/${id}/status`, { status }, { token, tenantId });
 }
 
 export async function getConsultations(token: string, tenantId: string) {
@@ -1238,6 +1450,20 @@ export async function getDashboardSummary(token: string, tenantId: string) {
   return httpGet<DashboardSummary>("/api/dashboard/summary", { token, tenantId });
 }
 
+export async function getClinicDashboard(
+  token: string,
+  tenantId: string,
+  params: { date?: string; startDate?: string; endDate?: string; doctorUserId?: string } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.date) query.set("date", params.date);
+  if (params.startDate) query.set("startDate", params.startDate);
+  if (params.endDate) query.set("endDate", params.endDate);
+  if (params.doctorUserId) query.set("doctorUserId", params.doctorUserId);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<ClinicDashboard>(`/api/reports/clinic-dashboard${suffix}`, { token, tenantId });
+}
+
 function buildReportQuery(params: {
   from?: string | null;
   to?: string | null;
@@ -1326,6 +1552,10 @@ export async function deactivateMedicine(token: string, tenantId: string, id: st
   return httpPatch<Medicine>(`/api/medicines/${id}/deactivate`, undefined, { token, tenantId });
 }
 
+export async function activateMedicine(token: string, tenantId: string, id: string) {
+  return httpPatch<Medicine>(`/api/medicines/${id}/activate`, undefined, { token, tenantId });
+}
+
 export async function getStocks(token: string, tenantId: string) {
   return httpGet<Stock[]>("/api/inventory/stocks", { token, tenantId });
 }
@@ -1348,6 +1578,59 @@ export async function createInventoryTransaction(token: string, tenantId: string
 
 export async function getLowStock(token: string, tenantId: string) {
   return httpGet<LowStockItem[]>("/api/inventory/low-stock", { token, tenantId });
+}
+
+export async function getExpiredStock(token: string, tenantId: string) {
+  return httpGet<Stock[]>("/api/inventory/alerts/expired", { token, tenantId });
+}
+
+export async function getExpiringStock(token: string, tenantId: string, days = 30) {
+  return httpGet<Stock[]>(`/api/inventory/alerts/expiring?days=${days}`, { token, tenantId });
+}
+
+export type DispenseLine = {
+  itemId: string | null;
+  prescribedMedicineName: string;
+  medicineId: string | null;
+  prescribedQuantity: number;
+  dispensedQuantity: number;
+  status: "NOT_DISPENSED" | "PARTIALLY_DISPENSED" | "DISPENSED" | string;
+  availableQuantity: number | null;
+  lastBatchId: string | null;
+};
+
+export type PrescriptionDispense = {
+  prescriptionId: string;
+  prescriptionNumber: string;
+  patientId: string;
+  patientName: string | null;
+  billingStatus: "NOT_BILLED" | "BILLED" | "PAID" | string;
+  billedBillId: string | null;
+  lines: DispenseLine[];
+};
+
+export type DispenseInput = {
+  prescribedMedicineName: string;
+  medicineId: string | null;
+  quantity: number;
+  batchId: string | null;
+  allowBatchOverride: boolean;
+};
+
+export async function getDispensingQueue(token: string, tenantId: string) {
+  return httpGet<PrescriptionDispense[]>("/api/inventory/dispensing/queue", { token, tenantId });
+}
+
+export async function getPrescriptionDispense(token: string, tenantId: string, prescriptionId: string) {
+  return httpGet<PrescriptionDispense>(`/api/inventory/dispensing/${prescriptionId}`, { token, tenantId });
+}
+
+export async function dispensePrescriptionMedicine(token: string, tenantId: string, prescriptionId: string, body: DispenseInput) {
+  return httpPost<PrescriptionDispense>(`/api/inventory/dispensing/${prescriptionId}/dispense`, body, { token, tenantId });
+}
+
+export async function generateMedicineBillFromDispense(token: string, tenantId: string, prescriptionId: string) {
+  return httpPost<Bill>(`/api/inventory/dispensing/${prescriptionId}/bill`, {}, { token, tenantId });
 }
 
 export type PlatformTenant = {

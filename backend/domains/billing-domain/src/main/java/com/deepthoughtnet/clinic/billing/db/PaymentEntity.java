@@ -35,6 +35,9 @@ public class PaymentEntity {
     @Column(name = "payment_date", nullable = false)
     private LocalDate paymentDate;
 
+    @Column(name = "payment_datetime")
+    private OffsetDateTime paymentDateTime;
+
     @Column(nullable = false, precision = 18, scale = 2)
     private BigDecimal amount;
 
@@ -45,24 +48,38 @@ public class PaymentEntity {
     @Column(name = "reference_number", length = 128)
     private String referenceNumber;
 
+    @Column(name = "received_by")
+    private UUID receivedBy;
+
     @Column(columnDefinition = "text")
     private String notes;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
-    protected PaymentEntity() {
-    }
+    protected PaymentEntity() {}
 
-    public static PaymentEntity create(UUID tenantId, UUID billId, LocalDate paymentDate, BigDecimal amount, PaymentMode paymentMode, String referenceNumber, String notes) {
+    public static PaymentEntity create(
+            UUID tenantId,
+            UUID billId,
+            LocalDate paymentDate,
+            OffsetDateTime paymentDateTime,
+            BigDecimal amount,
+            PaymentMode paymentMode,
+            String referenceNumber,
+            UUID receivedBy,
+            String notes
+    ) {
         PaymentEntity entity = new PaymentEntity();
         entity.id = UUID.randomUUID();
         entity.tenantId = tenantId;
         entity.billId = billId;
-        entity.paymentDate = paymentDate == null ? LocalDate.now() : paymentDate;
+        entity.paymentDate = paymentDate == null ? (paymentDateTime == null ? LocalDate.now() : paymentDateTime.toLocalDate()) : paymentDate;
+        entity.paymentDateTime = paymentDateTime == null ? OffsetDateTime.now() : paymentDateTime;
         entity.amount = amount;
         entity.paymentMode = paymentMode;
         entity.referenceNumber = referenceNumber;
+        entity.receivedBy = receivedBy;
         entity.notes = notes;
         entity.createdAt = OffsetDateTime.now();
         return entity;
@@ -72,9 +89,11 @@ public class PaymentEntity {
     public UUID getTenantId() { return tenantId; }
     public UUID getBillId() { return billId; }
     public LocalDate getPaymentDate() { return paymentDate; }
+    public OffsetDateTime getPaymentDateTime() { return paymentDateTime; }
     public BigDecimal getAmount() { return amount; }
     public PaymentMode getPaymentMode() { return paymentMode; }
     public String getReferenceNumber() { return referenceNumber; }
+    public UUID getReceivedBy() { return receivedBy; }
     public String getNotes() { return notes; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
 }

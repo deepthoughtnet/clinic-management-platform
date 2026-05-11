@@ -8,7 +8,9 @@ import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.appointment.db.AppointmentEntity;
 import com.deepthoughtnet.clinic.appointment.db.AppointmentRepository;
+import com.deepthoughtnet.clinic.appointment.db.AppointmentWaitlistRepository;
 import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityRepository;
+import com.deepthoughtnet.clinic.appointment.db.DoctorUnavailabilityRepository;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatusUpdateCommand;
@@ -41,6 +43,10 @@ class AppointmentServiceStatusTransitionTest {
 
     @Mock
     private DoctorAvailabilityRepository doctorAvailabilityRepository;
+    @Mock
+    private DoctorUnavailabilityRepository doctorUnavailabilityRepository;
+    @Mock
+    private AppointmentWaitlistRepository appointmentWaitlistRepository;
 
     @Mock
     private PatientRepository patientRepository;
@@ -58,6 +64,8 @@ class AppointmentServiceStatusTransitionTest {
         service = new AppointmentService(
                 appointmentRepository,
                 doctorAvailabilityRepository,
+                doctorUnavailabilityRepository,
+                appointmentWaitlistRepository,
                 patientRepository,
                 tenantUserManagementService,
                 auditEventPublisher,

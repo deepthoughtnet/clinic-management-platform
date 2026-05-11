@@ -9,6 +9,9 @@ public record BillLineCommand(
         Integer quantity,
         BigDecimal unitPrice,
         UUID referenceId,
-        Integer sortOrder
+        Integer sortOrder,
+        BigDecimal lineDiscountAmount,
+        String batchNumber,
+        UUID dispensationReferenceId
 ) {
 }

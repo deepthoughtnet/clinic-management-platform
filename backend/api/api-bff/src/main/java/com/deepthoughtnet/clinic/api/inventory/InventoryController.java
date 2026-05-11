@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -32,7 +33,7 @@ public class InventoryController {
     }
 
     @GetMapping("/stocks")
-    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read') or @permissionChecker.hasPermission('billing.create')")
     public List<StockRecord> listStocks() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return inventoryService.listStocks(tenantId);
@@ -65,7 +66,7 @@ public class InventoryController {
     }
 
     @GetMapping("/transactions")
-    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read') or @permissionChecker.hasPermission('audit.read')")
     public List<InventoryTransactionRecord> listTransactions() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return inventoryService.listTransactions(tenantId);
@@ -76,5 +77,19 @@ public class InventoryController {
     public List<LowStockRecord> lowStock() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return inventoryService.listLowStock(tenantId);
+    }
+
+    @GetMapping("/alerts/expired")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read')")
+    public List<StockRecord> expired() {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return inventoryService.listExpiredStocks(tenantId);
+    }
+
+    @GetMapping("/alerts/expiring")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read')")
+    public List<StockRecord> expiring(@RequestParam(defaultValue = "30") int days) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return inventoryService.listExpiringStocks(tenantId, days);
     }
 }

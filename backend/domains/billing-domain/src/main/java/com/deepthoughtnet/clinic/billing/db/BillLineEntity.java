@@ -43,17 +43,25 @@ public class BillLineEntity {
     @Column(name = "unit_price", nullable = false, precision = 18, scale = 2)
     private BigDecimal unitPrice;
 
+    @Column(name = "line_discount_amount", nullable = false, precision = 18, scale = 2)
+    private BigDecimal lineDiscountAmount;
+
     @Column(name = "total_price", nullable = false, precision = 18, scale = 2)
     private BigDecimal totalPrice;
+
+    @Column(name = "batch_number", length = 128)
+    private String batchNumber;
 
     @Column(name = "reference_id")
     private UUID referenceId;
 
+    @Column(name = "dispensation_reference_id")
+    private UUID dispensationReferenceId;
+
     @Column(name = "sort_order", nullable = false)
     private Integer sortOrder;
 
-    protected BillLineEntity() {
-    }
+    protected BillLineEntity() {}
 
     public static BillLineEntity create(
             UUID tenantId,
@@ -62,8 +70,11 @@ public class BillLineEntity {
             String itemName,
             Integer quantity,
             BigDecimal unitPrice,
+            BigDecimal lineDiscountAmount,
             BigDecimal totalPrice,
+            String batchNumber,
             UUID referenceId,
+            UUID dispensationReferenceId,
             Integer sortOrder
     ) {
         BillLineEntity entity = new BillLineEntity();
@@ -74,8 +85,11 @@ public class BillLineEntity {
         entity.itemName = itemName;
         entity.quantity = quantity;
         entity.unitPrice = unitPrice;
+        entity.lineDiscountAmount = lineDiscountAmount == null ? BigDecimal.ZERO : lineDiscountAmount;
         entity.totalPrice = totalPrice;
+        entity.batchNumber = batchNumber;
         entity.referenceId = referenceId;
+        entity.dispensationReferenceId = dispensationReferenceId;
         entity.sortOrder = sortOrder == null ? 0 : sortOrder;
         return entity;
     }
@@ -87,7 +101,10 @@ public class BillLineEntity {
     public String getItemName() { return itemName; }
     public Integer getQuantity() { return quantity; }
     public BigDecimal getUnitPrice() { return unitPrice; }
+    public BigDecimal getLineDiscountAmount() { return lineDiscountAmount; }
     public BigDecimal getTotalPrice() { return totalPrice; }
+    public String getBatchNumber() { return batchNumber; }
     public UUID getReferenceId() { return referenceId; }
+    public UUID getDispensationReferenceId() { return dispensationReferenceId; }
     public Integer getSortOrder() { return sortOrder; }
 }

@@ -11,6 +11,9 @@ public record BillLineResponse(
         BigDecimal unitPrice,
         BigDecimal totalPrice,
         String referenceId,
+        BigDecimal lineDiscountAmount,
+        String batchNumber,
+        String dispensationReferenceId,
         Integer sortOrder
 ) {
 }

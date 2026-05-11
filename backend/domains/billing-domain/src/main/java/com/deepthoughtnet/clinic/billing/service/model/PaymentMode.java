@@ -4,6 +4,7 @@ public enum PaymentMode {
     CASH,
     CARD,
     UPI,
+    INSURANCE,
     PAYTM,
     PHONEPE,
     GOOGLE_PAY,
