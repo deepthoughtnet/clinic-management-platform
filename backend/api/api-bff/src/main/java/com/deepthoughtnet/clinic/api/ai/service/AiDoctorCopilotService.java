@@ -24,13 +24,16 @@ public class AiDoctorCopilotService {
     private final AiOrchestrationService aiOrchestrationService;
     private final ObjectMapper objectMapper;
     private final boolean enabled;
+    private final int consultationMaxOutputTokens;
 
     public AiDoctorCopilotService(AiOrchestrationService aiOrchestrationService,
                                   ObjectMapper objectMapper,
-                                  @Value("${clinic.ai.enabled:false}") boolean enabled) {
+                                  @Value("${clinic.ai.enabled:false}") boolean enabled,
+                                  @Value("${clinic.ai.consultation.max-output-tokens:${GEMINI_MAX_OUTPUT_TOKENS:2048}}") int consultationMaxOutputTokens) {
         this.aiOrchestrationService = aiOrchestrationService;
         this.objectMapper = objectMapper;
         this.enabled = enabled;
+        this.consultationMaxOutputTokens = Math.max(1024, consultationMaxOutputTokens);
     }
 
     public AiDraftResponse draft(AiTaskType taskType,
@@ -54,7 +57,7 @@ public class AiDoctorCopilotService {
                 promptTemplateCode,
                 input,
                 evidence,
-                800,
+                consultationMaxOutputTokens,
                 0.1d,
                 correlationId,
                 useCaseCode

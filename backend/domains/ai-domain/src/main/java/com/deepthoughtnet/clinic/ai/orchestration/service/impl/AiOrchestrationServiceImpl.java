@@ -294,6 +294,28 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         String jsonCandidate = extractJsonCandidate(raw);
         try {
             JsonNode root = objectMapper.readTree(jsonCandidate);
+            if (root.isArray()) {
+                JsonNode normalized = normalizeArrayOutput(root);
+                String answer = text(normalized, "summary");
+                if (answer == null) {
+                    answer = text(normalized, "answer");
+                }
+                List<String> suggestions = new ArrayList<>(strings(normalized, "recommendedInvestigations"));
+                suggestions.addAll(strings(normalized, "followUpSuggestions"));
+                List<String> limitations = new ArrayList<>(strings(normalized, "safetyNotes"));
+                String safetyNote = text(normalized, "safetyNote");
+                if (safetyNote != null) {
+                    limitations.add(safetyNote);
+                }
+                return new ParsedOutput(
+                        answer == null ? "AI diagnosis suggestions generated. Please review." : answer,
+                        normalized.toString(),
+                        suggestions,
+                        limitations,
+                        response.confidence(),
+                        raw
+                );
+            }
             if (!root.isObject()) {
                 log.warn("AI provider returned non-object JSON. provider={}", response.providerName());
                 String structured = fallbackStructuredJson(raw);
@@ -315,8 +337,20 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
             return new ParsedOutput(answer == null ? raw : answer, root.toString(), suggestions, limitations,
                     confidence == null ? response.confidence() : confidence, raw);
         } catch (Exception ex) {
+            boolean likelyTruncatedJson = looksLikeJson(raw);
             log.warn("AI provider response parsing fallback used. provider={}, error={}, rawPreview=\"{}\"",
                     response.providerName(), safeMessage(ex), trimTo(raw.replaceAll("[\\r\\n\\t]+", " "), 300));
+            if (likelyTruncatedJson) {
+                String structured = incompleteStructuredJson();
+                return new ParsedOutput(
+                        "AI response was incomplete. Please retry.",
+                        structured,
+                        List.of(),
+                        List.of("AI suggestions are assistive only and must be reviewed."),
+                        response.confidence(),
+                        "AI response was incomplete. Please retry."
+                );
+            }
             String structured = fallbackStructuredJson(raw);
             return new ParsedOutput(raw, structured, List.of(), List.of("AI returned unstructured text. Please review carefully."), response.confidence(), raw);
         }
@@ -341,14 +375,88 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         return trimmed;
     }
 
+    private JsonNode normalizeArrayOutput(JsonNode arrayNode) {
+        List<Map<String, Object>> normalized = new ArrayList<>();
+        for (JsonNode item : arrayNode) {
+            if (!item.isObject()) {
+                continue;
+            }
+            String diagnosis = firstNonBlank(
+                    text(item, "diagnosis"),
+                    text(item, "condition"),
+                    text(item, "name")
+            );
+            if (diagnosis == null) {
+                diagnosis = "Condition";
+            }
+            String reason = firstNonBlank(
+                    text(item, "reason"),
+                    text(item, "reasoning")
+            );
+            List<String> redFlags = new ArrayList<>(strings(item, "redFlags"));
+            if (redFlags.isEmpty()) {
+                redFlags.addAll(strings(item, "redFlagExclusions"));
+            }
+
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("diagnosis", diagnosis);
+            row.put("reason", reason == null ? "" : reason);
+            row.put("redFlags", redFlags);
+            normalized.add(row);
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", normalized.isEmpty() ? "AI returned structured array output without usable diagnosis items." : "AI diagnosis suggestions generated. Please review.");
+        payload.put("suggestions", normalized);
+        payload.put("recommendedInvestigations", List.of());
+        payload.put("followUpSuggestions", List.of());
+        payload.put("safetyNote", "AI suggestions are assistive only and must be reviewed.");
+        payload.put("safetyNotes", List.of("AI suggestions are assistive only and must be reviewed."));
+        return objectMapper.valueToTree(payload);
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return null;
+    }
+
     private String fallbackStructuredJson(String summary) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("summary", summary == null ? "" : summary.trim());
+        payload.put("suggestions", List.of());
+        payload.put("safetyNote", "AI suggestions are assistive only and must be reviewed.");
         payload.put("possibleDiagnosisCategories", List.of());
         payload.put("recommendedInvestigations", List.of());
         payload.put("followUpSuggestions", List.of());
         payload.put("safetyNotes", List.of("AI returned unstructured text. Please review carefully."));
         return safeJson(payload);
+    }
+
+    private String incompleteStructuredJson() {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", "AI response was incomplete. Please retry.");
+        payload.put("suggestions", List.of());
+        payload.put("safetyNote", "AI suggestions are assistive only and must be reviewed.");
+        payload.put("possibleDiagnosisCategories", List.of());
+        payload.put("recommendedInvestigations", List.of());
+        payload.put("followUpSuggestions", List.of());
+        payload.put("safetyNotes", List.of("AI response was incomplete. Please retry.", "AI suggestions are assistive only and must be reviewed."));
+        return safeJson(payload);
+    }
+
+    private boolean looksLikeJson(String raw) {
+        if (raw == null) {
+            return false;
+        }
+        String trimmed = raw.trim();
+        return trimmed.startsWith("{") || trimmed.startsWith("[");
     }
 
     private String requestHash(AiOrchestrationRequest request, AiPromptTemplateDefinition template, String evidenceSummary) {

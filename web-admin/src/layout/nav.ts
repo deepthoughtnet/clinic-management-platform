@@ -18,6 +18,7 @@ export const NAV: NavItem[] = [
   { key: "dashboard", label: "Dashboard", path: "/", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_ASSISTANT", "PHARMA", "PHARMACY", "PHARMACIST"] },
   { key: "patients", label: "Patients", path: "/patients", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"] },
   { key: "appointments", label: "Appointments", path: "/appointments", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"] },
+  { key: "doctor-availability", label: "Doctor Availability", path: "/doctors/availability", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "AUDITOR"] },
   { key: "queue", label: "My Queue", path: "/queue", requiresTenant: true, rolesAny: ["DOCTOR"] },
   { key: "queue-ops", label: "Queue", path: "/queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST"] },
   { key: "consultations", label: "Consultations", path: "/consultations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "AUDITOR"] },

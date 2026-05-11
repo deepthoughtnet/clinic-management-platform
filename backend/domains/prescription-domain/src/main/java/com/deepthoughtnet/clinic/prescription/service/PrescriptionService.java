@@ -29,11 +29,13 @@ import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionUpsertCo
 import com.deepthoughtnet.clinic.prescription.service.model.Timing;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +48,7 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.springframework.stereotype.Service;
@@ -599,55 +602,55 @@ public class PrescriptionService {
                 .filter(item -> !item.id().equals(entity.getConsultationId()))
                 .findFirst()
                 .orElse(null);
+        PrescriptionPdfViewModel vm = buildPdfViewModel(tenantName, record, consultation, previousConsultation, data, template);
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            PDPage page = new PDPage(PDRectangle.A4);
-            document.addPage(page);
-            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
-                float margin = 36;
-                float y = page.getMediaBox().getHeight() - margin;
-                float[] primary = parseRgb(template.primaryColor(), 15, 118, 110);
-                float[] accent = parseRgb(template.accentColor(), 224, 242, 241);
-                drawHeaderBand(content, page, primary);
-                if (StringUtils.hasText(template.watermarkText())) {
-                    writeLine(content, template.watermarkText(), 42, 170, 430, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+            float margin = 42f;
+            float contentWidth = PDRectangle.A4.getWidth() - (margin * 2);
+            float[] primary = parseRgb(template.primaryColor(), 15, 118, 110);
+            float[] accent = parseRgb(template.accentColor(), 224, 242, 241);
+            PdfRenderState state = new PdfRenderState(document, margin, primary, accent);
+            try {
+                state.startPage();
+                state.y = drawPremiumHeader(state, vm, template);
+                state.y = drawPatientInfoGrid(state, vm, contentWidth);
+
+                state.y = drawSectionHeader(state, "History & Previous Records", contentWidth);
+                List<String> historyLines = vm.historyItems();
+                if (historyLines.isEmpty()) {
+                    historyLines = List.of("No significant previous records available.");
                 }
-                y = drawPremiumHeader(content, page, margin, y, tenantName, data, record, template, primary);
-                y = drawPatientInfoGrid(content, margin, y, 523, record, data, accent);
-                y -= 6;
-                y = drawSection(content, "History & Previous Records", margin, y, primary);
-                y = writeWrapped(content, historySummary(record, data, previousConsultation), 8.8f, margin, y, 523);
-                y -= 6;
-                y = drawSection(content, "Visit Summary", margin, y, primary);
-                y = writeWrapped(content, visitSummary(record, consultation), 8.8f, margin, y, 523);
-                y -= 6;
-                y = drawSection(content, "Prescription", margin, y, primary);
-                y = drawMedicineTable(content, margin, y, 523, record.medicines(), primary, accent);
-                y -= 4;
-                if (!record.recommendedTests().isEmpty()) {
-                    y = drawSection(content, "Investigations / Tests Recommended", margin, y, primary);
-                    for (PrescriptionTestRecord test : record.recommendedTests()) {
-                        y = writeWrapped(content, "• " + safe(test.testName()) + (test.instructions() == null ? "" : " - " + test.instructions()), 8.8f, margin, y, 523);
-                    }
+                state.y = drawBullets(state, historyLines, contentWidth);
+
+                state.y = drawSectionHeader(state, "Visit Summary", contentWidth);
+                state.y = drawVisitSummary(state, vm, contentWidth);
+
+                state.y = drawSectionHeader(state, "Prescription Medicines", contentWidth);
+                state.y = drawMedicineTable(state, vm.medicines(), contentWidth);
+
+                if (!vm.investigations().isEmpty()) {
+                    state.y = drawSectionHeader(state, "Investigations / Tests Recommended", contentWidth);
+                    state.y = drawBullets(state, vm.investigations(), contentWidth);
                 }
-                y -= 6;
-                y = drawSection(content, "Advice & Follow-up", margin, y, primary);
-                y = writeWrapped(content, "• " + (StringUtils.hasText(record.advice()) ? record.advice() : "No additional advice recorded."), 8.8f, margin, y, 523);
-                if (record.followUpDate() != null) {
-                    y = writeWrapped(content, "• Follow-up Date: " + record.followUpDate(), 8.8f, margin, y, 523);
+
+                state.y = drawSectionHeader(state, "Advice & Follow-up", contentWidth);
+                List<String> advice = vm.adviceItems();
+                if (advice.isEmpty()) {
+                    advice = List.of("No additional advice recorded.");
                 }
-                y -= 30;
-                writeLine(content, "__________________________", 9, 390, Math.max(y, 96), new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-                writeLine(content, signatureText(template, record), 9, 390, Math.max(y, 84), new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                if (template.showQrCode()) {
-                    drawQrPlaceholder(content, 472, 70);
+                state.y = writeWrapped(state, "Advice:", 9.2f, margin, contentWidth, true);
+                state.y = drawBullets(state, advice, contentWidth);
+                if (StringUtils.hasText(vm.followUpDate())) {
+                    state.y = writeWrapped(state, "Follow-up:", 9.2f, margin, contentWidth, true);
+                    state.y = drawBullets(state, List.of(vm.followUpDate()), contentWidth);
                 }
-                if (StringUtils.hasText(template.disclaimer())) {
-                    writeWrapped(content, "Disclaimer: " + template.disclaimer(), 7, margin, 54, 420);
+                if (!vm.emergencyWarnings().isEmpty()) {
+                    state.y = writeWrapped(state, "Emergency warning:", 9.2f, margin, contentWidth, true);
+                    state.y = drawBullets(state, vm.emergencyWarnings(), contentWidth);
                 }
-                if (StringUtils.hasText(template.footerText())) {
-                    writeLine(content, template.footerText(), 8, margin, 32, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-                }
-                writeLine(content, "Generated: " + OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")), 8, margin, 20, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+
+                drawFooter(state, contentWidth, template, vm.signatureLine(), vm.doctorName());
+            } finally {
+                state.close();
             }
             document.save(output);
             return new PrescriptionPdf((preview ? "preview-" : "") + safeFilename(record.prescriptionNumber()) + ".pdf", output.toByteArray());
@@ -663,20 +666,6 @@ public class PrescriptionService {
         return createPdf(tenantName, sample, emptyData, template, true);
     }
 
-    private void drawHeaderBand(PDPageContentStream content, PDPage page, float[] rgb) throws IOException {
-        content.setNonStrokingColor(rgb[0], rgb[1], rgb[2]);
-        content.addRect(0, page.getMediaBox().getHeight() - 16, page.getMediaBox().getWidth(), 16);
-        content.fill();
-        content.setNonStrokingColor(0, 0, 0);
-    }
-
-    private void drawQrPlaceholder(PDPageContentStream content, float x, float y) throws IOException {
-        content.setStrokingColor(0, 0, 0);
-        content.addRect(x, y, 58, 58);
-        content.stroke();
-        writeLine(content, "QR", 16, x + 17, y + 23, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-    }
-
     private float[] parseRgb(String hex, int fallbackR, int fallbackG, int fallbackB) {
         if (!StringUtils.hasText(hex) || !hex.matches("^#[0-9A-Fa-f]{6}$")) {
             return new float[]{fallbackR / 255f, fallbackG / 255f, fallbackB / 255f};
@@ -687,18 +676,22 @@ public class PrescriptionService {
         return new float[]{r / 255f, g / 255f, b / 255f};
     }
 
-    private float writeWrapped(PDPageContentStream content, String text, float fontSize, float x, float y, float maxWidth) throws IOException {
+    private float writeWrapped(PdfRenderState state, String text, float fontSize, float x, float maxWidth, boolean bold) throws IOException {
         if (!StringUtils.hasText(text)) {
-            return y;
+            return state.y;
         }
-        for (String line : wrap(text, 92)) {
-            writeLine(content, line, fontSize, x, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-            y -= fontSize + 3;
+        PDFont font = bold
+                ? new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD)
+                : new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+        for (String line : wrap(text, font, fontSize, maxWidth)) {
+            state.ensureSpace(fontSize + 4);
+            writeLine(state.content, line, fontSize, x, state.y, font);
+            state.y -= fontSize + 3;
         }
-        return y;
+        return state.y;
     }
 
-    private void writeLine(PDPageContentStream content, String text, float fontSize, float x, float y, PDType1Font font) throws IOException {
+    private void writeLine(PDPageContentStream content, String text, float fontSize, float x, float y, PDFont font) throws IOException {
         content.beginText();
         content.setFont(font, fontSize);
         content.newLineAtOffset(x, y);
@@ -706,13 +699,21 @@ public class PrescriptionService {
         content.endText();
     }
 
-    private List<String> wrap(String text, int maxChars) {
-        List<String> lines = new java.util.ArrayList<>();
+    private List<String> wrap(String text, PDFont font, float fontSize, float maxWidth) throws IOException {
+        List<String> lines = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         for (String word : text.split("\\s+")) {
+            if (textWidth(font, fontSize, word) > maxWidth) {
+                if (current.length() > 0) {
+                    lines.add(current.toString());
+                    current.setLength(0);
+                }
+                lines.addAll(splitLongWord(word, font, fontSize, maxWidth));
+                continue;
+            }
             if (current.length() == 0) {
                 current.append(word);
-            } else if (current.length() + 1 + word.length() <= maxChars) {
+            } else if (textWidth(font, fontSize, current + " " + word) <= maxWidth) {
                 current.append(' ').append(word);
             } else {
                 lines.add(current.toString());
@@ -726,120 +727,282 @@ public class PrescriptionService {
         return lines;
     }
 
-    private String patientSummary(PrescriptionRecord record, PrescriptionData data) {
-        PatientEntity patient = data.patients().get(record.patientId());
-        if (patient == null) {
-            return "Age/Gender/Mobile not available";
+    private List<String> splitLongWord(String word, PDFont font, float fontSize, float maxWidth) throws IOException {
+        List<String> pieces = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (int i = 0; i < word.length(); i++) {
+            current.append(word.charAt(i));
+            if (textWidth(font, fontSize, current.toString()) > maxWidth) {
+                if (current.length() == 1) {
+                    pieces.add(current.toString());
+                    current.setLength(0);
+                } else {
+                    char last = current.charAt(current.length() - 1);
+                    current.setLength(current.length() - 1);
+                    pieces.add(current.toString());
+                    current.setLength(0);
+                    current.append(last);
+                }
+            }
         }
-        String age = patient.getAgeYears() == null ? "N/A" : String.valueOf(patient.getAgeYears());
-        String gender = patient.getGender() == null ? "UNKNOWN" : patient.getGender().name();
-        return "Age: " + age + " | Gender: " + gender + " | Mobile: " + safe(patient.getMobile());
+        if (current.length() > 0) {
+            pieces.add(current.toString());
+        }
+        return pieces;
     }
-
-    private float drawPremiumHeader(PDPageContentStream content, PDPage page, float margin, float y, String tenantName, PrescriptionData data, PrescriptionRecord record, PrescriptionTemplateConfig template, float[] primary) throws IOException {
-        float iconX = margin;
-        float iconY = y - 38;
-        content.setStrokingColor(primary[0], primary[1], primary[2]);
-        content.addRect(iconX, iconY, 34, 34);
+    private float drawPremiumHeader(PdfRenderState state, PrescriptionPdfViewModel vm, PrescriptionTemplateConfig template) throws IOException {
+        state.ensureSpace(108);
+        PDPageContentStream content = state.content;
+        float y = state.y;
+        float x = state.margin;
+        content.setStrokingColor(state.primary[0], state.primary[1], state.primary[2]);
+        content.addRect(x, y - 36, 36, 36);
         content.stroke();
-        writeLine(content, "+", 17, iconX + 12, iconY + 8, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        float textX = iconX + 42;
-        writeLine(content, StringUtils.hasText(data.clinicDisplayName()) ? data.clinicDisplayName() : tenantName, 15, textX, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        y -= 14;
-        writeLine(content, safe(record.doctorName()), 9.5f, textX, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeLine(content, "+", 16, x + 13, y - 24, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        float textX = x + 48;
+        writeLine(content, cleanText(vm.clinicName()), 17, textX, y - 2, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        y -= 18;
+        String doctorName = cleanText(vm.doctorName());
+        String doctorLine = StringUtils.hasText(doctorName) ? "Dr. " + doctorName : "Doctor";
+        writeLine(content, doctorLine, 10.6f, textX, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
         y -= 12;
-        if (StringUtils.hasText(template.doctorSignatureText())) {
-            writeLine(content, template.doctorSignatureText(), 8.8f, textX, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-            y -= 12;
+        String signature = cleanText(template.doctorSignatureText());
+        if (StringUtils.hasText(signature)) {
+            writeLine(content, signature, 9f, textX, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            y -= 10;
         }
-        String contactLine = Stream.of(data.clinicPhone(), data.clinicEmail(), data.clinicAddress())
+        String contactLine = Stream.of(cleanText(vm.clinicPhone()), cleanText(vm.clinicEmail()), cleanText(vm.clinicAddress()))
                 .filter(StringUtils::hasText)
                 .collect(Collectors.joining(" | "));
-        writeLine(content, contactLine, 8.5f, textX, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-        y -= 8;
-        content.setStrokingColor(primary[0], primary[1], primary[2]);
-        content.moveTo(margin, y);
-        content.lineTo(page.getMediaBox().getWidth() - margin, y);
+        if (StringUtils.hasText(contactLine)) {
+            state.y = y;
+            y = writeWrapped(state, contactLine, 8.8f, textX, 460, false);
+        }
+        y -= 6;
+        content.setStrokingColor(state.primary[0], state.primary[1], state.primary[2]);
+        content.moveTo(state.margin, y);
+        content.lineTo(state.page.getMediaBox().getWidth() - state.margin, y);
         content.stroke();
         content.setStrokingColor(0, 0, 0);
-        return y - 12;
+        return y - 14;
     }
 
-    private float drawPatientInfoGrid(PDPageContentStream content, float x, float y, float width, PrescriptionRecord record, PrescriptionData data, float[] accent) throws IOException {
-        float rowHeight = 16;
-        float[] col = new float[]{0.28f, 0.22f, 0.25f, 0.25f};
+    private float drawPatientInfoGrid(PdfRenderState state, PrescriptionPdfViewModel vm, float width) throws IOException {
+        state.ensureSpace(102);
+        float y = state.y;
+        float headerHeight = 15f;
+        float[] col = new float[]{0.28f, 0.22f, 0.24f, 0.26f};
         String[] headers = new String[]{"Patient Name", "Age / Gender", "Patient ID", "Visit Date"};
-        String[] values = new String[]{safe(record.patientName()), ageGender(record, data), safe(record.patientNumber()), OffsetDateTime.now().toLocalDate().toString()};
-        float currentX = x;
-        content.setNonStrokingColor(accent[0], accent[1], accent[2]);
-        content.addRect(x, y - rowHeight, width, rowHeight);
-        content.fill();
-        content.setNonStrokingColor(0, 0, 0);
-        for (int i = 0; i < headers.length; i++) {
-            float cellWidth = width * col[i];
-            content.addRect(currentX, y - rowHeight * 2, cellWidth, rowHeight * 2);
-            content.stroke();
-            writeLine(content, headers[i], 8.2f, currentX + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-            writeLine(content, values[i], 8.3f, currentX + 4, y - 27, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-            currentX += cellWidth;
+        String[] values = new String[]{
+                cleanText(vm.patientName()),
+                cleanText(vm.patientAgeGender()),
+                cleanText(vm.patientId()),
+                cleanText(vm.visitDate())
+        };
+        PDFont bodyFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+        List<List<String>> valueLines = new ArrayList<>();
+        int maxValueLines = 1;
+        for (int i = 0; i < values.length; i++) {
+            List<String> wrapped = wrap(cleanText(values[i]), bodyFont, 8.8f, (width * col[i]) - 10);
+            if (wrapped.isEmpty()) {
+                wrapped = List.of("");
+            }
+            valueLines.add(wrapped);
+            maxValueLines = Math.max(maxValueLines, wrapped.size());
         }
-        return y - (rowHeight * 2) - 6;
+        float valueHeight = Math.max(18f, 8f + (maxValueLines * 10f));
+        float totalRowHeight = headerHeight + valueHeight;
+
+        state.content.setNonStrokingColor(state.accent[0], state.accent[1], state.accent[2]);
+        state.content.addRect(state.margin, y - headerHeight, width, headerHeight);
+        state.content.fill();
+        state.content.setNonStrokingColor(0, 0, 0);
+        float cx = state.margin;
+        for (int i = 0; i < headers.length; i++) {
+            float cell = width * col[i];
+            state.content.addRect(cx, y - totalRowHeight, cell, totalRowHeight);
+            state.content.stroke();
+            writeLine(state.content, headers[i], 8.8f, cx + 5, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+            float textY = y - headerHeight - 10;
+            for (String line : valueLines.get(i)) {
+                writeLine(state.content, line, 8.8f, cx + 5, textY, bodyFont);
+                textY -= 10f;
+            }
+            cx += cell;
+        }
+        y -= totalRowHeight + 6;
+        state.y = y;
+
+        String[] moreHeaders = new String[]{"Mobile", "Appointment ID", "Consultation ID", "Doctor"};
+        String[] moreValues = new String[]{
+                cleanText(vm.patientMobile()),
+                cleanText(vm.appointmentId()),
+                cleanText(vm.consultationId()),
+                cleanText(vm.doctorName())
+        };
+        boolean hasSecondaryRow = Stream.of(moreValues).anyMatch(StringUtils::hasText);
+        if (!hasSecondaryRow) {
+            return y - 4;
+        }
+        List<List<String>> moreLines = new ArrayList<>();
+        int maxMoreLines = 1;
+        for (int i = 0; i < moreValues.length; i++) {
+            List<String> wrapped = wrap(cleanText(moreValues[i]), bodyFont, 8.8f, (width * col[i]) - 10);
+            if (wrapped.isEmpty()) {
+                wrapped = List.of("");
+            }
+            moreLines.add(wrapped);
+            maxMoreLines = Math.max(maxMoreLines, wrapped.size());
+        }
+        float moreValueHeight = Math.max(18f, 8f + (maxMoreLines * 10f));
+        float moreTotalHeight = headerHeight + moreValueHeight;
+        state.ensureSpace(moreTotalHeight + 4);
+        y = state.y;
+        state.content.setNonStrokingColor(state.accent[0], state.accent[1], state.accent[2]);
+        state.content.addRect(state.margin, y - headerHeight, width, headerHeight);
+        state.content.fill();
+        state.content.setNonStrokingColor(0, 0, 0);
+        cx = state.margin;
+        for (int i = 0; i < moreHeaders.length; i++) {
+            float cell = width * col[i];
+            state.content.addRect(cx, y - moreTotalHeight, cell, moreTotalHeight);
+            state.content.stroke();
+            writeLine(state.content, moreHeaders[i], 8.8f, cx + 5, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+            float textY = y - headerHeight - 10;
+            for (String line : moreLines.get(i)) {
+                writeLine(state.content, line, 8.8f, cx + 5, textY, bodyFont);
+                textY -= 10f;
+            }
+            cx += cell;
+        }
+        state.y = y - moreTotalHeight - 12;
+        return state.y;
     }
 
-    private float drawSection(PDPageContentStream content, String title, float x, float y, float[] primary) throws IOException {
-        content.setNonStrokingColor(primary[0], primary[1], primary[2]);
-        content.addRect(x, y - 10, 523, 10);
-        content.fill();
-        content.setNonStrokingColor(1f, 1f, 1f);
-        writeLine(content, title, 8.5f, x + 4, y - 8, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        content.setNonStrokingColor(0, 0, 0);
-        return y - 15;
+    private float drawSectionHeader(PdfRenderState state, String title, float width) throws IOException {
+        state.y -= 10;
+        state.ensureSpace(26);
+        float y = state.y;
+        state.content.setNonStrokingColor(state.primary[0], state.primary[1], state.primary[2]);
+        state.content.addRect(state.margin, y - 14, width, 14);
+        state.content.fill();
+        state.content.setNonStrokingColor(1f, 1f, 1f);
+        writeLine(state.content, title, 9.4f, state.margin + 6, y - 10.5f, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        state.content.setNonStrokingColor(0, 0, 0);
+        state.y = y - 22;
+        return state.y;
     }
 
-    private float drawMedicineTable(PDPageContentStream content, float x, float y, float width, List<PrescriptionMedicineRecord> medicines, float[] primary, float[] accent) throws IOException {
-        String[] headers = new String[]{"Medicine", "Dosage", "Instructions", "Duration"};
-        float[] col = new float[]{0.27f, 0.15f, 0.43f, 0.15f};
-        float rowHeight = 15;
-        content.setNonStrokingColor(primary[0], primary[1], primary[2]);
-        content.addRect(x, y - rowHeight, width, rowHeight);
-        content.fill();
-        content.setNonStrokingColor(1f, 1f, 1f);
-        float cx = x;
-        for (int i = 0; i < headers.length; i++) {
-            writeLine(content, headers[i], 8.2f, cx + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-            cx += width * col[i];
+    private float drawBullets(PdfRenderState state, List<String> lines, float width) throws IOException {
+        for (String line : lines) {
+            String text = cleanText(line);
+            if (!StringUtils.hasText(text)) {
+                continue;
+            }
+            writeWrapped(state, "• " + text, 9f, state.margin + 10, width - 10, false);
         }
-        content.setNonStrokingColor(0, 0, 0);
-        y -= rowHeight;
+        state.y -= 3;
+        return state.y;
+    }
+
+    private float drawVisitSummary(PdfRenderState state, PrescriptionPdfViewModel vm, float width) throws IOException {
+        writeWrapped(state, "Chief Complaint:", 9.2f, state.margin, width, true);
+        drawBullets(state, vm.chiefComplaint().isEmpty() ? List.of("Not recorded.") : vm.chiefComplaint(), width);
+        writeWrapped(state, "Symptoms:", 9.2f, state.margin, width, true);
+        drawBullets(state, vm.symptoms().isEmpty() ? List.of("Not recorded.") : vm.symptoms(), width);
+        writeWrapped(state, "Vitals:", 9.2f, state.margin, width, true);
+        drawBullets(state, vm.vitals().isEmpty() ? List.of("No vitals recorded.") : vm.vitals(), width);
+        writeWrapped(state, "Diagnosis:", 9.2f, state.margin, width, true);
+        drawBullets(state, vm.diagnoses().isEmpty() ? List.of("Not recorded.") : vm.diagnoses(), width);
+        writeWrapped(state, "Clinical Notes:", 9.2f, state.margin, width, true);
+        drawBullets(state, vm.clinicalNotes().isEmpty() ? List.of("No clinical notes recorded.") : vm.clinicalNotes(), width);
+        state.y -= 4;
+        return state.y;
+    }
+
+    private float drawMedicineTable(PdfRenderState state, List<PrescriptionMedicineRecord> medicines, float width) throws IOException {
+        String[] headers = new String[]{"Medicine", "Dosage", "Frequency / Timing", "Instructions", "Duration"};
+        float[] columns = new float[]{0.28f, 0.14f, 0.2f, 0.25f, 0.13f};
+        float headerHeight = 18f;
+        state.ensureSpace(headerHeight + 14);
+        float y = state.y;
+
+        drawMedicineTableHeader(state, headers, columns, width, y, headerHeight);
+        y -= headerHeight;
+
         if (medicines.isEmpty()) {
-            content.addRect(x, y - rowHeight, width, rowHeight);
-            content.stroke();
-            writeLine(content, "No medicines prescribed.", 8.5f, x + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE));
-            return y - rowHeight - 2;
+            state.ensureSpace(18);
+            state.content.addRect(state.margin, y - 16, width, 16);
+            state.content.stroke();
+            writeLine(state.content, "No medicines prescribed.", 8.8f, state.margin + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE));
+            return y - 20;
         }
+
         for (int i = 0; i < medicines.size(); i++) {
             PrescriptionMedicineRecord medicine = medicines.get(i);
-            if (i % 2 == 1) {
-                content.setNonStrokingColor(accent[0], accent[1], accent[2]);
-                content.addRect(x, y - rowHeight, width, rowHeight);
-                content.fill();
-                content.setNonStrokingColor(0, 0, 0);
+            List<List<String>> cells = List.of(
+                    wrap(cleanText(mergeWithSpace(medicine.medicineName(), medicine.strength())), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width * columns[0] - 10),
+                    wrap(cleanText(medicine.dosage()), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width * columns[1] - 10),
+                    wrap(cleanText(mergeWithPipe(medicine.frequency(), medicine.timing() == null ? null : medicine.timing().name().replace('_', ' '))), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width * columns[2] - 10),
+                    wrap(cleanText(medicine.instructions()), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width * columns[3] - 10),
+                    wrap(cleanText(medicine.duration()), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.8f, width * columns[4] - 10)
+            );
+            int lines = cells.stream().mapToInt(List::size).max().orElse(1);
+            float rowHeight = Math.max(20f, 8f + (lines * 10f));
+            state.ensureSpace(rowHeight + 2);
+            if (state.y != y) {
+                y = state.y;
+                drawMedicineTableHeader(state, headers, columns, width, y, headerHeight);
+                y -= headerHeight;
             }
-            content.addRect(x, y - rowHeight, width, rowHeight);
-            content.stroke();
-            String medicineName = Stream.of(safe(medicine.medicineName()), safe(medicine.strength())).filter(StringUtils::hasText).collect(Collectors.joining(" "));
-            String instruction = Stream.of(safe(medicine.frequency()), safe(medicine.instructions()), medicine.timing() == null ? null : medicine.timing().name().replace('_', ' ')).filter(StringUtils::hasText).collect(Collectors.joining(" | "));
-            cx = x;
-            writeLine(content, medicineName, 8f, cx + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-            cx += width * col[0];
-            writeLine(content, safe(medicine.dosage()), 8f, cx + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-            cx += width * col[1];
-            writeLine(content, instruction, 8f, cx + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-            cx += width * col[2];
-            writeLine(content, safe(medicine.duration()), 8f, cx + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+
+            if (i % 2 == 1) {
+                state.content.setNonStrokingColor(state.accent[0], state.accent[1], state.accent[2]);
+                state.content.addRect(state.margin, y - rowHeight, width, rowHeight);
+                state.content.fill();
+                state.content.setNonStrokingColor(0, 0, 0);
+            }
+            drawRowBorders(state, columns, width, y, rowHeight);
+            float cx = state.margin;
+            for (int col = 0; col < cells.size(); col++) {
+                float textY = y - 12;
+                for (String line : cells.get(col)) {
+                    writeLine(state.content, line, 8.8f, cx + 5, textY, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+                    textY -= 10f;
+                }
+                cx += width * columns[col];
+            }
             y -= rowHeight;
+            state.y = y;
         }
-        return y - 2;
+        return y - 4;
+    }
+
+    private void drawMedicineTableHeader(PdfRenderState state, String[] headers, float[] columns, float width, float y, float rowHeight) throws IOException {
+        state.content.setNonStrokingColor(state.primary[0], state.primary[1], state.primary[2]);
+        state.content.addRect(state.margin, y - rowHeight, width, rowHeight);
+        state.content.fill();
+        state.content.setNonStrokingColor(1f, 1f, 1f);
+        float cx = state.margin;
+        for (int i = 0; i < headers.length; i++) {
+            writeLine(state.content, headers[i], 8.8f, cx + 5, y - 12, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+            cx += width * columns[i];
+        }
+        state.content.setNonStrokingColor(0, 0, 0);
+        drawRowBorders(state, columns, width, y, rowHeight);
+        state.y = y - rowHeight;
+    }
+
+    private void drawRowBorders(PdfRenderState state, float[] columns, float width, float y, float rowHeight) throws IOException {
+        state.content.addRect(state.margin, y - rowHeight, width, rowHeight);
+        state.content.stroke();
+        float cx = state.margin;
+        for (int i = 0; i < columns.length - 1; i++) {
+            cx += width * columns[i];
+            state.content.moveTo(cx, y);
+            state.content.lineTo(cx, y - rowHeight);
+            state.content.stroke();
+        }
     }
 
     private String ageGender(PrescriptionRecord record, PrescriptionData data) {
@@ -852,45 +1015,259 @@ public class PrescriptionService {
         return age + " / " + gender;
     }
 
-    private String historySummary(PrescriptionRecord record, PrescriptionData data, ConsultationRecord previousConsultation) {
+    private String patientMobile(PrescriptionRecord record, PrescriptionData data) {
         PatientEntity patient = data.patients().get(record.patientId());
-        String summary = Stream.of(
-                previousConsultation == null ? null : "Last visit: " + previousConsultation.createdAt().toLocalDate(),
-                safeLine("Known allergies", patient == null ? null : patient.getAllergies()),
-                safeLine("Chronic conditions", patient == null ? null : patient.getExistingConditions()),
-                safeLine("Uploaded reports summary", patient == null ? null : patient.getNotes()),
-                safeLine("Previous diagnosis", previousConsultation == null ? null : previousConsultation.diagnosis()),
-                safeLine("Previous medications", patient == null ? null : patient.getLongTermMedications())
-        ).filter(StringUtils::hasText).collect(Collectors.joining(" | "));
-        return StringUtils.hasText(summary) ? summary : "No significant previous records available.";
+        return patient == null ? "" : cleanText(patient.getMobile());
     }
 
-    private String visitSummary(PrescriptionRecord record, ConsultationRecord consultation) {
-        if (consultation == null) {
-            return safeLine("Diagnosis", record.diagnosisSnapshot());
+    private PrescriptionPdfViewModel buildPdfViewModel(
+            String tenantName,
+            PrescriptionRecord record,
+            ConsultationRecord consultation,
+            ConsultationRecord previousConsultation,
+            PrescriptionData data,
+            PrescriptionTemplateConfig template
+    ) {
+        List<String> investigations = record.recommendedTests().stream()
+                .map(test -> mergeWithDash(cleanText(test.testName()), cleanText(test.instructions())))
+                .filter(StringUtils::hasText)
+                .toList();
+        return new PrescriptionPdfViewModel(
+                StringUtils.hasText(data.clinicDisplayName()) ? cleanText(data.clinicDisplayName()) : cleanText(tenantName),
+                cleanText(data.clinicAddress()),
+                cleanText(data.clinicPhone()),
+                cleanText(data.clinicEmail()),
+                cleanText(record.doctorName()),
+                cleanText(record.patientName()),
+                ageGender(record, data),
+                cleanText(record.patientNumber()),
+                consultation == null ? LocalDate.now().toString() : consultation.createdAt().toLocalDate().toString(),
+                patientMobile(record, data),
+                record.appointmentId() == null ? "" : trimId(record.appointmentId()),
+                trimId(record.consultationId()),
+                historySummaryLines(record, data, previousConsultation),
+                splitToList(consultation == null ? null : consultation.chiefComplaints()),
+                splitToList(consultation == null ? null : consultation.symptoms()),
+                vitalsList(consultation),
+                splitToList(consultation == null ? record.diagnosisSnapshot() : consultation.diagnosis()),
+                splitToList(consultation == null ? null : consultation.clinicalNotes()),
+                record.medicines(),
+                investigations,
+                splitToList(record.advice()),
+                record.followUpDate() == null ? "" : record.followUpDate().toString(),
+                List.of("Seek immediate care for severe dehydration, high fever, blood in vomit/stool, or severe abdominal pain."),
+                signatureText(template, record)
+        );
+    }
+
+    private List<String> historySummaryLines(PrescriptionRecord record, PrescriptionData data, ConsultationRecord previousConsultation) {
+        PatientEntity patient = data.patients().get(record.patientId());
+        List<String> lines = new ArrayList<>();
+        if (previousConsultation != null && previousConsultation.createdAt() != null) {
+            lines.add("Last visit: " + previousConsultation.createdAt().toLocalDate());
         }
-        String vitals = Stream.of(
-                consultation.bloodPressureSystolic() == null || consultation.bloodPressureDiastolic() == null ? null : "BP " + consultation.bloodPressureSystolic() + "/" + consultation.bloodPressureDiastolic(),
-                consultation.pulseRate() == null ? null : "Pulse " + consultation.pulseRate(),
-                consultation.temperature() == null ? null : "Temp " + consultation.temperature() + (consultation.temperatureUnit() == null ? "" : " " + consultation.temperatureUnit().name()),
-                consultation.spo2() == null ? null : "SpO2 " + consultation.spo2() + "%",
-                consultation.weightKg() == null ? null : "Weight " + consultation.weightKg() + "kg"
-        ).filter(StringUtils::hasText).collect(Collectors.joining(", "));
-        return Stream.of(
-                safeLine("Chief complaint", consultation.chiefComplaints()),
-                safeLine("Symptoms", consultation.symptoms()),
-                safeLine("Diagnosis", consultation.diagnosis()),
-                safeLine("Consultation notes", consultation.clinicalNotes()),
-                StringUtils.hasText(vitals) ? "Vitals: " + vitals : null
-        ).filter(StringUtils::hasText).collect(Collectors.joining(" | "));
+        addLine(lines, "Referred by", previousConsultation == null ? null : previousConsultation.doctorName());
+        addLine(lines, "Known allergies", patient == null ? null : patient.getAllergies());
+        addLine(lines, "Chronic conditions", patient == null ? null : patient.getExistingConditions());
+        addLine(lines, "Long-term medications", patient == null ? null : patient.getLongTermMedications());
+        addLine(lines, "Uploaded reports summary", patient == null ? null : patient.getNotes());
+        addLine(lines, "Previous diagnosis", previousConsultation == null ? null : previousConsultation.diagnosis());
+        return lines;
     }
 
     private String signatureText(PrescriptionTemplateConfig template, PrescriptionRecord record) {
         return StringUtils.hasText(template.doctorSignatureText()) ? template.doctorSignatureText() : safe(record.doctorName());
     }
 
-    private String safeLine(String label, String value) {
-        return StringUtils.hasText(value) ? label + ": " + value.trim() : null;
+    private void drawFooter(PdfRenderState state, float width, PrescriptionTemplateConfig template, String signatureText, String doctorName) throws IOException {
+        float footerY = 50f;
+        float signatureX = state.margin + width - 170;
+        state.content.moveTo(signatureX, footerY + 42);
+        state.content.lineTo(signatureX + 140, footerY + 42);
+        state.content.stroke();
+        writeLine(state.content, "Doctor Signature", 8.8f, signatureX, footerY + 31, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        writeLine(state.content, cleanText(signatureText), 9.2f, signatureX, footerY + 20, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        if (StringUtils.hasText(doctorName)) {
+            writeLine(state.content, "Dr. " + doctorName, 8.8f, signatureX, footerY + 9, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        }
+
+        if (template.showQrCode()) {
+            drawQrPlaceholder(state.content, state.margin + width - 66, footerY + 2);
+            writeLine(state.content, "Scan to verify", 7.2f, state.margin + width - 74, footerY - 8, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        }
+        if (StringUtils.hasText(template.disclaimer())) {
+            writeLine(state.content, "Disclaimer: " + cleanText(template.disclaimer()), 7.4f, state.margin, footerY + 8, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        }
+        if (StringUtils.hasText(template.footerText())) {
+            writeLine(state.content, cleanText(template.footerText()), 7.8f, state.margin, footerY - 2, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        }
+        writeLine(state.content, "Generated: " + OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) + " | Page " + state.pageNumber, 7.8f, state.margin, footerY - 13, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+    }
+
+    private void drawQrPlaceholder(PDPageContentStream content, float x, float y) throws IOException {
+        content.setStrokingColor(0, 0, 0);
+        content.addRect(x, y, 54, 54);
+        content.stroke();
+        writeLine(content, "QR", 15, x + 16, y + 20, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+    }
+
+    private float textWidth(PDFont font, float fontSize, String text) throws IOException {
+        if (!StringUtils.hasText(text)) {
+            return 0f;
+        }
+        return (font.getStringWidth(text) / 1000f) * fontSize;
+    }
+
+    private String trimId(UUID id) {
+        if (id == null) {
+            return "";
+        }
+        String value = id.toString();
+        return value.length() <= 8 ? value : value.substring(0, 8);
+    }
+
+    private List<String> splitToList(String value) {
+        String cleaned = cleanText(value);
+        if (!StringUtils.hasText(cleaned)) {
+            return List.of();
+        }
+        return Stream.of(cleaned.split("[\\n,;]+"))
+                .map(String::trim)
+                .filter(StringUtils::hasText)
+                .toList();
+    }
+
+    private List<String> vitalsList(ConsultationRecord consultation) {
+        if (consultation == null) {
+            return List.of();
+        }
+        List<String> values = new ArrayList<>();
+        if (consultation.bloodPressureSystolic() != null && consultation.bloodPressureDiastolic() != null) {
+            values.add("BP: " + consultation.bloodPressureSystolic() + "/" + consultation.bloodPressureDiastolic());
+        }
+        if (consultation.pulseRate() != null) {
+            values.add("Pulse: " + consultation.pulseRate());
+        }
+        if (consultation.temperature() != null) {
+            values.add("Temp: " + consultation.temperature() + (consultation.temperatureUnit() == null ? "" : " " + consultation.temperatureUnit().name()));
+        }
+        if (consultation.spo2() != null) {
+            values.add("SpO2: " + consultation.spo2() + "%");
+        }
+        if (consultation.respiratoryRate() != null) {
+            values.add("Resp: " + consultation.respiratoryRate());
+        }
+        if (consultation.weightKg() != null) {
+            values.add("Weight: " + consultation.weightKg() + " kg");
+        }
+        return values;
+    }
+
+    private void addLine(List<String> lines, String label, String value) {
+        String cleaned = cleanText(value);
+        if (StringUtils.hasText(cleaned)) {
+            lines.add(label + ": " + cleaned);
+        }
+    }
+
+    private String cleanText(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        String trimmed = value.trim().replaceAll("[\\r\\n\\t]+", " ");
+        if ("unknown".equalsIgnoreCase(trimmed) || "n/a".equalsIgnoreCase(trimmed) || "-".equals(trimmed)) {
+            return "";
+        }
+        if (looksStructured(trimmed)) {
+            return summarizeStructured(trimmed);
+        }
+        return trimmed;
+    }
+
+    private boolean looksStructured(String value) {
+        String trimmed = value.trim();
+        return (trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"));
+    }
+
+    private String summarizeStructured(String value) {
+        try {
+            JsonNode node = objectMapper.readTree(value);
+            if (node.isTextual()) {
+                return cleanText(node.asText());
+            }
+            if (node.isArray()) {
+                List<String> entries = new ArrayList<>();
+                for (JsonNode item : node) {
+                    String summary = summarizeNode(item);
+                    if (StringUtils.hasText(summary)) {
+                        entries.add(summary);
+                    }
+                    if (entries.size() >= 5) {
+                        break;
+                    }
+                }
+                return String.join("; ", entries);
+            }
+            if (node.isObject()) {
+                return summarizeNode(node);
+            }
+            return "";
+        } catch (Exception ex) {
+            return "";
+        }
+    }
+
+    private String summarizeNode(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return "";
+        }
+        if (node.isTextual()) {
+            return node.asText();
+        }
+        if (node.isObject()) {
+            String diagnosis = text(node, "diagnosis");
+            String condition = text(node, "condition");
+            String name = text(node, "name");
+            String reason = text(node, "reason");
+            String summary = text(node, "summary");
+            return firstNonBlank(diagnosis, condition, name, reason, summary, "");
+        }
+        return "";
+    }
+
+    private String text(JsonNode node, String field) {
+        if (node == null || !node.has(field)) {
+            return null;
+        }
+        String text = node.path(field).asText(null);
+        return StringUtils.hasText(text) ? text.trim() : null;
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
+    private String mergeWithPipe(String a, String b) {
+        return Stream.of(cleanText(a), cleanText(b))
+                .filter(StringUtils::hasText)
+                .collect(Collectors.joining(" | "));
+    }
+
+    private String mergeWithDash(String a, String b) {
+        return Stream.of(cleanText(a), cleanText(b))
+                .filter(StringUtils::hasText)
+                .collect(Collectors.joining(" - "));
+    }
+
+    private String mergeWithSpace(String a, String b) {
+        return Stream.of(cleanText(a), cleanText(b))
+                .filter(StringUtils::hasText)
+                .collect(Collectors.joining(" "));
     }
 
     private String safe(String value) {
@@ -949,5 +1326,81 @@ public class PrescriptionService {
         String clinicAddress() {
             return clinicAddressValue;
         }
+    }
+
+    private static final class PdfRenderState {
+        private final PDDocument document;
+        private final float margin;
+        private final float[] primary;
+        private final float[] accent;
+        private PDPage page;
+        private PDPageContentStream content;
+        private float y;
+        private int pageNumber = 0;
+
+        private PdfRenderState(PDDocument document, float margin, float[] primary, float[] accent) {
+            this.document = document;
+            this.margin = margin;
+            this.primary = primary;
+            this.accent = accent;
+        }
+
+        private void startPage() throws IOException {
+            closeContent();
+            page = new PDPage(PDRectangle.A4);
+            document.addPage(page);
+            content = new PDPageContentStream(document, page);
+            pageNumber += 1;
+            content.setNonStrokingColor(primary[0], primary[1], primary[2]);
+            content.addRect(0, page.getMediaBox().getHeight() - 16, page.getMediaBox().getWidth(), 16);
+            content.fill();
+            content.setNonStrokingColor(0, 0, 0);
+            y = page.getMediaBox().getHeight() - margin;
+        }
+
+        private void ensureSpace(float neededHeight) throws IOException {
+            if (y - neededHeight < 160) {
+                startPage();
+            }
+        }
+
+        private void close() throws IOException {
+            closeContent();
+        }
+
+        private void closeContent() throws IOException {
+            if (content != null) {
+                content.close();
+                content = null;
+            }
+        }
+    }
+
+    private record PrescriptionPdfViewModel(
+            String clinicName,
+            String clinicAddress,
+            String clinicPhone,
+            String clinicEmail,
+            String doctorName,
+            String patientName,
+            String patientAgeGender,
+            String patientId,
+            String visitDate,
+            String patientMobile,
+            String appointmentId,
+            String consultationId,
+            List<String> historyItems,
+            List<String> chiefComplaint,
+            List<String> symptoms,
+            List<String> vitals,
+            List<String> diagnoses,
+            List<String> clinicalNotes,
+            List<PrescriptionMedicineRecord> medicines,
+            List<String> investigations,
+            List<String> adviceItems,
+            String followUpDate,
+            List<String> emergencyWarnings,
+            String signatureLine
+    ) {
     }
 }

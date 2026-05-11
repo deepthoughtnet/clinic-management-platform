@@ -27,6 +27,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -42,7 +43,7 @@ class AppointmentServiceSlotsTest {
     private static final UUID DOCTOR_ID = UUID.randomUUID();
     private static final UUID ACTOR_ID = UUID.randomUUID();
     private static final UUID PATIENT_ID = UUID.randomUUID();
-    private static final LocalDate APPOINTMENT_DATE = LocalDate.of(2026, 5, 11);
+    private static final LocalDate APPOINTMENT_DATE = LocalDate.now().with(TemporalAdjusters.next(DayOfWeek.MONDAY));
 
     @Mock
     private AppointmentRepository appointmentRepository;

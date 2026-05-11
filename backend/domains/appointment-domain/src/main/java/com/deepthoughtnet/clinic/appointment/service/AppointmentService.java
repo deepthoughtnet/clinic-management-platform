@@ -15,6 +15,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRec
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityUpsertCommand;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorCalendarReconcileResult;
 import com.deepthoughtnet.clinic.appointment.service.model.WalkInAppointmentCommand;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
@@ -49,6 +50,10 @@ import org.springframework.util.StringUtils;
 public class AppointmentService {
     private static final String APPOINTMENT_ENTITY = "APPOINTMENT";
     private static final String AVAILABILITY_ENTITY = "DOCTOR_AVAILABILITY";
+    private static final DayOfWeek DEFAULT_CALENDAR_DAY = DayOfWeek.MONDAY;
+    private static final LocalTime DEFAULT_CALENDAR_START = LocalTime.of(9, 0);
+    private static final LocalTime DEFAULT_CALENDAR_END = LocalTime.of(17, 0);
+    private static final int DEFAULT_SLOT_DURATION_MINUTES = 15;
 
     private final AppointmentRepository appointmentRepository;
     private final DoctorAvailabilityRepository doctorAvailabilityRepository;
@@ -77,6 +82,13 @@ public class AppointmentService {
     public List<DoctorAvailabilityRecord> listAvailabilities(UUID tenantId) {
         requireTenant(tenantId);
         return toAvailabilityRecords(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(tenantId));
+    }
+
+    @Transactional(readOnly = true)
+    public List<DoctorAvailabilityRecord> listDoctorAvailabilities(UUID tenantId, UUID doctorUserId) {
+        requireTenant(tenantId);
+        requireDoctor(doctorUserId);
+        return toAvailabilityRecords(doctorAvailabilityRepository.findByTenantIdAndDoctorUserIdOrderByDayOfWeekAscStartTimeAsc(tenantId, doctorUserId));
     }
 
     @Transactional(readOnly = true)
@@ -254,6 +266,119 @@ public class AppointmentService {
                 detailsJson(saved)
         ));
         return toRecord(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public DoctorAvailabilityRecord findAvailability(UUID tenantId, UUID id) {
+        requireTenant(tenantId);
+        requireId(id, "id");
+        DoctorAvailabilityEntity entity = doctorAvailabilityRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Doctor availability not found"));
+        return toRecord(entity);
+    }
+
+    @Transactional
+    public boolean ensureDoctorCalendarExists(UUID tenantId, UUID doctorUserId, UUID actorAppUserId, String action) {
+        requireTenant(tenantId);
+        requireDoctor(doctorUserId);
+        ensureDoctorInTenant(tenantId, doctorUserId);
+        if (doctorAvailabilityRepository.existsByTenantIdAndDoctorUserId(tenantId, doctorUserId)) {
+            return false;
+        }
+        DoctorAvailabilityEntity entity = DoctorAvailabilityEntity.create(tenantId, doctorUserId);
+        entity.update(
+                DEFAULT_CALENDAR_DAY,
+                DEFAULT_CALENDAR_START,
+                DEFAULT_CALENDAR_END,
+                null,
+                null,
+                DEFAULT_SLOT_DURATION_MINUTES,
+                1,
+                false
+        );
+        DoctorAvailabilityEntity saved = doctorAvailabilityRepository.save(entity);
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                AVAILABILITY_ENTITY,
+                saved.getId(),
+                "doctor.calendar.autocreated",
+                actorAppUserId,
+                OffsetDateTime.now(),
+                "Auto-created doctor calendar",
+                "{\"doctorUserId\":\"" + doctorUserId + "\",\"trigger\":\"" + normalizeNullable(action) + "\"}"
+        ));
+        return true;
+    }
+
+    @Transactional
+    public DoctorCalendarReconcileResult reconcileDoctorCalendars(UUID tenantId, UUID actorAppUserId, String action) {
+        requireTenant(tenantId);
+        int created = 0;
+        int skipped = 0;
+        List<TenantUserRecord> users = tenantUserManagementService.list(tenantId);
+        for (TenantUserRecord user : users) {
+            if (user.appUserId() == null) {
+                continue;
+            }
+            if (!"DOCTOR".equalsIgnoreCase(user.membershipRole())) {
+                continue;
+            }
+            if (!"ACTIVE".equalsIgnoreCase(user.membershipStatus())) {
+                skipped++;
+                continue;
+            }
+            boolean createdNow = ensureDoctorCalendarExists(tenantId, user.appUserId(), actorAppUserId, action);
+            if (createdNow) {
+                created++;
+            } else {
+                skipped++;
+            }
+        }
+        DoctorCalendarReconcileResult result = new DoctorCalendarReconcileResult(tenantId, created, skipped, OffsetDateTime.now());
+        org.slf4j.LoggerFactory.getLogger(AppointmentService.class).info(
+                "Doctor calendar reconciliation completed. tenantId={}, createdCount={}, skippedCount={}",
+                tenantId,
+                created,
+                skipped
+        );
+        return result;
+    }
+
+    @Transactional
+    public void deactivateDoctorCalendar(UUID tenantId, UUID doctorUserId, UUID actorAppUserId, String action) {
+        requireTenant(tenantId);
+        requireDoctor(doctorUserId);
+        List<DoctorAvailabilityEntity> rows = doctorAvailabilityRepository.findByTenantIdAndDoctorUserIdOrderByDayOfWeekAscStartTimeAsc(tenantId, doctorUserId);
+        boolean changed = false;
+        for (DoctorAvailabilityEntity entity : rows) {
+            if (!entity.isActive()) {
+                continue;
+            }
+            entity.update(
+                    entity.getDayOfWeek(),
+                    entity.getStartTime(),
+                    entity.getEndTime(),
+                    entity.getBreakStartTime(),
+                    entity.getBreakEndTime(),
+                    entity.getConsultationDurationMinutes(),
+                    entity.getMaxPatientsPerSlot(),
+                    false
+            );
+            doctorAvailabilityRepository.save(entity);
+            changed = true;
+        }
+        if (changed) {
+            auditEventPublisher.record(new AuditEventCommand(
+                    tenantId,
+                    AVAILABILITY_ENTITY,
+                    null,
+                    "doctor.calendar.deactivated",
+                    actorAppUserId,
+                    OffsetDateTime.now(),
+                    "Deactivated doctor calendar",
+                    "{\"doctorUserId\":\"" + doctorUserId + "\",\"trigger\":\"" + normalizeNullable(action) + "\"}"
+            ));
+        }
     }
 
     @Transactional(readOnly = true)

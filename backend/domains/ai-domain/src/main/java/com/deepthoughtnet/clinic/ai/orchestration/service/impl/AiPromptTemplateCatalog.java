@@ -94,7 +94,28 @@ public class AiPromptTemplateCatalog {
                     List.of("Review red flags and urgent exclusions", "Approve or reject each suggestion manually"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.suggest-diagnosis.v1", AiProductCode.CLINIC, AiTaskType.SYMPTOMS_DIAGNOSIS_DRAFT,
-                    "Suggest possible differential diagnosis categories based on symptoms, findings, and context. Return ONLY valid JSON with keys: summary, possibleDiagnosisCategories[{name,reason,confidence}], recommendedInvestigations, followUpSuggestions, safetyNotes. Do not include markdown. Do not include explanatory text before or after JSON.",
+                    """
+                    Suggest possible differential diagnosis categories based on symptoms, findings, and context.
+                    Return ONLY valid JSON. No markdown. No extra text.
+                    Use exactly this shape:
+                    {
+                      "suggestions": [
+                        {
+                          "diagnosis": "Short name",
+                          "reason": "One short sentence up to 140 chars",
+                          "redFlags": ["short item 1", "short item 2"]
+                        }
+                      ],
+                      "recommendedInvestigations": [],
+                      "followUpSuggestions": [],
+                      "safetyNote": "AI suggestions are assistive only."
+                    }
+                    Constraints:
+                    - max 3 suggestions
+                    - each suggestion reason <= 140 chars
+                    - each suggestion redFlags max 3 items
+                    - Do not return a top-level array
+                    """,
                     List.of("Review red flags and urgent exclusions", "Use diagnostics to confirm before final diagnosis"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.prescription.suggest-template.v1", AiProductCode.CLINIC, AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION,

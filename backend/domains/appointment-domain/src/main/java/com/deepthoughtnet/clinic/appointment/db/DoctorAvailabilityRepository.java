@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface DoctorAvailabilityRepository extends JpaRepository<DoctorAvailabilityEntity, UUID> {
     List<DoctorAvailabilityEntity> findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(UUID tenantId);
+    List<DoctorAvailabilityEntity> findByTenantIdAndDoctorUserIdOrderByDayOfWeekAscStartTimeAsc(UUID tenantId, UUID doctorUserId);
+    boolean existsByTenantIdAndDoctorUserId(UUID tenantId, UUID doctorUserId);
 
     Optional<DoctorAvailabilityEntity> findByTenantIdAndId(UUID tenantId, UUID id);
 }

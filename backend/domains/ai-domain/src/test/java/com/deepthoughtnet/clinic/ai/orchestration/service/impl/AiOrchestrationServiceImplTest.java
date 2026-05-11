@@ -215,6 +215,54 @@ class AiOrchestrationServiceImplTest {
         assertTrue(response.limitations().stream().anyMatch(v -> v.contains("unstructured text")));
     }
 
+    @Test
+    void handlesTruncatedJsonWithRetryFallbackAndNoRawLeak() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+
+        AiOrchestrationRequest request = request();
+        AiPromptTemplateDefinition template = template();
+        when(registry.resolve(request)).thenReturn(template);
+        when(router.resolveCandidates(AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION)).thenReturn(List.of(
+                provider("GEMINI", "[{\"diagnosis\":\"Gastroenteritis\",", AiProviderStatus.AVAILABLE)
+        ));
+
+        AiOrchestrationResponse response = service.complete(request);
+        assertEquals("AI response was incomplete. Please retry.", response.outputText());
+        assertNotNull(response.structuredJson());
+        assertTrue(response.structuredJson().contains("AI response was incomplete. Please retry."));
+        assertFalse(response.outputText().contains("{\"diagnosis\""));
+    }
+
+    @Test
+    void parsesTopLevelArrayAndNormalizesAliases() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+
+        AiOrchestrationRequest request = request();
+        AiPromptTemplateDefinition template = template();
+        when(registry.resolve(request)).thenReturn(template);
+        when(router.resolveCandidates(AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION)).thenReturn(List.of(
+                provider(
+                        "GEMINI",
+                        "[{\"condition\":\"Gastroenteritis\",\"reasoning\":\"Likely viral GI syndrome\",\"redFlagExclusions\":[\"severe dehydration\"]}]",
+                        AiProviderStatus.AVAILABLE
+                )
+        ));
+
+        AiOrchestrationResponse response = service.complete(request);
+        assertNotNull(response.structuredJson());
+        assertTrue(response.structuredJson().contains("\"suggestions\""));
+        assertTrue(response.structuredJson().contains("\"diagnosis\":\"Gastroenteritis\""));
+        assertTrue(response.structuredJson().contains("\"reason\":\"Likely viral GI syndrome\""));
+        assertTrue(response.structuredJson().contains("\"redFlags\":[\"severe dehydration\"]"));
+        assertTrue(response.limitations().stream().anyMatch(v -> v.contains("assistive only")));
+    }
+
     private AiPromptTemplateDefinition template() {
         return new AiPromptTemplateDefinition(
                 "clinic.reconciliation.exception.explain.v1",

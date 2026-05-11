@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
+import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.identity.service.model.CreateTenantUserCommand;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
@@ -32,14 +33,16 @@ import org.mockito.ArgumentCaptor;
 class TenantUserManagementControllerTest {
     private final UUID tenantId = UUID.randomUUID();
     private TenantUserManagementService tenantUserManagementService;
+    private AppointmentService appointmentService;
     private AuditEventPublisher auditEventPublisher;
     private TenantUserManagementController controller;
 
     @BeforeEach
     void setUp() {
         tenantUserManagementService = mock(TenantUserManagementService.class);
+        appointmentService = mock(AppointmentService.class);
         auditEventPublisher = mock(AuditEventPublisher.class);
-        controller = new TenantUserManagementController(tenantUserManagementService, auditEventPublisher, new ObjectMapper());
+        controller = new TenantUserManagementController(tenantUserManagementService, appointmentService, auditEventPublisher, new ObjectMapper());
         RequestContextHolder.set(new RequestContext(
                 TenantId.of(tenantId),
                 UUID.randomUUID(),

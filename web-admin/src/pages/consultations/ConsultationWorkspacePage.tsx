@@ -447,13 +447,47 @@ function asStringList(value: unknown): string[] {
 function formatAiDiagnosisSuggestion(draft: AiDraftResponse): { formatted: string; summary: string | null; unstructured: boolean } {
   const structured = draft.structuredData || {};
   const differentials = Array.isArray(structured["possibleDiagnosisCategories"]) ? structured["possibleDiagnosisCategories"] as Array<Record<string, unknown>> : [];
+  const compactSuggestions = Array.isArray(structured["suggestions"]) ? structured["suggestions"] as Array<Record<string, unknown>> : [];
   const investigations = asStringList(structured["recommendedInvestigations"]);
   const followUp = asStringList(structured["followUpSuggestions"]);
   const safety = asStringList(structured["safetyNotes"]);
+  const safetyNote = typeof structured["safetyNote"] === "string" ? structured["safetyNote"].trim() : "";
+  if (safetyNote) safety.push(safetyNote);
   const summary = typeof structured["summary"] === "string" ? structured["summary"].trim() : null;
+  const incomplete = (summary || "").toLowerCase().includes("incomplete");
+
+  if (compactSuggestions.length) {
+    const lines: string[] = ["Possible differential diagnoses:"];
+    compactSuggestions.forEach((item, index) => {
+      const name = String(item.diagnosis || item.condition || item.name || "Condition");
+      const reason = String(item.reason || item.reasoning || "").trim();
+      const redFlags = asStringList(item.redFlags).length ? asStringList(item.redFlags) : asStringList(item.redFlagExclusions);
+      lines.push("");
+      lines.push(`${index + 1}. ${name}`);
+      if (reason) lines.push(`   Reason: ${reason}`);
+      if (redFlags.length) lines.push(`   Red flags: ${redFlags.join(", ")}`);
+    });
+    if (safety.length) {
+      lines.push("");
+      lines.push("Safety:");
+      safety.forEach((item) => lines.push(`- ${item}`));
+    }
+    return {
+      formatted: lines.join("\n").trim(),
+      summary: summary || null,
+      unstructured: incomplete || safety.some((item) => item.toLowerCase().includes("unstructured text")),
+    };
+  }
 
   if (!differentials.length && !investigations.length && !followUp.length && !safety.length) {
     const plain = (draft.draft || draft.message || "").trim();
+    if ((plain.startsWith("{") || plain.startsWith("[")) && !summary) {
+      return {
+        formatted: "AI response was incomplete. Please retry.",
+        summary: "AI response was incomplete. Please retry.",
+        unstructured: true,
+      };
+    }
     return {
       formatted: plain || "AI suggestion unavailable.",
       summary: plain || null,
@@ -492,7 +526,7 @@ function formatAiDiagnosisSuggestion(draft: AiDraftResponse): { formatted: strin
   return {
     formatted: lines.join("\n").trim(),
     summary: summary || draft.draft || null,
-    unstructured: safety.some((item) => item.toLowerCase().includes("unstructured text")),
+    unstructured: incomplete || safety.some((item) => item.toLowerCase().includes("unstructured text")),
   };
 }
 
@@ -1607,7 +1641,13 @@ export default function ConsultationWorkspacePage() {
                       <CardContent sx={{ p: 1 }}>
                         <Stack spacing={1}>
                           <Typography variant="subtitle2">AI Suggested Differentials</Typography>
-                          {aiDiagnosisUnstructured ? <Alert severity="warning">AI returned unstructured text. Review before use.</Alert> : null}
+                          {aiDiagnosisUnstructured ? (
+                            <Alert severity="warning">
+                              {aiDiagnosisSuggestion === "AI response was incomplete. Please retry."
+                                ? "AI response was incomplete. Please retry."
+                                : "AI returned unstructured text. Review before use."}
+                            </Alert>
+                          ) : null}
                           <Box
                             sx={{
                               maxHeight: 220,
@@ -1626,7 +1666,15 @@ export default function ConsultationWorkspacePage() {
                             {aiDiagnosisSuggestion}
                           </Box>
                           <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                            <Button type="button" size="small" variant="outlined" disabled={readOnly} onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: aiDiagnosisSuggestion }))}>Copy to diagnosis</Button>
+                            <Button
+                              type="button"
+                              size="small"
+                              variant="outlined"
+                              disabled={readOnly || aiDiagnosisSuggestion === "AI response was incomplete. Please retry."}
+                              onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: aiDiagnosisSuggestion }))}
+                            >
+                              Copy to diagnosis
+                            </Button>
                             <Button type="button" size="small" variant="outlined" disabled={readOnly || !aiDiagnosisSummary} onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, aiDiagnosisSummary || "") }))}>Add summary</Button>
                           </Stack>
                         </Stack>

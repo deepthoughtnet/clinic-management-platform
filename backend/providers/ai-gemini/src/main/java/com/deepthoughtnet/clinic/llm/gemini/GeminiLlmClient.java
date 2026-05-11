@@ -123,6 +123,11 @@ public class GeminiLlmClient implements LlmClient {
             if (log.isDebugEnabled()) {
                 log.debug("Gemini preview. requestId={}, text=\"{}\"", requestId, safePreview(parsed.text()));
             }
+            if ("MAX_TOKENS".equalsIgnoreCase(parsed.finishReason())) {
+                log.warn("Gemini response truncated by max output tokens. requestId={}, maxOutputTokens={}",
+                        requestId,
+                        request.maxOutputTokens() != null ? request.maxOutputTokens() : defaultMaxOutputTokens);
+            }
 
             if (parsed.text() == null || parsed.text().isBlank()) {
                 log.warn("LLM provider returned empty content. provider=GEMINI, requestId={}", requestId);
@@ -212,22 +217,22 @@ public class GeminiLlmClient implements LlmClient {
                 return new ParsedGeminiResponse(null, responseBody.length(), 0, null, safetyBlocked, tokenUsage(root));
             }
 
-            JsonNode parts = candidates.get(0).path("content").path("parts");
-            if (!parts.isArray() || parts.isEmpty()) {
-                log.warn("Gemini returned candidate with empty parts.");
-                return new ParsedGeminiResponse(null, responseBody.length(), candidates.size(), finishReason(candidates), safetyBlocked, tokenUsage(root));
-            }
-
             StringBuilder builder = new StringBuilder();
-            for (JsonNode part : parts) {
-                String text = part.path("text").asText(null);
-                if (text == null || text.isBlank()) {
+            for (JsonNode candidate : candidates) {
+                JsonNode parts = candidate.path("content").path("parts");
+                if (!parts.isArray() || parts.isEmpty()) {
                     continue;
                 }
-                if (builder.length() > 0) {
-                    builder.append('\n');
+                for (JsonNode part : parts) {
+                    String text = part.path("text").asText(null);
+                    if (text == null || text.isBlank()) {
+                        continue;
+                    }
+                    if (builder.length() > 0) {
+                        builder.append('\n');
+                    }
+                    builder.append(text);
                 }
-                builder.append(text);
             }
             String extracted = builder.toString();
             if (extracted.isBlank()) {

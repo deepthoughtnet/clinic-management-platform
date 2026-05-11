@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.tenant;
 
 import com.deepthoughtnet.clinic.api.clinic.dto.ClinicUserResponse;
+import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
@@ -45,15 +46,18 @@ public class TenantUserManagementController {
     );
 
     private final TenantUserManagementService tenantUserManagementService;
+    private final AppointmentService appointmentService;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
 
     public TenantUserManagementController(
             TenantUserManagementService tenantUserManagementService,
+            AppointmentService appointmentService,
             AuditEventPublisher auditEventPublisher,
             ObjectMapper objectMapper
     ) {
         this.tenantUserManagementService = tenantUserManagementService;
+        this.appointmentService = appointmentService;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper;
     }
@@ -78,6 +82,7 @@ public class TenantUserManagementController {
         if (!request.active()) {
             created = tenantUserManagementService.updateStatus(tenantId, created.appUserId(), false);
         }
+        ensureDoctorCalendarForCurrentRole(tenantId, created.appUserId(), created.membershipRole(), request.active(), "tenant.user.created");
         auditEventPublisher.record(new AuditEventCommand(
                 tenantId,
                 "TENANT_USER",
@@ -106,6 +111,7 @@ public class TenantUserManagementController {
             enforceRoleAssignmentBoundary(role);
             record = tenantUserManagementService.updateRole(tenantId, appUserId, role);
         }
+        ensureDoctorCalendarForCurrentRole(tenantId, record.appUserId(), record.membershipRole(), request.active(), "tenant.user.updated");
         return toResponse(record);
     }
 
@@ -115,7 +121,10 @@ public class TenantUserManagementController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         String role = normalizeRole(request.role());
         enforceRoleAssignmentBoundary(role);
-        return toResponse(tenantUserManagementService.updateRole(tenantId, appUserId, role));
+        TenantUserRecord record = tenantUserManagementService.updateRole(tenantId, appUserId, role);
+        boolean active = record.membershipStatus() != null && "ACTIVE".equalsIgnoreCase(record.membershipStatus());
+        ensureDoctorCalendarForCurrentRole(tenantId, record.appUserId(), record.membershipRole(), active, "tenant.user.role.assigned");
+        return toResponse(record);
     }
 
     @PostMapping("/{appUserId}/reset-password")
@@ -197,6 +206,18 @@ public class TenantUserManagementController {
     public record AssignRoleRequest(@NotBlank String role) {}
 
     public record ResetPasswordRequest(@NotBlank @Size(max = 128) String tempPassword, boolean temporary) {}
+
+    private void ensureDoctorCalendarForCurrentRole(UUID tenantId, UUID appUserId, String role, boolean active, String action) {
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        if ("DOCTOR".equalsIgnoreCase(role)) {
+            appointmentService.ensureDoctorCalendarExists(tenantId, appUserId, actorAppUserId, action);
+            if (!active) {
+                appointmentService.deactivateDoctorCalendar(tenantId, appUserId, actorAppUserId, action + ".inactive");
+            }
+            return;
+        }
+        appointmentService.deactivateDoctorCalendar(tenantId, appUserId, actorAppUserId, action + ".non_doctor");
+    }
 
     private String toJson(Object value) {
         try {

@@ -43,6 +43,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -166,6 +169,7 @@ class PrescriptionServiceTest {
         )));
         lenient().when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.empty());
         lenient().when(consultationService.findById(TENANT_ID, CONSULTATION_ID)).thenReturn(Optional.of(consultation()));
+        lenient().when(consultationService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(consultation()));
     }
 
     @Test
@@ -275,6 +279,126 @@ class PrescriptionServiceTest {
         assertThat(updated.correctionReason()).isEqualTo("Correction after finalization");
     }
 
+    @Test
+    void generatedPdfDoesNotLeakRawJsonForConsultationFields() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-JSON");
+        entity.update("{\"diagnosis\":\"RawJsonDiagnosis\"}", "[{\"advice\":\"hydrate\"}]", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(PrescriptionMedicineEntity.create(
+                TENANT_ID, entity.getId(), "Ondansetron", MedicineType.TABLET, "4 mg", "1 tab", "1-0-1", "3 days", Timing.AFTER_FOOD, "{\"instruction\":\"after food\"}", 1
+        )));
+        tests.put(entity.getId(), List.of(PrescriptionTestEntity.create(
+                TENANT_ID, entity.getId(), "{\"test\":\"CBC\"}", "{\"notes\":\"if fever\"}", 1
+        )));
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+        String text = extractPdfText(pdf);
+
+        assertThat(text).doesNotContain("{\"diagnosis\"");
+        assertThat(text).doesNotContain("{\"instruction\"");
+        assertThat(text).doesNotContain("{");
+        assertThat(text).contains("Diagnosis");
+    }
+
+    @Test
+    void generatedPdfHandlesMissingFieldsGracefully() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-MISSING");
+        entity.update(null, null, null);
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(PrescriptionMedicineEntity.create(
+                TENANT_ID, entity.getId(), "ORS", MedicineType.OTHER, null, "200 ml", "1-1-1", "2 days", Timing.ANYTIME, null, 1
+        )));
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+        String text = extractPdfText(pdf);
+
+        assertThat(text).contains("No significant previous records available.");
+        assertThat(text).contains("No additional advice recorded.");
+        assertThat(text).doesNotContain("Unknown");
+    }
+
+    @Test
+    void generatedPdfHandlesLongSummaryWithoutRawJsonLeak() throws Exception {
+        ConsultationRecord longConsultation = new ConsultationRecord(
+                CONSULTATION_ID,
+                TENANT_ID,
+                PATIENT_ID,
+                "PAT-001",
+                "Anita Patel",
+                DOCTOR_ID,
+                "Doctor One",
+                APPOINTMENT_ID,
+                "{\"chiefComplaint\":\"Severe abdominal pain with repeated vomiting\"}",
+                "Nausea; Vomiting; Body pain; Weakness; Dehydration concern",
+                "{\"diagnosis\":\"Likely acute gastroenteritis\"}",
+                "{\"assessment\":\"Patient clinically stable but requires hydration and monitoring.\"}",
+                "{\"plan\":\"Oral hydration, antiemetic, follow-up in 48 hours.\"}",
+                LocalDate.now().plusDays(3),
+                ConsultationStatus.COMPLETED,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                OffsetDateTime.now().minusDays(1),
+                OffsetDateTime.now().minusDays(1),
+                OffsetDateTime.now().minusDays(1)
+        );
+        when(consultationService.findById(TENANT_ID, CONSULTATION_ID)).thenReturn(Optional.of(longConsultation));
+
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-LONG");
+        entity.update("Dx", "Maintain hydration and rest. Revisit if symptoms worsen.", LocalDate.now().plusDays(2));
+        prescriptions.put(entity.getId(), entity);
+        medicines.put(entity.getId(), List.of(PrescriptionMedicineEntity.create(
+                TENANT_ID, entity.getId(), "Ondansetron", MedicineType.TABLET, "4 mg", "1 tab", "1-0-1", "3 days", Timing.AFTER_FOOD, "After food", 1
+        )));
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+        String text = extractPdfText(pdf);
+
+        assertThat(text).doesNotContain("{");
+        assertThat(text).doesNotContain("}");
+        assertThat(text).contains("Visit Summary");
+    }
+
+    @Test
+    void generatedPdfHandlesManyMedicinesAcrossPages() throws Exception {
+        PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-MANY-MEDS");
+        entity.update("Acute gastritis", "Take medicines after food and hydrate well.", LocalDate.now().plusDays(4));
+        prescriptions.put(entity.getId(), entity);
+        List<PrescriptionMedicineEntity> manyMeds = new ArrayList<>();
+        for (int i = 1; i <= 12; i++) {
+            manyMeds.add(PrescriptionMedicineEntity.create(
+                    TENANT_ID,
+                    entity.getId(),
+                    "Medicine-" + i,
+                    MedicineType.TABLET,
+                    "500 mg",
+                    "1 tablet",
+                    "1-0-1",
+                    "5 days",
+                    Timing.AFTER_FOOD,
+                    "Long instruction text for medicine " + i + " to verify wrapping and row expansion in PDF table layout.",
+                    i
+            ));
+        }
+        medicines.put(entity.getId(), manyMeds);
+        tests.put(entity.getId(), List.of());
+
+        byte[] pdf = service.generatePdf(TENANT_ID, entity.getId(), ACTOR_ID).content();
+        String text = extractPdfText(pdf);
+
+        assertThat(text).contains("Medicine-1");
+        assertThat(text).contains("Medicine-12");
+        assertThat(text).contains("Prescription Medicines");
+    }
+
     private PrescriptionEntity finalizeSavedPrescription() {
         PrescriptionEntity entity = PrescriptionEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "RX-001");
         entity.update("Initial diagnosis", "Initial advice", LocalDate.now().plusDays(5));
@@ -363,5 +487,11 @@ class PrescriptionServiceTest {
                         ? Integer.compare(left.getVersionNumber() == null ? 0 : left.getVersionNumber(), right.getVersionNumber() == null ? 0 : right.getVersionNumber())
                         : Integer.compare(right.getVersionNumber() == null ? 0 : right.getVersionNumber(), left.getVersionNumber() == null ? 0 : left.getVersionNumber()))
                 .toList();
+    }
+
+    private String extractPdfText(byte[] pdfBytes) throws Exception {
+        try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+            return new PDFTextStripper().getText(doc);
+        }
     }
 }

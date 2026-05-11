@@ -39,9 +39,13 @@ public class DoctorAvailabilityController {
     }
 
     @GetMapping("/availability")
-    @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
+    @PreAuthorize("@permissionChecker.hasPermission('appointment.read') or @permissionChecker.hasPermission('appointment.manage')")
     public List<DoctorAvailabilityResponse> list() {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        if (doctorAssignmentSecurityService.isDoctor()) {
+            UUID doctorUserId = doctorAssignmentSecurityService.currentDoctorUserId();
+            return appointmentService.listDoctorAvailabilities(tenantId, doctorUserId).stream().map(this::toResponse).toList();
+        }
         return appointmentService.listAvailabilities(tenantId).stream().map(this::toResponse).toList();
     }
 
@@ -88,7 +92,8 @@ public class DoctorAvailabilityController {
     public DoctorAvailabilityResponse create(@PathVariable UUID doctorUserId, @Valid @RequestBody DoctorAvailabilityRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return toResponse(appointmentService.createAvailability(tenantId, doctorUserId, toCommand(request), actorAppUserId));
+        UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(doctorUserId);
+        return toResponse(appointmentService.createAvailability(tenantId, effectiveDoctorUserId, toCommand(request), actorAppUserId));
     }
 
     @PutMapping("/availability/{id}")
@@ -96,6 +101,8 @@ public class DoctorAvailabilityController {
     public DoctorAvailabilityResponse update(@PathVariable UUID id, @Valid @RequestBody DoctorAvailabilityRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        DoctorAvailabilityRecord current = appointmentService.findAvailability(tenantId, id);
+        doctorAssignmentSecurityService.effectiveDoctorUserId(current.doctorUserId());
         return toResponse(appointmentService.updateAvailability(tenantId, id, toCommand(request), actorAppUserId));
     }
 
@@ -104,6 +111,8 @@ public class DoctorAvailabilityController {
     public DoctorAvailabilityResponse deactivate(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        DoctorAvailabilityRecord current = appointmentService.findAvailability(tenantId, id);
+        doctorAssignmentSecurityService.effectiveDoctorUserId(current.doctorUserId());
         return toResponse(appointmentService.deactivateAvailability(tenantId, id, actorAppUserId));
     }
 

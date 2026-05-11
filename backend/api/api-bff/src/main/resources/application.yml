@@ -50,6 +50,8 @@ clinic:
     enabled: ${CLINIC_AI_ENABLED:false}
     provider: ${CLINIC_AI_PROVIDER:DISABLED}
     request-timeout-seconds: ${CLINIC_AI_REQUEST_TIMEOUT_SECONDS:60}
+    consultation:
+      max-output-tokens: ${CLINIC_AI_CONSULTATION_MAX_OUTPUT_TOKENS:${GEMINI_MAX_OUTPUT_TOKENS:2048}}
     gemini:
       enabled: ${CLINIC_GEMINI_ENABLED:false}
       api-key: ${GEMINI_API_KEY:}
