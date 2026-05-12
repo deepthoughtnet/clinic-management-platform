@@ -598,9 +598,10 @@ export type Prescription = {
   recommendedTests: PrescriptionTest[];
 };
 
-export type BillStatus = "DRAFT" | "UNPAID" | "ISSUED" | "PARTIALLY_PAID" | "PAID" | "CANCELLED";
+export type BillStatus = "DRAFT" | "UNPAID" | "ISSUED" | "PARTIALLY_PAID" | "PAID" | "PARTIALLY_REFUNDED" | "REFUNDED" | "CANCELLED";
 export type BillItemType = "CONSULTATION" | "MEDICINE" | "TEST" | "VACCINATION" | "PROCEDURE" | "OTHER";
 export type PaymentMode = "CASH" | "CARD" | "UPI" | "PAYTM" | "PHONEPE" | "GOOGLE_PAY" | "BANK_TRANSFER" | "CHEQUE" | "OTHER";
+export type DiscountType = "NONE" | "AMOUNT" | "PERCENTAGE";
 
 export type BillLine = {
   id: string | null;
@@ -625,10 +626,16 @@ export type Bill = {
   billDate: string;
   status: BillStatus;
   subtotalAmount: number;
+  discountType: DiscountType;
+  discountValue: number;
   discountAmount: number;
+  discountReason: string | null;
   taxAmount: number;
   totalAmount: number;
   paidAmount: number;
+  refundedAmount: number;
+  netPaidAmount: number;
+  invoiceEmailedAt: string | null;
   dueAmount: number;
   notes: string | null;
   createdAt: string;
@@ -641,7 +648,9 @@ export type BillInput = {
   consultationId: string | null;
   appointmentId: string | null;
   billDate: string;
-  discountAmount: number | null;
+  discountType: DiscountType | null;
+  discountValue: number | null;
+  discountReason: string | null;
   taxAmount: number | null;
   notes: string | null;
   lines: Array<Omit<BillLine, "id" | "totalPrice"> & { unitPrice: number; quantity: number; referenceId: string | null }>;
@@ -652,14 +661,46 @@ export type Payment = {
   tenantId: string;
   billId: string;
   paymentDate: string;
+  paymentDateTime?: string | null;
   amount: number;
   paymentMode: PaymentMode;
   referenceNumber: string | null;
   notes: string | null;
+  receivedBy?: string | null;
   receiptId: string | null;
   receiptNumber: string | null;
   receiptDate: string | null;
   createdAt: string;
+};
+
+export type Refund = {
+  id: string;
+  billId: string;
+  paymentId: string | null;
+  tenantId: string;
+  amount: number;
+  reason: string;
+  refundMode: PaymentMode | null;
+  refundedBy: string | null;
+  refundedAt: string;
+  notes: string | null;
+  createdAt: string;
+};
+
+export type RefundInput = {
+  paymentId: string | null;
+  amount: number;
+  reason: string;
+  refundMode: PaymentMode | null;
+  refundedAt: string | null;
+  notes: string | null;
+};
+
+export type InvoiceEmailSendResponse = {
+  sent: boolean;
+  message: string;
+  recipientEmail: string | null;
+  sentAt: string | null;
 };
 
 export type PaymentInput = {
@@ -1196,11 +1237,14 @@ export async function getPrescriptionPdf(token: string, tenantId: string, id: st
 export async function searchBills(
   token: string,
   tenantId: string,
-  params: { patientId?: string; status?: BillStatus | null } = {},
+  params: { patientId?: string; status?: BillStatus | null; fromDate?: string; toDate?: string; paymentMode?: PaymentMode | null } = {},
 ) {
   const query = new URLSearchParams();
   if (params.patientId) query.set("patientId", params.patientId);
   if (params.status) query.set("status", params.status);
+  if (params.fromDate) query.set("fromDate", params.fromDate);
+  if (params.toDate) query.set("toDate", params.toDate);
+  if (params.paymentMode) query.set("paymentMode", params.paymentMode);
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return httpGet<Bill[]>(`/api/bills${suffix}`, { token, tenantId });
 }
@@ -1235,6 +1279,18 @@ export async function listBillPayments(token: string, tenantId: string, billId: 
 
 export async function listBillReceipts(token: string, tenantId: string, billId: string) {
   return httpGet<Receipt[]>(`/api/bills/${billId}/receipts`, { token, tenantId });
+}
+
+export async function listBillRefunds(token: string, tenantId: string, billId: string) {
+  return httpGet<Refund[]>(`/api/bills/${billId}/refunds`, { token, tenantId });
+}
+
+export async function addBillRefund(token: string, tenantId: string, billId: string, body: RefundInput) {
+  return httpPost<Refund>(`/api/bills/${billId}/refunds`, body, { token, tenantId });
+}
+
+export async function sendBillInvoiceEmail(token: string, tenantId: string, billId: string) {
+  return httpPost<InvoiceEmailSendResponse>(`/api/bills/${billId}/send-invoice-email`, undefined, { token, tenantId });
 }
 
 export async function getReceipt(token: string, tenantId: string, id: string) {

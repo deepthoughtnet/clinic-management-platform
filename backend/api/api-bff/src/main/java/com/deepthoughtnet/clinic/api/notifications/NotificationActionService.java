@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.notifications;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.api.prescriptiontemplate.service.PrescriptionTemplateService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.billing.service.model.BillPdf;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.ReceiptRecord;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
@@ -18,6 +19,7 @@ import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionPdf;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.notify.NotificationAttachment;
+import com.deepthoughtnet.clinic.notify.NotificationDeliveryException;
 import com.deepthoughtnet.clinic.notify.NotificationMessage;
 import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
@@ -128,6 +130,48 @@ public class NotificationActionService {
                 receipt.id(),
                 actorAppUserId
         );
+    }
+
+    public InvoiceEmailResult sendInvoiceEmail(UUID tenantId, UUID billId, UUID actorAppUserId) {
+        BillRecord bill = billingService.findById(tenantId, billId)
+                .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
+        PatientEntity patient = patient(tenantId, bill.patientId());
+        if (!StringUtils.hasText(patient.getEmail())) {
+            throw new IllegalArgumentException("Patient email is required to send invoice");
+        }
+        String recipient = patient.getEmail().trim();
+        String subject = "Invoice " + bill.billNumber();
+        String message = "Invoice " + bill.billNumber() + " amount " + bill.totalAmount() + " for " + (bill.patientName() == null ? "patient" : bill.patientName());
+        NotificationHistoryRecord queued = notificationHistoryService.queue(
+                tenantId,
+                patient.getId(),
+                "INVOICE_SENT",
+                "email",
+                recipient,
+                subject,
+                message,
+                "BILL",
+                bill.id(),
+                actorAppUserId
+        );
+        try {
+            BillPdf pdf = billingService.generateBillPdf(tenantId, billId, actorAppUserId);
+            notificationProvider.send(new NotificationMessage(
+                    tenantId,
+                    "EMAIL",
+                    recipient,
+                    subject,
+                    message,
+                    "{\"sourceType\":\"BILL\",\"sourceId\":\"" + bill.id() + "\"}",
+                    null,
+                    List.of(new NotificationAttachment(pdf.filename(), "application/pdf", pdf.content()))
+            ));
+            notificationHistoryService.markSent(tenantId, queued.id());
+            billingService.markInvoiceEmailed(tenantId, billId, actorAppUserId);
+            return new InvoiceEmailResult(true, "Invoice email sent", recipient, OffsetDateTime.now());
+        } catch (NotificationDeliveryException ex) {
+            throw new IllegalArgumentException("Invoice email could not be sent. Please check email provider configuration.");
+        }
     }
 
     public int queueAppointmentReminders(UUID tenantId, LocalDate appointmentDate, UUID actorAppUserId) {
@@ -313,4 +357,6 @@ public class NotificationActionService {
                 + " is ready for " + patient.getFirstName() + " " + patient.getLastName()
                 + ". Follow advice: " + (prescription.advice() == null ? "Please review with the doctor." : prescription.advice());
     }
+
+    public record InvoiceEmailResult(boolean sent, String message, String recipientEmail, OffsetDateTime sentAt) {}
 }

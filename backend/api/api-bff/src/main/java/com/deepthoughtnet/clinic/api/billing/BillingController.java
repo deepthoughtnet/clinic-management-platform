@@ -4,11 +4,13 @@ import com.deepthoughtnet.clinic.api.billing.dto.BillLineRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.BillLineResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.BillRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.BillResponse;
+import com.deepthoughtnet.clinic.api.billing.dto.InvoiceEmailSendResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.PaymentRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.PaymentResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.ReceiptResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.RefundRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.RefundResponse;
+import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillLineCommand;
 import com.deepthoughtnet.clinic.billing.service.model.BillPdf;
@@ -50,9 +52,11 @@ import jakarta.validation.Valid;
 @RequestMapping("/api/bills")
 public class BillingController {
     private final BillingService billingService;
+    private final NotificationActionService notificationActionService;
 
-    public BillingController(BillingService billingService) {
+    public BillingController(BillingService billingService, NotificationActionService notificationActionService) {
         this.billingService = billingService;
+        this.notificationActionService = notificationActionService;
     }
 
     @GetMapping
@@ -269,6 +273,15 @@ public class BillingController {
     public List<RefundResponse> listRefunds(@PathVariable UUID billId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return billingService.listRefunds(tenantId, billId).stream().map(this::toRefundResponse).toList();
+    }
+
+    @PostMapping("/{billId}/send-invoice-email")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('notification.send')")
+    public InvoiceEmailSendResponse sendInvoiceEmail(@PathVariable UUID billId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        NotificationActionService.InvoiceEmailResult result = notificationActionService.sendInvoiceEmail(tenantId, billId, actorAppUserId);
+        return new InvoiceEmailSendResponse(result.sent(), result.message(), result.recipientEmail(), result.sentAt());
     }
 
     private RefundResponse toRefundResponse(RefundRecord record) {

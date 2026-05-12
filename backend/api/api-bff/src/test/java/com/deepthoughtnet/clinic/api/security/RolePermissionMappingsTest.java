@@ -64,6 +64,19 @@ class RolePermissionMappingsTest {
     }
 
     @Test
+    void refundMutationPermissionsAreLimitedToBillingCapableRoles() {
+        Set<String> doctor = RolePermissionMappings.permissionsForRole(Roles.DOCTOR);
+        Set<String> auditor = RolePermissionMappings.permissionsForRole(Roles.AUDITOR);
+        Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);
+        Set<String> billingUser = RolePermissionMappings.permissionsForRole(Roles.BILLING_USER);
+
+        assertThat(doctor).doesNotContain(Permissions.BILLING_CREATE, Permissions.PAYMENT_COLLECT);
+        assertThat(auditor).doesNotContain(Permissions.BILLING_CREATE, Permissions.PAYMENT_COLLECT);
+        assertThat(receptionist).contains(Permissions.BILLING_CREATE);
+        assertThat(billingUser).contains(Permissions.BILLING_CREATE, Permissions.PAYMENT_COLLECT);
+    }
+
+    @Test
     void auditorIsReadOnlyForBillingReportsAndClinicalRecords() {
         Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.AUDITOR);
 

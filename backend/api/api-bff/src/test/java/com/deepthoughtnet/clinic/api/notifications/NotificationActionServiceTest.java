@@ -14,6 +14,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCrit
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.billing.service.model.BillPdf;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
 import com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria;
@@ -23,6 +24,8 @@ import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
+import com.deepthoughtnet.clinic.notify.NotificationDeliveryException;
+import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
@@ -48,6 +51,7 @@ class NotificationActionServiceTest {
     private BillingService billingService;
     private AppointmentService appointmentService;
     private PatientRepository patientRepository;
+    private NotificationProvider notificationProvider;
     private NotificationActionService service;
 
     @BeforeEach
@@ -56,6 +60,7 @@ class NotificationActionServiceTest {
         billingService = mock(BillingService.class);
         appointmentService = mock(AppointmentService.class);
         patientRepository = mock(PatientRepository.class);
+        notificationProvider = mock(NotificationProvider.class);
         service = new NotificationActionService(
                 notificationHistoryService,
                 mock(PrescriptionService.class),
@@ -65,7 +70,7 @@ class NotificationActionServiceTest {
                 mock(VaccinationService.class),
                 mock(PlatformTenantManagementService.class),
                 patientRepository,
-                mock(com.deepthoughtnet.clinic.notify.NotificationProvider.class),
+                notificationProvider,
                 mock(PrescriptionTemplateService.class)
         );
 
@@ -170,6 +175,66 @@ class NotificationActionServiceTest {
                 eq("APPOINTMENT"),
                 any(),
                 eq(actorId)
+        );
+    }
+
+    @Test
+    void sendInvoiceEmailMissingPatientEmailReturnsCleanError() {
+        BillRecord bill = billRecord(BillStatus.ISSUED);
+        when(billingService.findById(tenantId, bill.id())).thenReturn(Optional.of(bill));
+        PatientEntity patient = mock(PatientEntity.class);
+        when(patient.getId()).thenReturn(patientId);
+        when(patient.getEmail()).thenReturn(null);
+        when(patientRepository.findByTenantIdAndId(eq(tenantId), eq(patientId))).thenReturn(Optional.of(patient));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.sendInvoiceEmail(tenantId, bill.id(), actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Patient email is required");
+    }
+
+    @Test
+    void sendInvoiceEmailProviderUnavailableReturnsCleanError() {
+        BillRecord bill = billRecord(BillStatus.ISSUED);
+        when(billingService.findById(tenantId, bill.id())).thenReturn(Optional.of(bill));
+        when(billingService.generateBillPdf(tenantId, bill.id(), actorId)).thenReturn(new BillPdf("bill.pdf", new byte[] {1, 2}));
+        when(notificationHistoryService.queue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(mock(NotificationHistoryRecord.class));
+        org.mockito.Mockito.doThrow(new NotificationDeliveryException("Email delivery failed", null)).when(notificationProvider).send(any());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.sendInvoiceEmail(tenantId, bill.id(), actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invoice email could not be sent");
+    }
+
+    private BillRecord billRecord(BillStatus status) {
+        return new BillRecord(
+                UUID.randomUUID(),
+                tenantId,
+                "BILL-1",
+                patientId,
+                "PAT-1",
+                "Asha Rao",
+                null,
+                null,
+                LocalDate.now(),
+                status,
+                new BigDecimal("100.00"),
+                DiscountType.NONE,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                null,
+                null,
+                BigDecimal.ZERO,
+                new BigDecimal("100.00"),
+                new BigDecimal("100.00"),
+                BigDecimal.ZERO,
+                new BigDecimal("100.00"),
+                BigDecimal.ZERO,
+                null,
+                null,
+                OffsetDateTime.now(),
+                OffsetDateTime.now(),
+                List.of()
         );
     }
 }
