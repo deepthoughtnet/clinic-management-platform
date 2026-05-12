@@ -40,7 +40,7 @@ import {
   updatePlatformTenantStatus,
 } from "../../api/clinicApi";
 
-const MODULE_CODES = ["APPOINTMENTS", "CONSULTATION", "PRESCRIPTION", "BILLING", "VACCINATION", "INVENTORY", "AI_COPILOT"] as const;
+const MODULE_CODES = ["APPOINTMENTS", "CONSULTATION", "PRESCRIPTION", "BILLING", "VACCINATION", "INVENTORY", "AI_COPILOT", "CAREPILOT"] as const;
 
 type CreateTenantForm = {
   clinicName: string;
@@ -79,7 +79,7 @@ const EMPTY_FORM: CreateTenantForm = {
   adminFirstName: "",
   adminLastName: "",
   tempPassword: "",
-  modules: Object.fromEntries(MODULE_CODES.map((code) => [code, code !== "AI_COPILOT"])) as Record<string, boolean>,
+  modules: Object.fromEntries(MODULE_CODES.map((code) => [code, !["AI_COPILOT", "CAREPILOT"].includes(code)])) as Record<string, boolean>,
 };
 
 function formatDate(value?: string | null) {

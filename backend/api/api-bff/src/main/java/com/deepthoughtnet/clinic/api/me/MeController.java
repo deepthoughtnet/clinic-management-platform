@@ -147,7 +147,8 @@ public class MeController {
                 modules.agentIntake(),
                 modules.gstFiling(),
                 modules.doctorIntelligence(),
-                modules.teleCalling()
+                modules.teleCalling(),
+                modules.carePilot()
         );
     }
 }

@@ -28,7 +28,7 @@ import {
   updatePlatformTenantStatus,
 } from "../../api/clinicApi";
 
-const MODULE_CODES = ["APPOINTMENTS", "CONSULTATION", "PRESCRIPTION", "BILLING", "VACCINATION", "INVENTORY", "AI_COPILOT"] as const;
+const MODULE_CODES = ["APPOINTMENTS", "CONSULTATION", "PRESCRIPTION", "BILLING", "VACCINATION", "INVENTORY", "AI_COPILOT", "CAREPILOT"] as const;
 
 function DetailCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (

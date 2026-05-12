@@ -57,7 +57,7 @@ class MeControllerTest {
                         "Clinic A",
                         "CLINIC_ADMIN",
                         "ACTIVE",
-                        new TenantModulesRecord(true, true, true, true, true, true, true, true, true)
+                        new TenantModulesRecord(true, true, true, true, true, true, true, true, true, true)
                 )
         ));
 

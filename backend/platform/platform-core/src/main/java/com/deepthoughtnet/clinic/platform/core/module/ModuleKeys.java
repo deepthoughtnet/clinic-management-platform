@@ -6,6 +6,7 @@ public final class ModuleKeys {
     public static final String RECONCILIATION = "reconciliation";
     public static final String DECISIONING = "decisioning";
     public static final String AI_COPILOT = "aiCopilot";
+    public static final String CAREPILOT = "carePilot";
     public static final String AGENT_INTAKE = "agentIntake";
     public static final String GST_FILING = "gstFiling";
     public static final String DOCTOR_INTELLIGENCE = "doctorIntelligence";

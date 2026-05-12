@@ -1881,3 +1881,156 @@ export async function previewPrescriptionTemplate(token: string, tenantId: strin
   }
   return { blob: await response.blob() };
 }
+
+export type CarePilotCampaignType =
+  | "APPOINTMENT_REMINDER"
+  | "FOLLOW_UP_REMINDER"
+  | "REFILL_REMINDER"
+  | "VACCINATION_REMINDER"
+  | "BILLING_REMINDER"
+  | "CUSTOM";
+export type CarePilotCampaignStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "ARCHIVED";
+export type CarePilotTriggerType = "MANUAL" | "SCHEDULED" | "EVENT_BASED";
+export type CarePilotAudienceType = "ALL_PATIENTS" | "SPECIFIC_PATIENTS" | "TAG_BASED" | "RULE_BASED";
+export type CarePilotChannelType = "EMAIL" | "SMS" | "WHATSAPP" | "IN_APP" | "APP_NOTIFICATION";
+export type CarePilotExecutionStatus = "QUEUED" | "PROCESSING" | "SUCCEEDED" | "FAILED" | "DEAD_LETTER" | "RETRY_SCHEDULED" | "CANCELLED";
+export type CarePilotDeliveryStatus = "SENT" | "FAILED" | "SKIPPED" | "PROVIDER_NOT_AVAILABLE" | "NOT_CONFIGURED";
+
+export type CarePilotCampaign = {
+  id: string;
+  tenantId: string;
+  name: string;
+  campaignType: CarePilotCampaignType;
+  status: CarePilotCampaignStatus;
+  triggerType: CarePilotTriggerType;
+  audienceType: CarePilotAudienceType;
+  templateId: string | null;
+  active: boolean;
+  notes: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CarePilotTemplate = {
+  id: string;
+  tenantId: string;
+  name: string;
+  channelType: CarePilotChannelType;
+  subjectLine: string | null;
+  bodyTemplate: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CarePilotExecution = {
+  id: string;
+  tenantId: string;
+  campaignId: string;
+  templateId: string | null;
+  channelType: CarePilotChannelType;
+  recipientPatientId: string | null;
+  scheduledAt: string;
+  status: CarePilotExecutionStatus;
+  attemptCount: number;
+  lastError: string | null;
+  executedAt: string | null;
+  nextAttemptAt: string | null;
+  deliveryStatus: CarePilotDeliveryStatus | null;
+  providerName: string | null;
+  providerMessageId: string | null;
+  lastAttemptAt: string | null;
+  failureReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CarePilotDeliveryAttempt = {
+  id: string;
+  tenantId: string;
+  executionId: string;
+  attemptNumber: number;
+  providerName: string | null;
+  channelType: CarePilotChannelType;
+  deliveryStatus: CarePilotDeliveryStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
+  attemptedAt: string;
+};
+
+export type CreateCarePilotCampaignInput = {
+  name: string;
+  campaignType: CarePilotCampaignType;
+  triggerType: CarePilotTriggerType;
+  audienceType: CarePilotAudienceType;
+  templateId?: string | null;
+  notes?: string | null;
+};
+
+export type CreateCarePilotTemplateInput = {
+  name: string;
+  channelType: CarePilotChannelType;
+  subjectLine?: string | null;
+  bodyTemplate: string;
+  active?: boolean | null;
+};
+
+export type PatchCarePilotTemplateInput = {
+  name?: string | null;
+  subjectLine?: string | null;
+  bodyTemplate?: string | null;
+  active?: boolean | null;
+};
+
+export async function listCarePilotCampaigns(token: string, tenantId: string) {
+  return httpGet<CarePilotCampaign[]>("/api/carepilot/campaigns", { token, tenantId });
+}
+
+export async function getCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
+  return httpGet<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}`, { token, tenantId });
+}
+
+export async function createCarePilotCampaign(token: string, tenantId: string, body: CreateCarePilotCampaignInput) {
+  return httpPost<CarePilotCampaign>("/api/carepilot/campaigns", body, { token, tenantId });
+}
+
+export async function activateCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
+  return httpPatch<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/activate`, undefined, { token, tenantId });
+}
+
+export async function deactivateCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
+  return httpPatch<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/deactivate`, undefined, { token, tenantId });
+}
+
+export async function listCarePilotTemplates(token: string, tenantId: string) {
+  return httpGet<CarePilotTemplate[]>("/api/carepilot/templates", { token, tenantId });
+}
+
+export async function createCarePilotTemplate(token: string, tenantId: string, body: CreateCarePilotTemplateInput) {
+  return httpPost<CarePilotTemplate>("/api/carepilot/templates", body, { token, tenantId });
+}
+
+export async function patchCarePilotTemplate(token: string, tenantId: string, templateId: string, body: PatchCarePilotTemplateInput) {
+  return httpPatch<CarePilotTemplate>(`/api/carepilot/templates/${templateId}`, body, { token, tenantId });
+}
+
+export async function listCarePilotExecutions(token: string, tenantId: string) {
+  return httpGet<CarePilotExecution[]>("/api/carepilot/executions", { token, tenantId });
+}
+
+export async function listCarePilotFailedExecutions(token: string, tenantId: string) {
+  return httpGet<CarePilotExecution[]>("/api/carepilot/executions/failed", { token, tenantId });
+}
+
+export async function retryCarePilotExecution(token: string, tenantId: string, executionId: string) {
+  return httpPatch<CarePilotExecution>(`/api/carepilot/executions/${executionId}/retry`, undefined, { token, tenantId });
+}
+
+export async function resendCarePilotExecution(token: string, tenantId: string, executionId: string) {
+  return httpPatch<CarePilotExecution>(`/api/carepilot/executions/${executionId}/resend`, undefined, { token, tenantId });
+}
+
+export async function listCarePilotDeliveryAttempts(token: string, tenantId: string, executionId: string) {
+  return httpGet<CarePilotDeliveryAttempt[]>(`/api/carepilot/executions/${executionId}/attempts`, { token, tenantId });
+}

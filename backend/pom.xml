@@ -31,6 +31,7 @@
     <module>domains/patient-domain</module>
     <module>domains/prescription-domain</module>
     <module>domains/vaccination-domain</module>
+    <module>domains/carepilot-domain</module>
 
     <module>platform/platform-audit</module>
     <module>platform/platform-contracts</module>
@@ -50,6 +51,8 @@
     <module>providers/notify-email</module>
     <module>providers/notify-logging</module>
     <module>providers/notify-spi</module>
+    <module>providers/messaging-spi</module>
+    <module>providers/messaging-email</module>
     <module>providers/storage-minio</module>
   </modules>
 

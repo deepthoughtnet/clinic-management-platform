@@ -28,6 +28,7 @@ import PlaceholderPage from "../pages/PlaceholderPage";
 import TenantsPage from "../pages/platform/TenantsPage";
 import TenantDetailPage from "../pages/platform/TenantDetailPage";
 import PlansModulesPage from "../pages/platform/PlansModulesPage";
+import CampaignsPage from "../products/carepilot/campaigns/CampaignsPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const auth = React.useContext(AuthContext);
@@ -140,6 +141,7 @@ function AuthedApp() {
         <Route path="/platform/tenants" element={<TenantsPage />} />
         <Route path="/platform/tenants/:tenantId" element={<TenantDetailPage />} />
         <Route path="/platform/plans" element={<PlansModulesPage />} />
+        <Route path="/carepilot/campaigns" element={<CampaignsPage />} />
         <Route
           path="/platform/users"
           element={<PlaceholderPage title="Users / Admins" description="Platform user administration can be enabled when backend APIs are exposed." />}

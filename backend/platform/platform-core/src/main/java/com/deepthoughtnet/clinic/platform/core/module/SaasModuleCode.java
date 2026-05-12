@@ -7,7 +7,8 @@ public enum SaasModuleCode {
     BILLING,
     VACCINATION,
     INVENTORY,
-    AI_COPILOT;
+    AI_COPILOT,
+    CAREPILOT;
 
     public static String normalize(String value) {
         return value == null ? null : value.trim().toUpperCase();

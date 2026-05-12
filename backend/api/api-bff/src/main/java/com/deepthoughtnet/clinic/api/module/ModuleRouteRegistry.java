@@ -17,6 +17,7 @@ public class ModuleRouteRegistry {
             new RouteModule("/api/medicines", SaasModuleCode.INVENTORY.name()),
             new RouteModule("/api/inventory", SaasModuleCode.INVENTORY.name()),
             new RouteModule("/api/ai", SaasModuleCode.AI_COPILOT.name()),
+            new RouteModule("/api/carepilot", SaasModuleCode.CAREPILOT.name()),
             new RouteModule("/api/dashboard", SaasModuleCode.APPOINTMENTS.name()),
             new RouteModule("/api/patients", SaasModuleCode.APPOINTMENTS.name()),
             new RouteModule("/api/doctors", SaasModuleCode.APPOINTMENTS.name()),

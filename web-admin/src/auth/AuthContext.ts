@@ -23,7 +23,15 @@ export type AuthContextValue = {
     tenantName?: string | null;
     role?: string | null;
     status?: string | null;
+    modules?: {
+      carePilot?: boolean | null;
+      aiCopilot?: boolean | null;
+    } | null;
   }>;
+  tenantModules: {
+    carePilot?: boolean | null;
+    aiCopilot?: boolean | null;
+  } | null;
   accessToken: string | null;
   initError: string | null;
   selectTenant: (tenant: SelectedTenant | null) => void;

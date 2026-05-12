@@ -108,6 +108,11 @@
     </dependency>
     <dependency>
       <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>carepilot-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
       <artifactId>platform-contracts</artifactId>
       <version>${project.version}</version>
     </dependency>
@@ -144,6 +149,11 @@
     <dependency>
       <groupId>com.deepthoughtnet.clinic</groupId>
       <artifactId>notify-logging</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>messaging-email</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

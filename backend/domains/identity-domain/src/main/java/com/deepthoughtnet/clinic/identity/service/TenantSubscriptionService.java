@@ -83,8 +83,23 @@ public class TenantSubscriptionService {
         if (legacyModuleKey != null) {
             return tenantModuleEntitlementService.isModuleEnabled(tenantId, legacyModuleKey);
         }
+        if ("CAREPILOT".equals(normalized)) {
+            return isCarePilotEnabledWithTransitionFallback(tenantId);
+        }
 
         return true;
+    }
+
+    /**
+     * During the CarePilot entitlement migration window, tenants may still have tele-calling enabled
+     * while the dedicated CarePilot flag has not been flipped yet. Prefer the dedicated flag first and
+     * only fall back to tele-calling for backward compatibility.
+     */
+    private boolean isCarePilotEnabledWithTransitionFallback(UUID tenantId) {
+        if (tenantModuleEntitlementService.isModuleEnabled(tenantId, ModuleKeys.CAREPILOT)) {
+            return true;
+        }
+        return tenantModuleEntitlementService.isModuleEnabled(tenantId, ModuleKeys.TELE_CALLING);
     }
 
     private boolean isSubscriptionActive(TenantSubscriptionEntity subscription, LocalDate today) {
@@ -103,6 +118,7 @@ public class TenantSubscriptionService {
         return switch (moduleCode) {
             case "APPOINTMENTS", "CONSULTATION", "PRESCRIPTION", "BILLING", "VACCINATION", "INVENTORY" -> ModuleKeys.CLINIC_AUTOMATION;
             case "AI_COPILOT" -> ModuleKeys.AI_COPILOT;
+            case "CAREPILOT" -> null;
             default -> null;
         };
     }

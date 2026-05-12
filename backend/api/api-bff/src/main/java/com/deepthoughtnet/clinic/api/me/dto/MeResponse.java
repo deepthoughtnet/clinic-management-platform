@@ -27,7 +27,8 @@ public record MeResponse(
             boolean billing,
             boolean vaccinations,
             boolean inventory,
-            boolean reports
+            boolean reports,
+            boolean carePilot
     ) {}
 
     public record ActiveTenantMembershipResponse(

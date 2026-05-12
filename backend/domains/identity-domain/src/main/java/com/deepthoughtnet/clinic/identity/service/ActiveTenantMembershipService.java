@@ -60,7 +60,8 @@ public class ActiveTenantMembershipService {
                                     tenant.isAgentIntakeEnabled(),
                                     tenant.isGstFilingEnabled(),
                                     tenant.isDoctorIntelligenceEnabled(),
-                                    tenant.isTeleCallingEnabled()
+                                    tenant.isTeleCallingEnabled(),
+                                    tenant.isCarePilotEnabled()
                             )
                     );
                 })

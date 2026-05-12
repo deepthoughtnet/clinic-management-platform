@@ -9,5 +9,6 @@ public record TenantModulesRecord(
         boolean agentIntake,
         boolean gstFiling,
         boolean doctorIntelligence,
-        boolean teleCalling
+        boolean teleCalling,
+        boolean carePilot
 ) {}

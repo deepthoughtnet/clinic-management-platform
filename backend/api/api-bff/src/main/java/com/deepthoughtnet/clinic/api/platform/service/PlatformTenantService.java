@@ -212,6 +212,7 @@ public class PlatformTenantService {
         boolean vaccination = moduleEnabled(modules, "VACCINATION");
         boolean inventory = moduleEnabled(modules, "INVENTORY");
         boolean aiCopilot = moduleEnabled(modules, "AI_COPILOT");
+        boolean carePilot = moduleEnabled(modules, "CAREPILOT");
 
         PlatformTenantRecord record = platformTenantManagementService.configureModules(
                 tenantId,
@@ -224,7 +225,8 @@ public class PlatformTenantService {
                         false,
                         false,
                         false,
-                        false
+                        false,
+                        carePilot
                 )
         );
 

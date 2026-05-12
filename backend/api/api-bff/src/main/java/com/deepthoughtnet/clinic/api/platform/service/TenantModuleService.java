@@ -20,7 +20,8 @@ public class TenantModuleService {
             SaasModuleCode.BILLING.name(),
             SaasModuleCode.VACCINATION.name(),
             SaasModuleCode.INVENTORY.name(),
-            SaasModuleCode.AI_COPILOT.name()
+            SaasModuleCode.AI_COPILOT.name(),
+            SaasModuleCode.CAREPILOT.name()
     );
 
     private final JdbcTemplate jdbcTemplate;

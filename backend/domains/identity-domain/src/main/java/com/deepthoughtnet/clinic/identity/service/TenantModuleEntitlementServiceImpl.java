@@ -60,6 +60,7 @@ public class TenantModuleEntitlementServiceImpl implements TenantModuleEntitleme
         addIf(modules, ModuleKeys.GST_FILING, tenant.isGstFilingEnabled());
         addIf(modules, ModuleKeys.DOCTOR_INTELLIGENCE, tenant.isDoctorIntelligenceEnabled());
         addIf(modules, ModuleKeys.TELE_CALLING, tenant.isTeleCallingEnabled());
+        addIf(modules, ModuleKeys.CAREPILOT, tenant.isCarePilotEnabled());
         return Set.copyOf(modules);
     }
 
@@ -75,6 +76,7 @@ public class TenantModuleEntitlementServiceImpl implements TenantModuleEntitleme
             case ModuleKeys.GST_FILING -> tenant.isGstFilingEnabled();
             case ModuleKeys.DOCTOR_INTELLIGENCE -> tenant.isDoctorIntelligenceEnabled();
             case ModuleKeys.TELE_CALLING -> tenant.isTeleCallingEnabled();
+            case ModuleKeys.CAREPILOT -> tenant.isCarePilotEnabled();
             default -> false;
         };
     }
@@ -99,6 +101,7 @@ public class TenantModuleEntitlementServiceImpl implements TenantModuleEntitleme
             case "gst_filing", "gst-filing" -> ModuleKeys.GST_FILING;
             case "doctor_intelligence", "doctor-intelligence" -> ModuleKeys.DOCTOR_INTELLIGENCE;
             case "tele_calling", "tele-calling" -> ModuleKeys.TELE_CALLING;
+            case "care_pilot", "care-pilot", "carepilot" -> ModuleKeys.CAREPILOT;
             default -> trimmed;
         };
     }

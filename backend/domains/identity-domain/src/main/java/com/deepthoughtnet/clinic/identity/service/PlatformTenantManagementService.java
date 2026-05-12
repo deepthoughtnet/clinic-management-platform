@@ -62,7 +62,8 @@ public class PlatformTenantManagementService {
                 command.agentIntake(),
                 command.gstFiling(),
                 command.doctorIntelligence(),
-                command.teleCalling()
+                command.teleCalling(),
+                command.carePilot()
         );
         return toRecord(tenant);
     }
@@ -92,7 +93,8 @@ public class PlatformTenantManagementService {
                         tenant.isAgentIntakeEnabled(),
                         tenant.isGstFilingEnabled(),
                         tenant.isDoctorIntelligenceEnabled(),
-                        tenant.isTeleCallingEnabled()
+                        tenant.isTeleCallingEnabled(),
+                        tenant.isCarePilotEnabled()
                 ),
                 tenant.getCreatedAt(),
                 tenant.getUpdatedAt()

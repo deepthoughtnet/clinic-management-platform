@@ -42,7 +42,7 @@ class TenantModuleEntitlementServiceImplTest {
     @Test
     void apClinicAutomationCanBeDisabled() {
         TenantEntity tenant = TenantEntity.create("acme", "Acme", "PRO");
-        tenant.configureModules(false, true, true, false, false, false);
+        tenant.configureModules(false, true, true, false, false, false, false);
         TenantModuleEntitlementServiceImpl service = new TenantModuleEntitlementServiceImpl(tenantRepository(tenant));
 
         assertFalse(service.isModuleEnabled(tenantId, ModuleKeys.CLINIC_AUTOMATION));
@@ -51,6 +51,16 @@ class TenantModuleEntitlementServiceImplTest {
         assertTrue(service.isModuleEnabled(tenantId, ModuleKeys.AI_COPILOT));
         assertThrows(TenantModuleDisabledException.class,
                 () -> service.requireModuleEnabled(tenantId, ModuleKeys.CLINIC_AUTOMATION));
+    }
+
+    @Test
+    void carePilotUsesDedicatedTenantFlag() {
+        TenantEntity tenant = TenantEntity.create("acme", "Acme", "BASIC");
+        tenant.configureModules(true, false, false, true, true, true, false, false, true, true);
+        TenantModuleEntitlementServiceImpl service = new TenantModuleEntitlementServiceImpl(tenantRepository(tenant));
+
+        assertTrue(service.isModuleEnabled(tenantId, ModuleKeys.CAREPILOT));
+        assertTrue(service.isModuleEnabled(tenantId, "care_pilot"));
     }
 
     private TenantRepository tenantRepository(TenantEntity tenant) {

@@ -14,6 +14,10 @@ type MeResponse = {
   tenantRole?: string | null;
   permissions?: string[] | null;
   tokenRoles?: string[] | null;
+  modules?: {
+    carePilot?: boolean | null;
+    aiCopilot?: boolean | null;
+  } | null;
   memberships?: Array<{
     tenantId?: string | null;
     id?: string | null;
@@ -24,6 +28,10 @@ type MeResponse = {
     role?: string | null;
     status?: string | null;
     active?: boolean | null;
+    modules?: {
+      carePilot?: boolean | null;
+      aiCopilot?: boolean | null;
+    } | null;
   }> | null;
   activeTenantMemberships?: Array<{
     tenantId?: string | null;
@@ -35,6 +43,10 @@ type MeResponse = {
     role?: string | null;
     status?: string | null;
     active?: boolean | null;
+    modules?: {
+      carePilot?: boolean | null;
+      aiCopilot?: boolean | null;
+    } | null;
   }> | null;
 };
 type ActiveMembership = {
@@ -43,6 +55,10 @@ type ActiveMembership = {
   tenantName?: string | null;
   role?: string | null;
   status?: string | null;
+  modules?: {
+    carePilot?: boolean | null;
+    aiCopilot?: boolean | null;
+  } | null;
 };
 
 const SELECTED_TENANT_STORAGE_KEY = "clinic_selected_tenant";
@@ -127,6 +143,10 @@ type Membership = {
   role?: string | null;
   status?: string | null;
   active?: boolean | null;
+  modules?: {
+    carePilot?: boolean | null;
+    aiCopilot?: boolean | null;
+  } | null;
 };
 
 function normalizeMemberships(me: MeResponse): Membership[] {
@@ -158,6 +178,12 @@ function normalizeMemberships(me: MeResponse): Membership[] {
       role: typeof membership.role === "string" ? membership.role : null,
       status: typeof membership.status === "string" ? membership.status : null,
       active: membership.active === true,
+      modules: typeof membership.modules === "object" && membership.modules !== null
+        ? {
+          carePilot: (membership.modules as { carePilot?: boolean | null }).carePilot ?? null,
+          aiCopilot: (membership.modules as { aiCopilot?: boolean | null }).aiCopilot ?? null,
+        }
+        : null,
     };
     if (!isValidClinicTenantShape(normalizedMembership)) continue;
     normalized.push(normalizedMembership);
@@ -176,6 +202,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const [appUserId, setAppUserId] = React.useState<string | null>(null);
   const [tenantRole, setTenantRole] = React.useState<string | null>(null);
   const [activeTenantMemberships, setActiveTenantMemberships] = React.useState<ActiveMembership[]>([]);
+  const [tenantModules, setTenantModules] = React.useState<{ carePilot?: boolean | null; aiCopilot?: boolean | null } | null>(null);
   const [initError, setInitError] = React.useState<string | null>(null);
   const [initVersion, setInitVersion] = React.useState(0);
 
@@ -207,6 +234,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     setAppUserId(null);
     setTenantRole(null);
     setActiveTenantMemberships([]);
+    setTenantModules(null);
   }, []);
 
   const refreshTenantContext = React.useCallback(async (tenant: SelectedTenant | null, tokenOverride?: string | null) => {
@@ -234,6 +262,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       setSelectedTenant(tenant);
       setAppUserId(me.appUserId || null);
       setTenantRole(me.tenantRole || null);
+      setTenantModules(me.modules || null);
       setPermissions((me.permissions || []).map((permission) => permission.toLowerCase()));
       setInitError(null);
       console.info("[auth] tenant context refresh completed", {
@@ -367,6 +396,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
                 setSelectedTenant(resolved);
                 setAppUserId(effectiveMe.appUserId || null);
                 setTenantRole(effectiveMe.tenantRole || null);
+                setTenantModules(effectiveMe.modules || null);
                 setPermissions((effectiveMe.permissions || []).map((permission) => permission.toLowerCase()));
                 storeSelectedTenant(resolved);
                 console.info("[auth] tenant bootstrap completed", {
@@ -438,6 +468,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       appUserId,
       tenantRole,
       activeTenantMemberships,
+      tenantModules,
       accessToken,
       initError,
       selectTenant: (tenant) => {
@@ -463,7 +494,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         await keycloak.logout({ redirectUri: `${window.location.origin}/login` });
       },
     }),
-    [initialized, authenticated, username, rolesUpper, permissions, selectedTenant, activeTenantMemberships, accessToken, initError, appUserId, tenantRole, clearSession, refreshTenantContext]
+    [initialized, authenticated, username, rolesUpper, permissions, selectedTenant, activeTenantMemberships, tenantModules, accessToken, initError, appUserId, tenantRole, clearSession, refreshTenantContext]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

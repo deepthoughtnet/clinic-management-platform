@@ -60,6 +60,9 @@ public class TenantEntity {
     @Column(name = "module_tele_calling", nullable = false)
     private boolean teleCallingEnabled = false;
 
+    @Column(name = "module_carepilot", nullable = false)
+    private boolean carePilotEnabled = false;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
@@ -95,6 +98,7 @@ public class TenantEntity {
     public boolean isGstFilingEnabled() { return gstFilingEnabled; }
     public boolean isDoctorIntelligenceEnabled() { return doctorIntelligenceEnabled; }
     public boolean isTeleCallingEnabled() { return teleCallingEnabled; }
+    public boolean isCarePilotEnabled() { return carePilotEnabled; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 
@@ -122,7 +126,8 @@ public class TenantEntity {
             boolean agentIntake,
             boolean gstFiling,
             boolean doctorIntelligence,
-            boolean teleCalling
+            boolean teleCalling,
+            boolean carePilot
     ) {
         this.clinicAutomationEnabled = clinicAutomation;
         this.clinicGenerationEnabled = clinicGeneration;
@@ -133,6 +138,7 @@ public class TenantEntity {
         this.gstFilingEnabled = gstFiling;
         this.doctorIntelligenceEnabled = doctorIntelligence;
         this.teleCallingEnabled = teleCalling;
+        this.carePilotEnabled = carePilot;
         touch();
     }
 
@@ -142,7 +148,8 @@ public class TenantEntity {
             boolean reconciliation,
             boolean gstFiling,
             boolean doctorIntelligence,
-            boolean teleCalling
+            boolean teleCalling,
+            boolean carePilot
     ) {
         configureModules(
                 clinicAutomation,
@@ -153,7 +160,8 @@ public class TenantEntity {
                 clinicAutomation,
                 gstFiling,
                 doctorIntelligence,
-                teleCalling
+                teleCalling,
+                carePilot
         );
     }
 
@@ -171,6 +179,7 @@ public class TenantEntity {
         this.gstFilingEnabled = false;
         this.doctorIntelligenceEnabled = false;
         this.teleCallingEnabled = false;
+        this.carePilotEnabled = false;
 
         if ("PRO".equalsIgnoreCase(planId)) {
             this.clinicGenerationEnabled = true;
@@ -181,6 +190,7 @@ public class TenantEntity {
             this.gstFilingEnabled = true;
             this.doctorIntelligenceEnabled = true;
             this.teleCallingEnabled = true;
+            this.carePilotEnabled = true;
         }
     }
 }

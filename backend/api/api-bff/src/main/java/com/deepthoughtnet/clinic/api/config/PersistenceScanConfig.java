@@ -22,7 +22,8 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
         "com.deepthoughtnet.clinic.prescription.db",
         "com.deepthoughtnet.clinic.billing.db",
         "com.deepthoughtnet.clinic.vaccination.db",
-        "com.deepthoughtnet.clinic.inventory.db"
+        "com.deepthoughtnet.clinic.inventory.db",
+        "com.deepthoughtnet.clinic.carepilot"
 })
 @EnableJpaRepositories(basePackages = {
         "com.deepthoughtnet.clinic.platform.audit.db",
@@ -41,7 +42,8 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
         "com.deepthoughtnet.clinic.prescription.db",
         "com.deepthoughtnet.clinic.billing.db",
         "com.deepthoughtnet.clinic.vaccination.db",
-        "com.deepthoughtnet.clinic.inventory.db"
+        "com.deepthoughtnet.clinic.inventory.db",
+        "com.deepthoughtnet.clinic.carepilot"
 })
 public class PersistenceScanConfig {
 }

@@ -35,7 +35,8 @@ public class ModuleEntitlementConfig implements WebMvcConfigurer {
                         "/api/inventory/**",
                         "/api/reports",
                         "/api/reports/**",
-                        "/api/ai/**"
+                        "/api/ai/**",
+                        "/api/carepilot/**"
                 );
     }
 }
