@@ -53,9 +53,9 @@ export const NAV_GROUPS: NavGroup[] = [
     requiresTenant: true,
     items: [
       { key: "inventory", label: "Inventory", path: "/inventory", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"] },
-      { key: "dispensing", label: "Dispensing", disabled: true, future: true, badge: "Coming soon", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "RECEPTIONIST"] },
-      { key: "stock-movements", label: "Stock Movements", disabled: true, future: true, badge: "Coming soon", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"] },
-      { key: "medicine-master", label: "Medicine Master", disabled: true, future: true, badge: "Coming soon", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST"] },
+      { key: "dispensing", label: "Dispensing", path: "/pharmacy/dispensing", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "RECEPTIONIST", "BILLING_USER", "DOCTOR", "AUDITOR"] },
+      { key: "stock-movements", label: "Stock Movements", path: "/pharmacy/stock-movements", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "RECEPTIONIST", "DOCTOR"] },
+      { key: "medicine-master", label: "Medicine Master", path: "/pharmacy/medicines", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "AUDITOR", "DOCTOR", "RECEPTIONIST", "BILLING_USER"] },
     ],
   },
   {
@@ -64,8 +64,8 @@ export const NAV_GROUPS: NavGroup[] = [
     requiresTenant: true,
     items: [
       { key: "billing", label: "Billing", path: "/billing", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"] },
-      { key: "payments", label: "Payments", disabled: true, future: true, badge: "Coming soon", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"] },
-      { key: "refunds", label: "Refunds", disabled: true, future: true, badge: "Coming soon", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"] },
+      { key: "payments", label: "Payments", path: "/finance/payments", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"] },
+      { key: "refunds", label: "Refunds", path: "/finance/refunds", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"] },
       { key: "reports", label: "Reports", path: "/reports", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "BILLING_USER", "AUDITOR"] },
     ],
   },
@@ -83,7 +83,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "reminders", label: "Reminders", path: "/carepilot/reminders", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
       { key: "patient-engagement", label: "Patient Engagement", path: "/carepilot/engagement", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
       { key: "leads", label: "Leads", path: "/carepilot/leads", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
-      { key: "webinar-automation", label: "Webinar Automation", disabled: true, future: true, badge: "Coming soon", requiresTenant: true, rolesAny: ["CLINIC_ADMIN"] },
+      { key: "webinar-automation", label: "Webinar Automation", path: "/carepilot/webinars", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
       { key: "ai-calls", label: "AI Calls", disabled: true, future: true, badge: "Coming soon", requiresTenant: true, rolesAny: ["CLINIC_ADMIN"] },
     ],
   },

@@ -687,6 +687,49 @@ export type Refund = {
   createdAt: string;
 };
 
+export type PaymentLedgerRow = {
+  id: string;
+  tenantId: string;
+  billId: string;
+  billNumber: string;
+  patientId: string | null;
+  patientName: string | null;
+  patientNumber: string | null;
+  paymentDate: string;
+  paymentDateTime: string | null;
+  amount: number;
+  paymentMode: PaymentMode;
+  referenceNumber: string | null;
+  notes: string | null;
+  receivedBy: string | null;
+  receiptId: string | null;
+  receiptNumber: string | null;
+  receiptDate: string | null;
+  billStatus: BillStatus;
+  billDueAmount: number;
+  createdAt: string;
+};
+
+export type RefundLedgerRow = {
+  id: string;
+  tenantId: string;
+  billId: string;
+  billNumber: string;
+  patientId: string | null;
+  patientName: string | null;
+  patientNumber: string | null;
+  paymentId: string | null;
+  amount: number;
+  reason: string;
+  refundMode: PaymentMode | null;
+  refundedBy: string | null;
+  refundedAt: string;
+  notes: string | null;
+  billStatus: BillStatus;
+  billDueAmount: number;
+  createdAt: string;
+};
+
 export type RefundInput = {
   paymentId: string | null;
   amount: number;
@@ -1289,6 +1332,60 @@ export async function addBillRefund(token: string, tenantId: string, billId: str
   return httpPost<Refund>(`/api/bills/${billId}/refunds`, body, { token, tenantId });
 }
 
+export async function listPaymentsLedger(
+  token: string,
+  tenantId: string,
+  params: {
+    fromDate?: string;
+    toDate?: string;
+    patientId?: string;
+    search?: string;
+    billNumber?: string;
+    paymentMode?: PaymentMode | null;
+    receivedBy?: string;
+    page?: number;
+    size?: number;
+  } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.fromDate) query.set("fromDate", params.fromDate);
+  if (params.toDate) query.set("toDate", params.toDate);
+  if (params.patientId) query.set("patientId", params.patientId);
+  if (params.search) query.set("search", params.search);
+  if (params.billNumber) query.set("billNumber", params.billNumber);
+  if (params.paymentMode) query.set("paymentMode", params.paymentMode);
+  if (params.receivedBy) query.set("receivedBy", params.receivedBy);
+  query.set("page", String(params.page ?? 0));
+  query.set("size", String(params.size ?? 200));
+  return httpGet<PaymentLedgerRow[]>(`/api/bills/payments?${query.toString()}`, { token, tenantId });
+}
+
+export async function listRefundsLedger(
+  token: string,
+  tenantId: string,
+  params: {
+    fromDate?: string;
+    toDate?: string;
+    patientId?: string;
+    search?: string;
+    billNumber?: string;
+    refundMode?: PaymentMode | null;
+    page?: number;
+    size?: number;
+  } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.fromDate) query.set("fromDate", params.fromDate);
+  if (params.toDate) query.set("toDate", params.toDate);
+  if (params.patientId) query.set("patientId", params.patientId);
+  if (params.search) query.set("search", params.search);
+  if (params.billNumber) query.set("billNumber", params.billNumber);
+  if (params.refundMode) query.set("refundMode", params.refundMode);
+  query.set("page", String(params.page ?? 0));
+  query.set("size", String(params.size ?? 200));
+  return httpGet<RefundLedgerRow[]>(`/api/bills/refunds?${query.toString()}`, { token, tenantId });
+}
+
 export async function sendBillInvoiceEmail(token: string, tenantId: string, billId: string) {
   return httpPost<InvoiceEmailSendResponse>(`/api/bills/${billId}/send-invoice-email`, undefined, { token, tenantId });
 }
@@ -1887,6 +1984,9 @@ export type CarePilotCampaignType =
   | "MISSED_APPOINTMENT_FOLLOW_UP"
   | "FOLLOW_UP_REMINDER"
   | "LEAD_FOLLOW_UP_REMINDER"
+  | "WEBINAR_CONFIRMATION"
+  | "WEBINAR_REMINDER"
+  | "WEBINAR_FOLLOW_UP"
   | "REFILL_REMINDER"
   | "VACCINATION_REMINDER"
   | "BILLING_REMINDER"
@@ -2349,6 +2449,81 @@ export type CarePilotLeadActivityListResponse = {
   rows: CarePilotLeadActivity[];
 };
 
+export type CarePilotWebinarStatus = "DRAFT" | "SCHEDULED" | "LIVE" | "COMPLETED" | "CANCELLED";
+export type CarePilotWebinarType = "HEALTH_AWARENESS" | "WELLNESS" | "CLINIC_EVENT" | "MARKETING" | "EDUCATIONAL" | "OTHER";
+export type CarePilotWebinarRegistrationStatus = "REGISTERED" | "CONFIRMED" | "CANCELLED" | "NO_SHOW" | "ATTENDED";
+export type CarePilotWebinarRegistrationSource = "MANUAL" | "PATIENT" | "LEAD" | "CAMPAIGN" | "OTHER";
+
+export type CarePilotWebinar = {
+  id: string;
+  tenantId: string;
+  title: string;
+  description: string | null;
+  webinarType: CarePilotWebinarType;
+  status: CarePilotWebinarStatus;
+  webinarUrl: string | null;
+  organizerName: string | null;
+  organizerEmail: string | null;
+  scheduledStartAt: string;
+  scheduledEndAt: string;
+  timezone: string;
+  capacity: number | null;
+  registrationEnabled: boolean;
+  reminderEnabled: boolean;
+  followupEnabled: boolean;
+  tags: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CarePilotWebinarListResponse = {
+  page: number;
+  size: number;
+  total: number;
+  rows: CarePilotWebinar[];
+};
+
+export type CarePilotWebinarRegistration = {
+  id: string;
+  tenantId: string;
+  webinarId: string;
+  patientId: string | null;
+  leadId: string | null;
+  attendeeName: string;
+  attendeeEmail: string | null;
+  attendeePhone: string | null;
+  registrationStatus: CarePilotWebinarRegistrationStatus;
+  attended: boolean;
+  attendedAt: string | null;
+  source: CarePilotWebinarRegistrationSource;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CarePilotWebinarRegistrationListResponse = {
+  page: number;
+  size: number;
+  total: number;
+  rows: CarePilotWebinarRegistration[];
+};
+
+export type CarePilotWebinarAnalyticsSummary = {
+  totalWebinars: number;
+  upcomingWebinars: number;
+  completedWebinars: number;
+  totalRegistrations: number;
+  attendedCount: number;
+  noShowCount: number;
+  attendanceRate: number;
+  noShowRate: number;
+  webinarConversions: number;
+  registrationsBySource: Record<string, number>;
+  attendeeEngagementCount: number;
+};
+
 export type CreateCarePilotCampaignInput = {
   name: string;
   campaignType: CarePilotCampaignType;
@@ -2646,4 +2821,81 @@ export async function getCarePilotLeadAnalyticsSummary(token: string, tenantId: 
   if (filters?.endDate) query.set("endDate", filters.endDate);
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return httpGet<CarePilotLeadAnalyticsSummary>(`/api/carepilot/leads/analytics/summary${suffix}`, { token, tenantId });
+}
+
+export async function listCarePilotWebinars(token: string, tenantId: string, filters?: {
+  status?: CarePilotWebinarStatus;
+  webinarType?: CarePilotWebinarType;
+  scheduledFrom?: string;
+  scheduledTo?: string;
+  upcoming?: boolean;
+  completed?: boolean;
+  page?: number;
+  size?: number;
+}) {
+  const query = new URLSearchParams();
+  if (filters?.status) query.set("status", filters.status);
+  if (filters?.webinarType) query.set("webinarType", filters.webinarType);
+  if (filters?.scheduledFrom) query.set("scheduledFrom", filters.scheduledFrom);
+  if (filters?.scheduledTo) query.set("scheduledTo", filters.scheduledTo);
+  if (filters?.upcoming) query.set("upcoming", "true");
+  if (filters?.completed) query.set("completed", "true");
+  if (filters?.page != null) query.set("page", String(filters.page));
+  if (filters?.size != null) query.set("size", String(filters.size));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<CarePilotWebinarListResponse>(`/api/carepilot/webinars${suffix}`, { token, tenantId });
+}
+
+export async function getCarePilotWebinar(token: string, tenantId: string, webinarId: string) {
+  return httpGet<CarePilotWebinar>(`/api/carepilot/webinars/${webinarId}`, { token, tenantId });
+}
+
+export async function createCarePilotWebinar(token: string, tenantId: string, body: Partial<CarePilotWebinar>) {
+  return httpPost<CarePilotWebinar>("/api/carepilot/webinars", body, { token, tenantId });
+}
+
+export async function updateCarePilotWebinar(token: string, tenantId: string, webinarId: string, body: Partial<CarePilotWebinar>) {
+  return httpPut<CarePilotWebinar>(`/api/carepilot/webinars/${webinarId}`, body, { token, tenantId });
+}
+
+export async function updateCarePilotWebinarStatus(token: string, tenantId: string, webinarId: string, status: CarePilotWebinarStatus) {
+  return httpPost<CarePilotWebinar>(`/api/carepilot/webinars/${webinarId}/status`, { status }, { token, tenantId });
+}
+
+export async function listCarePilotWebinarRegistrations(token: string, tenantId: string, webinarId: string, page = 0, size = 25) {
+  return httpGet<CarePilotWebinarRegistrationListResponse>(`/api/carepilot/webinars/${webinarId}/registrations?page=${page}&size=${size}`, { token, tenantId });
+}
+
+export async function registerCarePilotWebinarAttendee(
+  token: string,
+  tenantId: string,
+  webinarId: string,
+  body: {
+    patientId?: string | null;
+    leadId?: string | null;
+    attendeeName: string;
+    attendeeEmail?: string | null;
+    attendeePhone?: string | null;
+    source?: CarePilotWebinarRegistrationSource;
+    notes?: string | null;
+  }
+) {
+  return httpPost<CarePilotWebinarRegistration>(`/api/carepilot/webinars/${webinarId}/register`, body, { token, tenantId });
+}
+
+export async function markCarePilotWebinarAttendance(
+  token: string,
+  tenantId: string,
+  webinarId: string,
+  body: {
+    registrationId: string;
+    registrationStatus: CarePilotWebinarRegistrationStatus;
+    notes?: string | null;
+  }
+) {
+  return httpPost<CarePilotWebinarRegistration>(`/api/carepilot/webinars/${webinarId}/attendance`, body, { token, tenantId });
+}
+
+export async function getCarePilotWebinarAnalyticsSummary(token: string, tenantId: string) {
+  return httpGet<CarePilotWebinarAnalyticsSummary>("/api/carepilot/webinars/analytics/summary", { token, tenantId });
 }

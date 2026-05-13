@@ -132,4 +132,19 @@ class RolePermissionMappingsTest {
         assertThat(doctor).doesNotContain(Permissions.CAREPILOT_LEAD_READ, Permissions.CAREPILOT_LEAD_CREATE, Permissions.CAREPILOT_LEAD_UPDATE, Permissions.CAREPILOT_LEAD_CONVERT);
         assertThat(billing).doesNotContain(Permissions.CAREPILOT_LEAD_READ, Permissions.CAREPILOT_LEAD_CREATE, Permissions.CAREPILOT_LEAD_UPDATE, Permissions.CAREPILOT_LEAD_CONVERT);
     }
+
+    @Test
+    void carePilotWebinarPermissionsFollowOperationalRoleModel() {
+        Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
+        Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);
+        Set<String> auditor = RolePermissionMappings.permissionsForRole(Roles.AUDITOR);
+        Set<String> doctor = RolePermissionMappings.permissionsForRole(Roles.DOCTOR);
+        Set<String> billing = RolePermissionMappings.permissionsForRole(Roles.BILLING_USER);
+
+        assertThat(clinicAdmin).contains(Permissions.CAREPILOT_WEBINAR_READ, Permissions.CAREPILOT_WEBINAR_MANAGE);
+        assertThat(receptionist).contains(Permissions.CAREPILOT_WEBINAR_READ, Permissions.CAREPILOT_WEBINAR_MANAGE);
+        assertThat(auditor).contains(Permissions.CAREPILOT_WEBINAR_READ);
+        assertThat(doctor).doesNotContain(Permissions.CAREPILOT_WEBINAR_READ, Permissions.CAREPILOT_WEBINAR_MANAGE);
+        assertThat(billing).doesNotContain(Permissions.CAREPILOT_WEBINAR_READ, Permissions.CAREPILOT_WEBINAR_MANAGE);
+    }
 }

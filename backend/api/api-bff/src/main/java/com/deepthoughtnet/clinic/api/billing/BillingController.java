@@ -5,9 +5,11 @@ import com.deepthoughtnet.clinic.api.billing.dto.BillLineResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.BillRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.BillResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.InvoiceEmailSendResponse;
+import com.deepthoughtnet.clinic.api.billing.dto.PaymentLedgerResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.PaymentRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.PaymentResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.ReceiptResponse;
+import com.deepthoughtnet.clinic.api.billing.dto.RefundLedgerResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.RefundRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.RefundResponse;
 import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
@@ -26,6 +28,7 @@ import com.deepthoughtnet.clinic.billing.service.model.RefundCommand;
 import com.deepthoughtnet.clinic.billing.service.model.RefundRecord;
 import java.time.LocalDate;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.ContentDisposition;
@@ -136,6 +139,40 @@ public class BillingController {
     public List<PaymentResponse> listPayments(@PathVariable UUID billId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return billingService.listPayments(tenantId, billId).stream().map(this::toPaymentResponse).toList();
+    }
+
+    @GetMapping("/payments")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
+    public List<PaymentLedgerResponse> listAllPayments(
+            @RequestParam(required = false) LocalDate fromDate,
+            @RequestParam(required = false) LocalDate toDate,
+            @RequestParam(required = false) String patientId,
+            @RequestParam(required = false) String billNumber,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) String receivedBy,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size
+    ) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        PaymentMode mode = parsePaymentMode(paymentMode);
+        UUID patientUuid = parseUuid(patientId, "patientId");
+        UUID receivedByUuid = parseUuid(receivedBy, "receivedBy");
+        String billNumberFilter = normalizeText(billNumber);
+        String freeText = normalizeText(search);
+
+        List<BillRecord> bills = billingService.list(tenantId, new BillingSearchCriteria(patientUuid, null, null, null, null));
+        List<PaymentLedgerResponse> rows = bills.stream()
+                .flatMap(bill -> billingService.listPayments(tenantId, bill.id()).stream().map(payment -> toPaymentLedgerResponse(payment, bill)))
+                .filter(row -> fromDate == null || !row.paymentDate().isBefore(fromDate))
+                .filter(row -> toDate == null || !row.paymentDate().isAfter(toDate))
+                .filter(row -> mode == null || row.paymentMode() == mode)
+                .filter(row -> receivedByUuid == null || (row.receivedBy() != null && row.receivedBy().equals(receivedByUuid.toString())))
+                .filter(row -> billNumberFilter == null || (row.billNumber() != null && row.billNumber().toLowerCase().contains(billNumberFilter)))
+                .filter(row -> matchesSearch(row.patientName(), row.patientNumber(), row.billNumber(), freeText))
+                .sorted(Comparator.comparing(PaymentLedgerResponse::createdAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                .toList();
+        return paginate(rows, page, size);
     }
 
     @GetMapping("/{billId}/receipts")
@@ -275,6 +312,37 @@ public class BillingController {
         return billingService.listRefunds(tenantId, billId).stream().map(this::toRefundResponse).toList();
     }
 
+    @GetMapping("/refunds")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
+    public List<RefundLedgerResponse> listAllRefunds(
+            @RequestParam(required = false) LocalDate fromDate,
+            @RequestParam(required = false) LocalDate toDate,
+            @RequestParam(required = false) String patientId,
+            @RequestParam(required = false) String billNumber,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String refundMode,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size
+    ) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        PaymentMode mode = parsePaymentMode(refundMode);
+        UUID patientUuid = parseUuid(patientId, "patientId");
+        String billNumberFilter = normalizeText(billNumber);
+        String freeText = normalizeText(search);
+
+        List<BillRecord> bills = billingService.list(tenantId, new BillingSearchCriteria(patientUuid, null, null, null, null));
+        List<RefundLedgerResponse> rows = bills.stream()
+                .flatMap(bill -> billingService.listRefunds(tenantId, bill.id()).stream().map(refund -> toRefundLedgerResponse(refund, bill)))
+                .filter(row -> fromDate == null || !row.refundedAt().toLocalDate().isBefore(fromDate))
+                .filter(row -> toDate == null || !row.refundedAt().toLocalDate().isAfter(toDate))
+                .filter(row -> mode == null || row.refundMode() == mode)
+                .filter(row -> billNumberFilter == null || (row.billNumber() != null && row.billNumber().toLowerCase().contains(billNumberFilter)))
+                .filter(row -> matchesSearch(row.patientName(), row.patientNumber(), row.billNumber(), freeText))
+                .sorted(Comparator.comparing(RefundLedgerResponse::createdAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                .toList();
+        return paginate(rows, page, size);
+    }
+
     @PostMapping("/{billId}/send-invoice-email")
     @PreAuthorize("@permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('notification.send')")
     public InvoiceEmailSendResponse sendInvoiceEmail(@PathVariable UUID billId) {
@@ -311,6 +379,93 @@ public class BillingController {
                 record.amount(),
                 record.createdAt()
         );
+    }
+
+    private PaymentLedgerResponse toPaymentLedgerResponse(PaymentRecord payment, BillRecord bill) {
+        return new PaymentLedgerResponse(
+                payment.id() == null ? null : payment.id().toString(),
+                payment.tenantId() == null ? null : payment.tenantId().toString(),
+                payment.billId() == null ? null : payment.billId().toString(),
+                bill.billNumber(),
+                bill.patientId() == null ? null : bill.patientId().toString(),
+                bill.patientName(),
+                bill.patientNumber(),
+                payment.paymentDate(),
+                payment.paymentDateTime(),
+                payment.amount(),
+                payment.paymentMode(),
+                payment.referenceNumber(),
+                payment.notes(),
+                payment.receivedBy() == null ? null : payment.receivedBy().toString(),
+                payment.receiptId() == null ? null : payment.receiptId().toString(),
+                payment.receiptNumber(),
+                payment.receiptDate(),
+                bill.status(),
+                bill.dueAmount(),
+                payment.createdAt()
+        );
+    }
+
+    private RefundLedgerResponse toRefundLedgerResponse(RefundRecord refund, BillRecord bill) {
+        return new RefundLedgerResponse(
+                refund.id() == null ? null : refund.id().toString(),
+                refund.tenantId() == null ? null : refund.tenantId().toString(),
+                refund.billId() == null ? null : refund.billId().toString(),
+                bill.billNumber(),
+                bill.patientId() == null ? null : bill.patientId().toString(),
+                bill.patientName(),
+                bill.patientNumber(),
+                refund.paymentId() == null ? null : refund.paymentId().toString(),
+                refund.amount(),
+                refund.reason(),
+                refund.refundMode(),
+                refund.refundedBy() == null ? null : refund.refundedBy().toString(),
+                refund.refundedAt(),
+                refund.notes(),
+                bill.status(),
+                bill.dueAmount(),
+                refund.createdAt()
+        );
+    }
+
+    private UUID parseUuid(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Invalid " + fieldName);
+        }
+    }
+
+    private String normalizeText(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim().toLowerCase();
+    }
+
+    private boolean matchesSearch(String patientName, String patientNumber, String billNumber, String search) {
+        if (search == null) {
+            return true;
+        }
+        String haystack = String.join(" ",
+                patientName == null ? "" : patientName,
+                patientNumber == null ? "" : patientNumber,
+                billNumber == null ? "" : billNumber).toLowerCase();
+        return haystack.contains(search);
+    }
+
+    private <T> List<T> paginate(List<T> rows, int page, int size) {
+        int safeSize = Math.max(1, Math.min(size, 500));
+        int safePage = Math.max(page, 0);
+        int from = safePage * safeSize;
+        if (from >= rows.size()) {
+            return List.of();
+        }
+        int to = Math.min(rows.size(), from + safeSize);
+        return rows.subList(from, to);
     }
 
     private BillStatus parseStatus(String value) {

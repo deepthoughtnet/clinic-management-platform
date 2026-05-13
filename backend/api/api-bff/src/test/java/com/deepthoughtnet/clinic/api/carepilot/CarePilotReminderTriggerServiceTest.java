@@ -31,6 +31,9 @@ import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
 import com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateEntity;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateRepository;
+import com.deepthoughtnet.clinic.carepilot.webinar.db.WebinarRegistrationRepository;
+import com.deepthoughtnet.clinic.carepilot.webinar.db.WebinarRepository;
+import com.deepthoughtnet.clinic.carepilot.webinar.model.WebinarStatus;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
@@ -67,6 +70,8 @@ class CarePilotReminderTriggerServiceTest {
     private PatientRepository patientRepository;
     private LeadRepository leadRepository;
     private LeadActivityService leadActivityService;
+    private WebinarRepository webinarRepository;
+    private WebinarRegistrationRepository webinarRegistrationRepository;
     private CarePilotReminderTriggerService service;
 
     @BeforeEach
@@ -85,6 +90,8 @@ class CarePilotReminderTriggerServiceTest {
         patientRepository = mock(PatientRepository.class);
         leadRepository = mock(LeadRepository.class);
         leadActivityService = mock(LeadActivityService.class);
+        webinarRepository = mock(WebinarRepository.class);
+        webinarRegistrationRepository = mock(WebinarRegistrationRepository.class);
 
         service = new CarePilotReminderTriggerService(
                 tenantManagementService,
@@ -101,6 +108,8 @@ class CarePilotReminderTriggerServiceTest {
                 patientRepository,
                 leadRepository,
                 leadActivityService,
+                webinarRepository,
+                webinarRegistrationRepository,
                 new ObjectMapper(),
                 30,
                 3,
@@ -142,6 +151,7 @@ class CarePilotReminderTriggerServiceTest {
         when(templateRepository.findByTenantIdAndId(eq(tenantId), any()))
                 .thenAnswer(invocation -> java.util.Optional.of(CampaignTemplateEntity.create(tenantId, "Template", ChannelType.EMAIL, "S", "B", true)));
         when(vaccinationService.listOverdue(tenantId)).thenReturn(List.of());
+        when(webinarRepository.findByTenantIdAndStatusInAndScheduledStartAtBetween(eq(tenantId), any(), any(), any())).thenReturn(List.of());
     }
 
     @Test

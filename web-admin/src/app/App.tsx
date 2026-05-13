@@ -20,8 +20,13 @@ import ConsultationsPage from "../pages/consultations/ConsultationsPage";
 import ConsultationWorkspacePage from "../pages/consultations/ConsultationWorkspacePage";
 import PrescriptionsPage from "../pages/prescriptions/PrescriptionsPage";
 import BillsPage from "../pages/billing/BillsPage";
+import PaymentsPage from "../pages/finance/PaymentsPage";
+import RefundsPage from "../pages/finance/RefundsPage";
 import NotificationsPage from "../pages/notifications/NotificationsPage";
 import InventoryPage from "../pages/inventory/InventoryPage";
+import MedicineMasterPage from "../pages/pharmacy/MedicineMasterPage";
+import StockMovementsPage from "../pages/pharmacy/StockMovementsPage";
+import DispensingPage from "../pages/pharmacy/DispensingPage";
 import ReportsPage from "../pages/reports/ReportsPage";
 import VaccinationsPage from "../pages/vaccinations/VaccinationsPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
@@ -35,6 +40,7 @@ import MessagingPage from "../products/carepilot/messaging/MessagingPage";
 import PatientEngagementPage from "../products/carepilot/engagement/PatientEngagementPage";
 import RemindersPage from "../products/carepilot/reminders/RemindersPage";
 import LeadsPage from "../products/carepilot/leads/LeadsPage";
+import WebinarsPage from "../products/carepilot/webinars/WebinarsPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const auth = React.useContext(AuthContext);
@@ -140,9 +146,14 @@ function AuthedApp() {
         <Route path="/consultations/:id" element={<ConsultationWorkspacePage />} />
         <Route path="/prescriptions" element={<PrescriptionsPage />} />
         <Route path="/billing" element={<BillsPage />} />
+        <Route path="/finance/payments" element={<PaymentsPage />} />
+        <Route path="/finance/refunds" element={<RefundsPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/vaccinations" element={<VaccinationsPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/pharmacy/medicines" element={<MedicineMasterPage />} />
+        <Route path="/pharmacy/stock-movements" element={<StockMovementsPage />} />
+        <Route path="/pharmacy/dispensing" element={<DispensingPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/platform/tenants" element={<TenantsPage />} />
         <Route path="/platform/tenants/:tenantId" element={<TenantDetailPage />} />
@@ -154,6 +165,7 @@ function AuthedApp() {
         <Route path="/carepilot/engagement" element={<PatientEngagementPage />} />
         <Route path="/carepilot/reminders" element={<RemindersPage />} />
         <Route path="/carepilot/leads" element={<LeadsPage />} />
+        <Route path="/carepilot/webinars" element={<WebinarsPage />} />
         <Route
           path="/platform/users"
           element={<PlaceholderPage title="Users / Admins" description="Platform user administration can be enabled when backend APIs are exposed." />}

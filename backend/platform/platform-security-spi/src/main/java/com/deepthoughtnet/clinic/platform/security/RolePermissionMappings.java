@@ -191,7 +191,9 @@ public final class RolePermissionMappings {
                     Permissions.CAREPILOT_LEAD_READ,
                     Permissions.CAREPILOT_LEAD_CREATE,
                     Permissions.CAREPILOT_LEAD_UPDATE,
-                    Permissions.CAREPILOT_LEAD_CONVERT
+                    Permissions.CAREPILOT_LEAD_CONVERT,
+                    Permissions.CAREPILOT_WEBINAR_READ,
+                    Permissions.CAREPILOT_WEBINAR_MANAGE
             )
     );
 
@@ -247,7 +249,9 @@ public final class RolePermissionMappings {
             Permissions.CAREPILOT_LEAD_READ,
             Permissions.CAREPILOT_LEAD_CREATE,
             Permissions.CAREPILOT_LEAD_UPDATE,
-            Permissions.CAREPILOT_LEAD_CONVERT
+            Permissions.CAREPILOT_LEAD_CONVERT,
+            Permissions.CAREPILOT_WEBINAR_READ,
+            Permissions.CAREPILOT_WEBINAR_MANAGE
     );
 
     private static final Set<String> BILLING_USER_PERMISSIONS = Set.of(
@@ -416,7 +420,8 @@ public final class RolePermissionMappings {
             Permissions.RECONCILIATION_EXCEPTION_READ,
             Permissions.DECISIONING_POLICY_READ,
             Permissions.DECISIONING_EXECUTION_READ,
-            Permissions.CAREPILOT_LEAD_READ
+            Permissions.CAREPILOT_LEAD_READ,
+            Permissions.CAREPILOT_WEBINAR_READ
     );
 
     private static final Set<String> PLATFORM_TENANT_SUPPORT_PERMISSIONS = Set.of(
@@ -443,7 +448,8 @@ public final class RolePermissionMappings {
             Permissions.AI_COPILOT_READ,
             Permissions.AI_COPILOT_CLINIC_READ,
             Permissions.AI_COPILOT_RECONCILIATION_READ,
-            Permissions.CAREPILOT_LEAD_READ
+            Permissions.CAREPILOT_LEAD_READ,
+            Permissions.CAREPILOT_WEBINAR_READ
     );
 
     private static final Map<String, Set<String>> ROLE_PERMISSIONS = Map.ofEntries(

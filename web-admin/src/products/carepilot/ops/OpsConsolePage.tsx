@@ -29,6 +29,7 @@ import { useAuth } from "../../../auth/useAuth";
 import {
   getCarePilotExecutionTimeline,
   getCarePilotLeadAnalyticsSummary,
+  getCarePilotWebinarAnalyticsSummary,
   listCarePilotEngagementCohort,
   listCarePilotCampaigns,
   listCarePilotOpsFailedExecutions,
@@ -41,6 +42,7 @@ import {
   type CarePilotExecutionStatus,
   type CarePilotExecutionTimeline,
   type CarePilotLeadAnalyticsSummary,
+  type CarePilotWebinarAnalyticsSummary,
 } from "../../../api/clinicApi";
 
 function deliveryChipColor(status: string) {
@@ -74,6 +76,7 @@ export default function OpsConsolePage() {
   const [highRiskRows, setHighRiskRows] = React.useState<CarePilotEngagementProfile[]>([]);
   const [inactiveRows, setInactiveRows] = React.useState<CarePilotEngagementProfile[]>([]);
   const [leadOps, setLeadOps] = React.useState<CarePilotLeadAnalyticsSummary | null>(null);
+  const [webinarOps, setWebinarOps] = React.useState<CarePilotWebinarAnalyticsSummary | null>(null);
 
   const canView = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("AUDITOR") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
   const canMutate = auth.rolesUpper.includes("CLINIC_ADMIN") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
@@ -86,7 +89,7 @@ export default function OpsConsolePage() {
     setLoading(true);
     setError(null);
     try {
-      const [campaignRows, failedRows, highRisk, inactive, leadSummary] = await Promise.all([
+      const [campaignRows, failedRows, highRisk, inactive, leadSummary, webinarSummary] = await Promise.all([
         listCarePilotCampaigns(auth.accessToken, auth.tenantId),
         listCarePilotOpsFailedExecutions(auth.accessToken, auth.tenantId, {
           startDate: startDate || undefined,
@@ -100,12 +103,14 @@ export default function OpsConsolePage() {
         listCarePilotEngagementCohort(auth.accessToken, auth.tenantId, "HIGH_RISK_PATIENTS", { limit: 8 }),
         listCarePilotEngagementCohort(auth.accessToken, auth.tenantId, "INACTIVE_PATIENTS", { limit: 8 }),
         getCarePilotLeadAnalyticsSummary(auth.accessToken, auth.tenantId),
+        getCarePilotWebinarAnalyticsSummary(auth.accessToken, auth.tenantId),
       ]);
       setCampaigns(campaignRows);
       setRows(reminderWindow ? failedRows.filter((row) => row.reminderWindow === reminderWindow) : failedRows);
       setHighRiskRows(highRisk.rows);
       setInactiveRows(inactive.rows);
       setLeadOps(leadSummary);
+      setWebinarOps(webinarSummary);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load ops queue");
     } finally {
@@ -181,6 +186,10 @@ export default function OpsConsolePage() {
         <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Stale Leads</Typography><Typography variant="h5">{leadOps?.staleLeads ?? 0}</Typography></CardContent></Card></Grid>
         <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">High Priority Leads</Typography><Typography variant="h5">{leadOps?.highPriorityActiveLeads ?? 0}</Typography></CardContent></Card></Grid>
         <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Lead Conversion</Typography><Typography variant="h5">{(leadOps?.conversionRate ?? 0).toFixed(1)}%</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Webinars Upcoming</Typography><Typography variant="h5">{webinarOps?.upcomingWebinars ?? 0}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Webinar No-Shows</Typography><Typography variant="h5">{webinarOps?.noShowCount ?? 0}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Webinar Attendance</Typography><Typography variant="h5">{(webinarOps?.attendanceRate ?? 0).toFixed(1)}%</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 6, md: 3 }}><Card><CardContent><Typography variant="caption">Webinar Registrations</Typography><Typography variant="h5">{webinarOps?.totalRegistrations ?? 0}</Typography></CardContent></Card></Grid>
       </Grid>
 
       {error ? <Alert severity="error">{error}</Alert> : null}

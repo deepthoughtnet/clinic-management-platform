@@ -123,6 +123,8 @@ public final class Permissions {
     public static final String CAREPILOT_LEAD_CREATE = "carepilot.lead.create";
     public static final String CAREPILOT_LEAD_UPDATE = "carepilot.lead.update";
     public static final String CAREPILOT_LEAD_CONVERT = "carepilot.lead.convert";
+    public static final String CAREPILOT_WEBINAR_READ = "carepilot.webinar.read";
+    public static final String CAREPILOT_WEBINAR_MANAGE = "carepilot.webinar.manage";
 
     private Permissions() {}
 }
