@@ -119,6 +119,10 @@ public final class Permissions {
     public static final String AI_COPILOT_RECONCILIATION_RUN = "ai_copilot.reconciliation.run";
     public static final String AI_COPILOT_READ = "ai_copilot.read";
     public static final String AI_COPILOT_RUN = "ai_copilot.run";
+    public static final String CAREPILOT_LEAD_READ = "carepilot.lead.read";
+    public static final String CAREPILOT_LEAD_CREATE = "carepilot.lead.create";
+    public static final String CAREPILOT_LEAD_UPDATE = "carepilot.lead.update";
+    public static final String CAREPILOT_LEAD_CONVERT = "carepilot.lead.convert";
 
     private Permissions() {}
 }

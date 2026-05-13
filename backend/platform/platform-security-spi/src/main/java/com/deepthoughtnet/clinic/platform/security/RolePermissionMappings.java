@@ -187,7 +187,11 @@ public final class RolePermissionMappings {
                     Permissions.CLINIC_DOCTOR_RESUBMISSION,
                     Permissions.CLINIC_ARCHIVE,
                     Permissions.CLINIC_DASHBOARD_READ,
-                    Permissions.INVENTORY_MANAGE
+                    Permissions.INVENTORY_MANAGE,
+                    Permissions.CAREPILOT_LEAD_READ,
+                    Permissions.CAREPILOT_LEAD_CREATE,
+                    Permissions.CAREPILOT_LEAD_UPDATE,
+                    Permissions.CAREPILOT_LEAD_CONVERT
             )
     );
 
@@ -239,7 +243,11 @@ public final class RolePermissionMappings {
             Permissions.PRESCRIPTION_PRINT,
             Permissions.PRESCRIPTION_SEND,
             Permissions.CLINIC_DOCUMENT_UPLOAD,
-            Permissions.CLINIC_DOCUMENT_READ
+            Permissions.CLINIC_DOCUMENT_READ,
+            Permissions.CAREPILOT_LEAD_READ,
+            Permissions.CAREPILOT_LEAD_CREATE,
+            Permissions.CAREPILOT_LEAD_UPDATE,
+            Permissions.CAREPILOT_LEAD_CONVERT
     );
 
     private static final Set<String> BILLING_USER_PERMISSIONS = Set.of(
@@ -407,7 +415,8 @@ public final class RolePermissionMappings {
             Permissions.RECONCILIATION_MATCH_READ,
             Permissions.RECONCILIATION_EXCEPTION_READ,
             Permissions.DECISIONING_POLICY_READ,
-            Permissions.DECISIONING_EXECUTION_READ
+            Permissions.DECISIONING_EXECUTION_READ,
+            Permissions.CAREPILOT_LEAD_READ
     );
 
     private static final Set<String> PLATFORM_TENANT_SUPPORT_PERMISSIONS = Set.of(
@@ -433,7 +442,8 @@ public final class RolePermissionMappings {
             Permissions.DECISIONING_EXECUTION_READ,
             Permissions.AI_COPILOT_READ,
             Permissions.AI_COPILOT_CLINIC_READ,
-            Permissions.AI_COPILOT_RECONCILIATION_READ
+            Permissions.AI_COPILOT_RECONCILIATION_READ,
+            Permissions.CAREPILOT_LEAD_READ
     );
 
     private static final Map<String, Set<String>> ROLE_PERMISSIONS = Map.ofEntries(

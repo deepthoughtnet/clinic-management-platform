@@ -1886,6 +1886,7 @@ export type CarePilotCampaignType =
   | "APPOINTMENT_REMINDER"
   | "MISSED_APPOINTMENT_FOLLOW_UP"
   | "FOLLOW_UP_REMINDER"
+  | "LEAD_FOLLOW_UP_REMINDER"
   | "REFILL_REMINDER"
   | "VACCINATION_REMINDER"
   | "BILLING_REMINDER"
@@ -2248,6 +2249,106 @@ export type CarePilotEngagementCohortResponse = {
   generatedAt: string;
 };
 
+export type CarePilotLeadStatus =
+  | "NEW"
+  | "CONTACTED"
+  | "QUALIFIED"
+  | "FOLLOW_UP_REQUIRED"
+  | "APPOINTMENT_BOOKED"
+  | "CONVERTED"
+  | "LOST"
+  | "SPAM";
+export type CarePilotLeadPriority = "LOW" | "MEDIUM" | "HIGH";
+export type CarePilotLeadSource = "WEBSITE" | "WALK_IN" | "PHONE_CALL" | "WHATSAPP" | "FACEBOOK" | "GOOGLE_ADS" | "REFERRAL" | "CAMPAIGN" | "MANUAL" | "OTHER";
+
+export type CarePilotLead = {
+  id: string;
+  tenantId: string;
+  firstName: string;
+  lastName: string | null;
+  fullName: string | null;
+  phone: string;
+  email: string | null;
+  gender: PatientGender | null;
+  dateOfBirth: string | null;
+  source: CarePilotLeadSource;
+  sourceDetails: string | null;
+  campaignId: string | null;
+  assignedToAppUserId: string | null;
+  status: CarePilotLeadStatus;
+  priority: CarePilotLeadPriority;
+  notes: string | null;
+  tags: string | null;
+  convertedPatientId: string | null;
+  bookedAppointmentId: string | null;
+  lastContactedAt: string | null;
+  nextFollowUpAt: string | null;
+  lastActivityAt: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CarePilotLeadListResponse = {
+  page: number;
+  size: number;
+  total: number;
+  rows: CarePilotLead[];
+};
+
+export type CarePilotLeadAnalyticsSummary = {
+  totalLeads: number;
+  newLeads: number;
+  qualifiedLeads: number;
+  convertedLeads: number;
+  lostLeads: number;
+  followUpsDue: number;
+  followUpsDueToday: number;
+  overdueFollowUps: number;
+  conversionRate: number;
+  sourceBreakdown: Record<string, number>;
+  staleLeads: number;
+  highPriorityActiveLeads: number;
+  conversionsWithAppointment: number;
+  avgHoursToConversion: number | null;
+};
+
+export type CarePilotLeadActivityType =
+  | "CREATED"
+  | "UPDATED"
+  | "STATUS_CHANGED"
+  | "NOTE_ADDED"
+  | "FOLLOW_UP_SCHEDULED"
+  | "FOLLOW_UP_COMPLETED"
+  | "CONVERTED_TO_PATIENT"
+  | "APPOINTMENT_BOOKED"
+  | "CAMPAIGN_LINKED"
+  | "LOST"
+  | "SPAM_MARKED";
+
+export type CarePilotLeadActivity = {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  activityType: CarePilotLeadActivityType;
+  title: string;
+  description: string | null;
+  oldStatus: CarePilotLeadStatus | null;
+  newStatus: CarePilotLeadStatus | null;
+  relatedEntityType: string | null;
+  relatedEntityId: string | null;
+  createdByAppUserId: string | null;
+  createdAt: string;
+};
+
+export type CarePilotLeadActivityListResponse = {
+  page: number;
+  size: number;
+  total: number;
+  rows: CarePilotLeadActivity[];
+};
+
 export type CreateCarePilotCampaignInput = {
   name: string;
   campaignType: CarePilotCampaignType;
@@ -2458,4 +2559,91 @@ export async function listCarePilotEngagementCohort(
   if (params?.offset != null) query.set("offset", String(params.offset));
   if (params?.limit != null) query.set("limit", String(params.limit));
   return httpGet<CarePilotEngagementCohortResponse>(`/api/carepilot/engagement/cohorts?${query.toString()}`, { token, tenantId });
+}
+
+export async function listCarePilotLeads(token: string, tenantId: string, filters?: {
+  status?: CarePilotLeadStatus;
+  source?: CarePilotLeadSource;
+  assignedToAppUserId?: string;
+  priority?: CarePilotLeadPriority;
+  search?: string;
+  followUpDue?: boolean;
+  createdFrom?: string;
+  createdTo?: string;
+  page?: number;
+  size?: number;
+}) {
+  const query = new URLSearchParams();
+  if (filters?.status) query.set("status", filters.status);
+  if (filters?.source) query.set("source", filters.source);
+  if (filters?.assignedToAppUserId) query.set("assignedToAppUserId", filters.assignedToAppUserId);
+  if (filters?.priority) query.set("priority", filters.priority);
+  if (filters?.search) query.set("search", filters.search);
+  if (filters?.followUpDue) query.set("followUpDue", "true");
+  if (filters?.createdFrom) query.set("createdFrom", filters.createdFrom);
+  if (filters?.createdTo) query.set("createdTo", filters.createdTo);
+  if (filters?.page != null) query.set("page", String(filters.page));
+  if (filters?.size != null) query.set("size", String(filters.size));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<CarePilotLeadListResponse>(`/api/carepilot/leads${suffix}`, { token, tenantId });
+}
+
+export async function getCarePilotLead(token: string, tenantId: string, leadId: string) {
+  return httpGet<CarePilotLead>(`/api/carepilot/leads/${leadId}`, { token, tenantId });
+}
+
+export async function createCarePilotLead(token: string, tenantId: string, body: Partial<CarePilotLead>) {
+  return httpPost<CarePilotLead>("/api/carepilot/leads", body, { token, tenantId });
+}
+
+export async function updateCarePilotLead(token: string, tenantId: string, leadId: string, body: Partial<CarePilotLead>) {
+  return httpPut<CarePilotLead>(`/api/carepilot/leads/${leadId}`, body, { token, tenantId });
+}
+
+export async function updateCarePilotLeadStatus(
+  token: string,
+  tenantId: string,
+  leadId: string,
+  body: { status?: CarePilotLeadStatus; priority?: CarePilotLeadPriority; assignedToAppUserId?: string | null; lastContactedAt?: string | null; nextFollowUpAt?: string | null; comment?: string | null }
+) {
+  return httpPost<CarePilotLead>(`/api/carepilot/leads/${leadId}/status`, body, { token, tenantId });
+}
+
+export async function addCarePilotLeadNote(token: string, tenantId: string, leadId: string, note: string) {
+  return httpPost<CarePilotLead>(`/api/carepilot/leads/${leadId}/notes`, { note }, { token, tenantId });
+}
+
+export async function listCarePilotLeadActivities(token: string, tenantId: string, leadId: string, page = 0, size = 25) {
+  return httpGet<CarePilotLeadActivityListResponse>(`/api/carepilot/leads/${leadId}/activities?page=${page}&size=${size}`, { token, tenantId });
+}
+
+export async function convertCarePilotLead(
+  token: string,
+  tenantId: string,
+  leadId: string,
+  body?: {
+    bookAppointment?: boolean;
+    appointment?: {
+      doctorUserId: string;
+      appointmentDate: string;
+      appointmentTime?: string | null;
+      reason?: string | null;
+      notes?: string | null;
+      priority?: AppointmentPriority | null;
+    } | null;
+  }
+) {
+  return httpPost<{ leadId: string; patientId: string; newlyCreated: boolean; appointmentId: string | null; appointmentError: string | null }>(
+    `/api/carepilot/leads/${leadId}/convert`,
+    body ?? {},
+    { token, tenantId },
+  );
+}
+
+export async function getCarePilotLeadAnalyticsSummary(token: string, tenantId: string, filters?: { startDate?: string; endDate?: string }) {
+  const query = new URLSearchParams();
+  if (filters?.startDate) query.set("startDate", filters.startDate);
+  if (filters?.endDate) query.set("endDate", filters.endDate);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<CarePilotLeadAnalyticsSummary>(`/api/carepilot/leads/analytics/summary${suffix}`, { token, tenantId });
 }

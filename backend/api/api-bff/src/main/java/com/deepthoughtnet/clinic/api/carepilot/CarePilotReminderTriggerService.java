@@ -15,6 +15,10 @@ import com.deepthoughtnet.clinic.carepilot.execution.db.CampaignExecutionReposit
 import com.deepthoughtnet.clinic.carepilot.execution.service.CampaignExecutionService;
 import com.deepthoughtnet.clinic.carepilot.execution.service.model.CampaignExecutionCreateCommand;
 import com.deepthoughtnet.clinic.carepilot.featureflag.service.FeatureFlagService;
+import com.deepthoughtnet.clinic.carepilot.lead.activity.model.LeadActivityType;
+import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
+import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
+import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus;
 import com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateEntity;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateRepository;
@@ -37,6 +41,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
+import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -84,6 +89,8 @@ public class CarePilotReminderTriggerService {
     private final VaccinationService vaccinationService;
     private final BillingService billingService;
     private final PatientRepository patientRepository;
+    private final LeadRepository leadRepository;
+    private final LeadActivityService leadActivityService;
     private final ObjectMapper objectMapper;
     private final int refillEstimatedDays;
     private final int billingOverdueDays;
@@ -102,6 +109,8 @@ public class CarePilotReminderTriggerService {
             VaccinationService vaccinationService,
             BillingService billingService,
             PatientRepository patientRepository,
+            LeadRepository leadRepository,
+            LeadActivityService leadActivityService,
             ObjectMapper objectMapper,
             @Value("${carepilot.reminders.refill-estimated-days:30}") int refillEstimatedDays,
             @Value("${carepilot.reminders.billing-overdue-days:3}") int billingOverdueDays,
@@ -119,6 +128,8 @@ public class CarePilotReminderTriggerService {
         this.vaccinationService = vaccinationService;
         this.billingService = billingService;
         this.patientRepository = patientRepository;
+        this.leadRepository = leadRepository;
+        this.leadActivityService = leadActivityService;
         this.objectMapper = objectMapper;
         this.refillEstimatedDays = Math.max(1, refillEstimatedDays);
         this.billingOverdueDays = Math.max(0, billingOverdueDays);
@@ -145,6 +156,7 @@ public class CarePilotReminderTriggerService {
             tenantQueued += queueVaccinationReminders(tenantId);
             tenantQueued += queueBillingReminders(tenantId);
             tenantQueued += queueBirthdayWellnessMessages(tenantId);
+            tenantQueued += queueLeadFollowUpOperationalReminders(tenantId);
 
             queued += tenantQueued;
             log.info("CarePilot scheduler tenantId={} queued={}", tenantId, tenantQueued);
@@ -215,6 +227,48 @@ public class CarePilotReminderTriggerService {
                     }
                 }
             }
+        }
+        return queued;
+    }
+
+    /**
+     * Operational follow-up reminder foundation for leads.
+     * This records tenant-scoped timeline reminder entries without forcing patient-facing send when recipient model is patient-only.
+     */
+    private int queueLeadFollowUpOperationalReminders(UUID tenantId) {
+        int queued = 0;
+        var dueRows = leadRepository.findByTenantIdAndNextFollowUpAtLessThanEqualAndStatusNotIn(
+                tenantId,
+                OffsetDateTime.now(),
+                List.of(LeadStatus.CONVERTED, LeadStatus.LOST, LeadStatus.SPAM)
+        );
+        for (var lead : dueRows) {
+            if (queued >= batchSize) {
+                break;
+            }
+            if (lead.getNextFollowUpAt() == null) {
+                continue;
+            }
+            UUID marker = UUID.nameUUIDFromBytes(
+                    ("LEAD_FOLLOW_UP_REMINDER|" + lead.getId() + "|" + lead.getNextFollowUpAt().toLocalDate())
+                            .getBytes(StandardCharsets.UTF_8)
+            );
+            if (leadActivityService.existsScheduleMarker(tenantId, lead.getId(), marker)) {
+                continue;
+            }
+            leadActivityService.record(
+                    tenantId,
+                    lead.getId(),
+                    LeadActivityType.FOLLOW_UP_SCHEDULED,
+                    "Lead follow-up reminder due",
+                    "Operational reminder for scheduled lead follow-up",
+                    null,
+                    null,
+                    "LEAD_FOLLOW_UP",
+                    marker,
+                    null
+            );
+            queued += 1;
         }
         return queued;
     }

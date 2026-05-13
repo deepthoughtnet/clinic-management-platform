@@ -82,7 +82,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "messaging", label: "Messaging", path: "/carepilot/messaging", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "reminders", label: "Reminders", path: "/carepilot/reminders", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
       { key: "patient-engagement", label: "Patient Engagement", path: "/carepilot/engagement", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
-      { key: "leads", label: "Leads", disabled: true, future: true, badge: "Coming soon", requiresTenant: true, rolesAny: ["CLINIC_ADMIN"] },
+      { key: "leads", label: "Leads", path: "/carepilot/leads", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
       { key: "webinar-automation", label: "Webinar Automation", disabled: true, future: true, badge: "Coming soon", requiresTenant: true, rolesAny: ["CLINIC_ADMIN"] },
       { key: "ai-calls", label: "AI Calls", disabled: true, future: true, badge: "Coming soon", requiresTenant: true, rolesAny: ["CLINIC_ADMIN"] },
     ],

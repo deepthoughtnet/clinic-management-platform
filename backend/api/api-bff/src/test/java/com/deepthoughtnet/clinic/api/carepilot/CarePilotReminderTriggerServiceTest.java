@@ -26,6 +26,8 @@ import com.deepthoughtnet.clinic.carepilot.execution.service.CampaignExecutionSe
 import com.deepthoughtnet.clinic.carepilot.execution.service.model.CampaignExecutionCreateCommand;
 import com.deepthoughtnet.clinic.carepilot.featureflag.service.FeatureFlagService;
 import com.deepthoughtnet.clinic.carepilot.featureflag.service.model.FeatureFlagRecord;
+import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
+import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
 import com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateEntity;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateRepository;
@@ -63,6 +65,8 @@ class CarePilotReminderTriggerServiceTest {
     private VaccinationService vaccinationService;
     private BillingService billingService;
     private PatientRepository patientRepository;
+    private LeadRepository leadRepository;
+    private LeadActivityService leadActivityService;
     private CarePilotReminderTriggerService service;
 
     @BeforeEach
@@ -79,6 +83,8 @@ class CarePilotReminderTriggerServiceTest {
         vaccinationService = mock(VaccinationService.class);
         billingService = mock(BillingService.class);
         patientRepository = mock(PatientRepository.class);
+        leadRepository = mock(LeadRepository.class);
+        leadActivityService = mock(LeadActivityService.class);
 
         service = new CarePilotReminderTriggerService(
                 tenantManagementService,
@@ -93,6 +99,8 @@ class CarePilotReminderTriggerServiceTest {
                 vaccinationService,
                 billingService,
                 patientRepository,
+                leadRepository,
+                leadActivityService,
                 new ObjectMapper(),
                 30,
                 3,
