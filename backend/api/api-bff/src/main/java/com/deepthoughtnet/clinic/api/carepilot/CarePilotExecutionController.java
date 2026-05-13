@@ -65,7 +65,8 @@ public class CarePilotExecutionController {
     public ExecutionResponse create(@RequestBody CreateExecutionRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toResponse(executionService.create(tenantId, new CampaignExecutionCreateCommand(
-                request.campaignId(), request.templateId(), request.channelType(), request.recipientPatientId(), request.scheduledAt()
+                request.campaignId(), request.templateId(), request.channelType(), request.recipientPatientId(), request.scheduledAt(),
+                null, null, null, null
         )));
     }
 
@@ -91,7 +92,8 @@ public class CarePilotExecutionController {
                 record.id(), record.tenantId(), record.campaignId(), record.templateId(), record.channelType(),
                 record.recipientPatientId(), record.scheduledAt(), record.status(), record.attemptCount(), record.lastError(),
                 record.executedAt(), record.nextAttemptAt(), record.deliveryStatus(), record.providerName(),
-                record.providerMessageId(), record.lastAttemptAt(), record.failureReason(), record.createdAt(), record.updatedAt()
+                record.providerMessageId(), record.sourceType(), record.sourceReferenceId(), record.reminderWindow(),
+                record.referenceDateTime(), record.lastAttemptAt(), record.failureReason(), record.createdAt(), record.updatedAt()
         );
     }
 }

@@ -8,5 +8,6 @@ public enum ExecutionStatus {
     FAILED,
     DEAD_LETTER,
     RETRY_SCHEDULED,
-    CANCELLED
+    CANCELLED,
+    SUPPRESSED
 }

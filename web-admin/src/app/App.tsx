@@ -29,6 +29,11 @@ import TenantsPage from "../pages/platform/TenantsPage";
 import TenantDetailPage from "../pages/platform/TenantDetailPage";
 import PlansModulesPage from "../pages/platform/PlansModulesPage";
 import CampaignsPage from "../products/carepilot/campaigns/CampaignsPage";
+import AnalyticsPage from "../products/carepilot/analytics/AnalyticsPage";
+import OpsConsolePage from "../products/carepilot/ops/OpsConsolePage";
+import MessagingPage from "../products/carepilot/messaging/MessagingPage";
+import PatientEngagementPage from "../products/carepilot/engagement/PatientEngagementPage";
+import RemindersPage from "../products/carepilot/reminders/RemindersPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const auth = React.useContext(AuthContext);
@@ -142,6 +147,11 @@ function AuthedApp() {
         <Route path="/platform/tenants/:tenantId" element={<TenantDetailPage />} />
         <Route path="/platform/plans" element={<PlansModulesPage />} />
         <Route path="/carepilot/campaigns" element={<CampaignsPage />} />
+        <Route path="/carepilot/analytics" element={<AnalyticsPage />} />
+        <Route path="/carepilot/ops" element={<OpsConsolePage />} />
+        <Route path="/carepilot/messaging" element={<MessagingPage />} />
+        <Route path="/carepilot/engagement" element={<PatientEngagementPage />} />
+        <Route path="/carepilot/reminders" element={<RemindersPage />} />
         <Route
           path="/platform/users"
           element={<PlaceholderPage title="Users / Admins" description="Platform user administration can be enabled when backend APIs are exposed." />}

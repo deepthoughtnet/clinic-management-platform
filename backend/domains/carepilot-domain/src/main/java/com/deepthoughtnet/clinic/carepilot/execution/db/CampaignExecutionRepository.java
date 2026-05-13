@@ -24,4 +24,63 @@ public interface CampaignExecutionRepository extends JpaRepository<CampaignExecu
             Collection<ExecutionStatus> statuses,
             OffsetDateTime scheduledAt
     );
+
+    boolean existsByTenantIdAndCampaignIdAndSourceReferenceIdAndReminderWindowAndChannelType(
+            UUID tenantId,
+            UUID campaignId,
+            UUID sourceReferenceId,
+            String reminderWindow,
+            com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType channelType
+    );
+
+    Optional<CampaignExecutionEntity> findFirstByTenantIdAndCampaignIdAndSourceReferenceIdAndReminderWindowAndChannelType(
+            UUID tenantId,
+            UUID campaignId,
+            UUID sourceReferenceId,
+            String reminderWindow,
+            com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType channelType
+    );
+
+    List<CampaignExecutionEntity> findByTenantIdAndScheduledAtBetweenOrderByScheduledAtDesc(
+            UUID tenantId,
+            OffsetDateTime scheduledFrom,
+            OffsetDateTime scheduledTo
+    );
+
+    List<CampaignExecutionEntity> findByTenantIdAndCampaignIdAndScheduledAtBetweenOrderByScheduledAtDesc(
+            UUID tenantId,
+            UUID campaignId,
+            OffsetDateTime scheduledFrom,
+            OffsetDateTime scheduledTo
+    );
+
+    List<CampaignExecutionEntity> findByTenantIdAndStatusInAndScheduledAtBetweenOrderByUpdatedAtDesc(
+            UUID tenantId,
+            Collection<ExecutionStatus> statuses,
+            OffsetDateTime scheduledFrom,
+            OffsetDateTime scheduledTo
+    );
+
+    List<CampaignExecutionEntity> findByTenantIdAndCampaignIdAndStatusInAndScheduledAtBetweenOrderByUpdatedAtDesc(
+            UUID tenantId,
+            UUID campaignId,
+            Collection<ExecutionStatus> statuses,
+            OffsetDateTime scheduledFrom,
+            OffsetDateTime scheduledTo
+    );
+
+    List<CampaignExecutionEntity> findByTenantIdAndCampaignIdOrderByUpdatedAtDesc(UUID tenantId, UUID campaignId);
+
+    List<CampaignExecutionEntity> findTop50ByTenantIdAndCampaignIdOrderByUpdatedAtDesc(UUID tenantId, UUID campaignId);
+
+    Optional<CampaignExecutionEntity> findFirstByTenantIdAndCampaignIdAndStatusInOrderByScheduledAtAsc(
+            UUID tenantId,
+            UUID campaignId,
+            Collection<ExecutionStatus> statuses
+    );
+
+    List<CampaignExecutionEntity> findByProviderNameAndProviderMessageIdOrderByUpdatedAtDesc(
+            String providerName,
+            String providerMessageId
+    );
 }

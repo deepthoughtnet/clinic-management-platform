@@ -1,7 +1,12 @@
 package com.deepthoughtnet.clinic.api.carepilot;
 
 import com.deepthoughtnet.clinic.api.carepilot.dto.CampaignDtos.CampaignResponse;
+import com.deepthoughtnet.clinic.api.carepilot.dto.CampaignDtos.CampaignRuntimeExecutionResponse;
+import com.deepthoughtnet.clinic.api.carepilot.dto.CampaignDtos.CampaignRuntimeResponse;
+import com.deepthoughtnet.clinic.api.carepilot.dto.CampaignDtos.CampaignRuntimeSummaryResponse;
 import com.deepthoughtnet.clinic.api.carepilot.dto.CampaignDtos.CreateCampaignRequest;
+import com.deepthoughtnet.clinic.carepilot.campaign.model.CampaignType;
+import com.deepthoughtnet.clinic.carepilot.campaign.model.TriggerType;
 import com.deepthoughtnet.clinic.carepilot.campaign.service.CampaignService;
 import com.deepthoughtnet.clinic.carepilot.campaign.service.model.CampaignCreateCommand;
 import com.deepthoughtnet.clinic.carepilot.campaign.service.model.CampaignRecord;
@@ -24,9 +29,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/carepilot/campaigns")
 public class CarePilotCampaignController {
     private final CampaignService campaignService;
+    private final CarePilotCampaignRuntimeService runtimeService;
 
-    public CarePilotCampaignController(CampaignService campaignService) {
+    public CarePilotCampaignController(CampaignService campaignService, CarePilotCampaignRuntimeService runtimeService) {
         this.campaignService = campaignService;
+        this.runtimeService = runtimeService;
     }
 
     @GetMapping
@@ -42,6 +49,57 @@ public class CarePilotCampaignController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         CampaignRecord record = campaignService.find(tenantId, campaignId).orElseThrow(() -> new IllegalArgumentException("Campaign not found"));
         return toResponse(record);
+    }
+
+    @GetMapping("/{campaignId}/runtime")
+    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    public CampaignRuntimeResponse runtime(@PathVariable UUID campaignId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        var runtime = runtimeService.runtime(tenantId, campaignId);
+        return new CampaignRuntimeResponse(
+                runtime.campaignId(),
+                runtime.campaignName(),
+                runtime.active(),
+                TriggerType.valueOf(runtime.triggerType()),
+                CampaignType.valueOf(runtime.campaignType()),
+                runtime.nextExpectedExecutionAt(),
+                runtime.schedulerStatus(),
+                runtime.lastSchedulerScanAt(),
+                new CampaignRuntimeSummaryResponse(
+                        runtime.summary().totalExecutions(),
+                        runtime.summary().scheduled(),
+                        runtime.summary().sent(),
+                        runtime.summary().failed(),
+                        runtime.summary().retrying(),
+                        runtime.summary().skipped(),
+                        runtime.summary().lastSentAt(),
+                        runtime.summary().lastFailedAt()
+                ),
+                runtime.recentExecutions().stream().map(row -> new CampaignRuntimeExecutionResponse(
+                        row.executionId(),
+                        row.recipientPatientId(),
+                        row.recipientPatientName(),
+                        row.recipientEmail(),
+                        row.recipientPhone(),
+                        row.relatedEntityType(),
+                        row.relatedEntityId(),
+                        row.relatedEntityLabel(),
+                        row.doctorName(),
+                        row.reminderWindow(),
+                        row.createdAt(),
+                        row.scheduledAt(),
+                        row.attemptedAt(),
+                        row.sentAt(),
+                        row.failedAt(),
+                        row.nextRetryAt(),
+                        row.channel(),
+                        row.providerName(),
+                        row.providerMessageId(),
+                        row.status(),
+                        row.failureReason(),
+                        row.retryCount()
+                )).toList()
+        );
     }
 
     @PostMapping

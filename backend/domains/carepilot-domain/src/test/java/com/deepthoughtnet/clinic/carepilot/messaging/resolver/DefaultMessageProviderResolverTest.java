@@ -43,6 +43,23 @@ class DefaultMessageProviderResolverTest {
     }
 
     @Test
+    void resolvesEmailSmsAndWhatsAppProviders() {
+        NoOpMessageProvider noOp = new NoOpMessageProvider();
+        MessageProvider emailProvider = provider("email-provider", MessageChannel.EMAIL);
+        MessageProvider smsProvider = provider("sms-provider", MessageChannel.SMS);
+        MessageProvider whatsappProvider = provider("wa-provider", MessageChannel.WHATSAPP);
+
+        MessagingProviderRegistry resolver = new MessagingProviderRegistry(
+                List.of(noOp, emailProvider, smsProvider, whatsappProvider),
+                noOp
+        );
+
+        assertThat(resolver.resolve(MessageChannel.EMAIL).providerName()).isEqualTo("email-provider");
+        assertThat(resolver.resolve(MessageChannel.SMS).providerName()).isEqualTo("sms-provider");
+        assertThat(resolver.resolve(MessageChannel.WHATSAPP).providerName()).isEqualTo("wa-provider");
+    }
+
+    @Test
     void fallsBackToNoOpProviderWhenNoConcreteProviderSupportsChannel() {
         NoOpMessageProvider noOp = new NoOpMessageProvider();
         MessagingProviderRegistry resolver = new MessagingProviderRegistry(List.of(noOp), noOp);
@@ -63,5 +80,24 @@ class DefaultMessageProviderResolverTest {
 
         assertThat(resolved.providerName()).isEqualTo("carepilot-noop");
         assertThat(result.status()).isEqualTo(MessageDeliveryStatus.PROVIDER_NOT_AVAILABLE);
+    }
+
+    private MessageProvider provider(String providerName, MessageChannel supportedChannel) {
+        return new MessageProvider() {
+            @Override
+            public boolean supports(MessageChannel channel) {
+                return channel == supportedChannel;
+            }
+
+            @Override
+            public MessageResult send(MessageRequest request) {
+                return new MessageResult(true, MessageDeliveryStatus.SENT, providerName, "x", null, null, OffsetDateTime.now());
+            }
+
+            @Override
+            public String providerName() {
+                return providerName;
+            }
+        };
     }
 }

@@ -1,11 +1,12 @@
 package com.deepthoughtnet.clinic.messaging.email;
 
 import com.deepthoughtnet.clinic.messaging.spi.MessageProvider;
-import com.deepthoughtnet.clinic.notify.NotificationProvider;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.mail.javamail.JavaMailSender;
 
 /**
  * Wires CarePilot email provider foundation while keeping startup safe without secrets.
@@ -16,11 +17,18 @@ public class EmailMessageProviderConfig {
 
     @Bean
     public MessageProvider emailMessageProvider(
-            NotificationProvider notificationProvider,
             CarePilotEmailMessagingProperties properties,
+            ObjectProvider<JavaMailSender> mailSenderProvider,
             @Value("${clinic.mail.provider:logging}") String mailProvider,
-            @Value("${clinic.mail.enabled:false}") boolean mailEnabled
+            @Value("${clinic.mail.enabled:false}") boolean mailEnabled,
+            @Value("${clinic.mail.host:${spring.mail.host:}}") String smtpHost
     ) {
-        return new EmailMessageProvider(notificationProvider, properties, mailProvider, mailEnabled);
+        return new EmailMessageProvider(
+                properties,
+                mailSenderProvider.getIfAvailable(),
+                mailProvider,
+                mailEnabled,
+                smtpHost
+        );
     }
 }

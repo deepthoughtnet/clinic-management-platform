@@ -143,6 +143,17 @@ public class VaccinationService {
         return mapRecords(tenantId, patientVaccinationRepository.findByTenantIdAndPatientIdOrderByGivenDateDesc(tenantId, patientId));
     }
 
+    /**
+     * Returns one tenant-scoped patient vaccination record by id.
+     */
+    @Transactional(readOnly = true)
+    public Optional<PatientVaccinationRecord> findById(UUID tenantId, UUID vaccinationId) {
+        requireTenant(tenantId);
+        requireId(vaccinationId, "vaccinationId");
+        return patientVaccinationRepository.findByTenantIdAndId(tenantId, vaccinationId)
+                .map(entity -> toRecord(entity, tenantData(tenantId)));
+    }
+
     @Transactional
     public PatientVaccinationRecord recordVaccination(UUID tenantId, UUID patientId, PatientVaccinationCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);

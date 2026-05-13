@@ -10,5 +10,9 @@ public record CampaignExecutionCreateCommand(
         UUID templateId,
         ChannelType channelType,
         UUID recipientPatientId,
-        OffsetDateTime scheduledAt
+        OffsetDateTime scheduledAt,
+        String sourceType,
+        UUID sourceReferenceId,
+        String reminderWindow,
+        OffsetDateTime referenceDateTime
 ) {}

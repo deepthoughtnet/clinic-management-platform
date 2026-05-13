@@ -14,6 +14,10 @@ import com.deepthoughtnet.clinic.carepilot.messaging.service.MessageOrchestrator
 import com.deepthoughtnet.clinic.carepilot.shared.util.CarePilotValidators;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateEntity;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateRepository;
+import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
+import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
+import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.messaging.spi.MessageChannel;
 import com.deepthoughtnet.clinic.messaging.spi.MessageDeliveryStatus;
 import com.deepthoughtnet.clinic.messaging.spi.MessageRecipient;
@@ -21,11 +25,19 @@ import com.deepthoughtnet.clinic.messaging.spi.MessageRequest;
 import com.deepthoughtnet.clinic.messaging.spi.MessageResult;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
+import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
+import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineRecord;
+import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
+import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.Period;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -40,6 +52,10 @@ public class CampaignExecutionService {
     private final PatientRepository patientRepository;
     private final CarePilotTemplateRenderer templateRenderer;
     private final CarePilotRetryPolicy retryPolicy;
+    private final BillingService billingService;
+    private final PrescriptionService prescriptionService;
+    private final VaccinationService vaccinationService;
+    private final ClinicProfileService clinicProfileService;
 
     public CampaignExecutionService(
             CampaignExecutionRepository repository,
@@ -48,7 +64,11 @@ public class CampaignExecutionService {
             CampaignTemplateRepository templateRepository,
             PatientRepository patientRepository,
             CarePilotTemplateRenderer templateRenderer,
-            CarePilotRetryPolicy retryPolicy
+            CarePilotRetryPolicy retryPolicy,
+            BillingService billingService,
+            PrescriptionService prescriptionService,
+            VaccinationService vaccinationService,
+            ClinicProfileService clinicProfileService
     ) {
         this.repository = repository;
         this.attemptRepository = attemptRepository;
@@ -57,6 +77,10 @@ public class CampaignExecutionService {
         this.patientRepository = patientRepository;
         this.templateRenderer = templateRenderer;
         this.retryPolicy = retryPolicy;
+        this.billingService = billingService;
+        this.prescriptionService = prescriptionService;
+        this.vaccinationService = vaccinationService;
+        this.clinicProfileService = clinicProfileService;
     }
 
     @Transactional
@@ -74,9 +98,28 @@ public class CampaignExecutionService {
                 command.templateId(),
                 command.channelType(),
                 command.recipientPatientId(),
-                scheduledAt
+                scheduledAt,
+                command.sourceType(),
+                command.sourceReferenceId(),
+                command.reminderWindow(),
+                command.referenceDateTime()
         );
-        return toRecord(repository.save(entity));
+        try {
+            return toRecord(repository.save(entity));
+        } catch (DataIntegrityViolationException ex) {
+            if (command.sourceReferenceId() != null && StringUtils.hasText(command.reminderWindow())) {
+                return repository.findFirstByTenantIdAndCampaignIdAndSourceReferenceIdAndReminderWindowAndChannelType(
+                                tenantId,
+                                command.campaignId(),
+                                command.sourceReferenceId(),
+                                command.reminderWindow(),
+                                command.channelType()
+                        )
+                        .map(this::toRecord)
+                        .orElseThrow(() -> ex);
+            }
+            throw ex;
+        }
     }
 
     @Transactional(readOnly = true)
@@ -135,6 +178,43 @@ public class CampaignExecutionService {
             throw new IllegalArgumentException("Only failed or dead-letter executions can be retried");
         }
         entity.markQueuedForRetry();
+        return toRecord(repository.save(entity));
+    }
+
+    @Transactional
+    /** Cancels an in-flight reminder execution before final delivery outcome. */
+    public CampaignExecutionRecord cancelExecution(UUID tenantId, UUID executionId, String reason) {
+        CampaignExecutionEntity entity = requireExecution(tenantId, executionId);
+        ensureMutableReminderState(entity, "cancelled");
+        entity.markCancelled(StringUtils.hasText(reason) ? reason : "CANCELLED_BY_OPERATOR");
+        return toRecord(repository.save(entity));
+    }
+
+    @Transactional
+    /** Suppresses an in-flight reminder execution to prevent future processing. */
+    public CampaignExecutionRecord suppressExecution(UUID tenantId, UUID executionId, String reason) {
+        CampaignExecutionEntity entity = requireExecution(tenantId, executionId);
+        ensureMutableReminderState(entity, "suppressed");
+        entity.markSuppressed(StringUtils.hasText(reason) ? reason : "SUPPRESSED_BY_OPERATOR");
+        return toRecord(repository.save(entity));
+    }
+
+    @Transactional
+    /** Reschedules an in-flight reminder execution to a new future scheduled time. */
+    public CampaignExecutionRecord rescheduleExecution(UUID tenantId, UUID executionId, OffsetDateTime newScheduledAt, String reason) {
+        CampaignExecutionEntity entity = requireExecution(tenantId, executionId);
+        ensureMutableReminderState(entity, "rescheduled");
+        if (newScheduledAt == null) {
+            throw new IllegalArgumentException("newScheduledAt is required");
+        }
+        if (!newScheduledAt.isAfter(OffsetDateTime.now().plusSeconds(30))) {
+            throw new IllegalArgumentException("newScheduledAt must be in the future");
+        }
+        String resolvedReason = StringUtils.hasText(reason) ? reason.trim() : "BY_OPERATOR";
+        if (!resolvedReason.startsWith("RESCHEDULED_")) {
+            resolvedReason = "RESCHEDULED_" + resolvedReason;
+        }
+        entity.markRescheduled(newScheduledAt, resolvedReason);
         return toRecord(repository.save(entity));
     }
 
@@ -204,6 +284,19 @@ public class CampaignExecutionService {
         return 1;
     }
 
+    private void ensureMutableReminderState(CampaignExecutionEntity entity, String action) {
+        ExecutionStatus status = entity.getStatus();
+        if (!(status == ExecutionStatus.QUEUED || status == ExecutionStatus.RETRY_SCHEDULED || status == ExecutionStatus.PROCESSING)) {
+            throw new IllegalArgumentException("Only queued/retrying reminders can be " + action);
+        }
+        MessageDeliveryStatus deliveryStatus = entity.getDeliveryStatus();
+        if (deliveryStatus == MessageDeliveryStatus.DELIVERED
+                || deliveryStatus == MessageDeliveryStatus.READ
+                || status == ExecutionStatus.SUCCEEDED) {
+            throw new IllegalArgumentException("Delivered/read reminders cannot be " + action);
+        }
+    }
+
     private MessageRequest toMessageRequest(CampaignExecutionEntity execution) {
         MessageChannel messageChannel = toMessageChannel(execution.getChannelType());
         PatientEntity patient = execution.getRecipientPatientId() == null
@@ -218,11 +311,13 @@ public class CampaignExecutionService {
         String subject = "CarePilot Reminder";
         String body = "CarePilot reminder";
         if (template != null) {
+            Map<String, String> templateValues = buildTemplateValues(execution, patient);
             CarePilotTemplateRenderer.RenderedTemplate rendered = templateRenderer.render(
                     execution.getCampaignId(),
                     template,
                     patient,
-                    execution.getScheduledAt()
+                    execution.getReferenceDateTime() == null ? execution.getScheduledAt() : execution.getReferenceDateTime(),
+                    templateValues
             );
             if (StringUtils.hasText(rendered.subject())) {
                 subject = rendered.subject();
@@ -244,6 +339,130 @@ public class CampaignExecutionService {
                 execution.getId(),
                 Map.of("campaignId", execution.getCampaignId().toString())
         );
+    }
+
+    /**
+     * Builds source-specific placeholders while preserving safe defaults for missing source data.
+     */
+    private Map<String, String> buildTemplateValues(CampaignExecutionEntity execution, PatientEntity patient) {
+        Map<String, String> values = new LinkedHashMap<>();
+        String patientName = patient == null ? "Patient" : ((patient.getFirstName() == null ? "" : patient.getFirstName()) + " "
+                + (patient.getLastName() == null ? "" : patient.getLastName())).trim();
+        values.put("patientName", StringUtils.hasText(patientName) ? patientName : "Patient");
+        values.put("clinicName", clinicProfileService.findByTenantId(execution.getTenantId())
+                .map(this::resolveClinicDisplayName)
+                .orElse("Clinic"));
+        values.put("doctorName", "");
+        values.put("billNumber", "");
+        values.put("billDate", "");
+        values.put("billDueDate", "");
+        values.put("amountDue", "");
+        values.put("medicineName", "");
+        values.put("prescriptionDate", "");
+        values.put("refillDueDate", "");
+        values.put("vaccineName", "");
+        values.put("vaccinationDueDate", "");
+        values.put("vaccinationStatus", "");
+        values.put("birthdayDate", "");
+        values.put("age", "");
+        values.put("clinicPhone", clinicProfileService.findByTenantId(execution.getTenantId())
+                .map(ClinicProfileRecord::phone)
+                .filter(StringUtils::hasText)
+                .orElse(""));
+
+        String sourceType = execution.getSourceType() == null ? "" : execution.getSourceType().trim().toUpperCase();
+        if ("BILL".equals(sourceType) && execution.getSourceReferenceId() != null) {
+            billingService.findById(execution.getTenantId(), execution.getSourceReferenceId()).ifPresent(bill -> fillBillValues(values, bill));
+        } else if ("PRESCRIPTION".equals(sourceType) && execution.getSourceReferenceId() != null) {
+            prescriptionService.findById(execution.getTenantId(), execution.getSourceReferenceId()).ifPresent(p -> fillPrescriptionValues(values, p, execution));
+        } else if ("FOLLOW_UP".equals(sourceType) && execution.getSourceReferenceId() != null) {
+            prescriptionService.findById(execution.getTenantId(), execution.getSourceReferenceId()).ifPresent(p -> values.put("doctorName", safeText(p.doctorName())));
+        } else if ("VACCINATION".equals(sourceType) && execution.getSourceReferenceId() != null) {
+            vaccinationService.findById(execution.getTenantId(), execution.getSourceReferenceId()).ifPresent(v -> fillVaccinationValues(values, v, execution));
+        } else if ("PATIENT_BIRTHDAY".equals(sourceType)) {
+            fillBirthdayValues(values, patient);
+        }
+        return values;
+    }
+
+    private void fillBillValues(Map<String, String> values, BillRecord bill) {
+        values.put("billNumber", safeText(bill.billNumber()));
+        values.put("billDate", bill.billDate() == null ? "" : bill.billDate().toString());
+        values.put("billDueDate", bill.billDate() == null ? "" : bill.billDate().toString());
+        values.put("amountDue", bill.dueAmount() == null ? "" : bill.dueAmount().toPlainString());
+    }
+
+    private void fillPrescriptionValues(Map<String, String> values, PrescriptionRecord prescription, CampaignExecutionEntity execution) {
+        values.put("doctorName", safeText(prescription.doctorName()));
+        values.put("medicineName", summarizeMedicines(prescription.medicines()));
+        values.put("prescriptionDate", prescription.finalizedAt() == null ? "" : prescription.finalizedAt().toLocalDate().toString());
+        OffsetDateTime refillDue = execution.getReferenceDateTime();
+        values.put("refillDueDate", refillDue == null ? "" : refillDue.toLocalDate().toString());
+    }
+
+    private String summarizeMedicines(List<PrescriptionMedicineRecord> medicines) {
+        if (medicines == null || medicines.isEmpty()) {
+            return "";
+        }
+        List<String> names = medicines.stream()
+                .map(PrescriptionMedicineRecord::medicineName)
+                .filter(StringUtils::hasText)
+                .toList();
+        if (names.isEmpty()) {
+            return "";
+        }
+        if (names.size() == 1) {
+            return names.get(0);
+        }
+        return names.get(0) + " + " + (names.size() - 1) + " more";
+    }
+
+    private String resolveClinicDisplayName(ClinicProfileRecord record) {
+        if (record == null) {
+            return "Clinic";
+        }
+        if (StringUtils.hasText(record.displayName())) {
+            return record.displayName().trim();
+        }
+        if (StringUtils.hasText(record.clinicName())) {
+            return record.clinicName().trim();
+        }
+        return "Clinic";
+    }
+
+    private String safeText(String value) {
+        return StringUtils.hasText(value) ? value.trim() : "";
+    }
+
+    private void fillVaccinationValues(
+            Map<String, String> values,
+            com.deepthoughtnet.clinic.vaccination.service.model.PatientVaccinationRecord vaccination,
+            CampaignExecutionEntity execution
+    ) {
+        values.put("vaccineName", safeText(vaccination.vaccineName()));
+        LocalDate dueDate = execution.getReferenceDateTime() == null
+                ? vaccination.nextDueDate()
+                : execution.getReferenceDateTime().toLocalDate();
+        values.put("vaccinationDueDate", dueDate == null ? "" : dueDate.toString());
+        if (dueDate == null) {
+            values.put("vaccinationStatus", "");
+        } else if (dueDate.isBefore(LocalDate.now())) {
+            values.put("vaccinationStatus", "OVERDUE");
+        } else if (dueDate.isEqual(LocalDate.now())) {
+            values.put("vaccinationStatus", "DUE_TODAY");
+        } else {
+            values.put("vaccinationStatus", "UPCOMING");
+        }
+        values.put("doctorName", safeText(vaccination.administeredByUserName()));
+    }
+
+    private void fillBirthdayValues(Map<String, String> values, PatientEntity patient) {
+        if (patient == null || patient.getDateOfBirth() == null) {
+            return;
+        }
+        values.put("birthdayDate", patient.getDateOfBirth().toString());
+        int age = Period.between(patient.getDateOfBirth(), LocalDate.now()).getYears();
+        values.put("age", age < 0 ? "" : Integer.toString(age));
     }
 
     private String resolveRecipientAddress(
@@ -286,7 +505,8 @@ public class CampaignExecutionService {
                 entity.getId(), entity.getTenantId(), entity.getCampaignId(), entity.getTemplateId(), entity.getChannelType(),
                 entity.getRecipientPatientId(), entity.getScheduledAt(), entity.getStatus(), entity.getAttemptCount(),
                 entity.getLastError(), entity.getExecutedAt(), entity.getNextAttemptAt(), entity.getDeliveryStatus(),
-                entity.getProviderName(), entity.getProviderMessageId(), entity.getLastAttemptAt(), entity.getFailureReason(),
+                entity.getProviderName(), entity.getProviderMessageId(), entity.getSourceType(), entity.getSourceReferenceId(),
+                entity.getReminderWindow(), entity.getReferenceDateTime(), entity.getLastAttemptAt(), entity.getFailureReason(),
                 entity.getCreatedAt(), entity.getUpdatedAt()
         );
     }

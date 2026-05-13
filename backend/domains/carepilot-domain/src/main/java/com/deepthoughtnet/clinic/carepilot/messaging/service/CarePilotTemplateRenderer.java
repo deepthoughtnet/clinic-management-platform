@@ -22,14 +22,37 @@ public class CarePilotTemplateRenderer {
      * Renders subject and body using known placeholders and safe fallbacks.
      */
     public RenderedTemplate render(UUID campaignId, CampaignTemplateEntity template, PatientEntity patient, OffsetDateTime scheduledAt) {
+        return render(campaignId, template, patient, scheduledAt, Map.of());
+    }
+
+    /**
+     * Renders subject and body using known placeholders, source-specific placeholders, and safe fallbacks.
+     */
+    public RenderedTemplate render(
+            UUID campaignId,
+            CampaignTemplateEntity template,
+            PatientEntity patient,
+            OffsetDateTime scheduledAt,
+            Map<String, String> additionalValues
+    ) {
         Map<String, String> values = new LinkedHashMap<>();
         values.put("patientName", patient == null ? "Patient" : safeFullName(patient));
         values.put("appointmentDate", scheduledAt == null ? "" : scheduledAt.toLocalDate().toString());
         values.put("appointmentTime", scheduledAt == null ? "" : scheduledAt.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm")));
+        values.put("appointmentDateTime", scheduledAt == null ? "" : scheduledAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+        values.put("doctorName", "");
         values.put("followUpDate", scheduledAt == null ? "" : scheduledAt.toLocalDate().toString());
+        values.put("followUpTime", scheduledAt == null ? "" : scheduledAt.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm")));
+        values.put("consultationSummary", "");
         values.put("billDueDate", scheduledAt == null ? "" : scheduledAt.toLocalDate().toString());
+        values.put("reschedulePhone", "");
         values.put("clinicName", "Clinic");
+        values.put("clinicPhone", "");
+        values.put("clinicAddress", "");
         values.put("campaignId", campaignId == null ? "" : campaignId.toString());
+        if (additionalValues != null && !additionalValues.isEmpty()) {
+            values.putAll(additionalValues);
+        }
 
         String renderedSubject = replaceTokens(template.getSubjectLine(), values);
         String renderedBody = replaceTokens(template.getBodyTemplate(), values);
@@ -50,7 +73,8 @@ public class CarePilotTemplateRenderer {
         for (Map.Entry<String, String> entry : values.entrySet()) {
             rendered = rendered.replace("{{" + entry.getKey() + "}}", entry.getValue() == null ? "" : entry.getValue());
         }
-        return rendered;
+        // Strip unresolved placeholders to avoid leaking raw tokens in patient-facing reminders.
+        return rendered.replaceAll("\\{\\{[^}]+}}", "");
     }
 
     /**

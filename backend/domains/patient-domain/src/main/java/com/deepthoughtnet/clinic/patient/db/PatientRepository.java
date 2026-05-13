@@ -17,4 +17,6 @@ public interface PatientRepository extends JpaRepository<PatientEntity, UUID>, J
     boolean existsByTenantIdAndPatientNumber(UUID tenantId, String patientNumber);
 
     List<PatientEntity> findByTenantIdAndIdIn(UUID tenantId, Collection<UUID> ids);
+
+    List<PatientEntity> findByTenantIdAndActiveTrue(UUID tenantId);
 }

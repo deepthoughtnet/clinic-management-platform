@@ -71,6 +71,18 @@ public class CampaignExecutionEntity {
     @Column(name = "provider_message_id", length = 180)
     private String providerMessageId;
 
+    @Column(name = "source_type", length = 32)
+    private String sourceType;
+
+    @Column(name = "source_reference_id")
+    private UUID sourceReferenceId;
+
+    @Column(name = "reminder_window", length = 24)
+    private String reminderWindow;
+
+    @Column(name = "reference_datetime")
+    private OffsetDateTime referenceDateTime;
+
     @Column(name = "last_attempt_at")
     private OffsetDateTime lastAttemptAt;
 
@@ -85,7 +97,18 @@ public class CampaignExecutionEntity {
 
     protected CampaignExecutionEntity() {}
 
-    public static CampaignExecutionEntity create(UUID tenantId, UUID campaignId, UUID templateId, ChannelType channelType, UUID recipientPatientId, OffsetDateTime scheduledAt) {
+    public static CampaignExecutionEntity create(
+            UUID tenantId,
+            UUID campaignId,
+            UUID templateId,
+            ChannelType channelType,
+            UUID recipientPatientId,
+            OffsetDateTime scheduledAt,
+            String sourceType,
+            UUID sourceReferenceId,
+            String reminderWindow,
+            OffsetDateTime referenceDateTime
+    ) {
         CampaignExecutionEntity entity = new CampaignExecutionEntity();
         entity.id = UUID.randomUUID();
         entity.tenantId = tenantId;
@@ -94,9 +117,13 @@ public class CampaignExecutionEntity {
         entity.channelType = channelType;
         entity.recipientPatientId = recipientPatientId;
         entity.scheduledAt = scheduledAt;
+        entity.sourceType = sourceType;
+        entity.sourceReferenceId = sourceReferenceId;
+        entity.reminderWindow = reminderWindow;
+        entity.referenceDateTime = referenceDateTime;
         entity.status = ExecutionStatus.QUEUED;
         entity.attemptCount = 0;
-        entity.deliveryStatus = MessageDeliveryStatus.SKIPPED;
+        entity.deliveryStatus = MessageDeliveryStatus.QUEUED;
         entity.createdAt = OffsetDateTime.now();
         entity.updatedAt = entity.createdAt;
         return entity;
@@ -145,6 +172,61 @@ public class CampaignExecutionEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    /**
+     * Cancels an execution before delivery completion and prevents future retries.
+     */
+    public void markCancelled(String reason) {
+        this.status = ExecutionStatus.CANCELLED;
+        this.nextAttemptAt = null;
+        this.deliveryStatus = MessageDeliveryStatus.SKIPPED;
+        if (reason != null && !reason.isBlank()) {
+            this.failureReason = reason.trim();
+        }
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    /**
+     * Suppresses an execution from scheduler/retry processing without deleting audit history.
+     */
+    public void markSuppressed(String reason) {
+        this.status = ExecutionStatus.SUPPRESSED;
+        this.nextAttemptAt = null;
+        this.deliveryStatus = MessageDeliveryStatus.SKIPPED;
+        if (reason != null && !reason.isBlank()) {
+            this.failureReason = reason.trim();
+        }
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    /**
+     * Reschedules a non-terminal execution for a future send attempt.
+     */
+    public void markRescheduled(OffsetDateTime newScheduledAt, String reason) {
+        this.status = ExecutionStatus.QUEUED;
+        this.scheduledAt = newScheduledAt;
+        this.nextAttemptAt = null;
+        if (reason != null && !reason.isBlank()) {
+            this.failureReason = reason.trim();
+        }
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    /**
+     * Applies post-send provider lifecycle status without mutating scheduler execution state.
+     */
+    public void markDeliveryLifecycleStatus(MessageDeliveryStatus newDeliveryStatus, String deliveryFailureReason, OffsetDateTime eventAt) {
+        if (newDeliveryStatus == null) {
+            return;
+        }
+        this.deliveryStatus = newDeliveryStatus;
+        if (deliveryFailureReason != null && !deliveryFailureReason.isBlank()) {
+            this.failureReason = deliveryFailureReason.trim();
+        }
+        OffsetDateTime effectiveAt = eventAt == null ? OffsetDateTime.now() : eventAt;
+        this.lastAttemptAt = effectiveAt;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public UUID getId() { return id; }
     public UUID getTenantId() { return tenantId; }
     public UUID getCampaignId() { return campaignId; }
@@ -160,6 +242,10 @@ public class CampaignExecutionEntity {
     public MessageDeliveryStatus getDeliveryStatus() { return deliveryStatus; }
     public String getProviderName() { return providerName; }
     public String getProviderMessageId() { return providerMessageId; }
+    public String getSourceType() { return sourceType; }
+    public UUID getSourceReferenceId() { return sourceReferenceId; }
+    public String getReminderWindow() { return reminderWindow; }
+    public OffsetDateTime getReferenceDateTime() { return referenceDateTime; }
     public OffsetDateTime getLastAttemptAt() { return lastAttemptAt; }
     public String getFailureReason() { return failureReason; }
     public OffsetDateTime getCreatedAt() { return createdAt; }

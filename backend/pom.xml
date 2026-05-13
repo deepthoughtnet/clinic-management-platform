@@ -53,6 +53,8 @@
     <module>providers/notify-spi</module>
     <module>providers/messaging-spi</module>
     <module>providers/messaging-email</module>
+    <module>providers/messaging-sms</module>
+    <module>providers/messaging-whatsapp</module>
     <module>providers/storage-minio</module>
   </modules>
 
