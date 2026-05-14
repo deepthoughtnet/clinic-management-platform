@@ -215,6 +215,7 @@ public class CarePilotReminderTriggerService {
                 }
 
                 OffsetDateTime appointmentAt = toOffsetDateTime(appointment.appointmentDate(), appointment.appointmentTime());
+                OffsetDateTime now = OffsetDateTime.now();
                 for (long hours : List.of(24L, 2L)) {
                     if (hours == 24L && !settings.appointmentReminder24hEnabled()) {
                         continue;
@@ -224,8 +225,13 @@ public class CarePilotReminderTriggerService {
                     }
                     OffsetDateTime reminderAt = appointmentAt.minusHours(hours);
                     String reminderWindow = hours == 24L ? "H24" : "H2";
-                    if (reminderAt.isBefore(OffsetDateTime.now().minusMinutes(30))) {
-                        continue;
+                    if (reminderAt.isBefore(now.minusMinutes(30))) {
+                        if (appointmentAt.isAfter(now)) {
+                            // Preserve legacy behavior by catching up missed reminder windows for future appointments.
+                            reminderAt = now.plusMinutes(1);
+                        } else {
+                            continue;
+                        }
                     }
                     if (existsAppointmentWindowDuplicate(
                             tenantId,

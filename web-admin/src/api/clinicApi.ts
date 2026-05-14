@@ -2524,6 +2524,145 @@ export type CarePilotWebinarAnalyticsSummary = {
   attendeeEngagementCount: number;
 };
 
+export type CarePilotAiCallCampaignStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "COMPLETED" | "CANCELLED";
+export type CarePilotAiCallType =
+  | "APPOINTMENT_REMINDER"
+  | "MISSED_APPOINTMENT"
+  | "REFILL_REMINDER"
+  | "BILLING_REMINDER"
+  | "WELLNESS_OUTREACH"
+  | "LEAD_FOLLOW_UP"
+  | "WEBINAR_REMINDER"
+  | "MANUAL_OUTREACH";
+export type CarePilotAiCallExecutionStatus =
+  | "PENDING"
+  | "QUEUED"
+  | "DIALING"
+  | "IN_PROGRESS"
+  | "COMPLETED"
+  | "FAILED"
+  | "NO_ANSWER"
+  | "BUSY"
+  | "CANCELLED"
+  | "ESCALATED"
+  | "SKIPPED"
+  | "SUPPRESSED";
+export type CarePilotAiCallEventType =
+  | "QUEUED"
+  | "DISPATCHED"
+  | "PROVIDER_ACCEPTED"
+  | "RINGING"
+  | "ANSWERED"
+  | "COMPLETED"
+  | "FAILED"
+  | "NO_ANSWER"
+  | "BUSY"
+  | "CANCELLED"
+  | "ESCALATED"
+  | "SKIPPED"
+  | "SUPPRESSED"
+  | "TRANSCRIPT_RECEIVED"
+  | "RETRY_SCHEDULED"
+  | "FAILOVER_ATTEMPTED";
+export type CarePilotAiCallCampaign = {
+  id: string;
+  tenantId: string;
+  name: string;
+  description: string | null;
+  callType: CarePilotAiCallType;
+  status: CarePilotAiCallCampaignStatus;
+  templateId: string | null;
+  channel: CarePilotChannelType;
+  retryEnabled: boolean;
+  maxAttempts: number;
+  escalationEnabled: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type CarePilotAiCallExecution = {
+  id: string;
+  tenantId: string;
+  campaignId: string;
+  patientId: string | null;
+  leadId: string | null;
+  phoneNumber: string;
+  executionStatus: CarePilotAiCallExecutionStatus;
+  providerName: string | null;
+  providerCallId: string | null;
+  scheduledAt: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  retryCount: number;
+  nextRetryAt: string | null;
+  lastAttemptAt: string | null;
+  failureReason: string | null;
+  suppressionReason: string | null;
+  escalationRequired: boolean;
+  escalationReason: string | null;
+  failoverAttempted: boolean;
+  failoverReason: string | null;
+  transcriptId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  durationSeconds: number;
+  transcriptSummary: string | null;
+};
+export type CarePilotAiCallExecutionListResponse = {
+  page: number;
+  size: number;
+  total: number;
+  rows: CarePilotAiCallExecution[];
+};
+export type CarePilotAiCallTranscript = {
+  id: string;
+  executionId: string;
+  transcriptText: string | null;
+  summary: string | null;
+  sentiment: string | null;
+  outcome: string | null;
+  intent: string | null;
+  requiresFollowUp: boolean;
+  escalationReason: string | null;
+  extractedEntitiesJson: string | null;
+  createdAt: string;
+};
+export type CarePilotAiCallEvent = {
+  id: string;
+  executionId: string | null;
+  providerName: string;
+  providerCallId: string | null;
+  eventType: CarePilotAiCallEventType;
+  externalStatus: string | null;
+  internalStatus: CarePilotAiCallExecutionStatus | null;
+  eventTimestamp: string;
+  rawPayloadRedacted: string | null;
+  createdAt: string;
+};
+export type CarePilotAiCallSchedulerHealth = {
+  enabled: boolean;
+  lastRunAt: string | null;
+  nextEstimatedRunAt: string | null;
+  lastProcessedCount: number;
+  lastDispatchedCount: number;
+  lastFailedCount: number;
+  lastSkippedCount: number;
+  lastDurationMs: number;
+};
+export type CarePilotAiCallAnalyticsSummary = {
+  totalCalls: number;
+  completedCalls: number;
+  failedCalls: number;
+  escalations: number;
+  noAnswerRate: number;
+  averageDurationSeconds: number;
+  retryRate: number;
+  queuedCalls: number;
+  suppressedCalls: number;
+  skippedCalls: number;
+};
+
 export type CreateCarePilotCampaignInput = {
   name: string;
   campaignType: CarePilotCampaignType;
@@ -3087,4 +3226,100 @@ export async function markCarePilotWebinarAttendance(
 
 export async function getCarePilotWebinarAnalyticsSummary(token: string, tenantId: string) {
   return httpGet<CarePilotWebinarAnalyticsSummary>("/api/carepilot/webinars/analytics/summary", { token, tenantId });
+}
+
+export async function listCarePilotAiCallCampaigns(token: string, tenantId: string) {
+  return httpGet<CarePilotAiCallCampaign[]>("/api/carepilot/ai-calls/campaigns", { token, tenantId });
+}
+
+export async function updateCarePilotAiCallCampaignStatus(
+  token: string,
+  tenantId: string,
+  campaignId: string,
+  status: CarePilotAiCallCampaignStatus
+) {
+  return httpPost<CarePilotAiCallCampaign>(`/api/carepilot/ai-calls/campaigns/${campaignId}/status`, { status }, { token, tenantId });
+}
+
+export async function triggerCarePilotAiCallCampaign(
+  token: string,
+  tenantId: string,
+  campaignId: string,
+  body: { targets: Array<{ patientId?: string | null; leadId?: string | null; phoneNumber: string; script?: string | null; scheduledAt?: string | null }> }
+) {
+  return httpPost<CarePilotAiCallExecution[]>(`/api/carepilot/ai-calls/campaigns/${campaignId}/trigger`, body, { token, tenantId });
+}
+
+export async function listCarePilotAiCallExecutions(token: string, tenantId: string, filters?: {
+  status?: CarePilotAiCallExecutionStatus;
+  callType?: CarePilotAiCallType;
+  patientId?: string;
+  leadId?: string;
+  startDate?: string;
+  endDate?: string;
+  escalationRequired?: boolean;
+  provider?: string;
+  campaignId?: string;
+  page?: number;
+  size?: number;
+}) {
+  const query = new URLSearchParams();
+  if (filters?.status) query.set("status", filters.status);
+  if (filters?.callType) query.set("callType", filters.callType);
+  if (filters?.patientId) query.set("patientId", filters.patientId);
+  if (filters?.leadId) query.set("leadId", filters.leadId);
+  if (filters?.startDate) query.set("startDate", filters.startDate);
+  if (filters?.endDate) query.set("endDate", filters.endDate);
+  if (filters?.escalationRequired != null) query.set("escalationRequired", String(filters.escalationRequired));
+  if (filters?.provider) query.set("provider", filters.provider);
+  if (filters?.campaignId) query.set("campaignId", filters.campaignId);
+  if (filters?.page != null) query.set("page", String(filters.page));
+  if (filters?.size != null) query.set("size", String(filters.size));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<CarePilotAiCallExecutionListResponse>(`/api/carepilot/ai-calls/executions${suffix}`, { token, tenantId });
+}
+
+export async function retryCarePilotAiCallExecution(token: string, tenantId: string, executionId: string) {
+  return httpPost<CarePilotAiCallExecution>(`/api/carepilot/ai-calls/executions/${executionId}/retry`, {}, { token, tenantId });
+}
+
+export async function cancelCarePilotAiCallExecution(token: string, tenantId: string, executionId: string, reason?: string | null) {
+  return httpPost<CarePilotAiCallExecution>(`/api/carepilot/ai-calls/executions/${executionId}/cancel`, { reason: reason ?? null }, { token, tenantId });
+}
+
+export async function suppressCarePilotAiCallExecution(token: string, tenantId: string, executionId: string, reason?: string | null) {
+  return httpPost<CarePilotAiCallExecution>(`/api/carepilot/ai-calls/executions/${executionId}/suppress`, { reason: reason ?? null }, { token, tenantId });
+}
+
+export async function rescheduleCarePilotAiCallExecution(
+  token: string,
+  tenantId: string,
+  executionId: string,
+  body: { scheduledAt: string; reason?: string | null }
+) {
+  return httpPost<CarePilotAiCallExecution>(`/api/carepilot/ai-calls/executions/${executionId}/reschedule`, body, { token, tenantId });
+}
+
+export async function getCarePilotAiCallTranscript(token: string, tenantId: string, executionId: string) {
+  return httpGet<CarePilotAiCallTranscript>(`/api/carepilot/ai-calls/executions/${executionId}/transcript`, { token, tenantId });
+}
+
+export async function listCarePilotAiCallEvents(token: string, tenantId: string, executionId: string) {
+  return httpGet<CarePilotAiCallEvent[]>(`/api/carepilot/ai-calls/executions/${executionId}/events`, { token, tenantId });
+}
+
+export async function dispatchDueCarePilotAiCalls(token: string, tenantId: string) {
+  return httpPost<{ processed: number; dispatched: number; failed: number; skipped: number }>(
+    "/api/carepilot/ai-calls/executions/dispatch-due",
+    {},
+    { token, tenantId }
+  );
+}
+
+export async function getCarePilotAiCallSchedulerHealth(token: string, tenantId: string) {
+  return httpGet<CarePilotAiCallSchedulerHealth>("/api/carepilot/ai-calls/scheduler-health", { token, tenantId });
+}
+
+export async function getCarePilotAiCallAnalyticsSummary(token: string, tenantId: string) {
+  return httpGet<CarePilotAiCallAnalyticsSummary>("/api/carepilot/ai-calls/analytics/summary", { token, tenantId });
 }

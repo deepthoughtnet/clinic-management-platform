@@ -9,9 +9,11 @@ import com.deepthoughtnet.clinic.api.ai.service.AiStatusService;
 import com.deepthoughtnet.clinic.api.carepilot.CarePilotMessagingStatusService;
 import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderReadinessStatus;
 import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderStatusResponse;
+import com.deepthoughtnet.clinic.carepilot.ai_call.provider.VoiceCallProviderRegistry;
 import com.deepthoughtnet.clinic.messaging.sms.CarePilotSmsMessagingProperties;
 import com.deepthoughtnet.clinic.messaging.spi.MessageChannel;
 import com.deepthoughtnet.clinic.messaging.whatsapp.CarePilotWhatsAppMessagingProperties;
+import com.deepthoughtnet.clinic.voice.spi.VoiceCallProvider;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -23,6 +25,7 @@ class AdminIntegrationsStatusServiceTest {
     private CarePilotWhatsAppMessagingProperties whatsAppProperties;
     private CarePilotSmsMessagingProperties smsProperties;
     private AiStatusService aiStatusService;
+    private VoiceCallProviderRegistry voiceCallProviderRegistry;
     private AdminIntegrationsStatusService service;
 
     @BeforeEach
@@ -31,7 +34,12 @@ class AdminIntegrationsStatusServiceTest {
         whatsAppProperties = new CarePilotWhatsAppMessagingProperties();
         smsProperties = new CarePilotSmsMessagingProperties();
         aiStatusService = mock(AiStatusService.class);
-        service = new AdminIntegrationsStatusService(messagingStatusService, whatsAppProperties, smsProperties, aiStatusService);
+        voiceCallProviderRegistry = mock(VoiceCallProviderRegistry.class);
+        VoiceCallProvider provider = mock(VoiceCallProvider.class);
+        when(provider.isReady()).thenReturn(true);
+        when(provider.providerName()).thenReturn("mock-voice");
+        when(voiceCallProviderRegistry.resolve()).thenReturn(provider);
+        service = new AdminIntegrationsStatusService(messagingStatusService, whatsAppProperties, smsProperties, aiStatusService, voiceCallProviderRegistry);
 
         when(messagingStatusService.providerStatuses()).thenReturn(List.of(
                 new ProviderStatusResponse(MessageChannel.EMAIL, "email-provider", true, true, true, ProviderReadinessStatus.READY,

@@ -55,6 +55,7 @@
     <module>providers/messaging-email</module>
     <module>providers/messaging-sms</module>
     <module>providers/messaging-whatsapp</module>
+    <module>providers/voice-spi</module>
     <module>providers/storage-minio</module>
   </modules>
 

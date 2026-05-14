@@ -44,6 +44,7 @@ import PatientEngagementPage from "../products/carepilot/engagement/PatientEngag
 import RemindersPage from "../products/carepilot/reminders/RemindersPage";
 import LeadsPage from "../products/carepilot/leads/LeadsPage";
 import WebinarsPage from "../products/carepilot/webinars/WebinarsPage";
+import AiCallsPage from "../products/carepilot/ai-calls/AiCallsPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const auth = React.useContext(AuthContext);
@@ -169,6 +170,7 @@ function AuthedApp() {
         <Route path="/carepilot/reminders" element={<RemindersPage />} />
         <Route path="/carepilot/leads" element={<LeadsPage />} />
         <Route path="/carepilot/webinars" element={<WebinarsPage />} />
+        <Route path="/carepilot/ai-calls" element={<AiCallsPage />} />
         <Route
           path="/platform/users"
           element={<PlaceholderPage title="Users / Admins" description="Platform user administration can be enabled when backend APIs are exposed." />}

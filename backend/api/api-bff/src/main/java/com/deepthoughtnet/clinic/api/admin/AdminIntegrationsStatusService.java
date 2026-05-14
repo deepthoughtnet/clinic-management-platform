@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.admin;
 import com.deepthoughtnet.clinic.api.admin.dto.AdminIntegrationsDtos.IntegrationStatus;
 import com.deepthoughtnet.clinic.api.admin.dto.AdminIntegrationsDtos.IntegrationStatusRow;
 import com.deepthoughtnet.clinic.api.ai.service.AiStatusService;
+import com.deepthoughtnet.clinic.carepilot.ai_call.provider.VoiceCallProviderRegistry;
 import com.deepthoughtnet.clinic.api.carepilot.CarePilotMessagingStatusService;
 import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderReadinessStatus;
 import com.deepthoughtnet.clinic.messaging.sms.CarePilotSmsMessagingProperties;
@@ -23,17 +24,20 @@ public class AdminIntegrationsStatusService {
     private final CarePilotWhatsAppMessagingProperties whatsAppProperties;
     private final CarePilotSmsMessagingProperties smsProperties;
     private final AiStatusService aiStatusService;
+    private final VoiceCallProviderRegistry voiceProviderRegistry;
 
     public AdminIntegrationsStatusService(
             CarePilotMessagingStatusService messagingStatusService,
             CarePilotWhatsAppMessagingProperties whatsAppProperties,
             CarePilotSmsMessagingProperties smsProperties,
-            AiStatusService aiStatusService
+            AiStatusService aiStatusService,
+            VoiceCallProviderRegistry voiceProviderRegistry
     ) {
         this.messagingStatusService = messagingStatusService;
         this.whatsAppProperties = whatsAppProperties;
         this.smsProperties = smsProperties;
         this.aiStatusService = aiStatusService;
+        this.voiceProviderRegistry = voiceProviderRegistry;
     }
 
     /**
@@ -126,7 +130,21 @@ public class AdminIntegrationsStatusService {
                 now,
                 false
         ));
-        rows.add(futureRow("voice.provider", "Voice Calling", "AI_VOICE", now));
+        var voiceProvider = voiceProviderRegistry.resolve();
+        rows.add(new IntegrationStatusRow(
+                "voice.provider",
+                "Voice Calling",
+                "AI_VOICE",
+                voiceProvider.isReady() ? IntegrationStatus.READY : IntegrationStatus.NOT_CONFIGURED,
+                voiceProvider.isReady(),
+                voiceProvider.isReady(),
+                voiceProvider.providerName(),
+                voiceProvider.isReady() ? List.of() : List.of("carepilot.voice.mock.enabled"),
+                List.of("Enable voice provider configuration for production deployment."),
+                voiceProvider.isReady() ? "Voice provider is ready." : "Voice provider is not configured yet.",
+                now,
+                false
+        ));
         rows.add(futureRow("voice.stt-tts", "STT/TTS", "AI_VOICE", now));
 
         return List.copyOf(rows);
