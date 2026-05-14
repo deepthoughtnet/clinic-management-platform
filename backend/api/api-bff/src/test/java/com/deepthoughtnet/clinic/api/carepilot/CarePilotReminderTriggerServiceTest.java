@@ -29,6 +29,7 @@ import com.deepthoughtnet.clinic.carepilot.featureflag.service.model.FeatureFlag
 import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
 import com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateEntity;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateRepository;
 import com.deepthoughtnet.clinic.carepilot.webinar.db.WebinarRegistrationRepository;
@@ -70,6 +71,7 @@ class CarePilotReminderTriggerServiceTest {
     private PatientRepository patientRepository;
     private LeadRepository leadRepository;
     private LeadActivityService leadActivityService;
+    private TenantNotificationSettingsService notificationSettingsService;
     private WebinarRepository webinarRepository;
     private WebinarRegistrationRepository webinarRegistrationRepository;
     private CarePilotReminderTriggerService service;
@@ -90,6 +92,7 @@ class CarePilotReminderTriggerServiceTest {
         patientRepository = mock(PatientRepository.class);
         leadRepository = mock(LeadRepository.class);
         leadActivityService = mock(LeadActivityService.class);
+        notificationSettingsService = mock(TenantNotificationSettingsService.class);
         webinarRepository = mock(WebinarRepository.class);
         webinarRegistrationRepository = mock(WebinarRegistrationRepository.class);
 
@@ -108,6 +111,7 @@ class CarePilotReminderTriggerServiceTest {
                 patientRepository,
                 leadRepository,
                 leadActivityService,
+                notificationSettingsService,
                 webinarRepository,
                 webinarRegistrationRepository,
                 new ObjectMapper(),
@@ -127,6 +131,20 @@ class CarePilotReminderTriggerServiceTest {
                 OffsetDateTime.now()
         )));
         when(featureFlagService.carePilotForTenant(tenantId)).thenReturn(new FeatureFlagRecord(tenantId, true, "test"));
+        when(notificationSettingsService.getOrCreate(tenantId)).thenReturn(
+                new com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord(
+                        UUID.randomUUID(), tenantId,
+                        true, false, false, true,
+                        true, true, true, true, true, true, true, true, true, true,
+                        false, null, null, "UTC",
+                        com.deepthoughtnet.clinic.carepilot.notificationsettings.model.NotificationChannelPreference.EMAIL,
+                        com.deepthoughtnet.clinic.carepilot.notificationsettings.model.NotificationChannelPreference.IN_APP,
+                        false, true, true, 5,
+                        OffsetDateTime.now(), OffsetDateTime.now(), null, null
+                )
+        );
+        when(notificationSettingsService.resolveEffectiveChannel(any(), eq(ChannelType.EMAIL))).thenReturn(ChannelType.EMAIL);
+        when(notificationSettingsService.applyQuietHours(any(), any())).thenAnswer(invocation -> invocation.getArgument(1));
 
         PatientEntity patient = PatientEntity.create(tenantId, "PAT-1");
         patient.update("John", "Doe", null, null, null, "9999999999", "john@example.com", null, null, null, null, null, null, null, null, null, null, null, null, null, null, true);
@@ -172,7 +190,7 @@ class CarePilotReminderTriggerServiceTest {
 
         service.queueDueReminders();
 
-        verify(executionService, times(1)).create(eq(tenantId), any());
+        verify(executionService, times(2)).create(eq(tenantId), any());
     }
 
     @Test

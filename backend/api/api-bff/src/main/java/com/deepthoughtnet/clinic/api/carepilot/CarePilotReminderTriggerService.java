@@ -19,6 +19,8 @@ import com.deepthoughtnet.clinic.carepilot.lead.activity.model.LeadActivityType;
 import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
 import com.deepthoughtnet.clinic.carepilot.lead.db.LeadRepository;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord;
 import com.deepthoughtnet.clinic.carepilot.messaging.model.ChannelType;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateEntity;
 import com.deepthoughtnet.clinic.carepilot.template.db.CampaignTemplateRepository;
@@ -95,6 +97,7 @@ public class CarePilotReminderTriggerService {
     private final PatientRepository patientRepository;
     private final LeadRepository leadRepository;
     private final LeadActivityService leadActivityService;
+    private final TenantNotificationSettingsService notificationSettingsService;
     private final WebinarRepository webinarRepository;
     private final WebinarRegistrationRepository webinarRegistrationRepository;
     private final ObjectMapper objectMapper;
@@ -117,6 +120,7 @@ public class CarePilotReminderTriggerService {
             PatientRepository patientRepository,
             LeadRepository leadRepository,
             LeadActivityService leadActivityService,
+            TenantNotificationSettingsService notificationSettingsService,
             WebinarRepository webinarRepository,
             WebinarRegistrationRepository webinarRegistrationRepository,
             ObjectMapper objectMapper,
@@ -138,6 +142,7 @@ public class CarePilotReminderTriggerService {
         this.patientRepository = patientRepository;
         this.leadRepository = leadRepository;
         this.leadActivityService = leadActivityService;
+        this.notificationSettingsService = notificationSettingsService;
         this.webinarRepository = webinarRepository;
         this.webinarRegistrationRepository = webinarRegistrationRepository;
         this.objectMapper = objectMapper;
@@ -157,18 +162,19 @@ public class CarePilotReminderTriggerService {
             if (!featureFlagService.carePilotForTenant(tenantId).carePilotEnabled()) {
                 continue;
             }
+            NotificationSettingsRecord settings = notificationSettingsService.getOrCreate(tenantId);
 
             int tenantQueued = 0;
-            tenantQueued += queueAppointmentReminders(tenantId);
-            tenantQueued += queueMissedAppointmentFollowUps(tenantId);
-            tenantQueued += queueFollowUpReminders(tenantId);
-            tenantQueued += queueRefillReminders(tenantId);
-            tenantQueued += queueVaccinationReminders(tenantId);
-            tenantQueued += queueBillingReminders(tenantId);
-            tenantQueued += queueBirthdayWellnessMessages(tenantId);
-            tenantQueued += queueLeadFollowUpOperationalReminders(tenantId);
-            tenantQueued += queueWebinarReminders(tenantId);
-            tenantQueued += queueWebinarFollowUps(tenantId);
+            tenantQueued += queueAppointmentReminders(tenantId, settings);
+            tenantQueued += queueMissedAppointmentFollowUps(tenantId, settings);
+            tenantQueued += queueFollowUpReminders(tenantId, settings);
+            tenantQueued += queueRefillReminders(tenantId, settings);
+            tenantQueued += queueVaccinationReminders(tenantId, settings);
+            tenantQueued += queueBillingReminders(tenantId, settings);
+            tenantQueued += queueBirthdayWellnessMessages(tenantId, settings);
+            tenantQueued += queueLeadFollowUpOperationalReminders(tenantId, settings);
+            tenantQueued += queueWebinarReminders(tenantId, settings);
+            tenantQueued += queueWebinarFollowUps(tenantId, settings);
 
             queued += tenantQueued;
             log.info("CarePilot scheduler tenantId={} queued={}", tenantId, tenantQueued);
@@ -179,7 +185,10 @@ public class CarePilotReminderTriggerService {
         return queued;
     }
 
-    private int queueAppointmentReminders(UUID tenantId) {
+    private int queueAppointmentReminders(UUID tenantId, NotificationSettingsRecord settings) {
+        if (!settings.appointmentRemindersEnabled()) {
+            return 0;
+        }
         Optional<CampaignTemplateBinding> binding = activeEmailCampaignBinding(tenantId, CampaignType.APPOINTMENT_REMINDER);
         if (binding.isEmpty()) {
             return 0;
@@ -207,6 +216,12 @@ public class CarePilotReminderTriggerService {
 
                 OffsetDateTime appointmentAt = toOffsetDateTime(appointment.appointmentDate(), appointment.appointmentTime());
                 for (long hours : List.of(24L, 2L)) {
+                    if (hours == 24L && !settings.appointmentReminder24hEnabled()) {
+                        continue;
+                    }
+                    if (hours == 2L && !settings.appointmentReminder2hEnabled()) {
+                        continue;
+                    }
                     OffsetDateTime reminderAt = appointmentAt.minusHours(hours);
                     String reminderWindow = hours == 24L ? "H24" : "H2";
                     if (reminderAt.isBefore(OffsetDateTime.now().minusMinutes(30))) {
@@ -247,7 +262,10 @@ public class CarePilotReminderTriggerService {
      * Operational follow-up reminder foundation for leads.
      * This records tenant-scoped timeline reminder entries without forcing patient-facing send when recipient model is patient-only.
      */
-    private int queueLeadFollowUpOperationalReminders(UUID tenantId) {
+    private int queueLeadFollowUpOperationalReminders(UUID tenantId, NotificationSettingsRecord settings) {
+        if (!settings.leadFollowUpRemindersEnabled()) {
+            return 0;
+        }
         int queued = 0;
         var dueRows = leadRepository.findByTenantIdAndNextFollowUpAtLessThanEqualAndStatusNotIn(
                 tenantId,
@@ -285,7 +303,10 @@ public class CarePilotReminderTriggerService {
         return queued;
     }
 
-    private int queueMissedAppointmentFollowUps(UUID tenantId) {
+    private int queueMissedAppointmentFollowUps(UUID tenantId, NotificationSettingsRecord settings) {
+        if (!settings.followUpRemindersEnabled()) {
+            return 0;
+        }
         Optional<CampaignTemplateBinding> binding = activeEmailCampaignBinding(tenantId, CampaignType.MISSED_APPOINTMENT_FOLLOW_UP);
         if (binding.isEmpty()) {
             return 0;
@@ -352,7 +373,10 @@ public class CarePilotReminderTriggerService {
         return queued;
     }
 
-    private int queueFollowUpReminders(UUID tenantId) {
+    private int queueFollowUpReminders(UUID tenantId, NotificationSettingsRecord settings) {
+        if (!settings.followUpRemindersEnabled()) {
+            return 0;
+        }
         Optional<CampaignTemplateBinding> binding = activeEmailCampaignBinding(tenantId, CampaignType.FOLLOW_UP_REMINDER);
         if (binding.isEmpty()) {
             return 0;
@@ -417,7 +441,10 @@ public class CarePilotReminderTriggerService {
         return queued;
     }
 
-    private int queueRefillReminders(UUID tenantId) {
+    private int queueRefillReminders(UUID tenantId, NotificationSettingsRecord settings) {
+        if (!settings.refillRemindersEnabled()) {
+            return 0;
+        }
         Optional<CampaignTemplateBinding> binding = activeEmailCampaignBinding(tenantId, CampaignType.REFILL_REMINDER);
         if (binding.isEmpty()) {
             return 0;
@@ -494,7 +521,10 @@ public class CarePilotReminderTriggerService {
         return queued;
     }
 
-    private int queueVaccinationReminders(UUID tenantId) {
+    private int queueVaccinationReminders(UUID tenantId, NotificationSettingsRecord settings) {
+        if (!settings.vaccinationRemindersEnabled()) {
+            return 0;
+        }
         Optional<CampaignTemplateBinding> binding = activeEmailCampaignBinding(tenantId, CampaignType.VACCINATION_REMINDER);
         if (binding.isEmpty()) {
             return 0;
@@ -586,7 +616,10 @@ public class CarePilotReminderTriggerService {
         return queued;
     }
 
-    private int queueBirthdayWellnessMessages(UUID tenantId) {
+    private int queueBirthdayWellnessMessages(UUID tenantId, NotificationSettingsRecord settings) {
+        if (!settings.birthdayWellnessEnabled()) {
+            return 0;
+        }
         Optional<CampaignTemplateBinding> binding = activeEmailCampaignBinding(tenantId, CampaignType.WELLNESS_MESSAGE);
         if (binding.isEmpty()) {
             return 0;
@@ -663,7 +696,10 @@ public class CarePilotReminderTriggerService {
         return queued;
     }
 
-    private int queueBillingReminders(UUID tenantId) {
+    private int queueBillingReminders(UUID tenantId, NotificationSettingsRecord settings) {
+        if (!settings.billingRemindersEnabled()) {
+            return 0;
+        }
         Optional<CampaignTemplateBinding> binding = activeEmailCampaignBinding(tenantId, CampaignType.BILLING_REMINDER);
         if (binding.isEmpty()) {
             return 0;
@@ -766,7 +802,10 @@ public class CarePilotReminderTriggerService {
         return Optional.of(new CampaignTemplateBinding(campaign.get(), template.get()));
     }
 
-    private int queueWebinarReminders(UUID tenantId) {
+    private int queueWebinarReminders(UUID tenantId, NotificationSettingsRecord settings) {
+        if (!settings.webinarRemindersEnabled()) {
+            return 0;
+        }
         Optional<CampaignTemplateBinding> reminderBinding = activeEmailCampaignBinding(tenantId, CampaignType.WEBINAR_REMINDER);
         Optional<CampaignTemplateBinding> confirmationBinding = activeEmailCampaignBinding(tenantId, CampaignType.WEBINAR_CONFIRMATION);
         if (reminderBinding.isEmpty() && confirmationBinding.isEmpty()) {
@@ -830,7 +869,10 @@ public class CarePilotReminderTriggerService {
         return queued;
     }
 
-    private int queueWebinarFollowUps(UUID tenantId) {
+    private int queueWebinarFollowUps(UUID tenantId, NotificationSettingsRecord settings) {
+        if (!settings.webinarRemindersEnabled()) {
+            return 0;
+        }
         Optional<CampaignTemplateBinding> followupBinding = activeEmailCampaignBinding(tenantId, CampaignType.WEBINAR_FOLLOW_UP);
         if (followupBinding.isEmpty()) {
             return 0;
@@ -942,7 +984,34 @@ public class CarePilotReminderTriggerService {
 
     private boolean createExecutionSafely(UUID tenantId, CampaignExecutionCreateCommand command) {
         try {
-            executionService.create(tenantId, command);
+            NotificationSettingsRecord settings = notificationSettingsService.getOrCreate(tenantId);
+            ChannelType effectiveChannel = notificationSettingsService.resolveEffectiveChannel(settings, command.channelType());
+            if (effectiveChannel == null) {
+                log.info(
+                        "CarePilot reminder skipped because no channels are enabled. tenantId={}, campaignId={}, sourceType={}, sourceReferenceId={}",
+                        tenantId,
+                        command.campaignId(),
+                        command.sourceType(),
+                        command.sourceReferenceId()
+                );
+                return false;
+            }
+            OffsetDateTime effectiveScheduledAt = notificationSettingsService.applyQuietHours(
+                    settings,
+                    command.scheduledAt() == null ? OffsetDateTime.now() : command.scheduledAt()
+            );
+            CampaignExecutionCreateCommand effective = new CampaignExecutionCreateCommand(
+                    command.campaignId(),
+                    command.templateId(),
+                    effectiveChannel,
+                    command.recipientPatientId(),
+                    effectiveScheduledAt,
+                    command.sourceType(),
+                    command.sourceReferenceId(),
+                    command.reminderWindow(),
+                    command.referenceDateTime()
+            );
+            executionService.create(tenantId, effective);
             return true;
         } catch (RuntimeException ex) {
             log.warn(

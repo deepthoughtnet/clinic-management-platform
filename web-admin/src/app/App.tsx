@@ -8,6 +8,9 @@ import { useAuth } from "../auth/useAuth";
 import DashboardPage from "../pages/DashboardPage";
 import ClinicProfilePage from "../pages/settings/ClinicProfilePage";
 import UsersRolesPage from "../pages/settings/UsersRolesPage";
+import TemplatesPage from "../pages/admin/TemplatesPage";
+import NotificationSettingsPage from "../pages/admin/NotificationSettingsPage";
+import IntegrationsPage from "../pages/admin/IntegrationsPage";
 import DoctorDetailPage from "../pages/doctors/DoctorDetailPage";
 import DoctorAvailabilityPage from "../pages/doctors/DoctorAvailabilityPage";
 import PatientsPage from "../pages/patients/PatientsPage";
@@ -173,6 +176,9 @@ function AuthedApp() {
         <Route path="/settings" element={<Navigate to="/settings/clinic-profile" replace />} />
         <Route path="/settings/clinic-profile" element={<ClinicProfilePage />} />
         <Route path="/settings/users-roles" element={<UsersRolesPage />} />
+        <Route path="/admin/templates" element={<TemplatesPage />} />
+        <Route path="/admin/notification-settings" element={<NotificationSettingsPage />} />
+        <Route path="/admin/integrations" element={<IntegrationsPage />} />
         <Route path="/doctors/availability" element={<DoctorAvailabilityPage />} />
         <Route path="/doctors/:id" element={<DoctorDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

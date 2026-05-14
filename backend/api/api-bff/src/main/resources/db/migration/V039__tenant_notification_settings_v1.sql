@@ -1,0 +1,35 @@
+create table if not exists tenant_notification_settings (
+    id uuid primary key,
+    tenant_id uuid not null unique,
+    email_enabled boolean not null default true,
+    sms_enabled boolean not null default false,
+    whatsapp_enabled boolean not null default false,
+    in_app_enabled boolean not null default true,
+    appointment_reminders_enabled boolean not null default true,
+    appointment_reminder_24h_enabled boolean not null default true,
+    appointment_reminder_2h_enabled boolean not null default true,
+    follow_up_reminders_enabled boolean not null default true,
+    billing_reminders_enabled boolean not null default true,
+    refill_reminders_enabled boolean not null default true,
+    vaccination_reminders_enabled boolean not null default true,
+    lead_follow_up_reminders_enabled boolean not null default true,
+    webinar_reminders_enabled boolean not null default true,
+    birthday_wellness_enabled boolean not null default true,
+    quiet_hours_enabled boolean not null default false,
+    quiet_hours_start time,
+    quiet_hours_end time,
+    timezone varchar(64),
+    default_channel varchar(24) not null default 'EMAIL',
+    fallback_channel varchar(24),
+    allow_marketing_messages boolean not null default false,
+    require_patient_consent boolean not null default true,
+    unsubscribe_footer_enabled boolean not null default true,
+    max_messages_per_patient_per_day integer not null default 5,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    created_by uuid,
+    updated_by uuid
+);
+
+create index if not exists ix_tns_tenant
+    on tenant_notification_settings (tenant_id);

@@ -2548,6 +2548,128 @@ export type PatchCarePilotTemplateInput = {
   active?: boolean | null;
 };
 
+export type AdminTemplateType = "CAMPAIGN" | "REMINDER" | "WEBINAR" | "BILLING" | "LEAD" | "NOTIFICATION" | "AI_PROMPT" | "GENERAL";
+export type AdminTemplateChannel = "EMAIL" | "SMS" | "WHATSAPP" | "INTERNAL" | "VOICE";
+export type AdminTemplateCategory = "APPOINTMENT_REMINDER" | "REFILL_REMINDER" | "BILLING" | "WEBINAR" | "FOLLOW_UP" | "LEAD" | "VACCINATION" | "WELLNESS" | "GENERAL";
+
+export type AdminTemplate = {
+  id: string;
+  tenantId: string;
+  name: string;
+  description: string | null;
+  templateType: AdminTemplateType;
+  channel: AdminTemplateChannel;
+  category: AdminTemplateCategory;
+  subject: string | null;
+  body: string;
+  variablesJson: string | null;
+  active: boolean;
+  systemTemplate: boolean;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string | null;
+  updatedBy: string | null;
+};
+
+export type AdminTemplateUpsertInput = {
+  name: string;
+  description: string | null;
+  templateType: AdminTemplateType;
+  channel: AdminTemplateChannel;
+  category: AdminTemplateCategory;
+  subject: string | null;
+  body: string;
+  variablesJson: string | null;
+  active: boolean;
+};
+
+export type AdminNotificationChannel = "EMAIL" | "SMS" | "WHATSAPP" | "IN_APP";
+
+export type AdminNotificationSettings = {
+  id: string;
+  tenantId: string;
+  emailEnabled: boolean;
+  smsEnabled: boolean;
+  whatsappEnabled: boolean;
+  inAppEnabled: boolean;
+  appointmentRemindersEnabled: boolean;
+  appointmentReminder24hEnabled: boolean;
+  appointmentReminder2hEnabled: boolean;
+  followUpRemindersEnabled: boolean;
+  billingRemindersEnabled: boolean;
+  refillRemindersEnabled: boolean;
+  vaccinationRemindersEnabled: boolean;
+  leadFollowUpRemindersEnabled: boolean;
+  webinarRemindersEnabled: boolean;
+  birthdayWellnessEnabled: boolean;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string | null;
+  quietHoursEnd: string | null;
+  timezone: string | null;
+  defaultChannel: AdminNotificationChannel;
+  fallbackChannel: AdminNotificationChannel | null;
+  allowMarketingMessages: boolean;
+  requirePatientConsent: boolean;
+  unsubscribeFooterEnabled: boolean;
+  maxMessagesPerPatientPerDay: number;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string | null;
+  updatedBy: string | null;
+  emailReady: boolean;
+  smsReady: boolean;
+  whatsappReady: boolean;
+  warnings: string[];
+};
+
+export type AdminNotificationSettingsUpdateInput = {
+  emailEnabled: boolean;
+  smsEnabled: boolean;
+  whatsappEnabled: boolean;
+  inAppEnabled: boolean;
+  appointmentRemindersEnabled: boolean;
+  appointmentReminder24hEnabled: boolean;
+  appointmentReminder2hEnabled: boolean;
+  followUpRemindersEnabled: boolean;
+  billingRemindersEnabled: boolean;
+  refillRemindersEnabled: boolean;
+  vaccinationRemindersEnabled: boolean;
+  leadFollowUpRemindersEnabled: boolean;
+  webinarRemindersEnabled: boolean;
+  birthdayWellnessEnabled: boolean;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string | null;
+  quietHoursEnd: string | null;
+  timezone: string | null;
+  defaultChannel: AdminNotificationChannel;
+  fallbackChannel: AdminNotificationChannel | null;
+  allowMarketingMessages: boolean;
+  requirePatientConsent: boolean;
+  unsubscribeFooterEnabled: boolean;
+  maxMessagesPerPatientPerDay: number;
+};
+
+export type AdminIntegrationStatus = "READY" | "DISABLED" | "NOT_CONFIGURED" | "ERROR" | "FUTURE";
+
+export type AdminIntegrationStatusRow = {
+  key: string;
+  name: string;
+  category: string;
+  status: AdminIntegrationStatus;
+  enabled: boolean;
+  configured: boolean;
+  providerName: string | null;
+  missingConfigurationKeys: string[];
+  safeConfigurationHints: string[];
+  message: string;
+  lastCheckedAt: string;
+  supportsTestAction: boolean;
+};
+
+export type AdminIntegrationStatusResponse = {
+  rows: AdminIntegrationStatusRow[];
+};
+
 export async function listCarePilotCampaigns(token: string, tenantId: string) {
   return httpGet<CarePilotCampaign[]>("/api/carepilot/campaigns", { token, tenantId });
 }
@@ -2582,6 +2704,73 @@ export async function createCarePilotTemplate(token: string, tenantId: string, b
 
 export async function patchCarePilotTemplate(token: string, tenantId: string, templateId: string, body: PatchCarePilotTemplateInput) {
   return httpPatch<CarePilotTemplate>(`/api/carepilot/templates/${templateId}`, body, { token, tenantId });
+}
+
+export async function listAdminTemplates(
+  token: string,
+  tenantId: string,
+  filters: { templateType?: AdminTemplateType; channel?: AdminTemplateChannel; category?: AdminTemplateCategory; active?: boolean; search?: string } = {},
+) {
+  const query = new URLSearchParams();
+  if (filters.templateType) query.set("templateType", filters.templateType);
+  if (filters.channel) query.set("channel", filters.channel);
+  if (filters.category) query.set("category", filters.category);
+  if (filters.active !== undefined) query.set("active", String(filters.active));
+  if (filters.search) query.set("search", filters.search);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<AdminTemplate[]>(`/api/admin/templates${suffix}`, { token, tenantId });
+}
+
+export async function getAdminTemplate(token: string, tenantId: string, templateId: string) {
+  return httpGet<AdminTemplate>(`/api/admin/templates/${templateId}`, { token, tenantId });
+}
+
+export async function createAdminTemplate(token: string, tenantId: string, body: AdminTemplateUpsertInput) {
+  return httpPost<AdminTemplate>("/api/admin/templates", body, { token, tenantId });
+}
+
+export async function updateAdminTemplate(token: string, tenantId: string, templateId: string, body: AdminTemplateUpsertInput) {
+  return httpPut<AdminTemplate>(`/api/admin/templates/${templateId}`, body, { token, tenantId });
+}
+
+export async function activateAdminTemplate(token: string, tenantId: string, templateId: string) {
+  return httpPost<AdminTemplate>(`/api/admin/templates/${templateId}/activate`, undefined, { token, tenantId });
+}
+
+export async function deactivateAdminTemplate(token: string, tenantId: string, templateId: string) {
+  return httpPost<AdminTemplate>(`/api/admin/templates/${templateId}/deactivate`, undefined, { token, tenantId });
+}
+
+export async function deleteAdminTemplate(token: string, tenantId: string, templateId: string) {
+  await fetch(`${(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "")}/api/admin/templates/${templateId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Tenant-Id": tenantId,
+    },
+  }).then(async (res) => {
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  });
+}
+
+export async function previewAdminTemplate(token: string, tenantId: string, templateId: string, variables: Record<string, string>) {
+  return httpPost<{ renderedSubject: string; renderedBody: string }>(`/api/admin/templates/${templateId}/preview`, { variables }, { token, tenantId });
+}
+
+export async function getAdminNotificationSettings(token: string, tenantId: string) {
+  return httpGet<AdminNotificationSettings>("/api/admin/notification-settings", { token, tenantId });
+}
+
+export async function updateAdminNotificationSettings(
+  token: string,
+  tenantId: string,
+  body: AdminNotificationSettingsUpdateInput
+) {
+  return httpPut<AdminNotificationSettings>("/api/admin/notification-settings", body, { token, tenantId });
+}
+
+export async function getAdminIntegrationsStatus(token: string, tenantId: string) {
+  return httpGet<AdminIntegrationStatusResponse>("/api/admin/integrations/status", { token, tenantId });
 }
 
 export async function listCarePilotExecutions(token: string, tenantId: string) {
