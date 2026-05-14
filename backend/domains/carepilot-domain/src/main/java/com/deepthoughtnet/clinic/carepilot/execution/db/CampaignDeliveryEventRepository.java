@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * Repository for immutable provider webhook delivery events.
  */
 public interface CampaignDeliveryEventRepository extends JpaRepository<CampaignDeliveryEventEntity, UUID> {
+    java.util.List<CampaignDeliveryEventEntity> findByTenantIdAndReceivedAtBetween(UUID tenantId, java.time.OffsetDateTime from, java.time.OffsetDateTime to);
     List<CampaignDeliveryEventEntity> findByTenantIdAndExecutionIdOrderByEventTimestampAsc(UUID tenantId, UUID executionId);
     List<CampaignDeliveryEventEntity> findByTenantIdAndExecutionIdInOrderByEventTimestampAsc(UUID tenantId, List<UUID> executionIds);
 

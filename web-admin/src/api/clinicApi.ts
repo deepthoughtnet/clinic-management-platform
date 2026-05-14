@@ -2912,6 +2912,220 @@ export async function getAdminIntegrationsStatus(token: string, tenantId: string
   return httpGet<AdminIntegrationStatusResponse>("/api/admin/integrations/status", { token, tenantId });
 }
 
+export type PlatformHealthStatus = "HEALTHY" | "DEGRADED" | "WARNING" | "CRITICAL";
+export type IntegrationReadinessStatus = "READY" | "DISABLED" | "NOT_CONFIGURED" | "ERROR" | "FUTURE";
+
+export type PlatformSchedulerStatus = {
+  schedulerName: string;
+  enabled: boolean;
+  lastRunAt: string | null;
+  nextRunEstimate: string | null;
+  executionCount: number;
+  failureCount: number;
+  skippedCount: number;
+  avgExecutionTimeMs: number;
+  lastFailureMessage: string | null;
+  lockLastAcquiredAt: string | null;
+  lockLastSkippedAt: string | null;
+  lockAcquireCount: number;
+  lockSkipCount: number;
+};
+
+export type PlatformQueueMetrics = {
+  queueName: string;
+  queueSize: number;
+  pending: number;
+  retrying: number;
+  failed: number;
+  processing: number;
+  stale: number;
+  throttled: number;
+  suppressed: number;
+};
+
+export type PlatformProviderMetrics = {
+  key: string;
+  name: string;
+  category: string;
+  status: IntegrationReadinessStatus;
+  enabled: boolean;
+  configured: boolean;
+  providerName: string | null;
+  successCount: number;
+  failureCount: number;
+  timeoutCount: number;
+  avgLatencyMs: number;
+  lastFailure: string | null;
+};
+
+export type PlatformAiMetrics = {
+  totalCalls: number;
+  successfulCalls: number;
+  failedCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost: number;
+  avgLatencyMs: number;
+  callsByProvider: Record<string, number>;
+  callsByUseCase: Record<string, number>;
+  callsByStatus: Record<string, number>;
+};
+
+export type PlatformWebhookMetrics = {
+  incomingWebhookCount: number;
+  failedWebhookProcessingCount: number;
+  invalidSignatureCount: number;
+  retryProcessingCount: number;
+  staleWebhookCount: number;
+  providerCallbackFailureCount: number;
+};
+
+export type PlatformHealthResponse = {
+  overallStatus: PlatformHealthStatus;
+  degradedServices: string[];
+  reminderScheduler: PlatformSchedulerStatus | null;
+  aiCallScheduler: PlatformSchedulerStatus | null;
+  queueMetrics: { queues: PlatformQueueMetrics[] };
+  providerMetrics: { providers: PlatformProviderMetrics[] };
+  aiMetrics: PlatformAiMetrics;
+  webhookMetrics: PlatformWebhookMetrics;
+  databaseHealthy: boolean;
+  integrationsReady: boolean;
+};
+
+export type PlatformOpsAlertSeverity = "WARNING" | "CRITICAL";
+
+export type PlatformOpsAlert = {
+  id: string;
+  tenantId: string | null;
+  ruleKey: string | null;
+  correlationId: string | null;
+  sourceEntityId: string | null;
+  alertType: string;
+  severity: PlatformOpsAlertSeverity;
+  source: string;
+  message: string;
+  status: string;
+  occurrenceCount: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  createdAt: string;
+  acknowledgedBy: string | null;
+  acknowledgedAt: string | null;
+  resolvedBy: string | null;
+  resolutionNotes: string | null;
+  resolvedAt: string | null;
+};
+
+export type PlatformProviderSlo = {
+  provider: string;
+  providerType: string;
+  attempts: number;
+  webhookCallbacks: number;
+  retries: number;
+  failures: number;
+  timeouts: number;
+  avgLatencyMs: number;
+  successRatePct: number;
+  timeoutRatePct: number;
+  retryRatePct: number;
+  failoverUsageCount: number;
+  deliverySlaBreached: boolean;
+  providerDegraded: boolean;
+};
+
+export type PlatformRuntimeSummary = {
+  recentFailures: number;
+  retryStormSignals: number;
+  repeatedProviderFailures: number;
+  staleExecutions: number;
+  notes: string[];
+};
+
+export type DeadLetterRow = {
+  id: string;
+  tenantId: string;
+  sourceType: string;
+  sourceExecutionId: string;
+  failureReason: string | null;
+  payloadSummary: string | null;
+  retryCount: number;
+  deadLetteredAt: string;
+  recoveryStatus: string;
+  lastRecoveryError: string | null;
+};
+
+export async function getPlatformHealth(token: string, tenantId: string) {
+  return httpGet<PlatformHealthResponse>("/api/ops/platform-health", { token, tenantId });
+}
+
+export async function getPlatformSchedulers(token: string, tenantId: string) {
+  return httpGet<{ schedulers: PlatformSchedulerStatus[] }>("/api/ops/schedulers", { token, tenantId });
+}
+
+export async function getPlatformQueues(token: string, tenantId: string) {
+  return httpGet<{ queues: PlatformQueueMetrics[] }>("/api/ops/queues", { token, tenantId });
+}
+
+export async function getPlatformProviders(token: string, tenantId: string) {
+  return httpGet<{ providers: PlatformProviderMetrics[] }>("/api/ops/providers", { token, tenantId });
+}
+
+export async function getPlatformProviderSlos(token: string, tenantId: string) {
+  return httpGet<{ providers: PlatformProviderSlo[] }>("/api/ops/provider-slos", { token, tenantId });
+}
+
+export async function getPlatformAiMetrics(token: string, tenantId: string) {
+  return httpGet<PlatformAiMetrics>("/api/ops/ai-metrics", { token, tenantId });
+}
+
+export async function getPlatformWebhooks(token: string, tenantId: string) {
+  return httpGet<PlatformWebhookMetrics>("/api/ops/webhooks", { token, tenantId });
+}
+
+export async function getPlatformAlerts(token: string, tenantId: string) {
+  return httpGet<{ alerts: PlatformOpsAlert[] }>("/api/ops/alerts", { token, tenantId });
+}
+
+export async function acknowledgePlatformAlert(token: string, tenantId: string, id: string) {
+  return httpPost<PlatformOpsAlert>("/api/ops/alerts/" + id + "/acknowledge", {}, { token, tenantId });
+}
+
+export async function resolvePlatformAlert(token: string, tenantId: string, id: string, notes?: string) {
+  return httpPost<PlatformOpsAlert>("/api/ops/alerts/" + id + "/resolve", { notes }, { token, tenantId });
+}
+
+export async function suppressPlatformAlert(token: string, tenantId: string, id: string) {
+  return httpPost<PlatformOpsAlert>("/api/ops/alerts/" + id + "/suppress", {}, { token, tenantId });
+}
+
+export async function getPlatformAlertRules(token: string, tenantId: string) {
+  return httpGet<{ rules: Array<{
+    id: string;
+    tenantId: string | null;
+    ruleKey: string;
+    sourceType: string;
+    enabled: boolean;
+    severity: PlatformOpsAlertSeverity;
+    thresholdType: string;
+    thresholdValue: number;
+    cooldownMinutes: number;
+    autoResolveEnabled: boolean;
+  }> }>("/api/ops/alerts/rules", { token, tenantId });
+}
+
+export async function getPlatformRuntimeSummary(token: string, tenantId: string) {
+  return httpGet<PlatformRuntimeSummary>("/api/ops/runtime/summary", { token, tenantId });
+}
+
+export async function getPlatformDeadLetter(token: string, tenantId: string) {
+  return httpGet<{ items: DeadLetterRow[] }>("/api/ops/dead-letter", { token, tenantId });
+}
+
+export async function replayPlatformDeadLetter(token: string, tenantId: string, id: string) {
+  return httpPost<DeadLetterRow>(`/api/ops/dead-letter/${id}/replay`, {}, { token, tenantId });
+}
+
 export async function listCarePilotExecutions(token: string, tenantId: string) {
   return httpGet<CarePilotExecution[]>("/api/carepilot/executions", { token, tenantId });
 }
@@ -3322,4 +3536,189 @@ export async function getCarePilotAiCallSchedulerHealth(token: string, tenantId:
 
 export async function getCarePilotAiCallAnalyticsSummary(token: string, tenantId: string) {
   return httpGet<CarePilotAiCallAnalyticsSummary>("/api/carepilot/ai-calls/analytics/summary", { token, tenantId });
+}
+
+export type AiOpsPromptDefinition = {
+  id: string;
+  tenantId: string | null;
+  promptKey: string;
+  name: string;
+  description: string | null;
+  domain: string | null;
+  useCase: string | null;
+  activeVersion: number | null;
+  systemPrompt: boolean;
+  updatedAt: string;
+};
+
+export type AiOpsPromptVersion = {
+  id: string;
+  version: number;
+  status: "DRAFT" | "ACTIVE" | "ARCHIVED";
+  modelHint: string | null;
+  temperature: number | null;
+  maxTokens: number | null;
+  systemPrompt: string;
+  userPromptTemplate: string;
+  variablesJson: string | null;
+  guardrailProfile: string | null;
+  createdAt: string;
+  activatedAt: string | null;
+};
+
+export type AiOpsPromptDetail = {
+  definition: AiOpsPromptDefinition;
+  versions: AiOpsPromptVersion[];
+};
+
+export type AiOpsInvocationLog = {
+  id: string;
+  requestId: string | null;
+  domain: string | null;
+  useCase: string | null;
+  promptKey: string | null;
+  promptVersion: number | null;
+  providerName: string | null;
+  modelName: string | null;
+  status: string;
+  inputTokenCount: number | null;
+  outputTokenCount: number | null;
+  estimatedCost: number | null;
+  latencyMs: number | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
+export type AiOpsUsageSummary = {
+  totalCalls: number;
+  successfulCalls: number;
+  failedCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost: number;
+  avgLatencyMs: number;
+  callsByProvider: Record<string, number>;
+  callsByUseCase: Record<string, number>;
+  callsByStatus: Record<string, number>;
+};
+
+export type AiOpsTool = {
+  id: string;
+  tenantId: string | null;
+  toolKey: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  enabled: boolean;
+  riskLevel: string | null;
+  requiresApproval: boolean;
+  inputSchemaJson: string | null;
+  outputSchemaJson: string | null;
+  updatedAt: string;
+};
+
+export type AiOpsGuardrail = {
+  id: string;
+  tenantId: string | null;
+  profileKey: string;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  blockedTopicsJson: string | null;
+  piiRedactionEnabled: boolean;
+  humanApprovalRequired: boolean;
+  maxOutputTokens: number | null;
+  updatedAt: string;
+};
+
+export type AiOpsWorkflowRun = {
+  id: string;
+  workflowKey: string;
+  status: string;
+  startedAt: string;
+  completedAt: string | null;
+  failureReason: string | null;
+  inputSummary: string | null;
+  outputSummary: string | null;
+};
+
+export type AiOpsWorkflowStep = {
+  id: string;
+  workflowRunId: string;
+  stepName: string;
+  stepType: string | null;
+  status: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  providerName: string | null;
+  toolKey: string | null;
+  errorMessage: string | null;
+};
+
+export async function listAiOpsPrompts(token: string, tenantId: string) {
+  return httpGet<AiOpsPromptDefinition[]>("/api/ai/prompts", { token, tenantId });
+}
+
+export async function getAiOpsPrompt(token: string, tenantId: string, id: string) {
+  return httpGet<AiOpsPromptDetail>(`/api/ai/prompts/${id}`, { token, tenantId });
+}
+
+export async function createAiOpsPrompt(
+  token: string,
+  tenantId: string,
+  body: { promptKey: string; name: string; description?: string | null; domain?: string | null; useCase?: string | null; systemPrompt?: boolean }
+) {
+  return httpPost<AiOpsPromptDefinition>("/api/ai/prompts", body, { token, tenantId });
+}
+
+export async function createAiOpsPromptVersion(
+  token: string,
+  tenantId: string,
+  promptId: string,
+  body: { modelHint?: string | null; temperature?: number | null; maxTokens?: number | null; systemPrompt: string; userPromptTemplate: string; variablesJson?: string | null; guardrailProfile?: string | null }
+) {
+  return httpPost<AiOpsPromptVersion>(`/api/ai/prompts/${promptId}/versions`, body, { token, tenantId });
+}
+
+export async function activateAiOpsPromptVersion(token: string, tenantId: string, promptId: string, versionId: string) {
+  return httpPost<AiOpsPromptDetail>(`/api/ai/prompts/${promptId}/versions/${versionId}/activate`, {}, { token, tenantId });
+}
+
+export async function archiveAiOpsPromptVersion(token: string, tenantId: string, promptId: string, versionId: string) {
+  return httpPost<AiOpsPromptDetail>(`/api/ai/prompts/${promptId}/versions/${versionId}/archive`, {}, { token, tenantId });
+}
+
+export async function listAiOpsInvocations(token: string, tenantId: string) {
+  return httpGet<AiOpsInvocationLog[]>("/api/ai/invocations", { token, tenantId });
+}
+
+export async function getAiOpsUsageSummary(
+  token: string,
+  tenantId: string,
+  params: { fromDate?: string; toDate?: string; provider?: string; useCase?: string } = {}
+) {
+  const query = new URLSearchParams();
+  if (params.fromDate) query.set("fromDate", params.fromDate);
+  if (params.toDate) query.set("toDate", params.toDate);
+  if (params.provider) query.set("provider", params.provider);
+  if (params.useCase) query.set("useCase", params.useCase);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<AiOpsUsageSummary>(`/api/ai/usage/summary${suffix}`, { token, tenantId });
+}
+
+export async function listAiOpsTools(token: string, tenantId: string) {
+  return httpGet<AiOpsTool[]>("/api/ai/tools", { token, tenantId });
+}
+
+export async function listAiOpsGuardrails(token: string, tenantId: string) {
+  return httpGet<AiOpsGuardrail[]>("/api/ai/guardrails", { token, tenantId });
+}
+
+export async function listAiOpsWorkflowRuns(token: string, tenantId: string) {
+  return httpGet<AiOpsWorkflowRun[]>("/api/ai/workflows/runs", { token, tenantId });
+}
+
+export async function listAiOpsWorkflowSteps(token: string, tenantId: string, runId: string) {
+  return httpGet<AiOpsWorkflowStep[]>(`/api/ai/workflows/runs/${runId}/steps`, { token, tenantId });
 }

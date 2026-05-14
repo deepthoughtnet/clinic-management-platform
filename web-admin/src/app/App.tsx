@@ -11,6 +11,8 @@ import UsersRolesPage from "../pages/settings/UsersRolesPage";
 import TemplatesPage from "../pages/admin/TemplatesPage";
 import NotificationSettingsPage from "../pages/admin/NotificationSettingsPage";
 import IntegrationsPage from "../pages/admin/IntegrationsPage";
+import AiOpsPage from "../pages/admin/AiOpsPage";
+import PlatformOpsPage from "../pages/admin/PlatformOpsPage";
 import DoctorDetailPage from "../pages/doctors/DoctorDetailPage";
 import DoctorAvailabilityPage from "../pages/doctors/DoctorAvailabilityPage";
 import PatientsPage from "../pages/patients/PatientsPage";
@@ -181,6 +183,8 @@ function AuthedApp() {
         <Route path="/admin/templates" element={<TemplatesPage />} />
         <Route path="/admin/notification-settings" element={<NotificationSettingsPage />} />
         <Route path="/admin/integrations" element={<IntegrationsPage />} />
+        <Route path="/admin/ai-ops" element={<AiOpsPage />} />
+        <Route path="/admin/platform-ops" element={<PlatformOpsPage />} />
         <Route path="/doctors/availability" element={<DoctorAvailabilityPage />} />
         <Route path="/doctors/:id" element={<DoctorDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

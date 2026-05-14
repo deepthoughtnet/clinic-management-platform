@@ -13,6 +13,8 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiPromptTemplateRegistryService;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiProviderRouter;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiRequestAuditService;
+import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiGuardrailService;
+import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiInvocationLogService;
 import com.deepthoughtnet.clinic.ai.orchestration.service.model.AiPromptTemplateDefinition;
 import com.deepthoughtnet.clinic.ai.orchestration.service.model.AiRequestAuditCommand;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiEvidenceReference;
@@ -41,7 +43,7 @@ class AiOrchestrationServiceImplTest {
         AiProviderRouter router = mock(AiProviderRouter.class);
         AiRequestAuditService auditService = mock(AiRequestAuditService.class);
         AiProvider provider = provider("GEMINI", "Explain the exception.", AiProviderStatus.AVAILABLE);
-        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
 
         AiOrchestrationRequest request = request();
         AiPromptTemplateDefinition template = new AiPromptTemplateDefinition(
@@ -78,7 +80,7 @@ class AiOrchestrationServiceImplTest {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);
         AiRequestAuditService auditService = mock(AiRequestAuditService.class);
-        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
 
         AiOrchestrationRequest request = request();
         AiPromptTemplateDefinition template = new AiPromptTemplateDefinition(
@@ -112,7 +114,7 @@ class AiOrchestrationServiceImplTest {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);
         AiRequestAuditService auditService = mock(AiRequestAuditService.class);
-        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
 
         AiOrchestrationRequest request = request();
         AiPromptTemplateDefinition template = new AiPromptTemplateDefinition(
@@ -160,7 +162,7 @@ class AiOrchestrationServiceImplTest {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);
         AiRequestAuditService auditService = mock(AiRequestAuditService.class);
-        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
 
         AiOrchestrationRequest request = request();
         AiPromptTemplateDefinition template = template();
@@ -180,7 +182,7 @@ class AiOrchestrationServiceImplTest {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);
         AiRequestAuditService auditService = mock(AiRequestAuditService.class);
-        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
 
         AiOrchestrationRequest request = request();
         AiPromptTemplateDefinition template = template();
@@ -201,7 +203,7 @@ class AiOrchestrationServiceImplTest {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);
         AiRequestAuditService auditService = mock(AiRequestAuditService.class);
-        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
 
         AiOrchestrationRequest request = request();
         AiPromptTemplateDefinition template = template();
@@ -220,7 +222,7 @@ class AiOrchestrationServiceImplTest {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);
         AiRequestAuditService auditService = mock(AiRequestAuditService.class);
-        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
 
         AiOrchestrationRequest request = request();
         AiPromptTemplateDefinition template = template();
@@ -241,7 +243,7 @@ class AiOrchestrationServiceImplTest {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);
         AiRequestAuditService auditService = mock(AiRequestAuditService.class);
-        AiOrchestrationServiceImpl service = new AiOrchestrationServiceImpl(registry, router, auditService, new ObjectMapper());
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
 
         AiOrchestrationRequest request = request();
         AiPromptTemplateDefinition template = template();
@@ -342,5 +344,18 @@ class AiOrchestrationServiceImplTest {
                 return AiProviderStatus.AVAILABLE;
             }
         };
+    }
+
+    private AiOrchestrationServiceImpl newService(AiPromptTemplateRegistryService registry,
+                                                  AiProviderRouter router,
+                                                  AiRequestAuditService auditService) {
+        return new AiOrchestrationServiceImpl(
+                registry,
+                router,
+                auditService,
+                mock(AiGuardrailService.class),
+                mock(AiInvocationLogService.class),
+                new ObjectMapper()
+        );
     }
 }

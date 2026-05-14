@@ -4,6 +4,8 @@ import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiPromptTemplateRegistryService;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiProviderRouter;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiRequestAuditService;
+import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiGuardrailService;
+import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiInvocationLogService;
 import com.deepthoughtnet.clinic.ai.orchestration.service.model.AiPromptTemplateDefinition;
 import com.deepthoughtnet.clinic.ai.orchestration.service.model.AiRequestAuditCommand;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiEvidenceReference;
@@ -38,15 +40,21 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
     private final AiPromptTemplateRegistryService templateRegistry;
     private final AiProviderRouter providerRouter;
     private final AiRequestAuditService auditService;
+    private final AiGuardrailService guardrailService;
+    private final AiInvocationLogService invocationLogService;
     private final ObjectMapper objectMapper;
 
     public AiOrchestrationServiceImpl(AiPromptTemplateRegistryService templateRegistry,
                                       AiProviderRouter providerRouter,
                                       AiRequestAuditService auditService,
+                                      AiGuardrailService guardrailService,
+                                      AiInvocationLogService invocationLogService,
                                       ObjectMapper objectMapper) {
         this.templateRegistry = templateRegistry;
         this.providerRouter = providerRouter;
         this.auditService = auditService;
+        this.guardrailService = guardrailService;
+        this.invocationLogService = invocationLogService;
         this.objectMapper = objectMapper;
     }
 
@@ -59,6 +67,7 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
         Map<String, Object> renderedVariables = renderVariables(request, template);
         String evidenceSummary = summarizeEvidence(request.evidence());
         String userPrompt = render(template.userPromptTemplate(), renderedVariables, evidenceSummary);
+        guardrailService.validatePreExecution(request.tenantId(), userPrompt, request, null);
 
         AiProvider provider = null;
         AiProviderResponse providerResponse = null;
@@ -83,6 +92,9 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                     requestId, candidate.providerName(), i + 1, request.taskType());
             try {
                 providerResponse = candidate.complete(providerRequest);
+                if (providerResponse == null) {
+                    throw new IllegalStateException("Provider returned null response");
+                }
                 provider = candidate;
                 fallbackUsed = i > 0;
                 log.info("AI provider completed. requestId={}, provider={}, latencyMs={}, responseChars={}",
@@ -139,7 +151,43 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 lastFailure == null ? response.errorMessage() : safeMessage(lastFailure),
                 request.correlationId()
         ));
+        invocationLogService.record(new AiInvocationLogService.InvocationLogCommand(
+                request.tenantId(),
+                requestId,
+                request.correlationId(),
+                request.productCode() == null ? AiProductCode.GENERIC.name() : request.productCode().name(),
+                request.useCaseCode(),
+                template.templateCode(),
+                parseVersionNumber(template.version()),
+                provider == null ? null : provider.providerName(),
+                providerResponse == null ? null : providerResponse.model(),
+                fallbackUsed ? "FALLBACK" : "SUCCESS",
+                tokenUsage(response.tokenUsage(), true),
+                tokenUsage(response.tokenUsage(), false),
+                response.tokenUsage() == null ? null : response.tokenUsage().estimatedCost(),
+                response.latencyMs(),
+                inputSummary(request, template, renderedVariables, evidenceSummary),
+                outputSummary(response.outputText()),
+                lastFailure == null ? null : "PROVIDER_ERROR",
+                lastFailure == null ? response.errorMessage() : safeMessage(lastFailure),
+                request.actorUserId()
+        ));
         return response;
+    }
+
+    private Integer parseVersionNumber(String version) {
+        if (version == null || version.isBlank()) {
+            return null;
+        }
+        try {
+            String normalized = version.trim().toLowerCase();
+            if (normalized.startsWith("v")) {
+                normalized = normalized.substring(1);
+            }
+            return Integer.parseInt(normalized);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private AiOrchestrationResponse toResponse(AiOrchestrationRequest request,
