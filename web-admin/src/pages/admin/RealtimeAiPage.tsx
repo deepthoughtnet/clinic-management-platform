@@ -7,6 +7,7 @@ import {
   getRealtimeVoiceSummary,
   listRealtimeVoiceSessions,
   sendRealtimeVoiceTurn,
+  sendReceptionistTestMessage,
   type RealtimeVoiceEvent,
   type RealtimeVoiceSession,
   type RealtimeVoiceSessionType,
@@ -18,6 +19,36 @@ import { useAuth } from "../../auth/useAuth";
 function fmtDate(value: string | null | undefined) {
   if (!value) return "-";
   return new Date(value).toLocaleString();
+}
+
+function parseReceptionistMetadata(metadataJson: string | null | undefined): {
+  workflowState?: string;
+  intent?: string;
+  summary?: string;
+  leadCreated?: boolean;
+  leadId?: string;
+  appointmentRequestCreated?: boolean;
+  escalationRequired?: boolean;
+  escalationReason?: string;
+} {
+  if (!metadataJson) return {};
+  try {
+    const parsed = JSON.parse(metadataJson);
+    const receptionist = parsed?.receptionist ?? {};
+    const outcome = receptionist?.outcome ?? {};
+    return {
+      workflowState: receptionist?.state ?? parsed?.workflowState,
+      intent: receptionist?.intent ?? parsed?.intent,
+      summary: receptionist?.summary,
+      leadCreated: Boolean(outcome?.leadCreated),
+      leadId: outcome?.leadId,
+      appointmentRequestCreated: Boolean(outcome?.appointmentRequestCreated),
+      escalationRequired: Boolean(outcome?.escalationRequired),
+      escalationReason: outcome?.escalationReason,
+    };
+  } catch {
+    return {};
+  }
 }
 
 const DEFAULT_PROMPT_KEY_BY_TYPE: Record<RealtimeVoiceSessionType, string> = {
@@ -144,11 +175,13 @@ export default function RealtimeAiPage() {
           >Create Session</button>
         </div>
         <Table
-          columns={["Session", "Type", "Status", "Escalation", "Started", "Actions"]}
+          columns={["Session", "Type", "Status", "Intent", "Outcome", "Escalation", "Started", "Actions"]}
           rows={sessions.map((s) => [
             s.id,
             s.sessionType,
             s.sessionStatus,
+            parseReceptionistMetadata(s.metadataJson).intent || "-",
+            parseReceptionistMetadata(s.metadataJson).workflowState || "-",
             s.escalationReason || "-",
             fmtDate(s.startedAt)
           ])}
@@ -179,6 +212,13 @@ export default function RealtimeAiPage() {
           <div style={{ display: "grid", gap: 8 }}>
             <div><strong>Session:</strong> {selectedSession.id}</div>
             <div><strong>Provider:</strong> AI={selectedSession.aiProvider || "-"}, STT={selectedSession.sttProvider || "-"}, TTS={selectedSession.ttsProvider || "-"}</div>
+            <div><strong>Workflow State:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).workflowState || "-"}</div>
+            <div><strong>Intent:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).intent || "-"}</div>
+            <div><strong>Lead Created:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).leadCreated ? "YES" : "NO"} {parseReceptionistMetadata(selectedSession.metadataJson).leadId ? `(Lead ${parseReceptionistMetadata(selectedSession.metadataJson).leadId})` : ""}</div>
+            <div><strong>Appointment Request:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).appointmentRequestCreated ? "YES" : "NO"}</div>
+            <div><strong>Escalation Flag:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).escalationRequired ? "YES" : "NO"}</div>
+            <div><strong>Escalation Reason:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).escalationReason || "-"}</div>
+            <div><strong>Session Summary:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).summary || "-"}</div>
             <div><strong>Metadata:</strong> <code>{selectedSession.metadataJson || "{}"}</code></div>
 
             <div style={{ display: "flex", gap: 8 }}>
@@ -192,11 +232,19 @@ export default function RealtimeAiPage() {
                 disabled={!canManage || !userText.trim() || !accessToken || !tenantId}
                 onClick={async () => {
                   if (!accessToken || !tenantId || !selectedSession) return;
-                  await sendRealtimeVoiceTurn(accessToken, tenantId, selectedSession.id, {
-                    text: userText,
-                    promptKey: DEFAULT_PROMPT_KEY_BY_TYPE[selectedSession.sessionType],
-                    patientContextJson: "{}",
-                  });
+                  if (selectedSession.sessionType === "AI_RECEPTIONIST") {
+                    await sendReceptionistTestMessage(accessToken, tenantId, {
+                      sessionId: selectedSession.id,
+                      text: userText,
+                      patientContextJson: "{}",
+                    });
+                  } else {
+                    await sendRealtimeVoiceTurn(accessToken, tenantId, selectedSession.id, {
+                      text: userText,
+                      promptKey: DEFAULT_PROMPT_KEY_BY_TYPE[selectedSession.sessionType],
+                      patientContextJson: "{}",
+                    });
+                  }
                   setUserText("");
                   await loadSessionDetails(selectedSession);
                   await loadAll();

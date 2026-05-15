@@ -17,8 +17,13 @@ import com.deepthoughtnet.clinic.realtime.voice.metrics.RealtimeVoiceGatewayMetr
 import com.deepthoughtnet.clinic.realtime.voice.config.VoiceGatewayProperties;
 import com.deepthoughtnet.clinic.realtime.voice.orchestration.RealtimeConversationOrchestrator;
 import com.deepthoughtnet.clinic.realtime.voice.orchestration.RollingConversationMemory;
+import com.deepthoughtnet.clinic.realtime.voice.receptionist.AiReceptionistWorkflowService;
 import com.deepthoughtnet.clinic.stt.spi.MockSpeechToTextProvider;
 import com.deepthoughtnet.clinic.tts.spi.MockTextToSpeechProvider;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.deepthoughtnet.clinic.carepilot.lead.service.LeadService;
+import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
+import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -56,7 +61,12 @@ class RealtimeVoiceSessionServiceTest {
                 new VoiceEscalationDecider(),
                 new RealtimeVoiceGatewayMetrics(),
                 new VoiceSessionEventBus(),
-                new VoiceGatewayProperties()
+                new VoiceGatewayProperties(),
+                new AiReceptionistWorkflowService(
+                        new ObjectMapper(),
+                        Mockito.mock(LeadService.class),
+                        Mockito.mock(LeadActivityService.class),
+                        Mockito.mock(ClinicProfileService.class))
         );
     }
 

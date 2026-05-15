@@ -31,6 +31,13 @@ public class RealtimeVoicePromptRegistrySeeder {
         keys.put("realtime.voice.lead-qualification.v1", "Realtime Lead Qualification");
         keys.put("realtime.voice.follow-up-reminder.v1", "Realtime Follow-up Reminder");
         keys.put("realtime.voice.escalation-detection.v1", "Realtime Escalation Detection");
+        keys.put("AI_RECEPTIONIST_GREETING", "AI Receptionist Greeting");
+        keys.put("AI_RECEPTIONIST_INTENT_DETECTION", "AI Receptionist Intent Detection");
+        keys.put("AI_RECEPTIONIST_FAQ", "AI Receptionist FAQ");
+        keys.put("AI_RECEPTIONIST_APPOINTMENT_COLLECTION", "AI Receptionist Appointment Collection");
+        keys.put("AI_RECEPTIONIST_LEAD_CAPTURE", "AI Receptionist Lead Capture");
+        keys.put("AI_RECEPTIONIST_SAFE_ESCALATION", "AI Receptionist Safe Escalation");
+        keys.put("AI_RECEPTIONIST_SUMMARY", "AI Receptionist Session Summary");
 
         try {
             var existing = promptRegistryService.list(null);

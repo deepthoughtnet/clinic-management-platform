@@ -16,6 +16,7 @@ public final class RealtimeVoiceDtos {
     public record CreateVoiceSessionRequest(VoiceSessionType sessionType, UUID patientId, UUID leadId, String metadataJson) {}
 
     public record VoiceTurnRequest(String text, String promptKey, String patientContextJson) {}
+    public record ReceptionistTestMessageRequest(UUID sessionId, String text, String patientContextJson) {}
 
     public record VoiceSessionResponse(VoiceSessionRecord session) {}
 

@@ -107,6 +107,8 @@ public class VoiceSessionEntity {
         this.endedAt = OffsetDateTime.now();
     }
     public void assignHuman(UUID userId) { this.assignedHumanUserId = userId; }
+    public void setMetadataJson(String metadataJson) { this.metadataJson = metadataJson; }
+    public void setLeadId(UUID leadId) { this.leadId = leadId; }
 
     public UUID getId() { return id; }
     public UUID getTenantId() { return tenantId; }

@@ -14,6 +14,7 @@ import com.deepthoughtnet.clinic.realtime.voice.events.VoiceSessionEventType;
 import com.deepthoughtnet.clinic.realtime.voice.metrics.RealtimeVoiceGatewayMetrics;
 import com.deepthoughtnet.clinic.realtime.voice.orchestration.RealtimeConversationOrchestrator;
 import com.deepthoughtnet.clinic.realtime.voice.orchestration.RollingConversationMemory;
+import com.deepthoughtnet.clinic.realtime.voice.receptionist.AiReceptionistWorkflowService;
 import com.deepthoughtnet.clinic.realtime.voice.transcript.SpeakerType;
 import com.deepthoughtnet.clinic.realtime.voice.transcript.VoiceTranscriptRecord;
 import com.deepthoughtnet.clinic.stt.spi.SpeechRecognitionResult;
@@ -50,6 +51,7 @@ public class RealtimeVoiceSessionService {
     private final RealtimeVoiceGatewayMetrics metrics;
     private final VoiceSessionEventBus eventBus;
     private final VoiceGatewayProperties properties;
+    private final AiReceptionistWorkflowService receptionistWorkflowService;
     private final Map<UUID, SessionAudioRuntime> audioRuntime = new ConcurrentHashMap<>();
 
     public RealtimeVoiceSessionService(
@@ -63,7 +65,8 @@ public class RealtimeVoiceSessionService {
             VoiceEscalationDecider escalationDecider,
             RealtimeVoiceGatewayMetrics metrics,
             VoiceSessionEventBus eventBus,
-            VoiceGatewayProperties properties
+            VoiceGatewayProperties properties,
+            AiReceptionistWorkflowService receptionistWorkflowService
     ) {
         this.sessionRepository = sessionRepository;
         this.eventRepository = eventRepository;
@@ -76,6 +79,7 @@ public class RealtimeVoiceSessionService {
         this.metrics = metrics;
         this.eventBus = eventBus;
         this.properties = properties;
+        this.receptionistWorkflowService = receptionistWorkflowService;
     }
 
     @Transactional
@@ -190,20 +194,39 @@ public class RealtimeVoiceSessionService {
     public VoiceTurnResult processUserText(UUID tenantId, UUID sessionId, UUID actorUserId, String userText,
                                            String promptKey, String patientContextJson, String correlationId) {
         VoiceSessionEntity session = requireSession(tenantId, sessionId);
+        var workflow = receptionistWorkflowService.evaluate(session, actorUserId, userText, correlationId);
+        sessionRepository.save(session);
         VoiceTranscriptRecord userLine = appendTranscript(sessionId, SpeakerType.USER, sanitize(userText), null);
         addEvent(sessionId, VoiceSessionEventType.STT_TRANSCRIPT, trimPayload(userText), correlationId);
 
         String context = rollingConversationMemory.buildPromptContext(sessionId);
-        long aiStarted = System.currentTimeMillis();
-        var aiReply = conversationOrchestrator.respond(session, actorUserId, promptKey, userText, context, patientContextJson, correlationId);
-        long aiLatency = System.currentTimeMillis() - aiStarted;
-        metrics.addAiLatency(aiLatency);
+        long aiLatency = 0L;
+        RealtimeConversationOrchestrator.OrchestratorReply aiReply;
+        if (workflow.deterministicReply() != null && !workflow.deterministicReply().isBlank()) {
+            aiReply = new RealtimeConversationOrchestrator.OrchestratorReply(workflow.deterministicReply(), 1.0d, "DETERMINISTIC_RULES", 0L);
+        } else {
+            long aiStarted = System.currentTimeMillis();
+            aiReply = conversationOrchestrator.respond(
+                    session,
+                    actorUserId,
+                    workflow.promptKey() == null || workflow.promptKey().isBlank() ? promptKey : workflow.promptKey(),
+                    workflow.userTextForLlm() == null || workflow.userTextForLlm().isBlank() ? userText : workflow.userTextForLlm(),
+                    context,
+                    patientContextJson,
+                    correlationId
+            );
+            aiLatency = System.currentTimeMillis() - aiStarted;
+            metrics.addAiLatency(aiLatency);
+        }
 
         VoiceTranscriptRecord aiLine = appendTranscript(sessionId, SpeakerType.AI, aiReply.aiText(), aiReply.confidence());
         addEvent(sessionId, VoiceSessionEventType.AI_RESPONSE, trimPayload(aiReply.aiText()), correlationId);
 
         int misunderstandings = rollingConversationMemory.recentMisunderstandingCount(sessionId);
         String escalationReason = escalationDecider.escalationReason(userText, aiReply.aiText(), misunderstandings, aiReply.confidence());
+        if (workflow.escalate() && escalationReason == null) {
+            escalationReason = workflow.escalationReason() == null ? "Workflow-triggered escalation" : workflow.escalationReason();
+        }
         if (escalationReason != null) {
             session.markEscalated(escalationReason);
             sessionRepository.save(session);
@@ -217,6 +240,37 @@ public class RealtimeVoiceSessionService {
     @Transactional
     public VoiceSessionRecord completeSession(UUID tenantId, UUID sessionId, String correlationId) {
         VoiceSessionEntity session = requireSession(tenantId, sessionId);
+        String summaryPromptKey = "AI_RECEPTIONIST_SUMMARY";
+        String summaryText = null;
+        if (session.getSessionType() == VoiceSessionType.AI_RECEPTIONIST) {
+            StringBuilder transcriptDigest = new StringBuilder();
+            var lines = transcriptRepository.findBySessionIdOrderByTranscriptTimestampAsc(sessionId);
+            for (var line : lines) {
+                transcriptDigest
+                        .append(line.getSpeakerType().name())
+                        .append(": ")
+                        .append(line.getTranscriptText())
+                        .append("\n");
+            }
+            try {
+                var summaryReply = conversationOrchestrator.respond(
+                        session,
+                        session.getAssignedHumanUserId(),
+                        summaryPromptKey,
+                        transcriptDigest.toString(),
+                        "",
+                        "{}",
+                        correlationId
+                );
+                summaryText = summaryReply.aiText();
+            } catch (RuntimeException ignored) {
+                summaryText = "Session completed. Summary unavailable due to AI provider failure.";
+            }
+            receptionistWorkflowService.applySummary(session, summaryText);
+            addEvent(sessionId, VoiceSessionEventType.AI_RESPONSE, trimPayload(summaryText), correlationId);
+            receptionistWorkflowService.markCompleted(session);
+            sessionRepository.save(session);
+        }
         session.markCompleted();
         sessionRepository.save(session);
         rollingConversationMemory.clear(sessionId);

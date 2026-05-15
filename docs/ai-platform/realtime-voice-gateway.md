@@ -112,3 +112,18 @@ Java `GET /api/realtime-ai/summary` now includes runtime diagnostics for Adminis
 - streaming TTS chunk playback
 - telephony bridges (LiveKit/Asterisk/FreeSWITCH)
 - multilingual runtime routing
+
+## AI Receptionist Workflow v1
+- Business workflow runs through `AiReceptionistWorkflowService` inside realtime gateway.
+- AI calls are routed through shared AI orchestration only (no direct provider calls from voice workflow).
+- Session metadata stores receptionist workflow context (`state`, `intent`, `outcome`, collected fields, summary).
+- Test endpoint: `POST /api/realtime-ai/receptionist/test-message`.
+
+Safety boundaries:
+- no diagnosis or prescription advice
+- emergency language returns safe escalation guidance
+- repeated unknown intent and explicit human request escalate to staff
+
+Lead and appointment foundation:
+- lead create/update uses CarePilot lead services with source `AI_RECEPTIONIST`
+- appointment flow is intent collection + staff follow-up foundation in v1

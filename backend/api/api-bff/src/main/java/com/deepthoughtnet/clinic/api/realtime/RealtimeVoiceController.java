@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.realtime;
 
 import com.deepthoughtnet.clinic.api.realtime.dto.RealtimeVoiceDtos.CreateVoiceSessionRequest;
 import com.deepthoughtnet.clinic.api.realtime.dto.RealtimeVoiceDtos.RealtimeVoiceSummaryResponse;
+import com.deepthoughtnet.clinic.api.realtime.dto.RealtimeVoiceDtos.ReceptionistTestMessageRequest;
 import com.deepthoughtnet.clinic.api.realtime.dto.RealtimeVoiceDtos.VoiceSessionEventResponse;
 import com.deepthoughtnet.clinic.api.realtime.dto.RealtimeVoiceDtos.VoiceSessionEventsResponse;
 import com.deepthoughtnet.clinic.api.realtime.dto.RealtimeVoiceDtos.VoiceSessionResponse;
@@ -71,6 +72,25 @@ public class RealtimeVoiceController {
                 ctx.appUserId(),
                 request.text(),
                 request.promptKey(),
+                request.patientContextJson(),
+                ctx.correlationId()
+        );
+        return new VoiceTurnResponse(result.userTranscript(), result.aiTranscript(), result.escalationReason(), result.aiProvider(), result.aiLatencyMs());
+    }
+
+    /**
+     * Lightweight text-mode test endpoint for AI receptionist workflow validation.
+     */
+    @PostMapping("/receptionist/test-message")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST')")
+    public VoiceTurnResponse receptionistTestMessage(@RequestBody ReceptionistTestMessageRequest request) {
+        var ctx = RequestContextHolder.require();
+        var result = sessionService.processUserText(
+                ctx.tenantId().value(),
+                request.sessionId(),
+                ctx.appUserId(),
+                request.text(),
+                "AI_RECEPTIONIST_INTENT_DETECTION",
                 request.patientContextJson(),
                 ctx.correlationId()
         );

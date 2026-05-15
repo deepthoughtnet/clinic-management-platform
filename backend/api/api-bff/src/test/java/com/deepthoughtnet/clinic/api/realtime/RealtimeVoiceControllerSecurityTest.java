@@ -22,4 +22,13 @@ class RealtimeVoiceControllerSecurityTest {
         String guard = method.getAnnotation(PreAuthorize.class).value();
         assertThat(guard).contains("AUDITOR").contains("CLINIC_ADMIN").contains("PLATFORM_ADMIN");
     }
+
+    @Test
+    void receptionistTestMessageAllowsReceptionistButNotAuditor() throws Exception {
+        Method method = RealtimeVoiceController.class.getMethod("receptionistTestMessage",
+                com.deepthoughtnet.clinic.api.realtime.dto.RealtimeVoiceDtos.ReceptionistTestMessageRequest.class);
+        String guard = method.getAnnotation(PreAuthorize.class).value();
+        assertThat(guard).contains("RECEPTIONIST");
+        assertThat(guard).doesNotContain("AUDITOR");
+    }
 }

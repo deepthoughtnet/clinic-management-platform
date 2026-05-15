@@ -11,5 +11,6 @@ public enum LeadSource {
     REFERRAL,
     CAMPAIGN,
     MANUAL,
+    AI_RECEPTIONIST,
     OTHER
 }

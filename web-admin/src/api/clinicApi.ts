@@ -3850,3 +3850,15 @@ export async function sendRealtimeVoiceTurn(token: string, tenantId: string, ses
 export async function completeRealtimeVoiceSession(token: string, tenantId: string, sessionId: string) {
   return httpPost<{ session: RealtimeVoiceSession }>(`/api/realtime-ai/sessions/${sessionId}/complete`, {}, { token, tenantId });
 }
+
+export async function sendReceptionistTestMessage(token: string, tenantId: string, input: {
+  sessionId: string;
+  text: string;
+  patientContextJson?: string | null;
+}) {
+  return httpPost<{ userTranscript: RealtimeVoiceTranscript; aiTranscript: RealtimeVoiceTranscript; escalationReason: string | null; aiProvider: string; aiLatencyMs: number }>(
+    "/api/realtime-ai/receptionist/test-message",
+    input,
+    { token, tenantId }
+  );
+}
