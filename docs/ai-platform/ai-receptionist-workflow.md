@@ -124,3 +124,32 @@ Each turn stores extraction summary in session timeline (`RECEPTIONIST_EXTRACTIO
 - multilingual receptionist flows
 - explicit provider-level structured extraction templates
 - deterministic doctor-slot selection with confirmed doctor identity
+
+## Booking Integration v3
+v3 upgrades booking from intent-only to confirmation-based slot booking.
+
+Additional booking states:
+- `SLOT_SUGGESTIONS_PRESENTED`
+- `SLOT_CONFIRMATION_PENDING`
+- `BOOKING_CONFIRMED`
+- `BOOKING_CREATED`
+- `BOOKING_FOLLOWUP_REQUIRED`
+
+Doctor resolution (deterministic):
+1. match by doctor name
+2. match by specialization
+3. fallback to first available doctor
+4. if ambiguous, require clarification and avoid booking
+
+Slot lookup:
+- uses appointment-domain `listSlots` only
+- suggests real selectable slots (up to 5)
+- no slot hallucination
+
+Confirmation rule:
+- appointment creation occurs only after explicit confirmation text
+- without confirmation, session remains pending
+
+Safe fallback:
+- follow-up required for ambiguity, missing identity, no slots, backend errors, or safety escalation
+- persisted in metadata with reason and route for receptionist/admin actions

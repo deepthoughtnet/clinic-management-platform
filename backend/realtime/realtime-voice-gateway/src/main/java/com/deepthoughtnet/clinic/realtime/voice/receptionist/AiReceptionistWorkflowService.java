@@ -9,7 +9,14 @@ import com.deepthoughtnet.clinic.carepilot.lead.model.LeadSource;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadStatus;
 import com.deepthoughtnet.clinic.carepilot.lead.model.LeadUpsertCommand;
 import com.deepthoughtnet.clinic.carepilot.lead.service.LeadService;
+import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
+import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
+import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import com.deepthoughtnet.clinic.realtime.voice.db.VoiceSessionEntity;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -17,6 +24,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.OffsetDateTime;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,17 +48,26 @@ public class AiReceptionistWorkflowService {
     private final LeadService leadService;
     private final LeadActivityService leadActivityService;
     private final ClinicProfileService clinicProfileService;
+    private final AppointmentService appointmentService;
+    private final TenantUserManagementService tenantUserManagementService;
+    private final DoctorProfileService doctorProfileService;
 
     public AiReceptionistWorkflowService(
             ObjectMapper objectMapper,
             LeadService leadService,
             LeadActivityService leadActivityService,
-            ClinicProfileService clinicProfileService
+            ClinicProfileService clinicProfileService,
+            AppointmentService appointmentService,
+            TenantUserManagementService tenantUserManagementService,
+            DoctorProfileService doctorProfileService
     ) {
         this.objectMapper = objectMapper;
         this.leadService = leadService;
         this.leadActivityService = leadActivityService;
         this.clinicProfileService = clinicProfileService;
+        this.appointmentService = appointmentService;
+        this.tenantUserManagementService = tenantUserManagementService;
+        this.doctorProfileService = doctorProfileService;
     }
 
     /**
@@ -137,7 +155,11 @@ public class AiReceptionistWorkflowService {
                     state = ReceptionistWorkflowState.COLLECT_APPOINTMENT_DETAILS;
                     promptKey = "AI_RECEPTIONIST_APPOINTMENT_COLLECTION";
                     outcome.put("appointmentIntent", true);
-                    handleAppointmentFlow(slots, outcome, memory, normalized);
+                    handleAppointmentFlow(session, slots, outcome, memory, normalized, actorUserId);
+                    ReceptionistWorkflowState bookingState = stateOf(memory.path("currentWorkflowState").asText(null));
+                    if (bookingState != null) {
+                        state = bookingState;
+                    }
                     llmInput = appointmentCollectionPrompt(slots, memory);
                     if (hasNameAndPhone(slots)) {
                         persistLeadIfPossible(session, receptionist, actorUserId, correlationId, false);
@@ -262,24 +284,59 @@ public class AiReceptionistWorkflowService {
         session.setMetadataJson(writeMetadata(metadata));
     }
 
-    private void handleAppointmentFlow(ObjectNode slots, ObjectNode outcome, ObjectNode memory, String normalized) {
+    private void handleAppointmentFlow(VoiceSessionEntity session, ObjectNode slots, ObjectNode outcome, ObjectNode memory,
+                                       String normalized, UUID actorUserId) {
         List<String> missing = requiredAppointmentMissing(slots);
         memory.set("missingFields", toArray(missing));
         outcome.put("appointmentRequestCreated", true);
-        if (missing.isEmpty()) {
-            outcome.put("availabilityLookupReady", true);
-            outcome.put("bookingConfirmationRequired", true);
-            ArrayNode suggested = outcome.putArray("suggestedSlots");
-            String date = text(slots, "preferredDate");
-            String time = text(slots, "preferredTime");
-            if (date != null && time != null) {
-                suggested.add(date + " " + time);
-            }
-            if (containsAny(normalized, "confirm", "yes, book", "go ahead")) {
-                outcome.put("bookingRequestStatus", "CONFIRMED_FOR_STAFF");
+        if (!missing.isEmpty()) {
+            return;
+        }
+        outcome.put("availabilityLookupReady", true);
+        outcome.put("bookingConfirmationRequired", true);
+
+        LocalDate preferredDate = resolveDate(text(slots, "preferredDate"));
+        String preferredDoctor = text(slots, "preferredDoctor");
+        String specialty = text(slots, "specialty");
+        ObjectNode resolution = outcome.putObject("doctorResolution");
+        UUID doctorUserId = resolveDoctorUserId(session.getTenantId(), preferredDoctor, specialty, resolution);
+        if (doctorUserId == null || preferredDate == null) {
+            outcome.put("followUpRequired", true);
+            outcome.put("followUpReason", doctorUserId == null ? "Doctor resolution ambiguous" : "Preferred date not understood");
+            outcome.put("bookingRequestStatus", "FOLLOW_UP_REQUIRED");
+            return;
+        }
+
+        List<String> suggestions = lookupSuggestedSlots(session.getTenantId(), doctorUserId, preferredDate, text(slots, "preferredTime"));
+        ArrayNode suggested = outcome.putArray("suggestedSlots");
+        suggestions.forEach(suggested::add);
+        if (suggestions.isEmpty()) {
+            outcome.put("followUpRequired", true);
+            outcome.put("followUpReason", "No available slots found");
+            outcome.put("bookingRequestStatus", "FOLLOW_UP_REQUIRED");
+            return;
+        }
+        outcome.put("bookingRequestStatus", "SLOT_SUGGESTIONS_PRESENTED");
+        memory.put("currentWorkflowState", ReceptionistWorkflowState.SLOT_SUGGESTIONS_PRESENTED.name());
+        if (containsAny(normalized, "confirm", "yes", "go ahead", "book it", "first slot")) {
+            String selectedSlot = suggestions.getFirst();
+            outcome.put("selectedSlot", selectedSlot);
+            outcome.put("bookingConfirmation", "CONFIRMED");
+            memory.put("currentWorkflowState", ReceptionistWorkflowState.BOOKING_CONFIRMED.name());
+            UUID created = createAppointmentIfPossible(session, slots, doctorUserId, preferredDate, selectedSlot, actorUserId);
+            if (created != null) {
+                outcome.put("appointmentId", created.toString());
+                outcome.put("bookingRequestStatus", "BOOKING_CREATED");
+                memory.put("currentWorkflowState", ReceptionistWorkflowState.BOOKING_CREATED.name());
             } else {
-                outcome.put("bookingRequestStatus", "PENDING_CONFIRMATION");
+                outcome.put("bookingRequestStatus", "FOLLOW_UP_REQUIRED");
+                outcome.put("followUpRequired", true);
+                outcome.put("followUpReason", "Appointment creation failed safely");
+                memory.put("currentWorkflowState", ReceptionistWorkflowState.BOOKING_FOLLOWUP_REQUIRED.name());
             }
+        } else {
+            outcome.put("bookingConfirmation", "PENDING");
+            memory.put("currentWorkflowState", ReceptionistWorkflowState.SLOT_CONFIRMATION_PENDING.name());
         }
     }
 
@@ -287,10 +344,124 @@ public class AiReceptionistWorkflowService {
         List<String> missing = requiredAppointmentMissing(slots);
         if (missing.isEmpty()) {
             memory.put("lastAiQuestion", "Please confirm if you want us to proceed with this booking request.");
-            return "Ask for explicit confirmation before creating booking request. If no confirmation, hold as pending.";
+            return "Present 3-5 real slot suggestions and ask explicit confirmation. Book only after clear user confirmation.";
         }
         memory.put("lastAiQuestion", "Please share: " + String.join(", ", missing));
         return "Collect missing appointment fields only: " + String.join(", ", missing) + ". Be concise.";
+    }
+
+    private UUID createAppointmentIfPossible(VoiceSessionEntity session, ObjectNode slots, UUID doctorUserId, LocalDate preferredDate,
+                                             String selectedSlot, UUID actorUserId) {
+        if (session.getPatientId() == null) {
+            return null;
+        }
+        LocalTime time = extractSlotTime(selectedSlot);
+        if (time == null) {
+            return null;
+        }
+        try {
+            var created = appointmentService.createScheduled(
+                    session.getTenantId(),
+                    new AppointmentUpsertCommand(
+                            session.getPatientId(),
+                            doctorUserId,
+                            preferredDate,
+                            time,
+                            text(slots, "reasonForVisit"),
+                            AppointmentType.SCHEDULED,
+                            AppointmentStatus.BOOKED,
+                            AppointmentPriority.NORMAL
+                    ),
+                    actorUserId,
+                    false
+            );
+            return created.id();
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private UUID resolveDoctorUserId(UUID tenantId, String preferredDoctor, String specialty, ObjectNode resolution) {
+        var doctors = tenantUserManagementService.list(tenantId).stream()
+                .filter(row -> "DOCTOR".equalsIgnoreCase(row.membershipRole()))
+                .toList();
+        if (doctors.isEmpty()) {
+            resolution.put("status", "NO_DOCTOR_FOUND");
+            return null;
+        }
+        if (preferredDoctor != null) {
+            var matches = doctors.stream()
+                    .filter(d -> d.displayName() != null && d.displayName().toLowerCase(Locale.ROOT).contains(preferredDoctor.toLowerCase(Locale.ROOT)))
+                    .toList();
+            if (matches.size() == 1) {
+                resolution.put("status", "RESOLVED_BY_NAME");
+                resolution.put("doctorName", safe(matches.getFirst().displayName()));
+                return matches.getFirst().appUserId();
+            }
+            if (matches.size() > 1) {
+                resolution.put("status", "AMBIGUOUS_DOCTOR_NAME");
+                return null;
+            }
+        }
+        if (specialty != null) {
+            var matches = doctors.stream().filter(d -> doctorProfileService.findByDoctorUserId(tenantId, d.appUserId())
+                            .map(p -> p.specialization() != null && specialty.toLowerCase(Locale.ROOT).contains(p.specialization().toLowerCase(Locale.ROOT)))
+                            .orElse(false))
+                    .toList();
+            if (matches.size() == 1) {
+                resolution.put("status", "RESOLVED_BY_SPECIALTY");
+                resolution.put("doctorName", safe(matches.getFirst().displayName()));
+                return matches.getFirst().appUserId();
+            }
+            if (matches.size() > 1) {
+                resolution.put("status", "AMBIGUOUS_SPECIALTY");
+                return null;
+            }
+        }
+        resolution.put("status", "FALLBACK_ANY_DOCTOR");
+        resolution.put("doctorName", safe(doctors.getFirst().displayName()));
+        return doctors.getFirst().appUserId();
+    }
+
+    private List<String> lookupSuggestedSlots(UUID tenantId, UUID doctorUserId, LocalDate date, String preferredTime) {
+        List<String> slots = appointmentService.listSlots(tenantId, doctorUserId, date).stream()
+                .filter(s -> s.selectable())
+                .map(s -> date + " " + s.slotTime() + " with " + safe(s.doctorName()))
+                .toList();
+        if (preferredTime == null) {
+            return slots.stream().limit(5).toList();
+        }
+        String pref = preferredTime.toLowerCase(Locale.ROOT);
+        List<String> filtered = slots.stream().filter(s -> s.toLowerCase(Locale.ROOT).contains(pref)).toList();
+        return (filtered.isEmpty() ? slots : filtered).stream().limit(5).toList();
+    }
+
+    private LocalDate resolveDate(String text) {
+        if (text == null) return null;
+        String normalized = text.toLowerCase(Locale.ROOT);
+        LocalDate now = LocalDate.now(ZoneOffset.UTC);
+        if (normalized.contains("today")) return now;
+        if (normalized.contains("tomorrow")) return now.plusDays(1);
+        if (normalized.contains("monday")) return now.plusDays((8 - now.getDayOfWeek().getValue()) % 7);
+        if (normalized.contains("tuesday")) return now.plusDays((9 - now.getDayOfWeek().getValue()) % 7);
+        if (normalized.contains("wednesday")) return now.plusDays((10 - now.getDayOfWeek().getValue()) % 7);
+        if (normalized.contains("thursday")) return now.plusDays((11 - now.getDayOfWeek().getValue()) % 7);
+        if (normalized.contains("friday")) return now.plusDays((12 - now.getDayOfWeek().getValue()) % 7);
+        if (normalized.contains("saturday")) return now.plusDays((13 - now.getDayOfWeek().getValue()) % 7);
+        if (normalized.contains("sunday")) return now.plusDays((14 - now.getDayOfWeek().getValue()) % 7);
+        return null;
+    }
+
+    private LocalTime extractSlotTime(String slotText) {
+        if (slotText == null) return null;
+        Matcher matcher = Pattern.compile("(\\d{1,2}:\\d{2})").matcher(slotText);
+        if (matcher.find()) {
+            try {
+                return LocalTime.parse(matcher.group(1));
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
     }
 
     private List<String> requiredAppointmentMissing(ObjectNode slots) {

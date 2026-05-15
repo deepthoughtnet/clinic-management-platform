@@ -21,9 +21,12 @@ import com.deepthoughtnet.clinic.realtime.voice.receptionist.AiReceptionistWorkf
 import com.deepthoughtnet.clinic.stt.spi.MockSpeechToTextProvider;
 import com.deepthoughtnet.clinic.tts.spi.MockTextToSpeechProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.carepilot.lead.service.LeadService;
 import com.deepthoughtnet.clinic.carepilot.lead.activity.service.LeadActivityService;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
+import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
+import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -66,7 +69,10 @@ class RealtimeVoiceSessionServiceTest {
                         new ObjectMapper(),
                         Mockito.mock(LeadService.class),
                         Mockito.mock(LeadActivityService.class),
-                        Mockito.mock(ClinicProfileService.class))
+                        Mockito.mock(ClinicProfileService.class),
+                        Mockito.mock(AppointmentService.class),
+                        Mockito.mock(TenantUserManagementService.class),
+                        Mockito.mock(DoctorProfileService.class))
         );
     }
 

@@ -40,6 +40,16 @@
     </dependency>
     <dependency>
       <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>appointment-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
+      <artifactId>identity-domain</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.deepthoughtnet.clinic</groupId>
       <artifactId>stt-spi</artifactId>
       <version>${project.version}</version>
     </dependency>

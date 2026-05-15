@@ -38,6 +38,12 @@ function parseReceptionistMetadata(metadataJson: string | null | undefined): {
   suggestedSlots?: string[];
   bookingRequestStatus?: string;
   slots?: Record<string, unknown>;
+  selectedSlot?: string;
+  appointmentId?: string;
+  followUpRequired?: boolean;
+  followUpReason?: string;
+  doctorResolutionStatus?: string;
+  doctorResolutionName?: string;
 } {
   if (!metadataJson) return {};
   try {
@@ -61,6 +67,12 @@ function parseReceptionistMetadata(metadataJson: string | null | undefined): {
       suggestedSlots: Array.isArray(outcome?.suggestedSlots) ? outcome.suggestedSlots : [],
       bookingRequestStatus: outcome?.bookingRequestStatus,
       slots: receptionist?.slots,
+      selectedSlot: outcome?.selectedSlot,
+      appointmentId: outcome?.appointmentId,
+      followUpRequired: Boolean(outcome?.followUpRequired),
+      followUpReason: outcome?.followUpReason,
+      doctorResolutionStatus: outcome?.doctorResolution?.status,
+      doctorResolutionName: outcome?.doctorResolution?.doctorName,
     };
   } catch {
     return {};
@@ -237,6 +249,11 @@ export default function RealtimeAiPage() {
             <div><strong>Booking Request Status:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).bookingRequestStatus || "-"}</div>
             <div><strong>Missing Fields:</strong> {(parseReceptionistMetadata(selectedSession.metadataJson).missingFields || []).join(", ") || "-"}</div>
             <div><strong>Suggested Slots:</strong> {(parseReceptionistMetadata(selectedSession.metadataJson).suggestedSlots || []).join(", ") || "-"}</div>
+            <div><strong>Selected Slot:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).selectedSlot || "-"}</div>
+            <div><strong>Appointment Created:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).appointmentId || "-"}</div>
+            <div><strong>Follow-up Required:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).followUpRequired ? "YES" : "NO"}</div>
+            <div><strong>Follow-up Reason:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).followUpReason || "-"}</div>
+            <div><strong>Doctor Resolution:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).doctorResolutionStatus || "-"} {parseReceptionistMetadata(selectedSession.metadataJson).doctorResolutionName ? `(${parseReceptionistMetadata(selectedSession.metadataJson).doctorResolutionName})` : ""}</div>
             <div><strong>Collected Slots:</strong> <code>{JSON.stringify(parseReceptionistMetadata(selectedSession.metadataJson).slots || {}, null, 0)}</code></div>
             <div><strong>Escalation Flag:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).escalationRequired ? "YES" : "NO"}</div>
             <div><strong>Escalation Reason:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).escalationReason || "-"}</div>
