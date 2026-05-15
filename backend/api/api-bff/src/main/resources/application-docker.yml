@@ -1,22 +1,30 @@
+server:
+  port: 8089
+  address: 0.0.0.0
+
 spring:
   datasource:
     url: jdbc:postgresql://postgres:5432/clinic_management
     username: clinic
     password: clinic
+
   data:
     redis:
       host: redis
       port: 6379
+
   security:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: ${CLINIC_JWT_ISSUER_URI:http://keycloak:8080/realms/clinic-management}
+          issuer-uri: ${CLINIC_JWT_ISSUER_URI:http://localhost:8182/realms/clinic-management}
+          jwk-set-uri: ${CLINIC_JWT_JWK_SET_URI:http://keycloak:8080/realms/clinic-management/protocol/openid-connect/certs}
 
 clinic:
   keycloak:
     admin:
       serverUrl: ${CLINIC_KEYCLOAK_SERVER_URL:http://keycloak:8080}
+
   storage:
     minio:
       endpoint: ${CLINIC_MINIO_ENDPOINT:http://minio:9000}

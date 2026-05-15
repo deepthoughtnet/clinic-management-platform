@@ -46,6 +46,8 @@ import java.util.Set;
 public class SecurityConfig {
     @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}")
     private String primaryIssuer;
+    @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri:}")
+    private String configuredJwkSetUri;
 
     @Bean
     SecurityFilterChain securityFilterChain(
@@ -96,7 +98,12 @@ public class SecurityConfig {
 
     @Bean
     JwtDecoder jwtDecoder() {
-        NimbusJwtDecoder decoder = NimbusJwtDecoder.withIssuerLocation(primaryIssuer).build();
+        NimbusJwtDecoder decoder;
+        if (configuredJwkSetUri != null && !configuredJwkSetUri.isBlank()) {
+            decoder = NimbusJwtDecoder.withJwkSetUri(configuredJwkSetUri).build();
+        } else {
+            decoder = NimbusJwtDecoder.withIssuerLocation(primaryIssuer).build();
+        }
         Set<String> allowedIssuers = buildAllowedIssuers(primaryIssuer);
 
         OAuth2TokenValidator<Jwt> timestampValidator = new JwtTimestampValidator();

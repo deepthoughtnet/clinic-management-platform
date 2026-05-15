@@ -58,8 +58,12 @@ docker compose -f local/docker-compose.yml --env-file local/.env.full-docker --p
 - Keycloak container and realm import/volumes are unchanged.
 - Browser auth remains on external URL: `http://localhost:8182`.
 - Docker-internal admin/service URL is `http://keycloak:8080` in `application-docker.yml`.
+- Docker JWT validation uses split config:
+  - `issuer-uri`: `http://localhost:8182/realms/clinic-management` (must match browser token `iss`)
+  - `jwk-set-uri`: `http://keycloak:8080/realms/clinic-management/protocol/openid-connect/certs` (internal JWK fetch)
 - If JWT issuer mismatch appears in your environment, override:
   - `CLINIC_JWT_ISSUER_URI`
+  - `CLINIC_JWT_JWK_SET_URI`
   - `CLINIC_KEYCLOAK_SERVER_URL`
   with values matching your token issuer strategy.
 
