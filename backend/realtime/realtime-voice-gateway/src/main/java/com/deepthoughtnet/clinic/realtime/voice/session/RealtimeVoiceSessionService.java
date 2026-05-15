@@ -198,6 +198,7 @@ public class RealtimeVoiceSessionService {
         sessionRepository.save(session);
         VoiceTranscriptRecord userLine = appendTranscript(sessionId, SpeakerType.USER, sanitize(userText), null);
         addEvent(sessionId, VoiceSessionEventType.STT_TRANSCRIPT, trimPayload(userText), correlationId);
+        addEvent(sessionId, VoiceSessionEventType.RECEPTIONIST_EXTRACTION, trimPayload(workflow.extractionSummary()), correlationId);
 
         String context = rollingConversationMemory.buildPromptContext(sessionId);
         long aiLatency = 0L;
@@ -231,7 +232,10 @@ public class RealtimeVoiceSessionService {
             session.markEscalated(escalationReason);
             sessionRepository.save(session);
             metrics.markEscalation();
-            addEvent(sessionId, VoiceSessionEventType.ESCALATION, escalationReason, correlationId);
+            String escalationPayload = workflow.escalationCategory() == null
+                    ? escalationReason
+                    : workflow.escalationCategory() + " | " + workflow.escalationPriority() + " | " + escalationReason;
+            addEvent(sessionId, VoiceSessionEventType.ESCALATION, escalationPayload, correlationId);
         }
 
         return new VoiceTurnResult(userLine, aiLine, escalationReason, aiReply.provider(), aiLatency);

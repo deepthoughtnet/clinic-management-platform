@@ -1,23 +1,14 @@
-# AI Receptionist Workflow v1
+# AI Receptionist Workflow v2
 
 ## Purpose
-AI Receptionist v1 is a controlled, auditable workflow built on the Realtime AI Voice Gateway and AI Orchestration Platform.
+AI Receptionist v2 extends v1 with multi-turn conversational intelligence, structured slot filling, confidence-aware routing, and richer operational visibility.
 
-It supports:
-- greeting users
-- basic intent detection
-- clinic FAQ responses
-- lead capture
-- appointment-intent collection
-- safe human escalation
-- session transcript and summary persistence
+Safety boundaries remain unchanged:
+- no diagnosis
+- no prescription advice
+- no emergency triage beyond safe escalation guidance
 
-It does not support:
-- autonomous medical diagnosis
-- prescription advice
-- emergency triage beyond escalation guidance
-
-## Workflow States
+## V2 State Machine
 - `GREETING`
 - `IDENTIFY_INTENT`
 - `FAQ_RESPONSE`
@@ -30,74 +21,106 @@ It does not support:
 - `SESSION_SUMMARY`
 - `COMPLETED`
 
-State is persisted in voice session `metadata_json.receptionist.state`.
+State is persisted at `metadata_json.receptionist.state`.
 
-## Supported Intents
+## Intent Model
+Supported intents:
 - `CLINIC_FAQ`
 - `BOOK_APPOINTMENT`
+- `RESCHEDULE_APPOINTMENT`
+- `CANCEL_APPOINTMENT`
 - `LEAD_CAPTURE`
+- `BILLING_QUERY`
+- `INSURANCE_QUERY`
 - `HUMAN_CALLBACK`
-- `UNKNOWN`
+- `COMPLAINT`
 - `EMERGENCY_OR_MEDICAL_RISK`
+- `UNKNOWN`
 
-Intent and outcome are persisted in voice session metadata for auditability.
+Each turn stores intent and confidence at:
+- `metadata_json.receptionist.intent`
+- `metadata_json.receptionist.intentConfidence`
 
-## Prompt Keys
-Workflow uses AI orchestration prompt registry keys:
-- `AI_RECEPTIONIST_GREETING`
-- `AI_RECEPTIONIST_INTENT_DETECTION`
-- `AI_RECEPTIONIST_FAQ`
-- `AI_RECEPTIONIST_APPOINTMENT_COLLECTION`
-- `AI_RECEPTIONIST_LEAD_CAPTURE`
-- `AI_RECEPTIONIST_SAFE_ESCALATION`
-- `AI_RECEPTIONIST_SUMMARY`
+## Multi-turn Memory
+Session-scoped conversational memory is stored under `metadata_json.receptionist.memory`:
+- `lastIntent`
+- `currentWorkflowState`
+- `missingFields`
+- `lastAiQuestion`
+- `userClarification`
+- `escalationState`
 
-## Safety Rules
-- no diagnosis responses
-- no prescription guidance
-- emergency/medical-risk keywords trigger safe escalation response
-- repeated unknown intent triggers escalation
-- explicit human callback request triggers escalation
+## Slot Filling
+Structured fields are persisted under `metadata_json.receptionist.slots`:
+- `name`
+- `phone`
+- `email`
+- `preferredDoctor`
+- `specialty`
+- `preferredDate`
+- `preferredTime`
+- `reasonForVisit`
+- `callbackPreference`
+- `urgencyRiskFlag`
 
-## Lead Capture Flow
-When minimum lead identity is available (name + phone):
-1. Search existing lead by tenant and phone
-2. Create or update lead with source `AI_RECEPTIONIST`
-3. Add lead activity note with voice session reference
-4. Persist `leadCreated` and `leadId` in session metadata
+## Confidence and Routing
+Confidence behavior:
+- high confidence: continue workflow
+- medium confidence: clarify missing details
+- low confidence: clarifying fallback and escalation option
+- risk intent: immediate safe escalation
 
-## Appointment Booking Foundation
-v1 captures appointment details and marks appointment-request intent.
+## Escalation Routing
+Escalation metadata is persisted under `metadata_json.receptionist.escalation`:
+- `category` (e.g. `RECEPTIONIST`, `BILLING_DESK`, `CLINIC_ADMIN`, `EMERGENCY_GUIDANCE`)
+- `reason`
+- `priority`
+- `status`
 
-If details are incomplete or confidence is low, workflow escalates to receptionist follow-up rather than autonomous booking.
+Timeline events include extraction and escalation entries for auditability.
 
-## Human Escalation
-Escalation is set on session with reason and visible in admin:
-- user asks for human callback
-- emergency/medical-risk intent
-- repeated unknown intents
-- staff confirmation required for sensitive/uncertain requests
+## Appointment Workflow v2
+For booking intent:
+1. collect required fields
+2. compute missing fields
+3. require explicit confirmation
+4. store booking request status in metadata
 
-## Transcript and Summary
-- Transcript timeline stored in `voice_transcripts`
-- Events timeline stored in `voice_session_events`
-- Session summary generated at completion using `AI_RECEPTIONIST_SUMMARY`
-- Summary saved under `metadata_json.receptionist.summary`
+v2 does not hallucinate availability slots. If precise schedule data is not resolved, it creates a receptionist follow-up path.
+
+## FAQ Strategy
+FAQ answers are deterministic-first using tenant clinic profile data:
+- location/address
+- contact phone
+- timing handoff
+- service/specialty safe messaging
+
+AI orchestration is used for safe phrasing where deterministic answers are unavailable.
+
+## Structured Extraction
+Each turn stores extraction summary in session timeline (`RECEPTIONIST_EXTRACTION`) including:
+- intent
+- confidence
+- slot snapshot
+- missing fields
+
+## Test Endpoint
+`POST /api/realtime-ai/receptionist/test-message`
+- session-scoped multi-turn simulation by `sessionId`
+- uses existing orchestration and guardrails path
 
 ## Admin Realtime AI
-`Administration -> Realtime AI` now shows receptionist workflow metadata:
-- state
-- intent
-- escalation flags/reason
-- lead created + lead id
-- appointment request flag
-- session summary
+`Administration -> Realtime AI` displays:
+- workflow state
+- intent + confidence
+- slot values and missing fields
+- escalation route/priority/status
+- suggested/requested slots
+- booking request status
+- transcript and event timeline
 
-Test endpoint for controlled validation:
-- `POST /api/realtime-ai/receptionist/test-message`
-
-## Future Roadmap
-- telephony/SIP channel integration
-- multilingual receptionist prompts
-- stronger deterministic FAQ catalog
-- explicit appointment booking confirmations with scheduling APIs
+## Future Scope
+- telephony/SIP channels
+- multilingual receptionist flows
+- explicit provider-level structured extraction templates
+- deterministic doctor-slot selection with confirmed doctor identity

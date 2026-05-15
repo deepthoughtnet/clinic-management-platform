@@ -24,12 +24,20 @@ function fmtDate(value: string | null | undefined) {
 function parseReceptionistMetadata(metadataJson: string | null | undefined): {
   workflowState?: string;
   intent?: string;
+  intentConfidence?: number;
   summary?: string;
   leadCreated?: boolean;
   leadId?: string;
   appointmentRequestCreated?: boolean;
   escalationRequired?: boolean;
   escalationReason?: string;
+  escalationCategory?: string;
+  escalationPriority?: string;
+  escalationStatus?: string;
+  missingFields?: string[];
+  suggestedSlots?: string[];
+  bookingRequestStatus?: string;
+  slots?: Record<string, unknown>;
 } {
   if (!metadataJson) return {};
   try {
@@ -39,12 +47,20 @@ function parseReceptionistMetadata(metadataJson: string | null | undefined): {
     return {
       workflowState: receptionist?.state ?? parsed?.workflowState,
       intent: receptionist?.intent ?? parsed?.intent,
+      intentConfidence: Number(receptionist?.intentConfidence ?? 0),
       summary: receptionist?.summary,
       leadCreated: Boolean(outcome?.leadCreated),
       leadId: outcome?.leadId,
       appointmentRequestCreated: Boolean(outcome?.appointmentRequestCreated),
       escalationRequired: Boolean(outcome?.escalationRequired),
       escalationReason: outcome?.escalationReason,
+      escalationCategory: receptionist?.escalation?.category,
+      escalationPriority: receptionist?.escalation?.priority,
+      escalationStatus: receptionist?.escalation?.status,
+      missingFields: Array.isArray(receptionist?.memory?.missingFields) ? receptionist.memory.missingFields : [],
+      suggestedSlots: Array.isArray(outcome?.suggestedSlots) ? outcome.suggestedSlots : [],
+      bookingRequestStatus: outcome?.bookingRequestStatus,
+      slots: receptionist?.slots,
     };
   } catch {
     return {};
@@ -175,12 +191,13 @@ export default function RealtimeAiPage() {
           >Create Session</button>
         </div>
         <Table
-          columns={["Session", "Type", "Status", "Intent", "Outcome", "Escalation", "Started", "Actions"]}
+          columns={["Session", "Type", "Status", "Intent", "Confidence", "Outcome", "Escalation", "Started", "Actions"]}
           rows={sessions.map((s) => [
             s.id,
             s.sessionType,
             s.sessionStatus,
             parseReceptionistMetadata(s.metadataJson).intent || "-",
+            (parseReceptionistMetadata(s.metadataJson).intentConfidence ?? 0).toFixed(2),
             parseReceptionistMetadata(s.metadataJson).workflowState || "-",
             s.escalationReason || "-",
             fmtDate(s.startedAt)
@@ -214,10 +231,18 @@ export default function RealtimeAiPage() {
             <div><strong>Provider:</strong> AI={selectedSession.aiProvider || "-"}, STT={selectedSession.sttProvider || "-"}, TTS={selectedSession.ttsProvider || "-"}</div>
             <div><strong>Workflow State:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).workflowState || "-"}</div>
             <div><strong>Intent:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).intent || "-"}</div>
+            <div><strong>Intent Confidence:</strong> {(parseReceptionistMetadata(selectedSession.metadataJson).intentConfidence ?? 0).toFixed(2)}</div>
             <div><strong>Lead Created:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).leadCreated ? "YES" : "NO"} {parseReceptionistMetadata(selectedSession.metadataJson).leadId ? `(Lead ${parseReceptionistMetadata(selectedSession.metadataJson).leadId})` : ""}</div>
             <div><strong>Appointment Request:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).appointmentRequestCreated ? "YES" : "NO"}</div>
+            <div><strong>Booking Request Status:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).bookingRequestStatus || "-"}</div>
+            <div><strong>Missing Fields:</strong> {(parseReceptionistMetadata(selectedSession.metadataJson).missingFields || []).join(", ") || "-"}</div>
+            <div><strong>Suggested Slots:</strong> {(parseReceptionistMetadata(selectedSession.metadataJson).suggestedSlots || []).join(", ") || "-"}</div>
+            <div><strong>Collected Slots:</strong> <code>{JSON.stringify(parseReceptionistMetadata(selectedSession.metadataJson).slots || {}, null, 0)}</code></div>
             <div><strong>Escalation Flag:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).escalationRequired ? "YES" : "NO"}</div>
             <div><strong>Escalation Reason:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).escalationReason || "-"}</div>
+            <div><strong>Escalation Route:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).escalationCategory || "-"}</div>
+            <div><strong>Escalation Priority:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).escalationPriority || "-"}</div>
+            <div><strong>Escalation Status:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).escalationStatus || "-"}</div>
             <div><strong>Session Summary:</strong> {parseReceptionistMetadata(selectedSession.metadataJson).summary || "-"}</div>
             <div><strong>Metadata:</strong> <code>{selectedSession.metadataJson || "{}"}</code></div>
 

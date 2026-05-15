@@ -38,6 +38,7 @@ public class RealtimeVoicePromptRegistrySeeder {
         keys.put("AI_RECEPTIONIST_LEAD_CAPTURE", "AI Receptionist Lead Capture");
         keys.put("AI_RECEPTIONIST_SAFE_ESCALATION", "AI Receptionist Safe Escalation");
         keys.put("AI_RECEPTIONIST_SUMMARY", "AI Receptionist Session Summary");
+        keys.put("AI_RECEPTIONIST_STRUCTURED_EXTRACTION", "AI Receptionist Structured Extraction");
 
         try {
             var existing = promptRegistryService.list(null);

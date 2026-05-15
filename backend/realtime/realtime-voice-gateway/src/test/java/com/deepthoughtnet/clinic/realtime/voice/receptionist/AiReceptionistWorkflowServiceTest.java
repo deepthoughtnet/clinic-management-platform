@@ -37,7 +37,7 @@ class AiReceptionistWorkflowServiceTest {
 
         ReceptionistWorkflowResult result = service.evaluate(session, UUID.randomUUID(), "hello", "corr-1");
 
-        assertThat(result.promptKey()).isEqualTo("AI_RECEPTIONIST_GREETING");
+        assertThat(result.promptKey()).isEqualTo("AI_RECEPTIONIST_INTENT_DETECTION");
         assertThat(session.getMetadataJson()).contains("IDENTIFY_INTENT");
     }
 
@@ -75,8 +75,30 @@ class AiReceptionistWorkflowServiceTest {
         ReceptionistWorkflowResult result = service.evaluate(session, UUID.randomUUID(), "blabla random", "corr-4");
 
         assertThat(result.escalate()).isTrue();
-        assertThat(result.escalationReason()).contains("Repeated unknown intent");
-        assertThat(session.getMetadataJson()).contains("HUMAN_ESCALATION");
+        assertThat(result.escalationReason()).contains("Low confidence");
+        assertThat(session.getMetadataJson()).contains("IDENTIFY_INTENT");
+    }
+
+    @Test
+    void bookingIntentTracksMissingFieldsInMemory() {
+        VoiceSessionEntity session = newSession("{\"receptionist\":{\"state\":\"IDENTIFY_INTENT\"}}", UUID.randomUUID());
+
+        ReceptionistWorkflowResult result = service.evaluate(session, UUID.randomUUID(), "I want to book appointment", "corr-5");
+
+        assertThat(result.intent()).isEqualTo(ReceptionistIntent.BOOK_APPOINTMENT);
+        assertThat(session.getMetadataJson()).contains("missingFields");
+        assertThat(session.getMetadataJson()).contains("appointmentRequestCreated");
+    }
+
+    @Test
+    void billingIntentRoutesToBillingDeskEscalation() {
+        VoiceSessionEntity session = newSession("{\"receptionist\":{\"state\":\"IDENTIFY_INTENT\"}}", UUID.randomUUID());
+
+        ReceptionistWorkflowResult result = service.evaluate(session, UUID.randomUUID(), "I need billing invoice help", "corr-6");
+
+        assertThat(result.escalate()).isTrue();
+        assertThat(result.escalationCategory()).isEqualTo("BILLING_DESK");
+        assertThat(result.deterministicReply()).contains("billing desk");
     }
 
     private VoiceSessionEntity newSession(String metadata) {

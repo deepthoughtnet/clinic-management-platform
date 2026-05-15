@@ -127,3 +127,9 @@ Safety boundaries:
 Lead and appointment foundation:
 - lead create/update uses CarePilot lead services with source `AI_RECEPTIONIST`
 - appointment flow is intent collection + staff follow-up foundation in v1
+
+## AI Receptionist Workflow v2
+- Adds multi-turn session memory and structured slot filling under `metadata_json.receptionist.memory` and `metadata_json.receptionist.slots`.
+- Adds confidence-aware intent handling with low-confidence clarification and risk-first escalation.
+- Adds escalation routing metadata (`category`, `priority`, `status`) and timeline extraction events.
+- Maintains human-in-the-loop policy: no autonomous diagnosis/prescription and no blind booking.
