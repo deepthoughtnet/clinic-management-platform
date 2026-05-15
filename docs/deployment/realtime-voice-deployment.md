@@ -19,6 +19,8 @@ Runtime properties:
 Service added in `local/docker-compose.yml`:
 - `whisper-stt` (whisper.cpp HTTP server, CPU-first)
 - `realtime-voice-gateway` on port `8091`
+- optional `clinic-management-api` profile (`api`)
+- optional `web-admin` profile (`frontend`)
 
 Key environment variables:
 - `VOICE_STT_PROVIDER`, `VOICE_STT_URL`, `VOICE_STT_MODEL`, `VOICE_STT_DEVICE`
@@ -34,6 +36,15 @@ Recommended local defaults:
 - `VOICE_STT_MODEL=base.en`
 - `VOICE_TTS_PROVIDER=piper`
 - `PIPER_MODEL=/var/lib/voice-models/piper/en_US-lessac-medium.onnx`
+
+Optional full Docker integration mode:
+```bash
+docker compose -f local/docker-compose.yml --env-file local/.env.full-docker --profile api up -d
+docker compose -f local/docker-compose.yml --env-file local/.env.full-docker --profile api --profile frontend up -d
+```
+
+This mode sets runtime orchestration URL to:
+- `http://clinic-management-api:8089/actuator/health`
 
 ## Reverse proxy guidance
 - Route `/ws/voice/session/*` to Java API/BFF websocket endpoint.
