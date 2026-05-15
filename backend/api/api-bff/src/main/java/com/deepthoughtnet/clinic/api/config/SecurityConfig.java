@@ -67,6 +67,7 @@ public class SecurityConfig {
                 .requestMatchers("/graphiql", "/graphiql/**").permitAll()
                 .requestMatchers("/favicon.ico").permitAll()
                 .requestMatchers("/api/carepilot/webhooks/**").permitAll()
+                .requestMatchers("/ws/voice/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/graphql").authenticated()
                 .anyRequest().authenticated()
         );

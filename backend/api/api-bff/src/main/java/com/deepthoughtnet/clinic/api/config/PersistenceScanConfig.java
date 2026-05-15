@@ -16,6 +16,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
         "com.deepthoughtnet.clinic.notification.db",
         "com.deepthoughtnet.clinic.identity.db",
         "com.deepthoughtnet.clinic.ai.orchestration.db",
+        "com.deepthoughtnet.clinic.ai.orchestration.platform.db",
         "com.deepthoughtnet.clinic.clinic.db",
         "com.deepthoughtnet.clinic.patient.db",
         "com.deepthoughtnet.clinic.appointment.db",
@@ -24,7 +25,8 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
         "com.deepthoughtnet.clinic.billing.db",
         "com.deepthoughtnet.clinic.vaccination.db",
         "com.deepthoughtnet.clinic.inventory.db",
-        "com.deepthoughtnet.clinic.carepilot"
+        "com.deepthoughtnet.clinic.carepilot",
+        "com.deepthoughtnet.clinic.realtime.voice.db"
 })
 @EnableJpaRepositories(basePackages = {
         "com.deepthoughtnet.clinic.platform.audit.db",
@@ -37,6 +39,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
         "com.deepthoughtnet.clinic.notification.db",
         "com.deepthoughtnet.clinic.identity.db",
         "com.deepthoughtnet.clinic.ai.orchestration.db",
+        "com.deepthoughtnet.clinic.ai.orchestration.platform.db",
         "com.deepthoughtnet.clinic.clinic.db",
         "com.deepthoughtnet.clinic.patient.db",
         "com.deepthoughtnet.clinic.appointment.db",
@@ -45,7 +48,8 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
         "com.deepthoughtnet.clinic.billing.db",
         "com.deepthoughtnet.clinic.vaccination.db",
         "com.deepthoughtnet.clinic.inventory.db",
-        "com.deepthoughtnet.clinic.carepilot"
+        "com.deepthoughtnet.clinic.carepilot",
+        "com.deepthoughtnet.clinic.realtime.voice.db"
 })
 public class PersistenceScanConfig {
 }

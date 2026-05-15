@@ -48,16 +48,13 @@ public class AiUsageSummaryServiceImpl implements AiUsageSummaryService {
     private Map<String, Long> toMap(java.util.List<Object[]> rows) {
         Map<String, Long> map = new LinkedHashMap<>();
         for (Object[] row : rows) {
-            map.put(row[0] == null ? "UNKNOWN" : row[0].toString(), ((Number) row[1]).longValue());
+            map.put(row[0] == null ? "UNKNOWN" : row[0].toString(), extractLong(row, 1, "grouping-count"));
         }
         return map;
     }
 
     private long asLong(Object[] rows, int idx) {
-        if (rows == null || rows.length <= idx || rows[idx] == null) {
-            return 0L;
-        }
-        return ((Number) rows[idx]).longValue();
+        return extractLong(rows, idx, "totals[" + idx + "]");
     }
 
     private BigDecimal asDecimal(Object[] rows, int idx) {
@@ -72,5 +69,28 @@ public class AiUsageSummaryServiceImpl implements AiUsageSummaryService {
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /**
+     * Extracts numeric aggregate values defensively from JPA results.
+     * Some providers/native mappings may return nested Object[] cells for aggregate expressions.
+     */
+    private long extractLong(Object[] rows, int idx, String fieldName) {
+        if (rows == null || rows.length <= idx || rows[idx] == null) {
+            return 0L;
+        }
+        Object value = rows[idx];
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value instanceof Object[] nested) {
+            for (Object element : nested) {
+                if (element instanceof Number number) {
+                    return number.longValue();
+                }
+            }
+            throw new IllegalStateException("Expected numeric value for " + fieldName + " but nested array contained no Number");
+        }
+        throw new IllegalStateException("Expected numeric value for " + fieldName + " but got " + value.getClass().getName());
     }
 }

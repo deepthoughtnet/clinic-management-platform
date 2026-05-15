@@ -83,7 +83,78 @@ services:
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
 
+  whisper-stt:
+    image: ghcr.io/ggerganov/whisper.cpp:main
+    container_name: clinic-whisper-stt
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - "set -e; if [ ! -f /models/ggml-base.en.bin ]; then curl -fL https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -o /models/ggml-base.en.bin; fi; exec /app/build/bin/whisper-server --host 0.0.0.0 --port 8080 --model /models/ggml-base.en.bin"
+    ports:
+      - "8092:8080"
+    volumes:
+      - whisper_stt_models:/models
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -fsS http://127.0.0.1:8080/health || curl -fsS http://127.0.0.1:8080/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+  realtime-voice-gateway:
+    build:
+      context: ../backend/realtime/realtime-voice-runtime-python
+      dockerfile: Dockerfile
+    container_name: clinic-realtime-voice-gateway
+    restart: unless-stopped
+    environment:
+      VOICE_GATEWAY_HOST: 0.0.0.0
+      VOICE_GATEWAY_PORT: 8091
+      VOICE_STT_PROVIDER: ${VOICE_STT_PROVIDER:-whisper-cpp-server}
+      VOICE_STT_URL: ${VOICE_STT_URL:-http://whisper-stt:8080}
+      VOICE_STT_MODEL: ${VOICE_STT_MODEL:-base.en}
+      VOICE_STT_LANGUAGE: ${VOICE_STT_LANGUAGE:-en}
+      VOICE_STT_DEVICE: ${VOICE_STT_DEVICE:-cpu}
+      VOICE_STT_TIMEOUT_SECONDS: ${VOICE_STT_TIMEOUT_SECONDS:-30}
+      VOICE_TTS_PROVIDER: ${VOICE_TTS_PROVIDER:-piper}
+      VOICE_TTS_VOICE: ${VOICE_TTS_VOICE:-en_US-lessac-medium}
+      VOICE_TTS_MODEL_DIR: ${VOICE_TTS_MODEL_DIR:-/var/lib/voice-models/piper}
+      VOICE_TTS_AUTO_DOWNLOAD: ${VOICE_TTS_AUTO_DOWNLOAD:-true}
+      VOICE_AI_ORCHESTRATION_URL: ${VOICE_AI_ORCHESTRATION_URL:-http://host.docker.internal:8089/actuator/health}
+      VOICE_WS_MAX_SESSIONS: ${VOICE_WS_MAX_SESSIONS:-200}
+      VOICE_MAX_ACTIVE_SESSIONS: ${VOICE_MAX_ACTIVE_SESSIONS:-100}
+      VOICE_MAX_TRANSCRIPT_BUFFER: ${VOICE_MAX_TRANSCRIPT_BUFFER:-96}
+      VOICE_SESSION_IDLE_TIMEOUT: ${VOICE_SESSION_IDLE_TIMEOUT:-300}
+      VOICE_MODEL_CACHE_DIR: ${VOICE_MODEL_CACHE_DIR:-/var/lib/voice-models}
+      VOICE_ENABLE_GPU: ${VOICE_ENABLE_GPU:-false}
+      VOICE_WORKER_THREADS: ${VOICE_WORKER_THREADS:-2}
+      PIPER_CLI: ${PIPER_CLI:-piper}
+      PIPER_MODEL: ${PIPER_MODEL:-/var/lib/voice-models/piper/en_US-lessac-medium.onnx}
+    ports:
+      - "8091:8091"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    volumes:
+      - realtime_voice_model_cache:/var/lib/voice-models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      whisper-stt:
+        condition: service_healthy
+
+  # Future optional split services (placeholder only; not enabled in v1):
+  # stt-service:
+  # tts-service:
+
 volumes:
   clinic_management_postgres_data:
   clinic_management_redis_data:
   clinic_management_minio_data:
+  realtime_voice_model_cache:
+  whisper_stt_models:

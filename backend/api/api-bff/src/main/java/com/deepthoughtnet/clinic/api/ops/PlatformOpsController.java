@@ -59,8 +59,7 @@ public class PlatformOpsController {
     @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
     public com.deepthoughtnet.clinic.api.ops.dto.PlatformOpsDtos.AiMetricsResponse aiMetrics() { return platformOpsService.aiMetrics(RequestContextHolder.requireTenantId()); }
 
-    @GetMapping("/webhooks")
-    @GetMapping("/webhook-metrics")
+    @GetMapping({"/webhooks", "/webhook-metrics"})
     @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
     public WebhookMetricsResponse webhooks() { return platformOpsService.webhooks(RequestContextHolder.requireTenantId()); }
 
@@ -68,8 +67,7 @@ public class PlatformOpsController {
     @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
     public OperationalAlertsResponse alerts() { return new OperationalAlertsResponse(platformOpsService.alerts(RequestContextHolder.requireTenantId())); }
 
-    @GetMapping("/alerts/rules")
-    @GetMapping("/rules")
+    @GetMapping({"/alerts/rules", "/rules"})
     @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR')")
     public AlertRulesResponse alertRules() { return platformOpsService.alertRules(RequestContextHolder.requireTenantId()); }
 

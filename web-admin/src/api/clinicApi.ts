@@ -2978,6 +2978,10 @@ export type PlatformWebhookMetrics = {
   retryProcessingCount: number;
   staleWebhookCount: number;
   providerCallbackFailureCount: number;
+  replayAttemptCount: number;
+  unknownProviderPayloadCount: number;
+  dlqWebhookFailures: number;
+  avgProcessingLatencyMs: number;
 };
 
 export type PlatformHealthResponse = {
@@ -3721,4 +3725,128 @@ export async function listAiOpsWorkflowRuns(token: string, tenantId: string) {
 
 export async function listAiOpsWorkflowSteps(token: string, tenantId: string, runId: string) {
   return httpGet<AiOpsWorkflowStep[]>(`/api/ai/workflows/runs/${runId}/steps`, { token, tenantId });
+}
+
+export type RealtimeVoiceSessionType =
+  | "AI_RECEPTIONIST"
+  | "APPOINTMENT_BOOKING"
+  | "FOLLOW_UP_CALL"
+  | "LEAD_QUALIFICATION"
+  | "FAQ_ASSISTANT"
+  | "MANUAL_TRANSFER";
+
+export type RealtimeVoiceSessionStatus =
+  | "CREATED"
+  | "CONNECTING"
+  | "ACTIVE"
+  | "PAUSED"
+  | "ESCALATED"
+  | "COMPLETED"
+  | "FAILED";
+
+export type RealtimeVoiceSession = {
+  id: string;
+  tenantId: string;
+  sessionType: RealtimeVoiceSessionType;
+  sessionStatus: RealtimeVoiceSessionStatus;
+  patientId: string | null;
+  leadId: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  escalationRequired: boolean;
+  escalationReason: string | null;
+  assignedHumanUserId: string | null;
+  aiProvider: string | null;
+  sttProvider: string | null;
+  ttsProvider: string | null;
+  metadataJson: string | null;
+};
+
+export type RealtimeVoiceEvent = {
+  id: string;
+  sessionId: string;
+  eventType: string;
+  eventTimestamp: string;
+  sequenceNumber: number;
+  payloadSummary: string | null;
+  correlationId: string | null;
+};
+
+export type RealtimeVoiceTranscript = {
+  id: string;
+  sessionId: string;
+  speakerType: "USER" | "AI" | "HUMAN_AGENT" | "SYSTEM";
+  text: string;
+  timestamp: string;
+  confidence: number | null;
+};
+
+export type RealtimeVoiceSummary = {
+  activeSessions: number;
+  escalationCount: number;
+  failedSessions: number;
+  avgAiLatencyMs: number;
+  avgSttLatencyMs: number;
+  avgTtsLatencyMs: number;
+  avgTranscriptLatencyMs: number;
+  websocketDisconnects: number;
+  sttFailures: number;
+  ttsFailures: number;
+  interruptionCount: number;
+  sttProviders: Array<{ providerName: string; ready: boolean }>;
+  ttsProviders: Array<{ providerName: string; ready: boolean }>;
+  runtimeStatus: {
+    status: string;
+    sttReady: boolean;
+    ttsReady: boolean;
+    modelReady: boolean;
+    activeSessions: number;
+    uptimeSeconds: number;
+    error: string | null;
+  };
+};
+
+export async function getRealtimeVoiceSummary(token: string, tenantId: string) {
+  return httpGet<RealtimeVoiceSummary>("/api/realtime-ai/summary", { token, tenantId });
+}
+
+export async function listRealtimeVoiceSessions(token: string, tenantId: string) {
+  return httpGet<{ sessions: RealtimeVoiceSession[] }>("/api/realtime-ai/sessions", { token, tenantId });
+}
+
+export async function createRealtimeVoiceSession(token: string, tenantId: string, input: {
+  sessionType: RealtimeVoiceSessionType;
+  patientId?: string | null;
+  leadId?: string | null;
+  metadataJson?: string | null;
+}) {
+  return httpPost<{ session: RealtimeVoiceSession }>("/api/realtime-ai/sessions", input, { token, tenantId });
+}
+
+export async function getRealtimeVoiceSession(token: string, tenantId: string, sessionId: string) {
+  return httpGet<{ session: RealtimeVoiceSession }>(`/api/realtime-ai/sessions/${sessionId}`, { token, tenantId });
+}
+
+export async function getRealtimeVoiceSessionEvents(token: string, tenantId: string, sessionId: string) {
+  return httpGet<{ events: RealtimeVoiceEvent[] }>(`/api/realtime-ai/sessions/${sessionId}/events`, { token, tenantId });
+}
+
+export async function getRealtimeVoiceSessionTranscripts(token: string, tenantId: string, sessionId: string) {
+  return httpGet<{ transcripts: RealtimeVoiceTranscript[] }>(`/api/realtime-ai/sessions/${sessionId}/transcripts`, { token, tenantId });
+}
+
+export async function sendRealtimeVoiceTurn(token: string, tenantId: string, sessionId: string, input: {
+  text: string;
+  promptKey: string;
+  patientContextJson?: string | null;
+}) {
+  return httpPost<{ userTranscript: RealtimeVoiceTranscript; aiTranscript: RealtimeVoiceTranscript; escalationReason: string | null; aiProvider: string; aiLatencyMs: number }>(
+    `/api/realtime-ai/sessions/${sessionId}/turns`,
+    input,
+    { token, tenantId }
+  );
+}
+
+export async function completeRealtimeVoiceSession(token: string, tenantId: string, sessionId: string) {
+  return httpPost<{ session: RealtimeVoiceSession }>(`/api/realtime-ai/sessions/${sessionId}/complete`, {}, { token, tenantId });
 }

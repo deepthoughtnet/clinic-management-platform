@@ -7,6 +7,10 @@ spring:
     username: clinic
     password: clinic
 
+  data:
+    redis:
+      host: localhost
+      port: 6383
   jpa:
     hibernate:
       ddl-auto: none
@@ -162,3 +166,7 @@ logging:
     root: INFO
     com.deepthoughtnet.clinic: INFO
     org.springframework.security: INFO
+
+voice:
+  runtime:
+    summary-endpoint: ${VOICE_RUNTIME_SUMMARY_ENDPOINT:http://127.0.0.1:8091/metrics/summary}

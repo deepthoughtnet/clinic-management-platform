@@ -99,6 +99,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "integrations", label: "Integrations", path: "/admin/integrations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "ai-ops", label: "AI Ops", path: "/admin/ai-ops", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "platform-ops", label: "Platform Ops", path: "/admin/platform-ops", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
+      { key: "realtime-ai", label: "Realtime AI", path: "/admin/realtime-ai", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "RECEPTIONIST", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
     ],
   },
   {

@@ -34,7 +34,7 @@ function fmtDate(value: string | null | undefined) {
 }
 
 export default function PlatformOpsPage() {
-  const { accessToken, tenantId, me } = useAuth();
+  const { accessToken, tenantId, rolesUpper } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<PlatformHealthResponse | null>(null);
@@ -51,7 +51,7 @@ export default function PlatformOpsPage() {
   const [statusFilter, setStatusFilter] = useState<"ALL" | "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "SUPPRESSED">("ALL");
   const [rulesCount, setRulesCount] = useState(0);
 
-  const canAct = (me?.roles ?? []).includes("PLATFORM_ADMIN") || (me?.roles ?? []).includes("CLINIC_ADMIN");
+  const canAct = rolesUpper.includes("PLATFORM_ADMIN") || rolesUpper.includes("CLINIC_ADMIN");
 
   async function loadAll() {
     if (!accessToken || !tenantId) return;

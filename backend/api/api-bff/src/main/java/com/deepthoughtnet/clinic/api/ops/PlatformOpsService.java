@@ -249,7 +249,7 @@ public class PlatformOpsService {
         long unknownProvider = events.stream().filter(e -> e.getProviderName() == null || e.getProviderName().isBlank()).count();
         long replayAttempts = events.stream().collect(java.util.stream.Collectors.groupingBy(e -> (e.getProviderName() + ":" + e.getProviderMessageId()))).values().stream().filter(l -> l.size() > 2).count();
         long dlqWebhookFailures = deadLetterRepository.findTop200ByTenantIdOrderByDeadLetteredAtDesc(tenantId).stream().filter(d -> d.getSourceType().name().contains("CAMPAIGN")).count();
-        long avgLatencyMs = events.stream().filter(e -> e.getEventTimestamp() != null && e.getReceivedAt() != null)
+        long avgLatencyMs = (long) events.stream().filter(e -> e.getEventTimestamp() != null && e.getReceivedAt() != null)
                 .mapToLong(e -> java.time.Duration.between(e.getEventTimestamp(), e.getReceivedAt()).toMillis()).average().orElse(0);
         return new WebhookMetricsResponse(incoming, failed, 0, retries, stale, callbackFailures, replayAttempts, unknownProvider, dlqWebhookFailures, avgLatencyMs);
     }

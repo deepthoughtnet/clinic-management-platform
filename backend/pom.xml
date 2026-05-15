@@ -56,6 +56,10 @@
     <module>providers/messaging-sms</module>
     <module>providers/messaging-whatsapp</module>
     <module>providers/voice-spi</module>
+    <module>providers/stt-spi</module>
+    <module>providers/tts-spi</module>
+
+    <module>realtime/realtime-voice-gateway</module>
     <module>providers/storage-minio</module>
   </modules>
 

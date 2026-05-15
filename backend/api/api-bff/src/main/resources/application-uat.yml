@@ -72,3 +72,7 @@ logging:
   level:
     root: INFO
     com.deepthoughtnet.clinic: INFO
+
+voice:
+  runtime:
+    summary-endpoint: ${VOICE_RUNTIME_SUMMARY_ENDPOINT:http://realtime-voice-gateway:8091/metrics/summary}
