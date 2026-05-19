@@ -35,6 +35,8 @@ public class PrescriptionDispenseItemEntity {
     private int prescribedQuantity;
     @Column(name = "dispensed_quantity", nullable = false)
     private int dispensedQuantity;
+    @Column(name = "pending_quantity", nullable = false)
+    private int pendingQuantity;
     @Column(name = "last_batch_id")
     private UUID lastBatchId;
     @Column(name = "status", nullable = false, length = 32)
@@ -59,6 +61,7 @@ public class PrescriptionDispenseItemEntity {
         e.prescribedSortOrder = sortOrder;
         e.prescribedQuantity = Math.max(0, prescribedQuantity);
         e.dispensedQuantity = 0;
+        e.pendingQuantity = e.prescribedQuantity;
         e.status = "NOT_DISPENSED";
         e.createdAt = now;
         e.updatedAt = now;
@@ -66,11 +69,22 @@ public class PrescriptionDispenseItemEntity {
     }
 
     public void addDispense(int qty, UUID batchId) {
-        this.dispensedQuantity = this.dispensedQuantity + Math.max(0, qty);
+        int added = Math.max(0, qty);
+        if (this.prescribedQuantity <= 0) {
+            this.prescribedQuantity = Math.max(this.dispensedQuantity + added, added);
+        }
+        this.dispensedQuantity = this.dispensedQuantity + added;
+        this.pendingQuantity = Math.max(0, this.prescribedQuantity - this.dispensedQuantity);
         this.lastBatchId = batchId;
         if (dispensedQuantity <= 0) status = "NOT_DISPENSED";
         else if (prescribedQuantity > 0 && dispensedQuantity >= prescribedQuantity) status = "DISPENSED";
         else status = "PARTIALLY_DISPENSED";
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void markUnavailable() {
+        this.pendingQuantity = Math.max(0, this.prescribedQuantity - this.dispensedQuantity);
+        this.status = "UNAVAILABLE";
         this.updatedAt = OffsetDateTime.now();
     }
 
@@ -84,6 +98,7 @@ public class PrescriptionDispenseItemEntity {
     public Integer getPrescribedSortOrder() { return prescribedSortOrder; }
     public int getPrescribedQuantity() { return prescribedQuantity; }
     public int getDispensedQuantity() { return dispensedQuantity; }
+    public int getPendingQuantity() { return pendingQuantity; }
     public UUID getLastBatchId() { return lastBatchId; }
     public String getStatus() { return status; }
 }

@@ -1,6 +1,9 @@
 package com.deepthoughtnet.clinic.api.doctor.dto;
 
+import java.math.BigDecimal;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Size;
 
 public record DoctorProfileRequest(
@@ -10,6 +13,9 @@ public record DoctorProfileRequest(
         @Size(max = 256) String qualification,
         @Size(max = 128) String registrationNumber,
         @Size(max = 128) String consultationRoom,
+        @PositiveOrZero BigDecimal consultationFee,
+        @PositiveOrZero Integer yearsOfExperience,
+        @PositiveOrZero @Max(120) Integer age,
         Boolean active
 ) {
 }

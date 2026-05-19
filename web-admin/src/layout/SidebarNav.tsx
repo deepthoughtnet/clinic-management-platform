@@ -48,6 +48,7 @@ import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 
 import { NAV_GROUPS, type NavGroup, type NavItem } from "./nav";
 import { useAuth } from "../auth/useAuth";
+import { friendlyRoleLabel, hasTenantModule } from "../auth/moduleEntitlements";
 
 const GROUP_STATE_STORAGE_KEY = "clinic_sidebar_group_state_v1";
 
@@ -85,6 +86,7 @@ function iconFor(key: string): React.ReactNode {
     notifications: <NotificationsRoundedIcon fontSize="small" />,
     vaccinations: <VaccinesRoundedIcon fontSize="small" />,
     inventory: <Inventory2RoundedIcon fontSize="small" />,
+    "pharmacy-ops": <Inventory2RoundedIcon fontSize="small" />,
     reports: <BarChartRoundedIcon fontSize="small" />,
     payments: <PaymentsRoundedIcon fontSize="small" />,
     refunds: <AutorenewRoundedIcon fontSize="small" />,
@@ -129,14 +131,7 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
     return next;
   }, [auth.rolesUpper, auth.tenantRole, auth.activeTenantMemberships, auth.tenantId, isPlatformAdmin]);
 
-  const carePilotEnabledForTenant = React.useMemo(() => {
-    if (!auth.tenantId) return false;
-    if (typeof auth.tenantModules?.carePilot === "boolean") {
-      return auth.tenantModules.carePilot;
-    }
-    const activeMembership = auth.activeTenantMemberships.find((membership) => membership.tenantId === auth.tenantId);
-    return Boolean(activeMembership?.modules?.carePilot);
-  }, [auth.tenantId, auth.tenantModules, auth.activeTenantMemberships]);
+  const carePilotEnabledForTenant = React.useMemo(() => hasTenantModule(auth, "carePilot"), [auth]);
 
   const visibleGroups = React.useMemo(() => {
     const isTenantSelected = Boolean(auth.tenantId);
@@ -144,10 +139,7 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
       if (group.platformOnly && !isPlatformAdmin) return null;
       if (group.requiresTenant && !isTenantSelected) return null;
       const groupRoleMatch = !group.rolesAny || group.rolesAny.some((role) => activeRoles.has(role));
-      // Preserve tenant-support workflows for platform admins while keeping CarePilot
-      // constrained by tenant module entitlement below.
       if (!groupRoleMatch && !(isPlatformAdmin && auth.tenantId)) return null;
-      // CarePilot must be controlled by the dedicated CAREPILOT tenant module flag.
       if (group.key === "carepilot" && !carePilotEnabledForTenant) return null;
 
       const items = group.items.filter((item) => {
@@ -157,9 +149,6 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
         if ((group.key === "operations" || group.key === "clinical" || group.key === "pharmacy" || group.key === "finance" || group.key === "carepilot" || group.key === "administration") && isPlatformAdmin && !auth.tenantId) return false;
         return true;
       });
-      // Keep CarePilot visible for enabled tenants even when items are currently
-      // placeholder/coming-soon. This maintains product discoverability during
-      // staged modular rollout without exposing broken routes.
       if (items.length === 0) return null;
       return { ...group, items };
     }).filter(Boolean) as NavGroup[];
@@ -345,7 +334,7 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
 
       <Box sx={{ px: compact ? 1 : 2, py: 1.5, textAlign: compact ? "center" : "left" }}>
         <Typography variant="caption" sx={{ opacity: 0.7 }}>
-          {compact ? "v0.1" : `v0.1 • ${auth.rolesUpper[0] || "User"}`}
+          {compact ? "v0.1" : `v0.1 • ${friendlyRoleLabel(auth)}`}
         </Typography>
       </Box>
     </Drawer>

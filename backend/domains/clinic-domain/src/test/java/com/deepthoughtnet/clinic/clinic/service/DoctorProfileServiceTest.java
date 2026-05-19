@@ -29,7 +29,7 @@ class DoctorProfileServiceTest {
     @Test
     void createsProfileWhenMissing() {
         when(repository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.empty());
-        var result = service.upsert(tenantId, doctorUserId, new DoctorProfileUpsertCommand("9999", "Dermatology", "MBBS", "REG-1", "Room 2", true));
+        var result = service.upsert(tenantId, doctorUserId, new DoctorProfileUpsertCommand("9999", "Dermatology", "MBBS", "REG-1", "Room 2", null, null, null, true));
         assertThat(result.specialization()).isEqualTo("Dermatology");
         assertThat(result.active()).isTrue();
     }
@@ -37,9 +37,9 @@ class DoctorProfileServiceTest {
     @Test
     void updatesExistingProfile() {
         DoctorProfileEntity existing = DoctorProfileEntity.create(tenantId, doctorUserId);
-        existing.update("1111", "ENT", "MD", "REG-2", "Room 1", true);
+        existing.update("1111", "ENT", "MD", "REG-2", "Room 1", null, null, null, true);
         when(repository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(existing));
-        var result = service.upsert(tenantId, doctorUserId, new DoctorProfileUpsertCommand("2222", "Cardiology", "DM", "REG-3", "Room 3", false));
+        var result = service.upsert(tenantId, doctorUserId, new DoctorProfileUpsertCommand("2222", "Cardiology", "DM", "REG-3", "Room 3", null, null, null, false));
         assertThat(result.mobile()).isEqualTo("2222");
         assertThat(result.specialization()).isEqualTo("Cardiology");
         assertThat(result.active()).isFalse();

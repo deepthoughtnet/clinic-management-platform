@@ -2,12 +2,17 @@ package com.deepthoughtnet.clinic.inventory.service;
 
 import com.deepthoughtnet.clinic.inventory.db.InventoryTransactionEntity;
 import com.deepthoughtnet.clinic.inventory.db.InventoryTransactionRepository;
+import com.deepthoughtnet.clinic.inventory.db.InventoryLocationEntity;
+import com.deepthoughtnet.clinic.inventory.db.InventoryLocationRepository;
 import com.deepthoughtnet.clinic.inventory.db.MedicineEntity;
 import com.deepthoughtnet.clinic.inventory.db.MedicineRepository;
 import com.deepthoughtnet.clinic.inventory.db.StockEntity;
 import com.deepthoughtnet.clinic.inventory.db.StockRepository;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionRecord;
+import com.deepthoughtnet.clinic.inventory.service.model.InventoryLocationRecord;
+import com.deepthoughtnet.clinic.inventory.service.model.InventoryLocationUpsertCommand;
+import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransferCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType;
 import com.deepthoughtnet.clinic.inventory.service.model.LowStockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineRecord;
@@ -43,6 +48,7 @@ public class InventoryServiceImpl implements InventoryService {
     private final MedicineRepository medicineRepository;
     private final StockRepository stockRepository;
     private final InventoryTransactionRepository transactionRepository;
+    private final InventoryLocationRepository locationRepository;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
 
@@ -50,12 +56,14 @@ public class InventoryServiceImpl implements InventoryService {
             MedicineRepository medicineRepository,
             StockRepository stockRepository,
             InventoryTransactionRepository transactionRepository,
+            InventoryLocationRepository locationRepository,
             AuditEventPublisher auditEventPublisher,
             ObjectMapper objectMapper
     ) {
         this.medicineRepository = medicineRepository;
         this.stockRepository = stockRepository;
         this.transactionRepository = transactionRepository;
+        this.locationRepository = locationRepository;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper;
     }
@@ -80,7 +88,7 @@ public class InventoryServiceImpl implements InventoryService {
     public MedicineRecord createMedicine(UUID tenantId, MedicineUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
         validateMedicine(command);
-        ensureUniqueMedicineName(tenantId, command.medicineName(), null);
+        ensureUniqueMedicine(tenantId, command, null);
         MedicineEntity entity = MedicineEntity.create(tenantId, normalize(command.medicineName()), normalizeType(command.medicineType()));
         applyMedicine(entity, command);
         MedicineEntity saved = medicineRepository.save(entity);
@@ -96,7 +104,7 @@ public class InventoryServiceImpl implements InventoryService {
         validateMedicine(command);
         MedicineEntity entity = medicineRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
-        ensureUniqueMedicineName(tenantId, command.medicineName(), id);
+        ensureUniqueMedicine(tenantId, command, id);
         applyMedicine(entity, command);
         MedicineEntity saved = medicineRepository.save(entity);
         auditMedicine(tenantId, saved, "medicine.updated", actorAppUserId, "Updated medicine");
@@ -124,6 +132,16 @@ public class InventoryServiceImpl implements InventoryService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<StockRecord> listStocks(UUID tenantId, UUID locationId) {
+        requireTenant(tenantId);
+        if (locationId == null) {
+            return listStocks(tenantId);
+        }
+        return mapStocks(tenantId, stockRepository.findByTenantIdAndLocationIdOrderByUpdatedAtDesc(tenantId, locationId));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public Optional<StockRecord> findStock(UUID tenantId, UUID id) {
         requireTenant(tenantId);
         requireId(id, "id");
@@ -135,7 +153,8 @@ public class InventoryServiceImpl implements InventoryService {
     public StockRecord createStock(UUID tenantId, StockUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
         validateStock(tenantId, command);
-        StockEntity entity = StockEntity.create(tenantId, command.medicineId());
+        UUID locationId = resolveLocationId(tenantId, command.locationId());
+        StockEntity entity = StockEntity.create(tenantId, command.medicineId(), locationId);
         applyStock(entity, command);
         StockEntity saved = stockRepository.save(entity);
         auditStock(tenantId, saved, "stock.created", actorAppUserId, "Created stock batch");
@@ -172,8 +191,11 @@ public class InventoryServiceImpl implements InventoryService {
                 .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
         StockEntity stock = command.stockBatchId() == null ? null : stockRepository.findByTenantIdAndId(tenantId, command.stockBatchId())
                 .orElseThrow(() -> new IllegalArgumentException("Stock batch not found"));
+        UUID locationId = resolveLocationId(tenantId, command.locationId() != null ? command.locationId() : (stock == null ? null : stock.getLocationId()));
 
         int delta = Math.abs(command.quantity());
+        Integer beforeQuantity = null;
+        Integer afterQuantity = null;
         if (stock != null) {
             int current = stock.getQuantityOnHand();
             int nextQuantity = switch (normalizeTransactionType(command.transactionType())) {
@@ -184,6 +206,8 @@ public class InventoryServiceImpl implements InventoryService {
             if (nextQuantity < 0) {
                 throw new IllegalArgumentException("quantityAvailable cannot go negative");
             }
+            beforeQuantity = current;
+            afterQuantity = nextQuantity;
             stock.setQuantityOnHand(nextQuantity);
             stockRepository.save(stock);
         }
@@ -192,8 +216,12 @@ public class InventoryServiceImpl implements InventoryService {
                 tenantId,
                 medicine.getId(),
                 stock == null ? null : stock.getId(),
+                locationId,
+                command.targetLocationId(),
                 command.transactionType().name(),
                 delta,
+                beforeQuantity,
+                afterQuantity,
                 normalizeNullable(command.referenceType()),
                 command.referenceId(),
                 command.createdBy() == null ? actorAppUserId : command.createdBy(),
@@ -201,6 +229,85 @@ public class InventoryServiceImpl implements InventoryService {
                 normalizeNullable(command.notes())
         ));
         auditTransaction(tenantId, entity, "inventory.transaction.created", actorAppUserId, "Created inventory transaction");
+        return toRecord(entity);
+    }
+
+    @Override
+    @Transactional
+    public InventoryTransactionRecord transferStock(UUID tenantId, InventoryTransferCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        UUID fromLocationId = resolveLocationId(tenantId, command.fromLocationId());
+        UUID toLocationId = resolveLocationId(tenantId, command.toLocationId());
+        if (fromLocationId.equals(toLocationId)) {
+            throw new IllegalArgumentException("source and destination locations must differ");
+        }
+        StockEntity source = command.stockBatchId() == null
+                ? stockRepository.findByTenantIdAndLocationIdAndBatchNumberIgnoreCase(tenantId, fromLocationId, null).orElse(null)
+                : stockRepository.findByTenantIdAndId(tenantId, command.stockBatchId())
+                .orElseThrow(() -> new IllegalArgumentException("Stock batch not found"));
+        if (source == null || !source.getLocationId().equals(fromLocationId)) {
+            throw new IllegalArgumentException("Source stock not found in selected location");
+        }
+        int quantity = Math.max(0, command.quantity());
+        if (quantity <= 0) {
+            throw new IllegalArgumentException("quantity must be positive");
+        }
+        if (source.getQuantityOnHand() < quantity) {
+            throw new IllegalArgumentException("quantityAvailable cannot go negative");
+        }
+        MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, command.medicineId())
+                .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
+        int sourceBefore = source.getQuantityOnHand();
+        source.setQuantityOnHand(sourceBefore - quantity);
+        stockRepository.save(source);
+
+        StockEntity target = stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, medicine.getId(), toLocationId).stream()
+                .filter(stock -> source.getBatchNumber() == null || source.getBatchNumber().equalsIgnoreCase(normalizeNullable(stock.getBatchNumber())))
+                .findFirst()
+                .orElseGet(() -> StockEntity.create(tenantId, medicine.getId(), toLocationId));
+        if (target.getId() == null) {
+            // defensive, but StockEntity.create always assigns an id
+        }
+        target.update(
+                target.getLocationId() == null ? toLocationId : target.getLocationId(),
+                source.getBarcode(),
+                source.getQrCode(),
+                source.getExternalCode(),
+                source.getBatchNumber(),
+                source.getPurchaseReferenceNumber(),
+                source.getExpiryDate(),
+                source.getPurchaseDate(),
+                source.getSupplierName(),
+                target.getQuantityReceived() + quantity,
+                target.getQuantityOnHand() + quantity,
+                target.getLowStockThreshold(),
+                target.getUnitCost(),
+                target.getPurchasePrice(),
+                target.getSellingPrice(),
+                true
+        );
+        StockEntity savedTarget = stockRepository.save(target);
+
+        InventoryTransactionEntity entity = transactionRepository.save(InventoryTransactionEntity.create(
+                tenantId,
+                medicine.getId(),
+                source.getId(),
+                fromLocationId,
+                toLocationId,
+                InventoryTransactionType.TRANSFER_OUT.name(),
+                quantity,
+                sourceBefore,
+                source.getQuantityOnHand(),
+                "TRANSFER",
+                null,
+                actorAppUserId,
+                normalizeNullable(command.reason()),
+                "Transferred stock to another location"
+        ));
+        auditTransaction(tenantId, entity, "inventory.transfer.created", actorAppUserId, "Transferred stock between locations");
         return toRecord(entity);
     }
 
@@ -231,6 +338,40 @@ public class InventoryServiceImpl implements InventoryService {
                 .toList();
     }
 
+    @Override
+    @Transactional
+    public List<InventoryLocationRecord> listLocations(UUID tenantId) {
+        requireTenant(tenantId);
+        ensureDefaultLocation(tenantId);
+        return locationRepository.findByTenantIdOrderByDefaultLocationDescLocationNameAsc(tenantId).stream().map(this::toRecord).toList();
+    }
+
+    @Override
+    @Transactional
+    public InventoryLocationRecord saveLocation(UUID tenantId, UUID id, InventoryLocationUpsertCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        if (command == null || !StringUtils.hasText(command.locationName()) || !StringUtils.hasText(command.locationType())) {
+            throw new IllegalArgumentException("location name and type are required");
+        }
+        InventoryLocationEntity entity = id == null
+                ? InventoryLocationEntity.create(tenantId, normalize(command.locationName()), normalizeNullable(command.locationCode()), normalize(command.locationType()), command.defaultLocation())
+                : locationRepository.findByTenantIdAndId(tenantId, id).orElseThrow(() -> new IllegalArgumentException("Location not found"));
+        if (id != null) {
+            entity.update(normalize(command.locationName()), normalizeNullable(command.locationCode()), normalize(command.locationType()), command.defaultLocation(), command.active());
+        }
+        if (command.defaultLocation()) {
+            locationRepository.findByTenantIdOrderByDefaultLocationDescLocationNameAsc(tenantId).stream()
+                    .filter(location -> !location.getId().equals(entity.getId()) && location.isDefaultLocation())
+                    .findFirst()
+                    .ifPresent(previous -> {
+                        previous.update(previous.getLocationName(), previous.getLocationCode(), previous.getLocationType(), false, previous.isActive());
+                        locationRepository.save(previous);
+                    });
+        }
+        InventoryLocationEntity saved = locationRepository.save(entity);
+        return toRecord(saved);
+    }
+
     private InventoryTransactionType normalizeTransactionType(InventoryTransactionType type) {
         if (type == null) {
             return InventoryTransactionType.OPENING;
@@ -247,18 +388,19 @@ public class InventoryServiceImpl implements InventoryService {
         requireId(id, "id");
         MedicineEntity entity = medicineRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
-        entity.update(entity.getMedicineName(), entity.getMedicineType(), entity.getGenericName(), entity.getBrandName(), entity.getCategory(), entity.getDosageForm(), entity.getStrength(), entity.getUnit(), entity.getManufacturer(), entity.getDefaultDosage(), entity.getDefaultFrequency(), entity.getDefaultDurationDays(), entity.getDefaultTiming(), entity.getDefaultInstructions(), entity.getDefaultPrice(), entity.getTaxRate(), active);
+        entity.update(entity.getMedicineName(), entity.getMedicineType(), entity.getBarcode(), entity.getQrCode(), entity.getExternalCode(), entity.getGenericName(), entity.getBrandName(), entity.getCategory(), entity.getDosageForm(), entity.getStrength(), entity.getUnit(), entity.getManufacturer(), entity.getDefaultDosage(), entity.getDefaultFrequency(), entity.getDefaultDurationDays(), entity.getDefaultTiming(), entity.getDefaultInstructions(), entity.getDefaultPrice(), entity.getTaxRate(), active);
         MedicineEntity saved = medicineRepository.save(entity);
         auditMedicine(tenantId, saved, active ? "medicine.activated" : "medicine.deactivated", actorAppUserId, active ? "Activated medicine" : "Deactivated medicine");
         return toRecord(saved);
     }
 
     private MedicineRecord toRecord(MedicineEntity entity) {
-        return new MedicineRecord(entity.getId(), entity.getTenantId(), entity.getMedicineName(), entity.getMedicineType(), entity.getGenericName(), entity.getBrandName(), entity.getCategory(), entity.getDosageForm(), entity.getStrength(), entity.getUnit(), entity.getManufacturer(), entity.getDefaultDosage(), entity.getDefaultFrequency(), entity.getDefaultDurationDays(), entity.getDefaultTiming(), entity.getDefaultInstructions(), entity.getDefaultPrice(), entity.getTaxRate(), entity.isActive(), entity.getCreatedAt(), entity.getUpdatedAt());
+        return new MedicineRecord(entity.getId(), entity.getTenantId(), entity.getMedicineName(), entity.getMedicineType(), entity.getBarcode(), entity.getQrCode(), entity.getExternalCode(), entity.getGenericName(), entity.getBrandName(), entity.getCategory(), entity.getDosageForm(), entity.getStrength(), entity.getUnit(), entity.getManufacturer(), entity.getDefaultDosage(), entity.getDefaultFrequency(), entity.getDefaultDurationDays(), entity.getDefaultTiming(), entity.getDefaultInstructions(), entity.getDefaultPrice(), entity.getTaxRate(), entity.isActive(), entity.getCreatedAt(), entity.getUpdatedAt());
     }
 
     private StockRecord toRecord(StockEntity stock, MedicineEntity medicine) {
-        return new StockRecord(stock.getId(), stock.getTenantId(), stock.getMedicineId(), medicine == null ? null : medicine.getMedicineName(), medicine == null ? null : medicine.getMedicineType(), stock.getBatchNumber(), stock.getExpiryDate(), stock.getPurchaseDate(), stock.getSupplierName(), stock.getQuantityReceived(), stock.getQuantityOnHand(), stock.getLowStockThreshold(), stock.getUnitCost(), stock.getPurchasePrice(), stock.getSellingPrice(), stock.isActive(), stock.getCreatedAt(), stock.getUpdatedAt());
+        InventoryLocationEntity location = stock.getLocationId() == null ? null : locationRepository.findByTenantIdAndId(stock.getTenantId(), stock.getLocationId()).orElse(null);
+        return new StockRecord(stock.getId(), stock.getTenantId(), stock.getMedicineId(), stock.getLocationId(), location == null ? null : location.getLocationName(), medicine == null ? null : medicine.getMedicineName(), medicine == null ? null : medicine.getMedicineType(), stock.getBarcode(), stock.getQrCode(), stock.getExternalCode(), stock.getBatchNumber(), stock.getPurchaseReferenceNumber(), stock.getExpiryDate(), stock.getPurchaseDate(), stock.getSupplierName(), stock.getQuantityReceived(), stock.getQuantityOnHand(), stock.getLowStockThreshold(), stock.getUnitCost(), stock.getPurchasePrice(), stock.getSellingPrice(), stock.isActive(), stock.getCreatedAt(), stock.getUpdatedAt());
     }
 
     private LowStockRecord toLowStockRecord(StockEntity stock, MedicineEntity medicine) {
@@ -266,7 +408,11 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     private InventoryTransactionRecord toRecord(InventoryTransactionEntity entity) {
-        return new InventoryTransactionRecord(entity.getId(), entity.getTenantId(), entity.getMedicineId(), entity.getStockBatchId(), InventoryTransactionType.valueOf(entity.getTransactionType()), entity.getQuantity(), entity.getReason(), entity.getReferenceType(), entity.getReferenceId(), entity.getCreatedBy(), entity.getNotes(), entity.getCreatedAt());
+        return new InventoryTransactionRecord(entity.getId(), entity.getTenantId(), entity.getMedicineId(), entity.getStockBatchId(), entity.getLocationId(), entity.getTargetLocationId(), InventoryTransactionType.valueOf(entity.getTransactionType()), entity.getQuantity(), entity.getBeforeQuantity(), entity.getAfterQuantity(), entity.getReason(), entity.getReferenceType(), entity.getReferenceId(), entity.getCreatedBy(), entity.getNotes(), entity.getCreatedAt());
+    }
+
+    private InventoryLocationRecord toRecord(InventoryLocationEntity entity) {
+        return new InventoryLocationRecord(entity.getId(), entity.getTenantId(), entity.getLocationName(), entity.getLocationCode(), entity.getLocationType(), entity.isDefaultLocation(), entity.isActive(), entity.getCreatedAt(), entity.getUpdatedAt());
     }
 
     private List<StockRecord> mapStocks(UUID tenantId, List<StockEntity> stocks) {
@@ -276,11 +422,11 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     private void applyMedicine(MedicineEntity entity, MedicineUpsertCommand command) {
-        entity.update(normalize(command.medicineName()), normalizeType(command.medicineType()), normalizeNullable(command.genericName()), normalizeNullable(command.brandName()), normalizeNullable(command.category()), normalizeNullable(command.dosageForm()), normalizeNullable(command.strength()), normalizeNullable(command.unit()), normalizeNullable(command.manufacturer()), normalizeNullable(command.defaultDosage()), normalizeNullable(command.defaultFrequency()), command.defaultDurationDays(), normalizeNullable(command.defaultTiming()), normalizeNullable(command.defaultInstructions()), normalizeMoney(command.defaultPrice()), normalizeMoney(command.taxRate()), command.active());
+        entity.update(normalize(command.medicineName()), normalizeType(command.medicineType()), normalizeNullable(command.barcode()), normalizeNullable(command.qrCode()), normalizeNullable(command.externalCode()), normalizeNullable(command.genericName()), normalizeNullable(command.brandName()), normalizeNullable(command.category()), normalizeNullable(command.dosageForm()), normalizeNullable(command.strength()), normalizeNullable(command.unit()), normalizeNullable(command.manufacturer()), normalizeNullable(command.defaultDosage()), normalizeNullable(command.defaultFrequency()), command.defaultDurationDays(), normalizeNullable(command.defaultTiming()), normalizeNullable(command.defaultInstructions()), normalizeMoney(command.defaultPrice()), normalizeMoney(command.taxRate()), command.active());
     }
 
     private void applyStock(StockEntity entity, StockUpsertCommand command) {
-        entity.update(normalizeNullable(command.batchNumber()), command.expiryDate(), command.purchaseDate(), normalizeNullable(command.supplierName()), command.quantityReceived() == null ? Math.max(0, command.quantityOnHand()) : Math.max(0, command.quantityReceived()), Math.max(0, command.quantityOnHand()), command.lowStockThreshold(), normalizeMoney(command.unitCost()), normalizeMoney(command.purchasePrice()), normalizeMoney(command.sellingPrice()), command.active());
+        entity.update(resolveLocationId(entity.getTenantId(), command.locationId()), normalizeNullable(command.barcode()), normalizeNullable(command.qrCode()), normalizeNullable(command.externalCode()), normalizeNullable(command.batchNumber()), normalizeNullable(command.purchaseReferenceNumber()), command.expiryDate(), command.purchaseDate(), normalizeNullable(command.supplierName()), command.quantityReceived() == null ? Math.max(0, command.quantityOnHand()) : Math.max(0, command.quantityReceived()), Math.max(0, command.quantityOnHand()), command.lowStockThreshold(), normalizeMoney(command.unitCost()), normalizeMoney(command.purchasePrice()), normalizeMoney(command.sellingPrice()), command.active());
     }
 
     private void validateMedicine(MedicineUpsertCommand command) {
@@ -306,12 +452,16 @@ public class InventoryServiceImpl implements InventoryService {
         if (medicineRepository.findByTenantIdAndId(tenantId, command.medicineId()).isEmpty()) throw new IllegalArgumentException("Medicine not found");
     }
 
-    private void ensureUniqueMedicineName(UUID tenantId, String medicineName, UUID id) {
+    private void ensureUniqueMedicine(UUID tenantId, MedicineUpsertCommand command, UUID id) {
         if (id == null) {
-            if (medicineRepository.findByTenantIdAndMedicineNameIgnoreCase(tenantId, medicineName).isPresent()) throw new IllegalArgumentException("Medicine already exists");
+            if (medicineRepository.findByTenantIdAndMedicineNameIgnoreCase(tenantId, command.medicineName()).isPresent()) throw new IllegalArgumentException("Medicine already exists");
+            if (StringUtils.hasText(command.barcode()) && medicineRepository.findByTenantIdAndBarcodeIgnoreCase(tenantId, command.barcode()).isPresent()) throw new IllegalArgumentException("Medicine barcode already exists");
+            if (StringUtils.hasText(command.externalCode()) && medicineRepository.findByTenantIdAndExternalCodeIgnoreCase(tenantId, command.externalCode()).isPresent()) throw new IllegalArgumentException("Medicine external code already exists");
             return;
         }
-        if (medicineRepository.existsByTenantIdAndMedicineNameIgnoreCaseAndIdNot(tenantId, medicineName, id)) throw new IllegalArgumentException("Medicine already exists");
+        if (medicineRepository.existsByTenantIdAndMedicineNameIgnoreCaseAndIdNot(tenantId, command.medicineName(), id)) throw new IllegalArgumentException("Medicine already exists");
+        if (StringUtils.hasText(command.barcode()) && medicineRepository.existsByTenantIdAndBarcodeIgnoreCaseAndIdNot(tenantId, command.barcode(), id)) throw new IllegalArgumentException("Medicine barcode already exists");
+        if (StringUtils.hasText(command.externalCode()) && medicineRepository.existsByTenantIdAndExternalCodeIgnoreCaseAndIdNot(tenantId, command.externalCode(), id)) throw new IllegalArgumentException("Medicine external code already exists");
     }
 
     private String normalize(String value) { return value == null ? null : value.trim(); }
@@ -319,6 +469,28 @@ public class InventoryServiceImpl implements InventoryService {
     private String normalizeType(String value) { return normalize(value).toUpperCase(Locale.ROOT); }
     private BigDecimal normalizeMoney(BigDecimal value) { return value == null ? null : value.setScale(2, RoundingMode.HALF_UP); }
     private int effectiveThreshold(StockEntity stock) { return stock.getLowStockThreshold() == null ? 5 : Math.max(0, stock.getLowStockThreshold()); }
+
+    private UUID resolveLocationId(UUID tenantId, UUID requestedLocationId) {
+        if (requestedLocationId != null) {
+            return locationRepository.findByTenantIdAndId(tenantId, requestedLocationId)
+                    .orElseThrow(() -> new IllegalArgumentException("Location not found"))
+                    .getId();
+        }
+        return ensureDefaultLocation(tenantId).getId();
+    }
+
+    private InventoryLocationEntity ensureDefaultLocation(UUID tenantId) {
+        return locationRepository.findByTenantIdAndDefaultLocationTrue(tenantId)
+                .orElseGet(() -> locationRepository.findByTenantIdAndLocationNameIgnoreCase(tenantId, "Main Pharmacy")
+                        .map(existing -> {
+                            if (!existing.isDefaultLocation()) {
+                                existing.update(existing.getLocationName(), existing.getLocationCode(), existing.getLocationType(), true, existing.isActive());
+                                return locationRepository.save(existing);
+                            }
+                            return existing;
+                        })
+                        .orElseGet(() -> locationRepository.save(InventoryLocationEntity.create(tenantId, "Main Pharmacy", "MAIN_PHARMACY", "PHARMACY", true))));
+    }
 
     private void auditMedicine(UUID tenantId, MedicineEntity entity, String action, UUID actorAppUserId, String message) {
         auditEventPublisher.record(new AuditEventCommand(tenantId, MEDICINE_ENTITY, entity.getId(), action, actorAppUserId, OffsetDateTime.now(), message, detailsJson(entity)));

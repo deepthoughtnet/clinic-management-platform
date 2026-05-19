@@ -18,6 +18,7 @@ import MenuIcon from "@mui/icons-material/Menu";
 import LocalHospitalRoundedIcon from "@mui/icons-material/LocalHospitalRounded";
 
 import { useAuth } from "../auth/useAuth";
+import { friendlyRoleLabel } from "../auth/moduleEntitlements";
 import { getPlatformTenants } from "../api/clinicApi";
 
 function formatPathLabel(pathname: string): string {
@@ -40,7 +41,7 @@ export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => voi
   const navigate = useNavigate();
   const location = useLocation();
   const isPlatformAdmin = auth.rolesUpper.includes("PLATFORM_ADMIN");
-  const primaryRole = auth.rolesUpper[0] || "USER";
+  const primaryRole = friendlyRoleLabel(auth);
   const [platformTenantOptions, setPlatformTenantOptions] = React.useState<Array<{ tenantId: string; tenantCode?: string | null; tenantName?: string | null }>>([]);
   const tenantOptions = (isPlatformAdmin && platformTenantOptions.length > 0 ? platformTenantOptions : auth.activeTenantMemberships)
     .filter((tenant) => !isSystemTenantOption(tenant));

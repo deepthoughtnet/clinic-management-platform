@@ -19,7 +19,9 @@ import java.util.UUID;
                 @Index(name = "ix_medicine_catalogue_tenant_name", columnList = "tenant_id,medicine_name")
         },
         uniqueConstraints = {
-                @UniqueConstraint(name = "uq_medicine_catalogue_tenant_name", columnNames = {"tenant_id", "medicine_name"})
+                @UniqueConstraint(name = "uq_medicine_catalogue_tenant_name", columnNames = {"tenant_id", "medicine_name"}),
+                @UniqueConstraint(name = "uq_medicine_catalogue_tenant_barcode", columnNames = {"tenant_id", "barcode"}),
+                @UniqueConstraint(name = "uq_medicine_catalogue_tenant_external_code", columnNames = {"tenant_id", "external_code"})
         }
 )
 public class MedicineEntity {
@@ -35,6 +37,15 @@ public class MedicineEntity {
 
     @Column(name = "medicine_type", nullable = false, length = 24)
     private String medicineType;
+
+    @Column(length = 128)
+    private String barcode;
+
+    @Column(name = "qr_code", length = 128)
+    private String qrCode;
+
+    @Column(name = "external_code", length = 128)
+    private String externalCode;
 
     @Column(name = "generic_name", length = 256)
     private String genericName;
@@ -110,6 +121,9 @@ public class MedicineEntity {
     public void update(
             String medicineName,
             String medicineType,
+            String barcode,
+            String qrCode,
+            String externalCode,
             String genericName,
             String brandName,
             String category,
@@ -128,6 +142,9 @@ public class MedicineEntity {
     ) {
         this.medicineName = medicineName;
         this.medicineType = medicineType;
+        this.barcode = barcode;
+        this.qrCode = qrCode;
+        this.externalCode = externalCode;
         this.genericName = genericName;
         this.brandName = brandName;
         this.category = category;
@@ -150,6 +167,9 @@ public class MedicineEntity {
     public UUID getTenantId() { return tenantId; }
     public String getMedicineName() { return medicineName; }
     public String getMedicineType() { return medicineType; }
+    public String getBarcode() { return barcode; }
+    public String getQrCode() { return qrCode; }
+    public String getExternalCode() { return externalCode; }
     public String getGenericName() { return genericName; }
     public String getBrandName() { return brandName; }
     public String getCategory() { return category; }

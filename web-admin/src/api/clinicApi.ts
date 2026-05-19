@@ -294,6 +294,9 @@ export type DoctorProfile = {
   qualification: string | null;
   registrationNumber: string | null;
   consultationRoom: string | null;
+  consultationFee: number | null;
+  yearsOfExperience: number | null;
+  age: number | null;
   active: boolean;
   updatedAt: string | null;
 };
@@ -304,6 +307,9 @@ export type DoctorProfileInput = {
   qualification: string | null;
   registrationNumber: string | null;
   consultationRoom: string | null;
+  consultationFee: number | null;
+  yearsOfExperience: number | null;
+  age: number | null;
   active: boolean | null;
 };
 
@@ -821,6 +827,9 @@ export type PatientVaccinationInput = {
 export type MedicineInput = {
   medicineName: string;
   medicineType: MedicineType;
+  barcode: string | null;
+  qrCode: string | null;
+  externalCode: string | null;
   genericName: string | null;
   brandName: string | null;
   category: string | null;
@@ -847,7 +856,12 @@ export type Medicine = MedicineInput & {
 
 export type StockInput = {
   medicineId: string;
+  locationId: string | null;
+  barcode: string | null;
+  qrCode: string | null;
+  externalCode: string | null;
   batchNumber: string | null;
+  purchaseReferenceNumber: string | null;
   expiryDate: string | null;
   purchaseDate: string | null;
   supplierName: string | null;
@@ -865,6 +879,7 @@ export type Stock = StockInput & {
   tenantId: string;
   medicineName: string;
   medicineType: MedicineType;
+  locationName: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -874,8 +889,12 @@ export type InventoryTransaction = {
   tenantId: string;
   medicineId: string;
   stockBatchId: string | null;
+  locationId: string | null;
+  targetLocationId: string | null;
   transactionType: InventoryTransactionType;
   quantity: number;
+  beforeQuantity: number | null;
+  afterQuantity: number | null;
   reason: string | null;
   referenceType: string | null;
   referenceId: string | null;
@@ -904,6 +923,302 @@ export type LowStockItem = {
   expiryDate: string | null;
   quantityOnHand: number;
   lowStockThreshold: number | null;
+};
+
+export type MedicineImportRowResult = {
+  rowNumber: number;
+  medicineName: string;
+  status: "CREATED" | "UPDATED" | "SKIPPED" | "FAILED" | string;
+  message: string;
+  medicineId: string | null;
+  stockId: string | null;
+};
+
+export type MedicineImportResult = {
+  totalRows: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  rows: MedicineImportRowResult[];
+  failedRowsCsv: string;
+};
+
+export type Supplier = {
+  id: string;
+  tenantId: string;
+  supplierName: string;
+  contactPerson: string | null;
+  phone: string | null;
+  email: string | null;
+  gstNumber: string | null;
+  address: string | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SupplierInput = {
+  supplierName: string;
+  contactPerson: string | null;
+  phone: string | null;
+  email: string | null;
+  gstNumber: string | null;
+  address: string | null;
+  active: boolean;
+};
+
+export type InventoryLocation = {
+  id: string;
+  tenantId: string;
+  locationName: string;
+  locationCode: string | null;
+  locationType: string;
+  defaultLocation: boolean;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type InventoryLocationInput = {
+  locationName: string;
+  locationCode: string | null;
+  locationType: string;
+  defaultLocation: boolean;
+  active: boolean;
+};
+
+export type InventoryTransferInput = {
+  medicineId: string;
+  stockBatchId: string | null;
+  fromLocationId: string;
+  toLocationId: string;
+  quantity: number;
+  reason: string | null;
+};
+
+export type OcrExtractionRow = {
+  rowNumber: number;
+  medicineCode: string | null;
+  medicineName: string | null;
+  batchNumber: string | null;
+  physicalQuantity: number | null;
+  expiryDate: string | null;
+  notes: string | null;
+  confidence: number | null;
+  needsReview: boolean;
+};
+
+export type ReconciliationUploadResponse = {
+  reconciliationId: string;
+  fileName: string;
+  mediaType: string | null;
+  storageKey: string | null;
+  extractionStatus: string | null;
+  extractionProvider: string | null;
+  extractionConfidence: number | null;
+  extractedRows: OcrExtractionRow[];
+};
+
+export type PharmacyReconciliation = {
+  id: string;
+  tenantId: string;
+  medicineId: string;
+  medicineName: string | null;
+  stockBatchId: string | null;
+  batchNumber: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  systemQuantity: number;
+  physicalQuantity: number | null;
+  varianceQuantity: number | null;
+  reason: string | null;
+  status: string;
+  createdBy: string | null;
+  adjustedBy: string | null;
+  sheetDocumentId: string | null;
+  sheetFilename: string | null;
+  sheetMediaType: string | null;
+  sheetStorageKey: string | null;
+  extractionStatus: string | null;
+  extractionProvider: string | null;
+  extractionConfidence: number | null;
+  extractedRows: OcrExtractionRow[];
+  locationId: string | null;
+  locationName: string | null;
+  confirmedAt: string | null;
+  reviewedAt: string | null;
+  appliedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PharmacyReconciliationInput = {
+  medicineId: string;
+  stockBatchId: string | null;
+  supplierId: string | null;
+  locationId: string | null;
+  physicalQuantity: number | null;
+  reason: string | null;
+};
+
+export type PharmacyReconciliationConfirmInput = {
+  physicalQuantity: number | null;
+  reason: string | null;
+  adjustStock: boolean;
+};
+
+export type StockInwardInput = {
+  medicineId: string;
+  supplierId: string | null;
+  locationId: string | null;
+  purchaseReferenceNumber: string | null;
+  batchNumber: string | null;
+  barcode: string | null;
+  qrCode: string | null;
+  externalCode: string | null;
+  expiryDate: string | null;
+  purchaseDate: string | null;
+  quantity: number;
+  unitCost: number | null;
+  sellingPrice: number | null;
+  lowStockThreshold: number | null;
+};
+
+export type ProcurementLineInput = {
+  medicineId: string | null;
+  medicineName: string | null;
+  quantity: number;
+  expectedUnitCost: number | null;
+  unitCost: number | null;
+  taxPercent: number | null;
+  batchNumber: string | null;
+  expiryDate: string | null;
+  sellingPrice: number | null;
+};
+
+export type PurchaseOrderInput = {
+  supplierId: string;
+  poNumber: string;
+  orderDate: string;
+  expectedDeliveryDate: string | null;
+  items: ProcurementLineInput[];
+  approvalNote: string | null;
+};
+
+export type PurchaseOrder = {
+  id: string;
+  tenantId: string;
+  supplierId: string;
+  supplierName: string | null;
+  poNumber: string;
+  orderDate: string;
+  expectedDeliveryDate: string | null;
+  itemsJson: string;
+  matchingStatus: string;
+  varianceSummary: string | null;
+  approvalNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SupplierInvoiceInput = {
+  supplierId: string;
+  purchaseOrderId: string | null;
+  invoiceNumber: string;
+  invoiceDate: string;
+  taxAmount: number | null;
+  totalAmount: number | null;
+  items: ProcurementLineInput[];
+  approvalNote: string | null;
+};
+
+export type SupplierInvoice = {
+  id: string;
+  tenantId: string;
+  supplierId: string;
+  supplierName: string | null;
+  purchaseOrderId: string | null;
+  invoiceNumber: string;
+  invoiceDate: string;
+  taxAmount: number | null;
+  totalAmount: number | null;
+  itemsJson: string;
+  matchingStatus: string;
+  varianceSummary: string | null;
+  approvalNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type GoodsReceiptInput = {
+  supplierId: string;
+  purchaseOrderId: string | null;
+  supplierInvoiceId: string | null;
+  receiptNumber: string;
+  receivedAt: string;
+  locationId: string;
+  items: ProcurementLineInput[];
+  approvalNote: string | null;
+};
+
+export type GoodsReceipt = {
+  id: string;
+  tenantId: string;
+  supplierId: string;
+  supplierName: string | null;
+  purchaseOrderId: string | null;
+  supplierInvoiceId: string | null;
+  receiptNumber: string;
+  receivedAt: string;
+  locationId: string;
+  locationName: string | null;
+  itemsJson: string;
+  matchingStatus: string;
+  varianceSummary: string | null;
+  approvalNote: string | null;
+  confirmedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PharmacyDashboard = {
+  medicinesCount: number;
+  stockBatchesCount: number;
+  lowStockCount: number;
+  expiredCount: number;
+  nearExpiryCount: number;
+  pendingDispensingCount: number;
+  partiallyDispensedCount: number;
+  todayDispensedCount: number;
+  recentStockMovements: InventoryTransaction[];
+};
+
+export type FastMovingMedicine = {
+  medicineId: string;
+  medicineName: string | null;
+  dispensedQuantity: number;
+  availableQuantity: number;
+};
+
+export type PharmacyAnalytics = {
+  fastMovingMedicines: FastMovingMedicine[];
+  lowStockMedicines: LowStockItem[];
+  expiryRiskMedicines: Stock[];
+  stockValueEstimate: number;
+};
+
+export type SubstituteSuggestion = {
+  medicineId: string;
+  medicineName: string;
+  genericName: string | null;
+  brandName: string | null;
+  dosageForm: string | null;
+  strength: string | null;
+  availableQuantity: number;
+  availabilityStatus: string;
+  expiryStatus: string;
+  nearestExpiryDate: string | null;
 };
 
 export type ConsultationInputBody = ConsultationInput;
@@ -1689,6 +2004,11 @@ export async function getMedicines(token: string, tenantId: string) {
   return httpGet<Medicine[]>("/api/medicines", { token, tenantId });
 }
 
+export async function searchMedicines(token: string, tenantId: string, query?: string | null) {
+  const suffix = query ? `?q=${encodeURIComponent(query)}` : "";
+  return httpGet<Medicine[]>(`/api/medicines/search${suffix}`, { token, tenantId });
+}
+
 export async function getMedicine(token: string, tenantId: string, id: string) {
   return httpGet<Medicine>(`/api/medicines/${id}`, { token, tenantId });
 }
@@ -1709,8 +2029,35 @@ export async function activateMedicine(token: string, tenantId: string, id: stri
   return httpPatch<Medicine>(`/api/medicines/${id}/activate`, undefined, { token, tenantId });
 }
 
+export async function importMedicinesCsv(token: string, tenantId: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return httpPostForm<MedicineImportResult>("/api/medicines/import-csv", formData, { token, tenantId });
+}
+
 export async function getStocks(token: string, tenantId: string) {
   return httpGet<Stock[]>("/api/inventory/stocks", { token, tenantId });
+}
+
+export async function getInventoryLocations(token: string, tenantId: string) {
+  return httpGet<InventoryLocation[]>("/api/inventory/locations", { token, tenantId });
+}
+
+export async function createInventoryLocation(token: string, tenantId: string, body: InventoryLocationInput) {
+  return httpPost<InventoryLocation>("/api/inventory/locations", body, { token, tenantId });
+}
+
+export async function updateInventoryLocation(token: string, tenantId: string, id: string, body: InventoryLocationInput) {
+  return httpPut<InventoryLocation>(`/api/inventory/locations/${id}`, body, { token, tenantId });
+}
+
+export async function transferInventoryStock(token: string, tenantId: string, body: InventoryTransferInput) {
+  return httpPost("/api/inventory/transfers", body, { token, tenantId });
+}
+
+export async function searchStocks(token: string, tenantId: string, query?: string | null) {
+  const suffix = query ? `?q=${encodeURIComponent(query)}` : "";
+  return httpGet<Stock[]>(`/api/inventory/stocks/search${suffix}`, { token, tenantId });
 }
 
 export async function createStock(token: string, tenantId: string, body: StockInput) {
@@ -1741,14 +2088,100 @@ export async function getExpiringStock(token: string, tenantId: string, days = 3
   return httpGet<Stock[]>(`/api/inventory/alerts/expiring?days=${days}`, { token, tenantId });
 }
 
+export async function getPharmacyDashboard(token: string, tenantId: string) {
+  return httpGet<PharmacyDashboard>("/api/pharmacy/dashboard", { token, tenantId });
+}
+
+export async function getPharmacyAnalytics(token: string, tenantId: string) {
+  return httpGet<PharmacyAnalytics>("/api/pharmacy/analytics", { token, tenantId });
+}
+
+export async function listSuppliers(token: string, tenantId: string) {
+  return httpGet<Supplier[]>("/api/pharmacy/suppliers", { token, tenantId });
+}
+
+export async function createSupplier(token: string, tenantId: string, body: SupplierInput) {
+  return httpPost<Supplier>("/api/pharmacy/suppliers", body, { token, tenantId });
+}
+
+export async function updateSupplier(token: string, tenantId: string, id: string, body: SupplierInput) {
+  return httpPut<Supplier>(`/api/pharmacy/suppliers/${id}`, body, { token, tenantId });
+}
+
+export async function listReconciliations(token: string, tenantId: string) {
+  return httpGet<PharmacyReconciliation[]>("/api/pharmacy/reconciliations", { token, tenantId });
+}
+
+export async function createReconciliation(token: string, tenantId: string, body: PharmacyReconciliationInput) {
+  return httpPost<PharmacyReconciliation>("/api/pharmacy/reconciliations", body, { token, tenantId });
+}
+
+export async function confirmReconciliation(token: string, tenantId: string, id: string, body: PharmacyReconciliationConfirmInput) {
+  return httpPost<PharmacyReconciliation>(`/api/pharmacy/reconciliations/${id}/confirm`, body, { token, tenantId });
+}
+
+export async function reviewReconciliationSheet(token: string, tenantId: string, id: string, body: { rows: OcrExtractionRow[]; reviewNote?: string | null }) {
+  return httpPost<PharmacyReconciliation>(`/api/pharmacy/reconciliations/${id}/review`, body, { token, tenantId });
+}
+
+export async function uploadReconciliationSheet(token: string, tenantId: string, id: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return httpPostForm<ReconciliationUploadResponse>(
+    `/api/pharmacy/reconciliations/${id}/sheet`,
+    formData,
+    { token, tenantId },
+  );
+}
+
+export async function createStockInward(token: string, tenantId: string, body: StockInwardInput) {
+  return httpPost<Stock>("/api/pharmacy/inward", body, { token, tenantId });
+}
+
+export async function getPurchaseOrders(token: string, tenantId: string) {
+  return httpGet<PurchaseOrder[]>("/api/pharmacy/purchase-orders", { token, tenantId });
+}
+
+export async function createPurchaseOrder(token: string, tenantId: string, body: PurchaseOrderInput) {
+  return httpPost<PurchaseOrder>("/api/pharmacy/purchase-orders", body, { token, tenantId });
+}
+
+export async function getSupplierInvoices(token: string, tenantId: string) {
+  return httpGet<SupplierInvoice[]>("/api/pharmacy/supplier-invoices", { token, tenantId });
+}
+
+export async function createSupplierInvoice(token: string, tenantId: string, body: SupplierInvoiceInput) {
+  return httpPost<SupplierInvoice>("/api/pharmacy/supplier-invoices", body, { token, tenantId });
+}
+
+export async function getGoodsReceipts(token: string, tenantId: string) {
+  return httpGet<GoodsReceipt[]>("/api/pharmacy/goods-receipts", { token, tenantId });
+}
+
+export async function createGoodsReceipt(token: string, tenantId: string, body: GoodsReceiptInput) {
+  return httpPost<GoodsReceipt>("/api/pharmacy/goods-receipts", body, { token, tenantId });
+}
+
+export async function confirmGoodsReceipt(token: string, tenantId: string, id: string, approvalNote?: string | null) {
+  return httpPost<GoodsReceipt>(`/api/pharmacy/goods-receipts/${id}/confirm`, approvalNote ?? "", { token, tenantId });
+}
+
+export async function getSubstituteSuggestions(token: string, tenantId: string, medicineId: string) {
+  return httpGet<SubstituteSuggestion[]>(`/api/pharmacy/substitutes?medicineId=${encodeURIComponent(medicineId)}`, { token, tenantId });
+}
+
 export type DispenseLine = {
   itemId: string | null;
   prescribedMedicineName: string;
   medicineId: string | null;
   prescribedQuantity: number;
   dispensedQuantity: number;
+  pendingQuantity: number;
   status: "NOT_DISPENSED" | "PARTIALLY_DISPENSED" | "DISPENSED" | string;
   availableQuantity: number | null;
+  availabilityStatus: "AVAILABLE" | "LOW_STOCK" | "PARTIAL_AVAILABLE" | "OUT_OF_STOCK" | string;
+  expiryStatus: "NONE" | "OK" | "NEAR_EXPIRY" | "EXPIRED" | string;
+  nearestExpiryDate: string | null;
   lastBatchId: string | null;
 };
 
@@ -1757,6 +2190,8 @@ export type PrescriptionDispense = {
   prescriptionNumber: string;
   patientId: string;
   patientName: string | null;
+  doctorName: string | null;
+  prescriptionTimestamp: string | null;
   billingStatus: "NOT_BILLED" | "BILLED" | "PAID" | string;
   billedBillId: string | null;
   lines: DispenseLine[];
@@ -1765,9 +2200,10 @@ export type PrescriptionDispense = {
 export type DispenseInput = {
   prescribedMedicineName: string;
   medicineId: string | null;
-  quantity: number;
+  quantity: number | null;
   batchId: string | null;
   allowBatchOverride: boolean;
+  action: "FULL" | "PARTIAL" | "CANCEL" | string | null;
 };
 
 export async function getDispensingQueue(token: string, tenantId: string) {
@@ -1826,11 +2262,11 @@ export type PlatformTenantDetail = {
 };
 
 export async function getPlatformTenants(token: string) {
-  return httpGet<PlatformTenant[]>("/api/platform/tenants", { token });
+  return httpGet<PlatformTenant[]>("/api/platform/tenants", { token, platformOperation: true });
 }
 
 export async function getPlatformTenant(token: string, tenantId: string) {
-  return httpGet<PlatformTenantDetail>(`/api/platform/tenants/${tenantId}`, { token });
+  return httpGet<PlatformTenantDetail>(`/api/platform/tenants/${tenantId}`, { token, platformOperation: true });
 }
 
 export async function createPlatformTenant(token: string, body: {
@@ -1852,27 +2288,27 @@ export async function createPlatformTenant(token: string, body: {
   adminLastName?: string | null;
   tempPassword?: string | null;
 }) {
-  return httpPost<PlatformTenantDetail>("/api/platform/tenants", body, { token });
+  return httpPost<PlatformTenantDetail>("/api/platform/tenants", body, { token, platformOperation: true });
 }
 
 export async function updatePlatformTenantStatus(token: string, tenantId: string, active: boolean) {
-  return httpPatch<PlatformTenant>(`/api/platform/tenants/${tenantId}/status`, { active }, { token });
+  return httpPatch<PlatformTenant>(`/api/platform/tenants/${tenantId}/status`, { active }, { token, platformOperation: true });
 }
 
 export async function updatePlatformTenantPlan(token: string, tenantId: string, planId: string) {
-  return httpPut<PlatformTenant>(`/api/platform/tenants/${tenantId}/plan`, { planId }, { token });
+  return httpPut<PlatformTenant>(`/api/platform/tenants/${tenantId}/plan`, { planId }, { token, platformOperation: true });
 }
 
 export async function getPlatformPlans(token: string) {
-  return httpGet<PlatformPlan[]>("/api/platform/plans", { token });
+  return httpGet<PlatformPlan[]>("/api/platform/plans", { token, platformOperation: true });
 }
 
 export async function getPlatformTenantModules(token: string, tenantId: string) {
-  return httpGet<Record<string, boolean>>(`/api/platform/tenants/${tenantId}/modules`, { token });
+  return httpGet<Record<string, boolean>>(`/api/platform/tenants/${tenantId}/modules`, { token, platformOperation: true });
 }
 
 export async function updatePlatformTenantModules(token: string, tenantId: string, modules: Record<string, boolean>) {
-  return httpPut<PlatformTenant>(`/api/platform/tenants/${tenantId}/modules`, modules, { token });
+  return httpPut<PlatformTenant>(`/api/platform/tenants/${tenantId}/modules`, modules, { token, platformOperation: true });
 }
 
 export async function createPlatformTenantAdminUser(token: string, tenantId: string, body: {
@@ -1881,7 +2317,7 @@ export async function createPlatformTenantAdminUser(token: string, tenantId: str
   lastName?: string | null;
   tempPassword?: string | null;
 }) {
-  return httpPost(`/api/platform/tenants/${tenantId}/admin-user`, body, { token });
+  return httpPost(`/api/platform/tenants/${tenantId}/admin-user`, body, { token, platformOperation: true });
 }
 
 export async function getPatientDocuments(token: string, tenantId: string, patientId: string) {

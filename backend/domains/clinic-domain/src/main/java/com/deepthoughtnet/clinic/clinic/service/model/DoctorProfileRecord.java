@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.clinic.service.model;
 
 import java.time.OffsetDateTime;
+import java.math.BigDecimal;
 import java.util.UUID;
 
 public record DoctorProfileRecord(
@@ -12,6 +13,9 @@ public record DoctorProfileRecord(
         String qualification,
         String registrationNumber,
         String consultationRoom,
+        BigDecimal consultationFee,
+        Integer yearsOfExperience,
+        Integer age,
         boolean active,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt

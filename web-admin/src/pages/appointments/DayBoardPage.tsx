@@ -2,6 +2,10 @@ import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Alert,
+  Autocomplete,
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Button,
   Card,
@@ -22,10 +26,17 @@ import {
   MenuItem,
   Select,
   Stack,
-  Switch,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   TextField,
   Typography,
+  Tooltip,
 } from "@mui/material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import { alpha, type Theme } from "@mui/material/styles";
 
 import { useAuth } from "../../auth/useAuth";
 import {
@@ -51,6 +62,19 @@ import {
 
 type SlotFilterKey = DoctorAvailabilitySlotStatus | "BOOKED" | "CHECKED_IN" | "IN_CONSULTATION" | "COMPLETED" | "NO_SHOW" | "CANCELLED";
 
+type DoctorPanel = {
+  doctorUserId: string;
+  doctorName: string;
+  slots: DoctorAvailabilitySlot[];
+  waitlist: AppointmentWaitlist[];
+};
+
+type DoctorOption = {
+  appUserId: string;
+  displayName: string;
+  email: string | null;
+};
+
 type SlotSelection = {
   kind: "slot";
   slot: DoctorAvailabilitySlot;
@@ -63,7 +87,41 @@ type AppointmentSelection = {
 
 type Selection = SlotSelection | AppointmentSelection;
 
+type CalendarSlotRow = {
+  date: string;
+  doctorUserId: string;
+  doctorName: string;
+  slot: DoctorAvailabilitySlot;
+  appointment: Appointment | null;
+};
+
+type SchedulerSectionKey = "morning" | "afternoon" | "evening" | "other";
+
+type SchedulerSectionDefinition = {
+  key: SchedulerSectionKey;
+  label: string;
+  rangeLabel: string;
+  startMinute: number;
+  endMinute: number;
+};
+
+type SchedulerSectionSummary = {
+  totalSlots: number;
+  availableCount: number;
+  bookedCount: number;
+  partialCount: number;
+  fullCount: number;
+  checkedInCount: number;
+  inConsultationCount: number;
+};
+
 const APPOINTMENT_TYPES: AppointmentType[] = ["SCHEDULED", "FOLLOW_UP", "VACCINATION", "WALK_IN"];
+
+const ALL_DOCTORS_OPTION: DoctorOption = {
+  appUserId: "",
+  displayName: "All Doctors",
+  email: null,
+};
 
 const STATUS_FILTERS: SlotFilterKey[] = [
   "AVAILABLE",
@@ -120,6 +178,299 @@ function sameTimeSlot(slot: DoctorAvailabilitySlot, appointment: Appointment) {
   return toFive(appointment.appointmentTime) === toFive(slot.slotTime);
 }
 
+function friendlyStatusLabel(value: string | null | undefined) {
+  if (!value) return "-";
+  switch (value.toUpperCase()) {
+    case "PARTIALLY_BOOKED":
+      return "Partially booked";
+    case "CHECKED_IN":
+      return "Checked in";
+    case "IN_CONSULTATION":
+      return "In consultation";
+    case "COMPLETED":
+      return "Completed";
+    case "NO_SHOW":
+      return "No-show";
+    case "CANCELLED":
+      return "Cancelled";
+    case "AVAILABLE":
+      return "Available";
+    case "BOOKED":
+      return "Booked";
+    case "FULL":
+      return "Full";
+    case "BREAK":
+      return "Break";
+    case "LEAVE":
+      return "Leave";
+    case "UNAVAILABLE":
+      return "Unavailable";
+    case "CONFLICTED":
+      return "Conflicted";
+    default:
+      return value.replace(/_/g, " ").toLowerCase().replace(/(^|\s)\S/g, (match) => match.toUpperCase());
+  }
+}
+
+function displayDoctorName(users: ClinicUser[], doctorUserId: string | null | undefined) {
+  if (!doctorUserId) return "Unassigned";
+  return users.find((u) => u.appUserId === doctorUserId)?.displayName || doctorUserId;
+}
+
+function timeLabel(time: string) {
+  return time.length >= 5 ? time.slice(0, 5) : time;
+}
+
+function compactDateLabel(date: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${date}T00:00:00`));
+}
+
+function slotDisplayStatus(slot: DoctorAvailabilitySlot, appointments: Appointment[]) {
+  const activeAppointments = appointments.filter((appointment) => appointment.status !== "CANCELLED" && appointment.status !== "NO_SHOW");
+  if (activeAppointments.some((appointment) => appointment.status === "IN_CONSULTATION")) return "IN_CONSULTATION";
+  if (activeAppointments.some((appointment) => appointment.status === "WAITING")) return "CHECKED_IN";
+  if (activeAppointments.some((appointment) => appointment.status === "COMPLETED")) return "COMPLETED";
+  if (activeAppointments.some((appointment) => appointment.status === "BOOKED")) return "BOOKED";
+  if (appointments.some((appointment) => appointment.status === "NO_SHOW")) return "NO_SHOW";
+  if (appointments.some((appointment) => appointment.status === "CANCELLED")) return "CANCELLED";
+  return slot.status;
+}
+
+function slotCellColor(status: string) {
+  switch (status) {
+    case "AVAILABLE":
+      return "success";
+    case "PARTIALLY_BOOKED":
+      return "warning";
+    case "FULL":
+      return "error";
+    case "BOOKED":
+      return "info";
+    case "CHECKED_IN":
+      return "info";
+    case "IN_CONSULTATION":
+      return "secondary";
+    case "COMPLETED":
+      return "success";
+    case "NO_SHOW":
+      return "error";
+    case "CANCELLED":
+      return "default";
+    case "BREAK":
+    case "LEAVE":
+    case "UNAVAILABLE":
+      return "default";
+    case "CONFLICTED":
+      return "error";
+    default:
+      return "default";
+  }
+}
+
+function slotTint(status: string) {
+  switch (status) {
+    case "AVAILABLE":
+      return "success.50";
+    case "PARTIALLY_BOOKED":
+      return "warning.50";
+    case "FULL":
+      return "error.50";
+    case "BOOKED":
+      return "info.50";
+    case "CHECKED_IN":
+      return "info.100";
+    case "IN_CONSULTATION":
+      return "secondary.50";
+    case "COMPLETED":
+      return "success.100";
+    case "NO_SHOW":
+      return "error.100";
+    case "CANCELLED":
+      return "grey.100";
+    case "BREAK":
+    case "LEAVE":
+    case "UNAVAILABLE":
+      return "grey.200";
+    case "CONFLICTED":
+      return "error.100";
+    default:
+      return "background.paper";
+  }
+}
+
+function statusLabel(status: string) {
+  return friendlyStatusLabel(status);
+}
+
+function formatTimeRange(start: string | null | undefined, end: string | null | undefined) {
+  if (!start || !end) return "-";
+  return `${toFive(start)} - ${toFive(end)}`;
+}
+
+function appointmentTooltip(appointment: Appointment, doctorName: string, slot: DoctorAvailabilitySlot) {
+  return (
+    <Box sx={{ p: 0.5, maxWidth: 280 }}>
+      <Typography sx={{ fontWeight: 800 }}>{appointment.patientName || appointment.patientNumber || appointment.patientId}</Typography>
+      <Typography variant="body2">Phone: {appointment.patientMobile || "—"}</Typography>
+      <Typography variant="body2">Purpose: {appointment.type}</Typography>
+      <Typography variant="body2">Status: {friendlyStatusLabel(appointment.status)}</Typography>
+      <Typography variant="body2">Doctor: {doctorName}</Typography>
+      <Typography variant="body2">Slot: {toFive(slot.slotTime)} - {toFive(slot.slotEndTime)}</Typography>
+      <Typography variant="body2">Reference: {appointment.tokenNumber ?? appointment.id}</Typography>
+    </Box>
+  );
+}
+
+function appointmentTitle(appointment: Appointment) {
+  return appointment.patientName || appointment.patientNumber || appointment.patientId;
+}
+
+function isDragEligibleAppointment(appointment: Appointment) {
+  return appointment.status !== "COMPLETED" && appointment.status !== "CANCELLED" && appointment.status !== "NO_SHOW";
+}
+
+function summarizeCellStatus(slot: DoctorAvailabilitySlot | null, appointments: Appointment[]) {
+  if (!slot && appointments.length === 0) {
+    return {
+      status: "UNAVAILABLE",
+      label: "No slot",
+    };
+  }
+  if (appointments.some((appointment) => appointment.status === "IN_CONSULTATION")) {
+    return { status: "IN_CONSULTATION", label: "In consultation" };
+  }
+  if (appointments.some((appointment) => appointment.status === "WAITING")) {
+    return { status: "CHECKED_IN", label: "Checked in" };
+  }
+  if (appointments.length > 0 && appointments.every((appointment) => appointment.status === "COMPLETED")) {
+    return { status: "COMPLETED", label: "Completed" };
+  }
+  if (slot) {
+    if (slot.status === "AVAILABLE" && appointments.length > 0) {
+      return slot.bookedCount >= slot.maxPatientsPerSlot
+        ? { status: "FULL", label: "Full" }
+        : { status: "PARTIALLY_BOOKED", label: "Partial" };
+    }
+    return { status: slot.status, label: friendlyStatusLabel(slot.status) };
+  }
+  if (appointments.some((appointment) => appointment.status === "BOOKED")) {
+    return { status: "BOOKED", label: "Booked" };
+  }
+  return { status: "UNAVAILABLE", label: "No slot" };
+}
+
+function cellBackground(status: string) {
+  switch (status) {
+    case "AVAILABLE":
+      return (theme: Theme) => alpha(theme.palette.success.main, 0.08);
+    case "PARTIALLY_BOOKED":
+      return (theme: Theme) => alpha(theme.palette.warning.main, 0.12);
+    case "FULL":
+      return (theme: Theme) => alpha(theme.palette.error.main, 0.10);
+    case "BOOKED":
+      return (theme: Theme) => alpha(theme.palette.info.main, 0.10);
+    case "CHECKED_IN":
+      return (theme: Theme) => alpha(theme.palette.info.main, 0.16);
+    case "IN_CONSULTATION":
+      return (theme: Theme) => alpha(theme.palette.secondary.main, 0.12);
+    case "COMPLETED":
+      return (theme: Theme) => alpha(theme.palette.success.main, 0.14);
+    case "NO_SHOW":
+      return (theme: Theme) => alpha(theme.palette.error.main, 0.14);
+    case "CANCELLED":
+      return (theme: Theme) => alpha(theme.palette.grey[500], 0.12);
+    case "BREAK":
+    case "LEAVE":
+    case "UNAVAILABLE":
+      return (theme: Theme) => alpha(theme.palette.grey[500], 0.12);
+    case "CONFLICTED":
+      return (theme: Theme) => alpha(theme.palette.error.main, 0.18);
+    default:
+      return (theme: Theme) => alpha(theme.palette.background.paper, 1);
+  }
+}
+
+function cellBorder(status: string, selected = false) {
+  if (selected) return "primary.main";
+  switch (status) {
+    case "AVAILABLE":
+      return "success.200";
+    case "PARTIALLY_BOOKED":
+      return "warning.200";
+    case "FULL":
+      return "error.200";
+    case "BOOKED":
+    case "CHECKED_IN":
+    case "IN_CONSULTATION":
+      return "info.200";
+    case "COMPLETED":
+      return "success.300";
+    case "NO_SHOW":
+    case "CONFLICTED":
+      return "error.200";
+    case "CANCELLED":
+    case "BREAK":
+    case "LEAVE":
+    case "UNAVAILABLE":
+      return "divider";
+    default:
+      return "divider";
+  }
+}
+
+const SCHEDULER_SECTIONS: SchedulerSectionDefinition[] = [
+  { key: "morning", label: "Morning", rangeLabel: "06:00-12:00", startMinute: 6 * 60, endMinute: 12 * 60 },
+  { key: "afternoon", label: "Afternoon", rangeLabel: "12:00-17:00", startMinute: 12 * 60, endMinute: 17 * 60 },
+  { key: "evening", label: "Evening", rangeLabel: "17:00-22:00", startMinute: 17 * 60, endMinute: 22 * 60 },
+  { key: "other", label: "Other", rangeLabel: "Outside schedule", startMinute: -1, endMinute: -1 },
+];
+
+function minutesFromTime(time: string | null | undefined) {
+  if (!time || time.length < 5) return null;
+  const hours = Number(time.slice(0, 2));
+  const minutes = Number(time.slice(3, 5));
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+  return (hours * 60) + minutes;
+}
+
+function sectionForTime(time: string | null | undefined): SchedulerSectionKey {
+  const minutes = minutesFromTime(time);
+  if (minutes === null) return "other";
+  if (minutes >= 6 * 60 && minutes < 12 * 60) return "morning";
+  if (minutes >= 12 * 60 && minutes < 17 * 60) return "afternoon";
+  if (minutes >= 17 * 60 && minutes < 22 * 60) return "evening";
+  return "other";
+}
+
+function sectionTone(sectionKey: SchedulerSectionKey) {
+  switch (sectionKey) {
+    case "morning":
+      return "success";
+    case "afternoon":
+      return "warning";
+    case "evening":
+      return "secondary";
+    case "other":
+      return "default";
+  }
+}
+
+function summarizeRows(rows: CalendarSlotRow[]): SchedulerSectionSummary {
+  return {
+    totalSlots: rows.length,
+    availableCount: rows.filter((row) => row.slot.status === "AVAILABLE").length,
+    bookedCount: rows.filter((row) => Boolean(row.appointment)).length,
+    partialCount: rows.filter((row) => row.slot.status === "PARTIALLY_BOOKED").length,
+    fullCount: rows.filter((row) => row.slot.status === "FULL").length,
+    checkedInCount: rows.filter((row) => row.appointment?.status === "WAITING").length,
+    inConsultationCount: rows.filter((row) => row.appointment?.status === "IN_CONSULTATION").length,
+  };
+}
+
 export default function DayBoardPage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -136,15 +487,28 @@ export default function DayBoardPage() {
   const [appointments, setAppointments] = React.useState<Appointment[]>([]);
   const [slots, setSlots] = React.useState<DoctorAvailabilitySlot[]>([]);
   const [waitlist, setWaitlist] = React.useState<AppointmentWaitlist[]>([]);
+  const [doctorPanels, setDoctorPanels] = React.useState<DoctorPanel[]>([]);
   const [selected, setSelected] = React.useState<Selection | null>(null);
   const [rescheduleOpen, setRescheduleOpen] = React.useState(false);
   const [rescheduleTarget, setRescheduleTarget] = React.useState<Appointment | null>(null);
   const [rescheduleDoctorUserId, setRescheduleDoctorUserId] = React.useState("");
   const [rescheduleDate, setRescheduleDate] = React.useState("");
   const [rescheduleTime, setRescheduleTime] = React.useState("");
+  const [draggedAppointment, setDraggedAppointment] = React.useState<Appointment | null>(null);
+  const [moveConfirmOpen, setMoveConfirmOpen] = React.useState(false);
+  const [moveConfirmTarget, setMoveConfirmTarget] = React.useState<DoctorAvailabilitySlot | null>(null);
+  const [sectionOverrides, setSectionOverrides] = React.useState<Partial<Record<SchedulerSectionKey, boolean>>>({});
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const gridTopScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const gridBodyScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const sectionScrollRefs = React.useRef<Record<SchedulerSectionKey, HTMLDivElement | null>>({
+    morning: null,
+    afternoon: null,
+    evening: null,
+    other: null,
+  });
 
   const tenantRole = (auth.tenantRole || "").toUpperCase();
   const isDoctor = tenantRole === "DOCTOR";
@@ -152,9 +516,105 @@ export default function DayBoardPage() {
   const canBook = auth.hasPermission("appointment.create") || tenantRole === "RECEPTIONIST" || tenantRole === "CLINIC_ADMIN";
   const canStartConsultation = auth.hasPermission("consultation.create");
   const doctorOptions = users.filter((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
+  const selectedDoctorLabel = isDoctor && auth.appUserId
+    ? displayDoctorName(users, auth.appUserId)
+    : doctorUserId
+      ? displayDoctorName(users, doctorUserId)
+      : "All Doctors";
   const effectiveDoctorId = isDoctor && auth.appUserId ? auth.appUserId : doctorUserId;
   const selectedSlot = selected?.kind === "slot" ? selected.slot : null;
   const selectedAppointment = selected?.kind === "appointment" ? selected.appointment : null;
+  const selectedDoctorOption = React.useMemo(() => {
+    if (isDoctor && auth.appUserId) {
+      return doctorOptions.find((doctor) => doctor.appUserId === auth.appUserId) || { ...ALL_DOCTORS_OPTION, displayName: displayDoctorName(users, auth.appUserId) };
+    }
+    if (!doctorUserId) return ALL_DOCTORS_OPTION;
+    return doctorOptions.find((doctor) => doctor.appUserId === doctorUserId) || ALL_DOCTORS_OPTION;
+  }, [auth.appUserId, doctorOptions, doctorUserId, isDoctor, users]);
+
+  const visibleDoctorPanels = React.useMemo(() => {
+    if (effectiveDoctorId) return doctorPanels;
+    return doctorPanels;
+  }, [doctorPanels, effectiveDoctorId]);
+
+  const selectedSlotAppointments = React.useMemo(() => {
+    if (!selectedSlot) return [];
+    return appointments.filter((appointment) => appointment.doctorUserId === selectedSlot.doctorUserId && sameTimeSlot(selectedSlot, appointment));
+  }, [appointments, selectedSlot]);
+
+  const selectedSlotPanel = React.useMemo(() => {
+    if (!selectedSlot) return null;
+    return visibleDoctorPanels.find((panel) => panel.doctorUserId === selectedSlot.doctorUserId) || null;
+  }, [selectedSlot, visibleDoctorPanels]);
+
+  const activeWaitlist = React.useMemo(() => {
+    if (effectiveDoctorId) return waitlist;
+    return selectedSlotPanel?.waitlist || [];
+  }, [effectiveDoctorId, selectedSlotPanel, waitlist]);
+  const gridMinWidth = React.useMemo(() => Math.max(720, 92 + (visibleDoctorPanels.length * 188)), [visibleDoctorPanels.length]);
+  const calendarRows = React.useMemo(() => {
+    return visibleDoctorPanels.flatMap((panel) => {
+      return panel.slots
+        .filter((slot) => filters[slot.status])
+        .map((slot) => ({
+          date,
+          doctorUserId: panel.doctorUserId,
+          doctorName: panel.doctorName,
+          slot,
+          appointment: appointments.find((appointment) => appointment.id === slot.appointmentId)
+            || appointments.find((appointment) => sameTimeSlot(slot, appointment))
+            || null,
+        }) satisfies CalendarSlotRow);
+    }).sort((left, right) => {
+      const doctorDelta = left.doctorName.localeCompare(right.doctorName);
+      if (doctorDelta !== 0) return doctorDelta;
+      return left.slot.slotTime.localeCompare(right.slot.slotTime);
+    });
+  }, [appointments, date, filters, visibleDoctorPanels]);
+  const calendarSummary = React.useMemo(() => summarizeRows(calendarRows), [calendarRows]);
+  const todayDate = React.useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const currentTimeSection = React.useMemo<SchedulerSectionKey | null>(() => {
+    if (date !== todayDate) return null;
+    const minutes = new Date().getHours() * 60 + new Date().getMinutes();
+    if (minutes >= 6 * 60 && minutes < 12 * 60) return "morning";
+    if (minutes >= 12 * 60 && minutes < 17 * 60) return "afternoon";
+    if (minutes >= 17 * 60 && minutes < 22 * 60) return "evening";
+    return "other";
+  }, [date, todayDate]);
+  const schedulerSections = React.useMemo(() => {
+    const rowsBySection = new Map<SchedulerSectionKey, CalendarSlotRow[]>(
+      SCHEDULER_SECTIONS.map((section) => [section.key, [] as CalendarSlotRow[]]),
+    );
+    for (const row of calendarRows) {
+      rowsBySection.get(sectionForTime(row.slot.slotTime))?.push(row);
+    }
+    return SCHEDULER_SECTIONS.map((section) => {
+      const rows = [...(rowsBySection.get(section.key) || [])].sort((left, right) => {
+        const doctorDelta = left.doctorName.localeCompare(right.doctorName);
+        if (doctorDelta !== 0) return doctorDelta;
+        return left.slot.slotTime.localeCompare(right.slot.slotTime);
+      });
+      const times = Array.from(new Set(rows.map((row) => toFive(row.slot.slotTime)))).sort((left, right) => left.localeCompare(right));
+      const summary = summarizeRows(rows);
+      const hasBookings = rows.some((row) => Boolean(row.appointment) || row.slot.bookedCount > 0 || row.slot.status === "PARTIALLY_BOOKED" || row.slot.status === "FULL");
+      const autoExpanded = Boolean((currentTimeSection && currentTimeSection === section.key) || hasBookings);
+      const override = sectionOverrides[section.key];
+      const expanded = override === undefined ? autoExpanded : override;
+      return { ...section, rows, times, summary, hasBookings, autoExpanded, expanded };
+    });
+  }, [calendarRows, currentTimeSection, sectionOverrides]);
+
+  const syncGridScroll = (source: HTMLDivElement | null, target: HTMLDivElement | null) => {
+    if (!source || !target) return;
+    target.scrollLeft = source.scrollLeft;
+  };
+
+  const handleTopGridScroll = () => syncGridScroll(gridTopScrollRef.current, gridBodyScrollRef.current);
+  const handleBodyGridScroll = () => syncGridScroll(gridBodyScrollRef.current, gridTopScrollRef.current);
+
+  React.useEffect(() => {
+    setSectionOverrides({});
+  }, [date]);
 
   const loadCore = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -167,35 +627,72 @@ export default function DayBoardPage() {
       ]);
       setUsers(clinicUsers);
       setAppointments(appointmentRows);
-      if (!isDoctor && !doctorUserId) {
-        const firstDoctor = clinicUsers.find((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
-        if (firstDoctor) setDoctorUserId(firstDoctor.appUserId);
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load day board data");
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, auth.tenantId, date, doctorUserId, effectiveDoctorId, isDoctor]);
+  }, [auth.accessToken, auth.tenantId, date, effectiveDoctorId]);
 
   const loadDoctorPanels = React.useCallback(async () => {
-    if (!auth.accessToken || !auth.tenantId || !effectiveDoctorId) {
+    const token = auth.accessToken;
+    const tenantId = auth.tenantId;
+    if (!token || !tenantId) {
       setSlots([]);
       setWaitlist([]);
+      setDoctorPanels([]);
       return;
     }
     try {
-      const [slotRows, waitRows] = await Promise.all([
-        getDoctorSlots(auth.accessToken, auth.tenantId, effectiveDoctorId, date),
-        getWaitlist(auth.accessToken, auth.tenantId, { doctorUserId: effectiveDoctorId, preferredDate: date, status: "WAITING" }),
-      ]);
-      setSlots(slotRows);
-      setWaitlist(waitRows);
+      if (effectiveDoctorId) {
+        const [slotRows, waitRows] = await Promise.all([
+          getDoctorSlots(token, tenantId, effectiveDoctorId, date),
+          getWaitlist(token, tenantId, { doctorUserId: effectiveDoctorId, preferredDate: date, status: "WAITING" }),
+        ]);
+        setSlots(slotRows);
+        setWaitlist(waitRows);
+        setDoctorPanels([
+          {
+            doctorUserId: effectiveDoctorId,
+            doctorName: displayDoctorName(users, effectiveDoctorId),
+            slots: slotRows,
+            waitlist: waitRows,
+          },
+        ]);
+        return;
+      }
+      const doctors = users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
+      if (doctors.length === 0) {
+        setSlots([]);
+        setWaitlist([]);
+        setDoctorPanels([]);
+        return;
+      }
+      const rows = await Promise.all(doctors.map(async (doctor) => {
+        const doctorId: string = doctor.appUserId || "";
+        if (!doctorId) {
+          return null;
+        }
+        const [slotRows, waitRows] = await Promise.all([
+          getDoctorSlots(token, tenantId, doctorId, date),
+          getWaitlist(token, tenantId, { doctorUserId: doctorId, preferredDate: date, status: "WAITING" }),
+        ]);
+        return {
+          doctorUserId: doctorId,
+          doctorName: displayDoctorName(users, doctorId),
+          slots: slotRows,
+          waitlist: waitRows,
+        } satisfies DoctorPanel;
+      }));
+      setSlots([]);
+      setWaitlist([]);
+      setDoctorPanels(rows.filter((row): row is DoctorPanel => Boolean(row)).sort((a, b) => a.doctorName.localeCompare(b.doctorName)));
     } catch {
       setSlots([]);
       setWaitlist([]);
+      setDoctorPanels([]);
     }
-  }, [auth.accessToken, auth.tenantId, date, effectiveDoctorId]);
+  }, [auth.accessToken, auth.tenantId, date, effectiveDoctorId, users]);
 
   React.useEffect(() => {
     void loadCore();
@@ -231,23 +728,14 @@ export default function DayBoardPage() {
     };
   }, [auth.accessToken, auth.tenantId, patientSearch]);
 
-  const appointmentsBySlot = React.useMemo(() => {
-    const map = new Map<string, Appointment[]>();
-    for (const slot of slots) {
-      map.set(toFive(slot.slotTime), appointments.filter((a) => sameTimeSlot(slot, a)));
-    }
-    return map;
-  }, [appointments, slots]);
-
-  const filteredSlots = React.useMemo(() => slots.filter((slot) => filters[slot.status]), [filters, slots]);
-
   const refreshAll = async () => {
     await loadCore();
     await loadDoctorPanels();
   };
 
   const bookFromSlot = async () => {
-    if (!auth.accessToken || !auth.tenantId || !selectedPatient || !effectiveDoctorId) return;
+    const bookingDoctorId = selectedSlot?.doctorUserId || effectiveDoctorId;
+    if (!auth.accessToken || !auth.tenantId || !selectedPatient || !bookingDoctorId) return;
     const slotTime = selectedSlot ? toFive(selectedSlot.slotTime) : manualTime;
     if (!slotTime) {
       setError("Pick a slot or enter manual time.");
@@ -258,7 +746,7 @@ export default function DayBoardPage() {
     try {
       await createAppointment(auth.accessToken, auth.tenantId, {
         patientId: selectedPatient.id,
-        doctorUserId: effectiveDoctorId,
+        doctorUserId: bookingDoctorId,
         appointmentDate: date,
         appointmentTime: slotTime,
         reason: reason.trim() || null,
@@ -277,11 +765,12 @@ export default function DayBoardPage() {
   };
 
   const addWaitlistFromSelection = async () => {
-    if (!auth.accessToken || !auth.tenantId || !selectedPatient || !effectiveDoctorId) return;
+    const bookingDoctorId = selectedSlot?.doctorUserId || effectiveDoctorId;
+    if (!auth.accessToken || !auth.tenantId || !selectedPatient || !bookingDoctorId) return;
     try {
       await createWaitlist(auth.accessToken, auth.tenantId, {
         patientId: selectedPatient.id,
-        doctorUserId: effectiveDoctorId,
+        doctorUserId: bookingDoctorId,
         preferredDate: date,
         preferredStartTime: selectedSlot ? toFive(selectedSlot.slotTime) : null,
         preferredEndTime: selectedSlot ? toFive(selectedSlot.slotEndTime) : null,
@@ -340,11 +829,12 @@ export default function DayBoardPage() {
   };
 
   const bookWaitlistEntry = async (entry: AppointmentWaitlist) => {
-    if (!auth.accessToken || !auth.tenantId || !effectiveDoctorId || !selectedSlot) return;
+    const bookingDoctorId = selectedSlot?.doctorUserId || effectiveDoctorId;
+    if (!auth.accessToken || !auth.tenantId || !bookingDoctorId || !selectedSlot) return;
     try {
       await createAppointment(auth.accessToken, auth.tenantId, {
         patientId: entry.patientId,
-        doctorUserId: effectiveDoctorId,
+        doctorUserId: bookingDoctorId,
         appointmentDate: date,
         appointmentTime: toFive(selectedSlot.slotTime),
         reason: entry.reason,
@@ -359,6 +849,45 @@ export default function DayBoardPage() {
     }
   };
 
+  const startDragAppointment = (appointment: Appointment) => {
+    if (!isDragEligibleAppointment(appointment)) return;
+    setDraggedAppointment(appointment);
+  };
+
+  const canDropToSlot = (slot: DoctorAvailabilitySlot | null) => Boolean(slot && slot.selectable && slot.status !== "BREAK" && slot.status !== "LEAVE" && slot.status !== "UNAVAILABLE" && slot.status !== "CONFLICTED");
+
+  const openMoveConfirm = (slot: DoctorAvailabilitySlot) => {
+    if (!draggedAppointment || !canDropToSlot(slot)) return;
+    if (draggedAppointment.doctorUserId === slot.doctorUserId && toFive(draggedAppointment.appointmentTime) === toFive(slot.slotTime)) {
+      setDraggedAppointment(null);
+      return;
+    }
+    setMoveConfirmTarget(slot);
+    setMoveConfirmOpen(true);
+  };
+
+  const confirmMoveAppointment = async () => {
+    if (!auth.accessToken || !auth.tenantId || !draggedAppointment || !moveConfirmTarget) return;
+    const targetTime = toFive(moveConfirmTarget.slotTime);
+    try {
+      await rescheduleAppointment(auth.accessToken, auth.tenantId, draggedAppointment.id, {
+        doctorUserId: moveConfirmTarget.doctorUserId,
+        appointmentDate: date,
+        appointmentTime: targetTime,
+        reason: `Moved from day board to ${targetTime}`,
+      });
+      setMoveConfirmOpen(false);
+      setMoveConfirmTarget(null);
+      setDraggedAppointment(null);
+      await refreshAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to move appointment");
+    }
+  };
+
+  const cellAppointments = (doctorUserIdValue: string, timeValue: string) =>
+    appointments.filter((appointment) => appointment.doctorUserId === doctorUserIdValue && toFive(appointment.appointmentTime) === timeValue);
+
   if (!auth.tenantId) return <Alert severity="warning">No tenant selected.</Alert>;
 
   return (
@@ -366,10 +895,13 @@ export default function DayBoardPage() {
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 900 }}>Day Board</Typography>
-          <Typography variant="body2" color="text.secondary">Calendar to booking to queue to consultation handoff.</Typography>
+          <Typography variant="body2" color="text.secondary">
+            Calendar to booking to queue to consultation handoff • {selectedDoctorLabel}
+          </Typography>
         </Box>
         <Stack direction="row" spacing={1}>
           <Button variant="outlined" onClick={() => void refreshAll()}>Refresh</Button>
+          <Button variant="outlined" onClick={() => navigate("/appointments")}>New appointment</Button>
           <Button variant="outlined" onClick={() => navigate("/appointments")}>Appointments</Button>
           <Button variant="outlined" onClick={() => navigate("/queue")}>Queue</Button>
         </Stack>
@@ -384,20 +916,22 @@ export default function DayBoardPage() {
               <Stack spacing={1.5}>
                 <Typography variant="h6" sx={{ fontWeight: 800 }}>Filters</Typography>
                 <TextField size="small" type="date" label="Date" value={date} onChange={(e) => setDate(e.target.value)} InputLabelProps={{ shrink: true }} />
-                <FormControl size="small" fullWidth>
-                  <InputLabel id="day-board-doctor">Doctor</InputLabel>
-                  <Select
-                    labelId="day-board-doctor"
-                    label="Doctor"
-                    value={effectiveDoctorId}
-                    onChange={(e) => setDoctorUserId(String(e.target.value))}
-                    disabled={isDoctor}
-                  >
-                    {doctorOptions.map((d) => (
-                      <MenuItem key={d.appUserId} value={d.appUserId}>{d.displayName || d.email || d.appUserId}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <Autocomplete
+                  options={[ALL_DOCTORS_OPTION, ...doctorOptions]}
+                  value={selectedDoctorOption}
+                  onChange={(_, value) => setDoctorUserId(value?.appUserId || "")}
+                  getOptionLabel={(option) => option.displayName || option.email || option.appUserId || "All Doctors"}
+                  isOptionEqualToValue={(option, value) => option.appUserId === value.appUserId}
+                  disabled={isDoctor}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      size="small"
+                      label="Doctor"
+                      placeholder="Search doctor or select All Doctors"
+                    />
+                  )}
+                />
                 <TextField
                   size="small"
                   label="Patient quick search"
@@ -419,12 +953,20 @@ export default function DayBoardPage() {
                 {selectedPatient ? <Chip label={`Patient: ${selectedPatient.firstName} ${selectedPatient.lastName || ""}`.trim()} color="primary" /> : null}
                 <Divider />
                 <Typography variant="subtitle2">Status filters</Typography>
-                {STATUS_FILTERS.map((key) => (
-                  <Box key={key} sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <Typography variant="body2">{key.replace("PARTIALLY_BOOKED", "Partially booked").replace("CHECKED_IN", "Checked-in")}</Typography>
-                    <Switch size="small" checked={filters[key]} onChange={(_, checked) => setFilters((c) => ({ ...c, [key]: checked }))} />
-                  </Box>
-                ))}
+                <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                  {STATUS_FILTERS.map((key) => (
+                    <Chip
+                      key={key}
+                      size="small"
+                      clickable
+                      label={friendlyStatusLabel(key)}
+                      color={filters[key] ? "primary" : "default"}
+                      variant={filters[key] ? "filled" : "outlined"}
+                      onClick={() => setFilters((c) => ({ ...c, [key]: !c[key] }))}
+                      sx={{ mb: 0.5 }}
+                    />
+                  ))}
+                </Stack>
                 <Divider />
                 <Stack direction="row" spacing={1} flexWrap="wrap">
                   <Button size="small" variant="outlined" onClick={() => navigate("/doctors/availability")}>Add availability</Button>
@@ -438,60 +980,407 @@ export default function DayBoardPage() {
         </Grid>
 
         <Grid size={{ xs: 12, md: 6 }}>
-          <Card variant="outlined">
-            <CardContent>
-              <Stack spacing={1.5}>
-                <Typography variant="h6" sx={{ fontWeight: 800 }}>Timeline</Typography>
-                {loading ? (
-                  <Box sx={{ minHeight: 240, display: "grid", placeItems: "center" }}><CircularProgress /></Box>
-                ) : !effectiveDoctorId ? (
-                  <Alert severity="info">Select a doctor to view slots.</Alert>
-                ) : filteredSlots.length === 0 ? (
-                  <Alert severity="info">No configured schedule for selected date. Manual appointment booking remains available.</Alert>
+          <Card variant="outlined" sx={{ height: "100%" }}>
+            <CardContent sx={{ height: "100%", pb: 1.5 }}>
+              <Stack spacing={1.25} sx={{ height: "100%", minHeight: 0 }}>
+                <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 1, flexWrap: "wrap" }}>
+                  <Box>
+                    <Typography variant="h6" sx={{ fontWeight: 800 }}>Operational Calendar</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Grouped clinic scheduler for {effectiveDoctorId ? selectedDoctorLabel : "All Doctors"} on {compactDateLabel(date)}
+                    </Typography>
+                  </Box>
+                  <Stack direction="row" spacing={0.75} flexWrap="wrap" justifyContent="flex-end">
+                    <Chip size="small" label={effectiveDoctorId ? "Specific doctor" : "All Doctors"} color={effectiveDoctorId ? "primary" : "default"} />
+                    <Chip size="small" label={date} variant="outlined" />
+                  </Stack>
+                </Box>
+
+                <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                  <Chip size="small" label={`Doctor: ${selectedDoctorLabel}`} color={effectiveDoctorId ? "primary" : "default"} variant="outlined" />
+                  <Chip size="small" label={`Date: ${compactDateLabel(date)}`} variant="outlined" />
+                  <Chip size="small" label={`Time period: ${currentTimeSection ? currentTimeSection.charAt(0).toUpperCase() + currentTimeSection.slice(1) : "Outside current day"}`} variant="outlined" />
+                </Stack>
+
+                <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                  <Chip size="small" label={`Total ${calendarSummary.totalSlots}`} variant="outlined" />
+                  <Chip size="small" label={`Available ${calendarSummary.availableCount}`} color="success" variant="outlined" />
+                  <Chip size="small" label={`Booked ${calendarSummary.bookedCount}`} color="info" variant="outlined" />
+                  <Chip size="small" label={`Partial ${calendarSummary.partialCount}`} color="warning" variant="outlined" />
+                  <Chip size="small" label={`Full ${calendarSummary.fullCount}`} color="error" variant="outlined" />
+                  <Chip size="small" label={`Checked in ${calendarSummary.checkedInCount}`} color="info" variant="outlined" />
+                  <Chip size="small" label={`In consult ${calendarSummary.inConsultationCount}`} color="secondary" variant="outlined" />
+                </Stack>
+
+                <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                  <Chip size="small" label="Available" color="success" variant="outlined" />
+                  <Chip size="small" label="Booked" color="info" variant="outlined" />
+                  <Chip size="small" label="Partial" color="warning" variant="outlined" />
+                  <Chip size="small" label="Full" color="error" variant="outlined" />
+                  <Chip size="small" label="Checked in" color="info" variant="outlined" />
+                  <Chip size="small" label="In consultation" color="secondary" variant="outlined" />
+                  <Chip size="small" label="Break / Leave" variant="outlined" />
+                  <Chip size="small" label="No slot" variant="outlined" />
+                </Stack>
+
+                <Stack direction="row" spacing={1} flexWrap="wrap">
+                  <Button size="small" variant="outlined" onClick={() => setSectionOverrides({ morning: true, afternoon: true, evening: true, other: true })}>
+                    Expand all
+                  </Button>
+                  <Button size="small" variant="outlined" onClick={() => setSectionOverrides({ morning: false, afternoon: false, evening: false, other: false })}>
+                    Collapse all
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => {
+                      const liveMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+                      const liveSection: SchedulerSectionKey = liveMinutes >= 6 * 60 && liveMinutes < 12 * 60
+                        ? "morning"
+                        : liveMinutes >= 12 * 60 && liveMinutes < 17 * 60
+                          ? "afternoon"
+                          : liveMinutes >= 17 * 60 && liveMinutes < 22 * 60
+                            ? "evening"
+                            : "other";
+                      setDate(todayDate);
+                      setSectionOverrides((current) => ({ ...current, [liveSection]: true }));
+                      window.setTimeout(() => {
+                        sectionScrollRefs.current[liveSection]?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }, 0);
+                    }}
+                  >
+                    Jump to now
+                  </Button>
+                </Stack>
+
+                {loading && calendarRows.length === 0 ? (
+                  <Box sx={{ minHeight: 260, display: "grid", placeItems: "center" }}>
+                    <CircularProgress />
+                  </Box>
+                ) : visibleDoctorPanels.length === 0 ? (
+                  <Alert severity="info">
+                    {doctorOptions.length === 0
+                      ? "No doctors available for the selected clinic."
+                      : "Select All Doctors or a specific doctor to view the day board."}
+                  </Alert>
                 ) : (
-                  <Stack spacing={1}>
-                    {filteredSlots.map((slot) => {
-                      const slotAppointments = appointmentsBySlot.get(toFive(slot.slotTime)) || [];
-                      return (
-                        <Card
-                          key={`${slot.slotTime}-${slot.slotEndTime}`}
-                          variant="outlined"
+                  <Box
+                    ref={gridBodyScrollRef}
+                    onScroll={handleBodyGridScroll}
+                    sx={{ flex: 1, minHeight: 0, overflowX: "auto", overflowY: "visible" }}
+                  >
+                    <Stack spacing={1} sx={{ minWidth: gridMinWidth, minHeight: 0 }}>
+                    <Box
+                      ref={gridTopScrollRef}
+                      onScroll={handleTopGridScroll}
+                      sx={{
+                        overflowX: "auto",
+                        overflowY: "hidden",
+                        borderBottom: "1px solid",
+                        borderColor: "divider",
+                        pb: 0.25,
+                      }}
+                    >
+                      <Box sx={{ minWidth: gridMinWidth, height: 1 }} />
+                    </Box>
+
+                    {calendarRows.length === 0 ? (
+                      <Alert severity="info">
+                        {effectiveDoctorId
+                          ? "No slots available for selected date/doctor. Add availability to generate slots."
+                          : "No visible slots match the current filters."}
+                      </Alert>
+                    ) : null}
+
+                    <Stack spacing={1} sx={{ flex: 1, minHeight: 0 }}>
+                      {schedulerSections.map((section) => (
+                        <Accordion
+                          key={section.key}
+                          ref={(node) => {
+                            sectionScrollRefs.current[section.key] = node as HTMLDivElement | null;
+                          }}
+                          expanded={section.expanded}
+                          onChange={(_, expanded) => setSectionOverrides((current) => ({ ...current, [section.key]: expanded }))}
+                          disableGutters
                           sx={{
-                            borderColor: selected?.kind === "slot" && selected.slot.slotTime === slot.slotTime ? "primary.main" : "divider",
-                            bgcolor: slot.status === "FULL" ? "error.50" : slot.status === "PARTIALLY_BOOKED" ? "warning.50" : "background.paper",
+                            minWidth: gridMinWidth,
+                            border: "1px solid",
+                            borderColor: "divider",
+                            borderRadius: 2,
+                            overflow: "hidden",
+                            "&:before": { display: "none" },
+                            "& .MuiAccordionSummary-root": { minHeight: 52, px: 1.25 },
+                            "& .MuiAccordionSummary-content": { my: 0.75 },
+                            "& .MuiAccordionDetails-root": { px: 1.25, pb: 1.25, pt: 0 },
                           }}
                         >
-                          <CardContent sx={{ py: 1.25 }}>
-                            <Stack spacing={1}>
-                              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-                                <Button size="small" onClick={() => setSelected({ kind: "slot", slot })} sx={{ px: 0, minWidth: 0 }}>
-                                  {toFive(slot.slotTime)} - {toFive(slot.slotEndTime)}
-                                </Button>
-                                <Stack direction="row" spacing={1}>
-                                  <Chip size="small" label={`${slot.bookedCount}/${slot.maxPatientsPerSlot} booked`} color={slotColor(slot.status)} />
-                                  <Chip size="small" label={slot.status} variant="outlined" />
+                          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                            <Stack spacing={0.5} sx={{ width: "100%" }}>
+                              <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                                <Stack spacing={0.1}>
+                                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
+                                    <Typography sx={{ fontWeight: 800 }}>{section.label}</Typography>
+                                    <Chip size="small" label={section.rangeLabel} color={sectionTone(section.key)} variant="outlined" sx={{ height: 20 }} />
+                                    {section.autoExpanded ? <Chip size="small" label="Auto" color="primary" variant="outlined" sx={{ height: 20 }} /> : null}
+                                  </Box>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {section.times.length} visible times • {section.summary.bookedCount} booked • {section.summary.partialCount} partial • {section.summary.fullCount} full
+                                    </Typography>
+                                </Stack>
+                                <Stack direction="row" spacing={0.5} flexWrap="wrap" justifyContent="flex-end">
+                                  <Chip size="small" label={`${section.summary.totalSlots} total`} variant="outlined" />
+                                  <Chip size="small" label={`${section.summary.availableCount} available`} color="success" variant="outlined" />
+                                  <Chip size="small" label={`${section.summary.checkedInCount} checked in`} color="info" variant="outlined" />
+                                  <Chip size="small" label={`${section.summary.inConsultationCount} in consult`} color="secondary" variant="outlined" />
                                 </Stack>
                               </Box>
-                              {slotAppointments.length > 0 ? (
-                                <Stack direction="row" gap={0.75} flexWrap="wrap">
-                                  {slotAppointments.map((appt) => (
-                                    <Chip
-                                      key={appt.id}
-                                      size="small"
-                                      label={`${appt.patientName || appt.patientNumber || appt.patientId} • ${appt.status}`}
-                                      color={appointmentColor(appt.status)}
-                                      variant="outlined"
-                                      onClick={() => setSelected({ kind: "appointment", appointment: appt })}
-                                    />
-                                  ))}
-                                </Stack>
-                              ) : null}
                             </Stack>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
+                          </AccordionSummary>
+                          <AccordionDetails>
+                            <Box sx={{ maxHeight: 372, overflowY: "auto", overflowX: "hidden" }}>
+                              <Table stickyHeader size="small" sx={{ minWidth: gridMinWidth, tableLayout: "fixed" }}>
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell
+                                      sx={{
+                                        position: "sticky",
+                                        left: 0,
+                                        zIndex: 4,
+                                        bgcolor: "background.paper",
+                                        minWidth: 92,
+                                        width: 92,
+                                        fontWeight: 800,
+                                        py: 0.75,
+                                      }}
+                                    >
+                                      Time
+                                    </TableCell>
+                                    {visibleDoctorPanels.map((panel) => (
+                                      <TableCell
+                                        key={panel.doctorUserId}
+                                        sx={{
+                                          minWidth: 188,
+                                          fontWeight: 800,
+                                          verticalAlign: "top",
+                                          py: 0.75,
+                                        }}
+                                      >
+                                        <Stack spacing={0.25}>
+                                          <Typography variant="subtitle2" sx={{ fontWeight: 800, lineHeight: 1.1 }}>{panel.doctorName}</Typography>
+                                          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.1 }}>
+                                            {panel.slots.length} slots • {appointments.filter((appt) => appt.doctorUserId === panel.doctorUserId).length} appointments
+                                          </Typography>
+                                        </Stack>
+                                      </TableCell>
+                                    ))}
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {section.times.length === 0 ? (
+                                    <TableRow>
+                                      <TableCell colSpan={Math.max(1, visibleDoctorPanels.length + 1)} sx={{ py: 2 }}>
+                                        <Alert severity="info" sx={{ mb: 0 }}>
+                                          No visible slots in this section.
+                                        </Alert>
+                                      </TableCell>
+                                    </TableRow>
+                                  ) : section.times.map((time) => (
+                                    <TableRow key={`${section.key}-${time}`} hover>
+                                      <TableCell
+                                        sx={{
+                                          position: "sticky",
+                                          left: 0,
+                                          zIndex: 3,
+                                          bgcolor: "background.paper",
+                                          fontWeight: 800,
+                                          whiteSpace: "nowrap",
+                                          minWidth: 92,
+                                          width: 92,
+                                          py: 0.5,
+                                        }}
+                                      >
+                                        {time}
+                                      </TableCell>
+                                      {visibleDoctorPanels.map((panel) => {
+                                        const slot = panel.slots.find((candidate) => toFive(candidate.slotTime) === time) || null;
+                                        const slotAppointments = cellAppointments(panel.doctorUserId, time);
+                                        const summary = summarizeCellStatus(slot, slotAppointments);
+                                        const primaryAppointment = slotAppointments[0] || null;
+                                        const selectedCell = (selectedSlot?.doctorUserId === panel.doctorUserId && toFive(selectedSlot.slotTime) === time)
+                                          || (selectedAppointment?.doctorUserId === panel.doctorUserId && toFive(selectedAppointment.appointmentTime) === time);
+                                        const cellVisible = filters[summary.status as SlotFilterKey] !== false;
+                                        const moreCount = Math.max(0, slotAppointments.length - 1);
+                                        const capacityText = slot
+                                          ? `${slot.bookedCount}/${slot.maxPatientsPerSlot}`
+                                          : slotAppointments.length > 0
+                                            ? `${slotAppointments.length} booking${slotAppointments.length > 1 ? "s" : ""}`
+                                            : "—";
+                                        const tooltip = primaryAppointment
+                                          ? slot
+                                            ? appointmentTooltip(primaryAppointment, panel.doctorName, slot)
+                                            : (
+                                              <Box sx={{ p: 0.5, maxWidth: 280 }}>
+                                                <Typography sx={{ fontWeight: 800 }}>{appointmentTitle(primaryAppointment)}</Typography>
+                                                <Typography variant="body2">Phone: {primaryAppointment.patientMobile || "—"}</Typography>
+                                                <Typography variant="body2">Purpose: {primaryAppointment.type}</Typography>
+                                                <Typography variant="body2">Status: {friendlyStatusLabel(primaryAppointment.status)}</Typography>
+                                                <Typography variant="body2">Doctor: {panel.doctorName}</Typography>
+                                                <Typography variant="body2">Slot: {toFive(primaryAppointment.appointmentTime)}</Typography>
+                                                <Typography variant="body2">Reference: {primaryAppointment.tokenNumber ?? primaryAppointment.id}</Typography>
+                                              </Box>
+                                            )
+                                          : null;
+                                        const firstPatient = primaryAppointment ? appointmentTitle(primaryAppointment) : slot?.patientName || slot?.patientNumber || slot?.patientId || null;
+                                        const cellContent = !slot && slotAppointments.length === 0 ? (
+                                          <Box
+                                            sx={{
+                                              minHeight: 42,
+                                              display: "grid",
+                                              placeItems: "center",
+                                              borderRadius: 1,
+                                              border: "1px dashed",
+                                              borderColor: "divider",
+                                              color: "text.disabled",
+                                            }}
+                                          >
+                                            —
+                                          </Box>
+                                        ) : (
+                                          <Box
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => {
+                                              if (slotAppointments.length > 0 && primaryAppointment) {
+                                                setSelected({ kind: "appointment", appointment: primaryAppointment });
+                                                return;
+                                              }
+                                              if (slot) {
+                                                setSelected({ kind: "slot", slot });
+                                              }
+                                            }}
+                                            onDragOver={(event) => {
+                                              if (canDropToSlot(slot)) {
+                                                event.preventDefault();
+                                                event.dataTransfer.dropEffect = "move";
+                                              }
+                                            }}
+                                            onDrop={(event) => {
+                                              event.preventDefault();
+                                              if (slot) {
+                                                openMoveConfirm(slot);
+                                              }
+                                            }}
+                                            sx={{
+                                              minHeight: 42,
+                                              p: 0.5,
+                                              display: "flex",
+                                              flexDirection: "column",
+                                              gap: 0.25,
+                                              justifyContent: "space-between",
+                                              borderRadius: 1,
+                                              border: "1px solid",
+                                              borderColor: cellBorder(summary.status, Boolean(selectedCell)),
+                                              bgcolor: cellBackground(summary.status),
+                                              opacity: cellVisible ? 1 : 0.42,
+                                              cursor: slot || slotAppointments.length > 0 ? "pointer" : "default",
+                                              transition: "all 120ms ease",
+                                              minWidth: 0,
+                                              "&:hover": {
+                                                boxShadow: 2,
+                                                transform: "translateY(-1px)",
+                                              },
+                                            }}
+                                            onKeyDown={(event) => {
+                                              if (event.key === "Enter" || event.key === " ") {
+                                                event.preventDefault();
+                                                if (slotAppointments.length > 0 && primaryAppointment) {
+                                                  setSelected({ kind: "appointment", appointment: primaryAppointment });
+                                                } else if (slot) {
+                                                  setSelected({ kind: "slot", slot });
+                                                }
+                                              }
+                                            }}
+                                          >
+                                            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 0.5 }}>
+                                              <Chip
+                                                size="small"
+                                                label={summary.label}
+                                                color={slotCellColor(summary.status as DoctorAvailabilitySlotStatus)}
+                                                variant="outlined"
+                                                sx={{ height: 20, fontSize: "0.68rem", "& .MuiChip-label": { px: 0.75 } }}
+                                              />
+                                              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, lineHeight: 1 }}>
+                                                {capacityText}
+                                              </Typography>
+                                            </Box>
+                                            <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25, minHeight: 0 }}>
+                                              {slotAppointments.length > 0 && primaryAppointment ? (
+                                                <>
+                                                  <Chip
+                                                    size="small"
+                                                    label={firstPatient}
+                                                    color={appointmentColor(primaryAppointment.status)}
+                                                    variant="filled"
+                                                    draggable={isDragEligibleAppointment(primaryAppointment)}
+                                                    onDragStart={(event) => {
+                                                      event.dataTransfer.setData("text/plain", primaryAppointment.id);
+                                                      event.dataTransfer.effectAllowed = "move";
+                                                      startDragAppointment(primaryAppointment);
+                                                    }}
+                                                    onDragEnd={() => setDraggedAppointment(null)}
+                                                    sx={{
+                                                      height: 20,
+                                                      fontSize: "0.68rem",
+                                                      maxWidth: "100%",
+                                                      "& .MuiChip-label": {
+                                                        px: 0.75,
+                                                        overflow: "hidden",
+                                                        textOverflow: "ellipsis",
+                                                      },
+                                                    }}
+                                                  />
+                                                  {moreCount > 0 ? <Chip size="small" label={`+${moreCount}`} variant="outlined" sx={{ height: 18, fontSize: "0.64rem", "& .MuiChip-label": { px: 0.75 } }} /> : null}
+                                                </>
+                                              ) : slot ? (
+                                                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1 }}>
+                                                  {summary.status === "AVAILABLE" ? "Open" : friendlyStatusLabel(summary.status)}
+                                                </Typography>
+                                              ) : null}
+                                            </Box>
+                                          </Box>
+                                        );
+                                        const contentNode = tooltip ? (
+                                          <Tooltip title={tooltip} arrow placement="top">
+                                            <Box component="div">{cellContent}</Box>
+                                          </Tooltip>
+                                        ) : cellContent;
+
+                                        return (
+                                          <TableCell
+                                            key={`${section.key}-${panel.doctorUserId}-${time}`}
+                                            sx={{
+                                              minWidth: 188,
+                                              p: 0.25,
+                                              verticalAlign: "top",
+                                              borderBottom: "1px solid",
+                                              borderColor: "divider",
+                                            }}
+                                          >
+                                            {contentNode}
+                                          </TableCell>
+                                        );
+                                      })}
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </Box>
+                          </AccordionDetails>
+                        </Accordion>
+                      ))}
+                    </Stack>
                   </Stack>
+                </Box>
                 )}
               </Stack>
             </CardContent>
@@ -507,10 +1396,27 @@ export default function DayBoardPage() {
 
                 {selectedSlot ? (
                   <Stack spacing={1}>
-                    <Typography variant="body2">Doctor: {doctorOptions.find((d) => d.appUserId === effectiveDoctorId)?.displayName || effectiveDoctorId}</Typography>
+                    <Typography variant="body2">Doctor: {selectedSlot.doctorName || displayDoctorName(users, selectedSlot.doctorUserId)}</Typography>
                     <Typography variant="body2">Time: {toFive(selectedSlot.slotTime)} - {toFive(selectedSlot.slotEndTime)}</Typography>
                     <Typography variant="body2">Capacity: {selectedSlot.bookedCount}/{selectedSlot.maxPatientsPerSlot}</Typography>
-                    <Chip size="small" label={selectedSlot.status} color={slotColor(selectedSlot.status)} sx={{ width: "fit-content" }} />
+                    <Chip size="small" label={friendlyStatusLabel(selectedSlot.status)} color={slotColor(selectedSlot.status)} sx={{ width: "fit-content" }} />
+                    {selectedSlotAppointments.length > 0 ? (
+                      <Stack spacing={0.75}>
+                        <Typography variant="caption" color="text.secondary">Appointments in this slot</Typography>
+                        <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                          {selectedSlotAppointments.map((appointment) => (
+                            <Chip
+                              key={appointment.id}
+                              size="small"
+                              label={appointmentTitle(appointment)}
+                              color={appointmentColor(appointment.status)}
+                              variant="outlined"
+                              onClick={() => setSelected({ kind: "appointment", appointment })}
+                            />
+                          ))}
+                        </Stack>
+                      </Stack>
+                    ) : null}
                     <FormControl size="small" fullWidth>
                       <InputLabel id="db-type">Type</InputLabel>
                       <Select labelId="db-type" label="Type" value={appointmentType} onChange={(e) => setAppointmentType(e.target.value as AppointmentType)}>
@@ -531,8 +1437,11 @@ export default function DayBoardPage() {
                   <Stack spacing={1}>
                     <Typography variant="body2" sx={{ fontWeight: 700 }}>{selectedAppointment.patientName || selectedAppointment.patientNumber || selectedAppointment.patientId}</Typography>
                     <Typography variant="caption" color="text.secondary">{selectedAppointment.appointmentDate} {toFive(selectedAppointment.appointmentTime)}</Typography>
-                    <Chip size="small" label={selectedAppointment.status} color={appointmentColor(selectedAppointment.status)} sx={{ width: "fit-content" }} />
-                    <Typography variant="body2">Queue: {selectedAppointment.status === "WAITING" ? "Checked-in" : selectedAppointment.status}</Typography>
+                    <Typography variant="body2">Doctor: {selectedAppointment.doctorName || displayDoctorName(users, selectedAppointment.doctorUserId)}</Typography>
+                    <Typography variant="body2">Phone: {selectedAppointment.patientMobile || "—"}</Typography>
+                    <Typography variant="body2">Reference: {selectedAppointment.tokenNumber ?? selectedAppointment.id}</Typography>
+                    <Chip size="small" label={friendlyStatusLabel(selectedAppointment.status)} color={appointmentColor(selectedAppointment.status)} sx={{ width: "fit-content" }} />
+                    <Typography variant="body2">Queue: {selectedAppointment.status === "WAITING" ? "Checked in" : friendlyStatusLabel(selectedAppointment.status)}</Typography>
                     <Typography variant="body2">Consultation: {selectedAppointment.consultationId ? "Started" : "Not started"}</Typography>
                     <Stack direction="row" gap={1} flexWrap="wrap">
                       <Button size="small" variant="contained" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "WAITING")}>Check-in</Button>
@@ -546,7 +1455,9 @@ export default function DayBoardPage() {
                   </Stack>
                 ) : null}
 
-                {!slots.length ? (
+                {!effectiveDoctorId && !selectedSlot ? (
+                  <Alert severity="info">Select a slot in the grid to create bookings. Manual time booking requires selecting a specific doctor.</Alert>
+                ) : effectiveDoctorId && !slots.length ? (
                   <Stack spacing={1}>
                     <Alert severity="info">No configured schedule. Manual appointment time is enabled.</Alert>
                     <TextField size="small" type="time" label="Manual time" value={manualTime} onChange={(e) => setManualTime(e.target.value)} InputLabelProps={{ shrink: true }} />
@@ -560,9 +1471,11 @@ export default function DayBoardPage() {
           <Card variant="outlined" sx={{ mt: 2 }}>
             <CardContent>
               <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Waitlist</Typography>
-              {waitlist.length === 0 ? <Alert severity="info">No waitlist entries.</Alert> : (
+              {!effectiveDoctorId && !selectedSlot ? (
+                <Alert severity="info">Select a doctor or grid cell to review waitlist entries.</Alert>
+              ) : activeWaitlist.length === 0 ? <Alert severity="info">No waitlist entries.</Alert> : (
                 <Stack spacing={1}>
-                  {waitlist.map((entry) => (
+                  {activeWaitlist.map((entry) => (
                     <Box key={entry.id} sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1 }}>
                       <Typography variant="caption">{entry.patientName || entry.patientNumber || entry.patientId}</Typography>
                       <Button size="small" variant="outlined" disabled={!selectedSlot || !selectedSlot.selectable || !canBook} onClick={() => void bookWaitlistEntry(entry)}>Book</Button>
@@ -594,6 +1507,26 @@ export default function DayBoardPage() {
         <DialogActions>
           <Button onClick={() => setRescheduleOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={() => void saveReschedule()} disabled={!rescheduleDate || !rescheduleTime}>Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={moveConfirmOpen} onClose={() => { setMoveConfirmOpen(false); setMoveConfirmTarget(null); setDraggedAppointment(null); }} fullWidth maxWidth="sm">
+        <DialogTitle>Move appointment</DialogTitle>
+        <DialogContent>
+          {draggedAppointment && moveConfirmTarget ? (
+            <Stack spacing={1.25} sx={{ pt: 1 }}>
+              <Alert severity="info">
+                Move {appointmentTitle(draggedAppointment)} to {moveConfirmTarget.doctorName || displayDoctorName(users, moveConfirmTarget.doctorUserId)} at {toFive(moveConfirmTarget.slotTime)}?
+              </Alert>
+              <Typography variant="body2" color="text.secondary">
+                This will reschedule the appointment using the existing reschedule flow and refresh the schedule after save.
+              </Typography>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setMoveConfirmOpen(false); setMoveConfirmTarget(null); setDraggedAppointment(null); }}>Cancel</Button>
+          <Button variant="contained" onClick={() => void confirmMoveAppointment()} disabled={!draggedAppointment || !moveConfirmTarget}>Move</Button>
         </DialogActions>
       </Dialog>
     </Stack>

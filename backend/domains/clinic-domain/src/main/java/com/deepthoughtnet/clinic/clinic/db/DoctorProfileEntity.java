@@ -7,6 +7,7 @@ import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -46,6 +47,15 @@ public class DoctorProfileEntity {
     @Column(name = "consultation_room", length = 128)
     private String consultationRoom;
 
+    @Column(name = "consultation_fee", precision = 12, scale = 2)
+    private BigDecimal consultationFee;
+
+    @Column(name = "years_of_experience")
+    private Integer yearsOfExperience;
+
+    @Column(name = "age")
+    private Integer age;
+
     @Column(name = "active", nullable = false)
     private boolean active = true;
 
@@ -72,12 +82,25 @@ public class DoctorProfileEntity {
         return entity;
     }
 
-    public void update(String mobile, String specialization, String qualification, String registrationNumber, String consultationRoom, Boolean active) {
+    public void update(
+            String mobile,
+            String specialization,
+            String qualification,
+            String registrationNumber,
+            String consultationRoom,
+            BigDecimal consultationFee,
+            Integer yearsOfExperience,
+            Integer age,
+            Boolean active
+    ) {
         this.mobile = mobile;
         this.specialization = specialization;
         this.qualification = qualification;
         this.registrationNumber = registrationNumber;
         this.consultationRoom = consultationRoom;
+        this.consultationFee = consultationFee;
+        this.yearsOfExperience = yearsOfExperience;
+        this.age = age;
         if (active != null) {
             this.active = active;
         }
@@ -92,6 +115,9 @@ public class DoctorProfileEntity {
     public String getQualification() { return qualification; }
     public String getRegistrationNumber() { return registrationNumber; }
     public String getConsultationRoom() { return consultationRoom; }
+    public BigDecimal getConsultationFee() { return consultationFee; }
+    public Integer getYearsOfExperience() { return yearsOfExperience; }
+    public Integer getAge() { return age; }
     public boolean isActive() { return active; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }

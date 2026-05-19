@@ -3,9 +3,12 @@ package com.deepthoughtnet.clinic.api.inventory;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionRecord;
+import com.deepthoughtnet.clinic.inventory.service.model.InventoryLocationRecord;
+import com.deepthoughtnet.clinic.inventory.service.model.InventoryLocationUpsertCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.LowStockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockUpsertCommand;
+import com.deepthoughtnet.clinic.api.pharmacy.PharmacyOperationsService;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.List;
 import java.util.UUID;
@@ -27,16 +30,49 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/inventory")
 public class InventoryController {
     private final InventoryService inventoryService;
+    private final PharmacyOperationsService pharmacyOperationsService;
 
-    public InventoryController(InventoryService inventoryService) {
+    public InventoryController(InventoryService inventoryService, PharmacyOperationsService pharmacyOperationsService) {
         this.inventoryService = inventoryService;
+        this.pharmacyOperationsService = pharmacyOperationsService;
     }
 
     @GetMapping("/stocks")
     @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read') or @permissionChecker.hasPermission('billing.create')")
-    public List<StockRecord> listStocks() {
+    public List<StockRecord> listStocks(@RequestParam(name = "locationId", required = false) UUID locationId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        return inventoryService.listStocks(tenantId);
+        return inventoryService.listStocks(tenantId, locationId);
+    }
+
+    @GetMapping("/stocks/search")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read') or @permissionChecker.hasPermission('billing.create')")
+    public List<StockRecord> searchStocks(@RequestParam(name = "q", required = false) String query) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return pharmacyOperationsService.searchStocks(tenantId, query);
+    }
+
+    @GetMapping("/locations")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read')")
+    public List<InventoryLocationRecord> listLocations() {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return inventoryService.listLocations(tenantId);
+    }
+
+    @PostMapping("/locations")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public InventoryLocationRecord createLocation(@jakarta.validation.Valid @RequestBody InventoryLocationUpsertCommand request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return inventoryService.saveLocation(tenantId, null, request, actorAppUserId);
+    }
+
+    @PutMapping("/locations/{id}")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public InventoryLocationRecord updateLocation(@PathVariable UUID id, @jakarta.validation.Valid @RequestBody InventoryLocationUpsertCommand request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return inventoryService.saveLocation(tenantId, id, request, actorAppUserId);
     }
 
     @PostMapping("/stocks")

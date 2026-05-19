@@ -2,6 +2,9 @@ package com.deepthoughtnet.clinic.inventory.service;
 
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionRecord;
+import com.deepthoughtnet.clinic.inventory.service.model.InventoryLocationRecord;
+import com.deepthoughtnet.clinic.inventory.service.model.InventoryLocationUpsertCommand;
+import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransferCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.LowStockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineUpsertCommand;
@@ -20,14 +23,19 @@ public interface InventoryService {
     MedicineRecord activateMedicine(UUID tenantId, UUID id, UUID actorAppUserId);
 
     List<StockRecord> listStocks(UUID tenantId);
+    List<StockRecord> listStocks(UUID tenantId, UUID locationId);
     Optional<StockRecord> findStock(UUID tenantId, UUID id);
     StockRecord createStock(UUID tenantId, StockUpsertCommand command, UUID actorAppUserId);
     StockRecord updateStock(UUID tenantId, UUID id, StockUpsertCommand command, UUID actorAppUserId);
 
     List<InventoryTransactionRecord> listTransactions(UUID tenantId);
     InventoryTransactionRecord createTransaction(UUID tenantId, InventoryTransactionCommand command, UUID actorAppUserId);
+    InventoryTransactionRecord transferStock(UUID tenantId, InventoryTransferCommand command, UUID actorAppUserId);
 
     List<LowStockRecord> listLowStock(UUID tenantId);
     List<StockRecord> listExpiredStocks(UUID tenantId);
     List<StockRecord> listExpiringStocks(UUID tenantId, int days);
+
+    List<InventoryLocationRecord> listLocations(UUID tenantId);
+    InventoryLocationRecord saveLocation(UUID tenantId, UUID id, InventoryLocationUpsertCommand command, UUID actorAppUserId);
 }

@@ -19,6 +19,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertComm
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorCalendarReconcileResult;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityRecord;
@@ -53,6 +54,7 @@ import java.util.stream.Collectors;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -217,6 +219,15 @@ public class AppointmentService {
         requireDoctor(doctorUserId);
         validateAvailability(command);
         ensureDoctorInTenant(tenantId, doctorUserId);
+        if (doctorAvailabilityRepository.existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTime(
+                tenantId,
+                doctorUserId,
+                command.dayOfWeek(),
+                command.startTime(),
+                command.endTime()
+        )) {
+            throw new DoctorAvailabilityConflictException("Availability already exists for this doctor, day, and time range.");
+        }
 
         DoctorAvailabilityEntity entity = DoctorAvailabilityEntity.create(tenantId, doctorUserId);
         entity.update(
@@ -229,7 +240,15 @@ public class AppointmentService {
                 command.maxPatientsPerSlot(),
                 command.active()
         );
-        DoctorAvailabilityEntity saved = doctorAvailabilityRepository.save(entity);
+        DoctorAvailabilityEntity saved;
+        try {
+            saved = doctorAvailabilityRepository.save(entity);
+        } catch (DataIntegrityViolationException ex) {
+            if (isDuplicateAvailabilityConstraint(ex)) {
+                throw new DoctorAvailabilityConflictException("Availability already exists for this doctor, day, and time range.");
+            }
+            throw ex;
+        }
         auditEventPublisher.record(new AuditEventCommand(
                 tenantId,
                 AVAILABILITY_ENTITY,
@@ -1082,6 +1101,18 @@ public class AppointmentService {
         if (command.maxPatientsPerSlot() != null && command.maxPatientsPerSlot() <= 0) {
             throw new IllegalArgumentException("maxPatientsPerSlot must be greater than zero");
         }
+    }
+
+    private boolean isDuplicateAvailabilityConstraint(Throwable ex) {
+        Throwable current = ex;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.contains("uq_doctor_availability_slot")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private void validateUnavailability(DoctorUnavailabilityUpsertCommand command) {

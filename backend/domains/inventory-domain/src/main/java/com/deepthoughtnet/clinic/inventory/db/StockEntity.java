@@ -30,8 +30,23 @@ public class StockEntity {
     @Column(name = "medicine_id", nullable = false)
     private UUID medicineId;
 
+    @Column(name = "location_id")
+    private UUID locationId;
+
+    @Column(length = 128)
+    private String barcode;
+
+    @Column(name = "qr_code", length = 128)
+    private String qrCode;
+
+    @Column(name = "external_code", length = 128)
+    private String externalCode;
+
     @Column(name = "batch_number", length = 128)
     private String batchNumber;
+
+    @Column(name = "purchase_reference_number", length = 128)
+    private String purchaseReferenceNumber;
 
     @Column(name = "expiry_date")
     private LocalDate expiryDate;
@@ -77,11 +92,16 @@ public class StockEntity {
     }
 
     public static StockEntity create(UUID tenantId, UUID medicineId) {
+        return create(tenantId, medicineId, null);
+    }
+
+    public static StockEntity create(UUID tenantId, UUID medicineId, UUID locationId) {
         OffsetDateTime now = OffsetDateTime.now();
         StockEntity entity = new StockEntity();
         entity.id = UUID.randomUUID();
         entity.tenantId = tenantId;
         entity.medicineId = medicineId;
+        entity.locationId = locationId;
         entity.quantityOnHand = 0;
         entity.quantityReceived = 0;
         entity.active = true;
@@ -91,7 +111,12 @@ public class StockEntity {
     }
 
     public void update(
+            UUID locationId,
+            String barcode,
+            String qrCode,
+            String externalCode,
             String batchNumber,
+            String purchaseReferenceNumber,
             LocalDate expiryDate,
             LocalDate purchaseDate,
             String supplierName,
@@ -103,7 +128,12 @@ public class StockEntity {
             BigDecimal sellingPrice,
             boolean active
     ) {
+        this.locationId = locationId;
+        this.barcode = barcode;
+        this.qrCode = qrCode;
+        this.externalCode = externalCode;
         this.batchNumber = batchNumber;
+        this.purchaseReferenceNumber = purchaseReferenceNumber;
         this.expiryDate = expiryDate;
         this.purchaseDate = purchaseDate;
         this.supplierName = supplierName;
@@ -117,10 +147,35 @@ public class StockEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    public void update(
+            String barcode,
+            String qrCode,
+            String externalCode,
+            String batchNumber,
+            String purchaseReferenceNumber,
+            LocalDate expiryDate,
+            LocalDate purchaseDate,
+            String supplierName,
+            int quantityReceived,
+            int quantityOnHand,
+            Integer lowStockThreshold,
+            BigDecimal unitCost,
+            BigDecimal purchasePrice,
+            BigDecimal sellingPrice,
+            boolean active
+    ) {
+        update(this.locationId, barcode, qrCode, externalCode, batchNumber, purchaseReferenceNumber, expiryDate, purchaseDate, supplierName, quantityReceived, quantityOnHand, lowStockThreshold, unitCost, purchasePrice, sellingPrice, active);
+    }
+
     public UUID getId() { return id; }
     public UUID getTenantId() { return tenantId; }
     public UUID getMedicineId() { return medicineId; }
+    public UUID getLocationId() { return locationId; }
+    public String getBarcode() { return barcode; }
+    public String getQrCode() { return qrCode; }
+    public String getExternalCode() { return externalCode; }
     public String getBatchNumber() { return batchNumber; }
+    public String getPurchaseReferenceNumber() { return purchaseReferenceNumber; }
     public LocalDate getExpiryDate() { return expiryDate; }
     public LocalDate getPurchaseDate() { return purchaseDate; }
     public String getSupplierName() { return supplierName; }

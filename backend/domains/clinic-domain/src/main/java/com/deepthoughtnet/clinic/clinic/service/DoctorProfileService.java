@@ -40,6 +40,9 @@ public class DoctorProfileService {
                 normalizeNullable(command.qualification()),
                 normalizeNullable(command.registrationNumber()),
                 normalizeNullable(command.consultationRoom()),
+                command.consultationFee(),
+                command.yearsOfExperience(),
+                command.age(),
                 command.active()
         );
         return toRecord(doctorProfileRepository.save(entity));
@@ -55,6 +58,9 @@ public class DoctorProfileService {
                 entity.getQualification(),
                 entity.getRegistrationNumber(),
                 entity.getConsultationRoom(),
+                entity.getConsultationFee(),
+                entity.getYearsOfExperience(),
+                entity.getAge(),
                 entity.isActive(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()

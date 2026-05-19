@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -70,6 +71,17 @@ class GlobalRestExceptionHandlerTest {
                 .andExpect(jsonPath("$.correlationId").value("corr-789"));
     }
 
+    @Test
+    void formatsDoctorAvailabilityConflictWithStandardEnvelope() throws Exception {
+        mockMvc.perform(get("/availability-conflict")
+                        .header("X-Correlation-Id", "corr-999"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.code").value("conflict"))
+                .andExpect(jsonPath("$.message").value("Availability already exists for this doctor, day, and time range."))
+                .andExpect(jsonPath("$.correlationId").value("corr-999"));
+    }
+
     @RestController
     static class TestController {
         @PostMapping("/validation")
@@ -84,6 +96,11 @@ class GlobalRestExceptionHandlerTest {
         @GetMapping("/forbidden")
         void forbidden() {
             throw new AccessDeniedException("Denied");
+        }
+
+        @GetMapping("/availability-conflict")
+        void availabilityConflict() {
+            throw new DoctorAvailabilityConflictException("Availability already exists for this doctor, day, and time range.");
         }
     }
 

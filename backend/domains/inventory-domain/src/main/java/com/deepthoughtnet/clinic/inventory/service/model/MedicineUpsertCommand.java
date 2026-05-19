@@ -11,6 +11,12 @@ public record MedicineUpsertCommand(
         @NotBlank
         @Size(max = 64)
         String medicineType,
+        @Size(max = 128)
+        String barcode,
+        @Size(max = 128)
+        String qrCode,
+        @Size(max = 128)
+        String externalCode,
         @Size(max = 256)
         String genericName,
         @Size(max = 256)

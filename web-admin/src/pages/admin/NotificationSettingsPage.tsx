@@ -18,6 +18,7 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
+import { hasTenantModule } from "../../auth/moduleEntitlements";
 import {
   getAdminNotificationSettings,
   updateAdminNotificationSettings,
@@ -33,6 +34,7 @@ export default function NotificationSettingsPage() {
   const navigate = useNavigate();
   const canMutate = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("PLATFORM_ADMIN") || auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT");
   const canView = canMutate || auth.rolesUpper.includes("AUDITOR") || auth.rolesUpper.includes("RECEPTIONIST");
+  const carePilotEnabled = hasTenantModule(auth, "carePilot");
 
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -120,7 +122,7 @@ export default function NotificationSettingsPage() {
           <Typography variant="body2" color="text.secondary">Tenant-level communication defaults for Clinic and CarePilot reminders/campaigns.</Typography>
         </Stack>
         <Stack direction="row" gap={1}>
-          <Button variant="outlined" onClick={() => navigate("/carepilot/messaging")}>Open Messaging</Button>
+          {carePilotEnabled ? <Button variant="outlined" onClick={() => navigate("/carepilot/messaging")}>Open Messaging</Button> : null}
           {canMutate ? <Button variant="contained" onClick={() => void save()} disabled={saving}>{saving ? "Saving..." : "Save"}</Button> : null}
         </Stack>
       </Stack>

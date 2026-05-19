@@ -11,6 +11,9 @@ type FormState = {
   qualification: string;
   registrationNumber: string;
   consultationRoom: string;
+  consultationFee: string;
+  yearsOfExperience: string;
+  age: string;
   active: boolean;
 };
 
@@ -21,6 +24,9 @@ function toForm(profile: DoctorProfile): FormState {
     qualification: profile.qualification || "",
     registrationNumber: profile.registrationNumber || "",
     consultationRoom: profile.consultationRoom || "",
+    consultationFee: profile.consultationFee == null ? "" : String(profile.consultationFee),
+    yearsOfExperience: profile.yearsOfExperience == null ? "" : String(profile.yearsOfExperience),
+    age: profile.age == null ? "" : String(profile.age),
     active: profile.active,
   };
 }
@@ -80,6 +86,21 @@ export default function DoctorDetailPage() {
 
   const save = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
+    const consultationFee = form.consultationFee.trim() === "" ? null : Number(form.consultationFee);
+    const yearsOfExperience = form.yearsOfExperience.trim() === "" ? null : Number(form.yearsOfExperience);
+    const age = form.age.trim() === "" ? null : Number(form.age);
+    if (consultationFee != null && (!Number.isFinite(consultationFee) || consultationFee < 0)) {
+      setError("Consultation fee must be zero or greater.");
+      return;
+    }
+    if (yearsOfExperience != null && (!Number.isInteger(yearsOfExperience) || yearsOfExperience < 0)) {
+      setError("Years of experience must be zero or greater.");
+      return;
+    }
+    if (age != null && (!Number.isInteger(age) || age < 0 || age > 120)) {
+      setError("Age must be between 0 and 120.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -89,6 +110,9 @@ export default function DoctorDetailPage() {
         qualification: form.qualification.trim() || null,
         registrationNumber: form.registrationNumber.trim() || null,
         consultationRoom: form.consultationRoom.trim() || null,
+        consultationFee,
+        yearsOfExperience,
+        age,
         active: form.active,
       });
       setProfile(saved);
@@ -127,6 +151,9 @@ export default function DoctorDetailPage() {
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Qualification" value={form.qualification} disabled={formReadOnly || receptionistReadOnlyFields} onChange={(e) => setForm((c) => c ? { ...c, qualification: e.target.value } : c)} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Registration Number" value={form.registrationNumber} disabled={formReadOnly || receptionistReadOnlyFields} onChange={(e) => setForm((c) => c ? { ...c, registrationNumber: e.target.value } : c)} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Consultation Room/Location" value={form.consultationRoom} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, consultationRoom: e.target.value } : c)} /></Grid>
+            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Consultation Fee" value={form.consultationFee} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, consultationFee: e.target.value } : c)} inputProps={{ min: 0, step: "0.01" }} /></Grid>
+            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Years of Experience" value={form.yearsOfExperience} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, yearsOfExperience: e.target.value } : c)} inputProps={{ min: 0, step: 1 }} /></Grid>
+            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Age" value={form.age} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, age: e.target.value } : c)} inputProps={{ min: 0, max: 120, step: 1 }} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}>
               <Stack direction="row" spacing={1} alignItems="center">
                 <TextField fullWidth label="Availability/Calendar" value="Open in Appointments" disabled />

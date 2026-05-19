@@ -11,5 +11,7 @@ public enum InventoryTransactionType {
     OPENING,
     PURCHASE,
     SALE,
-    ADJUSTMENT
+    ADJUSTMENT,
+    TRANSFER_IN,
+    TRANSFER_OUT
 }

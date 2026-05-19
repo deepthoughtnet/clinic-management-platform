@@ -8,6 +8,8 @@ public record InventoryTransactionCommand(
         @NotNull
         UUID medicineId,
         UUID stockBatchId,
+        UUID locationId,
+        UUID targetLocationId,
         @NotNull
         InventoryTransactionType transactionType,
         @Positive

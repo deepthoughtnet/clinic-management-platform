@@ -33,6 +33,7 @@ import InventoryPage from "../pages/inventory/InventoryPage";
 import MedicineMasterPage from "../pages/pharmacy/MedicineMasterPage";
 import StockMovementsPage from "../pages/pharmacy/StockMovementsPage";
 import DispensingPage from "../pages/pharmacy/DispensingPage";
+import PharmacyOperationsPage from "../pages/pharmacy/PharmacyOperationsPage";
 import ReportsPage from "../pages/reports/ReportsPage";
 import VaccinationsPage from "../pages/vaccinations/VaccinationsPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
@@ -48,6 +49,7 @@ import RemindersPage from "../products/carepilot/reminders/RemindersPage";
 import LeadsPage from "../products/carepilot/leads/LeadsPage";
 import WebinarsPage from "../products/carepilot/webinars/WebinarsPage";
 import AiCallsPage from "../products/carepilot/ai-calls/AiCallsPage";
+import { hasTenantModule } from "../auth/moduleEntitlements";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const auth = React.useContext(AuthContext);
@@ -134,6 +136,14 @@ function LoginPage() {
   );
 }
 
+function ModuleGate({ moduleKey, children }: { moduleKey: "carePilot" | "aiCopilot"; children: React.ReactNode }) {
+  const auth = useAuth();
+  if (!hasTenantModule(auth, moduleKey)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return <>{children}</>;
+}
+
 function AuthedApp() {
   const auth = useAuth();
 
@@ -158,6 +168,7 @@ function AuthedApp() {
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/vaccinations" element={<VaccinationsPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/pharmacy/operations" element={<PharmacyOperationsPage />} />
         <Route path="/pharmacy/medicines" element={<MedicineMasterPage />} />
         <Route path="/pharmacy/stock-movements" element={<StockMovementsPage />} />
         <Route path="/pharmacy/dispensing" element={<DispensingPage />} />
@@ -165,15 +176,15 @@ function AuthedApp() {
         <Route path="/platform/tenants" element={<TenantsPage />} />
         <Route path="/platform/tenants/:tenantId" element={<TenantDetailPage />} />
         <Route path="/platform/plans" element={<PlansModulesPage />} />
-        <Route path="/carepilot/campaigns" element={<CampaignsPage />} />
-        <Route path="/carepilot/analytics" element={<AnalyticsPage />} />
-        <Route path="/carepilot/ops" element={<OpsConsolePage />} />
-        <Route path="/carepilot/messaging" element={<MessagingPage />} />
-        <Route path="/carepilot/engagement" element={<PatientEngagementPage />} />
-        <Route path="/carepilot/reminders" element={<RemindersPage />} />
-        <Route path="/carepilot/leads" element={<LeadsPage />} />
-        <Route path="/carepilot/webinars" element={<WebinarsPage />} />
-        <Route path="/carepilot/ai-calls" element={<AiCallsPage />} />
+        <Route path="/carepilot/campaigns" element={<ModuleGate moduleKey="carePilot"><CampaignsPage /></ModuleGate>} />
+        <Route path="/carepilot/analytics" element={<ModuleGate moduleKey="carePilot"><AnalyticsPage /></ModuleGate>} />
+        <Route path="/carepilot/ops" element={<ModuleGate moduleKey="carePilot"><OpsConsolePage /></ModuleGate>} />
+        <Route path="/carepilot/messaging" element={<ModuleGate moduleKey="carePilot"><MessagingPage /></ModuleGate>} />
+        <Route path="/carepilot/engagement" element={<ModuleGate moduleKey="carePilot"><PatientEngagementPage /></ModuleGate>} />
+        <Route path="/carepilot/reminders" element={<ModuleGate moduleKey="carePilot"><RemindersPage /></ModuleGate>} />
+        <Route path="/carepilot/leads" element={<ModuleGate moduleKey="carePilot"><LeadsPage /></ModuleGate>} />
+        <Route path="/carepilot/webinars" element={<ModuleGate moduleKey="carePilot"><WebinarsPage /></ModuleGate>} />
+        <Route path="/carepilot/ai-calls" element={<ModuleGate moduleKey="carePilot"><AiCallsPage /></ModuleGate>} />
         <Route
           path="/platform/users"
           element={<PlaceholderPage title="Users / Admins" description="Platform user administration can be enabled when backend APIs are exposed." />}
@@ -184,9 +195,9 @@ function AuthedApp() {
         <Route path="/admin/templates" element={<TemplatesPage />} />
         <Route path="/admin/notification-settings" element={<NotificationSettingsPage />} />
         <Route path="/admin/integrations" element={<IntegrationsPage />} />
-        <Route path="/admin/ai-ops" element={<AiOpsPage />} />
+        <Route path="/admin/ai-ops" element={<ModuleGate moduleKey="aiCopilot"><AiOpsPage /></ModuleGate>} />
         <Route path="/admin/platform-ops" element={<PlatformOpsPage />} />
-        <Route path="/admin/realtime-ai" element={<RealtimeAiPage />} />
+        <Route path="/admin/realtime-ai" element={<ModuleGate moduleKey="aiCopilot"><RealtimeAiPage /></ModuleGate>} />
         <Route path="/doctors/availability" element={<DoctorAvailabilityPage />} />
         <Route path="/doctors/:id" element={<DoctorDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

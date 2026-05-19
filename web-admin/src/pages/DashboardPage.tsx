@@ -65,6 +65,35 @@ function dateRangeForPreset(preset: DatePreset) {
   return { startDate: isoDate(start), endDate: isoDate(end) };
 }
 
+function friendlyStatusLabel(value: string | null | undefined) {
+  if (!value) return "-";
+  switch (value.toUpperCase()) {
+    case "PARTIALLY_BOOKED":
+      return "Partially booked";
+    case "IN_CONSULTATION":
+      return "In consultation";
+    case "NO_SHOW":
+      return "No-show";
+    case "AVAILABLE":
+      return "Available";
+    case "BOOKED":
+      return "Booked";
+    case "CHECKED_IN":
+      return "Checked in";
+    case "CANCELLED":
+      return "Cancelled";
+    case "COMPLETED":
+      return "Completed";
+    default:
+      return value.replace(/_/g, " ").toLowerCase().replace(/(^|\s)\S/g, (match) => match.toUpperCase());
+  }
+}
+
+function displayNameForUser(user: ClinicUser | undefined, fallback: string) {
+  if (!user) return fallback;
+  return user.displayName || user.email || fallback;
+}
+
 function KpiCard({ label, value, tone }: { label: string; value: string | number; tone: "primary" | "success" | "warning" | "error" | "info" }) {
   const bg = {
     primary: "linear-gradient(180deg, rgba(25,118,210,0.12), rgba(25,118,210,0.03))",
@@ -142,10 +171,6 @@ export default function DashboardPage() {
         const rows = await getClinicUsers(auth.accessToken, auth.tenantId);
         if (cancelled) return;
         setUsers(rows);
-        if (!isDoctor && !doctorUserId) {
-          const firstDoctor = rows.find((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
-          if (firstDoctor) setDoctorUserId(firstDoctor.appUserId);
-        }
       } catch {
         if (!cancelled) setUsers([]);
       }
@@ -154,7 +179,17 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken, auth.tenantId, doctorUserId, isDoctor]);
+  }, [auth.accessToken, auth.tenantId, isDoctor]);
+
+  React.useEffect(() => {
+    if (isDoctor && auth.appUserId) {
+      setDoctorUserId(auth.appUserId);
+      return;
+    }
+    if (!isDoctor && doctorUserId === auth.appUserId) {
+      setDoctorUserId("");
+    }
+  }, [auth.appUserId, doctorUserId, isDoctor]);
 
   const applyPreset = (next: DatePreset) => {
     setPreset(next);
@@ -209,12 +244,22 @@ export default function DashboardPage() {
   if (!auth.tenantId) return <Alert severity="warning">No tenant selected for this session.</Alert>;
 
   const doctorOptions = users.filter((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
+  const selectedDoctor = doctorOptions.find((doctor) => doctor.appUserId === doctorUserId) || null;
+  const selectedDoctorLabel = doctorUserId ? displayNameForUser(selectedDoctor || undefined, doctorUserId) : "All Doctors";
   const appt = dashboard?.appointmentSummary;
   const queue = dashboard?.queueSummary;
   const consult = dashboard?.consultationSummary;
   const billing = dashboard?.billingSummary;
   const followUp = dashboard?.followUpSummary;
   const rx = dashboard?.prescriptionSummary;
+  const waitByDoctor = React.useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of dashboard?.currentWaitingList || []) {
+      const key = item.doctorUserId || "__unassigned__";
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+    return map;
+  }, [dashboard?.currentWaitingList]);
   const showOperational = Boolean(appt || queue || consult || rx || followUp);
   const showBilling = Boolean(billing);
 
@@ -257,7 +302,9 @@ export default function DashboardPage() {
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 900 }}>{dashboardTitle}</Typography>
-          <Typography variant="body2" color="text.secondary">Operational and analytics summary from {startDate} to {endDate}.</Typography>
+          <Typography variant="body2" color="text.secondary">
+            Operational and analytics summary from {startDate} to {endDate} • {selectedDoctorLabel}
+          </Typography>
         </Box>
         <Chip label={auth.tenantName || "Clinic"} variant="outlined" />
       </Box>
@@ -266,7 +313,7 @@ export default function DashboardPage() {
 
       <Card variant="outlined">
         <CardContent>
-          <Stack direction={{ xs: "column", lg: "row" }} spacing={1.25} alignItems={{ lg: "center" }}>
+          <Stack direction={{ xs: "column", lg: "row" }} spacing={1.25} alignItems={{ lg: "center" }} useFlexGap flexWrap="wrap">
             <FormControl size="small" sx={{ minWidth: 180 }}>
               <InputLabel id="preset-label">Preset</InputLabel>
               <Select labelId="preset-label" label="Preset" value={preset} onChange={(e) => applyPreset(e.target.value as DatePreset)}>
@@ -284,7 +331,7 @@ export default function DashboardPage() {
               <FormControl size="small" sx={{ minWidth: 220 }}>
                 <InputLabel id="dashboard-doctor">Doctor</InputLabel>
                 <Select labelId="dashboard-doctor" label="Doctor" value={doctorUserId} onChange={(e) => setDoctorUserId(String(e.target.value))}>
-                  <MenuItem value="">All doctors</MenuItem>
+                  <MenuItem value="">All Doctors</MenuItem>
                   {doctorOptions.map((doctor) => (
                     <MenuItem key={doctor.appUserId} value={doctor.appUserId}>{doctor.displayName || doctor.email || doctor.appUserId}</MenuItem>
                   ))}
@@ -292,6 +339,9 @@ export default function DashboardPage() {
               </FormControl>
             ) : null}
             <Button variant="contained" onClick={() => void loadDashboard()}>Refresh</Button>
+            <Button variant="outlined" onClick={() => navigate("/appointments")}>New appointment</Button>
+            <Button variant="outlined" onClick={() => navigate("/appointments/day-board")}>Open day board</Button>
+            <Button variant="outlined" onClick={() => navigate("/queue")}>Open queue</Button>
           </Stack>
         </CardContent>
       </Card>
@@ -304,7 +354,7 @@ export default function DashboardPage() {
         <Stack spacing={2}>
           <Grid container spacing={2}>
             {(showBilling && !showOperational ? financeCards : cards).map((card) => (
-              <Grid key={card.label} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
+              <Grid key={card.label} size={{ xs: 12, sm: 6, md: 3 }}>
                 <KpiCard {...card} />
               </Grid>
             ))}
@@ -315,21 +365,85 @@ export default function DashboardPage() {
               <Grid size={{ xs: 12, lg: 7 }}>
                 <Card variant="outlined">
                   <CardContent>
-                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Doctor-wise Summary</Typography>
+                    <Stack spacing={1.25}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
+                        <Typography variant="h6" sx={{ fontWeight: 800 }}>Today at a glance</Typography>
+                        <Stack direction="row" spacing={1} flexWrap="wrap">
+                          <Chip size="small" label={`Filter: ${selectedDoctorLabel}`} color={doctorUserId ? "primary" : "default"} />
+                          <Chip size="small" label={`Waiting ${queue?.waiting || 0}`} color="warning" />
+                          <Chip size="small" label={`Checked in ${appt?.checkedIn || 0}`} color="info" />
+                          <Chip size="small" label={`In consultation ${appt?.inConsultation || 0}`} color="success" />
+                        </Stack>
+                      </Box>
+                      <Grid container spacing={1.5}>
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                          <Card variant="outlined" sx={{ bgcolor: "background.paper" }}>
+                            <CardContent sx={{ py: 1.5 }}>
+                              <Typography variant="overline" color="text.secondary">Appointments today</Typography>
+                              <Typography variant="h5" sx={{ fontWeight: 900 }}>{appt?.totalToday || 0}</Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                Scheduled {appt?.scheduled || 0} • Completed {appt?.completed || 0} • No-show {appt?.noShow || 0} • Cancelled {appt?.cancelled || 0}
+                              </Typography>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                          <Card variant="outlined" sx={{ bgcolor: "background.paper" }}>
+                            <CardContent sx={{ py: 1.5 }}>
+                              <Typography variant="overline" color="text.secondary">Queue state</Typography>
+                              <Typography variant="h5" sx={{ fontWeight: 900 }}>{queue?.waiting || 0}</Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                In consultation {queue?.inConsultation || 0} • Completed {queue?.completed || 0} • No-show {queue?.noShow || 0}
+                              </Typography>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                      </Grid>
+                    </Stack>
+                  </CardContent>
+                </Card>
+
+                <Card variant="outlined" sx={{ mt: 2 }}>
+                  <CardContent>
+                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Current waiting patients</Typography>
+                    {dashboard.currentWaitingList.length === 0 ? <Alert severity="info">No waiting patients for the selected filters.</Alert> : (
+                      <Stack spacing={1}>
+                        {dashboard.currentWaitingList.slice(0, 8).map((item) => (
+                          <Box key={item.appointmentId} sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap", border: "1px solid", borderColor: "divider", borderRadius: 1.25, p: 1.1 }}>
+                            <Box>
+                              <Typography variant="body2" sx={{ fontWeight: 700 }}>{item.patientName || item.patientNumber || item.patientId}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {item.doctorName || item.doctorUserId || "Unassigned"} • Token {item.tokenNumber ?? "-"} • {formatTime(item.appointmentTime)}
+                              </Typography>
+                            </Box>
+                            <Stack direction="row" spacing={0.75} flexWrap="wrap" alignItems="center">
+                              <Chip size="small" label={friendlyStatusLabel(item.status)} color={item.status === "WAITING" ? "warning" : "info"} />
+                              <Button size="small" variant="outlined" onClick={() => navigate(`/patients/${item.patientId}`)}>Open patient</Button>
+                            </Stack>
+                          </Box>
+                        ))}
+                      </Stack>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card variant="outlined">
+                  <CardContent>
+                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Doctor-wise summary</Typography>
                     {dashboard.doctorSummaries.length === 0 ? <Alert severity="info">No doctor metrics for selected range.</Alert> : (
                       <Box sx={{ overflowX: "auto" }}>
-                        <Table size="small" sx={{ minWidth: 880 }}>
+                        <Table size="small" sx={{ minWidth: 980 }}>
                           <TableHead>
                             <TableRow>
                               <TableCell>Doctor</TableCell>
                               <TableCell>Appointments</TableCell>
                               <TableCell>Checked-in</TableCell>
+                              <TableCell>Waiting</TableCell>
                               <TableCell>Completed</TableCell>
-                              <TableCell>Prescriptions</TableCell>
-                              <TableCell>Avg Load</TableCell>
+                              <TableCell>Next slot</TableCell>
                               <TableCell>No-show</TableCell>
                               <TableCell>Cancelled</TableCell>
-                              <TableCell>Next</TableCell>
+                              <TableCell>Rx</TableCell>
                               {canBilling && showBilling ? <TableCell>Revenue</TableCell> : null}
                             </TableRow>
                           </TableHead>
@@ -337,14 +451,14 @@ export default function DashboardPage() {
                             {dashboard.doctorSummaries.map((row) => (
                               <TableRow key={row.doctorUserId} hover>
                                 <TableCell>{row.doctorName || row.doctorUserId}</TableCell>
-                                <TableCell>{row.appointmentsToday}</TableCell>
-                                <TableCell>{row.checkedIn}</TableCell>
-                                <TableCell>{row.completed}</TableCell>
-                                <TableCell>{row.prescriptionsGenerated}</TableCell>
-                                <TableCell>{row.avgConsultationLoad}</TableCell>
-                                <TableCell>{row.noShow}</TableCell>
-                                <TableCell>{row.cancelled}</TableCell>
+                                <TableCell><Chip size="small" label={row.appointmentsToday} variant="outlined" /></TableCell>
+                                <TableCell><Chip size="small" label={row.checkedIn} color="info" variant="outlined" /></TableCell>
+                                <TableCell><Chip size="small" label={waitByDoctor.get(row.doctorUserId) || 0} color="warning" variant="outlined" /></TableCell>
+                                <TableCell><Chip size="small" label={row.completed} color="success" variant="outlined" /></TableCell>
                                 <TableCell>{formatTime(row.nextAppointmentTime)}</TableCell>
+                                <TableCell><Chip size="small" label={row.noShow} variant="outlined" /></TableCell>
+                                <TableCell><Chip size="small" label={row.cancelled} variant="outlined" /></TableCell>
+                                <TableCell><Chip size="small" label={row.prescriptionsGenerated} color="primary" variant="outlined" /></TableCell>
                                 {canBilling && showBilling ? <TableCell>{formatMoney(row.revenue)}</TableCell> : null}
                               </TableRow>
                             ))}
@@ -357,16 +471,14 @@ export default function DashboardPage() {
 
                 <Card variant="outlined" sx={{ mt: 2 }}>
                   <CardContent>
-                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Queue Snapshot</Typography>
-                    {dashboard.currentWaitingList.length === 0 ? <Alert severity="info">No active queue items.</Alert> : (
+                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Recent activity</Typography>
+                    {dashboard.recentActivity.length === 0 ? <Alert severity="info">No recent activity.</Alert> : (
                       <Stack spacing={1}>
-                        {dashboard.currentWaitingList.map((item) => (
-                          <Box key={item.appointmentId} sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap", border: "1px solid", borderColor: "divider", borderRadius: 1.5, p: 1.25 }}>
-                            <Box>
-                              <Typography variant="body2" sx={{ fontWeight: 700 }}>{item.patientName || item.patientNumber || item.patientId}</Typography>
-                              <Typography variant="caption" color="text.secondary">{item.doctorName || item.doctorUserId} • Token {item.tokenNumber ?? "-"} • {formatTime(item.appointmentTime)}</Typography>
-                            </Box>
-                            <Chip size="small" label={item.status} color={item.status === "WAITING" ? "warning" : "info"} />
+                        {dashboard.recentActivity.slice(0, 14).map((item, idx) => (
+                          <Box key={`${item.timestamp}-${idx}`} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.25, p: 1 }}>
+                            <Typography variant="caption" color="text.secondary">{item.timestamp ? new Date(item.timestamp).toLocaleString() : "-"} • {item.type}</Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 700 }}>{item.title}</Typography>
+                            <Typography variant="caption" color="text.secondary">{item.description}</Typography>
                           </Box>
                         ))}
                       </Stack>
@@ -420,22 +532,6 @@ export default function DashboardPage() {
                 </Card>
               ) : null}
 
-              <Card variant="outlined" sx={{ mt: 2, position: { lg: "sticky" }, top: { lg: 16 } }}>
-                <CardContent>
-                  <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Recent Activity</Typography>
-                  {dashboard.recentActivity.length === 0 ? <Alert severity="info">No recent activity.</Alert> : (
-                    <Stack spacing={1}>
-                      {dashboard.recentActivity.slice(0, 14).map((item, idx) => (
-                        <Box key={`${item.timestamp}-${idx}`} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.25, p: 1 }}>
-                          <Typography variant="caption" color="text.secondary">{item.timestamp ? new Date(item.timestamp).toLocaleString() : "-"} • {item.type}</Typography>
-                          <Typography variant="body2" sx={{ fontWeight: 700 }}>{item.title}</Typography>
-                          <Typography variant="caption" color="text.secondary">{item.description}</Typography>
-                        </Box>
-                      ))}
-                    </Stack>
-                  )}
-                </CardContent>
-              </Card>
             </Grid>
           </Grid>
           {!showOperational && !showBilling ? <Alert severity="info">No report sections are available for your current access level.</Alert> : null}

@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/platform")
-@PreAuthorize("hasRole('PLATFORM_ADMIN')")
+@PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN')")
 public class PlatformTenantController {
 
     private final PlatformTenantService platformTenantService;

@@ -5,17 +5,22 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.deepthoughtnet.clinic.appointment.db.AppointmentRepository;
 import com.deepthoughtnet.clinic.appointment.db.AppointmentWaitlistRepository;
 import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityEntity;
 import com.deepthoughtnet.clinic.appointment.db.DoctorAvailabilityRepository;
 import com.deepthoughtnet.clinic.appointment.db.DoctorUnavailabilityRepository;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityUpsertCommand;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.DayOfWeek;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.ArrayList;
@@ -27,6 +32,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import static org.mockito.Mockito.lenient;
 import static org.assertj.core.api.Assertions.assertThat;
+import org.springframework.dao.DataIntegrityViolationException;
 
 @ExtendWith(MockitoExtension.class)
 class AppointmentServiceDoctorCalendarTest {
@@ -197,5 +203,48 @@ class AppointmentServiceDoctorCalendarTest {
         assertThat(saved).hasSize(1);
         assertThat(saved.get(0).getTenantId()).isEqualTo(tenant2);
         assertThat(saved.get(0).getDoctorUserId()).isEqualTo(doctor2);
+    }
+
+    @Test
+    void createAvailabilityRejectsDuplicateBeforeInsert() {
+        when(doctorAvailabilityRepository.existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTime(
+                TENANT_ID,
+                DOCTOR_ID,
+                DayOfWeek.MONDAY,
+                LocalTime.of(9, 0),
+                LocalTime.of(10, 0)
+        )).thenReturn(true);
+
+        assertThatThrownBy(() -> service.createAvailability(
+                TENANT_ID,
+                DOCTOR_ID,
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(10, 0), null, null, 15, 1, true),
+                ACTOR_ID
+        )).isInstanceOf(DoctorAvailabilityConflictException.class)
+                .hasMessageContaining("Availability already exists for this doctor, day, and time range.");
+
+        verify(doctorAvailabilityRepository, never()).save(any());
+    }
+
+    @Test
+    void createAvailabilityMapsRaceConditionDuplicateToConflict() {
+        when(doctorAvailabilityRepository.existsByTenantIdAndDoctorUserIdAndDayOfWeekAndStartTimeAndEndTime(
+                TENANT_ID,
+                DOCTOR_ID,
+                DayOfWeek.MONDAY,
+                LocalTime.of(9, 0),
+                LocalTime.of(10, 0)
+        )).thenReturn(false);
+        when(doctorAvailabilityRepository.save(any(DoctorAvailabilityEntity.class))).thenThrow(
+                new DataIntegrityViolationException("duplicate key value violates unique constraint \"uq_doctor_availability_slot\"")
+        );
+
+        assertThatThrownBy(() -> service.createAvailability(
+                TENANT_ID,
+                DOCTOR_ID,
+                new DoctorAvailabilityUpsertCommand(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(10, 0), null, null, 15, 1, true),
+                ACTOR_ID
+        )).isInstanceOf(DoctorAvailabilityConflictException.class)
+                .hasMessageContaining("Availability already exists for this doctor, day, and time range.");
     }
 }

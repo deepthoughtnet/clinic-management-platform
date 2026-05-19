@@ -57,6 +57,26 @@ function priorityColor(priority: AppointmentPriority | null | undefined) {
   }
 }
 
+function friendlyStatusLabel(value: string | null | undefined) {
+  if (!value) return "-";
+  switch (value.toUpperCase()) {
+    case "BOOKED":
+      return "Booked";
+    case "WAITING":
+      return "Waiting";
+    case "IN_CONSULTATION":
+      return "In consultation";
+    case "COMPLETED":
+      return "Completed";
+    case "CANCELLED":
+      return "Cancelled";
+    case "NO_SHOW":
+      return "No-show";
+    default:
+      return value.replace(/_/g, " ").toLowerCase().replace(/(^|\s)\S/g, (match) => match.toUpperCase());
+  }
+}
+
 function isValidTenantId(tenantId: string | null | undefined) {
   if (!tenantId) {
     return false;
@@ -387,7 +407,7 @@ export default function QueuePage() {
                             <Chip size="small" label={appointment.priority || "NORMAL"} color={priorityColor(appointment.priority)} variant="outlined" />
                           )}
                         </TableCell>
-                        <TableCell><Chip size="small" label={appointment.status} color={statusColor(appointment.status)} /></TableCell>
+                        <TableCell><Chip size="small" label={friendlyStatusLabel(appointment.status)} color={statusColor(appointment.status)} /></TableCell>
                         <TableCell>{appointment.type}</TableCell>
                         <TableCell>{appointment.status === "BOOKED" ? "Not checked in" : appointment.status === "WAITING" ? "Checked in" : appointment.status}</TableCell>
                         <TableCell>{appointment.reason || "-"}</TableCell>

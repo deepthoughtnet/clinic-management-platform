@@ -25,17 +25,23 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
+import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import {
   createInventoryTransaction,
   createMedicine,
   createStock,
   deactivateMedicine,
+  getInventoryLocations,
+  getClinicUsers,
   getInventoryTransactions,
   getLowStock,
   getMedicines,
   getStocks,
+  transferInventoryStock,
   updateMedicine,
   updateStock,
+  type InventoryLocation,
+  type ClinicUser,
   type InventoryTransaction,
   type InventoryTransactionInput,
   type InventoryTransactionType,
@@ -51,6 +57,11 @@ import {
 type MedicineFormState = {
   medicineName: string;
   medicineType: MedicineType;
+  barcode: string;
+  qrCode: string;
+  externalCode: string;
+  genericName: string;
+  brandName: string;
   strength: string;
   defaultDosage: string;
   defaultFrequency: string;
@@ -63,7 +74,12 @@ type MedicineFormState = {
 
 type StockFormState = {
   medicineId: string;
+  locationId: string;
   batchNumber: string;
+  purchaseReferenceNumber: string;
+  barcode: string;
+  qrCode: string;
+  externalCode: string;
   expiryDate: string;
   quantityOnHand: string;
   lowStockThreshold: string;
@@ -89,7 +105,7 @@ const TABS = [
 ] as const;
 
 const MEDICINE_TYPES: MedicineType[] = ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "DROP", "OINTMENT", "OTHER"];
-const TRANSACTION_TYPES: InventoryTransactionType[] = ["OPENING", "PURCHASE", "SALE", "ADJUSTMENT", "RETURN"];
+const TRANSACTION_TYPES: InventoryTransactionType[] = ["OPENING", "PURCHASE", "SALE", "ADJUSTMENT", "RETURN", "EXPIRED", "CANCELLED_DISPENSE", "STOCK_IN", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"];
 const TIMING_OPTIONS: Array<{ label: string; value: Timing }> = [
   { label: "Before food", value: "BEFORE_FOOD" },
   { label: "After food", value: "AFTER_FOOD" },
@@ -101,6 +117,11 @@ function emptyMedicineForm(): MedicineFormState {
   return {
     medicineName: "",
     medicineType: "TABLET",
+    barcode: "",
+    qrCode: "",
+    externalCode: "",
+    genericName: "",
+    brandName: "",
     strength: "",
     defaultDosage: "",
     defaultFrequency: "",
@@ -115,7 +136,12 @@ function emptyMedicineForm(): MedicineFormState {
 function emptyStockForm(): StockFormState {
   return {
     medicineId: "",
+    locationId: "",
     batchNumber: "",
+    purchaseReferenceNumber: "",
+    barcode: "",
+    qrCode: "",
+    externalCode: "",
     expiryDate: "",
     quantityOnHand: "",
     lowStockThreshold: "",
@@ -141,8 +167,11 @@ function medicineInput(form: MedicineFormState): MedicineInput {
   return {
     medicineName: form.medicineName.trim(),
     medicineType: form.medicineType,
-    genericName: null,
-    brandName: null,
+    barcode: form.barcode.trim() || null,
+    qrCode: form.qrCode.trim() || null,
+    externalCode: form.externalCode.trim() || null,
+    genericName: form.genericName.trim() || null,
+    brandName: form.brandName.trim() || null,
     category: null,
     dosageForm: null,
     strength: form.strength.trim() || null,
@@ -162,7 +191,12 @@ function medicineInput(form: MedicineFormState): MedicineInput {
 function stockInput(form: StockFormState): StockInput {
   return {
     medicineId: form.medicineId,
+    locationId: form.locationId || null,
+    barcode: form.barcode.trim() || null,
+    qrCode: form.qrCode.trim() || null,
+    externalCode: form.externalCode.trim() || null,
     batchNumber: form.batchNumber.trim() || null,
+    purchaseReferenceNumber: form.purchaseReferenceNumber.trim() || null,
     expiryDate: form.expiryDate || null,
     purchaseDate: null,
     supplierName: null,
@@ -194,6 +228,33 @@ function statusColor(quantity: number, threshold: number | null) {
   return quantity <= threshold ? "error" : "success";
 }
 
+function transactionLabel(type: InventoryTransactionType) {
+  const labels: Record<InventoryTransactionType, string> = {
+    OPENING: "Opening",
+    PURCHASE: "Stock In",
+    SALE: "Sale",
+    ADJUSTMENT: "Adjustment",
+    RETURN: "Patient Return",
+    DISPENSED: "Dispensed",
+    EXPIRED: "Expired",
+    CANCELLED_DISPENSE: "Cancelled Dispense",
+    STOCK_IN: "Stock In",
+    ADJUSTMENT_IN: "Adjustment In",
+    ADJUSTMENT_OUT: "Adjustment Out",
+  };
+  return labels[type] || type;
+}
+
+function expiryBadge(expiryDate: string | null) {
+  if (!expiryDate) return { label: "No expiry", color: "default" as const };
+  const today = new Date();
+  const expiry = new Date(expiryDate);
+  const diffDays = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return { label: "Expired", color: "error" as const };
+  if (diffDays <= 30) return { label: `Near expiry`, color: "warning" as const };
+  return { label: "Fresh", color: "success" as const };
+}
+
 export default function InventoryPage() {
   const auth = useAuth();
   const [tab, setTab] = React.useState<(typeof TABS)[number]["value"]>("medicines");
@@ -201,32 +262,53 @@ export default function InventoryPage() {
   const [stocks, setStocks] = React.useState<Stock[]>([]);
   const [transactions, setTransactions] = React.useState<InventoryTransaction[]>([]);
   const [lowStock, setLowStock] = React.useState<LowStockItem[]>([]);
+  const [clinicUsers, setClinicUsers] = React.useState<ClinicUser[]>([]);
+  const [locations, setLocations] = React.useState<InventoryLocation[]>([]);
   const [medicineForm, setMedicineForm] = React.useState<MedicineFormState>(emptyMedicineForm());
   const [stockForm, setStockForm] = React.useState<StockFormState>(emptyStockForm());
   const [transactionForm, setTransactionForm] = React.useState<TransactionFormState>(emptyTransactionForm());
   const [selectedMedicineId, setSelectedMedicineId] = React.useState<string | null>(null);
   const [selectedStockId, setSelectedStockId] = React.useState<string | null>(null);
+  const [selectedLocationId, setSelectedLocationId] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
+  const [stockSearch, setStockSearch] = React.useState("");
+  const [transferForm, setTransferForm] = React.useState({ medicineId: "", stockBatchId: "", fromLocationId: "", toLocationId: "", quantity: "", reason: "" });
 
   const medicineById = React.useMemo(() => new Map(medicines.map((medicine) => [medicine.id, medicine])), [medicines]);
+  const userById = React.useMemo(() => new Map(clinicUsers.map((user) => [user.appUserId, user])), [clinicUsers]);
+  const visibleStocks = React.useMemo(() => {
+    const term = stockSearch.trim().toLowerCase();
+    return stocks.filter((stock) => {
+      const matchesLocation = !selectedLocationId || stock.locationId === selectedLocationId;
+      const matchesTerm = !term || [stock.medicineName, stock.batchNumber, stock.purchaseReferenceNumber, stock.barcode, stock.qrCode, stock.externalCode, stock.supplierName]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term));
+      return matchesLocation && matchesTerm;
+    });
+  }, [stocks, stockSearch, selectedLocationId]);
 
   const loadAll = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) {
       return;
     }
-    const [medicineRows, stockRows, transactionRows, lowStockRows] = await Promise.all([
+    const [medicineRows, stockRows, transactionRows, lowStockRows, userRows, locationRows] = await Promise.all([
       getMedicines(auth.accessToken, auth.tenantId),
       getStocks(auth.accessToken, auth.tenantId),
       getInventoryTransactions(auth.accessToken, auth.tenantId),
       getLowStock(auth.accessToken, auth.tenantId),
+      getClinicUsers(auth.accessToken, auth.tenantId),
+      getInventoryLocations(auth.accessToken, auth.tenantId),
     ]);
     setMedicines(medicineRows);
     setStocks(stockRows);
     setTransactions(transactionRows);
     setLowStock(lowStockRows);
+    setClinicUsers(userRows);
+    setLocations(locationRows);
+    setSelectedLocationId((current) => current || locationRows.find((location) => location.defaultLocation)?.id || null);
   }, [auth.accessToken, auth.tenantId]);
 
   React.useEffect(() => {
@@ -291,6 +373,11 @@ export default function InventoryPage() {
     setMedicineForm({
       medicineName: medicine.medicineName,
       medicineType: medicine.medicineType,
+      barcode: medicine.barcode || "",
+      qrCode: medicine.qrCode || "",
+      externalCode: medicine.externalCode || "",
+      genericName: medicine.genericName || "",
+      brandName: medicine.brandName || "",
       strength: medicine.strength || "",
       defaultDosage: medicine.defaultDosage || "",
       defaultFrequency: medicine.defaultFrequency || "",
@@ -352,7 +439,12 @@ export default function InventoryPage() {
     setSelectedStockId(stock.id);
     setStockForm({
       medicineId: stock.medicineId,
+      locationId: stock.locationId || "",
       batchNumber: stock.batchNumber || "",
+      purchaseReferenceNumber: stock.purchaseReferenceNumber || "",
+      barcode: stock.barcode || "",
+      qrCode: stock.qrCode || "",
+      externalCode: stock.externalCode || "",
       expiryDate: stock.expiryDate || "",
       quantityOnHand: stock.quantityOnHand.toString(),
       lowStockThreshold: stock.lowStockThreshold?.toString() || "",
@@ -428,6 +520,15 @@ export default function InventoryPage() {
                   </Typography>
                   <TextField label="Medicine name" value={medicineForm.medicineName} onChange={(e) => setMedicineForm((current) => ({ ...current, medicineName: e.target.value }))} />
                   <Grid container spacing={2}>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <CodeScannerField label="Barcode" value={medicineForm.barcode} onChange={(value) => setMedicineForm((current) => ({ ...current, barcode: value }))} placeholder="Scan or enter barcode" />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <CodeScannerField label="QR code" value={medicineForm.qrCode} onChange={(value) => setMedicineForm((current) => ({ ...current, qrCode: value }))} placeholder="Scan or enter QR code" />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <CodeScannerField label="External code" value={medicineForm.externalCode} onChange={(value) => setMedicineForm((current) => ({ ...current, externalCode: value }))} placeholder="Scan or enter code" />
+                    </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <FormControl fullWidth>
                         <InputLabel id="medicine-type-label">Type</InputLabel>
@@ -439,6 +540,12 @@ export default function InventoryPage() {
                           ))}
                         </Select>
                       </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField label="Generic name" value={medicineForm.genericName} onChange={(e) => setMedicineForm((current) => ({ ...current, genericName: e.target.value }))} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField label="Brand name" value={medicineForm.brandName} onChange={(e) => setMedicineForm((current) => ({ ...current, brandName: e.target.value }))} />
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <TextField label="Strength" value={medicineForm.strength} onChange={(e) => setMedicineForm((current) => ({ ...current, strength: e.target.value }))} />
@@ -514,8 +621,12 @@ export default function InventoryPage() {
                     <TableHead>
                       <TableRow>
                         <TableCell>Name</TableCell>
+                        <TableCell>Generic / Brand</TableCell>
+                        <TableCell>Category</TableCell>
                         <TableCell>Type</TableCell>
-                        <TableCell>Strength</TableCell>
+                        <TableCell>Dosage / Frequency</TableCell>
+                        <TableCell>Duration / Timing</TableCell>
+                        <TableCell>Instructions</TableCell>
                         <TableCell>Default price</TableCell>
                         <TableCell>Status</TableCell>
                         <TableCell align="right">Actions</TableCell>
@@ -523,19 +634,38 @@ export default function InventoryPage() {
                     </TableHead>
                     <TableBody>
                       {medicines.map((medicine) => (
-                        <TableRow key={medicine.id} hover selected={medicine.id === selectedMedicineId}>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                {medicine.medicineName}
+                      <TableRow key={medicine.id} hover selected={medicine.id === selectedMedicineId}>
+                        <TableCell>
+                          <Stack spacing={0.25}>
+                            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                              {medicine.medicineName}
                               </Typography>
                               <Typography variant="caption" color="text.secondary">
-                                {medicine.defaultDosage || "No default dosage"}
+                                {medicine.genericName || "No generic name"}
                               </Typography>
                             </Stack>
                           </TableCell>
+                          <TableCell>
+                            <Stack spacing={0.25}>
+                              <Typography variant="body2">{medicine.genericName || "-"}</Typography>
+                              <Typography variant="caption" color="text.secondary">{medicine.brandName || "-"}</Typography>
+                            </Stack>
+                          </TableCell>
+                          <TableCell>{medicine.category || "-"}</TableCell>
                           <TableCell>{medicine.medicineType}</TableCell>
-                          <TableCell>{medicine.strength || "-"}</TableCell>
+                          <TableCell>
+                            <Stack spacing={0.25}>
+                              <Typography variant="body2">{medicine.defaultDosage || "-"}</Typography>
+                              <Typography variant="caption" color="text.secondary">{medicine.defaultFrequency || "-"}</Typography>
+                            </Stack>
+                          </TableCell>
+                          <TableCell>
+                            <Stack spacing={0.25}>
+                              <Typography variant="body2">{medicine.defaultDurationDays != null ? `${medicine.defaultDurationDays} days` : "-"}</Typography>
+                              <Typography variant="caption" color="text.secondary">{medicine.defaultTiming || "-"}</Typography>
+                            </Stack>
+                          </TableCell>
+                          <TableCell sx={{ maxWidth: 200 }}>{medicine.defaultInstructions || "-"}</TableCell>
                           <TableCell>{medicine.defaultPrice ? medicine.defaultPrice.toFixed(2) : "-"}</TableCell>
                           <TableCell>
                             <Chip size="small" label={medicine.active ? "Active" : "Inactive"} color={medicine.active ? "success" : "default"} />
@@ -579,7 +709,30 @@ export default function InventoryPage() {
                       ))}
                     </Select>
                   </FormControl>
+                  <FormControl fullWidth>
+                    <InputLabel id="stock-location-label">Location</InputLabel>
+                    <Select labelId="stock-location-label" label="Location" value={stockForm.locationId} onChange={(e) => setStockForm((current) => ({ ...current, locationId: String(e.target.value) }))}>
+                      <MenuItem value="">Default location</MenuItem>
+                      {locations.map((location) => (
+                        <MenuItem key={location.id} value={location.id}>
+                          {location.locationName}{location.defaultLocation ? " (Default)" : ""}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
                   <TextField label="Batch number" value={stockForm.batchNumber} onChange={(e) => setStockForm((current) => ({ ...current, batchNumber: e.target.value }))} />
+                  <TextField label="Purchase reference" value={stockForm.purchaseReferenceNumber} onChange={(e) => setStockForm((current) => ({ ...current, purchaseReferenceNumber: e.target.value }))} />
+                  <Grid container spacing={2}>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <CodeScannerField label="Barcode" value={stockForm.barcode} onChange={(value) => setStockForm((current) => ({ ...current, barcode: value }))} placeholder="Scan or enter barcode" />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <CodeScannerField label="QR code" value={stockForm.qrCode} onChange={(value) => setStockForm((current) => ({ ...current, qrCode: value }))} placeholder="Scan or enter QR code" />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <CodeScannerField label="External code" value={stockForm.externalCode} onChange={(value) => setStockForm((current) => ({ ...current, externalCode: value }))} placeholder="Scan or enter code" />
+                    </Grid>
+                  </Grid>
                   <TextField label="Expiry date" type="date" value={stockForm.expiryDate} onChange={(e) => setStockForm((current) => ({ ...current, expiryDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
                   <Grid container spacing={2}>
                     <Grid size={{ xs: 12, md: 6 }}>
@@ -642,22 +795,110 @@ export default function InventoryPage() {
                     </Select>
                   </FormControl>
                   <TextField label="Stock batch ID" value={transactionForm.stockBatchId} onChange={(e) => setTransactionForm((current) => ({ ...current, stockBatchId: e.target.value }))} />
-                  <FormControl fullWidth>
-                    <InputLabel id="transaction-type-label">Type</InputLabel>
-                    <Select labelId="transaction-type-label" label="Type" value={transactionForm.transactionType} onChange={(e) => setTransactionForm((current) => ({ ...current, transactionType: String(e.target.value) as InventoryTransactionType }))}>
-                      {TRANSACTION_TYPES.map((type) => (
-                        <MenuItem key={type} value={type}>
-                          {type}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                    <FormControl fullWidth>
+                      <InputLabel id="transaction-type-label">Type</InputLabel>
+                      <Select labelId="transaction-type-label" label="Type" value={transactionForm.transactionType} onChange={(e) => setTransactionForm((current) => ({ ...current, transactionType: String(e.target.value) as InventoryTransactionType }))}>
+                        {TRANSACTION_TYPES.map((type) => (
+                          <MenuItem key={type} value={type}>
+                            {transactionLabel(type)}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
                   <TextField label="Quantity" value={transactionForm.quantity} onChange={(e) => setTransactionForm((current) => ({ ...current, quantity: e.target.value }))} />
                   <TextField label="Reference type" value={transactionForm.referenceType} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceType: e.target.value }))} />
                   <TextField label="Reference ID" value={transactionForm.referenceId} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceId: e.target.value }))} />
                   <TextField label="Notes" value={transactionForm.notes} onChange={(e) => setTransactionForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} />
                   <Button variant="contained" onClick={() => void saveTransaction()} disabled={saving}>
                     Save transaction
+                  </Button>
+                </Stack>
+              </CardContent>
+            </Card>
+
+            <Card sx={{ mt: 2 }}>
+              <CardContent>
+                <Stack spacing={2}>
+                  <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                    Transfer stock
+                  </Typography>
+                  <FormControl fullWidth>
+                    <InputLabel id="transfer-medicine-label">Medicine</InputLabel>
+                    <Select labelId="transfer-medicine-label" label="Medicine" value={transferForm.medicineId} onChange={(e) => setTransferForm((current) => ({ ...current, medicineId: String(e.target.value) }))}>
+                      <MenuItem value="">Select medicine</MenuItem>
+                      {medicines.map((medicine) => (
+                        <MenuItem key={medicine.id} value={medicine.id}>
+                          {medicine.medicineName}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <FormControl fullWidth>
+                    <InputLabel id="transfer-stock-label">Batch</InputLabel>
+                    <Select labelId="transfer-stock-label" label="Batch" value={transferForm.stockBatchId} onChange={(e) => setTransferForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}>
+                      <MenuItem value="">Select batch</MenuItem>
+                      {stocks.filter((stock) => !transferForm.medicineId || stock.medicineId === transferForm.medicineId).map((stock) => (
+                        <MenuItem key={stock.id} value={stock.id}>
+                          {stock.batchNumber || stock.id} ({stock.locationName || "Main Pharmacy"})
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <FormControl fullWidth>
+                    <InputLabel id="transfer-from-label">From location</InputLabel>
+                    <Select labelId="transfer-from-label" label="From location" value={transferForm.fromLocationId} onChange={(e) => setTransferForm((current) => ({ ...current, fromLocationId: String(e.target.value) }))}>
+                      <MenuItem value="">Select location</MenuItem>
+                      {locations.map((location) => (
+                        <MenuItem key={location.id} value={location.id}>
+                          {location.locationName}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <FormControl fullWidth>
+                    <InputLabel id="transfer-to-label">To location</InputLabel>
+                    <Select labelId="transfer-to-label" label="To location" value={transferForm.toLocationId} onChange={(e) => setTransferForm((current) => ({ ...current, toLocationId: String(e.target.value) }))}>
+                      <MenuItem value="">Select location</MenuItem>
+                      {locations.map((location) => (
+                        <MenuItem key={location.id} value={location.id}>
+                          {location.locationName}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <TextField label="Quantity" value={transferForm.quantity} onChange={(e) => setTransferForm((current) => ({ ...current, quantity: e.target.value }))} />
+                  <TextField label="Reason" value={transferForm.reason} onChange={(e) => setTransferForm((current) => ({ ...current, reason: e.target.value }))} multiline minRows={2} />
+                  <Button
+                    variant="outlined"
+                    onClick={async () => {
+                      if (!auth.accessToken || !auth.tenantId) return;
+                      if (!transferForm.medicineId || !transferForm.fromLocationId || !transferForm.toLocationId || !transferForm.quantity.trim()) {
+                        setError("Select medicine, source location, destination location, and quantity.");
+                        return;
+                      }
+                      setSaving(true);
+                      setError(null);
+                      try {
+                        await transferInventoryStock(auth.accessToken, auth.tenantId, {
+                          medicineId: transferForm.medicineId,
+                          stockBatchId: transferForm.stockBatchId || null,
+                          fromLocationId: transferForm.fromLocationId,
+                          toLocationId: transferForm.toLocationId,
+                          quantity: Number(transferForm.quantity),
+                          reason: transferForm.reason.trim() || null,
+                        });
+                        setTransferForm({ medicineId: "", stockBatchId: "", fromLocationId: "", toLocationId: "", quantity: "", reason: "" });
+                        await loadAll();
+                        setSuccess("Stock transfer recorded");
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Failed to transfer stock");
+                      } finally {
+                        setSaving(false);
+                      }
+                    }}
+                    disabled={saving}
+                  >
+                    Transfer
                   </Button>
                 </Stack>
               </CardContent>
@@ -670,10 +911,34 @@ export default function InventoryPage() {
                   <Typography variant="h6" sx={{ fontWeight: 800 }}>
                     Stock list
                   </Typography>
+                  <FormControl size="small" fullWidth>
+                    <InputLabel id="stock-filter-location-label">Location</InputLabel>
+                    <Select
+                      labelId="stock-filter-location-label"
+                      label="Location"
+                      value={selectedLocationId || ""}
+                      onChange={(e) => setSelectedLocationId(String(e.target.value) || null)}
+                    >
+                      <MenuItem value="">All locations</MenuItem>
+                      {locations.map((location) => (
+                        <MenuItem key={location.id} value={location.id}>
+                          {location.locationName}{location.defaultLocation ? " (Default)" : ""}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <TextField
+                    size="small"
+                    label="Scan or enter code"
+                    value={stockSearch}
+                    onChange={(e) => setStockSearch(e.target.value)}
+                    placeholder="barcode / QR / batch / reference"
+                  />
                   <Table size="small">
                     <TableHead>
                       <TableRow>
                         <TableCell>Medicine</TableCell>
+                        <TableCell>Location</TableCell>
                         <TableCell>Batch</TableCell>
                         <TableCell>Expiry</TableCell>
                         <TableCell align="right">Qty</TableCell>
@@ -683,7 +948,7 @@ export default function InventoryPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {stocks.map((stock) => (
+                      {visibleStocks.map((stock) => (
                         <TableRow key={stock.id} hover selected={stock.id === selectedStockId}>
                           <TableCell>
                             <Stack spacing={0.25}>
@@ -693,10 +958,24 @@ export default function InventoryPage() {
                               <Typography variant="caption" color="text.secondary">
                                 {stock.medicineType}
                               </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {stock.barcode || stock.externalCode || stock.qrCode || stock.purchaseReferenceNumber || "-"}
+                              </Typography>
                             </Stack>
                           </TableCell>
-                          <TableCell>{stock.batchNumber || "-"}</TableCell>
-                          <TableCell>{stock.expiryDate || "-"}</TableCell>
+                          <TableCell>{stock.locationName || "Main Pharmacy"}</TableCell>
+                          <TableCell>
+                            <Stack spacing={0.25}>
+                              <Typography variant="body2">{stock.batchNumber || "-"}</Typography>
+                              <Typography variant="caption" color="text.secondary">{stock.purchaseReferenceNumber || "-"}</Typography>
+                            </Stack>
+                          </TableCell>
+                          <TableCell>
+                            <Stack spacing={0.25}>
+                              <Chip size="small" label={expiryBadge(stock.expiryDate).label} color={expiryBadge(stock.expiryDate).color} />
+                              <Typography variant="caption" color="text.secondary">{stock.expiryDate || "No expiry date"}</Typography>
+                            </Stack>
+                          </TableCell>
                           <TableCell align="right">{stock.quantityOnHand}</TableCell>
                           <TableCell align="right">{stock.lowStockThreshold ?? "-"}</TableCell>
                           <TableCell>
@@ -726,8 +1005,11 @@ export default function InventoryPage() {
                       <TableRow>
                         <TableCell>Medicine</TableCell>
                         <TableCell>Type</TableCell>
+                        <TableCell align="right">Before</TableCell>
+                        <TableCell align="right">After</TableCell>
                         <TableCell align="right">Quantity</TableCell>
                         <TableCell>Reference</TableCell>
+                        <TableCell>Adjusted by</TableCell>
                         <TableCell>Notes</TableCell>
                         <TableCell>Created</TableCell>
                       </TableRow>
@@ -736,9 +1018,12 @@ export default function InventoryPage() {
                       {transactions.map((transaction) => (
                         <TableRow key={transaction.id}>
                           <TableCell>{medicineById.get(transaction.medicineId)?.medicineName || transaction.medicineId}</TableCell>
-                          <TableCell>{transaction.transactionType}</TableCell>
+                          <TableCell>{transactionLabel(transaction.transactionType)}</TableCell>
+                          <TableCell align="right">{transaction.beforeQuantity ?? "-"}</TableCell>
+                          <TableCell align="right">{transaction.afterQuantity ?? "-"}</TableCell>
                           <TableCell align="right">{transaction.quantity}</TableCell>
                           <TableCell>{transaction.referenceType || "-"}</TableCell>
+                          <TableCell>{userById.get(transaction.createdBy || "")?.displayName || transaction.createdBy || "-"}</TableCell>
                           <TableCell>{transaction.notes || "-"}</TableCell>
                           <TableCell>{new Date(transaction.createdAt).toLocaleString()}</TableCell>
                         </TableRow>
@@ -762,7 +1047,7 @@ export default function InventoryPage() {
                     Low stock medicines
                   </Typography>
                   {lowStock.length === 0 ? (
-                    <Alert severity="info">No low-stock items were found.</Alert>
+                    <Alert severity="info">No low stock items are currently blocking dispensing. Add or replenish stock batches to keep the queue moving.</Alert>
                   ) : (
                     <Table size="small">
                       <TableHead>
@@ -776,10 +1061,12 @@ export default function InventoryPage() {
                       </TableHead>
                       <TableBody>
                         {lowStock.map((row) => (
-                          <TableRow key={row.stockId}>
+                          <TableRow key={row.stockId} hover sx={{ "& td": { fontWeight: row.quantityOnHand <= (row.lowStockThreshold ?? 5) ? 700 : 400 } }}>
                             <TableCell>{row.medicineName}</TableCell>
                             <TableCell>{row.batchNumber || "-"}</TableCell>
-                            <TableCell>{row.expiryDate || "-"}</TableCell>
+                            <TableCell>
+                              <Chip size="small" label={expiryBadge(row.expiryDate).label} color={expiryBadge(row.expiryDate).color} />
+                            </TableCell>
                             <TableCell align="right">{row.quantityOnHand}</TableCell>
                             <TableCell align="right">{row.lowStockThreshold ?? "-"}</TableCell>
                           </TableRow>
@@ -799,7 +1086,7 @@ export default function InventoryPage() {
                     Quick summary
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Inventory transactions and low-stock checks run tenant-side only. Use the stock tab to add batches and adjust quantities.
+                    Inventory transactions and low-stock checks run tenant-side only. Use the stock tab to add batches, monitor expiry, and keep medicine availability current.
                   </Typography>
                   <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
                     <Chip label={`${medicines.length} medicines`} />

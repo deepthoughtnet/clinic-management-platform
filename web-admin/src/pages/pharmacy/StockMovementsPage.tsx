@@ -22,9 +22,11 @@ import { useAuth } from "../../auth/useAuth";
 import {
   getInventoryTransactions,
   getMedicines,
+  getClinicUsers,
   type InventoryTransaction,
   type InventoryTransactionType,
   type Medicine,
+  type ClinicUser,
 } from "../../api/clinicApi";
 
 const MOVEMENT_TYPES: InventoryTransactionType[] = [
@@ -47,12 +49,30 @@ function movementChip(type: string) {
   return "default" as const;
 }
 
+function movementLabel(type: string) {
+  const labels: Record<string, string> = {
+    OPENING: "Opening",
+    PURCHASE: "Stock In",
+    SALE: "Sale",
+    ADJUSTMENT: "Adjustment",
+    RETURN: "Patient Return",
+    DISPENSED: "Dispensed",
+    EXPIRED: "Expired",
+    CANCELLED_DISPENSE: "Cancelled Dispense",
+    STOCK_IN: "Stock In",
+    ADJUSTMENT_IN: "Adjustment In",
+    ADJUSTMENT_OUT: "Adjustment Out",
+  };
+  return labels[type] || type;
+}
+
 export default function StockMovementsPage() {
   const auth = useAuth();
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [rows, setRows] = React.useState<InventoryTransaction[]>([]);
   const [medicines, setMedicines] = React.useState<Medicine[]>([]);
+  const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [medicineId, setMedicineId] = React.useState("");
   const [movementType, setMovementType] = React.useState<string>("");
   const [fromDate, setFromDate] = React.useState("");
@@ -63,12 +83,14 @@ export default function StockMovementsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [trx, meds] = await Promise.all([
+      const [trx, meds, clinicUsers] = await Promise.all([
         getInventoryTransactions(auth.accessToken, auth.tenantId),
         getMedicines(auth.accessToken, auth.tenantId),
+        getClinicUsers(auth.accessToken, auth.tenantId),
       ]);
       setRows(trx);
       setMedicines(meds);
+      setUsers(clinicUsers);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load stock movements");
     } finally {
@@ -90,6 +112,13 @@ export default function StockMovementsPage() {
   }, [rows, medicineId, movementType, fromDate, toDate]);
 
   const medicineById = React.useMemo(() => new Map(medicines.map((m) => [m.id, m])), [medicines]);
+  const userById = React.useMemo(() => new Map(users.map((u) => [u.appUserId, u])), [users]);
+  const filteredSummary = React.useMemo(() => ({
+    total: filtered.length,
+    adjustments: filtered.filter((row) => row.transactionType.includes("ADJUSTMENT")).length,
+    stockIns: filtered.filter((row) => row.transactionType === "STOCK_IN" || row.transactionType === "OPENING" || row.transactionType === "PURCHASE").length,
+    dispenseRelated: filtered.filter((row) => row.transactionType === "DISPENSED" || row.transactionType === "CANCELLED_DISPENSE" || row.transactionType === "SALE").length,
+  }), [filtered]);
 
   if (!auth.tenantId) return <Alert severity="info">Select a tenant to access Stock Movements.</Alert>;
 
@@ -98,10 +127,17 @@ export default function StockMovementsPage() {
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 900 }}>Stock Movements</Typography>
-          <Typography variant="body2" color="text.secondary">Track stock in/out activity and movement references across dispensing, adjustments, returns, and expiry.</Typography>
+          <Typography variant="body2" color="text.secondary">Track stock in/out activity and movement references across dispensing, adjustments, returns, and expiry with audit-friendly quantities.</Typography>
         </Box>
         <Button variant="outlined" onClick={() => void load()}>Refresh</Button>
       </Box>
+
+      <Grid container spacing={1.5}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Rows</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{filteredSummary.total}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Adjustments</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{filteredSummary.adjustments}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Stock in</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{filteredSummary.stockIns}</Typography></CardContent></Card></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Dispense related</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{filteredSummary.dispenseRelated}</Typography></CardContent></Card></Grid>
+      </Grid>
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 
@@ -117,7 +153,7 @@ export default function StockMovementsPage() {
             <Grid size={{ xs: 12, md: 3 }}>
               <TextField select size="small" fullWidth label="Movement type" value={movementType} onChange={(e) => setMovementType(e.target.value)}>
                 <MenuItem value="">All</MenuItem>
-                {MOVEMENT_TYPES.map((t) => <MenuItem key={t} value={t}>{t}</MenuItem>)}
+                {MOVEMENT_TYPES.map((t) => <MenuItem key={t} value={t}>{movementLabel(t)}</MenuItem>)}
               </TextField>
             </Grid>
             <Grid size={{ xs: 12, md: 2.5 }}><TextField size="small" fullWidth type="date" label="From" value={fromDate} onChange={(e) => setFromDate(e.target.value)} InputLabelProps={{ shrink: true }} /></Grid>
@@ -132,7 +168,7 @@ export default function StockMovementsPage() {
       {!loading ? (
         <Card>
           <CardContent>
-            {filtered.length === 0 ? <Alert severity="info">No stock movements found for selected filters.</Alert> : (
+            {filtered.length === 0 ? <Alert severity="info">No stock movements match the current filters. Clear the filters to review the full audit trail.</Alert> : (
               <Table size="small">
                 <TableHead>
                   <TableRow>
@@ -140,8 +176,11 @@ export default function StockMovementsPage() {
                     <TableCell>Medicine</TableCell>
                     <TableCell>Type</TableCell>
                     <TableCell>Batch</TableCell>
+                    <TableCell align="right">Before</TableCell>
+                    <TableCell align="right">After</TableCell>
                     <TableCell align="right">Qty</TableCell>
                     <TableCell>Reference</TableCell>
+                    <TableCell>Adjusted by</TableCell>
                     <TableCell>Notes</TableCell>
                   </TableRow>
                 </TableHead>
@@ -150,13 +189,16 @@ export default function StockMovementsPage() {
                     <TableRow key={row.id}>
                       <TableCell>{new Date(row.createdAt).toLocaleString()}</TableCell>
                       <TableCell>{medicineById.get(row.medicineId)?.medicineName || row.medicineId}</TableCell>
-                      <TableCell><Chip size="small" label={row.transactionType} color={movementChip(row.transactionType)} /></TableCell>
+                      <TableCell><Chip size="small" label={movementLabel(row.transactionType)} color={movementChip(row.transactionType)} /></TableCell>
                       <TableCell>{row.stockBatchId || "-"}</TableCell>
+                      <TableCell align="right">{row.beforeQuantity ?? "-"}</TableCell>
+                      <TableCell align="right">{row.afterQuantity ?? "-"}</TableCell>
                       <TableCell align="right">{row.quantity}</TableCell>
                       <TableCell>
                         {row.referenceType || "-"}
                         {row.referenceId ? <Typography variant="caption" display="block" color="text.secondary">{row.referenceId}</Typography> : null}
                       </TableCell>
+                      <TableCell>{userById.get(row.createdBy || "")?.displayName || row.createdBy || "-"}</TableCell>
                       <TableCell>{row.notes || row.reason || "-"}</TableCell>
                     </TableRow>
                   ))}

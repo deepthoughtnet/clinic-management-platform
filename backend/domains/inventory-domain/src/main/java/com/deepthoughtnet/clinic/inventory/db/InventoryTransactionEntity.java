@@ -30,11 +30,23 @@ public class InventoryTransactionEntity {
     @Column(name = "stock_batch_id")
     private UUID stockBatchId;
 
+    @Column(name = "location_id")
+    private UUID locationId;
+
+    @Column(name = "target_location_id")
+    private UUID targetLocationId;
+
     @Column(name = "transaction_type", nullable = false, length = 24)
     private String transactionType;
 
     @Column(nullable = false)
     private int quantity;
+
+    @Column(name = "before_quantity")
+    private Integer beforeQuantity;
+
+    @Column(name = "after_quantity")
+    private Integer afterQuantity;
 
     @Column(name = "reference_type", length = 64)
     private String referenceType;
@@ -61,8 +73,12 @@ public class InventoryTransactionEntity {
             UUID tenantId,
             UUID medicineId,
             UUID stockBatchId,
+            UUID locationId,
+            UUID targetLocationId,
             String transactionType,
             int quantity,
+            Integer beforeQuantity,
+            Integer afterQuantity,
             String referenceType,
             UUID referenceId,
             UUID createdBy,
@@ -74,8 +90,12 @@ public class InventoryTransactionEntity {
         entity.tenantId = tenantId;
         entity.medicineId = medicineId;
         entity.stockBatchId = stockBatchId;
+        entity.locationId = locationId;
+        entity.targetLocationId = targetLocationId;
         entity.transactionType = transactionType;
         entity.quantity = quantity;
+        entity.beforeQuantity = beforeQuantity;
+        entity.afterQuantity = afterQuantity;
         entity.referenceType = referenceType;
         entity.referenceId = referenceId;
         entity.createdBy = createdBy;
@@ -89,8 +109,12 @@ public class InventoryTransactionEntity {
     public UUID getTenantId() { return tenantId; }
     public UUID getMedicineId() { return medicineId; }
     public UUID getStockBatchId() { return stockBatchId; }
+    public UUID getLocationId() { return locationId; }
+    public UUID getTargetLocationId() { return targetLocationId; }
     public String getTransactionType() { return transactionType; }
     public int getQuantity() { return quantity; }
+    public Integer getBeforeQuantity() { return beforeQuantity; }
+    public Integer getAfterQuantity() { return afterQuantity; }
     public String getReferenceType() { return referenceType; }
     public UUID getReferenceId() { return referenceId; }
     public UUID getCreatedBy() { return createdBy; }

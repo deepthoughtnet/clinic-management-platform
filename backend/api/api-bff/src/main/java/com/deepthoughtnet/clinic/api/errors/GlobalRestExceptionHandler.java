@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.errors;
 import com.deepthoughtnet.clinic.platform.core.errors.BadRequestException;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
 import com.deepthoughtnet.clinic.identity.exception.TenantModuleDisabledException;
 import com.deepthoughtnet.clinic.platform.spring.context.CorrelationId;
 import jakarta.servlet.http.HttpServletRequest;
@@ -137,6 +138,11 @@ public class GlobalRestExceptionHandler {
     @ExceptionHandler(TenantModuleDisabledException.class)
     public ResponseEntity<ApiError> handleTenantModuleDisabled(TenantModuleDisabledException ex, HttpServletRequest req) {
         return build(HttpStatus.FORBIDDEN, "module_disabled", "AI module is not enabled for this clinic.", req);
+    }
+
+    @ExceptionHandler(DoctorAvailabilityConflictException.class)
+    public ResponseEntity<ApiError> handleDoctorAvailabilityConflict(DoctorAvailabilityConflictException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Availability already exists for this doctor, day, and time range."), req);
     }
 
     @ExceptionHandler(Exception.class)

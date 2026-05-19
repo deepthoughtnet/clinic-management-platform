@@ -18,6 +18,7 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
+import { hasTenantModule } from "../../auth/moduleEntitlements";
 import {
   getAdminIntegrationsStatus,
   sendCarePilotProviderTestMessage,
@@ -52,6 +53,7 @@ export default function IntegrationsPage() {
   const canTest = auth.rolesUpper.includes("CLINIC_ADMIN")
     || auth.rolesUpper.includes("PLATFORM_ADMIN")
     || auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT");
+  const carePilotEnabled = hasTenantModule(auth, "carePilot");
 
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -155,7 +157,7 @@ export default function IntegrationsPage() {
                   Test
                 </Button>
               ) : <Button size="small" disabled>Test not available yet</Button>}
-              <Button size="small" variant="outlined" onClick={() => navigate("/carepilot/messaging")}>Open Messaging</Button>
+              {carePilotEnabled ? <Button size="small" variant="outlined" onClick={() => navigate("/carepilot/messaging")}>Open Messaging</Button> : null}
               <Button size="small" variant="outlined" onClick={() => navigate("/admin/notification-settings")}>Notification Settings</Button>
               <Button size="small" variant="outlined" onClick={() => navigate("/admin/templates")}>Templates</Button>
             </Stack>

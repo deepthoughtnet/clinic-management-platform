@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
+import jakarta.validation.Valid;
 
 @RestController
 @Validated
@@ -48,7 +49,7 @@ public class DoctorProfileController {
 
     @PutMapping("/{doctorUserId}/profile")
     @PreAuthorize("@permissionChecker.hasPermission('appointment.manage')")
-    public DoctorProfileResponse update(@PathVariable UUID doctorUserId, @RequestBody DoctorProfileRequest request) {
+    public DoctorProfileResponse update(@PathVariable UUID doctorUserId, @Valid @RequestBody DoctorProfileRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         TenantUserRecord doctor = findDoctor(tenantId, doctorUserId);
         String actorRole = normalizedRole(RequestContextHolder.require().tenantRole());
@@ -60,6 +61,9 @@ public class DoctorProfileController {
                     request.qualification(),
                     request.registrationNumber(),
                     request.consultationRoom(),
+                    request.consultationFee(),
+                    request.yearsOfExperience(),
+                    request.age(),
                     request.active()
             );
             case "RECEPTIONIST" -> new DoctorProfileUpsertCommand(
@@ -68,6 +72,9 @@ public class DoctorProfileController {
                     null,
                     null,
                     request.consultationRoom(),
+                    request.consultationFee(),
+                    request.yearsOfExperience(),
+                    request.age(),
                     request.active()
             );
             case "DOCTOR" -> {
@@ -80,6 +87,9 @@ public class DoctorProfileController {
                         request.qualification(),
                         request.registrationNumber(),
                         request.consultationRoom(),
+                        request.consultationFee(),
+                        request.yearsOfExperience(),
+                        request.age(),
                         null
                 );
             }
@@ -116,6 +126,9 @@ public class DoctorProfileController {
                 profile == null ? null : profile.qualification(),
                 profile == null ? null : profile.registrationNumber(),
                 profile == null ? null : profile.consultationRoom(),
+                profile == null ? null : profile.consultationFee(),
+                profile == null ? null : profile.yearsOfExperience(),
+                profile == null ? null : profile.age(),
                 profile == null || profile.active(),
                 profile == null ? null : profile.updatedAt()
         );
