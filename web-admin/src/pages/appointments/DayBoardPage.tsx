@@ -41,12 +41,15 @@ import { alpha, type Theme } from "@mui/material/styles";
 import { useAuth } from "../../auth/useAuth";
 import {
   createAppointment,
+  collectConsultationFee,
   createWaitlist,
   getClinicUsers,
   getDoctorSlots,
+  getDoctorProfile,
   getWaitlist,
   rescheduleAppointment,
   searchAppointments,
+  searchBills,
   searchPatients,
   startConsultationFromAppointment,
   updateAppointmentStatus,
@@ -57,8 +60,13 @@ import {
   type ClinicUser,
   type DoctorAvailabilitySlot,
   type DoctorAvailabilitySlotStatus,
+  type PaymentMode,
   type Patient,
+  type Bill,
+  type DoctorProfile,
 } from "../../api/clinicApi";
+import ConsultationFeeDialog from "../../components/ConsultationFeeDialog";
+import { CompactEmptyState } from "../../components/compact/CompactUi";
 
 type SlotFilterKey = DoctorAvailabilitySlotStatus | "BOOKED" | "CHECKED_IN" | "IN_CONSULTATION" | "COMPLETED" | "NO_SHOW" | "CANCELLED";
 
@@ -227,6 +235,28 @@ function compactDateLabel(date: string) {
     month: "short",
     day: "numeric",
   }).format(new Date(`${date}T00:00:00`));
+}
+
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isPastDateTime(date: string, time: string | null | undefined) {
+  if (!date) return false;
+  const now = new Date(Math.floor(Date.now() / 60000) * 60000);
+  const candidate = new Date(`${date}T${time && time.trim() ? toFive(time) : "23:59"}:00`);
+  return candidate.getTime() < now.getTime();
+}
+
+function isPastSlot(date: string, slot: DoctorAvailabilitySlot) {
+  return isPastDateTime(date, slot.slotEndTime);
+}
+
+function isHiddenPastSlot(date: string, slot: DoctorAvailabilitySlot, appointment: Appointment | null) {
+  return isPastSlot(date, slot) && !appointment && slot.bookedCount <= 0;
 }
 
 function slotDisplayStatus(slot: DoctorAvailabilitySlot, appointments: Appointment[]) {
@@ -471,12 +501,50 @@ function summarizeRows(rows: CalendarSlotRow[]): SchedulerSectionSummary {
   };
 }
 
+function formatMoney(value: number | null | undefined) {
+  if (value == null) return "—";
+  return value.toFixed(2);
+}
+
+function billHasConsultationLine(bill: Bill) {
+  return bill.lines.some((line) => line.itemType === "CONSULTATION");
+}
+
+type FeeStatus = "NOT_CONFIGURED" | "UNPAID" | "PARTIAL" | "PAID";
+
+function feeStatusColor(status: FeeStatus) {
+  switch (status) {
+    case "PAID":
+      return "success";
+    case "PARTIAL":
+    case "UNPAID":
+      return "warning";
+    case "NOT_CONFIGURED":
+    default:
+      return "default";
+  }
+}
+
+function feeStatusLabel(status: FeeStatus, amount: number | null | undefined) {
+  switch (status) {
+    case "PAID":
+      return `Paid${amount != null ? ` • ${formatMoney(amount)}` : ""}`;
+    case "PARTIAL":
+      return `Partial${amount != null ? ` • Due ${formatMoney(amount)}` : ""}`;
+    case "UNPAID":
+      return `Unpaid${amount != null ? ` • ${formatMoney(amount)}` : ""}`;
+    case "NOT_CONFIGURED":
+    default:
+      return "Not configured";
+  }
+}
+
 export default function DayBoardPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [doctorUserId, setDoctorUserId] = React.useState("");
-  const [date, setDate] = React.useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = React.useState(localDateKey());
   const [filters, setFilters] = React.useState<Record<SlotFilterKey, boolean>>(() => Object.fromEntries(STATUS_FILTERS.map((f) => [f, true])) as Record<SlotFilterKey, boolean>);
   const [patientSearch, setPatientSearch] = React.useState("");
   const [patientResults, setPatientResults] = React.useState<Patient[]>([]);
@@ -488,6 +556,8 @@ export default function DayBoardPage() {
   const [slots, setSlots] = React.useState<DoctorAvailabilitySlot[]>([]);
   const [waitlist, setWaitlist] = React.useState<AppointmentWaitlist[]>([]);
   const [doctorPanels, setDoctorPanels] = React.useState<DoctorPanel[]>([]);
+  const [bills, setBills] = React.useState<Bill[]>([]);
+  const [doctorProfiles, setDoctorProfiles] = React.useState<Record<string, DoctorProfile>>({});
   const [selected, setSelected] = React.useState<Selection | null>(null);
   const [rescheduleOpen, setRescheduleOpen] = React.useState(false);
   const [rescheduleTarget, setRescheduleTarget] = React.useState<Appointment | null>(null);
@@ -497,6 +567,7 @@ export default function DayBoardPage() {
   const [draggedAppointment, setDraggedAppointment] = React.useState<Appointment | null>(null);
   const [moveConfirmOpen, setMoveConfirmOpen] = React.useState(false);
   const [moveConfirmTarget, setMoveConfirmTarget] = React.useState<DoctorAvailabilitySlot | null>(null);
+  const [feeDialog, setFeeDialog] = React.useState<{ appointment: Appointment; action: "collect" | "collect-and-check-in" } | null>(null);
   const [sectionOverrides, setSectionOverrides] = React.useState<Partial<Record<SchedulerSectionKey, boolean>>>({});
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -514,6 +585,7 @@ export default function DayBoardPage() {
   const isDoctor = tenantRole === "DOCTOR";
   const canManage = auth.hasPermission("appointment.manage") || tenantRole === "RECEPTIONIST" || tenantRole === "CLINIC_ADMIN";
   const canBook = auth.hasPermission("appointment.create") || tenantRole === "RECEPTIONIST" || tenantRole === "CLINIC_ADMIN";
+  const canCollect = auth.hasPermission("billing.create") || auth.hasPermission("payment.collect");
   const canStartConsultation = auth.hasPermission("consultation.create");
   const doctorOptions = users.filter((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
   const selectedDoctorLabel = isDoctor && auth.appUserId
@@ -547,6 +619,41 @@ export default function DayBoardPage() {
     return visibleDoctorPanels.find((panel) => panel.doctorUserId === selectedSlot.doctorUserId) || null;
   }, [selectedSlot, visibleDoctorPanels]);
 
+  const appointmentBillById = React.useMemo(() => {
+    const map = new Map<string, Bill>();
+    for (const bill of bills) {
+      if (!bill.appointmentId || !billHasConsultationLine(bill)) {
+        continue;
+      }
+      if (!map.has(bill.appointmentId)) {
+        map.set(bill.appointmentId, bill);
+      }
+    }
+    return map;
+  }, [bills]);
+
+  const selectedAppointmentFee = React.useMemo(() => {
+    if (!selectedAppointment) return null;
+    const profile = doctorProfiles[selectedAppointment.doctorUserId];
+    const bill = appointmentBillById.get(selectedAppointment.id) || null;
+    const consultationFee = profile?.consultationFee ?? bill?.totalAmount ?? null;
+    let feeStatus: FeeStatus = "NOT_CONFIGURED";
+    let dueAmount: number | null = null;
+    if (bill) {
+      dueAmount = bill.dueAmount;
+      feeStatus = bill.dueAmount > 0 ? (bill.paidAmount > 0 ? "PARTIAL" : "UNPAID") : "PAID";
+    } else if (consultationFee != null && consultationFee > 0) {
+      dueAmount = consultationFee;
+      feeStatus = "UNPAID";
+    }
+    return {
+      consultationFee,
+      bill,
+      feeStatus,
+      dueAmount,
+    };
+  }, [appointmentBillById, doctorProfiles, selectedAppointment]);
+
   const activeWaitlist = React.useMemo(() => {
     if (effectiveDoctorId) return waitlist;
     return selectedSlotPanel?.waitlist || [];
@@ -564,7 +671,8 @@ export default function DayBoardPage() {
           appointment: appointments.find((appointment) => appointment.id === slot.appointmentId)
             || appointments.find((appointment) => sameTimeSlot(slot, appointment))
             || null,
-        }) satisfies CalendarSlotRow);
+        }) satisfies CalendarSlotRow)
+        .filter((row) => !isHiddenPastSlot(row.date, row.slot, row.appointment));
     }).sort((left, right) => {
       const doctorDelta = left.doctorName.localeCompare(right.doctorName);
       if (doctorDelta !== 0) return doctorDelta;
@@ -572,7 +680,7 @@ export default function DayBoardPage() {
     });
   }, [appointments, date, filters, visibleDoctorPanels]);
   const calendarSummary = React.useMemo(() => summarizeRows(calendarRows), [calendarRows]);
-  const todayDate = React.useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayDate = React.useMemo(() => localDateKey(), []);
   const currentTimeSection = React.useMemo<SchedulerSectionKey | null>(() => {
     if (date !== todayDate) return null;
     const minutes = new Date().getHours() * 60 + new Date().getMinutes();
@@ -621,12 +729,14 @@ export default function DayBoardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [clinicUsers, appointmentRows] = await Promise.all([
+      const [clinicUsers, appointmentRows, billRows] = await Promise.all([
         getClinicUsers(auth.accessToken, auth.tenantId),
         searchAppointments(auth.accessToken, auth.tenantId, { appointmentDate: date, doctorUserId: effectiveDoctorId || undefined }),
+        searchBills(auth.accessToken, auth.tenantId, { fromDate: date, toDate: date }),
       ]);
       setUsers(clinicUsers);
       setAppointments(appointmentRows);
+      setBills(billRows);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load day board data");
     } finally {
@@ -703,6 +813,49 @@ export default function DayBoardPage() {
   }, [loadDoctorPanels]);
 
   React.useEffect(() => {
+    let cancelled = false;
+    async function loadDoctorProfiles() {
+      const token = auth.accessToken;
+      const tenantId = auth.tenantId;
+      if (!token || !tenantId || users.length === 0) {
+        setDoctorProfiles({});
+        return;
+      }
+      const doctors = users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
+      try {
+        const rows = await Promise.all(doctors.map(async (doctor) => {
+          const doctorId = doctor.appUserId;
+          if (!doctorId) {
+            return null;
+          }
+          const profile = await getDoctorProfile(token, tenantId, doctorId as string).catch(() => null);
+          return profile ? [doctorId as string, profile] as const : null;
+        }));
+        if (cancelled) return;
+        const map: Record<string, DoctorProfile> = {};
+        for (const entry of rows) {
+          if (entry) {
+            map[entry[0]] = entry[1];
+          }
+        }
+        setDoctorProfiles(map);
+      } catch {
+        if (!cancelled) {
+          setDoctorProfiles({});
+        }
+      }
+    }
+    void loadDoctorProfiles();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken, auth.tenantId, users]);
+
+  React.useEffect(() => {
+    setSelected(null);
+  }, [date]);
+
+  React.useEffect(() => {
     if (isDoctor && auth.appUserId) {
       setDoctorUserId(auth.appUserId);
     }
@@ -733,7 +886,41 @@ export default function DayBoardPage() {
     await loadDoctorPanels();
   };
 
-  const bookFromSlot = async () => {
+  const selectedSlotBookingReason = React.useMemo(() => {
+    if (!selectedSlot) return "Select an available slot";
+    if (!auth.tenantId || !auth.accessToken) return "Clinic context is unavailable";
+    if (isPastSlot(date, selectedSlot)) return "This slot has already passed.";
+    if (selectedSlot.status === "BREAK" || selectedSlot.status === "LEAVE" || selectedSlot.status === "UNAVAILABLE" || selectedSlot.status === "CONFLICTED") {
+      return "Doctor is unavailable during this time.";
+    }
+    if (selectedSlot.status === "FULL" || selectedSlot.bookedCount >= selectedSlot.maxPatientsPerSlot) {
+      return "This slot is full.";
+    }
+    if (selectedSlot.status !== "AVAILABLE" && selectedSlot.status !== "PARTIALLY_BOOKED") {
+      return "Select an available slot";
+    }
+    if (!selectedSlot.selectable) {
+      return "Select an available slot";
+    }
+    return null;
+  }, [auth.accessToken, auth.tenantId, date, selectedSlot]);
+
+  const selectedSlotCanBook = Boolean(selectedSlot && !selectedSlotBookingReason);
+
+  const openBookingFlow = () => {
+    if (!selectedSlot || !selectedSlotCanBook) return;
+    const params = new URLSearchParams({
+      doctorUserId: selectedSlot.doctorUserId,
+      appointmentDate: date,
+      appointmentTime: toFive(selectedSlot.slotTime),
+    });
+    if (selectedPatient) {
+      params.set("patientId", selectedPatient.id);
+    }
+    navigate(`/appointments?${params.toString()}`);
+  };
+
+  const bookManualAppointment = async () => {
     const bookingDoctorId = selectedSlot?.doctorUserId || effectiveDoctorId;
     if (!auth.accessToken || !auth.tenantId || !selectedPatient || !bookingDoctorId) return;
     const slotTime = selectedSlot ? toFive(selectedSlot.slotTime) : manualTime;
@@ -783,6 +970,23 @@ export default function DayBoardPage() {
     }
   };
 
+  const checkInAppointment = async (appointment: Appointment) => {
+    const fee = appointmentBillById.get(appointment.id);
+    const consultationFee = doctorProfiles[appointment.doctorUserId]?.consultationFee ?? null;
+    if ((fee && fee.dueAmount > 0) || (consultationFee != null && consultationFee > 0 && !fee)) {
+      setError("Consultation fee is pending. Collect fee before check-in.");
+      if (canCollect) {
+        setFeeDialog({ appointment, action: "collect-and-check-in" });
+      }
+      return;
+    }
+    if (appointment.status !== "BOOKED") {
+      await transitionStatus(appointment.id, "WAITING");
+      return;
+    }
+    await transitionStatus(appointment.id, "WAITING");
+  };
+
   const transitionStatus = async (appointmentId: string, status: Appointment["status"]) => {
     if (!auth.accessToken || !auth.tenantId) return;
     try {
@@ -801,6 +1005,26 @@ export default function DayBoardPage() {
       navigate(`/consultations/${consultation.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start consultation");
+    }
+  };
+
+  const submitFeeDialog = async (value: { paymentMode: PaymentMode; referenceNumber: string; notes: string }) => {
+    if (!feeDialog || !auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    const action = feeDialog.action;
+    const current = feeDialog.appointment;
+    await collectConsultationFee(auth.accessToken, auth.tenantId, {
+      appointmentId: current.id,
+      paymentMode: value.paymentMode,
+      referenceNumber: value.referenceNumber || null,
+      notes: value.notes || null,
+    });
+    setFeeDialog(null);
+    await refreshAll();
+    if (action === "collect-and-check-in") {
+      await updateAppointmentStatus(auth.accessToken, auth.tenantId, current.id, "WAITING", null);
+      await refreshAll();
     }
   };
 
@@ -912,8 +1136,8 @@ export default function DayBoardPage() {
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, md: 3 }}>
           <Card variant="outlined" sx={{ position: { md: "sticky" }, top: { md: 16 } }}>
-            <CardContent>
-              <Stack spacing={1.5}>
+            <CardContent sx={{ p: 1.25 }}>
+              <Stack spacing={1.1}>
                 <Typography variant="h6" sx={{ fontWeight: 800 }}>Filters</Typography>
                 <TextField size="small" type="date" label="Date" value={date} onChange={(e) => setDate(e.target.value)} InputLabelProps={{ shrink: true }} />
                 <Autocomplete
@@ -942,7 +1166,7 @@ export default function DayBoardPage() {
                   }}
                 />
                 {patientResults.length > 0 && !selectedPatient ? (
-                  <List dense sx={{ maxHeight: 160, overflowY: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+                  <List dense sx={{ maxHeight: 132, overflowY: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
                     {patientResults.slice(0, 8).map((p) => (
                       <ListItemButton key={p.id} onClick={() => setSelectedPatient(p)}>
                         <ListItemText primary={`${p.firstName} ${p.lastName || ""}`.trim()} secondary={`${p.patientNumber} • ${p.mobile}`} />
@@ -953,7 +1177,7 @@ export default function DayBoardPage() {
                 {selectedPatient ? <Chip label={`Patient: ${selectedPatient.firstName} ${selectedPatient.lastName || ""}`.trim()} color="primary" /> : null}
                 <Divider />
                 <Typography variant="subtitle2">Status filters</Typography>
-                <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                <Stack direction="row" spacing={0.5} flexWrap="wrap">
                   {STATUS_FILTERS.map((key) => (
                     <Chip
                       key={key}
@@ -968,7 +1192,7 @@ export default function DayBoardPage() {
                   ))}
                 </Stack>
                 <Divider />
-                <Stack direction="row" spacing={1} flexWrap="wrap">
+                <Stack direction="row" spacing={0.75} flexWrap="wrap">
                   <Button size="small" variant="outlined" onClick={() => navigate("/doctors/availability")}>Add availability</Button>
                   <Button size="small" variant="outlined" onClick={() => navigate("/doctors/availability")}>Add break</Button>
                   <Button size="small" variant="outlined" onClick={() => navigate("/doctors/availability")}>Add leave</Button>
@@ -981,8 +1205,8 @@ export default function DayBoardPage() {
 
         <Grid size={{ xs: 12, md: 6 }}>
           <Card variant="outlined" sx={{ height: "100%" }}>
-            <CardContent sx={{ height: "100%", pb: 1.5 }}>
-              <Stack spacing={1.25} sx={{ height: "100%", minHeight: 0 }}>
+            <CardContent sx={{ height: "100%", p: 1.25, pb: 1.25 }}>
+              <Stack spacing={1} sx={{ height: "100%", minHeight: 0 }}>
                 <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 1, flexWrap: "wrap" }}>
                   <Box>
                     <Typography variant="h6" sx={{ fontWeight: 800 }}>Operational Calendar</Typography>
@@ -990,19 +1214,19 @@ export default function DayBoardPage() {
                       Grouped clinic scheduler for {effectiveDoctorId ? selectedDoctorLabel : "All Doctors"} on {compactDateLabel(date)}
                     </Typography>
                   </Box>
-                  <Stack direction="row" spacing={0.75} flexWrap="wrap" justifyContent="flex-end">
+                  <Stack direction="row" spacing={0.5} flexWrap="wrap" justifyContent="flex-end">
                     <Chip size="small" label={effectiveDoctorId ? "Specific doctor" : "All Doctors"} color={effectiveDoctorId ? "primary" : "default"} />
                     <Chip size="small" label={date} variant="outlined" />
                   </Stack>
                 </Box>
 
-                <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                <Stack direction="row" spacing={0.5} flexWrap="wrap">
                   <Chip size="small" label={`Doctor: ${selectedDoctorLabel}`} color={effectiveDoctorId ? "primary" : "default"} variant="outlined" />
                   <Chip size="small" label={`Date: ${compactDateLabel(date)}`} variant="outlined" />
                   <Chip size="small" label={`Time period: ${currentTimeSection ? currentTimeSection.charAt(0).toUpperCase() + currentTimeSection.slice(1) : "Outside current day"}`} variant="outlined" />
                 </Stack>
 
-                <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                <Stack direction="row" spacing={0.5} flexWrap="wrap">
                   <Chip size="small" label={`Total ${calendarSummary.totalSlots}`} variant="outlined" />
                   <Chip size="small" label={`Available ${calendarSummary.availableCount}`} color="success" variant="outlined" />
                   <Chip size="small" label={`Booked ${calendarSummary.bookedCount}`} color="info" variant="outlined" />
@@ -1085,11 +1309,12 @@ export default function DayBoardPage() {
                     </Box>
 
                     {calendarRows.length === 0 ? (
-                      <Alert severity="info">
-                        {effectiveDoctorId
-                          ? "No slots available for selected date/doctor. Add availability to generate slots."
-                          : "No visible slots match the current filters."}
-                      </Alert>
+                    <CompactEmptyState
+                      title="No visible slots"
+                      subtitle={effectiveDoctorId
+                        ? "Add availability to generate slots for the selected date and doctor."
+                        : "No rows match the current filters."}
+                    />
                     ) : null}
 
                     <Stack spacing={1} sx={{ flex: 1, minHeight: 0 }}>
@@ -1137,7 +1362,15 @@ export default function DayBoardPage() {
                             </Stack>
                           </AccordionSummary>
                           <AccordionDetails>
-                            <Box sx={{ maxHeight: 372, overflowY: "auto", overflowX: "hidden" }}>
+                            <Box
+                              sx={{
+                                maxHeight: 372,
+                                overflowY: "auto",
+                                overflowX: "hidden",
+                                scrollbarGutter: "stable both-edges",
+                                pr: 1.5,
+                              }}
+                            >
                               <Table stickyHeader size="small" sx={{ minWidth: gridMinWidth, tableLayout: "fixed" }}>
                                 <TableHead>
                                   <TableRow>
@@ -1150,7 +1383,7 @@ export default function DayBoardPage() {
                                         minWidth: 92,
                                         width: 92,
                                         fontWeight: 800,
-                                        py: 0.75,
+                                        py: 0.6,
                                       }}
                                     >
                                       Time
@@ -1162,7 +1395,7 @@ export default function DayBoardPage() {
                                           minWidth: 188,
                                           fontWeight: 800,
                                           verticalAlign: "top",
-                                          py: 0.75,
+                                          py: 0.6,
                                         }}
                                       >
                                         <Stack spacing={0.25}>
@@ -1179,9 +1412,10 @@ export default function DayBoardPage() {
                                   {section.times.length === 0 ? (
                                     <TableRow>
                                       <TableCell colSpan={Math.max(1, visibleDoctorPanels.length + 1)} sx={{ py: 2 }}>
-                                        <Alert severity="info" sx={{ mb: 0 }}>
-                                          No visible slots in this section.
-                                        </Alert>
+                                        <CompactEmptyState
+                                          title="No visible slots in this section"
+                                          subtitle="Try another time bucket or expand the filters."
+                                        />
                                       </TableCell>
                                     </TableRow>
                                   ) : section.times.map((time) => (
@@ -1196,7 +1430,7 @@ export default function DayBoardPage() {
                                           whiteSpace: "nowrap",
                                           minWidth: 92,
                                           width: 92,
-                                          py: 0.5,
+                                          py: 0.4,
                                         }}
                                       >
                                         {time}
@@ -1234,13 +1468,14 @@ export default function DayBoardPage() {
                                         const cellContent = !slot && slotAppointments.length === 0 ? (
                                           <Box
                                             sx={{
-                                              minHeight: 42,
+                                              minHeight: 38,
                                               display: "grid",
                                               placeItems: "center",
                                               borderRadius: 1,
                                               border: "1px dashed",
                                               borderColor: "divider",
                                               color: "text.disabled",
+                                              px: 0.5,
                                             }}
                                           >
                                             —
@@ -1271,11 +1506,12 @@ export default function DayBoardPage() {
                                               }
                                             }}
                                             sx={{
-                                              minHeight: 42,
-                                              p: 0.5,
+                                              minHeight: 38,
+                                              p: 0.4,
+                                              pr: 0.75,
                                               display: "flex",
                                               flexDirection: "column",
-                                              gap: 0.25,
+                                              gap: 0.2,
                                               justifyContent: "space-between",
                                               borderRadius: 1,
                                               border: "1px solid",
@@ -1301,7 +1537,7 @@ export default function DayBoardPage() {
                                               }
                                             }}
                                           >
-                                            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 0.5 }}>
+                                            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 0.5, pr: 0.5 }}>
                                               <Chip
                                                 size="small"
                                                 label={summary.label}
@@ -1389,10 +1625,10 @@ export default function DayBoardPage() {
 
         <Grid size={{ xs: 12, md: 3 }}>
           <Card variant="outlined" sx={{ position: { md: "sticky" }, top: { md: 16 } }}>
-            <CardContent>
-              <Stack spacing={1.5}>
+            <CardContent sx={{ p: 1.25 }}>
+              <Stack spacing={1.1}>
                 <Typography variant="h6" sx={{ fontWeight: 800 }}>Details</Typography>
-                {!selected ? <Alert severity="info">Select a slot or appointment.</Alert> : null}
+                {!selected ? <CompactEmptyState title="Select a slot or appointment" /> : null}
 
                 {selectedSlot ? (
                   <Stack spacing={1}>
@@ -1400,10 +1636,13 @@ export default function DayBoardPage() {
                     <Typography variant="body2">Time: {toFive(selectedSlot.slotTime)} - {toFive(selectedSlot.slotEndTime)}</Typography>
                     <Typography variant="body2">Capacity: {selectedSlot.bookedCount}/{selectedSlot.maxPatientsPerSlot}</Typography>
                     <Chip size="small" label={friendlyStatusLabel(selectedSlot.status)} color={slotColor(selectedSlot.status)} sx={{ width: "fit-content" }} />
+                    {selectedPatient ? (
+                      <Chip size="small" label={`Patient: ${selectedPatient.firstName} ${selectedPatient.lastName || ""}`.trim()} color="primary" variant="outlined" sx={{ width: "fit-content" }} />
+                    ) : null}
                     {selectedSlotAppointments.length > 0 ? (
-                      <Stack spacing={0.75}>
+                      <Stack spacing={0.5}>
                         <Typography variant="caption" color="text.secondary">Appointments in this slot</Typography>
-                        <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap">
                           {selectedSlotAppointments.map((appointment) => (
                             <Chip
                               key={appointment.id}
@@ -1424,9 +1663,14 @@ export default function DayBoardPage() {
                       </Select>
                     </FormControl>
                     <TextField size="small" label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
-                    <Button variant="contained" disabled={!canBook || !selectedPatient || !selectedSlot.selectable || saving} onClick={() => void bookFromSlot()}>
+                    <Button variant="contained" disabled={!selectedSlotCanBook || saving} onClick={openBookingFlow}>
                       Book appointment
                     </Button>
+                    {selectedSlotBookingReason ? (
+                      <Typography variant="caption" color="text.secondary">
+                        {selectedSlotBookingReason}
+                      </Typography>
+                    ) : null}
                     <Button variant="outlined" disabled={!canBook || !selectedPatient} onClick={() => void addWaitlistFromSelection()}>
                       Add to waitlist
                     </Button>
@@ -1441,10 +1685,24 @@ export default function DayBoardPage() {
                     <Typography variant="body2">Phone: {selectedAppointment.patientMobile || "—"}</Typography>
                     <Typography variant="body2">Reference: {selectedAppointment.tokenNumber ?? selectedAppointment.id}</Typography>
                     <Chip size="small" label={friendlyStatusLabel(selectedAppointment.status)} color={appointmentColor(selectedAppointment.status)} sx={{ width: "fit-content" }} />
+                    <Typography variant="body2">Consultation fee: {formatMoney(selectedAppointmentFee?.consultationFee)}</Typography>
+                    <Chip
+                      size="small"
+                      label={feeStatusLabel(selectedAppointmentFee?.feeStatus || "NOT_CONFIGURED", selectedAppointmentFee?.feeStatus === "PAID" ? selectedAppointmentFee?.consultationFee : selectedAppointmentFee?.dueAmount)}
+                      color={feeStatusColor(selectedAppointmentFee?.feeStatus || "NOT_CONFIGURED")}
+                      variant="outlined"
+                      sx={{ width: "fit-content" }}
+                    />
                     <Typography variant="body2">Queue: {selectedAppointment.status === "WAITING" ? "Checked in" : friendlyStatusLabel(selectedAppointment.status)}</Typography>
                     <Typography variant="body2">Consultation: {selectedAppointment.consultationId ? "Started" : "Not started"}</Typography>
-                    <Stack direction="row" gap={1} flexWrap="wrap">
-                      <Button size="small" variant="contained" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "WAITING")}>Check-in</Button>
+                    <Stack direction="row" gap={0.75} flexWrap="wrap">
+                      {canCollect && selectedAppointmentFee?.consultationFee != null && selectedAppointmentFee.consultationFee > 0 && selectedAppointmentFee.feeStatus !== "PAID" ? (
+                        <Button size="small" variant="outlined" onClick={() => setFeeDialog({ appointment: selectedAppointment, action: "collect" })}>Collect Fee</Button>
+                      ) : null}
+                      {selectedAppointmentFee?.bill ? (
+                        <Button size="small" variant="outlined" onClick={() => navigate(`/billing?appointmentId=${selectedAppointment.id}`)}>View Payment</Button>
+                      ) : null}
+                      <Button size="small" variant="contained" disabled={!canManage} onClick={() => void checkInAppointment(selectedAppointment)}>Check-in</Button>
                       <Button size="small" variant="outlined" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "NO_SHOW")}>No-show</Button>
                       <Button size="small" variant="outlined" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "CANCELLED")}>Cancel</Button>
                       <Button size="small" variant="outlined" onClick={() => openReschedule(selectedAppointment)}>Reschedule</Button>
@@ -1459,9 +1717,9 @@ export default function DayBoardPage() {
                   <Alert severity="info">Select a slot in the grid to create bookings. Manual time booking requires selecting a specific doctor.</Alert>
                 ) : effectiveDoctorId && !slots.length ? (
                   <Stack spacing={1}>
-                    <Alert severity="info">No configured schedule. Manual appointment time is enabled.</Alert>
+                    <CompactEmptyState title="No configured schedule" subtitle="Manual appointment time is enabled." />
                     <TextField size="small" type="time" label="Manual time" value={manualTime} onChange={(e) => setManualTime(e.target.value)} InputLabelProps={{ shrink: true }} />
-                    <Button variant="contained" disabled={!canBook || !selectedPatient || !manualTime} onClick={() => void bookFromSlot()}>Book manual time</Button>
+                    <Button variant="contained" disabled={!canBook || !selectedPatient || !manualTime} onClick={() => void bookManualAppointment()}>Book manual time</Button>
                   </Stack>
                 ) : null}
               </Stack>
@@ -1469,10 +1727,10 @@ export default function DayBoardPage() {
           </Card>
 
           <Card variant="outlined" sx={{ mt: 2 }}>
-            <CardContent>
+            <CardContent sx={{ p: 1.25 }}>
               <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Waitlist</Typography>
               {!effectiveDoctorId && !selectedSlot ? (
-                <Alert severity="info">Select a doctor or grid cell to review waitlist entries.</Alert>
+                <CompactEmptyState title="Select a doctor or grid cell" subtitle="Waitlist entries appear here." />
               ) : activeWaitlist.length === 0 ? <Alert severity="info">No waitlist entries.</Alert> : (
                 <Stack spacing={1}>
                   {activeWaitlist.map((entry) => (
@@ -1529,6 +1787,20 @@ export default function DayBoardPage() {
           <Button variant="contained" onClick={() => void confirmMoveAppointment()} disabled={!draggedAppointment || !moveConfirmTarget}>Move</Button>
         </DialogActions>
       </Dialog>
+
+      {feeDialog ? (
+        <ConsultationFeeDialog
+          open
+          title={feeDialog.action === "collect-and-check-in" ? "Collect consultation fee and check in" : "Collect consultation fee"}
+          appointmentLabel={`${feeDialog.appointment.appointmentDate} ${toFive(feeDialog.appointment.appointmentTime)}`}
+          doctorLabel={`Doctor: ${feeDialog.appointment.doctorName || displayDoctorName(users, feeDialog.appointment.doctorUserId)}`}
+          patientLabel={`Patient: ${feeDialog.appointment.patientName || feeDialog.appointment.patientNumber || feeDialog.appointment.patientId}`}
+          feeLabel={`Consultation fee: ${formatMoney(selectedAppointmentFee?.consultationFee ?? null)}`}
+          submitLabel={feeDialog.action === "collect-and-check-in" ? "Collect & Check-in" : "Collect Fee"}
+          onClose={() => setFeeDialog(null)}
+          onSubmit={submitFeeDialog}
+        />
+      ) : null}
     </Stack>
   );
 }

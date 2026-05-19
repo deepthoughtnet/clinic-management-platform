@@ -90,7 +90,8 @@ public class AppointmentWaitlistController {
                 request.reason(),
                 request.type(),
                 request.status(),
-                request.priority()
+                request.priority(),
+                request.allowAdHocBooking()
         ), actorAppUserId, allowOverbooking);
         return new com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse(
                 record.id() == null ? null : record.id().toString(),

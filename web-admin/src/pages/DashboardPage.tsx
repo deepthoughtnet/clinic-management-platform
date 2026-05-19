@@ -94,6 +94,16 @@ function displayNameForUser(user: ClinicUser | undefined, fallback: string) {
   return user.displayName || user.email || fallback;
 }
 
+const DASHBOARD_CHIP_SX = {
+  height: 24,
+  borderRadius: 999,
+  fontSize: "0.72rem",
+  "& .MuiChip-label": {
+    px: 0.85,
+    py: 0,
+  },
+} as const;
+
 function KpiCard({ label, value, tone }: { label: string; value: string | number; tone: "primary" | "success" | "warning" | "error" | "info" }) {
   const bg = {
     primary: "linear-gradient(180deg, rgba(25,118,210,0.12), rgba(25,118,210,0.03))",
@@ -104,10 +114,24 @@ function KpiCard({ label, value, tone }: { label: string; value: string | number
   }[tone];
 
   return (
-    <Card variant="outlined" sx={{ background: bg, transition: "transform 0.2s ease", "&:hover": { transform: "translateY(-2px)" } }}>
-      <CardContent>
-        <Typography variant="overline" sx={{ opacity: 0.75 }}>{label}</Typography>
-        <Typography variant="h4" sx={{ fontWeight: 900 }}>{value}</Typography>
+    <Card
+      variant="outlined"
+      sx={{
+        minHeight: 96,
+        background: bg,
+        transition: "transform 0.2s ease, box-shadow 0.2s ease",
+        "&:hover": { transform: "translateY(-2px)", boxShadow: 2 },
+      }}
+    >
+      <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+        <Stack spacing={0.35} sx={{ height: "100%", justifyContent: "space-between" }}>
+          <Typography variant="caption" sx={{ opacity: 0.8, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
+            {label}
+          </Typography>
+          <Typography variant="h5" sx={{ fontWeight: 900, lineHeight: 1 }}>
+            {value}
+          </Typography>
+        </Stack>
       </CardContent>
     </Card>
   );
@@ -298,23 +322,23 @@ export default function DashboardPage() {
   ] : [];
 
   return (
-    <Stack spacing={2.5}>
-      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
+    <Stack spacing={1.75}>
+      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap", alignItems: "flex-start" }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900 }}>{dashboardTitle}</Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="h5" sx={{ fontWeight: 900, lineHeight: 1.1 }}>{dashboardTitle}</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
             Operational and analytics summary from {startDate} to {endDate} • {selectedDoctorLabel}
           </Typography>
         </Box>
-        <Chip label={auth.tenantName || "Clinic"} variant="outlined" />
+        <Chip label={auth.tenantName || "Clinic"} variant="outlined" size="small" sx={DASHBOARD_CHIP_SX} />
       </Box>
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 
       <Card variant="outlined">
-        <CardContent>
-          <Stack direction={{ xs: "column", lg: "row" }} spacing={1.25} alignItems={{ lg: "center" }} useFlexGap flexWrap="wrap">
-            <FormControl size="small" sx={{ minWidth: 180 }}>
+        <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+          <Stack direction={{ xs: "column", lg: "row" }} spacing={0.9} alignItems={{ lg: "center" }} useFlexGap flexWrap="wrap">
+            <FormControl size="small" sx={{ minWidth: 160 }}>
               <InputLabel id="preset-label">Preset</InputLabel>
               <Select labelId="preset-label" label="Preset" value={preset} onChange={(e) => applyPreset(e.target.value as DatePreset)}>
                 <MenuItem value="TODAY">Today</MenuItem>
@@ -325,10 +349,10 @@ export default function DashboardPage() {
                 <MenuItem value="CUSTOM">Custom Range</MenuItem>
               </Select>
             </FormControl>
-            <TextField size="small" type="date" label="Start" value={startDate} onChange={(e) => { setPreset("CUSTOM"); setStartDate(e.target.value); }} InputLabelProps={{ shrink: true }} />
-            <TextField size="small" type="date" label="End" value={endDate} onChange={(e) => { setPreset("CUSTOM"); setEndDate(e.target.value); }} InputLabelProps={{ shrink: true }} />
+            <TextField size="small" sx={{ minWidth: 150 }} type="date" label="Start" value={startDate} onChange={(e) => { setPreset("CUSTOM"); setStartDate(e.target.value); }} InputLabelProps={{ shrink: true }} />
+            <TextField size="small" sx={{ minWidth: 150 }} type="date" label="End" value={endDate} onChange={(e) => { setPreset("CUSTOM"); setEndDate(e.target.value); }} InputLabelProps={{ shrink: true }} />
             {!isDoctor && !isBillingUser ? (
-              <FormControl size="small" sx={{ minWidth: 220 }}>
+              <FormControl size="small" sx={{ minWidth: 200 }}>
                 <InputLabel id="dashboard-doctor">Doctor</InputLabel>
                 <Select labelId="dashboard-doctor" label="Doctor" value={doctorUserId} onChange={(e) => setDoctorUserId(String(e.target.value))}>
                   <MenuItem value="">All Doctors</MenuItem>
@@ -338,10 +362,10 @@ export default function DashboardPage() {
                 </Select>
               </FormControl>
             ) : null}
-            <Button variant="contained" onClick={() => void loadDashboard()}>Refresh</Button>
-            <Button variant="outlined" onClick={() => navigate("/appointments")}>New appointment</Button>
-            <Button variant="outlined" onClick={() => navigate("/appointments/day-board")}>Open day board</Button>
-            <Button variant="outlined" onClick={() => navigate("/queue")}>Open queue</Button>
+            <Button size="small" sx={{ minHeight: 36, px: 1.5 }} variant="contained" onClick={() => void loadDashboard()}>Refresh</Button>
+            <Button size="small" sx={{ minHeight: 36, px: 1.5 }} variant="outlined" onClick={() => navigate("/appointments")}>New appointment</Button>
+            <Button size="small" sx={{ minHeight: 36, px: 1.5 }} variant="outlined" onClick={() => navigate("/appointments/day-board")}>Open day board</Button>
+            <Button size="small" sx={{ minHeight: 36, px: 1.5 }} variant="outlined" onClick={() => navigate("/queue")}>Open queue</Button>
           </Stack>
         </CardContent>
       </Card>
@@ -351,34 +375,44 @@ export default function DashboardPage() {
       ) : !dashboard ? (
         <Alert severity="info">No dashboard data available for the selected filters.</Alert>
       ) : (
-        <Stack spacing={2}>
-          <Grid container spacing={2}>
+        <Stack spacing={1.5}>
+          <Box
+            sx={{
+              display: "grid",
+              gap: 1.25,
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "repeat(2, minmax(0, 1fr))",
+                lg: "repeat(auto-fit, minmax(280px, 1fr))",
+              },
+            }}
+          >
             {(showBilling && !showOperational ? financeCards : cards).map((card) => (
-              <Grid key={card.label} size={{ xs: 12, sm: 6, md: 3 }}>
+              <Box key={card.label}>
                 <KpiCard {...card} />
-              </Grid>
+              </Box>
             ))}
-          </Grid>
+          </Box>
 
-          <Grid container spacing={2}>
+          <Grid container spacing={1.5}>
             {showOperational ? (
               <Grid size={{ xs: 12, lg: 7 }}>
                 <Card variant="outlined">
-                  <CardContent>
-                    <Stack spacing={1.25}>
-                      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
+                  <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+                    <Stack spacing={1}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.25, flexWrap: "wrap", alignItems: "center" }}>
                         <Typography variant="h6" sx={{ fontWeight: 800 }}>Today at a glance</Typography>
-                        <Stack direction="row" spacing={1} flexWrap="wrap">
-                          <Chip size="small" label={`Filter: ${selectedDoctorLabel}`} color={doctorUserId ? "primary" : "default"} />
-                          <Chip size="small" label={`Waiting ${queue?.waiting || 0}`} color="warning" />
-                          <Chip size="small" label={`Checked in ${appt?.checkedIn || 0}`} color="info" />
-                          <Chip size="small" label={`In consultation ${appt?.inConsultation || 0}`} color="success" />
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                          <Chip size="small" label={`Filter: ${selectedDoctorLabel}`} color={doctorUserId ? "primary" : "default"} sx={DASHBOARD_CHIP_SX} />
+                          <Chip size="small" label={`Waiting ${queue?.waiting || 0}`} color="warning" sx={DASHBOARD_CHIP_SX} />
+                          <Chip size="small" label={`Checked in ${appt?.checkedIn || 0}`} color="info" sx={DASHBOARD_CHIP_SX} />
+                          <Chip size="small" label={`In consultation ${appt?.inConsultation || 0}`} color="success" sx={DASHBOARD_CHIP_SX} />
                         </Stack>
                       </Box>
-                      <Grid container spacing={1.5}>
+                      <Grid container spacing={1}>
                         <Grid size={{ xs: 12, sm: 6 }}>
-                          <Card variant="outlined" sx={{ bgcolor: "background.paper" }}>
-                            <CardContent sx={{ py: 1.5 }}>
+                          <Card variant="outlined" sx={{ bgcolor: "background.paper", minHeight: 96 }}>
+                            <CardContent sx={{ py: 1.2, "&:last-child": { pb: 1.2 } }}>
                               <Typography variant="overline" color="text.secondary">Appointments today</Typography>
                               <Typography variant="h5" sx={{ fontWeight: 900 }}>{appt?.totalToday || 0}</Typography>
                               <Typography variant="body2" color="text.secondary">
@@ -388,8 +422,8 @@ export default function DashboardPage() {
                           </Card>
                         </Grid>
                         <Grid size={{ xs: 12, sm: 6 }}>
-                          <Card variant="outlined" sx={{ bgcolor: "background.paper" }}>
-                            <CardContent sx={{ py: 1.5 }}>
+                          <Card variant="outlined" sx={{ bgcolor: "background.paper", minHeight: 96 }}>
+                            <CardContent sx={{ py: 1.2, "&:last-child": { pb: 1.2 } }}>
                               <Typography variant="overline" color="text.secondary">Queue state</Typography>
                               <Typography variant="h5" sx={{ fontWeight: 900 }}>{queue?.waiting || 0}</Typography>
                               <Typography variant="body2" color="text.secondary">
@@ -403,9 +437,9 @@ export default function DashboardPage() {
                   </CardContent>
                 </Card>
 
-                <Card variant="outlined" sx={{ mt: 2 }}>
-                  <CardContent>
-                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Current waiting patients</Typography>
+                <Card variant="outlined" sx={{ mt: 1.25 }}>
+                  <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 0.75 }}>Current waiting patients</Typography>
                     {dashboard.currentWaitingList.length === 0 ? <Alert severity="info">No waiting patients for the selected filters.</Alert> : (
                       <Stack spacing={1}>
                         {dashboard.currentWaitingList.slice(0, 8).map((item) => (
@@ -427,9 +461,9 @@ export default function DashboardPage() {
                   </CardContent>
                 </Card>
 
-                <Card variant="outlined">
-                  <CardContent>
-                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Doctor-wise summary</Typography>
+                <Card variant="outlined" sx={{ mt: 1.25 }}>
+                  <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 0.75 }}>Doctor-wise summary</Typography>
                     {dashboard.doctorSummaries.length === 0 ? <Alert severity="info">No doctor metrics for selected range.</Alert> : (
                       <Box sx={{ overflowX: "auto" }}>
                         <Table size="small" sx={{ minWidth: 980 }}>
@@ -469,9 +503,9 @@ export default function DashboardPage() {
                   </CardContent>
                 </Card>
 
-                <Card variant="outlined" sx={{ mt: 2 }}>
-                  <CardContent>
-                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Recent activity</Typography>
+                <Card variant="outlined" sx={{ mt: 1.25 }}>
+                  <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 0.75 }}>Recent activity</Typography>
                     {dashboard.recentActivity.length === 0 ? <Alert severity="info">No recent activity.</Alert> : (
                       <Stack spacing={1}>
                         {dashboard.recentActivity.slice(0, 14).map((item, idx) => (
@@ -491,8 +525,8 @@ export default function DashboardPage() {
             <Grid size={{ xs: 12, lg: showOperational ? 5 : 12 }}>
               {showBilling ? (
               <Card variant="outlined">
-                <CardContent>
-                  <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>{isBillingUser ? "Finance Snapshot" : "Billing Snapshot"}</Typography>
+                <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+                  <Typography variant="h6" sx={{ fontWeight: 800, mb: 0.75 }}>{isBillingUser ? "Finance Snapshot" : "Billing Snapshot"}</Typography>
                   <Stack spacing={0.75}>
                     <Typography variant="body2">Total billed: <b>{formatMoney(billing?.totalBilled)}</b></Typography>
                     <Typography variant="body2">Paid: <b>{formatMoney(billing?.totalPaid)}</b></Typography>
@@ -523,10 +557,10 @@ export default function DashboardPage() {
                       <Typography variant="body2">Consultations with prescriptions: <b>{rx?.consultationsWithPrescriptions || 0}</b></Typography>
                       <Typography variant="body2">Avg Rx per consultation: <b>{rx?.avgPrescriptionsPerConsultation || 0}</b></Typography>
                     </Stack>
-                    <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1.25 }}>
-                      <Chip size="small" label={`Due in range ${followUp?.dueInRange || 0}`} color="warning" />
-                      <Chip size="small" label={`Overdue ${followUp?.overdue || 0}`} color="error" />
-                      <Chip size="small" label={`Next 7 days ${followUp?.upcomingNext7Days || 0}`} color="info" />
+                    <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 1 }}>
+                      <Chip size="small" label={`Due in range ${followUp?.dueInRange || 0}`} color="warning" sx={DASHBOARD_CHIP_SX} />
+                      <Chip size="small" label={`Overdue ${followUp?.overdue || 0}`} color="error" sx={DASHBOARD_CHIP_SX} />
+                      <Chip size="small" label={`Next 7 days ${followUp?.upcomingNext7Days || 0}`} color="info" sx={DASHBOARD_CHIP_SX} />
                     </Stack>
                   </CardContent>
                 </Card>

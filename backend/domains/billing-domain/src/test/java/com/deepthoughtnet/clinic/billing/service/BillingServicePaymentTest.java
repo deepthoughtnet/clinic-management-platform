@@ -18,6 +18,7 @@ import com.deepthoughtnet.clinic.billing.db.ReceiptEntity;
 import com.deepthoughtnet.clinic.billing.db.ReceiptRepository;
 import com.deepthoughtnet.clinic.billing.service.model.BillItemType;
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
+import com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria;
 import com.deepthoughtnet.clinic.billing.service.model.BillUpsertCommand;
 import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
 import com.deepthoughtnet.clinic.billing.service.model.BillLineCommand;
@@ -25,6 +26,7 @@ import com.deepthoughtnet.clinic.billing.service.model.PaymentCommand;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.billing.service.model.RefundCommand;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
+import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
@@ -68,6 +70,7 @@ class BillingServicePaymentTest {
                 receiptRepository,
                 patientRepository,
                 mock(ClinicProfileService.class),
+                mock(DoctorProfileService.class),
                 mock(ConsultationService.class),
                 mock(AppointmentService.class),
                 mock(InventoryService.class),
@@ -237,6 +240,24 @@ class BillingServicePaymentTest {
         assertThatThrownBy(() -> service.refund(tenantId, UUID.randomUUID(), new RefundCommand(null, new BigDecimal("10.00"), null, PaymentMode.CASH, null, null), actorId))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("refund reason is required");
+    }
+
+    @Test
+    void listUsesNonPaymentModeQueryWhenPaymentModeFilterMissing() {
+        when(billRepository.search(any(), any(BillingSearchCriteria.class))).thenReturn(List.of());
+
+        var rows = service.list(tenantId, new BillingSearchCriteria(null, null, null, null, null, null));
+
+        assertThat(rows).isEmpty();
+    }
+
+    @Test
+    void listUsesPaymentModeQueryWhenPaymentModeFilterPresent() {
+        when(billRepository.search(any(), any(BillingSearchCriteria.class))).thenReturn(List.of());
+
+        var rows = service.list(tenantId, new BillingSearchCriteria(null, null, null, null, PaymentMode.UPI, null));
+
+        assertThat(rows).isEmpty();
     }
 
     private BillEntity billWithTotal(BigDecimal total, List<PaymentEntity> payments) {

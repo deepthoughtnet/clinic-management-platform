@@ -22,6 +22,7 @@ public record AppointmentRequest(
         @NotNull
         AppointmentType type,
         AppointmentStatus status,
-        AppointmentPriority priority
+        AppointmentPriority priority,
+        boolean allowAdHocBooking
 ) {
 }

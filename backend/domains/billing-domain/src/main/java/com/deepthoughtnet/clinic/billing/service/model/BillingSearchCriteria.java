@@ -8,6 +8,7 @@ public record BillingSearchCriteria(
         BillStatus status,
         LocalDate fromDate,
         LocalDate toDate,
-        PaymentMode paymentMode
+        PaymentMode paymentMode,
+        UUID appointmentId
 ) {
 }

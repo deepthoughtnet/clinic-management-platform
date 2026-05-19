@@ -14,11 +14,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
 public class AiDoctorCopilotService {
+    private static final Logger log = LoggerFactory.getLogger(AiDoctorCopilotService.class);
     private static final String SAFETY_NOTICE = "This is an AI-generated draft. Doctor must verify before use.";
 
     private final AiOrchestrationService aiOrchestrationService;
@@ -70,6 +73,14 @@ public class AiDoctorCopilotService {
         }
 
         Map<String, Object> structured = toStructuredData(response.structuredJson());
+        log.debug("{} requestId={} provider={} model={} draftChars={} structuredKeys={} fallbackUsed={}",
+                responsePrefix(taskType),
+                response.requestId(),
+                response.provider(),
+                response.model(),
+                response.outputText() == null ? 0 : response.outputText().length(),
+                structured.keySet(),
+                response.fallbackUsed());
         return new AiDraftResponse(
                 true,
                 response.fallbackUsed(),
@@ -111,5 +122,15 @@ public class AiDoctorCopilotService {
                 List.of(),
                 List.of(SAFETY_NOTICE)
         );
+    }
+
+    private String responsePrefix(AiTaskType taskType) {
+        if (taskType == AiTaskType.SYMPTOMS_DIAGNOSIS_DRAFT) {
+            return "AI_DIAGNOSIS_RESPONSE";
+        }
+        if (taskType == AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION) {
+            return "AI_MEDICINE_RESPONSE";
+        }
+        return "AI_RESPONSE";
     }
 }

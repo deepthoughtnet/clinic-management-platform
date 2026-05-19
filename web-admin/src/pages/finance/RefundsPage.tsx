@@ -26,6 +26,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useAuth } from "../../auth/useAuth";
+import { CompactEmptyState, CompactFilterCard, CompactStatCard, compactChipSx } from "../../components/compact/CompactUi";
 import {
   addBillRefund,
   listRefundsLedger,
@@ -123,76 +124,84 @@ export default function RefundsPage() {
       {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
 
-      <Grid container spacing={2}>
-        <Grid size={{ xs: 12, md: 3 }}><Card><CardContent><Typography variant="caption">Refunds Today</Typography><Typography variant="h6">{refundsToday.length}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, md: 3 }}><Card><CardContent><Typography variant="caption">Total Refunded</Typography><Typography variant="h6">{formatMoney(totalRefunded)}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, md: 3 }}><Card><CardContent><Typography variant="caption">Partial Refunds</Typography><Typography variant="h6">{partialRefunds}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, md: 3 }}><Card><CardContent><Typography variant="caption">Full Refunds</Typography><Typography variant="h6">{fullRefunds}</Typography></CardContent></Card></Grid>
+      <Grid container spacing={1.25}>
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><CompactStatCard label="Today" value={refundsToday.length} helper="Refunds issued today" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><CompactStatCard label="Refunded" value={formatMoney(totalRefunded)} tone="warning" helper="Total refunded amount" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><CompactStatCard label="Partial" value={partialRefunds} tone="info" helper="Bills with partial refunds" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><CompactStatCard label="Full" value={fullRefunds} tone="success" helper="Fully refunded bills" /></Grid>
       </Grid>
 
-      <Card>
-        <CardContent>
-          <Grid container spacing={2}>
-            <Grid size={{ xs: 12, md: 2 }}><TextField type="date" label="From" value={fromDate} onChange={(e) => setFromDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} /></Grid>
-            <Grid size={{ xs: 12, md: 2 }}><TextField type="date" label="To" value={toDate} onChange={(e) => setToDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} /></Grid>
-            <Grid size={{ xs: 12, md: 2 }}>
-              <FormControl fullWidth>
-                <InputLabel id="refund-mode-label">Refund Mode</InputLabel>
-                <Select labelId="refund-mode-label" label="Refund Mode" value={refundMode} onChange={(e) => setRefundMode(e.target.value)}>
-                  <MenuItem value="">All</MenuItem>
-                  {PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12, md: 3 }}><TextField label="Patient / Bill Search" value={search} onChange={(e) => setSearch(e.target.value)} fullWidth /></Grid>
-            <Grid size={{ xs: 12, md: 2 }}><TextField label="Bill Number" value={billNumber} onChange={(e) => setBillNumber(e.target.value)} fullWidth /></Grid>
-            <Grid size={{ xs: 12, md: 1 }}><Button variant="contained" onClick={() => void load()} fullWidth>Apply</Button></Grid>
+      <CompactFilterCard
+        title="Filters"
+        subtitle="Keep the ledger dense and searchable."
+        actions={<Button size="small" variant="outlined" onClick={() => void load()}>Apply</Button>}
+      >
+        <Grid container spacing={1}>
+          <Grid size={{ xs: 12, md: 2 }}><TextField size="small" type="date" label="From" value={fromDate} onChange={(e) => setFromDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} /></Grid>
+          <Grid size={{ xs: 12, md: 2 }}><TextField size="small" type="date" label="To" value={toDate} onChange={(e) => setToDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} /></Grid>
+          <Grid size={{ xs: 12, md: 2 }}>
+            <FormControl fullWidth size="small">
+              <InputLabel id="refund-mode-label">Refund Mode</InputLabel>
+              <Select labelId="refund-mode-label" label="Refund Mode" value={refundMode} onChange={(e) => setRefundMode(e.target.value)}>
+                <MenuItem value="">All</MenuItem>
+                {PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}
+              </Select>
+            </FormControl>
           </Grid>
-        </CardContent>
-      </Card>
+          <Grid size={{ xs: 12, md: 3 }}><TextField size="small" label="Patient / Bill Search" value={search} onChange={(e) => setSearch(e.target.value)} fullWidth /></Grid>
+          <Grid size={{ xs: 12, md: 2 }}><TextField size="small" label="Bill Number" value={billNumber} onChange={(e) => setBillNumber(e.target.value)} fullWidth /></Grid>
+          <Grid size={{ xs: 12, md: 1 }} sx={{ display: "flex", alignItems: "stretch" }}>
+            <Button variant="outlined" size="small" onClick={() => { setFromDate(""); setToDate(""); setRefundMode(""); setSearch(""); setBillNumber(""); }}>
+              Clear
+            </Button>
+          </Grid>
+        </Grid>
+      </CompactFilterCard>
 
-      <Card>
+      <Card variant="outlined">
         <CardContent sx={{ p: 0 }}>
           {loading ? (
-            <Box sx={{ p: 3 }}><Typography color="text.secondary">Loading refunds…</Typography></Box>
+            <CompactEmptyState title="Loading refunds…" subtitle="Fetching the refund ledger." />
           ) : rows.length === 0 ? (
-            <Box sx={{ p: 3 }}><Typography color="text.secondary">No refunds found for current filters.</Typography></Box>
+            <CompactEmptyState title="No refunds found" subtitle="Try widening the filters or clearing the search row." />
           ) : (
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Refund Date</TableCell>
-                  <TableCell>Patient</TableCell>
-                  <TableCell>Bill Number</TableCell>
-                  <TableCell align="right">Refund Amount</TableCell>
-                  <TableCell>Refund Mode</TableCell>
-                  <TableCell>Reason</TableCell>
-                  <TableCell>Refunded By</TableCell>
-                  <TableCell>Bill Status</TableCell>
-                  <TableCell align="right">Actions</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.map((row) => (
-                  <TableRow key={row.id} hover>
-                    <TableCell>{row.refundedAt?.slice(0, 10)}</TableCell>
-                    <TableCell>{row.patientName || "—"}</TableCell>
-                    <TableCell>{row.billNumber}</TableCell>
-                    <TableCell align="right">{formatMoney(row.amount)}</TableCell>
-                    <TableCell><Chip size="small" label={row.refundMode || "N/A"} /></TableCell>
-                    <TableCell>{row.reason || "—"}</TableCell>
-                    <TableCell>{row.refundedBy || "—"}</TableCell>
-                    <TableCell><Chip size="small" label={row.billStatus} color={row.billStatus === "REFUNDED" ? "success" : row.billStatus === "PARTIALLY_REFUNDED" ? "warning" : "default"} /></TableCell>
-                    <TableCell align="right">
-                      <Stack direction="row" spacing={1} justifyContent="flex-end">
-                        <Button size="small" onClick={() => navigate("/billing")}>Open Bill</Button>
-                        {canIssueRefund && <Button size="small" onClick={() => { setIssueBillId(row.billId); setIssueAmount(""); setIssueReason(""); setIssueOpen(true); }}>Issue Refund</Button>}
-                      </Stack>
-                    </TableCell>
+            <Box sx={{ overflowX: "auto" }}>
+              <Table size="small" sx={{ minWidth: 1040 }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ py: 0.8 }}>Refund Date</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Patient</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Bill Number</TableCell>
+                    <TableCell sx={{ py: 0.8 }} align="right">Refund Amount</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Mode</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Reason</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Refunded By</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Bill Status</TableCell>
+                    <TableCell sx={{ py: 0.8 }} align="right">Actions</TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHead>
+                <TableBody>
+                  {rows.map((row) => (
+                    <TableRow key={row.id} hover>
+                      <TableCell sx={{ py: 0.65 }}>{row.refundedAt?.slice(0, 10)}</TableCell>
+                      <TableCell sx={{ py: 0.65 }}>{row.patientName || "—"}</TableCell>
+                      <TableCell sx={{ py: 0.65 }}>{row.billNumber}</TableCell>
+                      <TableCell sx={{ py: 0.65 }} align="right">{formatMoney(row.amount)}</TableCell>
+                      <TableCell sx={{ py: 0.65 }}><Chip size="small" label={row.refundMode || "N/A"} sx={compactChipSx} /></TableCell>
+                      <TableCell sx={{ py: 0.65, maxWidth: 170, wordBreak: "break-word" }}>{row.reason || "—"}</TableCell>
+                      <TableCell sx={{ py: 0.65 }}>{row.refundedBy || "—"}</TableCell>
+                      <TableCell sx={{ py: 0.65 }}><Chip size="small" label={row.billStatus} color={row.billStatus === "REFUNDED" ? "success" : row.billStatus === "PARTIALLY_REFUNDED" ? "warning" : "default"} sx={compactChipSx} /></TableCell>
+                      <TableCell sx={{ py: 0.65 }} align="right">
+                        <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap">
+                          <Button size="small" variant="text" onClick={() => navigate("/billing")}>Open Bill</Button>
+                          {canIssueRefund && <Button size="small" variant="text" onClick={() => { setIssueBillId(row.billId); setIssueAmount(""); setIssueReason(""); setIssueOpen(true); }}>Issue Refund</Button>}
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
           )}
         </CardContent>
       </Card>

@@ -88,7 +88,7 @@ public class ReportingFacade {
             List<com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord> todayAppointments,
             List<ConsultationRecord> consultations
     ) {
-        List<BillRecord> bills = billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null, null, null, null));
+        List<BillRecord> bills = billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null, null, null, null, null));
         BigDecimal todayRevenue = BigDecimal.ZERO;
         for (BillRecord bill : bills) {
             for (PaymentRecord payment : billingService.listPayments(tenantId, bill.id())) {
@@ -150,7 +150,7 @@ public class ReportingFacade {
         List<ConsultationRecord> activeConsultations = consultations.stream()
                 .filter(record -> record.status() == ConsultationStatus.DRAFT)
                 .toList();
-        List<BillRecord> bills = billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null, null, null, null));
+        List<BillRecord> bills = billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null, null, null, null, null));
         if (doctorUserId != null) {
             bills = bills.stream()
                     .filter(bill -> dateAppointments.stream().anyMatch(appointment -> appointment.id() != null && appointment.id().equals(bill.appointmentId())))
@@ -523,7 +523,7 @@ public class ReportingFacade {
     }
 
     public List<Map<String, Object>> revenue(UUID tenantId, LocalDate from, LocalDate to, UUID doctorUserId, UUID patientId) {
-        List<BillRecord> bills = billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(patientId, null, null, null, null));
+        List<BillRecord> bills = billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(patientId, null, null, null, null, null));
         return bills.stream()
                 .filter(bill -> between(bill.billDate(), from, to))
                 .map(bill -> row(
@@ -541,7 +541,7 @@ public class ReportingFacade {
 
     public List<Map<String, Object>> paymentModes(UUID tenantId, LocalDate from, LocalDate to) {
         Map<PaymentMode, BigDecimal> totals = new LinkedHashMap<>();
-        for (BillRecord bill : billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null, null, null, null))) {
+        for (BillRecord bill : billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null, null, null, null, null))) {
             for (PaymentRecord payment : billingService.listPayments(tenantId, bill.id())) {
                 if (payment.createdAt() != null && between(payment.createdAt().toLocalDate(), from, to)) {
                     totals.merge(payment.paymentMode(), payment.amount(), BigDecimal::add);
@@ -554,7 +554,7 @@ public class ReportingFacade {
     }
 
     public List<Map<String, Object>> pendingDues(UUID tenantId) {
-        return billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null, null, null, null)).stream()
+        return billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null, null, null, null, null)).stream()
                 .filter(bill -> bill.dueAmount().compareTo(BigDecimal.ZERO) > 0)
                 .map(bill -> row(
                         "billId", bill.id(),

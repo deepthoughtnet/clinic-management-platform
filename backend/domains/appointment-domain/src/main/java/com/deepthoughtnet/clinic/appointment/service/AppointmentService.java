@@ -51,6 +51,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.time.temporal.ChronoUnit;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
@@ -562,11 +563,13 @@ public class AppointmentService {
     public AppointmentRecord createScheduled(UUID tenantId, AppointmentUpsertCommand command, UUID actorAppUserId, boolean allowOverbooking) {
         requireTenant(tenantId);
         validateAppointment(command);
-        validateNotPast(command.appointmentDate(), command.appointmentTime());
+        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, command.doctorUserId(), command.appointmentDate());
+        DoctorAvailabilitySlotRecord matchingSlot = findMatchingSlot(slots, command.appointmentTime());
+        validateNotPast(command.appointmentDate(), command.appointmentTime(), matchingSlot);
         ensurePatientInTenant(tenantId, command.patientId());
         ensureDoctorInTenant(tenantId, command.doctorUserId());
         ensureNoDuplicateActiveAppointment(tenantId, command.patientId(), command.doctorUserId(), command.appointmentDate(), command.appointmentTime());
-        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking);
+        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots);
 
         AppointmentEntity entity = AppointmentEntity.create(tenantId, command.patientId(), command.doctorUserId());
         AppointmentType type = command.type() == null ? AppointmentType.SCHEDULED : command.type();
@@ -696,11 +699,13 @@ public class AppointmentService {
         }
         requireDate(command.appointmentDate(), "appointmentDate");
         requireTime(command.appointmentTime(), "appointmentTime");
-        validateNotPast(command.appointmentDate(), command.appointmentTime());
 
         AppointmentEntity entity = appointmentRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Appointment not found"));
         UUID targetDoctor = command.doctorUserId() == null ? entity.getDoctorUserId() : command.doctorUserId();
+        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, targetDoctor, command.appointmentDate());
+        DoctorAvailabilitySlotRecord matchingSlot = findMatchingSlot(slots, command.appointmentTime());
+        validateNotPast(command.appointmentDate(), command.appointmentTime(), matchingSlot);
         ensureDoctorInTenant(tenantId, targetDoctor);
         ensureNoDuplicateActiveAppointment(tenantId, entity.getPatientId(), targetDoctor, command.appointmentDate(), command.appointmentTime());
         ensureScheduledSlotAvailable(tenantId, new AppointmentUpsertCommand(
@@ -711,8 +716,9 @@ public class AppointmentService {
                 command.reason(),
                 entity.getType(),
                 entity.getStatus(),
-                entity.getPriority()
-        ), allowOverbooking);
+                entity.getPriority(),
+                false
+        ), allowOverbooking, slots);
         Integer token = entity.getType() == AppointmentType.WALK_IN
                 ? nextToken(tenantId, targetDoctor, command.appointmentDate())
                 : entity.getTokenNumber();
@@ -1130,18 +1136,38 @@ public class AppointmentService {
         }
     }
 
+    private DoctorAvailabilitySlotRecord findMatchingSlot(List<DoctorAvailabilitySlotRecord> slots, LocalTime appointmentTime) {
+        if (appointmentTime == null || slots == null || slots.isEmpty()) {
+            return null;
+        }
+        return slots.stream()
+                .filter(candidate -> candidate.slotTime().equals(appointmentTime))
+                .findFirst()
+                .orElse(null);
+    }
+
     private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking) {
+        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, command.doctorUserId(), command.appointmentDate());
+        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots);
+    }
+
+    private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking, List<DoctorAvailabilitySlotRecord> slots) {
         if (command.type() == AppointmentType.WALK_IN) {
             return;
         }
-        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, command.doctorUserId(), command.appointmentDate());
         if (slots.isEmpty()) {
             return;
         }
         DoctorAvailabilitySlotRecord slot = slots.stream()
                 .filter(candidate -> candidate.slotTime().equals(command.appointmentTime()))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Selected time is not available for the selected doctor"));
+                .orElse(null);
+        if (slot == null) {
+            if (command.allowAdHocBooking()) {
+                return;
+            }
+            throw new IllegalArgumentException("Selected time is not available for the selected doctor");
+        }
         if (slot.status() == DoctorAvailabilitySlotStatus.UNAVAILABLE
                 || slot.status() == DoctorAvailabilitySlotStatus.BREAK
                 || slot.status() == DoctorAvailabilitySlotStatus.LEAVE) {
@@ -1177,11 +1203,27 @@ public class AppointmentService {
 
     private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime) {
         LocalDate today = LocalDate.now();
+        LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
         if (appointmentDate.isBefore(today)) {
-            throw new IllegalArgumentException("Appointment date/time cannot be in the past");
+            throw new IllegalArgumentException("Please select a future time or current running slot.");
         }
-        if (appointmentDate.isEqual(today) && appointmentTime != null && !appointmentTime.isAfter(LocalTime.now())) {
-            throw new IllegalArgumentException("Appointment date/time cannot be in the past");
+        if (appointmentDate.isEqual(today) && appointmentTime != null && appointmentTime.isBefore(now)) {
+            throw new IllegalArgumentException("Please select a future time or current running slot.");
+        }
+    }
+
+    private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime, DoctorAvailabilitySlotRecord matchingSlot) {
+        LocalDate today = LocalDate.now();
+        LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
+        if (appointmentDate.isBefore(today)) {
+            throw new IllegalArgumentException("Please select a future time or current running slot.");
+        }
+        LocalTime effectiveTime = matchingSlot == null ? appointmentTime : matchingSlot.slotEndTime();
+        if (appointmentDate.isEqual(today) && effectiveTime != null && effectiveTime.isBefore(now)) {
+            if (matchingSlot != null) {
+                throw new IllegalArgumentException("This slot has already passed.");
+            }
+            throw new IllegalArgumentException("Please select a future time or current running slot.");
         }
     }
 

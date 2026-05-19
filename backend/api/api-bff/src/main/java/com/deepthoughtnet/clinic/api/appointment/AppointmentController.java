@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentRescheduleReques
 import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentStatusRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.QueueReorderRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.WalkInAppointmentRequest;
+import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
@@ -47,15 +48,18 @@ import jakarta.validation.Valid;
 public class AppointmentController {
     private final AppointmentService appointmentService;
     private final ConsultationService consultationService;
+    private final BillingService billingService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
     public AppointmentController(
             AppointmentService appointmentService,
             ConsultationService consultationService,
+            BillingService billingService,
             DoctorAssignmentSecurityService doctorAssignmentSecurityService
     ) {
         this.appointmentService = appointmentService;
         this.consultationService = consultationService;
+        this.billingService = billingService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
     }
 
@@ -95,7 +99,8 @@ public class AppointmentController {
                 request.reason(),
                 request.type(),
                 request.status(),
-                request.priority()
+                request.priority(),
+                request.allowAdHocBooking()
         ), actorAppUserId, allowOverbooking));
     }
 
@@ -131,6 +136,9 @@ public class AppointmentController {
         doctorAssignmentSecurityService.requireNonDoctorQueueStatusUpdate();
         requireReceptionQueueTarget(request.status());
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        if (request.status() == AppointmentStatus.WAITING) {
+            billingService.ensureConsultationFeePaid(tenantId, id);
+        }
         return toResponse(appointmentService.updateStatus(tenantId, id, new AppointmentStatusUpdateCommand(request.status(), request.comment()), actorAppUserId));
     }
 

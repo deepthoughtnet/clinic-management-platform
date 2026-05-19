@@ -51,6 +51,30 @@ export const appTheme = createTheme({
         root: { textTransform: "none", borderRadius: 12, boxShadow: "none" },
       },
     },
+    MuiChip: {
+      styleOverrides: {
+        root: {
+          borderRadius: 999,
+          fontWeight: 700,
+        },
+        sizeSmall: {
+          height: 22,
+          fontSize: "0.68rem",
+          lineHeight: 1,
+          "& .MuiChip-label": {
+            paddingLeft: 7,
+            paddingRight: 7,
+            paddingTop: 0,
+            paddingBottom: 0,
+          },
+          "& .MuiChip-iconSmall": {
+            fontSize: 13,
+            marginLeft: 3,
+            marginRight: -1,
+          },
+        },
+      },
+    },
     MuiPaper: {
       styleOverrides: {
         rounded: { borderRadius: 16 },

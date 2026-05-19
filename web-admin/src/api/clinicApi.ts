@@ -388,6 +388,7 @@ export type AppointmentInput = {
   type: AppointmentType;
   status: AppointmentStatus | null;
   priority: AppointmentPriority | null;
+  allowAdHocBooking?: boolean;
 };
 
 export type WalkInAppointmentInput = {
@@ -755,6 +756,13 @@ export type InvoiceEmailSendResponse = {
 export type PaymentInput = {
   paymentDate: string;
   amount: number;
+  paymentMode: PaymentMode;
+  referenceNumber: string | null;
+  notes: string | null;
+};
+
+export type ConsultationFeePaymentInput = {
+  appointmentId: string;
   paymentMode: PaymentMode;
   referenceNumber: string | null;
   notes: string | null;
@@ -1595,10 +1603,11 @@ export async function getPrescriptionPdf(token: string, tenantId: string, id: st
 export async function searchBills(
   token: string,
   tenantId: string,
-  params: { patientId?: string; status?: BillStatus | null; fromDate?: string; toDate?: string; paymentMode?: PaymentMode | null } = {},
+  params: { patientId?: string; appointmentId?: string; status?: BillStatus | null; fromDate?: string; toDate?: string; paymentMode?: PaymentMode | null } = {},
 ) {
   const query = new URLSearchParams();
   if (params.patientId) query.set("patientId", params.patientId);
+  if (params.appointmentId) query.set("appointmentId", params.appointmentId);
   if (params.status) query.set("status", params.status);
   if (params.fromDate) query.set("fromDate", params.fromDate);
   if (params.toDate) query.set("toDate", params.toDate);
@@ -1629,6 +1638,10 @@ export async function cancelBill(token: string, tenantId: string, id: string) {
 
 export async function addBillPayment(token: string, tenantId: string, billId: string, body: PaymentInput) {
   return httpPost<Payment>(`/api/bills/${billId}/payments`, body, { token, tenantId });
+}
+
+export async function collectConsultationFee(token: string, tenantId: string, body: ConsultationFeePaymentInput) {
+  return httpPost<Payment>("/api/bills/consultation-fees", body, { token, tenantId });
 }
 
 export async function listBillPayments(token: string, tenantId: string, billId: string) {

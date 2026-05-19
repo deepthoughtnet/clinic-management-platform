@@ -720,7 +720,7 @@ public class CarePilotReminderTriggerService {
         int skipped = 0;
         int failed = 0;
         LocalDate today = LocalDate.now();
-        for (BillRecord bill : billingService.list(tenantId, new BillingSearchCriteria(null, null, null, null, null))) {
+        for (BillRecord bill : billingService.list(tenantId, new BillingSearchCriteria(null, null, null, null, null, null))) {
             if (queued >= batchSize) {
                 break;
             }

@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.billing.service;
 
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
 import com.deepthoughtnet.clinic.billing.db.BillEntity;
 import com.deepthoughtnet.clinic.billing.db.BillLineEntity;
 import com.deepthoughtnet.clinic.billing.db.BillLineRepository;
@@ -11,6 +12,7 @@ import com.deepthoughtnet.clinic.billing.db.PaymentEntity;
 import com.deepthoughtnet.clinic.billing.db.PaymentRepository;
 import com.deepthoughtnet.clinic.billing.db.ReceiptEntity;
 import com.deepthoughtnet.clinic.billing.db.ReceiptRepository;
+import com.deepthoughtnet.clinic.billing.service.model.ConsultationFeePaymentCommand;
 import com.deepthoughtnet.clinic.billing.service.model.BillItemType;
 import com.deepthoughtnet.clinic.billing.service.model.BillLineCommand;
 import com.deepthoughtnet.clinic.billing.service.model.BillLineRecord;
@@ -28,7 +30,9 @@ import com.deepthoughtnet.clinic.billing.service.model.ReceiptRecord;
 import com.deepthoughtnet.clinic.billing.service.model.RefundCommand;
 import com.deepthoughtnet.clinic.billing.service.model.RefundRecord;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
+import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
+import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
@@ -45,7 +49,9 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -54,6 +60,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.Locale;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -68,6 +75,8 @@ import org.springframework.util.StringUtils;
 public class BillingService {
     private static final String ENTITY_TYPE = "BILL";
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    private static final DateTimeFormatter PDF_DATE = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH);
+    private static final DateTimeFormatter PDF_TIME = DateTimeFormatter.ofPattern("hh:mm a", Locale.ENGLISH);
 
     private final BillRepository billRepository;
     private final BillLineRepository billLineRepository;
@@ -76,6 +85,7 @@ public class BillingService {
     private final ReceiptRepository receiptRepository;
     private final PatientRepository patientRepository;
     private final ClinicProfileService clinicProfileService;
+    private final DoctorProfileService doctorProfileService;
     private final ConsultationService consultationService;
     private final AppointmentService appointmentService;
     private final InventoryService inventoryService;
@@ -92,6 +102,7 @@ public class BillingService {
             ReceiptRepository receiptRepository,
             PatientRepository patientRepository,
             ClinicProfileService clinicProfileService,
+            DoctorProfileService doctorProfileService,
             ConsultationService consultationService,
             AppointmentService appointmentService,
             InventoryService inventoryService,
@@ -106,6 +117,7 @@ public class BillingService {
         this.receiptRepository = receiptRepository;
         this.patientRepository = patientRepository;
         this.clinicProfileService = clinicProfileService;
+        this.doctorProfileService = doctorProfileService;
         this.consultationService = consultationService;
         this.appointmentService = appointmentService;
         this.inventoryService = inventoryService;
@@ -117,8 +129,9 @@ public class BillingService {
     @Transactional(readOnly = true)
     public List<BillRecord> list(UUID tenantId, BillingSearchCriteria criteria) {
         requireTenant(tenantId);
-        BillingSearchCriteria safe = criteria == null ? new BillingSearchCriteria(null, null, null, null, null) : criteria;
-        return mapBills(tenantId, billRepository.search(tenantId, safe.patientId(), safe.status(), safe.fromDate(), safe.toDate(), safe.paymentMode()));
+        BillingSearchCriteria safe = criteria == null ? new BillingSearchCriteria(null, null, null, null, null, null) : criteria;
+        List<BillEntity> bills = billRepository.search(tenantId, safe);
+        return mapBills(tenantId, bills);
     }
 
     @Transactional(readOnly = true)
@@ -246,6 +259,100 @@ public class BillingService {
         refreshFinancials(bill);
         auditPayment(tenantId, payment, receipt, actorAppUserId, "Collected bill payment");
         return toPaymentRecord(payment, receipt);
+    }
+
+    @Transactional
+    public PaymentRecord collectConsultationFee(UUID tenantId, ConsultationFeePaymentCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        requireId(command.appointmentId(), "appointmentId");
+        if (command.paymentMode() == null) {
+            throw new IllegalArgumentException("paymentMode is required");
+        }
+        if (command.paymentMode() != PaymentMode.CASH && !StringUtils.hasText(command.referenceNumber())) {
+            throw new IllegalArgumentException("referenceNumber is required for non-cash payments");
+        }
+
+        var appointment = appointmentService.findById(tenantId, command.appointmentId());
+        DoctorProfileRecord doctorProfile = doctorProfileService.findByDoctorUserId(tenantId, appointment.doctorUserId())
+                .orElseThrow(() -> new IllegalArgumentException("Doctor consultation fee is not configured."));
+        BigDecimal consultationFee = normalizeMoney(doctorProfile.consultationFee());
+        if (consultationFee.compareTo(ZERO) <= 0) {
+            throw new IllegalArgumentException("Doctor consultation fee is not configured.");
+        }
+
+        BillEntity consultationBill = findConsultationFeeBill(tenantId, command.appointmentId()).orElse(null);
+        if (consultationBill == null) {
+            BillUpsertCommand billCommand = new BillUpsertCommand(
+                    appointment.patientId(),
+                    null,
+                    command.appointmentId(),
+                    appointment.appointmentDate(),
+                    DiscountType.NONE,
+                    ZERO,
+                    null,
+                    null,
+                    null,
+                    ZERO,
+                    "Consultation fee collected at reception",
+                    List.of(new BillLineCommand(
+                    BillItemType.CONSULTATION,
+                            StringUtils.hasText(appointment.doctorName()) ? "Consultation fee - " + appointment.doctorName() : "Consultation fee",
+                            1,
+                            consultationFee,
+                            command.appointmentId(),
+                            1,
+                            ZERO,
+                            null,
+                            null
+                    ))
+            );
+            BillRecord createdBill = createDraft(tenantId, billCommand, actorAppUserId);
+            consultationBill = findBill(tenantId, createdBill.id());
+        } else {
+            refreshFinancials(consultationBill);
+        }
+
+        if (consultationBill.getDueAmount().compareTo(ZERO) <= 0) {
+            throw new IllegalArgumentException("Consultation fee is already paid.");
+        }
+
+        BigDecimal paymentAmount = consultationBill.getDueAmount();
+        PaymentRecord payment = recordPayment(
+                tenantId,
+                consultationBill.getId(),
+                new PaymentCommand(
+                        appointment.appointmentDate(),
+                        OffsetDateTime.now(),
+                        paymentAmount,
+                        command.paymentMode(),
+                        normalizeNullable(command.referenceNumber()),
+                        normalizeNullable(command.notes()),
+                        actorAppUserId
+                ),
+                actorAppUserId
+        );
+        return payment;
+    }
+
+    @Transactional(readOnly = true)
+    public void ensureConsultationFeePaid(UUID tenantId, UUID appointmentId) {
+        requireTenant(tenantId);
+        requireId(appointmentId, "appointmentId");
+        var appointment = appointmentService.findById(tenantId, appointmentId);
+        DoctorProfileRecord doctorProfile = doctorProfileService.findByDoctorUserId(tenantId, appointment.doctorUserId()).orElse(null);
+        if (doctorProfile == null || doctorProfile.consultationFee() == null || doctorProfile.consultationFee().compareTo(ZERO) <= 0) {
+            return;
+        }
+        BillEntity bill = findConsultationFeeBill(tenantId, appointmentId).orElse(null);
+        if (bill == null) {
+            throw new IllegalArgumentException("Consultation fee must be collected before check-in.");
+        }
+        if (bill.getDueAmount().compareTo(ZERO) > 0) {
+            throw new IllegalArgumentException("Consultation fee must be collected before check-in.");
+        }
     }
 
     @Transactional
@@ -446,8 +553,10 @@ public class BillingService {
         String clinicName = clinic == null ? null : clinic.clinicName();
         String displayName = clinic == null ? null : clinic.displayName();
         String address = clinic == null ? null : formatAddress(clinic);
+        String phone = clinic == null ? null : clinic.phone();
+        String email = clinic == null ? null : clinic.email();
         String tenantName = StringUtils.hasText(displayName) ? displayName : (StringUtils.hasText(clinicName) ? clinicName : "Clinic");
-        return new BillData(patients, tenantName, clinicName, displayName, address);
+        return new BillData(patients, tenantName, clinicName, displayName, address, phone, email);
     }
 
     private void ensurePatient(UUID tenantId, UUID patientId) {
@@ -495,6 +604,19 @@ public class BillingService {
         if (command.amount() == null || command.amount().compareTo(ZERO) <= 0) throw new IllegalArgumentException("amount is required");
         if (command.paymentMode() == null) throw new IllegalArgumentException("paymentMode is required");
         if (command.paymentMode() != PaymentMode.CASH && !StringUtils.hasText(command.referenceNumber())) throw new IllegalArgumentException("referenceNumber is required for non-cash payments");
+    }
+
+    private Optional<BillEntity> findConsultationFeeBill(UUID tenantId, UUID appointmentId) {
+        List<BillEntity> bills = billRepository.findByTenantIdAndAppointmentIdOrderByCreatedAtDesc(tenantId, appointmentId);
+        for (BillEntity bill : bills) {
+            if (bill.getStatus() == BillStatus.CANCELLED) {
+                continue;
+            }
+            if (billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, bill.getId()).stream().anyMatch(line -> line.getItemType() == BillItemType.CONSULTATION)) {
+                return Optional.of(bill);
+            }
+        }
+        return Optional.empty();
     }
 
     private void validate(RefundCommand command) {
@@ -599,34 +721,27 @@ public class BillingService {
 
     private BillPdf buildBillPdf(String tenantName, BillEntity entity, BillData data) {
         BillRecord record = toRecord(entity, data);
+        ClinicProfileRecord clinic = clinicProfileService.findByTenantId(entity.getTenantId()).orElse(null);
+        AppointmentRecord appointment = record.appointmentId() == null ? null : appointmentService.findById(entity.getTenantId(), record.appointmentId());
+        ConsultationRecord consultation = record.consultationId() == null ? null : consultationService.findById(entity.getTenantId(), record.consultationId()).orElse(null);
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PDPage page = new PDPage(PDRectangle.A4);
             document.addPage(page);
             try (PDPageContentStream content = new PDPageContentStream(document, page)) {
-                float margin = 40;
+                float margin = 28f;
+                float width = page.getMediaBox().getWidth() - (margin * 2);
                 float y = page.getMediaBox().getHeight() - margin;
-                writeLine(content, tenantName, 16, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 18;
-                writeLine(content, "Bill: " + record.billNumber(), 13, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 14;
-                writeLine(content, "Patient: " + safe(record.patientName()), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-                y -= 12;
-                writeLine(content, "Status: " + record.status(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-                y -= 16;
-                for (BillLineRecord line : record.lines()) {
-                    String text = String.format("%s | %s x %s | %s", safe(line.itemName()), line.quantity(), line.unitPrice(), line.totalPrice());
-                    y = writeWrapped(content, text, 9, margin, y, 520);
-                }
-                y -= 10;
-                writeLine(content, "Subtotal: " + record.subtotalAmount(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 12;
-                writeLine(content, "Discount: " + record.discountAmount(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 12;
-                writeLine(content, "Tax: " + record.taxAmount(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 12;
-                writeLine(content, "Total: " + record.totalAmount(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 12;
-                writeLine(content, "Paid: " + record.paidAmount() + " | Refunded: " + record.refundedAmount() + " | Due: " + record.dueAmount(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+
+                drawDocumentFrame(content, page, margin);
+                y = drawHeader(content, tenantName, "INVOICE", clinic, page, margin, y);
+                y -= 4;
+                y = drawBillMeta(content, record, appointment, consultation, margin, width, y);
+                y -= 8;
+                y = drawLineItemsTable(content, record, margin, width, y);
+                y -= 8;
+                y = drawSummaryBlock(content, record, margin, width, y);
+                y -= 8;
+                drawFooter(content, "This invoice is system generated and intended for patient records and payment verification.", margin, y);
             }
             document.save(output);
             return new BillPdf(safeFilename(record.billNumber()) + ".pdf", output.toByteArray());
@@ -637,22 +752,25 @@ public class BillingService {
 
     private ReceiptPdf buildReceiptPdf(String tenantName, BillEntity bill, ReceiptEntity receipt, PaymentEntity payment, BillData data) {
         BillRecord record = toRecord(bill, data);
+        ClinicProfileRecord clinic = clinicProfileService.findByTenantId(bill.getTenantId()).orElse(null);
+        AppointmentRecord appointment = record.appointmentId() == null ? null : appointmentService.findById(bill.getTenantId(), record.appointmentId());
+        ConsultationRecord consultation = record.consultationId() == null ? null : consultationService.findById(bill.getTenantId(), record.consultationId()).orElse(null);
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PDPage page = new PDPage(PDRectangle.A4);
             document.addPage(page);
             try (PDPageContentStream content = new PDPageContentStream(document, page)) {
-                float margin = 40;
+                float margin = 28f;
+                float width = page.getMediaBox().getWidth() - (margin * 2);
                 float y = page.getMediaBox().getHeight() - margin;
-                writeLine(content, tenantName, 16, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 18;
-                writeLine(content, "Receipt: " + receipt.getReceiptNumber(), 13, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 14;
-                writeLine(content, "Bill: " + record.billNumber(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
-                y -= 12;
-                writeLine(content, "Amount: " + receipt.getAmount(), 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-                y -= 12;
-                String paymentMode = payment == null || payment.getPaymentMode() == null ? "-" : payment.getPaymentMode().name();
-                writeLine(content, "Payment Mode: " + paymentMode, 10, margin, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+
+                drawDocumentFrame(content, page, margin);
+                y = drawHeader(content, tenantName, "RECEIPT", clinic, page, margin, y);
+                y -= 4;
+                y = drawReceiptMeta(content, record, receipt, payment, appointment, consultation, margin, width, y);
+                y -= 8;
+                y = drawReceiptBody(content, record, receipt, payment, margin, width, y);
+                y -= 8;
+                drawFooter(content, "This receipt acknowledges the payment received against the referenced bill.", margin, y);
             }
             document.save(output);
             return new ReceiptPdf(safeFilename(receipt.getReceiptNumber()) + ".pdf", output.toByteArray());
@@ -661,9 +779,225 @@ public class BillingService {
         }
     }
 
+    private float drawHeader(PDPageContentStream content, String clinicName, String title, ClinicProfileRecord clinic, PDPage page, float margin, float y) throws IOException {
+        float pageWidth = page.getMediaBox().getWidth();
+        float leftX = margin + 8;
+        float rightX = pageWidth - margin - 8;
+        setFillColor(content, 14, 165, 233);
+        content.addRect(pageWidth - 112, page.getMediaBox().getHeight() - 112, 112, 112);
+        content.fill();
+        setFillColor(content, 244, 114, 182);
+        content.addRect(margin, page.getMediaBox().getHeight() - 112, 92, 92);
+        content.fill();
+        setFillColor(content, 255, 255, 255);
+        content.addRect(pageWidth - 118, page.getMediaBox().getHeight() - 118, 106, 106);
+        content.fill();
+        setFillColor(content, 18, 33, 43);
+
+        writeLine(content, safe(clinicName), 15, leftX, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        y -= 15;
+        writeWrapped(content, clinicLine(clinic), 9, leftX, y, pageWidth * 0.52f);
+        y -= 10;
+        writeWrapped(content, clinicContact(clinic), 9, leftX, y, pageWidth * 0.52f);
+        y -= 12;
+        writeLine(content, title, 25, rightX - 170, page.getMediaBox().getHeight() - margin - 4, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeLine(content, "A4 printable document", 9, rightX - 128, page.getMediaBox().getHeight() - margin - 22, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        return y - 6;
+    }
+
+    private float drawBillMeta(PDPageContentStream content, BillRecord record, AppointmentRecord appointment, ConsultationRecord consultation, float margin, float width, float y) throws IOException {
+        List<MetaPair> pairs = List.of(
+                new MetaPair("Invoice No", record.billNumber()),
+                new MetaPair("Bill Date", formatDate(record.billDate())),
+                new MetaPair("Patient", safe(record.patientName())),
+                new MetaPair("Patient ID", safe(record.patientNumber())),
+                new MetaPair("Mobile", patientMobile(record.patientId(), record.patientName())),
+                new MetaPair("Doctor", doctorName(appointment, consultation)),
+                new MetaPair("Appointment", appointmentSummary(appointment, consultation))
+        );
+        return drawMetaRows(content, pairs, margin, width, y);
+    }
+
+    private float drawReceiptMeta(PDPageContentStream content, BillRecord record, ReceiptEntity receipt, PaymentEntity payment, AppointmentRecord appointment, ConsultationRecord consultation, float margin, float width, float y) throws IOException {
+        List<MetaPair> pairs = List.of(
+                new MetaPair("Receipt No", safe(receipt.getReceiptNumber())),
+                new MetaPair("Payment Date", formatDateTime(payment == null ? null : payment.getPaymentDateTime())),
+                new MetaPair("Patient", safe(record.patientName())),
+                new MetaPair("Bill No", record.billNumber()),
+                new MetaPair("Payment Mode", payment == null || payment.getPaymentMode() == null ? "—" : payment.getPaymentMode().name()),
+                new MetaPair("Amount Paid", money(receipt.getAmount())),
+                new MetaPair("Remaining Due", money(record.dueAmount())),
+                new MetaPair("Received By", receivedBy(payment))
+        );
+        return drawMetaRows(content, pairs, margin, width, y);
+    }
+
+    private float drawMetaRows(PDPageContentStream content, List<MetaPair> pairs, float margin, float width, float y) throws IOException {
+        float cellWidth = width / 2f;
+        float labelWidth = 78f;
+        float rowHeight = 14f;
+        for (int i = 0; i < pairs.size(); i += 2) {
+            MetaPair left = pairs.get(i);
+            MetaPair right = i + 1 < pairs.size() ? pairs.get(i + 1) : null;
+            float rowY = y;
+            drawKeyValue(content, left, margin + 4, rowY, cellWidth - 10, labelWidth);
+            if (right != null) {
+                drawKeyValue(content, right, margin + cellWidth + 6, rowY, cellWidth - 10, labelWidth);
+            }
+            y -= rowHeight;
+        }
+        return y - 4;
+    }
+
+    private void drawKeyValue(PDPageContentStream content, MetaPair pair, float x, float y, float width, float labelWidth) throws IOException {
+        writeLine(content, pair.label() + ":", 9, x, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeWrapped(content, safe(pair.value()), 9, x + labelWidth, y, width - labelWidth);
+    }
+
+    private float drawLineItemsTable(PDPageContentStream content, BillRecord record, float margin, float width, float y) throws IOException {
+        float[] cols = new float[] { 20f, 165f, 38f, 58f, 58f, 48f, 60f };
+        float tableWidth = 447f;
+        float startX = margin + 4;
+        float rowH = 15f;
+        float headerH = 18f;
+        String[] headers = { "No", "Description", "Qty", "Unit", "Disc", "Tax", "Subtot" };
+
+        setFillColor(content, 238, 248, 246);
+        content.addRect(startX, y - headerH + 3, tableWidth, headerH);
+        content.fill();
+        setFillColor(content, 18, 33, 43);
+
+        float x = startX;
+        for (int i = 0; i < headers.length; i++) {
+            writeLine(content, headers[i], 8.5f, x + 2, y - 8, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+            x += cols[i];
+        }
+        y -= headerH;
+
+        int index = 1;
+        for (BillLineRecord line : record.lines()) {
+            String description = safe(line.itemName());
+            String itemType = safe(line.itemType() == null ? null : line.itemType().name());
+            String desc = itemType.isBlank() ? description : description + " (" + itemType + ")";
+            if (y < 120) {
+                break;
+            }
+            x = startX;
+            writeLine(content, String.valueOf(index), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            x += cols[0];
+            writeWrapped(content, desc, 8.5f, x + 2, y - 10, cols[1] - 4);
+            x += cols[1];
+            writeLine(content, String.valueOf(line.quantity()), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            x += cols[2];
+            writeLine(content, money(line.unitPrice()), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            x += cols[3];
+            writeLine(content, money(line.lineDiscountAmount()), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            x += cols[4];
+            writeLine(content, money(lineTaxShare(record, line.totalPrice())), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            x += cols[5];
+            writeLine(content, money(line.totalPrice()), 8.5f, x + 2, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+            y -= rowH;
+            index++;
+        }
+
+        return y - 4;
+    }
+
+    private float drawSummaryBlock(PDPageContentStream content, BillRecord record, float margin, float width, float y) throws IOException {
+        float boxWidth = 220f;
+        float boxX = margin + width - boxWidth + 4;
+        float boxY = y - 4;
+        float boxH = 82f;
+        setFillColor(content, 250, 250, 250);
+        content.addRect(boxX, boxY - boxH, boxWidth, boxH);
+        content.fill();
+        setStrokeColor(content, 220, 227, 232);
+        content.addRect(boxX, boxY - boxH, boxWidth, boxH);
+        content.stroke();
+        setFillColor(content, 18, 33, 43);
+
+        float lineY = boxY - 14;
+        lineY = writeSummaryRow(content, "Subtotal", money(record.subtotalAmount()), boxX + 10, lineY, false);
+        lineY = writeSummaryRow(content, "Discount", money(record.discountAmount()), boxX + 10, lineY, false);
+        lineY = writeSummaryRow(content, "Tax", money(record.taxAmount()), boxX + 10, lineY, false);
+        lineY = writeSummaryRow(content, "Grand Total", money(record.totalAmount()), boxX + 10, lineY, true);
+        lineY = writeSummaryRow(content, "Paid", money(record.paidAmount()), boxX + 10, lineY, false);
+        writeSummaryRow(content, "Due", money(record.dueAmount()), boxX + 10, lineY, true);
+
+        float noteX = margin + 4;
+        float noteW = width - boxWidth - 16;
+        writeLine(content, "Notes", 9, noteX, boxY - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeWrapped(content, safe(record.notes()), 8.5f, noteX, boxY - 22, noteW);
+        if (StringUtils.hasText(record.discountReason())) {
+            writeWrapped(content, "Discount reason: " + record.discountReason(), 8.5f, noteX, boxY - 36, noteW);
+        }
+        return y - boxH - 4;
+    }
+
+    private float drawReceiptBody(PDPageContentStream content, BillRecord record, ReceiptEntity receipt, PaymentEntity payment, float margin, float width, float y) throws IOException {
+        float bodyX = margin + 4;
+        float bodyW = width - 8;
+        float boxH = 62f;
+        setFillColor(content, 249, 249, 249);
+        content.addRect(bodyX, y - boxH, bodyW, boxH);
+        content.fill();
+        setStrokeColor(content, 220, 227, 232);
+        content.addRect(bodyX, y - boxH, bodyW, boxH);
+        content.stroke();
+        setFillColor(content, 18, 33, 43);
+
+        float lineY = y - 14;
+        lineY = writeSummaryRow(content, "Amount Paid", money(receipt.getAmount()), bodyX + 10, lineY, true);
+        lineY = writeSummaryRow(content, "Remaining Due", money(record.dueAmount()), bodyX + 10, lineY, true);
+        lineY = writeSummaryRow(content, "Payment Mode", payment == null || payment.getPaymentMode() == null ? "—" : payment.getPaymentMode().name(), bodyX + 10, lineY, false);
+        lineY = writeSummaryRow(content, "Received By", receivedBy(payment), bodyX + 10, lineY, false);
+
+        float noteX = bodyX + 4;
+        float noteW = bodyW - 8;
+        writeLine(content, "Payment Notes", 9, noteX, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeWrapped(content, safe(payment == null ? null : payment.getNotes()), 8.5f, noteX, y - 22, noteW);
+        return y - boxH - 4;
+    }
+
+    private float writeSummaryRow(PDPageContentStream content, String label, String value, float x, float y, boolean bold) throws IOException {
+        writeLine(content, label + ":", 8.75f, x, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeLine(content, value, bold ? 9.5f : 8.75f, x + 76, y, bold ? new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD) : new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        return y - 12;
+    }
+
+    private void drawFooter(PDPageContentStream content, String text, float margin, float y) throws IOException {
+        writeWrapped(content, text, 8.25f, margin + 8, Math.max(40, y), 520);
+    }
+
+    private void drawDocumentFrame(PDPageContentStream content, PDPage page, float margin) throws IOException {
+        float w = page.getMediaBox().getWidth();
+        float h = page.getMediaBox().getHeight();
+        setStrokeColor(content, 187, 199, 205);
+        content.addRect(margin, margin, w - (margin * 2), h - (margin * 2));
+        content.stroke();
+    }
+
+    private void setFillColor(PDPageContentStream content, int red, int green, int blue) throws IOException {
+        content.setNonStrokingColor(pdfColor(red), pdfColor(green), pdfColor(blue));
+    }
+
+    private void setStrokeColor(PDPageContentStream content, int red, int green, int blue) throws IOException {
+        content.setStrokingColor(pdfColor(red), pdfColor(green), pdfColor(blue));
+    }
+
+    private float pdfColor(int channel) {
+        return Math.max(0, Math.min(255, channel)) / 255f;
+    }
+
+    private BigDecimal lineTaxShare(BillRecord record, BigDecimal lineTotal) {
+        if (record.taxAmount() == null || record.taxAmount().compareTo(ZERO) <= 0) return ZERO;
+        if (record.subtotalAmount() == null || record.subtotalAmount().compareTo(ZERO) <= 0) return ZERO;
+        return record.taxAmount().multiply(lineTotal).divide(record.subtotalAmount(), 2, RoundingMode.HALF_UP);
+    }
+
     private float writeWrapped(PDPageContentStream content, String text, float fontSize, float x, float y, float maxWidth) throws IOException {
         if (!StringUtils.hasText(text)) return y;
-        for (String line : wrap(text, 92)) {
+        for (String line : wrap(text, Math.max(24, Math.round(maxWidth / (fontSize * 0.55f))))) {
             writeLine(content, line, fontSize, x, y, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
             y -= fontSize + 3;
         }
@@ -704,7 +1038,67 @@ public class BillingService {
         return parts.isEmpty() ? null : String.join(", ", parts);
     }
 
-    private record BillData(Map<UUID, PatientEntity> patients, String tenantName, String clinicName, String clinicDisplayNameValue, String clinicAddressValue) {
+    private String clinicLine(ClinicProfileRecord clinic) {
+        if (clinic == null) return "";
+        return StringUtils.hasText(clinic.registrationNumber()) ? "Reg: " + clinic.registrationNumber() : "";
+    }
+
+    private String clinicContact(ClinicProfileRecord clinic) {
+        if (clinic == null) return "";
+        List<String> parts = new ArrayList<>();
+        if (StringUtils.hasText(clinic.phone())) parts.add("Phone: " + clinic.phone());
+        if (StringUtils.hasText(clinic.email())) parts.add("Email: " + clinic.email());
+        if (StringUtils.hasText(clinic.addressLine1()) || StringUtils.hasText(clinic.city()) || StringUtils.hasText(clinic.state())) {
+            parts.add(formatAddress(clinic));
+        }
+        return String.join("  |  ", parts);
+    }
+
+    private String patientMobile(UUID patientId, String patientName) {
+        if (patientId == null) return "—";
+        PatientEntity patient = patientRepository.findById(patientId).orElse(null);
+        if (patient == null || !StringUtils.hasText(patient.getMobile())) return "—";
+        return patient.getMobile();
+    }
+
+    private String doctorName(AppointmentRecord appointment, ConsultationRecord consultation) {
+        if (appointment != null && StringUtils.hasText(appointment.doctorName())) return appointment.doctorName();
+        if (consultation != null && StringUtils.hasText(consultation.doctorName())) return consultation.doctorName();
+        return "—";
+    }
+
+    private String appointmentSummary(AppointmentRecord appointment, ConsultationRecord consultation) {
+        if (appointment == null && consultation == null) return "—";
+        List<String> parts = new ArrayList<>();
+        if (appointment != null && appointment.appointmentDate() != null) parts.add(appointment.appointmentDate().format(PDF_DATE));
+        if (appointment != null && appointment.appointmentTime() != null) parts.add(appointment.appointmentTime().format(PDF_TIME));
+        String doctor = doctorName(appointment, consultation);
+        if (StringUtils.hasText(doctor) && !"—".equals(doctor)) parts.add(doctor);
+        String status = appointment != null && appointment.status() != null ? appointment.status().name().replace('_', ' ') : consultation != null && consultation.status() != null ? consultation.status().name().replace('_', ' ') : null;
+        if (StringUtils.hasText(status)) parts.add(status);
+        return parts.isEmpty() ? "—" : String.join(" · ", parts);
+    }
+
+    private String formatDate(LocalDate date) {
+        return date == null ? "—" : date.format(PDF_DATE);
+    }
+
+    private String formatDateTime(OffsetDateTime dateTime) {
+        return dateTime == null ? "—" : dateTime.format(DateTimeFormatter.ofPattern("MMM d, yyyy hh:mm a", Locale.ENGLISH));
+    }
+
+    private String money(BigDecimal value) {
+        return value == null ? "0.00" : value.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private String receivedBy(PaymentEntity payment) {
+        if (payment == null || payment.getReceivedBy() == null) return "—";
+        return payment.getReceivedBy().toString();
+    }
+
+    private record MetaPair(String label, String value) {}
+
+    private record BillData(Map<UUID, PatientEntity> patients, String tenantName, String clinicName, String clinicDisplayNameValue, String clinicAddressValue, String clinicPhoneValue, String clinicEmailValue) {
         String clinicDisplayName() { return StringUtils.hasText(clinicDisplayNameValue) ? clinicDisplayNameValue : clinicName; }
         String clinicAddress() { return clinicAddressValue; }
     }

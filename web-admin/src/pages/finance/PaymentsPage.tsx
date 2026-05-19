@@ -22,12 +22,24 @@ import {
   Typography,
 } from "@mui/material";
 import { useAuth } from "../../auth/useAuth";
+import { CompactEmptyState, CompactFilterCard, CompactStatCard, compactChipSx } from "../../components/compact/CompactUi";
 import {
+  ReceiptPrintDialog,
+  type ReceiptPrintData,
+} from "../../components/finance/PrintableBillingDocuments";
+import {
+  getAppointment,
+  getBill,
+  getClinicProfile,
+  getConsultation,
   getReceiptPdf,
   listPaymentsLedger,
+  getPatient,
   sendReceipt,
+  type ClinicProfile,
   type PaymentLedgerRow,
   type PaymentMode,
+  type Receipt,
 } from "../../api/clinicApi";
 
 const PAYMENT_MODES: PaymentMode[] = ["CASH", "CARD", "UPI", "PAYTM", "PHONEPE", "GOOGLE_PAY", "BANK_TRANSFER", "CHEQUE", "OTHER"];
@@ -49,8 +61,36 @@ export default function PaymentsPage() {
   const [search, setSearch] = React.useState("");
   const [billNumber, setBillNumber] = React.useState("");
   const [workingId, setWorkingId] = React.useState<string | null>(null);
+  const [clinicProfile, setClinicProfile] = React.useState<ClinicProfile | null>(null);
+  const [receiptPreview, setReceiptPreview] = React.useState<ReceiptPrintData | null>(null);
+  const [receiptPreviewLoading, setReceiptPreviewLoading] = React.useState(false);
+  const [receiptAutoPrint, setReceiptAutoPrint] = React.useState(false);
 
   const canSendReceipt = auth.hasPermission("payment.collect") || auth.hasPermission("notification.send");
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadClinic() {
+      if (!auth.accessToken || !auth.tenantId) return;
+      try {
+        const profile = await getClinicProfile(auth.accessToken, auth.tenantId);
+        if (!cancelled) setClinicProfile(profile);
+      } catch {
+        if (!cancelled) setClinicProfile(null);
+      }
+    }
+    void loadClinic();
+    return () => { cancelled = true; };
+  }, [auth.accessToken, auth.tenantId]);
+
+  React.useEffect(() => {
+    if (receiptAutoPrint && receiptPreview && !receiptPreviewLoading) {
+      const handle = window.setTimeout(() => window.print(), 60);
+      setReceiptAutoPrint(false);
+      return () => window.clearTimeout(handle);
+    }
+    return undefined;
+  }, [receiptAutoPrint, receiptPreview, receiptPreviewLoading]);
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -98,6 +138,50 @@ export default function PaymentsPage() {
     }
   }
 
+  function buildReceiptStub(row: PaymentLedgerRow): Receipt {
+    return {
+      id: row.receiptId || row.id,
+      tenantId: row.tenantId,
+      receiptNumber: row.receiptNumber || "—",
+      billId: row.billId,
+      paymentId: row.id,
+      receiptDate: row.receiptDate || row.paymentDate,
+      amount: row.amount,
+      createdAt: row.createdAt,
+    };
+  }
+
+  const loadReceiptPreview = React.useCallback(async (row: PaymentLedgerRow, autoPrint = false) => {
+    if (!auth.accessToken || !auth.tenantId || !row.receiptId) return;
+    setReceiptPreviewLoading(true);
+    setReceiptAutoPrint(autoPrint);
+    setReceiptPreview(null);
+    try {
+      const bill = await getBill(auth.accessToken, auth.tenantId, row.billId).catch(() => null);
+      if (!bill) {
+        throw new Error("Bill not found for receipt");
+      }
+      const [patient, appointment, consultation] = await Promise.all([
+        getPatient(auth.accessToken, auth.tenantId, bill.patientId).then((result) => result.patient).catch(() => null),
+        bill.appointmentId ? getAppointment(auth.accessToken, auth.tenantId, bill.appointmentId).catch(() => null) : Promise.resolve(null),
+        bill.consultationId ? getConsultation(auth.accessToken, auth.tenantId, bill.consultationId).catch(() => null) : Promise.resolve(null),
+      ]);
+      setReceiptPreview({
+        clinicProfile,
+        bill,
+        receipt: buildReceiptStub(row),
+        payment: row,
+        patient,
+        appointment,
+        consultation,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load receipt preview");
+    } finally {
+      setReceiptPreviewLoading(false);
+    }
+  }, [auth.accessToken, auth.tenantId, clinicProfile]);
+
   async function handleDownloadReceipt(row: PaymentLedgerRow) {
     if (!auth.accessToken || !auth.tenantId || !row.receiptId) return;
     setWorkingId(row.id);
@@ -120,85 +204,108 @@ export default function PaymentsPage() {
   }
 
   return (
-    <Stack spacing={2}>
+    <>
+    <Stack className="no-print" spacing={2}>
       <Typography variant="h5" sx={{ fontWeight: 700 }}>Payments</Typography>
       {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
       {success && <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>}
 
-      <Grid container spacing={2}>
-        <Grid size={{ xs: 12, md: 3 }}><Card><CardContent><Typography variant="caption">Payments Today</Typography><Typography variant="h6">{paymentsToday.length}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, md: 3 }}><Card><CardContent><Typography variant="caption">Total Collected</Typography><Typography variant="h6">{formatMoney(totalCollected)}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, md: 3 }}><Card><CardContent><Typography variant="caption">Pending Amount</Typography><Typography variant="h6">{formatMoney(pendingAmount)}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, md: 3 }}><Card><CardContent><Typography variant="caption">Partially Paid Bills</Typography><Typography variant="h6">{partiallyPaid}</Typography></CardContent></Card></Grid>
+      <Grid container spacing={1.25}>
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><CompactStatCard label="Today" value={paymentsToday.length} helper="Payments collected today" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><CompactStatCard label="Collected" value={formatMoney(totalCollected)} tone="success" helper="Total settled amount" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><CompactStatCard label="Pending" value={formatMoney(pendingAmount)} tone="warning" helper="Open due across bills" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 3 }}><CompactStatCard label="Partial" value={partiallyPaid} tone="info" helper="Bills with partial payment" /></Grid>
       </Grid>
 
-      <Card>
-        <CardContent>
-          <Grid container spacing={2}>
-            <Grid size={{ xs: 12, md: 2 }}><TextField type="date" label="From" value={fromDate} onChange={(e) => setFromDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} /></Grid>
-            <Grid size={{ xs: 12, md: 2 }}><TextField type="date" label="To" value={toDate} onChange={(e) => setToDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} /></Grid>
-            <Grid size={{ xs: 12, md: 2 }}>
-              <FormControl fullWidth>
-                <InputLabel id="pay-mode-label">Payment Mode</InputLabel>
-                <Select labelId="pay-mode-label" label="Payment Mode" value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)}>
-                  <MenuItem value="">All</MenuItem>
-                  {PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12, md: 3 }}><TextField label="Patient / Bill Search" value={search} onChange={(e) => setSearch(e.target.value)} fullWidth /></Grid>
-            <Grid size={{ xs: 12, md: 2 }}><TextField label="Bill Number" value={billNumber} onChange={(e) => setBillNumber(e.target.value)} fullWidth /></Grid>
-            <Grid size={{ xs: 12, md: 1 }}><Button variant="contained" onClick={() => void load()} fullWidth>Apply</Button></Grid>
+      <CompactFilterCard
+        title="Filters"
+        subtitle="Use a dense date range and search row to narrow the ledger."
+        actions={<Button size="small" variant="outlined" onClick={() => void load()}>Apply</Button>}
+      >
+        <Grid container spacing={1}>
+          <Grid size={{ xs: 12, md: 2 }}><TextField size="small" type="date" label="From" value={fromDate} onChange={(e) => setFromDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} /></Grid>
+          <Grid size={{ xs: 12, md: 2 }}><TextField size="small" type="date" label="To" value={toDate} onChange={(e) => setToDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} /></Grid>
+          <Grid size={{ xs: 12, md: 2 }}>
+            <FormControl fullWidth size="small">
+              <InputLabel id="pay-mode-label">Payment Mode</InputLabel>
+              <Select labelId="pay-mode-label" label="Payment Mode" value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)}>
+                <MenuItem value="">All</MenuItem>
+                {PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}
+              </Select>
+            </FormControl>
           </Grid>
-        </CardContent>
-      </Card>
+          <Grid size={{ xs: 12, md: 3 }}><TextField size="small" label="Patient / Bill Search" value={search} onChange={(e) => setSearch(e.target.value)} fullWidth /></Grid>
+          <Grid size={{ xs: 12, md: 2 }}><TextField size="small" label="Bill Number" value={billNumber} onChange={(e) => setBillNumber(e.target.value)} fullWidth /></Grid>
+          <Grid size={{ xs: 12, md: 1 }} sx={{ display: "flex", alignItems: "stretch" }}>
+            <Button variant="outlined" size="small" onClick={() => { setFromDate(""); setToDate(""); setPaymentMode(""); setSearch(""); setBillNumber(""); }}>
+              Clear
+            </Button>
+          </Grid>
+        </Grid>
+      </CompactFilterCard>
 
-      <Card>
+      <Card variant="outlined">
         <CardContent sx={{ p: 0 }}>
           {loading ? (
-            <Box sx={{ p: 3 }}><Typography color="text.secondary">Loading payments…</Typography></Box>
+            <CompactEmptyState title="Loading payments…" subtitle="Fetching the payment ledger." />
           ) : rows.length === 0 ? (
-            <Box sx={{ p: 3 }}><Typography color="text.secondary">No payments found for current filters.</Typography></Box>
+            <CompactEmptyState title="No payments found" subtitle="Try widening the filters or clearing the search row." />
           ) : (
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Payment Date</TableCell>
-                  <TableCell>Patient</TableCell>
-                  <TableCell>Bill Number</TableCell>
-                  <TableCell align="right">Amount</TableCell>
-                  <TableCell>Payment Mode</TableCell>
-                  <TableCell>Reference</TableCell>
-                  <TableCell>Received By</TableCell>
-                  <TableCell>Bill Status</TableCell>
-                  <TableCell align="right">Actions</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.map((row) => (
-                  <TableRow key={row.id} hover>
-                    <TableCell>{row.paymentDate}</TableCell>
-                    <TableCell>{row.patientName || "—"}</TableCell>
-                    <TableCell>{row.billNumber}</TableCell>
-                    <TableCell align="right">{formatMoney(row.amount)}</TableCell>
-                    <TableCell><Chip size="small" label={row.paymentMode} /></TableCell>
-                    <TableCell>{row.referenceNumber || "—"}</TableCell>
-                    <TableCell>{row.receivedBy || "—"}</TableCell>
-                    <TableCell><Chip size="small" label={row.billStatus} color={row.billStatus === "PAID" ? "success" : row.billStatus === "PARTIALLY_PAID" ? "warning" : "default"} /></TableCell>
-                    <TableCell align="right">
-                      <Stack direction="row" spacing={1} justifyContent="flex-end">
-                        <Button size="small" onClick={() => navigate("/billing")}>Open Bill</Button>
-                        {row.receiptId && <Button size="small" onClick={() => void handleDownloadReceipt(row)} disabled={workingId === row.id}>Receipt</Button>}
-                        {canSendReceipt && row.receiptId && <Button size="small" onClick={() => void handleSendReceipt(row)} disabled={workingId === row.id}>Send Email</Button>}
-                      </Stack>
-                    </TableCell>
+            <Box sx={{ overflowX: "auto" }}>
+              <Table size="small" sx={{ minWidth: 1120 }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ py: 0.8 }}>Payment Date</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Patient</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Bill Number</TableCell>
+                    <TableCell sx={{ py: 0.8 }} align="right">Amount</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Mode</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Reference</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Received By</TableCell>
+                    <TableCell sx={{ py: 0.8 }}>Bill Status</TableCell>
+                    <TableCell sx={{ py: 0.8 }} align="right">Actions</TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHead>
+                <TableBody>
+                  {rows.map((row) => (
+                    <TableRow key={row.id} hover>
+                      <TableCell sx={{ py: 0.65 }}>{row.paymentDate}</TableCell>
+                      <TableCell sx={{ py: 0.65 }}>{row.patientName || "—"}</TableCell>
+                      <TableCell sx={{ py: 0.65 }}>{row.billNumber}</TableCell>
+                      <TableCell sx={{ py: 0.65 }} align="right">{formatMoney(row.amount)}</TableCell>
+                      <TableCell sx={{ py: 0.65 }}><Chip size="small" label={row.paymentMode} sx={compactChipSx} /></TableCell>
+                      <TableCell sx={{ py: 0.65, maxWidth: 160, wordBreak: "break-word" }}>{row.referenceNumber || "—"}</TableCell>
+                      <TableCell sx={{ py: 0.65 }}>{row.receivedBy || "—"}</TableCell>
+                      <TableCell sx={{ py: 0.65 }}><Chip size="small" label={row.billStatus} color={row.billStatus === "PAID" ? "success" : row.billStatus === "PARTIALLY_PAID" ? "warning" : "default"} sx={compactChipSx} /></TableCell>
+                      <TableCell sx={{ py: 0.65 }} align="right">
+                        <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap">
+                          <Button size="small" variant="text" onClick={() => navigate("/billing")}>Open Bill</Button>
+                          {row.receiptId && <Button size="small" variant="text" onClick={() => void loadReceiptPreview(row)}>View Receipt</Button>}
+                          {row.receiptId && <Button size="small" variant="text" onClick={() => void loadReceiptPreview(row, true)}>Print Receipt</Button>}
+                          {row.receiptId && <Button size="small" variant="text" onClick={() => void handleDownloadReceipt(row)} disabled={workingId === row.id}>Download PDF</Button>}
+                          {canSendReceipt && row.receiptId && <Button size="small" variant="text" onClick={() => void handleSendReceipt(row)} disabled={workingId === row.id}>Send Email</Button>}
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
           )}
         </CardContent>
       </Card>
     </Stack>
+    <ReceiptPrintDialog
+      open={Boolean(receiptPreview || receiptPreviewLoading)}
+      loading={receiptPreviewLoading}
+      data={receiptPreview}
+      onClose={() => {
+        setReceiptPreview(null);
+        setReceiptPreviewLoading(false);
+        setReceiptAutoPrint(false);
+      }}
+      onPrint={() => window.print()}
+    />
+    </>
   );
 }

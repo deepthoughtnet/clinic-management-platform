@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.billing;
 
 import com.deepthoughtnet.clinic.api.billing.dto.BillLineRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.BillLineResponse;
+import com.deepthoughtnet.clinic.api.billing.dto.ConsultationFeePaymentRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.BillRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.BillResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.InvoiceEmailSendResponse;
@@ -20,6 +21,7 @@ import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
 import com.deepthoughtnet.clinic.billing.service.model.BillUpsertCommand;
 import com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria;
+import com.deepthoughtnet.clinic.billing.service.model.ConsultationFeePaymentCommand;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentCommand;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
@@ -66,6 +68,7 @@ public class BillingController {
     @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('patient.read')")
     public List<BillResponse> list(
             @RequestParam(required = false) UUID patientId,
+            @RequestParam(required = false) UUID appointmentId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) LocalDate fromDate,
             @RequestParam(required = false) LocalDate toDate,
@@ -74,7 +77,7 @@ public class BillingController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         BillStatus billStatus = parseStatus(status);
         PaymentMode mode = parsePaymentMode(paymentMode);
-        return billingService.list(tenantId, new BillingSearchCriteria(patientId, billStatus, fromDate, toDate, mode)).stream().map(this::toResponse).toList();
+        return billingService.list(tenantId, new BillingSearchCriteria(patientId, billStatus, fromDate, toDate, mode, appointmentId)).stream().map(this::toResponse).toList();
     }
 
     @PostMapping
@@ -134,6 +137,20 @@ public class BillingController {
         ), actorAppUserId));
     }
 
+    @PostMapping("/consultation-fees")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("@permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('payment.collect')")
+    public PaymentResponse collectConsultationFee(@Valid @RequestBody ConsultationFeePaymentRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toPaymentResponse(billingService.collectConsultationFee(tenantId, new ConsultationFeePaymentCommand(
+                request.appointmentId(),
+                request.paymentMode(),
+                request.referenceNumber(),
+                request.notes()
+        ), actorAppUserId));
+    }
+
     @GetMapping("/{billId}/payments")
     @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
     public List<PaymentResponse> listPayments(@PathVariable UUID billId) {
@@ -161,7 +178,7 @@ public class BillingController {
         String billNumberFilter = normalizeText(billNumber);
         String freeText = normalizeText(search);
 
-        List<BillRecord> bills = billingService.list(tenantId, new BillingSearchCriteria(patientUuid, null, null, null, null));
+        List<BillRecord> bills = billingService.list(tenantId, new BillingSearchCriteria(patientUuid, null, null, null, null, null));
         List<PaymentLedgerResponse> rows = bills.stream()
                 .flatMap(bill -> billingService.listPayments(tenantId, bill.id()).stream().map(payment -> toPaymentLedgerResponse(payment, bill)))
                 .filter(row -> fromDate == null || !row.paymentDate().isBefore(fromDate))
@@ -330,7 +347,7 @@ public class BillingController {
         String billNumberFilter = normalizeText(billNumber);
         String freeText = normalizeText(search);
 
-        List<BillRecord> bills = billingService.list(tenantId, new BillingSearchCriteria(patientUuid, null, null, null, null));
+        List<BillRecord> bills = billingService.list(tenantId, new BillingSearchCriteria(patientUuid, null, null, null, null, null));
         List<RefundLedgerResponse> rows = bills.stream()
                 .flatMap(bill -> billingService.listRefunds(tenantId, bill.id()).stream().map(refund -> toRefundLedgerResponse(refund, bill)))
                 .filter(row -> fromDate == null || !row.refundedAt().toLocalDate().isBefore(fromDate))

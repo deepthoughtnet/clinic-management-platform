@@ -165,11 +165,36 @@ function formatDate(value: string) {
   return new Date(`${value}T00:00:00`).toLocaleDateString();
 }
 
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function toFive(time: string | null | undefined) {
+  if (!time) return "";
+  return time.slice(0, 5);
+}
+
 function isPastDateTime(date: string, time: string | null | undefined) {
   if (!date) return false;
-  const now = new Date();
+  const now = new Date(Math.floor(Date.now() / 60000) * 60000);
   const candidate = new Date(`${date}T${time && time.trim() ? time : "23:59"}:00`);
   return candidate.getTime() < now.getTime();
+}
+
+function isPastSlot(date: string, slot: DoctorAvailabilitySlot) {
+  return isPastDateTime(date, slot.slotEndTime);
+}
+
+function isBookableSlot(date: string, slot: DoctorAvailabilitySlot) {
+  if (isPastSlot(date, slot)) return false;
+  if (slot.status === "AVAILABLE") return slot.selectable;
+  if (slot.status === "PARTIALLY_BOOKED") {
+    return slot.selectable && slot.bookedCount < slot.maxPatientsPerSlot;
+  }
+  return false;
 }
 
 function toPatientInput(form: QuickRegisterForm): PatientInput {
@@ -218,6 +243,8 @@ export default function AppointmentsPage() {
 
   const statePatient = (location.state as AppointmentPageState | null)?.patient ?? null;
   const doctorUserIdFromQuery = searchParams.get("doctorUserId") || "";
+  const appointmentDateFromQuery = searchParams.get("appointmentDate") || localDateKey();
+  const appointmentTimeFromQuery = searchParams.get("appointmentTime") || "";
 
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [appointments, setAppointments] = React.useState<Appointment[]>([]);
@@ -225,8 +252,8 @@ export default function AppointmentsPage() {
   const [patientQuery, setPatientQuery] = React.useState(statePatient ? patientSummary(statePatient) : "");
   const [selectedPatient, setSelectedPatient] = React.useState<Patient | null>(statePatient);
   const [doctorUserId, setDoctorUserId] = React.useState(doctorUserIdFromQuery);
-  const [appointmentDate, setAppointmentDate] = React.useState(new Date().toISOString().slice(0, 10));
-  const [appointmentTime, setAppointmentTime] = React.useState("");
+  const [appointmentDate, setAppointmentDate] = React.useState(appointmentDateFromQuery);
+  const [appointmentTime, setAppointmentTime] = React.useState(appointmentTimeFromQuery);
   const [type, setType] = React.useState<AppointmentType>("SCHEDULED");
   const [priority, setPriority] = React.useState<AppointmentPriority>("NORMAL");
   const [reason, setReason] = React.useState("");
@@ -248,16 +275,39 @@ export default function AppointmentsPage() {
   const [rescheduleDate, setRescheduleDate] = React.useState(new Date().toISOString().slice(0, 10));
   const [rescheduleTime, setRescheduleTime] = React.useState("");
   const [rescheduleDoctorUserId, setRescheduleDoctorUserId] = React.useState("");
+  const [adHocConfirmOpen, setAdHocConfirmOpen] = React.useState(false);
+  const [adHocConfirmMessage, setAdHocConfirmMessage] = React.useState("");
+  const [adHocConfirmPending, setAdHocConfirmPending] = React.useState(false);
 
   const tenantRole = (auth.tenantRole || "").toUpperCase();
   const isDoctor = tenantRole === "DOCTOR";
   const doctorOptions = users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
   const doctorFilter = isDoctor && auth.appUserId ? auth.appUserId : undefined;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateKey();
 
   const selectedDoctorId = doctorFilter || doctorUserId || "";
   const requiresAppointmentTime = type !== "WALK_IN";
-  const manualTimeAllowed = requiresAppointmentTime && Boolean(selectedDoctorId) && slots.length === 0;
+  const matchingSlot = React.useMemo(
+    () => slots.find((slot) => toFive(slot.slotTime) === toFive(appointmentTime)) || null,
+    [appointmentTime, slots],
+  );
+  const bookableSlots = React.useMemo(
+    () => slots.filter((slot) => isBookableSlot(appointmentDate, slot)),
+    [appointmentDate, slots],
+  );
+  const manualTimeAllowed = requiresAppointmentTime && Boolean(selectedDoctorId) && bookableSlots.length === 0;
+  const adHocBookingNeeded = React.useMemo(
+    () => Boolean(
+      requiresAppointmentTime
+      && selectedDoctorId
+      && appointmentDate
+      && appointmentTime
+      && !matchingSlot
+      && !isPastDateTime(appointmentDate, appointmentTime)
+      && slots.length > 0
+    ),
+    [appointmentDate, appointmentTime, matchingSlot, requiresAppointmentTime, selectedDoctorId, slots.length],
+  );
   const canCreateAppointment = Boolean(
     selectedPatient
     && doctorUserId
@@ -499,22 +549,27 @@ export default function AppointmentsPage() {
       .sort((left, right) => (left.appointmentTime || "").localeCompare(right.appointmentTime || "")),
     [appointments, calendarDate],
   );
+  const slotSummary = React.useMemo(() => ({
+    total: slots.length,
+    bookable: bookableSlots.length,
+    available: bookableSlots.filter((slot) => slot.status === "AVAILABLE").length,
+    partial: bookableSlots.filter((slot) => slot.status === "PARTIALLY_BOOKED").length,
+    full: slots.filter((slot) => slot.status === "FULL").length,
+    unavailable: slots.filter((slot) => slot.status === "BREAK" || slot.status === "LEAVE" || slot.status === "UNAVAILABLE" || slot.status === "CONFLICTED").length,
+    past: slots.filter((slot) => isPastSlot(appointmentDate, slot)).length,
+  }), [appointmentDate, bookableSlots, slots]);
 
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
   }
 
-  const saveAppointment = async () => {
+  const submitAppointment = async (allowAdHocBooking = false) => {
     if (!auth.accessToken || !auth.tenantId || !selectedPatient || !doctorUserId) {
       setError("Select a patient and doctor before saving.");
       return;
     }
     if (type !== "WALK_IN" && !appointmentTime) {
       setError("Select an available slot or enter an appointment time before saving.");
-      return;
-    }
-    if (isPastDateTime(appointmentDate, type === "WALK_IN" ? null : appointmentTime || null)) {
-      setError("Appointment date/time cannot be in the past.");
       return;
     }
 
@@ -539,6 +594,7 @@ export default function AppointmentsPage() {
           type,
           status: null,
           priority,
+          allowAdHocBooking,
         });
       }
       setPatientQuery("");
@@ -555,6 +611,63 @@ export default function AppointmentsPage() {
       setError(err instanceof Error ? err.message : "Failed to save appointment");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveAppointment = async () => {
+    if (!auth.accessToken || !auth.tenantId || !selectedPatient || !doctorUserId) {
+      setError("Select a patient and doctor before saving.");
+      return;
+    }
+    if (type !== "WALK_IN" && !appointmentTime) {
+      setError("Select an available slot or enter an appointment time before saving.");
+      return;
+    }
+    if (type === "WALK_IN") {
+      await submitAppointment(false);
+      return;
+    }
+
+    const timeValue = appointmentTime || "";
+    const matchedSlot = matchingSlot;
+    if (isPastDateTime(appointmentDate, timeValue)) {
+      setError("Please select a future time or current running slot.");
+      return;
+    }
+    if (matchedSlot) {
+      if (isPastSlot(appointmentDate, matchedSlot)) {
+        setError("This slot has already passed.");
+        return;
+      }
+      if (matchedSlot.status === "FULL" || matchedSlot.bookedCount >= matchedSlot.maxPatientsPerSlot) {
+        setError("This slot is full.");
+        return;
+      }
+      if (matchedSlot.status === "BREAK" || matchedSlot.status === "LEAVE" || matchedSlot.status === "UNAVAILABLE" || matchedSlot.status === "CONFLICTED") {
+        setError("Doctor is unavailable during this time.");
+        return;
+      }
+      await submitAppointment(false);
+      return;
+    }
+
+    if (slots.length > 0) {
+      setAdHocConfirmMessage(`The selected time (${appointmentTime}) is outside doctor availability. Continue as ad-hoc booking?`);
+      setAdHocConfirmPending(false);
+      setAdHocConfirmOpen(true);
+      return;
+    }
+
+    await submitAppointment(true);
+  };
+
+  const confirmAdHocBooking = async () => {
+    setAdHocConfirmOpen(false);
+    setAdHocConfirmPending(true);
+    try {
+      await submitAppointment(true);
+    } finally {
+      setAdHocConfirmPending(false);
     }
   };
   const addToWaitlist = async () => {
@@ -586,6 +699,7 @@ export default function AppointmentsPage() {
         type: "SCHEDULED",
         status: null,
         priority: "NORMAL",
+        allowAdHocBooking: slots.length > 0 && !matchingSlot,
       });
       await updateWaitlistStatus(auth.accessToken, auth.tenantId, entry.id, "BOOKED");
       await loadAppointments();
@@ -791,8 +905,10 @@ export default function AppointmentsPage() {
                           type === "WALK_IN"
                             ? "Walk-ins are tokenized on arrival."
                             : manualTimeAllowed
-                              ? "No schedule is configured for this doctor/date. Enter the time manually."
-                              : "Pick a slot below or review availability before booking."
+                              ? "No bookable slots remain for this doctor/date. Enter a time manually to create an ad-hoc booking."
+                              : adHocBookingNeeded
+                                ? "This time is outside availability. Saving will require ad-hoc confirmation."
+                                : "Pick a slot below or enter a current/future time."
                         }
                       />
                     </Grid>
@@ -805,37 +921,42 @@ export default function AppointmentsPage() {
                             <Box>
                               <Typography sx={{ fontWeight: 800 }}>Available slots</Typography>
                               <Typography variant="body2" color="text.secondary">
-                                {slots.length ? "Booked and unavailable slots are shown alongside the open gaps." : "Select a doctor and date to load the schedule."}
+                                {slots.length ? "Only future and current bookable slots are shown." : "Select a doctor and date to load the schedule."}
                               </Typography>
                             </Box>
                             <Stack direction="row" spacing={1} flexWrap="wrap">
-                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "AVAILABLE").length} available`} variant="outlined" />
-                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "PARTIALLY_BOOKED").length} partially booked`} variant="outlined" />
-                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "FULL").length} full`} color="error" variant="outlined" />
-                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "BREAK").length} break`} variant="outlined" />
-                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "LEAVE" || slot.status === "UNAVAILABLE").length} unavailable`} variant="outlined" />
-                              <Chip size="small" label={`${slots.filter((slot) => slot.status === "CONFLICTED").length} conflicts`} color="error" variant="outlined" />
+                              <Chip size="small" label={`${slotSummary.bookable} bookable`} variant="outlined" />
+                              <Chip size="small" label={`${slotSummary.available} available`} variant="outlined" />
+                              <Chip size="small" label={`${slotSummary.partial} partial`} variant="outlined" />
+                              <Chip size="small" label={`${slotSummary.full} full`} color="error" variant="outlined" />
+                              <Chip size="small" label={`${slotSummary.unavailable} unavailable`} variant="outlined" />
+                              <Chip size="small" label={`${slotSummary.past} past`} variant="outlined" />
                             </Stack>
                           </Box>
                           {slots.length === 0 ? (
                             <Alert severity="info">No schedule configured. Enter time manually or configure doctor availability.</Alert>
+                          ) : bookableSlots.length === 0 ? (
+                            <Alert severity="info">No bookable slots remain for this doctor today. Choose another date or create ad-hoc booking.</Alert>
                           ) : (
                             <Stack direction="row" flexWrap="wrap" gap={1}>
-                              {slots.map((slot) => {
+                              {bookableSlots.map((slot) => {
                                 const timeLabel = slot.slotTime.length >= 5 ? slot.slotTime.slice(0, 5) : slot.slotTime;
                                 const selected = appointmentTime === timeLabel;
+                                const pastSlot = isPastSlot(appointmentDate, slot);
                                 const label = slot.status === "PARTIALLY_BOOKED" && slot.selectable
                                   ? `${timeLabel} • ${slot.bookedCount}/${slot.maxPatientsPerSlot}`
                                   : slot.status === "FULL"
                                     ? `${timeLabel} • ${slot.bookedCount}/${slot.maxPatientsPerSlot} full`
-                                    : timeLabel;
+                                    : pastSlot
+                                      ? `${timeLabel} • Past`
+                                      : timeLabel;
                                 return (
                                   <Button
                                     key={`${slot.slotTime}-${slot.slotEndTime}`}
                                     size="small"
                                     variant={selected ? "contained" : "outlined"}
-                                    color={slot.status === "FULL" ? "error" : (slot.status === "PARTIALLY_BOOKED" ? "warning" : (slot.status === "AVAILABLE" ? "primary" : "inherit"))}
-                                    disabled={slot.status !== "AVAILABLE" && !(slot.status === "PARTIALLY_BOOKED" && slot.selectable)}
+                                    color={pastSlot ? "inherit" : (slot.status === "FULL" ? "error" : (slot.status === "PARTIALLY_BOOKED" ? "warning" : (slot.status === "AVAILABLE" ? "primary" : "inherit")))}
+                                    disabled={pastSlot || (slot.status !== "AVAILABLE" && !(slot.status === "PARTIALLY_BOOKED" && slot.selectable))}
                                     onClick={() => setAppointmentTime(timeLabel)}
                                   >
                                     {label}
@@ -844,6 +965,9 @@ export default function AppointmentsPage() {
                               })}
                             </Stack>
                           )}
+                          {slots.length > 0 && adHocBookingNeeded ? (
+                            <Alert severity="warning">This time is outside doctor availability. You can continue as an ad-hoc booking when saving.</Alert>
+                          ) : null}
                         </Stack>
                       </CardContent>
                     </Card>
@@ -978,6 +1102,24 @@ export default function AppointmentsPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={adHocConfirmOpen} onClose={() => !adHocConfirmPending && setAdHocConfirmOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Confirm ad-hoc booking</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ pt: 1 }}>
+            <Alert severity="warning">{adHocConfirmMessage || "This time is outside doctor availability. Continue as ad-hoc booking?"}</Alert>
+            <Typography variant="body2" color="text.secondary">
+              The selected time does not match a generated availability slot. The booking will still be created for operational use if you continue.
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAdHocConfirmOpen(false)} disabled={adHocConfirmPending}>Cancel</Button>
+          <Button variant="contained" onClick={() => void confirmAdHocBooking()} disabled={adHocConfirmPending}>
+            Continue
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={quickRegisterOpen} onClose={() => setQuickRegisterOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Quick Register Patient</DialogTitle>

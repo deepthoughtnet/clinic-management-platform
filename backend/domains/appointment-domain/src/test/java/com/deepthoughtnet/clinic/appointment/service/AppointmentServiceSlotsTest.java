@@ -269,6 +269,23 @@ class AppointmentServiceSlotsTest {
     }
 
     @Test
+    void createScheduledAllowsAdHocBookingWhenFlagEnabled() {
+        DoctorAvailabilityEntity availability = availability();
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of());
+
+        service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, APPOINTMENT_DATE, LocalTime.of(14, 0), "Ad-hoc visit", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL, true),
+                ACTOR_ID,
+                false
+        );
+
+        verify(appointmentRepository).save(any(AppointmentEntity.class));
+    }
+
+    @Test
     void createScheduledRejectsBlankAppointmentTime() {
         assertThatThrownBy(() -> service.createScheduled(
                 TENANT_ID,
@@ -288,7 +305,7 @@ class AppointmentServiceSlotsTest {
                 ACTOR_ID,
                 false
         )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("cannot be in the past");
+                .hasMessageContaining("future time or current running slot");
     }
 
     @Test

@@ -30,6 +30,7 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { alpha, type Theme } from "@mui/material/styles";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
+import { CompactEmptyState } from "../../components/compact/CompactUi";
 import {
   createDoctorAvailability,
   createDoctorUnavailability,
@@ -302,6 +303,28 @@ function compactDateLabel(date: string) {
   }).format(new Date(`${date}T00:00:00`));
 }
 
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isPastDateTime(date: string, time: string | null | undefined) {
+  if (!date) return false;
+  const now = new Date(Math.floor(Date.now() / 60000) * 60000);
+  const candidate = new Date(`${date}T${time && time.trim() ? timeLabel(time) : "23:59"}:00`);
+  return candidate.getTime() < now.getTime();
+}
+
+function isPastSlot(date: string, slot: DoctorAvailabilitySlot) {
+  return isPastDateTime(date, slot.slotEndTime);
+}
+
+function hidePastSlot(date: string, slot: DoctorAvailabilitySlot, appointment: Appointment | null) {
+  return isPastSlot(date, slot) && !appointment && slot.bookedCount <= 0;
+}
+
 function timeLabel(time: string) {
   return time.length >= 5 ? time.slice(0, 5) : time;
 }
@@ -352,7 +375,7 @@ export default function DoctorAvailabilityPage() {
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [selectedDoctorId, setSelectedDoctorId] = React.useState("");
   const [viewMode, setViewMode] = React.useState<ViewMode>("day");
-  const [date, setDate] = React.useState(toIsoDate(new Date()));
+  const [date, setDate] = React.useState(localDateKey());
 
   const [availabilityRows, setAvailabilityRows] = React.useState<DoctorAvailability[]>([]);
   const [slotsByKey, setSlotsByKey] = React.useState<Record<string, DoctorAvailabilitySlot[]>>({});
@@ -431,7 +454,7 @@ export default function DoctorAvailabilityPage() {
           appointment: appointments.find((appointment) => appointment.id === slot.appointmentId)
             || appointments.find((appointment) => sameTimeSlot(slot, appointment))
             || null,
-        }));
+        })).filter((row) => !hidePastSlot(row.date, row.slot, row.appointment));
       }).sort((left, right) => {
         const dayDelta = left.date.localeCompare(right.date);
         if (dayDelta !== 0) return dayDelta;
@@ -762,6 +785,34 @@ export default function DoctorAvailabilityPage() {
 
   const doctorScopeLabel = isDoctor ? selectedDoctorLabel : (selectedDoctorId ? selectedDoctorLabel : "All Doctors");
   const canMutateSchedule = Boolean(isDoctor ? auth.appUserId : selectedDoctorId);
+  const selectedSlotBookingReason = React.useMemo(() => {
+    if (!selectedSlot) return "Select an available slot";
+    if (!auth.accessToken || !auth.tenantId) return "Clinic context is unavailable";
+    if (isPastSlot(selectedSlot.date, selectedSlot.slot)) return "This slot has already passed.";
+    if (selectedSlot.slot.status === "BREAK" || selectedSlot.slot.status === "LEAVE" || selectedSlot.slot.status === "UNAVAILABLE" || selectedSlot.slot.status === "CONFLICTED") {
+      return "Doctor is unavailable during this time.";
+    }
+    if (selectedSlot.slot.status === "FULL" || selectedSlot.slot.bookedCount >= selectedSlot.slot.maxPatientsPerSlot) {
+      return "This slot is full.";
+    }
+    if (selectedSlot.slot.status !== "AVAILABLE" && selectedSlot.slot.status !== "PARTIALLY_BOOKED") {
+      return "Select an available slot";
+    }
+    if (!selectedSlot.slot.selectable) {
+      return "Select an available slot";
+    }
+    return null;
+  }, [auth.accessToken, auth.tenantId, selectedSlot]);
+  const selectedSlotCanBook = Boolean(selectedSlot && !selectedSlotBookingReason);
+  const openBookingFlow = () => {
+    if (!selectedSlot || !selectedSlotCanBook) return;
+    const params = new URLSearchParams({
+      doctorUserId: selectedSlot.doctorUserId,
+      appointmentDate: selectedSlot.date,
+      appointmentTime: timeLabel(selectedSlot.slot.slotTime),
+    });
+    navigate(`/appointments?${params.toString()}`);
+  };
 
   return (
     <Stack spacing={1.75}>
@@ -869,7 +920,7 @@ export default function DoctorAvailabilityPage() {
             </Card>
 
             <Card>
-              <CardContent sx={{ pb: 1.5 }}>
+            <CardContent sx={{ p: 1.25, pb: 1.25 }}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>Quick Actions</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
                   Select a specific doctor to create sessions, leave blocks, or waitlist entries.
@@ -1007,7 +1058,7 @@ export default function DoctorAvailabilityPage() {
         <Grid size={{ xs: 12, lg: 6 }}>
           <Stack spacing={1.5}>
             <Card sx={{ minHeight: 240 }}>
-              <CardContent sx={{ pb: 1.25 }}>
+              <CardContent sx={{ p: 1.25, pb: 1.25 }}>
                 <Stack spacing={1.1}>
                   <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap", alignItems: "flex-start" }}>
                     <Box>
@@ -1061,9 +1112,9 @@ export default function DoctorAvailabilityPage() {
                   </Stack>
 
                   {loading && calendarGroups.every((group) => group.rows.length === 0) ? (
-                    <Alert severity="info">Loading doctor schedule…</Alert>
+                    <CompactEmptyState title="Loading doctor schedule…" subtitle="Fetching availability and booking visibility." />
                   ) : calendarGroups.length === 0 ? (
-                    <Alert severity="info">No schedule available for the selected scope.</Alert>
+                    <CompactEmptyState title="No schedule available" subtitle="The selected scope has no visible sessions." />
                   ) : (
                     <Stack spacing={1}>
                       {calendarGroupsWithBuckets.map((group) => (
@@ -1136,7 +1187,15 @@ export default function DoctorAvailabilityPage() {
                                     </Box>
                                   </AccordionSummary>
                                   <AccordionDetails>
-                                    <Box sx={{ maxHeight: 360, overflowX: "auto", overflowY: "auto" }}>
+                                    <Box
+                                      sx={{
+                                        maxHeight: 360,
+                                        overflowX: "auto",
+                                        overflowY: "auto",
+                                        scrollbarGutter: "stable both-edges",
+                                        pr: 1.5,
+                                      }}
+                                    >
                                       <Table size="small" sx={{ minWidth: isDoctor || selectedDoctorId ? 720 : 900, tableLayout: "fixed" }}>
                                         <TableHead>
                                           <TableRow>
@@ -1178,7 +1237,7 @@ export default function DoctorAvailabilityPage() {
                                                     {row.slot.selectable ? <Chip size="small" label="Selectable" variant="outlined" sx={COMPACT_CHIP_SX} /> : null}
                                                   </Stack>
                                                 </TableCell>
-                                                <TableCell sx={{ whiteSpace: "nowrap", py: 0.75 }}>
+                                                <TableCell sx={{ whiteSpace: "nowrap", py: 0.75, pr: 1 }}>
                                                   {row.slot.bookedCount}/{row.slot.maxPatientsPerSlot}
                                                 </TableCell>
                                                 <TableCell sx={{ py: 0.75 }}>
@@ -1506,10 +1565,16 @@ export default function DoctorAvailabilityPage() {
                         <Button
                           size="small"
                           variant="contained"
-                          onClick={() => navigate(`/appointments?doctorUserId=${selectedSlot.doctorUserId}&appointmentDate=${selectedSlot.date}`)}
+                          disabled={!selectedSlotCanBook}
+                          onClick={openBookingFlow}
                         >
                           {selectedAppointment ? "Open appointment flow" : "Book appointment"}
                         </Button>
+                        {selectedSlotBookingReason ? (
+                          <Typography variant="caption" color="text.secondary">
+                            {selectedSlotBookingReason}
+                          </Typography>
+                        ) : null}
                         <Button
                           size="small"
                           variant="outlined"

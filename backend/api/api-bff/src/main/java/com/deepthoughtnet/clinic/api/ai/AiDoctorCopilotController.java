@@ -22,6 +22,8 @@ import com.deepthoughtnet.clinic.platform.core.module.ModuleKeys;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.List;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -32,6 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/ai")
 public class AiDoctorCopilotController {
+    private static final Logger log = LoggerFactory.getLogger(AiDoctorCopilotController.class);
     private static final String AI_COPILOT_RUN_ACCESS = """
             @permissionChecker.hasPermission('ai_copilot.clinic.run') or
             @permissionChecker.hasPermission('ai_copilot.run')
@@ -85,14 +88,32 @@ public class AiDoctorCopilotController {
     @PreAuthorize(AI_COPILOT_RUN_ACCESS)
     public AiDraftResponse suggestDiagnosis(@RequestBody AiDiagnosisSuggestionRequest request) {
         requireAiReady();
-        return aiConsultationDraftService.suggestDiagnosis(request);
+        AiDraftResponse response = aiConsultationDraftService.suggestDiagnosis(request);
+        log.debug("AI_DIAGNOSIS_RESPONSE endpoint=/api/ai/consultation/suggest-diagnosis correlationId={} enabled={} fallbackUsed={} provider={} model={} draftChars={} structuredKeys={}",
+                RequestContextHolder.require().correlationId(),
+                response.enabled(),
+                response.fallbackUsed(),
+                response.provider(),
+                response.model(),
+                response.draft() == null ? 0 : response.draft().length(),
+                response.structuredData() == null ? "[]" : response.structuredData().keySet().toString());
+        return response;
     }
 
     @PostMapping("/prescription/suggest-template")
     @PreAuthorize(AI_COPILOT_RUN_ACCESS)
     public AiDraftResponse suggestPrescriptionTemplate(@RequestBody AiPrescriptionTemplateRequest request) {
         requireAiReady();
-        return aiConsultationDraftService.suggestPrescriptionTemplate(request);
+        AiDraftResponse response = aiConsultationDraftService.suggestPrescriptionTemplate(request);
+        log.debug("AI_MEDICINE_RESPONSE endpoint=/api/ai/prescription/suggest-template correlationId={} enabled={} fallbackUsed={} provider={} model={} draftChars={} structuredKeys={}",
+                RequestContextHolder.require().correlationId(),
+                response.enabled(),
+                response.fallbackUsed(),
+                response.provider(),
+                response.model(),
+                response.draft() == null ? 0 : response.draft().length(),
+                response.structuredData() == null ? "[]" : response.structuredData().keySet().toString());
+        return response;
     }
 
     @PostMapping("/patient-instructions")
