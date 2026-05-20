@@ -55,6 +55,7 @@ import {
   type DoctorUnavailabilityType,
   type WaitlistStatus,
 } from "../../api/clinicApi";
+import { isBookingTimePast, isSlotExpired } from "../appointments/bookingValidation";
 
 const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"] as const;
 const WEEKDAY_DAYS = DAYS.slice(0, 5);
@@ -311,14 +312,11 @@ function localDateKey(date = new Date()) {
 }
 
 function isPastDateTime(date: string, time: string | null | undefined) {
-  if (!date) return false;
-  const now = new Date(Math.floor(Date.now() / 60000) * 60000);
-  const candidate = new Date(`${date}T${time && time.trim() ? timeLabel(time) : "23:59"}:00`);
-  return candidate.getTime() < now.getTime();
+  return isBookingTimePast(date, time);
 }
 
 function isPastSlot(date: string, slot: DoctorAvailabilitySlot) {
-  return isPastDateTime(date, slot.slotEndTime);
+  return isSlotExpired(date, slot);
 }
 
 function hidePastSlot(date: string, slot: DoctorAvailabilitySlot, appointment: Appointment | null) {
@@ -788,7 +786,7 @@ export default function DoctorAvailabilityPage() {
   const selectedSlotBookingReason = React.useMemo(() => {
     if (!selectedSlot) return "Select an available slot";
     if (!auth.accessToken || !auth.tenantId) return "Clinic context is unavailable";
-    if (isPastSlot(selectedSlot.date, selectedSlot.slot)) return "This slot has already passed.";
+    if (isPastSlot(selectedSlot.date, selectedSlot.slot)) return "Selected time has already passed. Choose a current or future slot.";
     if (selectedSlot.slot.status === "BREAK" || selectedSlot.slot.status === "LEAVE" || selectedSlot.slot.status === "UNAVAILABLE" || selectedSlot.slot.status === "CONFLICTED") {
       return "Doctor is unavailable during this time.";
     }

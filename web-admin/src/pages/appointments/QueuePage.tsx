@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -187,11 +187,13 @@ type FeeDialogState = {
 export default function QueuePage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const doctorUserIdFromQuery = searchParams.get("doctorUserId") || "";
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [appointments, setAppointments] = React.useState<Appointment[]>([]);
   const [bills, setBills] = React.useState<Bill[]>([]);
   const [doctorProfiles, setDoctorProfiles] = React.useState<Record<string, DoctorProfile>>({});
-  const [doctorUserId, setDoctorUserId] = React.useState("");
+  const [doctorUserId, setDoctorUserId] = React.useState(doctorUserIdFromQuery);
   const [queueSearch, setQueueSearch] = React.useState("");
   const [loadingDoctors, setLoadingDoctors] = React.useState(true);
   const [loadingQueue, setLoadingQueue] = React.useState(true);
@@ -211,6 +213,12 @@ export default function QueuePage() {
   const canReorderQueue = (isDoctor || isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage") && Boolean(doctorUserId || isDoctor);
   const tenantReady = isValidTenantId(auth.tenantId);
   const effectiveDoctorId = isDoctor && auth.appUserId ? auth.appUserId : doctorUserId || null;
+
+  React.useEffect(() => {
+    if (!isDoctor) {
+      setDoctorUserId(doctorUserIdFromQuery);
+    }
+  }, [doctorUserIdFromQuery, isDoctor]);
 
   const doctors = React.useMemo(
     () => users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR"),

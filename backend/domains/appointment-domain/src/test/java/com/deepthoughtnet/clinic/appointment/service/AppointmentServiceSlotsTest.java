@@ -35,11 +35,13 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -95,6 +97,7 @@ class AppointmentServiceSlotsTest {
             return Optional.of(patient(id));
         });
         lenient().when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctor()));
+        lenient().when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of());
         lenient().when(doctorUnavailabilityRepository.findByTenantIdAndDoctorUserIdAndActiveTrueAndStartAtLessThanAndEndAtGreaterThan(eq(TENANT_ID), eq(DOCTOR_ID), any(), any()))
                 .thenReturn(List.of());
         lenient().when(appointmentWaitlistRepository.save(any(AppointmentWaitlistEntity.class))).thenAnswer(invocation -> {
@@ -220,6 +223,33 @@ class AppointmentServiceSlotsTest {
     }
 
     @Test
+    void createScheduledAllowsNearCurrentBookingWithinGraceWindow() {
+        LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
+        Assumptions.assumeTrue(now.isAfter(LocalTime.of(1, 0)) && now.isBefore(LocalTime.of(22, 0)));
+
+        service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, LocalDate.now(), now.minusMinutes(10), "Near current", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
+                ACTOR_ID,
+                false
+        );
+    }
+
+    @Test
+    void createScheduledRejectsClearlyPastBookingOutsideGraceWindow() {
+        LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
+        Assumptions.assumeTrue(now.isAfter(LocalTime.of(1, 30)) && now.isBefore(LocalTime.of(22, 30)));
+
+        assertThatThrownBy(() -> service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, LocalDate.now(), now.minusMinutes(30), "Past visit", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
+                ACTOR_ID,
+                false
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Selected time has already passed. Choose a current or future slot.");
+    }
+
+    @Test
     void rescheduleRejectsOccupiedSlot() {
         DoctorAvailabilityEntity availability = availability();
         AppointmentEntity source = appointment(LocalTime.of(10, 0), AppointmentStatus.BOOKED);
@@ -305,7 +335,7 @@ class AppointmentServiceSlotsTest {
                 ACTOR_ID,
                 false
         )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("future time or current running slot");
+                .hasMessageContaining("Selected time has already passed. Choose a current or future slot.");
     }
 
     @Test

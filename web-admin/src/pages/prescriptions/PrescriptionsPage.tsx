@@ -76,13 +76,19 @@ export default function PrescriptionsPage() {
     if (!auth.accessToken || !auth.tenantId) {
       return;
     }
+    if (row.status === "DRAFT") {
+      setError("Finalize prescription before generating final PDF.");
+      return;
+    }
     setWorkingId(row.id);
     try {
       const { blob } = await getPrescriptionPdf(auth.accessToken, auth.tenantId, row.id);
       const url = URL.createObjectURL(blob);
       window.open(url, "_blank", "noopener,noreferrer");
       window.setTimeout(() => URL.revokeObjectURL(url), 60000);
-      await printPrescription(auth.accessToken, auth.tenantId, row.id);
+      if (row.status !== "CORRECTED" && row.status !== "SUPERSEDED") {
+        await printPrescription(auth.accessToken, auth.tenantId, row.id);
+      }
       const refreshed = await getPrescriptions(auth.accessToken, auth.tenantId);
       setRows(refreshed);
     } catch (err) {

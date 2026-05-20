@@ -43,6 +43,7 @@ import {
   getAppointment,
   finalizePrescription,
   getConsultation,
+  getConsultationAiSummary,
   getConsultationPrescription,
   getMedicines,
   getPatient,
@@ -54,6 +55,7 @@ import {
   getPrescriptionHistory,
   printPrescription,
   previewPrescription,
+  saveConsultationAiSummary,
   sendPrescription,
   startConsultationFromAppointment,
   updateConsultation,
@@ -62,6 +64,7 @@ import {
   type AiDraftResponse,
   type Appointment,
   type Consultation,
+  type ConsultationAiSummary,
   type ConsultationInput,
   type Medicine,
   type MedicineType,
@@ -100,6 +103,18 @@ type AiSuggestionItem = {
   title: string;
   reason: string | null;
   confidence: string | null;
+  redFlags: string[];
+  recommendedInvestigations: string[];
+  followUpSuggestions: string[];
+  rawText: string;
+};
+type AiMedicineSuggestionItem = {
+  medicine: string;
+  dose: string | null;
+  frequency: string | null;
+  duration: string | null;
+  reason: string | null;
+  safetyNote: string | null;
   rawText: string;
 };
 type MedicineShortcut = Pick<
@@ -450,10 +465,63 @@ function asStringList(value: unknown): string[] {
   return value.map((entry) => String(entry ?? "").trim()).filter(Boolean);
 }
 
+function isPromptLeak(value: string) {
+  const normalized = value.toLowerCase().replace(/[\r\n\t]+/g, " ");
+  return [
+    "return only valid json",
+    "use exactly this shape",
+    "no markdown",
+    "no extra text",
+    "do not return a top-level array",
+    "\"diagnosis\": \"short name\"",
+    "\"medicine\": \"medicine name\"",
+    "one short sentence up to 140 chars",
+  ].some((pattern) => normalized.includes(pattern));
+}
+
+function extractJsonCandidate(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("```")) {
+    const openEnd = trimmed.indexOf("\n");
+    const fenceEnd = trimmed.lastIndexOf("```");
+    if (openEnd >= 0 && fenceEnd > openEnd) {
+      return trimmed.slice(openEnd + 1, fenceEnd).trim();
+    }
+  }
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1).trim();
+  }
+  const firstBracket = trimmed.indexOf("[");
+  const lastBracket = trimmed.lastIndexOf("]");
+  if (firstBracket >= 0 && lastBracket > firstBracket) {
+    return trimmed.slice(firstBracket, lastBracket + 1).trim();
+  }
+  return trimmed;
+}
+
+function parseStructuredObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
 function normalizeAiSuggestionItem(entry: unknown): AiSuggestionItem | null {
   if (typeof entry === "string") {
     const title = entry.trim();
-    return title ? { title, reason: null, confidence: null, rawText: title } : null;
+    if (!title || isPromptLeak(title)) return null;
+    return {
+      title,
+      reason: null,
+      confidence: null,
+      redFlags: [],
+      recommendedInvestigations: [],
+      followUpSuggestions: [],
+      rawText: title,
+    };
   }
   if (!entry || typeof entry !== "object") return null;
   const row = entry as Record<string, unknown>;
@@ -467,63 +535,76 @@ function normalizeAiSuggestionItem(entry: unknown): AiSuggestionItem | null {
     row.label ??
     ""
   ).trim();
-  if (!title) return null;
+  if (!title || isPromptLeak(title)) return null;
   const reason = String(row.reason ?? row.reasoning ?? row.note ?? row.notes ?? "").trim() || null;
   const confidence = String(row.confidence ?? row.confidenceLevel ?? "").trim() || null;
+  const redFlags = asStringList(row.redFlags ?? row.redFlagExclusions ?? row.flags);
+  const recommendedInvestigations = asStringList(row.recommendedInvestigations ?? row.investigations ?? row.tests);
+  const followUpSuggestions = asStringList(row.followUpSuggestions ?? row.followUps ?? row.followUp);
   const rawText = [title, reason, confidence ? `confidence: ${confidence}` : ""].filter(Boolean).join(" | ");
-  return { title, reason, confidence, rawText };
+  return { title, reason, confidence, redFlags, recommendedInvestigations, followUpSuggestions, rawText };
 }
 
-function parseAiSuggestionItems(draft: AiDraftResponse): { items: AiSuggestionItem[]; summary: string | null; rawText: string; unstructured: boolean } {
-  const structured = draft.structuredData && typeof draft.structuredData === "object" ? draft.structuredData : {};
+function normalizeAiMedicineSuggestionItem(entry: unknown): AiMedicineSuggestionItem | null {
+  if (typeof entry === "string") {
+    const medicine = entry.trim();
+    if (!medicine || isPromptLeak(medicine)) return null;
+    return { medicine, dose: null, frequency: null, duration: null, reason: null, safetyNote: null, rawText: medicine };
+  }
+  if (!entry || typeof entry !== "object") return null;
+  const row = entry as Record<string, unknown>;
+  const medicine = String(
+    row.medicine ??
+    row.medicineName ??
+    row.name ??
+    row.title ??
+    row.label ??
+    ""
+  ).trim();
+  if (!medicine || isPromptLeak(medicine)) return null;
+  const dose = String(row.dose ?? row.strength ?? row.dosage ?? "").trim() || null;
+  const frequency = String(row.frequency ?? row.freq ?? "").trim() || null;
+  const duration = String(row.duration ?? row.days ?? row.durationDays ?? "").trim() || null;
+  const reason = String(row.reason ?? row.reasoning ?? row.note ?? row.notes ?? "").trim() || null;
+  const safetyNote = String(row.safetyNote ?? row.safety ?? row.warning ?? row.warnings ?? "").trim() || null;
+  const rawText = [medicine, dose, frequency, duration, reason].filter(Boolean).join(" | ");
+  return { medicine, dose, frequency, duration, reason, safetyNote, rawText };
+}
+
+function parseAiSuggestionItems(draft: AiDraftResponse): { items: AiSuggestionItem[]; summary: string | null; rawText: string; unstructured: boolean; invalid: boolean } {
+  const structured = parseStructuredObject(draft.structuredData);
   const summary = typeof structured["summary"] === "string" ? structured["summary"].trim() : null;
-  const safetyNotes = asStringList(structured["safetyNotes"]);
   const safetyNote = typeof structured["safetyNote"] === "string" ? structured["safetyNote"].trim() : "";
+  const safetyNotes = asStringList(structured["safetyNotes"]);
   const rawText = (draft.draft || draft.message || "").trim();
-  const source = structured["suggestions"] ?? structured["possibleDiagnosisCategories"] ?? structured["recommendedInvestigations"] ?? structured["followUpSuggestions"];
-  let items = Array.isArray(source) ? source.map(normalizeAiSuggestionItem).filter((item): item is AiSuggestionItem => Boolean(item)) : [];
-
-  if (!items.length && rawText) {
-    const lines = rawText
-      .split(/\r?\n+/)
-      .map((line) => line.replace(/^\s*[-*•]\s*/, "").replace(/^\s*\d+[.)]\s*/, "").trim())
-      .filter(Boolean);
-    items = lines.map((line) => ({ title: line, reason: null, confidence: null, rawText: line }));
-  }
-
-  const unstructured = !items.length
+  const source = Array.isArray(structured["suggestions"]) ? structured["suggestions"] : Array.isArray(structured["possibleDiagnosisCategories"]) ? structured["possibleDiagnosisCategories"] : [];
+  const items = source.map(normalizeAiSuggestionItem).filter((item): item is AiSuggestionItem => Boolean(item));
+  const invalid = !rawText
+    || isPromptLeak(rawText)
     || (summary || "").toLowerCase().includes("incomplete")
-    || safetyNotes.some((item) => item.toLowerCase().includes("unstructured text"))
-    || safetyNote.toLowerCase().includes("unstructured text");
-
-  return { items, summary, rawText, unstructured };
+    || safetyNotes.some((item) => item.toLowerCase().includes("invalid response") || item.toLowerCase().includes("incomplete"))
+    || safetyNote.toLowerCase().includes("invalid response")
+    || safetyNote.toLowerCase().includes("incomplete");
+  const unstructured = !items.length && !invalid;
+  return { items, summary, rawText, unstructured, invalid };
 }
 
-function formatAiDiagnosisSuggestion(draft: AiDraftResponse): { formatted: string; summary: string | null; items: AiSuggestionItem[]; unstructured: boolean } {
-  const parsed = parseAiSuggestionItems(draft);
-  if (!parsed.items.length) {
-    return {
-      formatted: parsed.rawText || parsed.summary || "AI suggestion unavailable.",
-      summary: parsed.summary || parsed.rawText || null,
-      items: [],
-      unstructured: true,
-    };
-  }
-
-  const lines: string[] = ["Possible differential diagnoses:"];
-  parsed.items.forEach((item, index) => {
-    lines.push("");
-    lines.push(`${index + 1}. ${item.title}`);
-    if (item.reason) lines.push(`   Reason: ${item.reason}`);
-    if (item.confidence) lines.push(`   Confidence: ${item.confidence}`);
-  });
-
-  return {
-    formatted: lines.join("\n").trim(),
-    summary: parsed.summary || parsed.rawText || null,
-    items: parsed.items,
-    unstructured: parsed.unstructured,
-  };
+function parseAiMedicineSuggestionItems(draft: AiDraftResponse): { items: AiMedicineSuggestionItem[]; summary: string | null; rawText: string; unstructured: boolean; invalid: boolean } {
+  const structured = parseStructuredObject(draft.structuredData);
+  const summary = typeof structured["summary"] === "string" ? structured["summary"].trim() : null;
+  const safetyNote = typeof structured["safetyNote"] === "string" ? structured["safetyNote"].trim() : null;
+  const safetyNotes = asStringList(structured["safetyNotes"]);
+  const rawText = (draft.draft || draft.message || "").trim();
+  const source = Array.isArray(structured["suggestions"]) ? structured["suggestions"] : [];
+  const items = source.map(normalizeAiMedicineSuggestionItem).filter((item): item is AiMedicineSuggestionItem => Boolean(item));
+  const invalid = !rawText
+    || isPromptLeak(rawText)
+    || (summary || "").toLowerCase().includes("incomplete")
+    || safetyNotes.some((item) => item.toLowerCase().includes("invalid response") || item.toLowerCase().includes("incomplete"))
+    || (safetyNote || "").toLowerCase().includes("invalid response")
+    || (safetyNote || "").toLowerCase().includes("incomplete");
+  const unstructured = !items.length && !invalid;
+  return { items, summary, rawText, unstructured, invalid };
 }
 
 function compactDate(value?: string | null): string {
@@ -668,8 +749,12 @@ export default function ConsultationWorkspacePage() {
   const [aiDiagnosisSummary, setAiDiagnosisSummary] = React.useState<string | null>(null);
   const [aiDiagnosisItems, setAiDiagnosisItems] = React.useState<AiSuggestionItem[]>([]);
   const [aiDiagnosisUnstructured, setAiDiagnosisUnstructured] = React.useState(false);
+  const [aiDiagnosisProvider, setAiDiagnosisProvider] = React.useState<string | null>(null);
   const [aiPrescriptionSuggestion, setAiPrescriptionSuggestion] = React.useState<string | null>(null);
-  const [aiPrescriptionItems, setAiPrescriptionItems] = React.useState<AiSuggestionItem[]>([]);
+  const [aiPrescriptionItems, setAiPrescriptionItems] = React.useState<AiMedicineSuggestionItem[]>([]);
+  const [aiPrescriptionUnstructured, setAiPrescriptionUnstructured] = React.useState(false);
+  const [aiPrescriptionProvider, setAiPrescriptionProvider] = React.useState<string | null>(null);
+  const [savedAiSummary, setSavedAiSummary] = React.useState<ConsultationAiSummary | null>(null);
   const [medicineCatalogWarning, setMedicineCatalogWarning] = React.useState<string | null>(null);
   const [viewerDocument, setViewerDocument] = React.useState<ClinicalDocument | null>(null);
   const [viewerUrl, setViewerUrl] = React.useState<string | null>(null);
@@ -735,8 +820,12 @@ export default function ConsultationWorkspacePage() {
       setAiDiagnosisSummary(null);
       setAiDiagnosisItems([]);
       setAiDiagnosisUnstructured(false);
+      setAiDiagnosisProvider(null);
       setAiPrescriptionSuggestion(null);
       setAiPrescriptionItems([]);
+      setAiPrescriptionUnstructured(false);
+      setAiPrescriptionProvider(null);
+      setSavedAiSummary(null);
       try {
         const [medicines, consult] = await Promise.all([
           getMedicines(auth.accessToken, auth.tenantId).catch(() => {
@@ -749,6 +838,10 @@ export default function ConsultationWorkspacePage() {
 
         setMedicineCatalog(medicines);
         setConsultation(consult);
+        const persistedSummary = await getConsultationAiSummary(auth.accessToken, auth.tenantId, consult.id).catch(() => null);
+        if (!cancelled) {
+          setSavedAiSummary(persistedSummary);
+        }
         const loadedAppointment = consult.appointmentId
           ? await getAppointment(auth.accessToken, auth.tenantId, consult.appointmentId).catch(() => null)
           : null;
@@ -919,6 +1012,22 @@ export default function ConsultationWorkspacePage() {
     if (!prescriptionReadOnly) setPrescriptionForm((current) => ({ ...current, medicines: [...current.medicines.filter((item) => item.medicineName.trim()), row] }));
   };
 
+  const addMedicineFromAiSuggestion = (item: AiMedicineSuggestionItem) => {
+    if (prescriptionReadOnly) return;
+    const row = {
+      ...newMedicineRow(prescriptionForm.medicines.length),
+      medicineName: item.medicine,
+      medicineType: null,
+      strength: "",
+      dosage: item.dose || "",
+      frequency: item.frequency || "",
+      duration: item.duration || "",
+      timing: null,
+      instructions: [item.reason, item.safetyNote].filter(Boolean).join(" • "),
+    };
+    setPrescriptionForm((current) => ({ ...current, medicines: [...current.medicines.filter((med) => med.medicineName.trim()), row] }));
+  };
+
   const addManualMedicine = () => {
     if (!prescriptionReadOnly) setPrescriptionForm((current) => ({ ...current, medicines: [...current.medicines, newMedicineRow(current.medicines.length)] }));
   };
@@ -974,6 +1083,39 @@ export default function ConsultationWorkspacePage() {
       followUpDate: followUpChipToDate(template.followUp),
     }));
     setInfo(`${template.label} applied`);
+  };
+
+  const aiSummaryText = React.useMemo(() => {
+    if (clinicalSummary) {
+      const structured = parseStructuredObject(clinicalSummary.structuredData || {});
+      const summary = typeof structured.summary === "string" ? structured.summary.trim() : "";
+      return summary || (clinicalSummary.draft || clinicalSummary.message || "").trim();
+    }
+    return savedAiSummary?.summary?.trim() || "";
+  }, [clinicalSummary, savedAiSummary?.summary]);
+
+  const aiSummaryProviderLabel = clinicalSummary?.provider || savedAiSummary?.provider || null;
+  const aiSummaryModelLabel = clinicalSummary?.model || savedAiSummary?.model || null;
+  const aiSummaryGeneratedAtLabel = clinicalSummary
+    ? (savedAiSummary?.generatedAt || new Date().toISOString())
+    : (savedAiSummary?.generatedAt || null);
+
+  const copyAiSummaryToClipboard = async () => {
+    if (!aiSummaryText) return;
+    try {
+      await navigator.clipboard.writeText(aiSummaryText);
+      setInfo("AI summary copied to clipboard");
+    } catch {
+      setError("Unable to copy AI summary. Please select and copy manually.");
+    }
+  };
+
+  const applyAiSummaryToConsultationNotes = () => {
+    if (!aiSummaryText) return;
+    setConsultationForm((current) => ({
+      ...current,
+      clinicalNotes: appendTokenLine(current.clinicalNotes, aiSummaryText),
+    }));
   };
 
   const saveConsultationDraft = async (showInfo = false): Promise<Consultation | null> => {
@@ -1314,6 +1456,11 @@ export default function ConsultationWorkspacePage() {
     setError(null);
     try {
       if (mode === "diagnosis") {
+        setAiDiagnosisSuggestion(null);
+        setAiDiagnosisSummary(null);
+        setAiDiagnosisItems([]);
+        setAiDiagnosisUnstructured(false);
+        setAiDiagnosisProvider(null);
         if (import.meta.env.DEV) {
           console.debug("[AI_DIAGNOSIS_DEBUG] request", {
             consultationId: consultation.id,
@@ -1345,6 +1492,7 @@ export default function ConsultationWorkspacePage() {
             provider: draft.provider,
             model: draft.model,
             summaryChars: summaryText.length,
+            rawTextLength: (draft.draft || draft.message || "").length,
             suggestionCount,
             keys: Object.keys(draft.structuredData || {}),
           });
@@ -1354,11 +1502,25 @@ export default function ConsultationWorkspacePage() {
           setError(aiStatusMessage || AI_DISABLED_MESSAGE);
           return;
         }
-        const parsed = formatAiDiagnosisSuggestion(draft);
-        setAiDiagnosisSuggestion(parsed.formatted);
+        if (!draft.provider && draft.fallbackUsed) {
+          setError(draft.message || "AI providers are temporarily unavailable. Please retry.");
+          return;
+        }
+        const parsed = parseAiSuggestionItems(draft);
+        if (parsed.invalid) {
+          setAiDiagnosisSuggestion(parsed.summary || "AI returned an invalid response. Please retry.");
+          setAiDiagnosisSummary(parsed.summary);
+          setAiDiagnosisItems([]);
+          setAiDiagnosisUnstructured(true);
+          setAiDiagnosisProvider(draft.provider || null);
+          setError("AI returned an invalid response. Please retry.");
+          return;
+        }
+        setAiDiagnosisSuggestion(parsed.summary || parsed.rawText || null);
         setAiDiagnosisSummary(parsed.summary);
         setAiDiagnosisItems(parsed.items);
-        setAiDiagnosisUnstructured(parsed.unstructured);
+        setAiDiagnosisUnstructured(parsed.invalid);
+        setAiDiagnosisProvider(draft.provider || null);
       }
 
       if (mode === "notes") {
@@ -1410,13 +1572,21 @@ export default function ConsultationWorkspacePage() {
         message.includes("HTTP 403")
         || message.includes("HTTP 404")
         || message.includes("HTTP 400")
+        || normalized.includes("gemini authorization failed")
+        || normalized.includes("api key/provider configuration")
         || normalized.includes("not enabled")
         || normalized.includes("not configured")
         || normalized.includes("module_disabled")
         || normalized.includes("enabled for this clinic")
       ) {
         setAiAvailable(false);
-        setError(normalized.includes("enabled for this clinic") ? AI_PROVIDER_NOT_CONFIGURED_MESSAGE : (aiStatusMessage || AI_DISABLED_MESSAGE));
+        setError(
+          normalized.includes("authorization failed") || normalized.includes("api key/provider configuration")
+            ? "AI provider authorization failed. Check API key/provider configuration."
+            : normalized.includes("enabled for this clinic")
+              ? AI_PROVIDER_NOT_CONFIGURED_MESSAGE
+              : (aiStatusMessage || AI_DISABLED_MESSAGE)
+        );
       } else {
         setError("AI assistance is temporarily unavailable.");
       }
@@ -1431,6 +1601,10 @@ export default function ConsultationWorkspacePage() {
     setAiBusy(true);
     setError(null);
     try {
+      setAiPrescriptionSuggestion(null);
+      setAiPrescriptionItems([]);
+      setAiPrescriptionUnstructured(false);
+      setAiPrescriptionProvider(null);
       if (import.meta.env.DEV) {
         console.debug("[AI_MEDICINE_DEBUG] request", {
           consultationId: consultation.id,
@@ -1459,6 +1633,7 @@ export default function ConsultationWorkspacePage() {
           provider: draft.provider,
           model: draft.model,
           draftChars: (draft.draft || "").length,
+          rawTextLength: (draft.draft || draft.message || "").length,
           suggestionCount,
           keys: Object.keys(draft.structuredData || {}),
         });
@@ -1468,10 +1643,23 @@ export default function ConsultationWorkspacePage() {
         setError(aiStatusMessage || AI_DISABLED_MESSAGE);
         return;
       }
-      const parsed = formatAiDiagnosisSuggestion(draft);
-      setAiPrescriptionSuggestion(draft.draft || draft.message || parsed.formatted || null);
+      if (!draft.provider && draft.fallbackUsed) {
+        setError(draft.message || "AI providers are temporarily unavailable. Please retry.");
+        return;
+      }
+      const parsed = parseAiMedicineSuggestionItems(draft);
+      if (parsed.invalid) {
+        setAiPrescriptionSuggestion(parsed.summary || "AI returned an invalid response. Please retry.");
+        setAiPrescriptionItems([]);
+        setAiPrescriptionUnstructured(true);
+        setAiPrescriptionProvider(draft.provider || null);
+        setError("AI returned an invalid response. Please retry.");
+        return;
+      }
+      setAiPrescriptionSuggestion(parsed.summary || parsed.rawText || null);
       setAiPrescriptionItems(parsed.items);
-      if (draft.draft) setPrescriptionForm((current) => ({ ...current, advice: `${current.advice.trim()}\n\nAI Rx Suggestion:\n${draft.draft}`.trim() }));
+      setAiPrescriptionUnstructured(parsed.invalid);
+      setAiPrescriptionProvider(draft.provider || null);
       setInfo("AI prescription suggestion generated. Doctor must verify before use.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "AI action failed";
@@ -1480,13 +1668,21 @@ export default function ConsultationWorkspacePage() {
         message.includes("HTTP 403")
         || message.includes("HTTP 404")
         || message.includes("HTTP 400")
+        || normalized.includes("gemini authorization failed")
+        || normalized.includes("api key/provider configuration")
         || normalized.includes("not enabled")
         || normalized.includes("not configured")
         || normalized.includes("module_disabled")
         || normalized.includes("enabled for this clinic")
       ) {
         setAiAvailable(false);
-        setError(normalized.includes("enabled for this clinic") ? AI_PROVIDER_NOT_CONFIGURED_MESSAGE : (aiStatusMessage || AI_DISABLED_MESSAGE));
+        setError(
+          normalized.includes("authorization failed") || normalized.includes("api key/provider configuration")
+            ? "AI provider authorization failed. Check API key/provider configuration."
+            : normalized.includes("enabled for this clinic")
+              ? AI_PROVIDER_NOT_CONFIGURED_MESSAGE
+              : (aiStatusMessage || AI_DISABLED_MESSAGE)
+        );
       } else {
         setError("AI assistance is temporarily unavailable.");
       }
@@ -1521,6 +1717,23 @@ export default function ConsultationWorkspacePage() {
         return;
       }
       setClinicalSummary(draft);
+      const summaryText = (typeof draft.structuredData?.["summary"] === "string" && String(draft.structuredData["summary"]).trim())
+        || (draft.draft || draft.message || "").trim();
+      if (summaryText) {
+        try {
+          const savedSummary = await saveConsultationAiSummary(auth.accessToken, auth.tenantId, consultation.id, {
+            summary: summaryText,
+            provider: draft.provider || null,
+            model: draft.model || null,
+            generatedAt: new Date().toISOString(),
+          });
+          if (savedSummary) {
+            setSavedAiSummary(savedSummary);
+          }
+        } catch (saveErr) {
+          console.error("AI summary persistence failed", saveErr);
+        }
+      }
       setInfo("Clinical summary generated. Doctor must verify before use.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "AI action failed";
@@ -1691,46 +1904,64 @@ export default function ConsultationWorkspacePage() {
                     }}>Add</Button>
                     {canRunAi && aiAvailable ? <Button type="button" variant="outlined" disabled={aiBusy || readOnly} onClick={() => void runAiAction("diagnosis")}>AI Suggest</Button> : null}
                   </Stack>
-                  {aiDiagnosisSuggestion ? (
+                  {aiDiagnosisSuggestion || aiDiagnosisItems.length ? (
                     <Card variant="outlined" sx={{ boxShadow: "none" }}>
                       <CardContent sx={{ p: 1 }}>
                         <Stack spacing={1}>
-                          <Typography variant="subtitle2">AI Suggested Differentials</Typography>
+                          <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
+                            <Typography variant="subtitle2">AI Suggested Differentials</Typography>
+                            {aiDiagnosisProvider ? <Chip size="small" variant="outlined" label={`Provider: ${aiDiagnosisProvider}`} /> : null}
+                          </Stack>
                           <Alert severity="info">
                             AI suggestions are assistive only. Doctor must verify before use.
                           </Alert>
-                          {aiDiagnosisUnstructured ? (
-                            <Alert severity="warning">
-                              {aiDiagnosisSuggestion === "AI response was incomplete. Please retry."
-                                ? "AI response was incomplete. Please retry."
-                                : "AI returned unstructured text. Review before use."}
+                          {aiDiagnosisUnstructured && !aiDiagnosisItems.length ? (
+                            <Alert severity="error">
+                              {aiDiagnosisSuggestion || "AI returned an invalid response. Please retry."}
                             </Alert>
                           ) : null}
                           <Stack spacing={0.75}>
                             {aiDiagnosisItems.length ? aiDiagnosisItems.map((item, index) => (
                               <Card key={`${item.title}-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
                                 <CardContent sx={{ p: 1 }}>
-                                  <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between">
-                                    <Box sx={{ minWidth: 0 }}>
-                                      <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
-                                        {item.title}
+                                  <Stack spacing={0.75}>
+                                    <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between">
+                                      <Box sx={{ minWidth: 0, flex: 1 }}>
+                                        <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
+                                          {item.title}
+                                        </Typography>
+                                        {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>{item.reason}</Typography> : null}
+                                        {item.confidence ? <Chip size="small" variant="outlined" sx={{ mt: 0.5 }} label={`Confidence: ${item.confidence}`} /> : null}
+                                      </Box>
+                                      <Button
+                                        type="button"
+                                        size="small"
+                                        variant="outlined"
+                                        disabled={readOnly}
+                                        onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, item.title) }))}
+                                      >
+                                        Add
+                                      </Button>
+                                    </Stack>
+                                    {item.redFlags.length ? (
+                                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                        {item.redFlags.slice(0, 3).map((flag) => <Chip key={flag} size="small" color="error" variant="outlined" label={`Red flag: ${flag}`} />)}
+                                      </Stack>
+                                    ) : null}
+                                    {item.recommendedInvestigations.length ? (
+                                      <Typography variant="caption" color="text.secondary">
+                                        Investigations: {item.recommendedInvestigations.slice(0, 3).join(" • ")}
                                       </Typography>
-                                      {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>{item.reason}</Typography> : null}
-                                      {item.confidence ? <Chip size="small" variant="outlined" sx={{ mt: 0.5 }} label={`Confidence: ${item.confidence}`} /> : null}
-                                    </Box>
-                                    <Button
-                                      type="button"
-                                      size="small"
-                                      variant="outlined"
-                                      disabled={readOnly}
-                                      onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, item.rawText || item.title) }))}
-                                    >
-                                      Add
-                                    </Button>
+                                    ) : null}
+                                    {item.followUpSuggestions.length ? (
+                                      <Typography variant="caption" color="text.secondary">
+                                        Follow-up: {item.followUpSuggestions.slice(0, 3).join(" • ")}
+                                      </Typography>
+                                    ) : null}
                                   </Stack>
                                 </CardContent>
                               </Card>
-                            )) : (
+                            )) : aiDiagnosisSuggestion ? (
                               <Box
                                 sx={{
                                   maxHeight: 220,
@@ -1748,15 +1979,15 @@ export default function ConsultationWorkspacePage() {
                               >
                                 {aiDiagnosisSuggestion}
                               </Box>
-                            )}
+                            ) : null}
                           </Stack>
                           <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                             <Button
                               type="button"
                               size="small"
                               variant="outlined"
-                              disabled={readOnly || aiDiagnosisSuggestion === "AI response was incomplete. Please retry."}
-                              onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, aiDiagnosisSummary || aiDiagnosisSuggestion) }))}
+                              disabled={readOnly || !aiDiagnosisSummary}
+                              onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, aiDiagnosisSummary || aiDiagnosisSuggestion || "") }))}
                             >
                               Add to diagnosis
                             </Button>
@@ -1943,7 +2174,7 @@ export default function ConsultationWorkspacePage() {
                       </Stack>
                     </Box>
 
-                    {aiPrescriptionSuggestion ? (
+                    {aiPrescriptionSuggestion || aiPrescriptionItems.length ? (
                       <Card variant="outlined" sx={{ boxShadow: "none" }}>
                         <CardContent sx={{ p: 1 }}>
                           <Stack spacing={1}>
@@ -1951,33 +2182,44 @@ export default function ConsultationWorkspacePage() {
                             <Alert severity="info">
                               AI suggestions are assistive only. Doctor must verify before use.
                             </Alert>
+                            {aiPrescriptionUnstructured && !aiPrescriptionItems.length ? (
+                              <Alert severity="error">
+                                {aiPrescriptionSuggestion || "AI returned an invalid response. Please retry."}
+                              </Alert>
+                            ) : null}
                             {aiPrescriptionItems.length ? (
                               <Stack spacing={0.75}>
                                 {aiPrescriptionItems.map((item, index) => (
-                                  <Card key={`${item.title}-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                                  <Card key={`${item.medicine}-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
                                     <CardContent sx={{ p: 1 }}>
-                                      <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between">
-                                        <Box sx={{ minWidth: 0 }}>
-                                          <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
-                                            {item.title}
-                                          </Typography>
-                                          {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>{item.reason}</Typography> : null}
-                                        </Box>
-                                        <Button
-                                          type="button"
-                                          size="small"
-                                          variant="outlined"
-                                          disabled={prescriptionReadOnly}
-                                          onClick={() => setPrescriptionForm((current) => ({ ...current, advice: appendTokenLine(current.advice, item.rawText || item.title) }))}
-                                        >
-                                          Add
-                                        </Button>
+                                      <Stack spacing={0.75}>
+                                        <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between">
+                                          <Box sx={{ minWidth: 0, flex: 1 }}>
+                                            <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
+                                              {item.medicine}
+                                            </Typography>
+                                            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+                                              {[item.dose, item.frequency, item.duration].filter(Boolean).join(" • ") || "No dose details provided"}
+                                            </Typography>
+                                            {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>{item.reason}</Typography> : null}
+                                            {item.safetyNote ? <Typography variant="caption" color="warning.main" sx={{ display: "block", mt: 0.25 }}>{item.safetyNote}</Typography> : null}
+                                          </Box>
+                                          <Button
+                                            type="button"
+                                            size="small"
+                                            variant="outlined"
+                                            disabled={prescriptionReadOnly}
+                                            onClick={() => addMedicineFromAiSuggestion(item)}
+                                          >
+                                            Add
+                                          </Button>
+                                        </Stack>
                                       </Stack>
                                     </CardContent>
                                   </Card>
                                 ))}
                               </Stack>
-                            ) : (
+                            ) : aiPrescriptionSuggestion ? (
                               <Box
                                 sx={{
                                   maxHeight: 180,
@@ -1995,13 +2237,13 @@ export default function ConsultationWorkspacePage() {
                               >
                                 {aiPrescriptionSuggestion}
                               </Box>
-                            )}
+                            ) : null}
                             <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                               <Button
                                 type="button"
                                 size="small"
                                 variant="outlined"
-                                disabled={prescriptionReadOnly}
+                                disabled={prescriptionReadOnly || !aiPrescriptionSuggestion}
                                 onClick={() => setPrescriptionForm((current) => ({ ...current, advice: appendTokenLine(current.advice, aiPrescriptionSuggestion || "") }))}
                               >
                                 Add to advice
@@ -2197,7 +2439,10 @@ export default function ConsultationWorkspacePage() {
               <Card>
                 <CardContent>
                   <Stack spacing={1.25}>
-                    <Typography variant="h6">AI Clinical Assist</Typography>
+                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
+                      <Typography variant="h6">AI Clinical Assist</Typography>
+                      {aiPrescriptionProvider ? <Chip size="small" variant="outlined" label={`Provider: ${aiPrescriptionProvider}`} /> : null}
+                    </Stack>
                     {!aiAvailable ? <Alert severity="warning">{aiStatusMessage || AI_DISABLED_MESSAGE}</Alert> : null}
                     <Button type="button" disabled={aiBusy || readOnly || !aiAvailable} onClick={() => void runAiAction("diagnosis")}>Suggest diagnosis</Button>
                     <Button type="button" variant="outlined" disabled={aiBusy || readOnly || !aiAvailable} onClick={() => void runAiAction("notes")}>Structure notes</Button>
@@ -2215,43 +2460,70 @@ export default function ConsultationWorkspacePage() {
                       Previous visit summary, chronic history, and recent consultation summary are generated as assistive context only.
                     </Typography>
                     <Button type="button" variant="contained" disabled={aiBusy || !aiAvailable} onClick={() => void generateClinicalSummary()}>Generate summary</Button>
-                    {clinicalSummary ? (
+                    {aiSummaryText || clinicalSummary ? (
                       <Stack spacing={1}>
-                        <Chip size="small" color={clinicalSummary.fallbackUsed ? "warning" : "success"} label={clinicalSummary.fallbackUsed ? "Fallback used" : "AI ready"} />
-                        {Array.isArray(clinicalSummary.structuredData["possibleDiagnosisCategories"]) && (clinicalSummary.structuredData["possibleDiagnosisCategories"] as Array<unknown>).length ? (
-                          <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                            <CardContent sx={{ p: 1 }}>
-                              <Typography variant="subtitle2">Possible Diagnosis Categories</Typography>
-                              {(clinicalSummary.structuredData["possibleDiagnosisCategories"] as Array<Record<string, unknown>>).map((row, idx) => (
-                                <Typography key={idx} variant="caption" display="block">
-                                  {String(row.name || "Category")} - {String(row.reason || "")} {row.confidence ? `(${String(row.confidence)})` : ""}
-                                </Typography>
-                              ))}
-                            </CardContent>
-                          </Card>
-                        ) : null}
-                        {Array.isArray(clinicalSummary.structuredData["recommendedInvestigations"]) && (clinicalSummary.structuredData["recommendedInvestigations"] as Array<unknown>).length ? (
-                          <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                            <CardContent sx={{ p: 1 }}>
-                              <Typography variant="subtitle2">Recommended Investigations</Typography>
-                              <Typography variant="caption">{(clinicalSummary.structuredData["recommendedInvestigations"] as Array<unknown>).map((v) => String(v)).join(" • ")}</Typography>
-                            </CardContent>
-                          </Card>
-                        ) : null}
-                        {Array.isArray(clinicalSummary.structuredData["followUpSuggestions"]) && (clinicalSummary.structuredData["followUpSuggestions"] as Array<unknown>).length ? (
-                          <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                            <CardContent sx={{ p: 1 }}>
-                              <Typography variant="subtitle2">Follow-up Suggestions</Typography>
-                              <Typography variant="caption">{(clinicalSummary.structuredData["followUpSuggestions"] as Array<unknown>).map((v) => String(v)).join(" • ")}</Typography>
-                            </CardContent>
-                          </Card>
-                        ) : null}
-                        {Array.isArray(clinicalSummary.structuredData["safetyNotes"]) && (clinicalSummary.structuredData["safetyNotes"] as Array<unknown>).some((v) => String(v).includes("unstructured")) ? (
-                          <Alert severity="warning">AI returned unstructured text. Review before use.</Alert>
-                        ) : null}
-                        <Typography variant="body2">{clinicalSummary.draft || clinicalSummary.message}</Typography>
-                        {clinicalSummary.suggestedActions?.length ? <Typography variant="caption" color="text.secondary">{clinicalSummary.suggestedActions.join(" · ")}</Typography> : null}
-                        {clinicalSummary.warnings?.length ? <Typography variant="caption" color="text.secondary">{clinicalSummary.warnings.join(" · ")}</Typography> : null}
+                        <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                          <CardContent sx={{ p: 1 }}>
+                            <Stack spacing={1}>
+                              <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
+                                <Typography variant="subtitle2">Clinical Summary Draft</Typography>
+                                {aiSummaryProviderLabel ? <Chip size="small" variant="outlined" label={`Provider: ${aiSummaryProviderLabel}`} /> : null}
+                                {aiSummaryModelLabel ? <Chip size="small" variant="outlined" label={`Model: ${aiSummaryModelLabel}`} /> : null}
+                                {aiSummaryGeneratedAtLabel ? <Chip size="small" variant="outlined" label={`Generated: ${compactDateTime(aiSummaryGeneratedAtLabel)}`} /> : null}
+                                {clinicalSummary ? <Chip size="small" color={clinicalSummary.fallbackUsed ? "warning" : "success"} label={clinicalSummary.fallbackUsed ? "Fallback used" : "AI ready"} /> : null}
+                              </Stack>
+                              <Alert severity="info">
+                                AI suggestions are assistive only. Doctor must verify before use.
+                              </Alert>
+                              {aiSummaryText ? (
+                                <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 1, bgcolor: "background.paper", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                  <Typography variant="body2" sx={{ lineHeight: 1.55 }}>{aiSummaryText}</Typography>
+                                </Box>
+                              ) : null}
+                              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText} onClick={() => void copyAiSummaryToClipboard()}>Copy to Summary</Button>
+                                <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText || readOnly} onClick={applyAiSummaryToConsultationNotes}>Apply to Consultation Notes</Button>
+                              </Stack>
+                              {clinicalSummary ? (
+                                <Stack spacing={1}>
+                                  {Array.isArray(clinicalSummary.structuredData["possibleDiagnosisCategories"]) && (clinicalSummary.structuredData["possibleDiagnosisCategories"] as Array<unknown>).length ? (
+                                    <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                      <CardContent sx={{ p: 1 }}>
+                                        <Typography variant="subtitle2">Possible Diagnosis Categories</Typography>
+                                        {(clinicalSummary.structuredData["possibleDiagnosisCategories"] as Array<Record<string, unknown>>).map((row, idx) => (
+                                          <Typography key={idx} variant="caption" display="block">
+                                            {String(row.name || "Category")} - {String(row.reason || "")} {row.confidence ? `(${String(row.confidence)})` : ""}
+                                          </Typography>
+                                        ))}
+                                      </CardContent>
+                                    </Card>
+                                  ) : null}
+                                  {Array.isArray(clinicalSummary.structuredData["recommendedInvestigations"]) && (clinicalSummary.structuredData["recommendedInvestigations"] as Array<unknown>).length ? (
+                                    <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                      <CardContent sx={{ p: 1 }}>
+                                        <Typography variant="subtitle2">Recommended Investigations</Typography>
+                                        <Typography variant="caption">{(clinicalSummary.structuredData["recommendedInvestigations"] as Array<unknown>).map((v) => String(v)).join(" • ")}</Typography>
+                                      </CardContent>
+                                    </Card>
+                                  ) : null}
+                                  {Array.isArray(clinicalSummary.structuredData["followUpSuggestions"]) && (clinicalSummary.structuredData["followUpSuggestions"] as Array<unknown>).length ? (
+                                    <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                      <CardContent sx={{ p: 1 }}>
+                                        <Typography variant="subtitle2">Follow-up Suggestions</Typography>
+                                        <Typography variant="caption">{(clinicalSummary.structuredData["followUpSuggestions"] as Array<unknown>).map((v) => String(v)).join(" • ")}</Typography>
+                                      </CardContent>
+                                    </Card>
+                                  ) : null}
+                                  {Array.isArray(clinicalSummary.structuredData["safetyNotes"]) && (clinicalSummary.structuredData["safetyNotes"] as Array<unknown>).some((v) => String(v).includes("unstructured")) ? (
+                                    <Alert severity="warning">AI returned unstructured text. Review before use.</Alert>
+                                  ) : null}
+                                  {clinicalSummary.suggestedActions?.length ? <Typography variant="caption" color="text.secondary">{clinicalSummary.suggestedActions.join(" · ")}</Typography> : null}
+                                  {clinicalSummary.warnings?.length ? <Typography variant="caption" color="text.secondary">{clinicalSummary.warnings.join(" · ")}</Typography> : null}
+                                </Stack>
+                              ) : null}
+                            </Stack>
+                          </CardContent>
+                        </Card>
                       </Stack>
                     ) : null}
                   </Stack>

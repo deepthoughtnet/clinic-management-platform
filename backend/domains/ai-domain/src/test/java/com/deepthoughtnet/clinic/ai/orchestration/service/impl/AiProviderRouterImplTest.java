@@ -19,7 +19,7 @@ class AiProviderRouterImplTest {
         AiProvider openAi = new StubProvider("OPENAI");
         AiProvider groq = new StubProvider("GROQ");
         AiProvider gemini = new StubProvider("GEMINI");
-        AiProviderRouterImpl router = new AiProviderRouterImpl(List.of(openAi, groq, gemini));
+        AiProviderRouterImpl router = new AiProviderRouterImpl(List.of(openAi, groq, gemini), "GEMINI,GROQ,MOCK");
 
         assertEquals("GEMINI", router.resolve(AiTaskType.SUMMARY).providerName());
         assertEquals("GEMINI", router.resolveCandidates(AiTaskType.SUMMARY).get(0).providerName());
@@ -29,7 +29,7 @@ class AiProviderRouterImplTest {
     @Test
     void throwsWhenNoProviderAvailable() {
         AiProvider unavailable = new StubProvider("GEMINI", AiProviderStatus.UNAVAILABLE);
-        AiProviderRouterImpl router = new AiProviderRouterImpl(List.of(unavailable));
+        AiProviderRouterImpl router = new AiProviderRouterImpl(List.of(unavailable), "GEMINI,GROQ,MOCK");
 
         assertThrows(IllegalStateException.class, () -> router.resolve(AiTaskType.SUMMARY));
     }

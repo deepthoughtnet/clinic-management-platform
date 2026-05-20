@@ -104,7 +104,17 @@ const DASHBOARD_CHIP_SX = {
   },
 } as const;
 
-function KpiCard({ label, value, tone }: { label: string; value: string | number; tone: "primary" | "success" | "warning" | "error" | "info" }) {
+function KpiCard({
+  label,
+  value,
+  tone,
+  onClick,
+}: {
+  label: string;
+  value: string | number;
+  tone: "primary" | "success" | "warning" | "error" | "info";
+  onClick?: () => void;
+}) {
   const bg = {
     primary: "linear-gradient(180deg, rgba(25,118,210,0.12), rgba(25,118,210,0.03))",
     success: "linear-gradient(180deg, rgba(46,125,50,0.12), rgba(46,125,50,0.03))",
@@ -112,15 +122,26 @@ function KpiCard({ label, value, tone }: { label: string; value: string | number
     error: "linear-gradient(180deg, rgba(211,47,47,0.12), rgba(211,47,47,0.03))",
     info: "linear-gradient(180deg, rgba(2,136,209,0.12), rgba(2,136,209,0.03))",
   }[tone];
+  const interactive = Boolean(onClick);
 
   return (
     <Card
       variant="outlined"
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={interactive ? (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick?.();
+        }
+      } : undefined}
       sx={{
         minHeight: 96,
         background: bg,
         transition: "transform 0.2s ease, box-shadow 0.2s ease",
-        "&:hover": { transform: "translateY(-2px)", boxShadow: 2 },
+        cursor: interactive ? "pointer" : "default",
+        "&:hover": { transform: interactive ? "translateY(-2px)" : "none", boxShadow: interactive ? 2 : 0 },
       }}
     >
       <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
@@ -286,6 +307,39 @@ export default function DashboardPage() {
   }, [dashboard?.currentWaitingList]);
   const showOperational = Boolean(appt || queue || consult || rx || followUp);
   const showBilling = Boolean(billing);
+  const withDoctorFilter = React.useCallback((path: string) => {
+    if (isDoctor || !doctorUserId) return path;
+    return `${path}${path.includes("?") ? "&" : "?"}doctorUserId=${encodeURIComponent(doctorUserId)}`;
+  }, [doctorUserId, isDoctor]);
+  const openDashboardSection = React.useCallback((section: "appointments" | "queue" | "consultations" | "prescriptions" | "followups" | "billing") => {
+    switch (section) {
+      case "appointments":
+        navigate(withDoctorFilter("/appointments"));
+        return;
+      case "queue":
+        navigate(withDoctorFilter("/queue"));
+        return;
+      case "consultations":
+        navigate("/consultations");
+        return;
+      case "prescriptions":
+        navigate(withDoctorFilter("/prescriptions"));
+        return;
+      case "followups":
+        navigate(withDoctorFilter("/appointments/day-board"));
+        return;
+      case "billing":
+        navigate(withDoctorFilter("/billing"));
+        return;
+    }
+  }, [navigate, withDoctorFilter, isDoctor]);
+  const openDoctorSummaryRow = React.useCallback((doctorId: string) => {
+    if (isDoctor) {
+      navigate("/queue");
+      return;
+    }
+    navigate(`/appointments?doctorUserId=${encodeURIComponent(doctorId)}`);
+  }, [isDoctor, navigate]);
 
   const dashboardTitle = isPlatformAdmin && !auth.tenantId
     ? "Platform Dashboard"
@@ -302,23 +356,23 @@ export default function DashboardPage() {
               : "Dashboard";
 
   const cards = dashboard ? [
-    { label: "Appointments", value: appt?.totalToday || 0, tone: "primary" as const },
-    { label: "Checked-in", value: appt?.checkedIn || 0, tone: "warning" as const },
-    { label: "Waiting Queue", value: queue?.waiting || 0, tone: "warning" as const },
-    { label: "In Consultation", value: appt?.inConsultation || 0, tone: "info" as const },
-    { label: "Completed", value: consult?.completed || 0, tone: "success" as const },
-    { label: "No-shows", value: appt?.noShow || 0, tone: "error" as const },
-    { label: "Cancelled", value: appt?.cancelled || 0, tone: "error" as const },
-    { label: "Prescriptions", value: rx?.prescriptionsGenerated || 0, tone: "info" as const },
-    { label: "Pending Bills", value: billing?.pendingBills || 0, tone: "warning" as const },
-    { label: "Revenue", value: formatMoney(billing?.totalBilled), tone: "success" as const },
+    { label: "Appointments", value: appt?.totalToday || 0, tone: "primary" as const, onClick: () => openDashboardSection("appointments") },
+    { label: "Checked-in", value: appt?.checkedIn || 0, tone: "warning" as const, onClick: () => openDashboardSection("queue") },
+    { label: "Waiting Queue", value: queue?.waiting || 0, tone: "warning" as const, onClick: () => openDashboardSection("queue") },
+    { label: "In Consultation", value: appt?.inConsultation || 0, tone: "info" as const, onClick: () => openDashboardSection("consultations") },
+    { label: "Completed", value: consult?.completed || 0, tone: "success" as const, onClick: () => openDashboardSection("consultations") },
+    { label: "No-shows", value: appt?.noShow || 0, tone: "error" as const, onClick: () => openDashboardSection("appointments") },
+    { label: "Cancelled", value: appt?.cancelled || 0, tone: "error" as const, onClick: () => openDashboardSection("appointments") },
+    { label: "Prescriptions", value: rx?.prescriptionsGenerated || 0, tone: "info" as const, onClick: () => openDashboardSection("prescriptions") },
+    { label: "Pending Bills", value: billing?.pendingBills || 0, tone: "warning" as const, onClick: () => openDashboardSection("billing") },
+    { label: "Revenue", value: formatMoney(billing?.totalBilled), tone: "success" as const, onClick: () => openDashboardSection("billing") },
   ] : [];
 
   const financeCards = dashboard ? [
-    { label: "Bills Created", value: billing?.billsCreated || 0, tone: "info" as const },
-    { label: "Payments Received", value: formatMoney(billing?.totalPaid), tone: "success" as const },
-    { label: "Pending Amount", value: formatMoney(billing?.pendingAmount), tone: "warning" as const },
-    { label: "Pending Invoices", value: billing?.pendingBills || 0, tone: "error" as const },
+    { label: "Bills Created", value: billing?.billsCreated || 0, tone: "info" as const, onClick: () => openDashboardSection("billing") },
+    { label: "Payments Received", value: formatMoney(billing?.totalPaid), tone: "success" as const, onClick: () => openDashboardSection("billing") },
+    { label: "Pending Amount", value: formatMoney(billing?.pendingAmount), tone: "warning" as const, onClick: () => openDashboardSection("billing") },
+    { label: "Pending Invoices", value: billing?.pendingBills || 0, tone: "error" as const, onClick: () => openDashboardSection("billing") },
   ] : [];
 
   return (
@@ -404,14 +458,14 @@ export default function DashboardPage() {
                         <Typography variant="h6" sx={{ fontWeight: 800 }}>Today at a glance</Typography>
                         <Stack direction="row" spacing={0.5} flexWrap="wrap">
                           <Chip size="small" label={`Filter: ${selectedDoctorLabel}`} color={doctorUserId ? "primary" : "default"} sx={DASHBOARD_CHIP_SX} />
-                          <Chip size="small" label={`Waiting ${queue?.waiting || 0}`} color="warning" sx={DASHBOARD_CHIP_SX} />
-                          <Chip size="small" label={`Checked in ${appt?.checkedIn || 0}`} color="info" sx={DASHBOARD_CHIP_SX} />
-                          <Chip size="small" label={`In consultation ${appt?.inConsultation || 0}`} color="success" sx={DASHBOARD_CHIP_SX} />
+                          <Chip size="small" clickable label={`Waiting ${queue?.waiting || 0}`} color="warning" sx={DASHBOARD_CHIP_SX} onClick={() => openDashboardSection("queue")} />
+                          <Chip size="small" clickable label={`Checked in ${appt?.checkedIn || 0}`} color="info" sx={DASHBOARD_CHIP_SX} onClick={() => openDashboardSection("queue")} />
+                          <Chip size="small" clickable label={`In consultation ${appt?.inConsultation || 0}`} color="success" sx={DASHBOARD_CHIP_SX} onClick={() => openDashboardSection("consultations")} />
                         </Stack>
                       </Box>
                       <Grid container spacing={1}>
                         <Grid size={{ xs: 12, sm: 6 }}>
-                          <Card variant="outlined" sx={{ bgcolor: "background.paper", minHeight: 96 }}>
+                          <Card variant="outlined" sx={{ bgcolor: "background.paper", minHeight: 96, cursor: "pointer", transition: "transform 0.2s ease, box-shadow 0.2s ease", "&:hover": { transform: "translateY(-2px)", boxShadow: 2 } }} onClick={() => openDashboardSection("appointments")} role="button" tabIndex={0}>
                             <CardContent sx={{ py: 1.2, "&:last-child": { pb: 1.2 } }}>
                               <Typography variant="overline" color="text.secondary">Appointments today</Typography>
                               <Typography variant="h5" sx={{ fontWeight: 900 }}>{appt?.totalToday || 0}</Typography>
@@ -422,7 +476,7 @@ export default function DashboardPage() {
                           </Card>
                         </Grid>
                         <Grid size={{ xs: 12, sm: 6 }}>
-                          <Card variant="outlined" sx={{ bgcolor: "background.paper", minHeight: 96 }}>
+                          <Card variant="outlined" sx={{ bgcolor: "background.paper", minHeight: 96, cursor: "pointer", transition: "transform 0.2s ease, box-shadow 0.2s ease", "&:hover": { transform: "translateY(-2px)", boxShadow: 2 } }} onClick={() => openDashboardSection("queue")} role="button" tabIndex={0}>
                             <CardContent sx={{ py: 1.2, "&:last-child": { pb: 1.2 } }}>
                               <Typography variant="overline" color="text.secondary">Queue state</Typography>
                               <Typography variant="h5" sx={{ fontWeight: 900 }}>{queue?.waiting || 0}</Typography>
@@ -483,7 +537,7 @@ export default function DashboardPage() {
                           </TableHead>
                           <TableBody>
                             {dashboard.doctorSummaries.map((row) => (
-                              <TableRow key={row.doctorUserId} hover>
+                              <TableRow key={row.doctorUserId} hover sx={{ cursor: "pointer" }} onClick={() => openDoctorSummaryRow(row.doctorUserId)}>
                                 <TableCell>{row.doctorName || row.doctorUserId}</TableCell>
                                 <TableCell><Chip size="small" label={row.appointmentsToday} variant="outlined" /></TableCell>
                                 <TableCell><Chip size="small" label={row.checkedIn} color="info" variant="outlined" /></TableCell>

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Autocomplete,
@@ -67,6 +67,7 @@ import {
 } from "../../api/clinicApi";
 import ConsultationFeeDialog from "../../components/ConsultationFeeDialog";
 import { CompactEmptyState } from "../../components/compact/CompactUi";
+import { isBookingTimePast, isSlotExpired } from "./bookingValidation";
 
 type SlotFilterKey = DoctorAvailabilitySlotStatus | "BOOKED" | "CHECKED_IN" | "IN_CONSULTATION" | "COMPLETED" | "NO_SHOW" | "CANCELLED";
 
@@ -245,14 +246,11 @@ function localDateKey(date = new Date()) {
 }
 
 function isPastDateTime(date: string, time: string | null | undefined) {
-  if (!date) return false;
-  const now = new Date(Math.floor(Date.now() / 60000) * 60000);
-  const candidate = new Date(`${date}T${time && time.trim() ? toFive(time) : "23:59"}:00`);
-  return candidate.getTime() < now.getTime();
+  return isBookingTimePast(date, time);
 }
 
 function isPastSlot(date: string, slot: DoctorAvailabilitySlot) {
-  return isPastDateTime(date, slot.slotEndTime);
+  return isSlotExpired(date, slot);
 }
 
 function isHiddenPastSlot(date: string, slot: DoctorAvailabilitySlot, appointment: Appointment | null) {
@@ -542,8 +540,10 @@ function feeStatusLabel(status: FeeStatus, amount: number | null | undefined) {
 export default function DayBoardPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const doctorUserIdFromQuery = searchParams.get("doctorUserId") || "";
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
-  const [doctorUserId, setDoctorUserId] = React.useState("");
+  const [doctorUserId, setDoctorUserId] = React.useState(doctorUserIdFromQuery);
   const [date, setDate] = React.useState(localDateKey());
   const [filters, setFilters] = React.useState<Record<SlotFilterKey, boolean>>(() => Object.fromEntries(STATUS_FILTERS.map((f) => [f, true])) as Record<SlotFilterKey, boolean>);
   const [patientSearch, setPatientSearch] = React.useState("");
@@ -659,6 +659,12 @@ export default function DayBoardPage() {
     return selectedSlotPanel?.waitlist || [];
   }, [effectiveDoctorId, selectedSlotPanel, waitlist]);
   const gridMinWidth = React.useMemo(() => Math.max(720, 92 + (visibleDoctorPanels.length * 188)), [visibleDoctorPanels.length]);
+
+  React.useEffect(() => {
+    if (!isDoctor) {
+      setDoctorUserId(doctorUserIdFromQuery);
+    }
+  }, [doctorUserIdFromQuery, isDoctor]);
   const calendarRows = React.useMemo(() => {
     return visibleDoctorPanels.flatMap((panel) => {
       return panel.slots
@@ -889,7 +895,7 @@ export default function DayBoardPage() {
   const selectedSlotBookingReason = React.useMemo(() => {
     if (!selectedSlot) return "Select an available slot";
     if (!auth.tenantId || !auth.accessToken) return "Clinic context is unavailable";
-    if (isPastSlot(date, selectedSlot)) return "This slot has already passed.";
+    if (isPastSlot(date, selectedSlot)) return "Selected time has already passed. Choose a current or future slot.";
     if (selectedSlot.status === "BREAK" || selectedSlot.status === "LEAVE" || selectedSlot.status === "UNAVAILABLE" || selectedSlot.status === "CONFLICTED") {
       return "Doctor is unavailable during this time.";
     }
@@ -1746,10 +1752,10 @@ export default function DayBoardPage() {
         </Grid>
       </Grid>
 
-      <Dialog open={rescheduleOpen} onClose={() => setRescheduleOpen(false)} fullWidth maxWidth="sm">
+      <Dialog open={rescheduleOpen} onClose={() => setRescheduleOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>Reschedule appointment</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ pt: 1 }}>
+          <Stack spacing={2} sx={{ pt: 1, minWidth: { sm: 480 } }}>
             <FormControl fullWidth>
               <InputLabel id="reschedule-doctor">Doctor</InputLabel>
               <Select labelId="reschedule-doctor" label="Doctor" value={rescheduleDoctorUserId} onChange={(e) => setRescheduleDoctorUserId(String(e.target.value))}>
@@ -1758,8 +1764,10 @@ export default function DayBoardPage() {
                 ))}
               </Select>
             </FormControl>
-            <TextField type="date" label="Date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)} InputLabelProps={{ shrink: true }} />
-            <TextField type="time" label="Time" value={rescheduleTime} onChange={(e) => setRescheduleTime(e.target.value)} InputLabelProps={{ shrink: true }} />
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField fullWidth type="date" label="Date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)} InputLabelProps={{ shrink: true }} />
+              <TextField fullWidth type="time" label="Time" value={rescheduleTime} onChange={(e) => setRescheduleTime(e.target.value)} InputLabelProps={{ shrink: true }} />
+            </Stack>
           </Stack>
         </DialogContent>
         <DialogActions>

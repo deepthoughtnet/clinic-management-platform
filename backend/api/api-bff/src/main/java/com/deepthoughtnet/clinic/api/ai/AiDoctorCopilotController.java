@@ -89,13 +89,14 @@ public class AiDoctorCopilotController {
     public AiDraftResponse suggestDiagnosis(@RequestBody AiDiagnosisSuggestionRequest request) {
         requireAiReady();
         AiDraftResponse response = aiConsultationDraftService.suggestDiagnosis(request);
-        log.debug("AI_DIAGNOSIS_RESPONSE endpoint=/api/ai/consultation/suggest-diagnosis correlationId={} enabled={} fallbackUsed={} provider={} model={} draftChars={} structuredKeys={}",
+        log.debug("AI_DIAGNOSIS_RESPONSE endpoint=/api/ai/consultation/suggest-diagnosis correlationId={} enabled={} fallbackUsed={} provider={} model={} rawTextLength={} parsedSuggestionsCount={} structuredKeys={}",
                 RequestContextHolder.require().correlationId(),
                 response.enabled(),
                 response.fallbackUsed(),
                 response.provider(),
                 response.model(),
                 response.draft() == null ? 0 : response.draft().length(),
+                suggestionCount(response),
                 response.structuredData() == null ? "[]" : response.structuredData().keySet().toString());
         return response;
     }
@@ -105,13 +106,14 @@ public class AiDoctorCopilotController {
     public AiDraftResponse suggestPrescriptionTemplate(@RequestBody AiPrescriptionTemplateRequest request) {
         requireAiReady();
         AiDraftResponse response = aiConsultationDraftService.suggestPrescriptionTemplate(request);
-        log.debug("AI_MEDICINE_RESPONSE endpoint=/api/ai/prescription/suggest-template correlationId={} enabled={} fallbackUsed={} provider={} model={} draftChars={} structuredKeys={}",
+        log.debug("AI_MEDICINE_RESPONSE endpoint=/api/ai/prescription/suggest-template correlationId={} enabled={} fallbackUsed={} provider={} model={} rawTextLength={} parsedSuggestionsCount={} structuredKeys={}",
                 RequestContextHolder.require().correlationId(),
                 response.enabled(),
                 response.fallbackUsed(),
                 response.provider(),
                 response.model(),
                 response.draft() == null ? 0 : response.draft().length(),
+                suggestionCount(response),
                 response.structuredData() == null ? "[]" : response.structuredData().keySet().toString());
         return response;
     }
@@ -152,5 +154,13 @@ public class AiDoctorCopilotController {
     private void requireAiModule() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         moduleEntitlementService.requireModuleEnabled(tenantId, ModuleKeys.AI_COPILOT);
+    }
+
+    private int suggestionCount(AiDraftResponse response) {
+        if (response == null || response.structuredData() == null) {
+            return 0;
+        }
+        Object suggestions = response.structuredData().get("suggestions");
+        return suggestions instanceof List<?> list ? list.size() : 0;
     }
 }

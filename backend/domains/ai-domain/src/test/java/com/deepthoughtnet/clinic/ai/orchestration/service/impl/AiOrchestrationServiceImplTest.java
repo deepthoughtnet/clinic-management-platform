@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -17,6 +18,7 @@ import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiGuardrailSe
 import com.deepthoughtnet.clinic.ai.orchestration.platform.service.AiInvocationLogService;
 import com.deepthoughtnet.clinic.ai.orchestration.service.model.AiPromptTemplateDefinition;
 import com.deepthoughtnet.clinic.ai.orchestration.service.model.AiRequestAuditCommand;
+import com.deepthoughtnet.clinic.llm.spi.AiProviderException;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiEvidenceReference;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationResponse;
@@ -146,6 +148,43 @@ class AiOrchestrationServiceImplTest {
         assertEquals("GROQ", captor.getValue().provider());
         assertTrue(captor.getValue().fallbackUsed());
         assertTrue(captor.getValue().errorMessage().contains("Gemini timed out"));
+    }
+
+    @Test
+    void doesNotFallbackOnFatalProviderFailure() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+
+        AiOrchestrationRequest request = request();
+        AiPromptTemplateDefinition template = template();
+        when(registry.resolve(request)).thenReturn(template);
+        AiProvider gemini = new AiProvider() {
+            @Override
+            public String providerName() {
+                return "GEMINI";
+            }
+
+            @Override
+            public boolean supports(AiTaskType taskType) {
+                return true;
+            }
+
+            @Override
+            public AiProviderResponse complete(AiProviderRequest request) {
+                throw AiProviderException.fatal("Gemini authorization failed. Check API key/provider configuration.", 403, "GEMINI", "model", "/chat/completions", null);
+            }
+
+            @Override
+            public AiProviderStatus status() {
+                return AiProviderStatus.AVAILABLE;
+            }
+        };
+        AiProvider groq = provider("GROQ", "{\"answer\":\"Groq explanation\"}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION)).thenReturn(List.of(gemini, groq));
+
+        assertThrows(AiProviderException.class, () -> service.complete(request));
     }
 
     @Test
@@ -336,7 +375,7 @@ class AiOrchestrationServiceImplTest {
 
             @Override
             public AiProviderResponse complete(AiProviderRequest request) {
-                throw new IllegalStateException(message);
+                throw AiProviderException.retryable(message, 503, name, "model", "/chat/completions", null);
             }
 
             @Override

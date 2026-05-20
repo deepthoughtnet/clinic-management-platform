@@ -57,6 +57,11 @@ import {
   type PatientInput,
   type WaitlistStatus,
 } from "../../api/clinicApi";
+import {
+  isBookingTimePast,
+  isCurrentSlot,
+  isSlotExpired,
+} from "./bookingValidation";
 
 type AppointmentTab = "today" | "upcoming" | "completed" | "archive";
 
@@ -178,14 +183,11 @@ function toFive(time: string | null | undefined) {
 }
 
 function isPastDateTime(date: string, time: string | null | undefined) {
-  if (!date) return false;
-  const now = new Date(Math.floor(Date.now() / 60000) * 60000);
-  const candidate = new Date(`${date}T${time && time.trim() ? time : "23:59"}:00`);
-  return candidate.getTime() < now.getTime();
+  return isBookingTimePast(date, time);
 }
 
 function isPastSlot(date: string, slot: DoctorAvailabilitySlot) {
-  return isPastDateTime(date, slot.slotEndTime);
+  return isSlotExpired(date, slot);
 }
 
 function isBookableSlot(date: string, slot: DoctorAvailabilitySlot) {
@@ -299,12 +301,12 @@ export default function AppointmentsPage() {
   const adHocBookingNeeded = React.useMemo(
     () => Boolean(
       requiresAppointmentTime
-      && selectedDoctorId
-      && appointmentDate
-      && appointmentTime
-      && !matchingSlot
-      && !isPastDateTime(appointmentDate, appointmentTime)
-      && slots.length > 0
+    && selectedDoctorId
+    && appointmentDate
+    && appointmentTime
+    && !matchingSlot
+    && !isPastDateTime(appointmentDate, appointmentTime)
+    && slots.length > 0
     ),
     [appointmentDate, appointmentTime, matchingSlot, requiresAppointmentTime, selectedDoctorId, slots.length],
   );
@@ -631,12 +633,12 @@ export default function AppointmentsPage() {
     const timeValue = appointmentTime || "";
     const matchedSlot = matchingSlot;
     if (isPastDateTime(appointmentDate, timeValue)) {
-      setError("Please select a future time or current running slot.");
+      setError("Selected time has already passed. Choose a current or future slot.");
       return;
     }
     if (matchedSlot) {
       if (isPastSlot(appointmentDate, matchedSlot)) {
-        setError("This slot has already passed.");
+        setError("Selected time has already passed. Choose a current or future slot.");
         return;
       }
       if (matchedSlot.status === "FULL" || matchedSlot.bookedCount >= matchedSlot.maxPatientsPerSlot) {
@@ -825,7 +827,7 @@ export default function AppointmentsPage() {
 
       <Grid container spacing={2}>
         {!isDoctor ? (
-          <Grid size={{ xs: 12, lg: 5 }}>
+          <Grid size={{ xs: 12, lg: 12 }}>
             <Card>
               <CardContent>
                 <Stack spacing={2}>
@@ -943,12 +945,15 @@ export default function AppointmentsPage() {
                                 const timeLabel = slot.slotTime.length >= 5 ? slot.slotTime.slice(0, 5) : slot.slotTime;
                                 const selected = appointmentTime === timeLabel;
                                 const pastSlot = isPastSlot(appointmentDate, slot);
+                                const currentSlot = isCurrentSlot(appointmentDate, slot);
                                 const label = slot.status === "PARTIALLY_BOOKED" && slot.selectable
                                   ? `${timeLabel} • ${slot.bookedCount}/${slot.maxPatientsPerSlot}`
                                   : slot.status === "FULL"
                                     ? `${timeLabel} • ${slot.bookedCount}/${slot.maxPatientsPerSlot} full`
                                     : pastSlot
                                       ? `${timeLabel} • Past`
+                                      : currentSlot
+                                        ? `${timeLabel} • Current slot`
                                       : timeLabel;
                                 return (
                                   <Button
@@ -1001,7 +1006,7 @@ export default function AppointmentsPage() {
           </Grid>
         ) : null}
 
-        <Grid size={{ xs: 12, lg: 7 }}>
+        <Grid size={{ xs: 12, lg: 12 }}>
           <Card>
             <CardContent>
               <Stack spacing={2}>
@@ -1164,10 +1169,10 @@ export default function AppointmentsPage() {
           <Button variant="contained" onClick={() => void saveQuickPatient()} disabled={quickRegisterSaving}>Save patient</Button>
         </DialogActions>
       </Dialog>
-      <Dialog open={rescheduleOpen} onClose={() => setRescheduleOpen(false)} fullWidth maxWidth="sm">
+      <Dialog open={rescheduleOpen} onClose={() => setRescheduleOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>Reschedule Appointment</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ pt: 1 }}>
+          <Stack spacing={2} sx={{ pt: 1, minWidth: { sm: 480 } }}>
             <FormControl fullWidth>
               <InputLabel id="reschedule-doctor-label">Doctor</InputLabel>
               <Select labelId="reschedule-doctor-label" label="Doctor" value={rescheduleDoctorUserId} onChange={(event) => setRescheduleDoctorUserId(String(event.target.value))}>
@@ -1178,8 +1183,10 @@ export default function AppointmentsPage() {
                 ))}
               </Select>
             </FormControl>
-            <TextField type="date" label="Date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)} InputLabelProps={{ shrink: true }} />
-            <TextField type="time" label="Time" value={rescheduleTime} onChange={(e) => setRescheduleTime(e.target.value)} InputLabelProps={{ shrink: true }} />
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField fullWidth type="date" label="Date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)} InputLabelProps={{ shrink: true }} />
+              <TextField fullWidth type="time" label="Time" value={rescheduleTime} onChange={(e) => setRescheduleTime(e.target.value)} InputLabelProps={{ shrink: true }} />
+            </Stack>
           </Stack>
         </DialogContent>
         <DialogActions>

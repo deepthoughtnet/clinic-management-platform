@@ -5,18 +5,22 @@ import com.deepthoughtnet.clinic.platform.contracts.ai.AiProvider;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderStatus;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
+import java.util.Locale;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 
 @Service
 public class AiProviderRouterImpl implements AiProviderRouter {
-    private static final String DEFAULT_PROVIDER_NAME = "GEMINI";
-    private static final String FALLBACK_PROVIDER_NAME = "GROQ";
-
     private final List<AiProvider> providers;
+    private final Map<String, Integer> providerOrder;
 
-    public AiProviderRouterImpl(List<AiProvider> providers) {
+    public AiProviderRouterImpl(List<AiProvider> providers,
+                                @Value("${clinic.ai.provider-chain:GEMINI,GROQ,MOCK}") String providerChain) {
         this.providers = providers == null ? List.of() : List.copyOf(providers);
+        this.providerOrder = buildProviderOrder(providerChain);
     }
 
     @Override
@@ -39,12 +43,34 @@ public class AiProviderRouterImpl implements AiProviderRouter {
         if (providerName == null) {
             return Integer.MAX_VALUE;
         }
-        if (DEFAULT_PROVIDER_NAME.equalsIgnoreCase(providerName.trim())) {
-            return 0;
+        return providerOrder.getOrDefault(providerName.trim().toUpperCase(Locale.ROOT), Integer.MAX_VALUE);
+    }
+
+    private Map<String, Integer> buildProviderOrder(String providerChain) {
+        Map<String, Integer> order = new HashMap<>();
+        if (providerChain == null || providerChain.isBlank()) {
+            order.put("GEMINI", 0);
+            order.put("GROQ", 1);
+            order.put("MOCK", 2);
+            return order;
         }
-        if (FALLBACK_PROVIDER_NAME.equalsIgnoreCase(providerName.trim())) {
-            return 1;
+        int index = 0;
+        for (String entry : providerChain.split(",")) {
+            String normalized = entry == null ? "" : entry.trim().toUpperCase(Locale.ROOT);
+            if (normalized.isBlank() || order.containsKey(normalized)) {
+                continue;
+            }
+            order.put(normalized, index++);
         }
-        return 2;
+        if (!order.containsKey("GEMINI")) {
+            order.put("GEMINI", index++);
+        }
+        if (!order.containsKey("GROQ")) {
+            order.put("GROQ", index++);
+        }
+        if (!order.containsKey("MOCK")) {
+            order.put("MOCK", index);
+        }
+        return order;
     }
 }

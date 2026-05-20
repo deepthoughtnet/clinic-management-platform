@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.platform.core.module.ModuleKeys;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.env.Environment;
 
 class AiStatusServiceTest {
     @Test
@@ -26,6 +27,8 @@ class AiStatusServiceTest {
 
         when(moduleService.isModuleEnabled(tenantId, ModuleKeys.AI_COPILOT)).thenReturn(true);
         when(permissionChecker.hasAnyPermission("ai_copilot.run", "ai_copilot.clinic.run")).thenReturn(true);
+        Environment environment = mock(Environment.class);
+        when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
 
         AiStatusService service = new AiStatusService(
                 moduleService,
@@ -33,10 +36,12 @@ class AiStatusServiceTest {
                 List.of(new StubProvider("GEMINI", AiProviderStatus.UNAVAILABLE)),
                 true,
                 "GEMINI",
+                "GEMINI,GROQ,MOCK",
                 true,
                 "",
                 true,
-                "TESSERACT"
+                "TESSERACT",
+                environment
         );
 
         var status = service.status(tenantId);
@@ -56,6 +61,8 @@ class AiStatusServiceTest {
 
         when(moduleService.isModuleEnabled(tenantId, ModuleKeys.AI_COPILOT)).thenReturn(true);
         when(permissionChecker.hasAnyPermission("ai_copilot.run", "ai_copilot.clinic.run")).thenReturn(true);
+        Environment environment = mock(Environment.class);
+        when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
 
         AiStatusService service = new AiStatusService(
                 moduleService,
@@ -63,15 +70,52 @@ class AiStatusServiceTest {
                 List.of(new StubProvider("MOCK", AiProviderStatus.AVAILABLE)),
                 true,
                 "MOCK",
+                "GEMINI,GROQ,MOCK",
                 false,
                 "",
                 true,
-                "TESSERACT"
+                "TESSERACT",
+                environment
         );
 
         var status = service.status(tenantId);
         assertThat(status.effectiveStatus()).isEqualTo("READY");
         assertThat(status.providerConfigured()).isTrue();
+        assertThat(status.provider()).isEqualTo("MOCK");
+    }
+
+    @Test
+    void returnsReadyForGroqWhenGeminiUnavailable() {
+        TenantModuleEntitlementService moduleService = mock(TenantModuleEntitlementService.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        UUID tenantId = UUID.randomUUID();
+
+        when(moduleService.isModuleEnabled(tenantId, ModuleKeys.AI_COPILOT)).thenReturn(true);
+        when(permissionChecker.hasAnyPermission("ai_copilot.run", "ai_copilot.clinic.run")).thenReturn(true);
+        Environment environment = mock(Environment.class);
+        when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
+
+        AiStatusService service = new AiStatusService(
+                moduleService,
+                permissionChecker,
+                List.of(
+                        new StubProvider("GEMINI", AiProviderStatus.UNAVAILABLE),
+                        new StubProvider("GROQ", AiProviderStatus.AVAILABLE)
+                ),
+                true,
+                "GEMINI",
+                "GEMINI,GROQ,MOCK",
+                true,
+                "",
+                true,
+                "TESSERACT",
+                environment
+        );
+
+        var status = service.status(tenantId);
+        assertThat(status.effectiveStatus()).isEqualTo("READY");
+        assertThat(status.providerConfigured()).isTrue();
+        assertThat(status.provider()).isEqualTo("GROQ");
     }
 
     @Test
@@ -82,6 +126,8 @@ class AiStatusServiceTest {
 
         when(moduleService.isModuleEnabled(tenantId, ModuleKeys.AI_COPILOT)).thenReturn(true);
         when(permissionChecker.hasAnyPermission("ai_copilot.run", "ai_copilot.clinic.run")).thenReturn(true);
+        Environment environment = mock(Environment.class);
+        when(environment.getActiveProfiles()).thenReturn(new String[] {"test"});
 
         AiStatusService service = new AiStatusService(
                 moduleService,
@@ -89,10 +135,12 @@ class AiStatusServiceTest {
                 List.of(),
                 true,
                 "GEMINI",
+                "GEMINI,GROQ,MOCK",
                 true,
                 "",
                 true,
-                "TESSERACT"
+                "TESSERACT",
+                environment
         );
 
         assertThatThrownBy(() -> service.requireProviderReady(tenantId))

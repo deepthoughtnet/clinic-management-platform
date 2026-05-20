@@ -45,6 +45,7 @@
     <module>platform/platform-storage-spi</module>
 
     <module>providers/ai-gemini</module>
+    <module>providers/ai-groq</module>
     <module>providers/ai-spi</module>
     <module>providers/ocr-spi</module>
     <module>providers/ocr-tesseract</module>

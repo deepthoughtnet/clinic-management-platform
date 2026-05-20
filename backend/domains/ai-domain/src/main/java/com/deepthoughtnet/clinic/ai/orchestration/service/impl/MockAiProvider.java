@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnExpression(
         "'${clinic.ai.enabled:false}' == 'true' "
-                + "&& '${clinic.ai.provider:DISABLED}'.equalsIgnoreCase('MOCK')"
+                + "&& '${clinic.ai.mock.enabled:true}' == 'true'"
 )
 public class MockAiProvider implements AiProvider {
     private static final String MODEL = "mock-clinic-ai";

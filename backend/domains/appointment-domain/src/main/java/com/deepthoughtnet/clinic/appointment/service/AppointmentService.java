@@ -68,6 +68,7 @@ public class AppointmentService {
     private static final LocalTime DEFAULT_CALENDAR_START = LocalTime.of(9, 0);
     private static final LocalTime DEFAULT_CALENDAR_END = LocalTime.of(17, 0);
     private static final int DEFAULT_SLOT_DURATION_MINUTES = 15;
+    private static final int BOOKING_TIME_GRACE_MINUTES = 15;
 
     private final AppointmentRepository appointmentRepository;
     private final DoctorAvailabilityRepository doctorAvailabilityRepository;
@@ -1207,7 +1208,7 @@ public class AppointmentService {
         if (appointmentDate.isBefore(today)) {
             throw new IllegalArgumentException("Please select a future time or current running slot.");
         }
-        if (appointmentDate.isEqual(today) && appointmentTime != null && appointmentTime.isBefore(now)) {
+        if (appointmentDate.isEqual(today) && appointmentTime != null && isPastWithGrace(appointmentTime, now)) {
             throw new IllegalArgumentException("Please select a future time or current running slot.");
         }
     }
@@ -1216,15 +1217,19 @@ public class AppointmentService {
         LocalDate today = LocalDate.now();
         LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
         if (appointmentDate.isBefore(today)) {
-            throw new IllegalArgumentException("Please select a future time or current running slot.");
+            throw new IllegalArgumentException("Selected time has already passed. Choose a current or future slot.");
         }
         LocalTime effectiveTime = matchingSlot == null ? appointmentTime : matchingSlot.slotEndTime();
-        if (appointmentDate.isEqual(today) && effectiveTime != null && effectiveTime.isBefore(now)) {
+        if (appointmentDate.isEqual(today) && effectiveTime != null && isPastWithGrace(effectiveTime, now)) {
             if (matchingSlot != null) {
-                throw new IllegalArgumentException("This slot has already passed.");
+                throw new IllegalArgumentException("Selected time has already passed. Choose a current or future slot.");
             }
-            throw new IllegalArgumentException("Please select a future time or current running slot.");
+            throw new IllegalArgumentException("Selected time has already passed. Choose a current or future slot.");
         }
+    }
+
+    private boolean isPastWithGrace(LocalTime candidate, LocalTime now) {
+        return candidate.plusMinutes(BOOKING_TIME_GRACE_MINUTES).isBefore(now);
     }
 
     private boolean isWithinBreak(LocalTime slotStart, LocalTime breakStart, LocalTime breakEnd) {

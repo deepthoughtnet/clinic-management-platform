@@ -102,24 +102,47 @@ public class AiPromptTemplateCatalog {
                       "suggestions": [
                         {
                           "diagnosis": "Short name",
-                          "reason": "One short sentence up to 140 chars",
-                          "redFlags": ["short item 1", "short item 2"]
+                          "reason": "One short sentence",
+                          "redFlags": ["short item 1", "short item 2"],
+                          "recommendedInvestigations": ["short item 1"],
+                          "followUpSuggestions": ["short item 1"]
                         }
                       ],
-                      "recommendedInvestigations": [],
-                      "followUpSuggestions": [],
                       "safetyNote": "AI suggestions are assistive only."
                     }
                     Constraints:
                     - max 3 suggestions
-                    - each suggestion reason <= 140 chars
                     - each suggestion redFlags max 3 items
+                    - each suggestion recommendedInvestigations max 3 items
+                    - each suggestion followUpSuggestions max 3 items
                     - Do not return a top-level array
                     """,
                     List.of("Review red flags and urgent exclusions", "Use diagnostics to confirm before final diagnosis"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.prescription.suggest-template.v1", AiProductCode.CLINIC, AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION,
-                    "Suggest a prescription template using diagnosis, allergies, and current medications.",
+                    """
+                    Suggest a prescription template using diagnosis, allergies, and current medications.
+                    Return ONLY valid JSON. No markdown. No extra text.
+                    Use exactly this shape:
+                    {
+                      "suggestions": [
+                        {
+                          "medicine": "Medicine name",
+                          "dose": "Dose",
+                          "frequency": "Frequency",
+                          "duration": "Duration",
+                          "reason": "Short reason",
+                          "safetyNote": "Doctor review required"
+                        }
+                      ],
+                      "safetyNote": "AI suggestions are assistive only."
+                    }
+                    Constraints:
+                    - max 5 suggestions
+                    - highlight allergies or interaction concerns when relevant
+                    - do not auto-prescribe or finalize anything
+                    - do not return a top-level array
+                    """,
                     List.of("Check contraindications and interactions", "Adjust dose and duration based on patient profile"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.patient.instructions.v1", AiProductCode.CLINIC, AiTaskType.PATIENT_INSTRUCTIONS_DRAFT,

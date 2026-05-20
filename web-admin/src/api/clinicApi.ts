@@ -534,6 +534,16 @@ export type Consultation = {
   updatedAt: string;
 };
 
+export type ConsultationAiSummary = {
+  consultationId: string;
+  summary: string;
+  provider: string | null;
+  model: string | null;
+  generatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ConsultationInput = {
   patientId: string;
   doctorUserId: string;
@@ -553,6 +563,13 @@ export type ConsultationInput = {
   heightCm: number | null;
   spo2: number | null;
   respiratoryRate: number | null;
+};
+
+export type ConsultationAiSummaryInput = {
+  summary: string;
+  provider: string | null;
+  model: string | null;
+  generatedAt: string | null;
 };
 
 export type PrescriptionMedicine = {
@@ -1525,6 +1542,14 @@ export async function completeConsultation(token: string, tenantId: string, id: 
 
 export async function cancelConsultation(token: string, tenantId: string, id: string) {
   return httpPatch<Consultation>(`/api/consultations/${id}/cancel`, undefined, { token, tenantId });
+}
+
+export async function getConsultationAiSummary(token: string, tenantId: string, id: string) {
+  return httpGet<ConsultationAiSummary>(`/api/consultations/${id}/ai-summary`, { token, tenantId });
+}
+
+export async function saveConsultationAiSummary(token: string, tenantId: string, id: string, body: ConsultationAiSummaryInput) {
+  return httpPatch<ConsultationAiSummary>(`/api/consultations/${id}/ai-summary`, body, { token, tenantId });
 }
 
 export async function startConsultationFromAppointment(token: string, tenantId: string, appointmentId: string) {

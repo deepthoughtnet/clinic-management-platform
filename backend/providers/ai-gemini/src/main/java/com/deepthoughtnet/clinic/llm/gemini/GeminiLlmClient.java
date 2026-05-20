@@ -1,5 +1,6 @@
 package com.deepthoughtnet.clinic.llm.gemini;
 
+import com.deepthoughtnet.clinic.llm.spi.AiProviderException;
 import com.deepthoughtnet.clinic.llm.spi.LlmClient;
 import com.deepthoughtnet.clinic.llm.spi.LlmRequest;
 import com.deepthoughtnet.clinic.llm.spi.LlmResponse;
@@ -20,8 +21,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.http.MediaType;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
@@ -30,7 +29,6 @@ import org.springframework.web.client.RestClientResponseException;
 @Component("geminiLlmClient")
 @ConditionalOnExpression(
         "'${clinic.ai.enabled:false}' == 'true' "
-                + "&& '${clinic.ai.provider:DISABLED}'.equalsIgnoreCase('GEMINI') "
                 + "&& '${clinic.ai.gemini.enabled:false}' == 'true' "
                 + "&& '${clinic.ai.gemini.api-key:${clinic.llm.gemini.apiKey:}}' != ''"
 )
@@ -100,7 +98,8 @@ public class GeminiLlmClient implements LlmClient {
 
         try {
             String responseBody = restClient.post()
-                    .uri(baseUrl + "/models/" + model + ":generateContent?key=" + apiKey)
+                    .uri(baseUrl + "/models/" + model + ":generateContent")
+                    .header("x-goog-api-key", apiKey)
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
                     .body(payload)
@@ -131,39 +130,124 @@ public class GeminiLlmClient implements LlmClient {
 
             if (parsed.text() == null || parsed.text().isBlank()) {
                 log.warn("LLM provider returned empty content. provider=GEMINI, requestId={}", requestId);
-                throw new IllegalStateException("Gemini returned an empty response");
+                throw AiProviderException.retryable(
+                        "Gemini returned an empty response.",
+                        null,
+                        providerName(),
+                        model,
+                        "/models/" + model + ":generateContent",
+                        null
+                );
             }
             return new LlmResponse(providerName(), model, parsed.text().trim(), parsed.tokenUsage());
-        } catch (HttpClientErrorException.Unauthorized ex) {
-            log.error("Gemini authentication failed. requestId={}, status={}, message={}", requestId, ex.getStatusCode().value(), sanitize(ex.getStatusText()));
-            throw new IllegalStateException("Gemini authentication failed: invalid API key.");
-        } catch (HttpClientErrorException.Forbidden ex) {
-            log.error("Gemini authorization failed. requestId={}, status={}, message={}", requestId, ex.getStatusCode().value(), sanitize(ex.getStatusText()));
-            throw new IllegalStateException("Gemini authorization failed.");
-        } catch (HttpClientErrorException.TooManyRequests ex) {
-            log.error("Gemini quota exceeded. requestId={}, status={}, message={}", requestId, ex.getStatusCode().value(), sanitize(ex.getStatusText()));
-            throw new IllegalStateException("Gemini quota exceeded.");
-        } catch (HttpClientErrorException ex) {
-            log.error("Gemini HTTP client error. requestId={}, status={}, message={}", requestId, ex.getStatusCode().value(), sanitize(ex.getStatusText()));
-            throw new IllegalStateException("Gemini request failed with client error.");
-        } catch (HttpServerErrorException ex) {
-            log.error("Gemini provider unavailable. requestId={}, status={}, message={}", requestId, ex.getStatusCode().value(), sanitize(ex.getStatusText()));
-            throw new IllegalStateException("Gemini provider unavailable.");
         } catch (RestClientResponseException ex) {
-            log.error("Gemini HTTP failure. requestId={}, status={}, message={}", requestId, ex.getRawStatusCode(), sanitize(ex.getStatusText()));
-            throw new IllegalStateException("Gemini request failed.");
+            int status = ex.getRawStatusCode();
+            String bodyPreview = sanitizePreview(ex.getResponseBodyAsString(), 300);
+            if (status == 401 || status == 403) {
+                log.error("Gemini authorization failed. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}, bodyPreview=\"{}\"",
+                        requestId,
+                        model,
+                        model,
+                        status,
+                        bodyPreview);
+                throw AiProviderException.fatal(
+                        "Gemini authorization failed. Check API key/provider configuration.",
+                        status,
+                        providerName(),
+                        model,
+                        "/models/" + model + ":generateContent",
+                        ex
+                );
+            }
+            if (status == 400) {
+                log.error("Gemini invalid request. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}, bodyPreview=\"{}\"",
+                        requestId,
+                        model,
+                        model,
+                        status,
+                        bodyPreview);
+                throw AiProviderException.fatal(
+                        "Gemini request failed with client error.",
+                        status,
+                        providerName(),
+                        model,
+                        "/models/" + model + ":generateContent",
+                        ex
+                );
+            }
+            if (status == 429) {
+                log.error("Gemini quota exceeded. requestId={}, status={}, bodyPreview=\"{}\"",
+                        requestId, status, bodyPreview);
+                throw AiProviderException.retryable(
+                        "Gemini quota exceeded.",
+                        status,
+                        providerName(),
+                        model,
+                        "/models/" + model + ":generateContent",
+                        ex
+                );
+            }
+            if (status == 500 || status == 502 || status == 503 || status == 504) {
+                log.error("Gemini provider unavailable. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}, bodyPreview=\"{}\"",
+                        requestId,
+                        model,
+                        model,
+                        status,
+                        bodyPreview);
+                throw AiProviderException.retryable(
+                        "Gemini provider unavailable.",
+                        status,
+                        providerName(),
+                        model,
+                        "/models/" + model + ":generateContent",
+                        ex
+                );
+            }
+            log.error("Gemini HTTP failure. requestId={}, provider=GEMINI, model={}, endpointPath=/models/{}:generateContent, status={}, bodyPreview=\"{}\"",
+                    requestId,
+                    model,
+                    model,
+                    status,
+                    bodyPreview);
+            throw AiProviderException.fatal(
+                    "Gemini request failed.",
+                    status,
+                    providerName(),
+                    model,
+                    "/models/" + model + ":generateContent",
+                    ex
+            );
         } catch (ResourceAccessException ex) {
             if (isTimeout(ex)) {
                 log.error("Gemini timeout. requestId={}, timeoutSeconds={}", requestId, timeoutSeconds);
-                throw new IllegalStateException("Gemini request timed out.");
+                throw AiProviderException.retryable(
+                        "Gemini request timed out.",
+                        null,
+                        providerName(),
+                        model,
+                        "/models/" + model + ":generateContent",
+                        ex
+                );
             }
             log.error("Gemini network failure. requestId={}, message={}", requestId, sanitize(ex.getMessage()));
-            throw new IllegalStateException("Gemini network failure.");
-        } catch (IllegalStateException ex) {
-            throw ex;
+            throw AiProviderException.retryable(
+                    "Gemini network failure.",
+                    null,
+                    providerName(),
+                    model,
+                    "/models/" + model + ":generateContent",
+                    ex
+            );
         } catch (Exception ex) {
             log.error("Gemini unexpected failure. requestId={}, message={}", requestId, sanitize(ex.getMessage()));
-            throw new IllegalStateException("Gemini provider failed unexpectedly.");
+            throw AiProviderException.retryable(
+                    "Gemini provider failed unexpectedly.",
+                    null,
+                    providerName(),
+                    model,
+                    "/models/" + model + ":generateContent",
+                    ex
+            );
         }
     }
 

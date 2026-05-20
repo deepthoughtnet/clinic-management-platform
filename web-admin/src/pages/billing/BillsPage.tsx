@@ -52,6 +52,7 @@ import {
   getBill,
   getBillPdf,
   getClinicProfile,
+  getDoctorProfile,
   getConsultation,
   getReceiptPdf,
   getPatient,
@@ -74,6 +75,7 @@ import {
   type Payment,
   type PaymentMode,
   type Patient,
+  type DoctorProfile,
   type Receipt,
   type Refund,
 } from "../../api/clinicApi";
@@ -185,7 +187,26 @@ function lineTotal(row: BillLineForm) {
 function parseMoney(value: string | null) {
   if (!value) return null;
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function formatAmount(value: number | null | undefined) {
+  if (value == null) return "—";
+  return `₹${value.toFixed(2)}`;
+}
+
+function formatAppointmentSummary(appointment: Appointment | null) {
+  if (!appointment) return null;
+  const time = appointment.appointmentTime ? appointment.appointmentTime.slice(0, 5) : null;
+  const dateLabel = new Date(`${appointment.appointmentDate}T00:00:00`).toLocaleDateString(undefined, {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+  const timeLabel = time ? new Date(`1970-01-01T${time}:00`).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—";
+  const doctorLabel = appointment.doctorName || "Doctor";
+  return `${dateLabel} • ${timeLabel} • ${doctorLabel}`;
 }
 
 type InvoicePreviewState = InvoicePrintData | null;
@@ -239,6 +260,10 @@ export default function BillsPage() {
   const [receiptPreviewLoading, setReceiptPreviewLoading] = React.useState(false);
   const [invoiceAutoPrint, setInvoiceAutoPrint] = React.useState(false);
   const [receiptAutoPrint, setReceiptAutoPrint] = React.useState(false);
+  const [consultationAppointment, setConsultationAppointment] = React.useState<Appointment | null>(null);
+  const [consultationDoctorProfile, setConsultationDoctorProfile] = React.useState<DoctorProfile | null>(null);
+  const [consultationContextLoading, setConsultationContextLoading] = React.useState(false);
+  const [consultationContextError, setConsultationContextError] = React.useState<string | null>(null);
 
   const canCreateBill = auth.hasPermission("billing.create");
   const canUpdateBill = auth.hasPermission("billing.update") || auth.hasPermission("billing.create");
@@ -252,22 +277,46 @@ export default function BillsPage() {
     () => consultationCollectionRequested && Boolean(consultationAppointmentId),
     [consultationCollectionRequested, consultationAppointmentId],
   );
-  const consultationPatientLabel = consultationPatientId
-    ? (patients.find((patient) => patient.id === consultationPatientId)?.patientNumber || consultationPatientId)
-    : null;
-  const consultationDoctorLabel = consultationDoctorUserId || null;
+  const resolvedConsultationFee = consultationFeeAmount ?? consultationDoctorProfile?.consultationFee ?? null;
+  const consultationPatientLabel = consultationAppointment
+    ? [
+        consultationAppointment.patientName || consultationAppointment.patientNumber || "Patient",
+        consultationAppointment.patientNumber && consultationAppointment.patientName ? consultationAppointment.patientNumber : null,
+        consultationAppointment.patientMobile || null,
+      ].filter(Boolean).join(" • ")
+      : consultationPatientId
+        ? (patients.find((patient) => patient.id === consultationPatientId)?.patientNumber || consultationPatientId)
+      : null;
+  const consultationDoctorUserProfileId = consultationAppointment?.doctorUserId || consultationDoctorUserId || "";
+  const consultationDoctorLabel = consultationDoctorProfile?.doctorName || consultationAppointment?.doctorName || null;
+  const consultationAppointmentLabel = formatAppointmentSummary(consultationAppointment);
 
-  const loadBills = React.useCallback(async () => {
+  const loadBills = React.useCallback(async (override?: {
+    patientId?: string;
+    appointmentId?: string;
+    status?: string;
+    fromDate?: string;
+    toDate?: string;
+    paymentMode?: string;
+    text?: string;
+  }) => {
     if (!auth.accessToken || !auth.tenantId) return;
+    const patientId = override?.patientId ?? billFilterPatient;
+    const appointmentId = override?.appointmentId ?? billFilterAppointmentId;
+    const status = override?.status ?? billFilterStatus;
+    const fromDate = override?.fromDate ?? billFilterFromDate;
+    const toDate = override?.toDate ?? billFilterToDate;
+    const paymentMode = override?.paymentMode ?? billFilterMode;
+    const text = override?.text ?? billFilterText;
     const rows = await searchBills(auth.accessToken, auth.tenantId, {
-      patientId: billFilterPatient.trim() || undefined,
-      appointmentId: billFilterAppointmentId.trim() || undefined,
-      status: billFilterStatus ? (billFilterStatus as Bill["status"]) : null,
-      fromDate: billFilterFromDate || undefined,
-      toDate: billFilterToDate || undefined,
-      paymentMode: billFilterMode ? (billFilterMode as PaymentMode) : null,
+      patientId: patientId.trim() || undefined,
+      appointmentId: appointmentId.trim() || undefined,
+      status: status ? (status as Bill["status"]) : null,
+      fromDate: fromDate || undefined,
+      toDate: toDate || undefined,
+      paymentMode: paymentMode ? (paymentMode as PaymentMode) : null,
     });
-    const filtered = billFilterText.trim().toLowerCase();
+    const filtered = text.trim().toLowerCase();
     setBills(filtered
       ? rows.filter((b) => `${b.billNumber} ${b.patientName || ""} ${b.patientNumber || ""}`.toLowerCase().includes(filtered))
       : rows);
@@ -296,15 +345,55 @@ export default function BillsPage() {
   }, [auth.accessToken, auth.tenantId]);
 
   React.useEffect(() => {
+    let cancelled = false;
+    async function loadConsultationContext() {
+      if (!consultationAppointmentId || !auth.accessToken || !auth.tenantId) {
+        setConsultationAppointment(null);
+        setConsultationDoctorProfile(null);
+        setConsultationContextLoading(false);
+        setConsultationContextError(null);
+        return;
+      }
+      setConsultationContextLoading(true);
+      setConsultationContextError(null);
+      try {
+        const appointment = await getAppointment(auth.accessToken, auth.tenantId, consultationAppointmentId);
+        if (cancelled) return;
+        setConsultationAppointment(appointment);
+        if (appointment.doctorUserId) {
+          const profile = await getDoctorProfile(auth.accessToken, auth.tenantId, appointment.doctorUserId).catch(() => null);
+          if (cancelled) return;
+          setConsultationDoctorProfile(profile);
+        } else {
+          setConsultationDoctorProfile(null);
+        }
+      } catch {
+        if (!cancelled) {
+          setConsultationAppointment(null);
+          setConsultationDoctorProfile(null);
+          setConsultationContextError("Unable to load appointment billing context.");
+        }
+      } finally {
+        if (!cancelled) setConsultationContextLoading(false);
+      }
+    }
+    void loadConsultationContext();
+    return () => { cancelled = true; };
+  }, [auth.accessToken, auth.tenantId, consultationAppointmentId]);
+
+  React.useEffect(() => {
     if (!consultationFeeRequested) {
       return;
     }
-    if (consultationFeeAmount != null) {
+    if (consultationContextLoading) {
+      return;
+    }
+    if (resolvedConsultationFee != null) {
       setConsultationFeeOpen(true);
     } else {
-      setError("Doctor consultation fee is not configured.");
+      setError(consultationContextError || "Doctor consultation fee is not configured.");
     }
-  }, [consultationFeeRequested, consultationFeeAmount]);
+  }, [consultationFeeRequested, consultationContextLoading, resolvedConsultationFee, consultationContextError]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -423,6 +512,7 @@ export default function BillsPage() {
     const [billRows, paymentRows, receiptRows, refundRows] = await Promise.all([
       searchBills(auth.accessToken, auth.tenantId, {
         patientId: billFilterPatient.trim() || undefined,
+        appointmentId: billFilterAppointmentId.trim() || undefined,
         status: billFilterStatus ? (billFilterStatus as Bill["status"]) : null,
         fromDate: billFilterFromDate || undefined,
         toDate: billFilterToDate || undefined,
@@ -437,7 +527,7 @@ export default function BillsPage() {
     setReceipts(receiptRows);
     setRefunds(refundRows);
     setSelectedBill(billRows.find((bill) => bill.id === billId) || null);
-  }, [auth.accessToken, auth.tenantId, billFilterPatient, billFilterStatus, billFilterFromDate, billFilterToDate, billFilterMode]);
+  }, [auth.accessToken, auth.tenantId, billFilterPatient, billFilterAppointmentId, billFilterStatus, billFilterFromDate, billFilterToDate, billFilterMode]);
 
   const selectBill = async (bill: Bill) => {
     setSelectedBill(bill);
@@ -674,22 +764,31 @@ export default function BillsPage() {
                 ) : null}
               </Box>
               <Stack direction="row" spacing={1} flexWrap="wrap">
-                <Chip size="small" label={`Appointment ${consultationAppointmentId}`} variant="outlined" />
-                {consultationPatientLabel ? <Chip size="small" label={`Patient ${consultationPatientLabel}`} variant="outlined" /> : null}
-                {consultationDoctorLabel ? <Chip size="small" label={`Doctor ${consultationDoctorLabel}`} variant="outlined" /> : null}
-                {consultationFeeAmount != null ? <Chip size="small" label={`Fee ${consultationFeeAmount.toFixed(2)}`} color="warning" variant="outlined" /> : <Chip size="small" label="Doctor fee missing" color="default" variant="outlined" />}
+                {consultationAppointmentLabel ? <Chip size="small" label={consultationAppointmentLabel} variant="outlined" /> : null}
+                {consultationPatientLabel ? <Chip size="small" label={`Patient: ${consultationPatientLabel}`} variant="outlined" /> : null}
+                {consultationDoctorLabel ? <Chip size="small" label={`Doctor: ${consultationDoctorLabel}`} variant="outlined" /> : null}
+                {consultationContextLoading
+                  ? <Chip size="small" label="Consultation fee: loading…" variant="outlined" />
+                  : resolvedConsultationFee != null
+                    ? <Chip size="small" label={`Consultation fee: ${formatAmount(resolvedConsultationFee)}`} color="warning" variant="outlined" />
+                    : <Chip size="small" label="Consultation fee missing" color="default" variant="outlined" />}
               </Stack>
-              {consultationFeeAmount != null ? (
+              {consultationContextError ? (
+                <Alert severity="warning">
+                  {consultationContextError}
+                </Alert>
+              ) : null}
+              {consultationContextLoading ? (
+                <Alert severity="info">Loading appointment billing context…</Alert>
+              ) : resolvedConsultationFee != null ? (
                 <Button variant="contained" onClick={() => setConsultationFeeOpen(true)}>
                   Collect consultation fee
                 </Button>
               ) : (
-                <Alert severity="warning">
-                  Doctor consultation fee is not configured. Open the doctor profile to configure the fee before collecting payment.
-                </Alert>
+                <Alert severity="warning">Doctor consultation fee is not configured. Open the doctor profile to configure the fee before collecting payment.</Alert>
               )}
-              {consultationDoctorUserId ? (
-                <Button variant="text" onClick={() => navigate(`/doctors/${consultationDoctorUserId}`)}>
+              {consultationDoctorUserProfileId ? (
+                <Button variant="text" onClick={() => navigate(`/doctors/${consultationDoctorUserProfileId}`)}>
                   Open doctor profile
                 </Button>
               ) : null}
@@ -939,6 +1038,15 @@ export default function BillsPage() {
                         setBillFilterMode("");
                         setBillFilterFromDate("");
                         setBillFilterToDate("");
+                        void loadBills({
+                          patientId: "",
+                          appointmentId: "",
+                          status: "",
+                          fromDate: "",
+                          toDate: "",
+                          paymentMode: "",
+                          text: "",
+                        });
                       }}
                     >
                       Clear
@@ -1043,15 +1151,15 @@ export default function BillsPage() {
         <TextField fullWidth label="Notes" multiline minRows={2} value={refundForm.notes} onChange={(e) => setRefundForm((c) => ({ ...c, notes: e.target.value }))} />
       </Stack></DialogContent><DialogActions><Button onClick={() => setRefundOpen(false)}>Cancel</Button><Button variant="contained" onClick={() => void submitRefund()} disabled={saving}>{saving ? "Saving..." : "Refund"}</Button></DialogActions></Dialog>
 
-      {consultationFeeRequested && consultationFeeAmount != null ? (
+      {consultationFeeRequested && resolvedConsultationFee != null ? (
         <ConsultationFeeDialog
           open={consultationFeeOpen}
           title="Collect consultation fee"
           reasonLabel={consultationReason}
-          appointmentLabel={`Appointment: ${consultationAppointmentId}`}
+          appointmentLabel={consultationAppointmentLabel ? `Appointment: ${consultationAppointmentLabel}` : "Appointment: —"}
           doctorLabel={consultationDoctorLabel ? `Doctor: ${consultationDoctorLabel}` : "Doctor: —"}
           patientLabel={consultationPatientLabel ? `Patient: ${consultationPatientLabel}` : "Patient: —"}
-          feeLabel={`Consultation fee: ${consultationFeeAmount.toFixed(2)}`}
+          feeLabel={`Consultation fee: ${formatAmount(resolvedConsultationFee)}`}
           submitLabel="Collect Fee"
           onClose={() => setConsultationFeeOpen(false)}
           onSubmit={submitConsultationFee}

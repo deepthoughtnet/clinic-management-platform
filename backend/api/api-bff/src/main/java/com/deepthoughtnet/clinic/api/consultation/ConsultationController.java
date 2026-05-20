@@ -2,6 +2,9 @@ package com.deepthoughtnet.clinic.api.consultation;
 
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationRequest;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
+import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationAiSummaryRequest;
+import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationAiSummaryResponse;
+import com.deepthoughtnet.clinic.api.consultation.service.ConsultationAiSummaryService;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
@@ -28,10 +31,14 @@ import jakarta.validation.Valid;
 @RequestMapping("/api/consultations")
 public class ConsultationController {
     private final ConsultationService consultationService;
+    private final ConsultationAiSummaryService consultationAiSummaryService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
-    public ConsultationController(ConsultationService consultationService, DoctorAssignmentSecurityService doctorAssignmentSecurityService) {
+    public ConsultationController(ConsultationService consultationService,
+                                   ConsultationAiSummaryService consultationAiSummaryService,
+                                   DoctorAssignmentSecurityService doctorAssignmentSecurityService) {
         this.consultationService = consultationService;
+        this.consultationAiSummaryService = consultationAiSummaryService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
     }
 
@@ -90,6 +97,22 @@ public class ConsultationController {
         doctorAssignmentSecurityService.requireConsultationAccess(tenantId, id);
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(consultationService.cancel(tenantId, id, actorAppUserId));
+    }
+
+    @GetMapping("/{id}/ai-summary")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.read')")
+    public ConsultationAiSummaryResponse getAiSummary(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationAccess(tenantId, id);
+        return consultationAiSummaryService.get(tenantId, id);
+    }
+
+    @PatchMapping("/{id}/ai-summary")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.update')")
+    public ConsultationAiSummaryResponse saveAiSummary(@PathVariable UUID id, @Valid @RequestBody ConsultationAiSummaryRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        doctorAssignmentSecurityService.requireConsultationAccess(tenantId, id);
+        return consultationAiSummaryService.save(tenantId, id, request);
     }
 
     private ConsultationUpsertCommand toCommand(ConsultationRequest request) {
