@@ -25,7 +25,7 @@ import org.springframework.web.multipart.MultipartFile;
 import jakarta.validation.Valid;
 
 @RestController
-@RequestMapping("/api/medicines")
+@RequestMapping({"/api/medicines", "/api/pharmacy/medicines"})
 public class MedicineController {
     private final InventoryService inventoryService;
     private final PermissionChecker permissionChecker;
@@ -95,6 +95,12 @@ public class MedicineController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return pharmacyOperationsService.importMedicines(tenantId, file.getBytes(), actorAppUserId);
+    }
+
+    @GetMapping(value = "/import-template", produces = "text/csv")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('vaccination.manage')")
+    public String importTemplate() {
+        return pharmacyOperationsService.medicineImportTemplateCsv();
     }
 
     @PatchMapping("/{id}/deactivate")

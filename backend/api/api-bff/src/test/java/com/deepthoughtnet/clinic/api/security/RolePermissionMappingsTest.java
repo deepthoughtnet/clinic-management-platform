@@ -59,7 +59,8 @@ class RolePermissionMappingsTest {
         assertThat(permissions).doesNotContain(
                 Permissions.CONSULTATION_UPDATE,
                 Permissions.PRESCRIPTION_FINALIZE,
-                Permissions.TENANT_USERS_MANAGE
+                Permissions.TENANT_USERS_MANAGE,
+                Permissions.INVENTORY_MANAGE
         );
     }
 
@@ -94,7 +95,8 @@ class RolePermissionMappingsTest {
                 Permissions.PAYMENT_COLLECT,
                 Permissions.CONSULTATION_UPDATE,
                 Permissions.PRESCRIPTION_CREATE,
-                Permissions.PRESCRIPTION_FINALIZE
+                Permissions.PRESCRIPTION_FINALIZE,
+                Permissions.INVENTORY_MANAGE
         );
     }
 

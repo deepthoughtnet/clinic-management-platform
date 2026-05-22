@@ -1,4 +1,4 @@
-import { httpGet, httpPatch, httpPost, httpPostForm, httpPut } from "./restClient";
+import { httpGet, httpGetText, httpPatch, httpPost, httpPostForm, httpPut } from "./restClient";
 
 export type PatientGender = "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
 export type AppointmentStatus = "BOOKED" | "WAITING" | "IN_CONSULTATION" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
@@ -2095,7 +2095,11 @@ export async function activateMedicine(token: string, tenantId: string, id: stri
 export async function importMedicinesCsv(token: string, tenantId: string, file: File) {
   const formData = new FormData();
   formData.append("file", file);
-  return httpPostForm<MedicineImportResult>("/api/medicines/import-csv", formData, { token, tenantId });
+  return httpPostForm<MedicineImportResult>("/api/pharmacy/medicines/import-csv", formData, { token, tenantId });
+}
+
+export async function getMedicineImportTemplate(token: string, tenantId: string) {
+  return httpGetText("/api/pharmacy/medicines/import-template", { token, tenantId });
 }
 
 export async function getStocks(token: string, tenantId: string) {

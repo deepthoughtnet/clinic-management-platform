@@ -190,6 +190,57 @@ public class PharmacyOperationsService {
     }
 
     @Transactional(readOnly = true)
+    public String medicineImportTemplateCsv() {
+        try (StringWriter writer = new StringWriter(); CSVPrinter printer = new CSVPrinter(writer, CSVFormat.DEFAULT.builder().setHeader(
+                "medicineName",
+                "genericName",
+                "brandName",
+                "category",
+                "type",
+                "strength",
+                "unit",
+                "defaultDosage",
+                "defaultFrequency",
+                "defaultDurationDays",
+                "defaultTiming",
+                "instructions",
+                "manufacturer",
+                "barcode",
+                "qrCode",
+                "externalCode",
+                "defaultPrice",
+                "taxPercent",
+                "active"
+        ).build())) {
+            printer.printRecord(
+                    "Paracetamol 650",
+                    "Paracetamol",
+                    "Dolo",
+                    "Analgesic",
+                    "Tablet",
+                    "650",
+                    "mg",
+                    "1 tablet",
+                    "Twice daily",
+                    "5",
+                    "AFTER_FOOD",
+                    "Take after meals",
+                    "Micro Labs",
+                    "PARA-650-001",
+                    "PARA-650-001",
+                    "PARA-650-001",
+                    "25.00",
+                    "5",
+                    "true"
+            );
+            printer.flush();
+            return writer.toString();
+        } catch (Exception ex) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Unable to generate medicine template");
+        }
+    }
+
+    @Transactional(readOnly = true)
     public List<SupplierRecord> listSuppliers(UUID tenantId) {
         return supplierRepository.findByTenantIdOrderBySupplierNameAsc(tenantId).stream().map(this::toRecord).toList();
     }
@@ -719,7 +770,7 @@ public class PharmacyOperationsService {
         String medicineName = required(record, "medicineName");
         String genericName = value(record, "genericName");
         String brandName = value(record, "brandName");
-        String form = required(record, "form");
+        String form = requiredAny(record, "form", "type");
         String strength = value(record, "strength");
         String category = value(record, "category");
         String unit = value(record, "unit");
@@ -728,12 +779,13 @@ public class PharmacyOperationsService {
         String defaultFrequency = value(record, "defaultFrequency");
         Integer defaultDurationDays = parseInteger(value(record, "defaultDurationDays"), "defaultDurationDays");
         String defaultTiming = value(record, "defaultTiming");
-        String defaultInstructions = value(record, "defaultInstructions");
+        String defaultInstructions = valueAny(record, "defaultInstructions", "instructions");
         BigDecimal defaultPrice = parseDecimal(value(record, "defaultPrice"), "defaultPrice");
-        BigDecimal taxPercent = parseDecimal(value(record, "taxPercent"), "taxPercent");
+        BigDecimal taxPercent = parseDecimal(valueAny(record, "taxPercent", "taxRate"), "taxPercent");
         String barcode = value(record, "barcode");
         String qrCode = value(record, "qrCode");
         String externalCode = value(record, "externalCode");
+        boolean active = parseBoolean(value(record, "active"), true);
 
         MedicineEntity existing = findMedicineForImport(tenantId, medicineName, form, strength).orElse(null);
         MedicineUpsertCommand command = new MedicineUpsertCommand(
@@ -756,7 +808,7 @@ public class PharmacyOperationsService {
                 defaultInstructions,
                 defaultPrice,
                 taxPercent,
-                true
+                active
         );
 
         boolean sameMedicine = existing != null && sameMedicine(existing, command);
@@ -1015,12 +1067,30 @@ public class PharmacyOperationsService {
         return value.trim();
     }
 
+    private String requiredAny(CSVRecord record, String... columns) {
+        String value = valueAny(record, columns);
+        if (!StringUtils.hasText(value)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, String.join("/", columns) + " is required");
+        }
+        return value.trim();
+    }
+
     private String value(CSVRecord record, String column) {
         try {
             return record.isMapped(column) ? record.get(column) : null;
         } catch (IllegalArgumentException ex) {
             return null;
         }
+    }
+
+    private String valueAny(CSVRecord record, String... columns) {
+        for (String column : columns) {
+            String value = value(record, column);
+            if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private Integer parseInteger(String value, String field) {
@@ -1043,6 +1113,17 @@ public class PharmacyOperationsService {
         } catch (NumberFormatException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " must be numeric");
         }
+    }
+
+    private boolean parseBoolean(String value, boolean defaultValue) {
+        if (!StringUtils.hasText(value)) {
+            return defaultValue;
+        }
+        return switch (value.trim().toLowerCase(Locale.ROOT)) {
+            case "true", "yes", "y", "1" -> true;
+            case "false", "no", "n", "0" -> false;
+            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "active must be true or false");
+        };
     }
 
     private LocalDate parseDate(String value, String field) {

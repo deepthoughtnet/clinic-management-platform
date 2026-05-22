@@ -192,6 +192,18 @@ export async function httpGet<T>(path: string, opts?: ApiOpts): Promise<T> {
   return parseResponse<T>(res);
 }
 
+export async function httpGetText(path: string, opts?: ApiOpts): Promise<string> {
+  const res = await fetch(`${baseUrl(opts?.apiBase)}${path}`, {
+    method: "GET",
+    headers: buildHeaders(path, opts, false),
+    signal: opts?.signal,
+  });
+  if (!res.ok) {
+    await parseResponse<unknown>(res);
+  }
+  return res.text();
+}
+
 export async function httpPut<T>(path: string, body: unknown, opts?: ApiOpts): Promise<T> {
   const res = await fetch(`${baseUrl(opts?.apiBase)}${path}`, {
     method: "PUT",

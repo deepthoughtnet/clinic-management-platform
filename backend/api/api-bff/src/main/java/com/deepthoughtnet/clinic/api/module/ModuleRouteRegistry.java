@@ -15,6 +15,7 @@ public class ModuleRouteRegistry {
             new RouteModule("/api/vaccines", SaasModuleCode.VACCINATION.name()),
             new RouteModule("/api/vaccinations", SaasModuleCode.VACCINATION.name()),
             new RouteModule("/api/medicines", SaasModuleCode.INVENTORY.name()),
+            new RouteModule("/api/pharmacy/medicines", SaasModuleCode.INVENTORY.name()),
             new RouteModule("/api/inventory", SaasModuleCode.INVENTORY.name()),
             new RouteModule("/api/ai", SaasModuleCode.AI_COPILOT.name()),
             new RouteModule("/api/carepilot", SaasModuleCode.CAREPILOT.name()),
