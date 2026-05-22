@@ -95,6 +95,57 @@ public class PharmacyPosController {
         return service.recordPayment(RequestContextHolder.requireTenantId(), id, request, RequestContextHolder.require().appUserId());
     }
 
+    @PostMapping("/shifts/open")
+    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PHARMACIST') or @permissionChecker.hasRole('PHARMACY') or @permissionChecker.hasRole('PHARMA')")
+    public PharmacyPosShiftResponse openShift(@RequestBody PharmacyPosOpenShiftRequest request) {
+        assertPosRole();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.openShift(RequestContextHolder.requireTenantId(), actorAppUserId, request);
+    }
+
+    @GetMapping("/shifts/current")
+    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PHARMACIST') or @permissionChecker.hasRole('PHARMACY') or @permissionChecker.hasRole('PHARMA')")
+    public PharmacyPosShiftResponse currentShift() {
+        assertPosRole();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.getCurrentShift(RequestContextHolder.requireTenantId(), actorAppUserId);
+    }
+
+    @PostMapping("/shifts/{shiftId}/close")
+    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PHARMACIST') or @permissionChecker.hasRole('PHARMACY') or @permissionChecker.hasRole('PHARMA')")
+    public PharmacyPosShiftResponse closeShift(@PathVariable UUID shiftId, @RequestBody PharmacyPosCloseShiftRequest request) {
+        assertPosRole();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.closeShift(
+                RequestContextHolder.requireTenantId(),
+                shiftId,
+                actorAppUserId,
+                permissionChecker.hasRole("CLINIC_ADMIN"),
+                request
+        );
+    }
+
+    @GetMapping("/shifts")
+    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PHARMACIST') or @permissionChecker.hasRole('PHARMACY') or @permissionChecker.hasRole('PHARMA')")
+    public List<PharmacyPosShiftResponse> listShifts(
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) UUID cashier
+    ) {
+        assertPosRole();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.listShifts(
+                RequestContextHolder.requireTenantId(),
+                actorAppUserId,
+                permissionChecker.hasRole("CLINIC_ADMIN"),
+                dateFrom,
+                dateTo,
+                status,
+                cashier
+        );
+    }
+
     @PostMapping("/sales/{id}/return")
     @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PHARMACIST') or @permissionChecker.hasRole('PHARMACY') or @permissionChecker.hasRole('PHARMA')")
     public PharmacyPosSaleResponse returnSale(@PathVariable UUID id, @RequestBody PharmacyPosReturnRequest request) {

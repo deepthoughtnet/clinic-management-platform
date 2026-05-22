@@ -847,6 +847,7 @@ export type PharmacyPosSaleItem = {
 
 export type PharmacyPosSalePayment = {
   id: string;
+  cashierShiftId: string | null;
   amount: number;
   paymentMode: PaymentMode;
   referenceNumber: string | null;
@@ -955,6 +956,45 @@ export type PharmacyPosReturnInput = {
     quantity: number;
     reusable: boolean;
   }>;
+};
+
+export type PharmacyPosShift = {
+  id: string;
+  cashierUserId: string;
+  openedAt: string;
+  openedBy: string;
+  openingCashAmount: number;
+  closedAt: string | null;
+  closedBy: string | null;
+  status: "OPEN" | "CLOSED" | "CANCELLED";
+  expectedCashAmount: number;
+  expectedUpiAmount: number;
+  expectedCardAmount: number;
+  expectedOtherAmount: number;
+  expectedTotalAmount: number;
+  actualCashAmount: number;
+  actualUpiAmount: number;
+  actualCardAmount: number;
+  actualOtherAmount: number;
+  actualTotalAmount: number;
+  varianceAmount: number;
+  openNotes: string | null;
+  closeNotes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PharmacyPosOpenShiftInput = {
+  openingCashAmount?: number | null;
+  notes?: string | null;
+};
+
+export type PharmacyPosCloseShiftInput = {
+  actualCashAmount?: number | null;
+  actualUpiAmount?: number | null;
+  actualCardAmount?: number | null;
+  actualOtherAmount?: number | null;
+  closeNotes?: string | null;
 };
 
 export type VaccineMaster = {
@@ -2044,6 +2084,37 @@ export async function getPharmacyPosReceiptPdf(token: string, tenantId: string, 
     blob,
     filename: match?.[1] || `sale-${saleId}-receipt.pdf`,
   };
+}
+
+export async function openPharmacyPosShift(token: string, tenantId: string, body: PharmacyPosOpenShiftInput) {
+  return httpPost<PharmacyPosShift>("/api/pharmacy/pos/shifts/open", body, { token, tenantId });
+}
+
+export async function getCurrentPharmacyPosShift(token: string, tenantId: string) {
+  return httpGet<PharmacyPosShift | null>("/api/pharmacy/pos/shifts/current", { token, tenantId });
+}
+
+export async function closePharmacyPosShift(token: string, tenantId: string, shiftId: string, body: PharmacyPosCloseShiftInput) {
+  return httpPost<PharmacyPosShift>(`/api/pharmacy/pos/shifts/${shiftId}/close`, body, { token, tenantId });
+}
+
+export async function listPharmacyPosShifts(
+  token: string,
+  tenantId: string,
+  params?: {
+    dateFrom?: string;
+    dateTo?: string;
+    status?: string;
+    cashier?: string;
+  },
+) {
+  const query = new URLSearchParams();
+  if (params?.dateFrom) query.set("dateFrom", params.dateFrom);
+  if (params?.dateTo) query.set("dateTo", params.dateTo);
+  if (params?.status) query.set("status", params.status);
+  if (params?.cashier) query.set("cashier", params.cashier);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<PharmacyPosShift[]>(`/api/pharmacy/pos/shifts${suffix}`, { token, tenantId });
 }
 
 export async function getVaccines(token: string, tenantId: string) {

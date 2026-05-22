@@ -7,5 +7,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface PharmacySalePaymentRepository extends JpaRepository<PharmacySalePaymentEntity, UUID> {
     List<PharmacySalePaymentEntity> findByTenantIdAndSaleIdOrderByCreatedAtAsc(UUID tenantId, UUID saleId);
+    List<PharmacySalePaymentEntity> findByTenantIdAndCashierShiftIdOrderByCreatedAtAsc(UUID tenantId, UUID cashierShiftId);
     Optional<PharmacySalePaymentEntity> findByTenantIdAndReceiptNumber(UUID tenantId, String receiptNumber);
 }

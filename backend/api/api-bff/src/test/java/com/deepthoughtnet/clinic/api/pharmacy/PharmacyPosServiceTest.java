@@ -15,6 +15,8 @@ import com.deepthoughtnet.clinic.inventory.db.InventoryLocationEntity;
 import com.deepthoughtnet.clinic.inventory.db.InventoryLocationRepository;
 import com.deepthoughtnet.clinic.inventory.db.MedicineEntity;
 import com.deepthoughtnet.clinic.inventory.db.MedicineRepository;
+import com.deepthoughtnet.clinic.inventory.db.PharmacyCashierShiftEntity;
+import com.deepthoughtnet.clinic.inventory.db.PharmacyCashierShiftRepository;
 import com.deepthoughtnet.clinic.inventory.db.PharmacySaleEntity;
 import com.deepthoughtnet.clinic.inventory.db.PharmacySaleItemEntity;
 import com.deepthoughtnet.clinic.inventory.db.PharmacySaleItemRepository;
@@ -56,6 +58,7 @@ class PharmacyPosServiceTest {
     private InventoryLocationRepository locationRepository;
     private PatientRepository patientRepository;
     private ClinicProfileService clinicProfileService;
+    private PharmacyCashierShiftRepository cashierShiftRepository;
     private PharmacySaleRepository saleRepository;
     private PharmacySaleItemRepository saleItemRepository;
     private PharmacySalePaymentRepository salePaymentRepository;
@@ -70,6 +73,7 @@ class PharmacyPosServiceTest {
     private final List<PharmacySalePaymentEntity> payments = new ArrayList<>();
     private final List<PharmacySaleReturnEntity> returns = new ArrayList<>();
     private final List<PharmacySalePrescriptionEntity> prescriptions = new ArrayList<>();
+    private final List<PharmacyCashierShiftEntity> shifts = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -79,6 +83,7 @@ class PharmacyPosServiceTest {
         locationRepository = mock(InventoryLocationRepository.class);
         patientRepository = mock(PatientRepository.class);
         clinicProfileService = mock(ClinicProfileService.class);
+        cashierShiftRepository = mock(PharmacyCashierShiftRepository.class);
         saleRepository = mock(PharmacySaleRepository.class);
         saleItemRepository = mock(PharmacySaleItemRepository.class);
         salePaymentRepository = mock(PharmacySalePaymentRepository.class);
@@ -88,6 +93,30 @@ class PharmacyPosServiceTest {
 
         location = InventoryLocationEntity.create(tenantId, "Main Pharmacy", "MAIN", "PHARMACY", true);
         when(locationRepository.findByTenantIdAndDefaultLocationTrue(tenantId)).thenReturn(Optional.of(location));
+        when(cashierShiftRepository.save(any())).thenAnswer(invocation -> {
+            PharmacyCashierShiftEntity entity = invocation.getArgument(0);
+            shifts.removeIf(existing -> existing.getId().equals(entity.getId()));
+            shifts.add(entity);
+            return entity;
+        });
+        when(cashierShiftRepository.existsByTenantIdAndCashierUserIdAndStatus(eq(tenantId), any(), eq("OPEN"))).thenAnswer(invocation -> {
+            UUID cashierUserId = invocation.getArgument(1);
+            return shifts.stream().anyMatch(shift -> shift.getTenantId().equals(tenantId) && shift.getCashierUserId().equals(cashierUserId) && "OPEN".equals(shift.getStatus()));
+        });
+        when(cashierShiftRepository.findByTenantIdAndCashierUserIdAndStatus(eq(tenantId), any(), eq("OPEN"))).thenAnswer(invocation -> {
+            UUID cashierUserId = invocation.getArgument(1);
+            return shifts.stream().filter(shift -> shift.getTenantId().equals(tenantId) && shift.getCashierUserId().equals(cashierUserId) && "OPEN".equals(shift.getStatus())).findFirst();
+        });
+        when(cashierShiftRepository.findByTenantIdAndId(eq(tenantId), any())).thenAnswer(invocation -> {
+            UUID shiftId = invocation.getArgument(1);
+            return shifts.stream().filter(shift -> shift.getTenantId().equals(tenantId) && shift.getId().equals(shiftId)).findFirst();
+        });
+        when(cashierShiftRepository.findByTenantIdOrderByOpenedAtDesc(tenantId)).thenAnswer(invocation -> new ArrayList<>(shifts));
+        when(cashierShiftRepository.findByTenantIdAndCashierUserIdOrderByOpenedAtDesc(eq(tenantId), any())).thenAnswer(invocation -> {
+            UUID cashierUserId = invocation.getArgument(1);
+            return shifts.stream().filter(shift -> shift.getTenantId().equals(tenantId) && shift.getCashierUserId().equals(cashierUserId)).toList();
+        });
+
         when(saleRepository.save(any())).thenAnswer(invocation -> {
             PharmacySaleEntity entity = invocation.getArgument(0);
             sales.removeIf(existing -> existing.getId().equals(entity.getId()));
@@ -119,6 +148,10 @@ class PharmacyPosServiceTest {
         when(salePaymentRepository.findByTenantIdAndSaleIdOrderByCreatedAtAsc(eq(tenantId), any())).thenAnswer(invocation -> {
             UUID saleId = invocation.getArgument(1);
             return payments.stream().filter(item -> item.getSaleId().equals(saleId)).toList();
+        });
+        when(salePaymentRepository.findByTenantIdAndCashierShiftIdOrderByCreatedAtAsc(eq(tenantId), any())).thenAnswer(invocation -> {
+            UUID shiftId = invocation.getArgument(1);
+            return payments.stream().filter(item -> shiftId.equals(item.getCashierShiftId())).toList();
         });
         when(salePaymentRepository.findByTenantIdAndReceiptNumber(eq(tenantId), any())).thenReturn(Optional.empty());
 
@@ -174,6 +207,7 @@ class PharmacyPosServiceTest {
                 locationRepository,
                 patientRepository,
                 clinicProfileService,
+                cashierShiftRepository,
                 saleRepository,
                 saleItemRepository,
                 salePaymentRepository,
@@ -187,6 +221,7 @@ class PharmacyPosServiceTest {
 
     @Test
     void createSaleUsesFefoAndSplitsAcrossBatches() {
+        openShiftFor(actorId);
         MedicineEntity medicine = medicine("Amoxicillin");
         StockEntity expired = stock(medicine.getId(), "EXP", LocalDate.now().minusDays(1), 20, "11.00");
         StockEntity earliest = stock(medicine.getId(), "EARLY", LocalDate.now().plusDays(10), 2, "12.00");
@@ -240,6 +275,24 @@ class PharmacyPosServiceTest {
     }
 
     @Test
+    void openShiftCreatesCurrentShiftForCashier() {
+        PharmacyPosShiftResponse shift = service.openShift(tenantId, actorId, new PharmacyPosOpenShiftRequest(new BigDecimal("1000.00"), "Opening drawer"));
+
+        assertThat(shift.status()).isEqualTo("OPEN");
+        assertThat(shift.openingCashAmount()).isEqualByComparingTo("1000.00");
+        assertThat(service.getCurrentShift(tenantId, actorId).id()).isEqualTo(shift.id());
+    }
+
+    @Test
+    void openShiftBlocksSecondOpenShiftForSameCashier() {
+        service.openShift(tenantId, actorId, new PharmacyPosOpenShiftRequest(new BigDecimal("500.00"), null));
+
+        assertThatThrownBy(() -> service.openShift(tenantId, actorId, new PharmacyPosOpenShiftRequest(new BigDecimal("250.00"), null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("open cashier shift already exists");
+    }
+
+    @Test
     void expiredBatchesAreExcludedFromAvailableStock() {
         MedicineEntity medicine = medicine("Cetirizine");
         when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
@@ -255,6 +308,7 @@ class PharmacyPosServiceTest {
 
     @Test
     void returnRestocksReusableQuantityAndUpdatesStatus() {
+        openShiftFor(actorId);
         MedicineEntity medicine = medicine("Paracetamol");
         StockEntity batch = stock(medicine.getId(), "P1", LocalDate.now().plusDays(30), 10, "4.00");
         when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
@@ -291,7 +345,23 @@ class PharmacyPosServiceTest {
     }
 
     @Test
+    void createSaleWithPaymentIsBlockedWithoutOpenShift() {
+        MedicineEntity medicine = medicine("Domperidone");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId()))
+                .thenReturn(List.of(stock(medicine.getId(), "D1", LocalDate.now().plusDays(30), 3, "5.00")));
+
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("5.00"),
+                PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("5.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Open cashier shift required");
+    }
+
+    @Test
     void uploadPrescriptionAndLinkItToSale() throws Exception {
+        openShiftFor(actorId);
         MedicineEntity medicine = medicine("Cefixime");
         StockEntity batch = stock(medicine.getId(), "CF1", LocalDate.now().plusDays(30), 10, "8.00");
         when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
@@ -344,6 +414,7 @@ class PharmacyPosServiceTest {
 
     @Test
     void nonReusableReturnDoesNotRestockStock() {
+        openShiftFor(actorId);
         MedicineEntity medicine = medicine("Azithromycin");
         StockEntity batch = stock(medicine.getId(), "AZ1", LocalDate.now().plusDays(30), 10, "10.00");
         when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
@@ -370,6 +441,7 @@ class PharmacyPosServiceTest {
 
     @Test
     void returnBlocksWhenQuantityExceedsRemainingSoldQuantity() {
+        openShiftFor(actorId);
         MedicineEntity medicine = medicine("Ofloxacin");
         StockEntity batch = stock(medicine.getId(), "OF1", LocalDate.now().plusDays(30), 10, "7.00");
         when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
@@ -391,6 +463,85 @@ class PharmacyPosServiceTest {
                 .hasMessageContaining("Return quantity exceeds sold quantity");
     }
 
+    @Test
+    void recordPaymentLinksToCurrentOpenShift() {
+        PharmacyCashierShiftEntity shift = openShiftFor(actorId);
+        MedicineEntity medicine = medicine("Levocetirizine");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)).thenReturn(List.of(medicine));
+        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId())).thenReturn(List.of(stock(medicine.getId(), "L1", LocalDate.now().plusDays(30), 10, "6.00")));
+
+        PharmacyPosSaleResponse created = service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("6.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId);
+
+        PharmacyPosSaleResponse paid = service.recordPayment(tenantId, created.id(), new PharmacyPosPaymentRequest(
+                new BigDecimal("6.00"), PaymentMode.CASH, null, null, LocalDate.now(), OffsetDateTime.now()
+        ), actorId);
+
+        assertThat(paid.payments()).hasSize(1);
+        assertThat(paid.payments().get(0).cashierShiftId()).isEqualTo(shift.getId());
+    }
+
+    @Test
+    void closeShiftCalculatesExpectedTotalsAndVariance() {
+        PharmacyCashierShiftEntity shift = openShiftFor(actorId);
+        MedicineEntity medicine = medicine("Rabeprazole");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)).thenReturn(List.of(medicine));
+        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId())).thenReturn(List.of(stock(medicine.getId(), "R1", LocalDate.now().plusDays(30), 10, "100.00")));
+
+        service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("100.00"), PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("100.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId);
+        service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("200.00"), PaymentMode.UPI, "upi-ref", null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 2, new BigDecimal("100.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId);
+
+        PharmacyPosShiftResponse closed = service.closeShift(tenantId, shift.getId(), actorId, false, new PharmacyPosCloseShiftRequest(
+                new BigDecimal("95.00"), new BigDecimal("200.00"), BigDecimal.ZERO, BigDecimal.ZERO, "Close test"
+        ));
+
+        assertThat(closed.status()).isEqualTo("CLOSED");
+        assertThat(closed.expectedCashAmount()).isEqualByComparingTo("100.00");
+        assertThat(closed.expectedUpiAmount()).isEqualByComparingTo("200.00");
+        assertThat(closed.expectedTotalAmount()).isEqualByComparingTo("300.00");
+        assertThat(closed.varianceAmount()).isEqualByComparingTo("-5.00");
+    }
+
+    @Test
+    void cashierCannotCloseAnotherCashierShift() {
+        UUID otherCashierId = UUID.randomUUID();
+        PharmacyCashierShiftEntity shift = openShiftFor(otherCashierId);
+
+        assertThatThrownBy(() -> service.closeShift(tenantId, shift.getId(), actorId, false, new PharmacyPosCloseShiftRequest(
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null
+        ))).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("owning cashier");
+    }
+
+    @Test
+    void clinicAdminCanViewTenantShifts() {
+        PharmacyCashierShiftEntity first = openShiftFor(actorId);
+        first.close(actorId, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null);
+        cashierShiftRepository.save(first);
+        openShiftFor(UUID.randomUUID());
+
+        List<PharmacyPosShiftResponse> rows = service.listShifts(tenantId, actorId, true, null, null, null, null);
+
+        assertThat(rows).hasSize(2);
+    }
+
+    @Test
+    void listShiftsRespectsTenantIsolation() {
+        openShiftFor(actorId);
+
+        assertThat(service.listShifts(UUID.randomUUID(), actorId, true, null, null, null, null)).isEmpty();
+    }
+
     private MedicineEntity medicine(String name) {
         MedicineEntity medicine = MedicineEntity.create(tenantId, name, "TABLET");
         medicine.update(name, "TABLET", null, null, null, name, null, null, null, null, "strip", null, null, null, null, null, null, new BigDecimal("10.00"), new BigDecimal("5.00"), true);
@@ -401,5 +552,11 @@ class PharmacyPosServiceTest {
         StockEntity stock = StockEntity.create(tenantId, medicineId, location.getId());
         stock.update(location.getId(), null, null, null, batchNumber, null, expiryDate, LocalDate.now(), "Supplier", quantity, quantity, 2, new BigDecimal("1.00"), new BigDecimal("2.00"), new BigDecimal(sellingPrice), true);
         return stock;
+    }
+
+    private PharmacyCashierShiftEntity openShiftFor(UUID cashierUserId) {
+        PharmacyCashierShiftEntity shift = PharmacyCashierShiftEntity.open(tenantId, cashierUserId, cashierUserId, new BigDecimal("1000.00"), null);
+        cashierShiftRepository.save(shift);
+        return shift;
     }
 }

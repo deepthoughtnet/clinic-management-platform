@@ -7,6 +7,8 @@ import com.deepthoughtnet.clinic.inventory.db.InventoryLocationEntity;
 import com.deepthoughtnet.clinic.inventory.db.InventoryLocationRepository;
 import com.deepthoughtnet.clinic.inventory.db.MedicineEntity;
 import com.deepthoughtnet.clinic.inventory.db.MedicineRepository;
+import com.deepthoughtnet.clinic.inventory.db.PharmacyCashierShiftEntity;
+import com.deepthoughtnet.clinic.inventory.db.PharmacyCashierShiftRepository;
 import com.deepthoughtnet.clinic.inventory.db.PharmacySaleEntity;
 import com.deepthoughtnet.clinic.inventory.db.PharmacySaleItemEntity;
 import com.deepthoughtnet.clinic.inventory.db.PharmacySaleItemRepository;
@@ -50,6 +52,7 @@ import java.util.Set;
 import java.util.HexFormat;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -84,6 +87,7 @@ public class PharmacyPosService {
     private final InventoryLocationRepository locationRepository;
     private final PatientRepository patientRepository;
     private final ClinicProfileService clinicProfileService;
+    private final PharmacyCashierShiftRepository cashierShiftRepository;
     private final PharmacySaleRepository saleRepository;
     private final PharmacySaleItemRepository saleItemRepository;
     private final PharmacySalePaymentRepository salePaymentRepository;
@@ -100,6 +104,7 @@ public class PharmacyPosService {
             InventoryLocationRepository locationRepository,
             PatientRepository patientRepository,
             ClinicProfileService clinicProfileService,
+            PharmacyCashierShiftRepository cashierShiftRepository,
             PharmacySaleRepository saleRepository,
             PharmacySaleItemRepository saleItemRepository,
             PharmacySalePaymentRepository salePaymentRepository,
@@ -115,6 +120,7 @@ public class PharmacyPosService {
         this.locationRepository = locationRepository;
         this.patientRepository = patientRepository;
         this.clinicProfileService = clinicProfileService;
+        this.cashierShiftRepository = cashierShiftRepository;
         this.saleRepository = saleRepository;
         this.saleItemRepository = saleItemRepository;
         this.salePaymentRepository = salePaymentRepository;
@@ -202,6 +208,104 @@ public class PharmacyPosService {
     }
 
     @Transactional
+    public PharmacyPosShiftResponse openShift(UUID tenantId, UUID actorAppUserId, PharmacyPosOpenShiftRequest request) {
+        if (cashierShiftRepository.existsByTenantIdAndCashierUserIdAndStatus(tenantId, actorAppUserId, "OPEN")) {
+            throw new IllegalArgumentException("An open cashier shift already exists for this user");
+        }
+        BigDecimal openingCashAmount = money(request == null ? null : request.openingCashAmount());
+        PharmacyCashierShiftEntity shift = PharmacyCashierShiftEntity.open(
+                tenantId,
+                actorAppUserId,
+                actorAppUserId,
+                openingCashAmount,
+                normalizeNullable(request == null ? null : request.notes())
+        );
+        try {
+            cashierShiftRepository.save(shift);
+        } catch (DataIntegrityViolationException ex) {
+            throw new IllegalArgumentException("An open cashier shift already exists for this user", ex);
+        }
+        audit("pharmacy.shift.opened", tenantId, shift.getId(), actorAppUserId, "Opened pharmacy cashier shift", Map.of(
+                "cashierUserId", actorAppUserId,
+                "openingCashAmount", openingCashAmount
+        ));
+        return mapShift(tenantId, shift);
+    }
+
+    @Transactional(readOnly = true)
+    public PharmacyPosShiftResponse getCurrentShift(UUID tenantId, UUID actorAppUserId) {
+        return cashierShiftRepository.findByTenantIdAndCashierUserIdAndStatus(tenantId, actorAppUserId, "OPEN")
+                .map(shift -> mapShift(tenantId, shift))
+                .orElse(null);
+    }
+
+    @Transactional
+    public PharmacyPosShiftResponse closeShift(UUID tenantId, UUID shiftId, UUID actorAppUserId, boolean adminOverride, PharmacyPosCloseShiftRequest request) {
+        requireId(shiftId, "shiftId");
+        PharmacyCashierShiftEntity shift = cashierShiftRepository.findByTenantIdAndId(tenantId, shiftId)
+                .orElseThrow(() -> new IllegalArgumentException("Cashier shift not found"));
+        if (!"OPEN".equals(shift.getStatus())) {
+            throw new IllegalArgumentException("Only open cashier shifts can be closed");
+        }
+        if (!adminOverride && !shift.getCashierUserId().equals(actorAppUserId)) {
+            throw new IllegalArgumentException("Only the owning cashier can close this shift");
+        }
+        ShiftTotals expected = calculateShiftTotals(tenantId, shift.getId());
+        BigDecimal actualCashAmount = money(request == null ? null : request.actualCashAmount());
+        BigDecimal actualUpiAmount = money(request == null ? null : request.actualUpiAmount());
+        BigDecimal actualCardAmount = money(request == null ? null : request.actualCardAmount());
+        BigDecimal actualOtherAmount = money(request == null ? null : request.actualOtherAmount());
+        BigDecimal varianceAmount = actualCashAmount.add(actualUpiAmount).add(actualCardAmount).add(actualOtherAmount)
+                .subtract(expected.total())
+                .setScale(2, RoundingMode.HALF_UP);
+        shift.close(
+                actorAppUserId,
+                expected.cash(),
+                expected.upi(),
+                expected.card(),
+                expected.other(),
+                actualCashAmount,
+                actualUpiAmount,
+                actualCardAmount,
+                actualOtherAmount,
+                varianceAmount,
+                normalizeNullable(request == null ? null : request.closeNotes())
+        );
+        cashierShiftRepository.save(shift);
+        audit("pharmacy.shift.closed", tenantId, shift.getId(), actorAppUserId, "Closed pharmacy cashier shift", Map.of(
+                "varianceAmount", varianceAmount,
+                "expectedTotalAmount", expected.total()
+        ));
+        return mapShift(tenantId, shift);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PharmacyPosShiftResponse> listShifts(
+            UUID tenantId,
+            UUID actorAppUserId,
+            boolean adminOverride,
+            String dateFrom,
+            String dateTo,
+            String status,
+            UUID cashier
+    ) {
+        List<PharmacyCashierShiftEntity> shifts = adminOverride
+                ? cashierShiftRepository.findByTenantIdOrderByOpenedAtDesc(tenantId)
+                : cashierShiftRepository.findByTenantIdAndCashierUserIdOrderByOpenedAtDesc(tenantId, actorAppUserId);
+        LocalDate from = parseDate(dateFrom);
+        LocalDate to = parseDate(dateTo);
+        String normalizedStatus = normalizeNullable(status);
+        return shifts.stream()
+                .filter(shift -> adminOverride || shift.getCashierUserId().equals(actorAppUserId))
+                .filter(shift -> cashier == null || shift.getCashierUserId().equals(cashier))
+                .filter(shift -> normalizedStatus == null || shift.getStatus().equalsIgnoreCase(normalizedStatus))
+                .filter(shift -> from == null || !shift.getOpenedAt().toLocalDate().isBefore(from))
+                .filter(shift -> to == null || !shift.getOpenedAt().toLocalDate().isAfter(to))
+                .map(shift -> mapShift(tenantId, shift))
+                .toList();
+    }
+
+    @Transactional
     public PharmacyPosSaleResponse createSale(UUID tenantId, PharmacyPosCreateSaleRequest request, UUID actorAppUserId) {
         validateCreateRequest(request);
         InventoryLocationEntity location = ensureDefaultLocation(tenantId);
@@ -231,6 +335,7 @@ public class PharmacyPosService {
             total = ZERO;
         }
         BigDecimal paidAmount = money(request.paidAmount());
+        PharmacyCashierShiftEntity activeShift = paidAmount.compareTo(ZERO) > 0 ? requireOpenShift(tenantId, actorAppUserId) : null;
         if (paidAmount.compareTo(total) > 0) {
             throw new IllegalArgumentException("paidAmount cannot exceed sale total");
         }
@@ -293,6 +398,7 @@ public class PharmacyPosService {
             salePaymentRepository.save(PharmacySalePaymentEntity.create(
                     tenantId,
                     sale.getId(),
+                    activeShift == null ? null : activeShift.getId(),
                 sale.getSaleDateTime().toLocalDate(),
                     sale.getSaleDateTime(),
                     paidAmount,
@@ -349,6 +455,7 @@ public class PharmacyPosService {
         if (request.paymentMode() != PaymentMode.CASH && !StringUtils.hasText(request.referenceNumber())) {
             throw new IllegalArgumentException("referenceNumber is required for non-cash payments");
         }
+        PharmacyCashierShiftEntity activeShift = requireOpenShift(tenantId, actorAppUserId);
         PharmacySaleEntity sale = saleRepository.findByTenantIdAndId(tenantId, saleId)
                 .orElseThrow(() -> new IllegalArgumentException("Sale not found"));
         if (request.amount().compareTo(sale.getDueAmount()) > 0) {
@@ -357,6 +464,7 @@ public class PharmacyPosService {
         PharmacySalePaymentEntity payment = salePaymentRepository.save(PharmacySalePaymentEntity.create(
                 tenantId,
                 saleId,
+                activeShift.getId(),
                 request.paymentDate() == null ? LocalDate.now() : request.paymentDate(),
                 request.paymentDateTime() == null ? OffsetDateTime.now() : request.paymentDateTime(),
                 money(request.amount()),
@@ -584,6 +692,7 @@ public class PharmacyPosService {
                 )).toList(),
                 payments.stream().map(payment -> new PharmacyPosPaymentResponse(
                         payment.getId(),
+                        payment.getCashierShiftId(),
                         payment.getAmount(),
                         paymentModeOf(payment.getPaymentMode()),
                         payment.getReferenceNumber(),
@@ -673,6 +782,71 @@ public class PharmacyPosService {
                 money(medicine.getTaxRate()),
                 earliest
         );
+    }
+
+    private ShiftTotals calculateShiftTotals(UUID tenantId, UUID shiftId) {
+        BigDecimal cash = ZERO;
+        BigDecimal upi = ZERO;
+        BigDecimal card = ZERO;
+        BigDecimal other = ZERO;
+        for (PharmacySalePaymentEntity payment : salePaymentRepository.findByTenantIdAndCashierShiftIdOrderByCreatedAtAsc(tenantId, shiftId)) {
+            PaymentBucket bucket = paymentBucket(payment.getPaymentMode());
+            if (bucket == PaymentBucket.CASH) {
+                cash = cash.add(payment.getAmount()).setScale(2, RoundingMode.HALF_UP);
+            } else if (bucket == PaymentBucket.UPI) {
+                upi = upi.add(payment.getAmount()).setScale(2, RoundingMode.HALF_UP);
+            } else if (bucket == PaymentBucket.CARD) {
+                card = card.add(payment.getAmount()).setScale(2, RoundingMode.HALF_UP);
+            } else {
+                other = other.add(payment.getAmount()).setScale(2, RoundingMode.HALF_UP);
+            }
+        }
+        return new ShiftTotals(cash, upi, card, other);
+    }
+
+    private PharmacyPosShiftResponse mapShift(UUID tenantId, PharmacyCashierShiftEntity shift) {
+        ShiftTotals expected = "OPEN".equals(shift.getStatus())
+                ? calculateShiftTotals(tenantId, shift.getId())
+                : new ShiftTotals(
+                money(shift.getExpectedCashAmount()),
+                money(shift.getExpectedUpiAmount()),
+                money(shift.getExpectedCardAmount()),
+                money(shift.getExpectedOtherAmount())
+        );
+        BigDecimal actualCash = money(shift.getActualCashAmount());
+        BigDecimal actualUpi = money(shift.getActualUpiAmount());
+        BigDecimal actualCard = money(shift.getActualCardAmount());
+        BigDecimal actualOther = money(shift.getActualOtherAmount());
+        return new PharmacyPosShiftResponse(
+                shift.getId(),
+                shift.getCashierUserId(),
+                shift.getOpenedAt(),
+                shift.getOpenedBy(),
+                money(shift.getOpeningCashAmount()),
+                shift.getClosedAt(),
+                shift.getClosedBy(),
+                shift.getStatus(),
+                expected.cash(),
+                expected.upi(),
+                expected.card(),
+                expected.other(),
+                expected.total(),
+                actualCash,
+                actualUpi,
+                actualCard,
+                actualOther,
+                actualCash.add(actualUpi).add(actualCard).add(actualOther).setScale(2, RoundingMode.HALF_UP),
+                money(shift.getVarianceAmount()),
+                shift.getOpenNotes(),
+                shift.getCloseNotes(),
+                shift.getCreatedAt(),
+                shift.getUpdatedAt()
+        );
+    }
+
+    private PharmacyCashierShiftEntity requireOpenShift(UUID tenantId, UUID actorAppUserId) {
+        return cashierShiftRepository.findByTenantIdAndCashierUserIdAndStatus(tenantId, actorAppUserId, "OPEN")
+                .orElseThrow(() -> new IllegalArgumentException("Open cashier shift required before collecting payment"));
     }
 
     private PharmacyPosBatchResponse toBatchResponse(StockEntity stock, InventoryLocationEntity location) {
@@ -977,6 +1151,26 @@ public class PharmacyPosService {
         return PaymentMode.valueOf(value);
     }
 
+    private PaymentBucket paymentBucket(String value) {
+        PaymentMode mode = paymentModeOf(value);
+        if (mode == null) {
+            return PaymentBucket.OTHER;
+        }
+        return switch (mode) {
+            case CASH -> PaymentBucket.CASH;
+            case CARD -> PaymentBucket.CARD;
+            case UPI, PHONEPE, GOOGLE_PAY, PAYTM -> PaymentBucket.UPI;
+            default -> PaymentBucket.OTHER;
+        };
+    }
+
+    private LocalDate parseDate(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        return LocalDate.parse(value.trim());
+    }
+
     private String safeFilename(String value) {
         return defaultString(value, "receipt").replaceAll("[^A-Za-z0-9._-]", "_");
     }
@@ -1045,5 +1239,23 @@ public class PharmacyPosService {
             BigDecimal returnValue,
             boolean reusable
     ) {
+    }
+
+    private record ShiftTotals(
+            BigDecimal cash,
+            BigDecimal upi,
+            BigDecimal card,
+            BigDecimal other
+    ) {
+        private BigDecimal total() {
+            return cash.add(upi).add(card).add(other).setScale(2, RoundingMode.HALF_UP);
+        }
+    }
+
+    private enum PaymentBucket {
+        CASH,
+        UPI,
+        CARD,
+        OTHER
     }
 }

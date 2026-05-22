@@ -103,6 +103,7 @@ record PharmacyPosReturnRequest(
 
 record PharmacyPosPaymentResponse(
         UUID id,
+        UUID cashierShiftId,
         BigDecimal amount,
         PaymentMode paymentMode,
         String referenceNumber,
@@ -179,5 +180,47 @@ record PharmacyPosSaleResponse(
 record PharmacyPosReceiptPdf(
         String filename,
         byte[] content
+) {
+}
+
+record PharmacyPosOpenShiftRequest(
+        BigDecimal openingCashAmount,
+        String notes
+) {
+}
+
+record PharmacyPosCloseShiftRequest(
+        BigDecimal actualCashAmount,
+        BigDecimal actualUpiAmount,
+        BigDecimal actualCardAmount,
+        BigDecimal actualOtherAmount,
+        String closeNotes
+) {
+}
+
+record PharmacyPosShiftResponse(
+        UUID id,
+        UUID cashierUserId,
+        OffsetDateTime openedAt,
+        UUID openedBy,
+        BigDecimal openingCashAmount,
+        OffsetDateTime closedAt,
+        UUID closedBy,
+        String status,
+        BigDecimal expectedCashAmount,
+        BigDecimal expectedUpiAmount,
+        BigDecimal expectedCardAmount,
+        BigDecimal expectedOtherAmount,
+        BigDecimal expectedTotalAmount,
+        BigDecimal actualCashAmount,
+        BigDecimal actualUpiAmount,
+        BigDecimal actualCardAmount,
+        BigDecimal actualOtherAmount,
+        BigDecimal actualTotalAmount,
+        BigDecimal varianceAmount,
+        String openNotes,
+        String closeNotes,
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt
 ) {
 }

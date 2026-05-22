@@ -102,4 +102,40 @@ class PharmacyPosControllerTest {
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("pharmacy counter roles");
     }
+
+    @Test
+    void pharmacistCanOpenShift() {
+        UUID tenantId = UUID.randomUUID();
+        PharmacyPosService service = mock(PharmacyPosService.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        PharmacyPosController controller = new PharmacyPosController(service, permissionChecker);
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("PHARMACIST"), "PHARMACIST", "cid"));
+        when(permissionChecker.hasPermission("inventory.manage")).thenReturn(true);
+        when(service.openShift(eq(tenantId), eq(actorId), any())).thenReturn(
+                new PharmacyPosShiftResponse(UUID.randomUUID(), actorId, java.time.OffsetDateTime.now(), actorId, java.math.BigDecimal.ZERO,
+                        null, null, "OPEN", java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO,
+                        java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO,
+                        java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, null, null, java.time.OffsetDateTime.now(), java.time.OffsetDateTime.now())
+        );
+
+        controller.openShift(new PharmacyPosOpenShiftRequest(java.math.BigDecimal.ZERO, null));
+
+        verify(service).openShift(eq(tenantId), eq(actorId), any());
+    }
+
+    @Test
+    void receptionistCannotOpenShift() {
+        UUID tenantId = UUID.randomUUID();
+        PharmacyPosService service = mock(PharmacyPosService.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        PharmacyPosController controller = new PharmacyPosController(service, permissionChecker);
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of("RECEPTIONIST"), "RECEPTIONIST", "cid"));
+        when(permissionChecker.hasPermission("inventory.manage")).thenReturn(false);
+        when(permissionChecker.hasPermission("billing.create")).thenReturn(true);
+
+        assertThatThrownBy(() -> controller.openShift(new PharmacyPosOpenShiftRequest(java.math.BigDecimal.ZERO, null)))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("pharmacy counter roles");
+    }
 }

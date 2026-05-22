@@ -28,6 +28,9 @@ public class PharmacySalePaymentEntity {
     @Column(name = "sale_id", nullable = false)
     private UUID saleId;
 
+    @Column(name = "cashier_shift_id")
+    private UUID cashierShiftId;
+
     @Column(name = "payment_date", nullable = false)
     private LocalDate paymentDate;
 
@@ -61,6 +64,7 @@ public class PharmacySalePaymentEntity {
     public static PharmacySalePaymentEntity create(
             UUID tenantId,
             UUID saleId,
+            UUID cashierShiftId,
             LocalDate paymentDate,
             OffsetDateTime paymentDateTime,
             BigDecimal amount,
@@ -74,6 +78,7 @@ public class PharmacySalePaymentEntity {
         entity.id = UUID.randomUUID();
         entity.tenantId = tenantId;
         entity.saleId = saleId;
+        entity.cashierShiftId = cashierShiftId;
         entity.paymentDate = paymentDate;
         entity.paymentDateTime = paymentDateTime;
         entity.amount = amount;
@@ -89,6 +94,7 @@ public class PharmacySalePaymentEntity {
     public UUID getId() { return id; }
     public UUID getTenantId() { return tenantId; }
     public UUID getSaleId() { return saleId; }
+    public UUID getCashierShiftId() { return cashierShiftId; }
     public LocalDate getPaymentDate() { return paymentDate; }
     public OffsetDateTime getPaymentDateTime() { return paymentDateTime; }
     public BigDecimal getAmount() { return amount; }

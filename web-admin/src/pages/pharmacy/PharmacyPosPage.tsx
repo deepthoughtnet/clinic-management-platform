@@ -42,11 +42,15 @@ import ShoppingCartCheckoutRoundedIcon from "@mui/icons-material/ShoppingCartChe
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
 import {
   addPharmacyPosPayment,
+  closePharmacyPosShift,
   createPharmacyPosSale,
+  getCurrentPharmacyPosShift,
   getPharmacyPosAvailableBatches,
   getPharmacyPosPrescriptionDownloadUrl,
   getPharmacyPosReceiptPdf,
   listPharmacyPosSales,
+  listPharmacyPosShifts,
+  openPharmacyPosShift,
   returnPharmacyPosSale,
   searchPatients,
   searchPharmacyPosMedicines,
@@ -57,6 +61,7 @@ import {
   type PharmacyPosMedicine,
   type PharmacyPosPrescriptionUpload,
   type PharmacyPosSale,
+  type PharmacyPosShift,
 } from "../../api/clinicApi";
 import { useAuth } from "../../auth/useAuth";
 
@@ -94,6 +99,14 @@ const PAYMENT_MODES: PaymentMode[] = ["CASH", "UPI", "CARD", "PHONEPE", "GOOGLE_
 const POS_ROLES = new Set(["CLINIC_ADMIN", "PHARMACIST", "PHARMACY", "PHARMA"]);
 const HELD_CART_STORAGE_KEY = "pharmacy-pos-held-cart";
 const STICKY_TOP = 88;
+const PRESCRIPTION_MAX_BYTES = 10 * 1024 * 1024;
+const ALLOWED_PRESCRIPTION_TYPES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+const ALLOWED_PRESCRIPTION_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".webp"];
 
 const panelSx = {
   border: "1px solid",
@@ -133,6 +146,10 @@ function openPdf(blob: Blob) {
 
 function saleDisplayName(sale: PharmacyPosSale) {
   return sale.patientName ?? sale.customerName ?? "Walk-in";
+}
+
+function shortId(value: string | null | undefined) {
+  return value ? value.slice(0, 8).toUpperCase() : "NA";
 }
 
 function compactBatchPreview(batches: PharmacyPosBatch[] | undefined) {
@@ -201,6 +218,36 @@ function buildReturnDraft(sale: PharmacyPosSale | null) {
   return next;
 }
 
+function mapPosError(raw: unknown, fallback: string) {
+  const message = raw instanceof Error ? raw.message : fallback;
+  const normalized = message.toLowerCase();
+  if (normalized.includes("open cashier shift")) {
+    return "Payment requires an open cashier shift.";
+  }
+  if (normalized.includes("insufficient stock")) {
+    return "Insufficient stock for selected medicine.";
+  }
+  if (normalized.includes("payment amount cannot exceed due")) {
+    return "Payment amount cannot exceed the remaining due.";
+  }
+  if (normalized.includes("return quantity exceeds")) {
+    return "Return quantity exceeds the remaining sold quantity.";
+  }
+  return fallback;
+}
+
+function validatePrescriptionFile(file: File) {
+  const name = file.name.toLowerCase();
+  const hasAllowedExtension = ALLOWED_PRESCRIPTION_EXTENSIONS.some((extension) => name.endsWith(extension));
+  if (!ALLOWED_PRESCRIPTION_TYPES.has(file.type) && !hasAllowedExtension) {
+    return "Prescription file must be PDF, JPG, JPEG, PNG, or WEBP.";
+  }
+  if (file.size > PRESCRIPTION_MAX_BYTES) {
+    return "Prescription file must be 10MB or smaller.";
+  }
+  return null;
+}
+
 export default function PharmacyPosPage() {
   const auth = useAuth();
   const token = auth.accessToken;
@@ -212,11 +259,14 @@ export default function PharmacyPosPage() {
   const cameraVideoRef = React.useRef<HTMLVideoElement | null>(null);
   const cameraCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
+  const actionLockRef = React.useRef<string | null>(null);
 
   const [loading, setLoading] = React.useState(true);
   const [submitting, setSubmitting] = React.useState(false);
+  const [activeAction, setActiveAction] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
+  const [lastCompletedSale, setLastCompletedSale] = React.useState<PharmacyPosSale | null>(null);
   const [recentDrawerOpen, setRecentDrawerOpen] = React.useState(false);
   const [scanDialogOpen, setScanDialogOpen] = React.useState(false);
   const [scanError, setScanError] = React.useState<string | null>(null);
@@ -250,6 +300,17 @@ export default function PharmacyPosPage() {
   const paidAmountInputRef = React.useRef<HTMLInputElement | null>(null);
   const [paymentTopupMode, setPaymentTopupMode] = React.useState<PaymentMode>("CASH");
   const [paymentReferenceTopup, setPaymentReferenceTopup] = React.useState("");
+  const [currentShift, setCurrentShift] = React.useState<PharmacyPosShift | null>(null);
+  const [shiftHistory, setShiftHistory] = React.useState<PharmacyPosShift[]>([]);
+  const [openShiftDialogOpen, setOpenShiftDialogOpen] = React.useState(false);
+  const [closeShiftDialogOpen, setCloseShiftDialogOpen] = React.useState(false);
+  const [openingCashAmount, setOpeningCashAmount] = React.useState("0");
+  const [shiftOpenNotes, setShiftOpenNotes] = React.useState("");
+  const [actualCashAmount, setActualCashAmount] = React.useState("");
+  const [actualUpiAmount, setActualUpiAmount] = React.useState("");
+  const [actualCardAmount, setActualCardAmount] = React.useState("");
+  const [actualOtherAmount, setActualOtherAmount] = React.useState("");
+  const [shiftCloseNotes, setShiftCloseNotes] = React.useState("");
   const [saleSearchQuery, setSaleSearchQuery] = React.useState("");
   const [returnDraft, setReturnDraft] = React.useState<Record<string, ReturnLineDraft>>({});
   const [returnReason, setReturnReason] = React.useState("");
@@ -268,7 +329,8 @@ export default function PharmacyPosPage() {
     return sales.filter((sale) =>
       sale.saleNumber.toLowerCase().includes(term)
       || saleDisplayName(sale).toLowerCase().includes(term)
-      || (sale.customerMobile || "").toLowerCase().includes(term),
+      || (sale.customerMobile || "").toLowerCase().includes(term)
+      || sale.saleDateTime.slice(0, 10).includes(term),
     );
   }, [saleSearchQuery, sales]);
   const selectedReturnRows = React.useMemo(() => {
@@ -285,6 +347,26 @@ export default function PharmacyPosPage() {
   const reusableSelectedCount = React.useMemo(() =>
     selectedReturnRows.filter((entry) => entry.draft.reusable).length, [selectedReturnRows]);
   const discardSelectedCount = selectedReturnRows.length - reusableSelectedCount;
+  const collectingPaymentWithoutShift = numeric(paidAmount) > 0 && !currentShift;
+  const paymentTopupBlocked = !currentShift;
+  const closeVariancePreview = React.useMemo(() => {
+    const actualTotal = numeric(actualCashAmount) + numeric(actualUpiAmount) + numeric(actualCardAmount) + numeric(actualOtherAmount);
+    return actualTotal - (currentShift?.expectedTotalAmount ?? 0);
+  }, [actualCardAmount, actualCashAmount, actualOtherAmount, actualUpiAmount, currentShift]);
+
+  const beginAction = React.useCallback((name: string) => {
+    if (actionLockRef.current) return false;
+    actionLockRef.current = name;
+    setActiveAction(name);
+    setSubmitting(true);
+    return true;
+  }, []);
+
+  const endAction = React.useCallback(() => {
+    actionLockRef.current = null;
+    setActiveAction(null);
+    setSubmitting(false);
+  }, []);
 
   const clearDraft = React.useCallback(() => {
     setCart([]);
@@ -310,6 +392,22 @@ export default function PharmacyPosPage() {
       return saleRows.find((row) => row.id === current.id) ?? saleRows[0] ?? null;
     });
     setSelectedSaleId((current) => current ?? saleRows[0]?.id ?? null);
+  }, [canAccessPos, tenantId, token]);
+
+  const refreshMedicineResults = React.useCallback(async (query: string = medicineQuery) => {
+    if (!token || !tenantId || !canAccessPos) return;
+    const rows = await searchPharmacyPosMedicines(token, tenantId, query);
+    setMedicineResults(rows);
+  }, [canAccessPos, medicineQuery, tenantId, token]);
+
+  const refreshShifts = React.useCallback(async () => {
+    if (!token || !tenantId || !canAccessPos) return;
+    const [current, history] = await Promise.all([
+      getCurrentPharmacyPosShift(token, tenantId),
+      listPharmacyPosShifts(token, tenantId),
+    ]);
+    setCurrentShift(current);
+    setShiftHistory(history);
   }, [canAccessPos, tenantId, token]);
 
   React.useEffect(() => {
@@ -406,10 +504,16 @@ export default function PharmacyPosPage() {
       try {
         setLoading(true);
         const saleRows = await listPharmacyPosSales(token, tenantId);
+        const [currentShiftRow, shiftRows] = await Promise.all([
+          getCurrentPharmacyPosShift(token, tenantId),
+          listPharmacyPosShifts(token, tenantId),
+        ]);
         if (cancelled) return;
         setSales(saleRows);
         setSelectedSale(saleRows[0] ?? null);
         setSelectedSaleId(saleRows[0]?.id ?? null);
+        setCurrentShift(currentShiftRow);
+        setShiftHistory(shiftRows);
         setError(null);
       } catch (err) {
         if (!cancelled) {
@@ -429,14 +533,13 @@ export default function PharmacyPosPage() {
     if (!token || !tenantId || !canAccessPos) return;
     const handle = window.setTimeout(async () => {
       try {
-        const rows = await searchPharmacyPosMedicines(token, tenantId, medicineQuery);
-        setMedicineResults(rows);
+        await refreshMedicineResults(medicineQuery);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to search medicines");
+        setError("Medicine search could not be refreshed.");
       }
     }, 180);
     return () => window.clearTimeout(handle);
-  }, [canAccessPos, medicineQuery, tenantId, token]);
+  }, [canAccessPos, medicineQuery, refreshMedicineResults, tenantId, token]);
 
   React.useEffect(() => {
     if (!token || !tenantId || !canAccessPos || patientQuery.trim().length < 2) {
@@ -514,7 +617,8 @@ export default function PharmacyPosPage() {
       const rows = await getPharmacyPosAvailableBatches(token, tenantId, medicine.medicineId);
       setBatchPreview((current) => ({ ...current, [medicine.medicineId]: rows }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load batches");
+      setError("Available stock batches could not be loaded.");
+      window.setTimeout(() => searchInputRef.current?.focus(), 0);
     }
   }, [batchPreview, tenantId, token]);
 
@@ -618,23 +722,32 @@ export default function PharmacyPosPage() {
 
   const submitSale = React.useCallback(async () => {
     if (!token || !tenantId) return;
+    if (!beginAction("sale")) return;
     if (!cart.length) {
       setError("Add at least one medicine to the cart.");
+      endAction();
       return;
     }
     if (cartHasStockIssue) {
       setError("Reduce cart quantity for items showing a stock warning before completing the sale.");
+      endAction();
+      return;
+    }
+    if (numeric(paidAmount) > 0 && !currentShift) {
+      setError("Payment requires an open cashier shift.");
+      endAction();
       return;
     }
     if (!selectedPatient && !customerName.trim()) {
       setError("Choose a patient or enter a walk-in customer name.");
+      endAction();
       return;
     }
     if (!window.confirm("Confirm stock deduction and create this pharmacy sale using FEFO allocation?")) {
+      endAction();
       return;
     }
     try {
-      setSubmitting(true);
       const sale = await createPharmacyPosSale(token, tenantId, {
         patientId: selectedPatient?.id ?? null,
         customerName: selectedPatient ? null : customerName.trim(),
@@ -653,18 +766,21 @@ export default function PharmacyPosPage() {
         })),
       });
       clearDraft();
+      setBatchPreview({});
+      setLastCompletedSale(sale);
       setSuccess(`Sale ${sale.saleNumber} created. FEFO allocation used the earliest non-expired batches and stock movements were recorded.`);
-      await refreshSales();
+      await Promise.all([refreshSales(), refreshShifts(), refreshMedicineResults("")]);
       selectSale(sale);
       setHeldDraft(null);
       window.sessionStorage.removeItem(HELD_CART_STORAGE_KEY);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create sale");
+      setError(mapPosError(err, "Sale could not be completed. Stock was not deducted."));
     } finally {
-      setSubmitting(false);
+      endAction();
+      window.setTimeout(() => searchInputRef.current?.focus(), 0);
     }
-  }, [cart, cartHasStockIssue, clearDraft, customerMobile, customerName, notes, paidAmount, paymentMode, paymentReference, prescription, refreshSales, selectSale, selectedPatient, tenantId, token]);
+  }, [beginAction, cart, cartHasStockIssue, clearDraft, currentShift, customerMobile, customerName, endAction, notes, paidAmount, paymentMode, paymentReference, prescription, refreshMedicineResults, refreshSales, refreshShifts, selectSale, selectedPatient, tenantId, token]);
 
   React.useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -775,21 +891,26 @@ export default function PharmacyPosPage() {
 
   const uploadPrescription = React.useCallback(async (file: File | null) => {
     if (!file || !token || !tenantId) return;
+    const validationError = validatePrescriptionFile(file);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    if (!beginAction("prescription-upload")) return;
     try {
-      setSubmitting(true);
       const uploaded = await uploadPharmacyPosPrescription(token, tenantId, file);
       setPrescription(uploaded);
       setSuccess(`Prescription ${uploaded.fileName} uploaded for this draft sale.`);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upload prescription");
+      setError(mapPosError(err, "Prescription upload failed. Please retry or continue without upload."));
     } finally {
-      setSubmitting(false);
+      endAction();
       if (prescriptionInputRef.current) {
         prescriptionInputRef.current.value = "";
       }
     }
-  }, [tenantId, token]);
+  }, [beginAction, endAction, tenantId, token]);
 
   const capturePrescriptionImage = React.useCallback(() => {
     const video = cameraVideoRef.current;
@@ -841,27 +962,33 @@ export default function PharmacyPosPage() {
 
   const submitPayment = React.useCallback(async () => {
     if (!token || !tenantId || !selectedSale) return;
+    if (!beginAction("payment")) return;
+    if (!currentShift) {
+      setError("Payment requires an open cashier shift.");
+      endAction();
+      return;
+    }
     try {
-      setSubmitting(true);
       const sale = await addPharmacyPosPayment(token, tenantId, selectedSale.id, {
         amount: numeric(paymentAmount),
         paymentMode: paymentTopupMode,
         referenceNumber: paymentReferenceTopup.trim() || null,
       });
-      await refreshSales();
+      await Promise.all([refreshSales(), refreshShifts(), refreshMedicineResults(medicineQuery)]);
       selectSale(sale);
       setPaymentReferenceTopup("");
       setSuccess(`Payment recorded against sale ${sale.saleNumber}.`);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to record payment");
+      setError(mapPosError(err, "Payment could not be recorded."));
     } finally {
-      setSubmitting(false);
+      endAction();
     }
-  }, [paymentAmount, paymentReferenceTopup, paymentTopupMode, refreshSales, selectSale, selectedSale, tenantId, token]);
+  }, [beginAction, currentShift, endAction, medicineQuery, paymentAmount, paymentReferenceTopup, paymentTopupMode, refreshMedicineResults, refreshSales, refreshShifts, selectSale, selectedSale, tenantId, token]);
 
   const submitReturn = React.useCallback(async () => {
     if (!token || !tenantId || !selectedSale) return;
+    if (!beginAction("return")) return;
     const requestItems = selectedSale.items.flatMap((item) => {
       const draft = returnDraft[item.id];
       if (!draft?.selected) return [];
@@ -875,6 +1002,7 @@ export default function PharmacyPosPage() {
     });
     if (!requestItems.length || !returnReason.trim()) {
       setError("Select at least one return item and provide a return reason.");
+      endAction();
       return;
     }
     const excessiveItem = requestItems.find((entry) => {
@@ -883,10 +1011,10 @@ export default function PharmacyPosPage() {
     });
     if (excessiveItem) {
       setError("One or more return quantities exceed the remaining returnable quantity.");
+      endAction();
       return;
     }
     try {
-      setSubmitting(true);
       const existingReturnIds = new Set(selectedSale.returns.map((item) => item.id));
       const sale = await returnPharmacyPosSale(token, tenantId, selectedSale.id, {
         reason: returnReason.trim(),
@@ -894,18 +1022,73 @@ export default function PharmacyPosPage() {
         referenceNumber: returnReference.trim() || null,
         items: requestItems,
       });
-      await refreshSales();
+      setBatchPreview({});
+      await Promise.all([refreshSales(), refreshShifts(), refreshMedicineResults(medicineQuery)]);
       selectSale(sale);
       const newReturns = sale.returns.filter((item) => !existingReturnIds.has(item.id));
       const returnNumbers = Array.from(new Set(newReturns.map((item) => item.returnNumber))).join(", ");
       setSuccess(`Return ${returnNumbers || "processed"} for sale ${sale.saleNumber}. Refund recorded ${money(newReturns.reduce((sum, item) => sum + item.refundAmount, 0))}. Reusable items were restocked with RETURN audit movements.`);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to process return");
+      setError(mapPosError(err, "Return could not be processed."));
     } finally {
-      setSubmitting(false);
+      endAction();
     }
-  }, [refreshSales, returnDraft, returnMode, returnReason, returnReference, selectSale, selectedSale, tenantId, token]);
+  }, [beginAction, endAction, medicineQuery, refreshMedicineResults, refreshSales, refreshShifts, returnDraft, returnMode, returnReason, returnReference, selectSale, selectedSale, tenantId, token]);
+
+  const submitOpenShift = React.useCallback(async () => {
+    if (!token || !tenantId) return;
+    if (!beginAction("open-shift")) return;
+    try {
+      const shift = await openPharmacyPosShift(token, tenantId, {
+        openingCashAmount: numeric(openingCashAmount),
+        notes: shiftOpenNotes.trim() || null,
+      });
+      setCurrentShift(shift);
+      setOpenShiftDialogOpen(false);
+      setOpeningCashAmount("0");
+      setShiftOpenNotes("");
+      await refreshShifts();
+      setSuccess("Cashier shift opened.");
+      setError(null);
+    } catch (err) {
+      setError("Cashier shift could not be opened.");
+    } finally {
+      endAction();
+    }
+  }, [beginAction, endAction, openingCashAmount, refreshShifts, shiftOpenNotes, tenantId, token]);
+
+  const openCloseShiftDialog = React.useCallback(() => {
+    if (!currentShift) return;
+    setActualCashAmount(String(currentShift.expectedCashAmount));
+    setActualUpiAmount(String(currentShift.expectedUpiAmount));
+    setActualCardAmount(String(currentShift.expectedCardAmount));
+    setActualOtherAmount(String(currentShift.expectedOtherAmount));
+    setShiftCloseNotes("");
+    setCloseShiftDialogOpen(true);
+  }, [currentShift]);
+
+  const submitCloseShift = React.useCallback(async () => {
+    if (!token || !tenantId || !currentShift) return;
+    if (!beginAction("close-shift")) return;
+    try {
+      await closePharmacyPosShift(token, tenantId, currentShift.id, {
+        actualCashAmount: numeric(actualCashAmount),
+        actualUpiAmount: numeric(actualUpiAmount),
+        actualCardAmount: numeric(actualCardAmount),
+        actualOtherAmount: numeric(actualOtherAmount),
+        closeNotes: shiftCloseNotes.trim() || null,
+      });
+      setCloseShiftDialogOpen(false);
+      await refreshShifts();
+      setSuccess("Cashier shift closed.");
+      setError(null);
+    } catch (err) {
+      setError("Cashier shift could not be closed.");
+    } finally {
+      endAction();
+    }
+  }, [actualCardAmount, actualCashAmount, actualOtherAmount, actualUpiAmount, beginAction, currentShift, endAction, refreshShifts, shiftCloseNotes, tenantId, token]);
 
   if (!canAccessPos) {
     return <Alert severity="error">Pharmacy POS is restricted to Clinic Admin and pharmacy counter roles.</Alert>;
@@ -924,9 +1107,14 @@ export default function PharmacyPosPage() {
             value={medicineQuery}
             onChange={(event) => setMedicineQuery(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && medicineResults[0]) {
+              if (event.key === "Enter") {
                 event.preventDefault();
-                void addMedicine(medicineResults[0]);
+                if (medicineResults[0]) {
+                  void addMedicine(medicineResults[0]);
+                  return;
+                }
+                setError("No FEFO-eligible medicine matched this scan.");
+                window.setTimeout(() => searchInputRef.current?.focus(), 0);
               }
             }}
             placeholder="Name, generic, brand, barcode, QR, external code, batch"
@@ -972,7 +1160,21 @@ export default function PharmacyPosPage() {
 
       {error ? <Alert severity="error" onClose={() => setError(null)}>{error}</Alert> : null}
       {success ? <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert> : null}
+      {lastCompletedSale ? (
+        <Alert
+          severity="success"
+          onClose={() => setLastCompletedSale(null)}
+          action={(
+            <Button color="inherit" size="small" startIcon={<LocalPrintshopOutlinedIcon />} onClick={() => void printReceipt(lastCompletedSale.id)}>
+              Print Receipt
+            </Button>
+          )}
+        >
+          Sale {lastCompletedSale.saleNumber} completed successfully.
+        </Alert>
+      ) : null}
       {cartHasStockIssue ? <Alert severity="warning">Some cart quantities exceed available stock. Adjust the highlighted rows before completing the sale.</Alert> : null}
+      {collectingPaymentWithoutShift ? <Alert severity="warning">Open cashier shift before collecting payment. Unpaid sale checkout remains available.</Alert> : null}
 
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 8.4 }}>
@@ -1083,7 +1285,7 @@ export default function PharmacyPosPage() {
                               <Typography variant="caption" color={overLimit ? "error.main" : "text.secondary"} sx={{ display: "block" }}>
                                 {overLimit
                                   ? `Only ${line.availableQuantity} available across sellable batches.`
-                                  : `Available ${line.availableQuantity}. ${compactBatchPreview(batchPreview[line.medicineId])}`}
+                                  : `Available ${line.availableQuantity}. Remaining after this line ${Math.max(0, line.availableQuantity - numeric(line.quantity))}. ${compactBatchPreview(batchPreview[line.medicineId])}`}
                               </Typography>
                               {nearExpiry ? (
                                 <Typography variant="caption" color={`${nearExpiry.tone}.main`} sx={{ display: "block" }}>
@@ -1234,10 +1436,10 @@ export default function PharmacyPosPage() {
               <Stack spacing={1.25}>
                 <Typography variant="subtitle1" fontWeight={700}>Payment</Typography>
                 <TextField inputRef={paidAmountInputRef} size="small" label="Paid amount" value={paidAmount} onChange={(event) => setPaidAmount(event.target.value)} fullWidth />
-                <Select size="small" value={paymentMode} onChange={(event) => setPaymentMode(event.target.value as PaymentMode)} fullWidth>
+                <Select size="small" value={paymentMode} onChange={(event) => setPaymentMode(event.target.value as PaymentMode)} fullWidth disabled={collectingPaymentWithoutShift}>
                   {PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}
                 </Select>
-                <TextField size="small" label="Reference" value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} fullWidth />
+                <TextField size="small" label="Reference" value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} fullWidth disabled={collectingPaymentWithoutShift} />
               </Stack>
             </Box>
 
@@ -1245,30 +1447,60 @@ export default function PharmacyPosPage() {
               <Stack spacing={1}>
                 <Stack direction="row" justifyContent="space-between" alignItems="center">
                   <Typography variant="subtitle1" fontWeight={700}>Shift</Typography>
-                  <Chip size="small" label="Foundation only" variant="outlined" />
+                  <Chip
+                    size="small"
+                    label={currentShift ? currentShift.status : "NO OPEN SHIFT"}
+                    color={currentShift ? "success" : "default"}
+                    variant={currentShift ? "filled" : "outlined"}
+                  />
                 </Stack>
                 <Typography variant="caption" color="text.secondary">
-                  Session accounting backend is not active yet. These controls are placeholders for cashier shift open/close workflow.
+                  {currentShift
+                    ? `Opened ${new Date(currentShift.openedAt).toLocaleString()} for cashier ${currentShift.cashierUserId}.`
+                    : "No open cashier shift. Open a shift before collecting POS payments."}
                 </Typography>
                 <Stack direction="row" spacing={1}>
-                  <Button size="small" variant="outlined" disabled>Open Shift</Button>
-                  <Button size="small" variant="outlined" color="inherit" disabled>Close Shift</Button>
+                  <Button size="small" variant="outlined" disabled={Boolean(currentShift)} onClick={() => setOpenShiftDialogOpen(true)}>Open Shift</Button>
+                  <Button size="small" variant="outlined" color="inherit" disabled={!currentShift} onClick={openCloseShiftDialog}>Close Shift</Button>
                 </Stack>
                 <Stack direction="row" justifyContent="space-between">
-                  <Typography variant="body2">Cash collected</Typography>
-                  <Typography variant="body2">{money(0)}</Typography>
+                  <Typography variant="body2">Opening cash</Typography>
+                  <Typography variant="body2">{money(currentShift?.openingCashAmount ?? 0)}</Typography>
                 </Stack>
                 <Stack direction="row" justifyContent="space-between">
-                  <Typography variant="body2">UPI collected</Typography>
-                  <Typography variant="body2">{money(0)}</Typography>
+                  <Typography variant="body2">Expected cash</Typography>
+                  <Typography variant="body2">{money(currentShift?.expectedCashAmount ?? 0)}</Typography>
                 </Stack>
                 <Stack direction="row" justifyContent="space-between">
-                  <Typography variant="body2">Card collected</Typography>
-                  <Typography variant="body2">{money(0)}</Typography>
+                  <Typography variant="body2">Expected UPI</Typography>
+                  <Typography variant="body2">{money(currentShift?.expectedUpiAmount ?? 0)}</Typography>
                 </Stack>
                 <Stack direction="row" justifyContent="space-between">
-                  <Typography variant="body2">Difference</Typography>
-                  <Typography variant="body2">{money(0)}</Typography>
+                  <Typography variant="body2">Expected card</Typography>
+                  <Typography variant="body2">{money(currentShift?.expectedCardAmount ?? 0)}</Typography>
+                </Stack>
+                <Stack direction="row" justifyContent="space-between">
+                  <Typography variant="body2">Expected other</Typography>
+                  <Typography variant="body2">{money(currentShift?.expectedOtherAmount ?? 0)}</Typography>
+                </Stack>
+                <Stack direction="row" justifyContent="space-between">
+                  <Typography variant="body2">Total expected</Typography>
+                  <Typography variant="body2">{money(currentShift?.expectedTotalAmount ?? 0)}</Typography>
+                </Stack>
+                <Divider />
+                <Typography variant="body2" fontWeight={600}>Recent shifts</Typography>
+                <Stack spacing={0.75}>
+                  {shiftHistory.slice(0, 4).map((shift) => (
+                    <Box key={shift.id} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 1 }}>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                        {new Date(shift.openedAt).toLocaleString()} | {shift.status}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                        Expected {money(shift.expectedTotalAmount)} | Actual {money(shift.actualTotalAmount)} | Variance {money(shift.varianceAmount)}
+                      </Typography>
+                    </Box>
+                  ))}
+                  {!shiftHistory.length ? <Typography variant="caption" color="text.secondary">No cashier shifts yet.</Typography> : null}
                 </Stack>
               </Stack>
             </Box>
@@ -1286,10 +1518,10 @@ export default function PharmacyPosPage() {
                 <Button
                   variant="contained"
                   startIcon={<ShoppingCartCheckoutRoundedIcon />}
-                  disabled={submitting || !cart.length || cartHasStockIssue}
+                  disabled={submitting || !cart.length || cartHasStockIssue || collectingPaymentWithoutShift}
                   onClick={() => void submitSale()}
                 >
-                  Complete Sale
+                  {activeAction === "sale" ? "Completing Sale..." : "Complete Sale"}
                 </Button>
               </Stack>
             </Box>
@@ -1311,6 +1543,23 @@ export default function PharmacyPosPage() {
                       </Button>
                     </Stack>
                   </Stack>
+                  <Typography variant="caption" color="text.secondary">
+                    Sale date {new Date(selectedSale.saleDateTime).toLocaleString()} | Payments {selectedSale.payments.length} | Returns {selectedSale.returns.length}
+                  </Typography>
+                  {selectedSale.payments.length ? (
+                    <Typography variant="caption" color="text.secondary">
+                      Latest payment {selectedSale.payments[selectedSale.payments.length - 1].paymentMode} | Receipt {selectedSale.payments[selectedSale.payments.length - 1].receiptNumber} | Shift ref {shortId(selectedSale.payments[selectedSale.payments.length - 1].cashierShiftId)}
+                    </Typography>
+                  ) : null}
+                  {selectedSale.returns.length ? (
+                    <Typography variant="caption" color="text.secondary">
+                      Latest return {selectedSale.returns[selectedSale.returns.length - 1].returnNumber} | Refund {money(selectedSale.returns[selectedSale.returns.length - 1].refundAmount)} | Mode {selectedSale.returns[selectedSale.returns.length - 1].refundMode ?? "NA"}
+                    </Typography>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      Return receipt is not available separately yet. Use the sale receipt for the current audit trail.
+                    </Typography>
+                  )}
                   <Typography variant="caption" color="text.secondary">{selectedSale.fefoExplanation}</Typography>
                   {saleUsesMultipleBatches(selectedSale) ? (
                     <Alert severity="info" sx={{ py: 0 }}>
@@ -1328,13 +1577,14 @@ export default function PharmacyPosPage() {
                   <Divider />
                   <Typography variant="body2" fontWeight={600}>Add payment</Typography>
                   <TextField size="small" label="Amount" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} fullWidth />
-                  <Select size="small" value={paymentTopupMode} onChange={(event) => setPaymentTopupMode(event.target.value as PaymentMode)} fullWidth>
+                  <Select size="small" value={paymentTopupMode} onChange={(event) => setPaymentTopupMode(event.target.value as PaymentMode)} fullWidth disabled={paymentTopupBlocked}>
                     {PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}
                   </Select>
-                  <TextField size="small" label="Reference" value={paymentReferenceTopup} onChange={(event) => setPaymentReferenceTopup(event.target.value)} fullWidth />
-                  <Button size="small" variant="outlined" disabled={submitting || selectedSale.dueAmount <= 0} onClick={() => void submitPayment()}>
-                    Record Payment
+                  <TextField size="small" label="Reference" value={paymentReferenceTopup} onChange={(event) => setPaymentReferenceTopup(event.target.value)} fullWidth disabled={paymentTopupBlocked} />
+                  <Button size="small" variant="outlined" disabled={submitting || selectedSale.dueAmount <= 0 || paymentTopupBlocked} onClick={() => void submitPayment()}>
+                    {activeAction === "payment" ? "Recording Payment..." : "Record Payment"}
                   </Button>
+                  {paymentTopupBlocked ? <Typography variant="caption" color="warning.main">Open cashier shift before collecting payment.</Typography> : null}
                   <Divider />
                   <Stack direction="row" justifyContent="space-between" alignItems="center">
                     <Typography variant="body2" fontWeight={600}>Return / Refund</Typography>
@@ -1417,7 +1667,7 @@ export default function PharmacyPosPage() {
                     Refund estimate {money(refundEstimate)}. Reusable lines: {reusableSelectedCount}. Discard lines: {discardSelectedCount}.
                   </Alert>
                   <Button size="small" variant="outlined" color="warning" disabled={submitting || !selectedSale.items.length} onClick={() => void submitReturn()}>
-                    Process Return
+                    {activeAction === "return" ? "Processing Return..." : "Process Return"}
                   </Button>
                   {selectedSale.returns.length ? (
                     <>
@@ -1470,6 +1720,69 @@ export default function PharmacyPosPage() {
           </Stack>
         </Box>
       </Drawer>
+
+      <Dialog open={openShiftDialogOpen} onClose={() => setOpenShiftDialogOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Open Cashier Shift</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              size="small"
+              label="Opening cash"
+              value={openingCashAmount}
+              onChange={(event) => setOpeningCashAmount(event.target.value)}
+              fullWidth
+            />
+            <TextField
+              size="small"
+              label="Notes"
+              value={shiftOpenNotes}
+              onChange={(event) => setShiftOpenNotes(event.target.value)}
+              multiline
+              minRows={2}
+              fullWidth
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenShiftDialogOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={() => void submitOpenShift()} disabled={submitting}>{activeAction === "open-shift" ? "Opening..." : "Open Shift"}</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={closeShiftDialogOpen} onClose={() => setCloseShiftDialogOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Close Cashier Shift</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Alert severity="info" sx={{ py: 0 }}>
+              Expected cash {money(currentShift?.expectedCashAmount ?? 0)}, UPI {money(currentShift?.expectedUpiAmount ?? 0)}, card {money(currentShift?.expectedCardAmount ?? 0)}, other {money(currentShift?.expectedOtherAmount ?? 0)}.
+            </Alert>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+              <TextField size="small" label="Actual cash" value={actualCashAmount} onChange={(event) => setActualCashAmount(event.target.value)} fullWidth />
+              <TextField size="small" label="Actual UPI" value={actualUpiAmount} onChange={(event) => setActualUpiAmount(event.target.value)} fullWidth />
+            </Stack>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+              <TextField size="small" label="Actual card" value={actualCardAmount} onChange={(event) => setActualCardAmount(event.target.value)} fullWidth />
+              <TextField size="small" label="Actual other" value={actualOtherAmount} onChange={(event) => setActualOtherAmount(event.target.value)} fullWidth />
+            </Stack>
+            <TextField
+              size="small"
+              label="Close notes"
+              value={shiftCloseNotes}
+              onChange={(event) => setShiftCloseNotes(event.target.value)}
+              multiline
+              minRows={2}
+              fullWidth
+            />
+            <Typography variant="body2" color={closeVariancePreview === 0 ? "text.primary" : closeVariancePreview > 0 ? "success.main" : "warning.main"}>
+              Variance preview {money(closeVariancePreview)}
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCloseShiftDialogOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={() => void submitCloseShift()} disabled={submitting || !currentShift}>{activeAction === "close-shift" ? "Closing..." : "Close Shift"}</Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog
         open={scanDialogOpen}
@@ -1524,7 +1837,7 @@ export default function PharmacyPosPage() {
               <Stack direction="row" spacing={1}>
                 <Button variant="outlined" onClick={retakePrescriptionImage}>Retake</Button>
                 <Button variant="contained" onClick={() => void useCapturedPrescriptionImage()} disabled={submitting}>
-                  Use Photo
+                  {activeAction === "prescription-upload" ? "Uploading..." : "Use Photo"}
                 </Button>
               </Stack>
             )}
