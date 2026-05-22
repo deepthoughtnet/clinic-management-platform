@@ -109,6 +109,7 @@ class RolePermissionMappingsTest {
                     Permissions.DASHBOARD_READ,
                     Permissions.CLINIC_DASHBOARD_READ,
                     Permissions.PRESCRIPTION_READ,
+                    Permissions.PRESCRIPTION_PRINT,
                     Permissions.MEDICINE_READ,
                     Permissions.BILLING_CREATE,
                     Permissions.INVENTORY_READ,
@@ -122,6 +123,7 @@ class RolePermissionMappingsTest {
                     Permissions.CONSULTATION_COMPLETE,
                     Permissions.PRESCRIPTION_CREATE,
                     Permissions.PRESCRIPTION_FINALIZE,
+                    Permissions.PRESCRIPTION_SEND,
                     Permissions.NOTIFICATION_SEND,
                     Permissions.NOTIFICATION_MANAGE
             );

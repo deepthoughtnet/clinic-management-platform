@@ -55,6 +55,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "pharmacy-dashboard", label: "Pharmacy Dashboard", path: "/pharmacy/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"] },
       { key: "pharmacy-ops", label: "Operations", path: "/pharmacy/operations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
       { key: "inventory", label: "Inventory", path: "/inventory", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"] },
+      { key: "reconciliation", label: "Reconciliation", path: "/pharmacy/operations?tab=reconciliation", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"] },
       { key: "dispensing", label: "Dispensing", path: "/pharmacy/dispensing", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "AUDITOR"] },
       { key: "stock-movements", label: "Stock Movements", path: "/pharmacy/stock-movements", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER"] },
       { key: "medicine-master", label: "Medicine Master", path: "/pharmacy/medicines", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "AUDITOR", "DOCTOR", "BILLING_USER"] },

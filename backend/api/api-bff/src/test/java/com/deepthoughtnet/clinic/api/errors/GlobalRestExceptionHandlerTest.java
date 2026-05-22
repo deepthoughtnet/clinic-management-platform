@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.errors;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
@@ -69,6 +70,16 @@ class GlobalRestExceptionHandlerTest {
                 .andExpect(jsonPath("$.code").value("forbidden"))
                 .andExpect(jsonPath("$.message").value("You do not have permission to perform this action"))
                 .andExpect(jsonPath("$.correlationId").value("corr-789"));
+    }
+
+    @Test
+    void returnsPlainTextForbiddenForPdfAcceptHeader() throws Exception {
+        mockMvc.perform(get("/forbidden")
+                        .header("X-Correlation-Id", "corr-pdf")
+                        .accept(MediaType.APPLICATION_PDF))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_PLAIN))
+                .andExpect(content().string("You do not have permission to perform this action"));
     }
 
     @Test

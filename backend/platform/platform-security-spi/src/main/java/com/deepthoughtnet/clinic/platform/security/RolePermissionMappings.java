@@ -273,6 +273,7 @@ public final class RolePermissionMappings {
             Permissions.CLINIC_DASHBOARD_READ,
             Permissions.PATIENT_READ,
             Permissions.PRESCRIPTION_READ,
+            Permissions.PRESCRIPTION_PRINT,
             Permissions.MEDICINE_READ,
             Permissions.BILLING_CREATE,
             Permissions.INVENTORY_READ,

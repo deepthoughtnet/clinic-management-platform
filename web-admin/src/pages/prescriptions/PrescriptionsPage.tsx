@@ -94,7 +94,7 @@ export default function PrescriptionsPage() {
       const refreshed = await getPrescriptions(auth.accessToken, auth.tenantId);
       setRows(refreshed);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to open PDF");
+      setError(err instanceof Error ? err.message : "Unable to open prescription. Please try again.");
     } finally {
       setWorkingId(null);
     }

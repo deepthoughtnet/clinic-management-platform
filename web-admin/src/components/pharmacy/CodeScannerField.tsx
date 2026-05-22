@@ -20,6 +20,7 @@ type CodeScannerFieldProps = {
   placeholder?: string;
   helperText?: string;
   disabled?: boolean;
+  size?: "small" | "medium";
 };
 
 type CameraState = "idle" | "starting" | "scanning" | "error";
@@ -33,6 +34,7 @@ export default function CodeScannerField({
   placeholder,
   helperText,
   disabled,
+  size = "medium",
 }: CodeScannerFieldProps) {
   const [open, setOpen] = React.useState(false);
   const [cameraState, setCameraState] = React.useState<CameraState>("idle");
@@ -152,6 +154,7 @@ export default function CodeScannerField({
     <>
       <TextField
         fullWidth
+        size={size}
         label={label}
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -161,7 +164,7 @@ export default function CodeScannerField({
         InputProps={{
           endAdornment: (
             <InputAdornment position="end">
-              <Button size="small" onClick={() => setOpen(true)} disabled={disabled}>
+              <Button size="small" sx={{ minWidth: 52 }} onClick={() => setOpen(true)} disabled={disabled}>
                 Scan
               </Button>
             </InputAdornment>

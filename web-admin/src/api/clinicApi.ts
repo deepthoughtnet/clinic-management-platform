@@ -1639,7 +1639,27 @@ export async function getPrescriptionPdf(token: string, tenantId: string, id: st
     },
   });
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    let message = `HTTP ${res.status}: ${res.statusText}`;
+    const contentType = res.headers.get("content-type") || "";
+    try {
+      if (contentType.includes("application/json")) {
+        const body = await res.json() as { message?: string };
+        if (body?.message) {
+          message = body.message;
+        }
+      } else {
+        const text = (await res.text()).trim();
+        if (text) {
+          message = text;
+        }
+      }
+    } catch {
+      // Keep the fallback HTTP status message when the error body cannot be parsed.
+    }
+    if (res.status === 403) {
+      throw new Error("You do not have permission to print this prescription.");
+    }
+    throw new Error(message);
   }
   const blob = await res.blob();
   const disposition = res.headers.get("content-disposition") || "";

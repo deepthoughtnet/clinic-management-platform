@@ -10,10 +10,13 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
@@ -33,27 +36,27 @@ public class GlobalRestExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalRestExceptionHandler.class);
 
     @ExceptionHandler(BadRequestException.class)
-    public ResponseEntity<ApiError> handleBadRequest(BadRequestException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleBadRequest(BadRequestException ex, HttpServletRequest req) {
         return build(HttpStatus.BAD_REQUEST, "bad_request", userMessage(ex.getMessage(), "Invalid request"), req);
     }
 
     @ExceptionHandler(UnauthorizedException.class)
-    public ResponseEntity<ApiError> handleUnauthorized(UnauthorizedException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleUnauthorized(UnauthorizedException ex, HttpServletRequest req) {
         return build(HttpStatus.UNAUTHORIZED, "unauthorized", userMessage(ex.getMessage(), "Authentication is required"), req);
     }
 
     @ExceptionHandler(ForbiddenException.class)
-    public ResponseEntity<ApiError> handleForbidden(ForbiddenException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleForbidden(ForbiddenException ex, HttpServletRequest req) {
         return build(HttpStatus.FORBIDDEN, "forbidden", userMessage(ex.getMessage(), "You do not have permission to perform this action"), req);
     }
 
     @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<ApiError> handleAccessDenied(AccessDeniedException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleAccessDenied(AccessDeniedException ex, HttpServletRequest req) {
         return build(HttpStatus.FORBIDDEN, "forbidden", "You do not have permission to perform this action", req);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleValidation(MethodArgumentNotValidException ex, HttpServletRequest req) {
         List<String> messages = new ArrayList<>();
         ex.getBindingResult().getFieldErrors().forEach(fe ->
                 messages.add(fe.getField() + ": " + userMessage(fe.getDefaultMessage(), "Invalid value"))
@@ -66,7 +69,7 @@ public class GlobalRestExceptionHandler {
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<ApiError> handleBadJson(HttpMessageNotReadableException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleBadJson(HttpMessageNotReadableException ex, HttpServletRequest req) {
         String message = "Malformed JSON request body";
         Throwable root = ex.getMostSpecificCause();
         if (root != null && root.getMessage() != null) {
@@ -79,22 +82,22 @@ public class GlobalRestExceptionHandler {
     }
 
     @ExceptionHandler(MissingRequestHeaderException.class)
-    public ResponseEntity<ApiError> handleMissingHeader(MissingRequestHeaderException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleMissingHeader(MissingRequestHeaderException ex, HttpServletRequest req) {
         return build(HttpStatus.BAD_REQUEST, "missing_header", "Missing required header: " + ex.getHeaderName(), req);
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
-    public ResponseEntity<ApiError> handleMaxUploadSize(MaxUploadSizeExceededException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleMaxUploadSize(MaxUploadSizeExceededException ex, HttpServletRequest req) {
         return build(HttpStatus.BAD_REQUEST, "file_too_large", "Uploaded file exceeds the maximum allowed size", req);
     }
 
     @ExceptionHandler(MultipartException.class)
-    public ResponseEntity<ApiError> handleMultipart(MultipartException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleMultipart(MultipartException ex, HttpServletRequest req) {
         return build(HttpStatus.BAD_REQUEST, "invalid_multipart", "Invalid multipart upload request", req);
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
-    public ResponseEntity<ApiError> handleTypeMismatch(MethodArgumentTypeMismatchException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleTypeMismatch(MethodArgumentTypeMismatchException ex, HttpServletRequest req) {
         String field = ex.getName() == null ? "parameter" : ex.getName();
         String message = "Invalid value for " + field;
         if (ex.getRequiredType() != null && ex.getValue() != null) {
@@ -104,12 +107,12 @@ public class GlobalRestExceptionHandler {
     }
 
     @ExceptionHandler(MissingServletRequestParameterException.class)
-    public ResponseEntity<ApiError> handleMissingParameter(MissingServletRequestParameterException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleMissingParameter(MissingServletRequestParameterException ex, HttpServletRequest req) {
         return build(HttpStatus.BAD_REQUEST, "missing_parameter", "Missing required parameter: " + ex.getParameterName(), req);
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
-    public ResponseEntity<ApiError> handleConstraintViolation(ConstraintViolationException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleConstraintViolation(ConstraintViolationException ex, HttpServletRequest req) {
         String message = ex.getConstraintViolations().stream()
                 .map(violation -> {
                     String field = violation.getPropertyPath() == null ? "value" : violation.getPropertyPath().toString();
@@ -121,7 +124,7 @@ public class GlobalRestExceptionHandler {
     }
 
     @ExceptionHandler(ResponseStatusException.class)
-    public ResponseEntity<ApiError> handleResponseStatus(ResponseStatusException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleResponseStatus(ResponseStatusException ex, HttpServletRequest req) {
         HttpStatus status = HttpStatus.resolve(ex.getStatusCode().value());
         if (status == null) {
             status = HttpStatus.INTERNAL_SERVER_ERROR;
@@ -131,22 +134,22 @@ public class GlobalRestExceptionHandler {
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<ApiError> handleIllegalArgument(IllegalArgumentException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleIllegalArgument(IllegalArgumentException ex, HttpServletRequest req) {
         return build(HttpStatus.BAD_REQUEST, "bad_request", userMessage(ex.getMessage(), "Invalid request"), req);
     }
 
     @ExceptionHandler(TenantModuleDisabledException.class)
-    public ResponseEntity<ApiError> handleTenantModuleDisabled(TenantModuleDisabledException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleTenantModuleDisabled(TenantModuleDisabledException ex, HttpServletRequest req) {
         return build(HttpStatus.FORBIDDEN, "module_disabled", "AI module is not enabled for this clinic.", req);
     }
 
     @ExceptionHandler(DoctorAvailabilityConflictException.class)
-    public ResponseEntity<ApiError> handleDoctorAvailabilityConflict(DoctorAvailabilityConflictException ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleDoctorAvailabilityConflict(DoctorAvailabilityConflictException ex, HttpServletRequest req) {
         return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Availability already exists for this doctor, day, and time range."), req);
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiError> handleUnhandled(Exception ex, HttpServletRequest req) {
+    public ResponseEntity<?> handleUnhandled(Exception ex, HttpServletRequest req) {
         log.error(
                 "Unhandled exception requestId={} correlationId={} {} {}",
                 correlationId(req),
@@ -158,11 +161,33 @@ public class GlobalRestExceptionHandler {
         return build(HttpStatus.INTERNAL_SERVER_ERROR, "internal_error", "Internal server error", req);
     }
 
-    private ResponseEntity<ApiError> build(HttpStatus status, String code, String message, HttpServletRequest req) {
+    private ResponseEntity<?> build(HttpStatus status, String code, String message, HttpServletRequest req) {
         String correlationId = correlationId(req);
-        return ResponseEntity.status(status).body(
-                ApiError.of(status.value(), code, message, path(req), correlationId)
-        );
+        ApiError body = ApiError.of(status.value(), code, message, path(req), correlationId);
+        MediaType responseType = errorResponseMediaType(req);
+        if (MediaType.TEXT_PLAIN.includes(responseType)) {
+            return ResponseEntity.status(status)
+                    .contentType(MediaType.TEXT_PLAIN)
+                    .body(message);
+        }
+        return ResponseEntity.status(status)
+                .contentType(responseType)
+                .body(body);
+    }
+
+    private MediaType errorResponseMediaType(HttpServletRequest req) {
+        String accept = Optional.ofNullable(req)
+                .map(request -> request.getHeader(HttpHeaders.ACCEPT))
+                .orElse("");
+        if (accept == null || accept.isBlank() || accept.contains(MediaType.ALL_VALUE)) {
+            return MediaType.APPLICATION_JSON;
+        }
+        if (accept.contains(MediaType.APPLICATION_PDF_VALUE)
+                || accept.contains(MediaType.TEXT_HTML_VALUE)
+                || accept.contains(MediaType.TEXT_PLAIN_VALUE)) {
+            return MediaType.TEXT_PLAIN;
+        }
+        return MediaType.APPLICATION_JSON;
     }
 
     private String path(HttpServletRequest req) {

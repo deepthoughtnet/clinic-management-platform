@@ -1,5 +1,9 @@
 import * as React from "react";
 import {
+  Autocomplete,
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -7,6 +11,10 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   Grid,
   InputLabel,
@@ -20,24 +28,26 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TableContainer,
   TextField,
   Typography,
 } from "@mui/material";
+import ExpandMoreRounded from "@mui/icons-material/ExpandMoreRounded";
+import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/useAuth";
+import { CompactEmptyState, CompactFilterCard, CompactStatCard, compactCardContentSx } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import {
   createInventoryTransaction,
   createMedicine,
   createStock,
-  deactivateMedicine,
   getInventoryLocations,
   getInventoryTransactions,
   getLowStock,
   getMedicines,
   getStocks,
   transferInventoryStock,
-  updateMedicine,
   updateStock,
   type InventoryLocation,
   type InventoryTransaction,
@@ -49,26 +59,7 @@ import {
   type MedicineType,
   type Stock,
   type StockInput,
-  type Timing,
 } from "../../api/clinicApi";
-
-type MedicineFormState = {
-  medicineName: string;
-  medicineType: MedicineType;
-  barcode: string;
-  qrCode: string;
-  externalCode: string;
-  genericName: string;
-  brandName: string;
-  strength: string;
-  defaultDosage: string;
-  defaultFrequency: string;
-  defaultDurationDays: string;
-  defaultTiming: Timing | "";
-  defaultInstructions: string;
-  defaultPrice: string;
-  active: boolean;
-};
 
 type StockFormState = {
   medicineId: string;
@@ -97,39 +88,16 @@ type TransactionFormState = {
 };
 
 const TABS = [
-  { value: "medicines", label: "Medicines" },
   { value: "stocks", label: "Stock" },
   { value: "low-stock", label: "Low stock" },
 ] as const;
 
-const MEDICINE_TYPES: MedicineType[] = ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "DROP", "OINTMENT", "OTHER"];
 const TRANSACTION_TYPES: InventoryTransactionType[] = ["OPENING", "PURCHASE", "SALE", "ADJUSTMENT", "RETURN", "EXPIRED", "CANCELLED_DISPENSE", "STOCK_IN", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"];
-const TIMING_OPTIONS: Array<{ label: string; value: Timing }> = [
-  { label: "Before food", value: "BEFORE_FOOD" },
-  { label: "After food", value: "AFTER_FOOD" },
-  { label: "With food", value: "WITH_FOOD" },
-  { label: "Anytime", value: "ANYTIME" },
-];
+const MEDICINE_TYPES: MedicineType[] = ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "DROP", "OINTMENT", "OTHER"];
 
-function emptyMedicineForm(): MedicineFormState {
-  return {
-    medicineName: "",
-    medicineType: "TABLET",
-    barcode: "",
-    qrCode: "",
-    externalCode: "",
-    genericName: "",
-    brandName: "",
-    strength: "",
-    defaultDosage: "",
-    defaultFrequency: "",
-    defaultDurationDays: "",
-    defaultTiming: "",
-    defaultInstructions: "",
-    defaultPrice: "",
-    active: true,
-  };
-}
+type MedicineAutocompleteOption =
+  | { kind: "existing"; medicine: Medicine }
+  | { kind: "create"; inputValue: string };
 
 function emptyStockForm(): StockFormState {
   return {
@@ -161,28 +129,28 @@ function emptyTransactionForm(): TransactionFormState {
   };
 }
 
-function medicineInput(form: MedicineFormState): MedicineInput {
+function emptyQuickMedicineForm(): MedicineInput {
   return {
-    medicineName: form.medicineName.trim(),
-    medicineType: form.medicineType,
-    barcode: form.barcode.trim() || null,
-    qrCode: form.qrCode.trim() || null,
-    externalCode: form.externalCode.trim() || null,
-    genericName: form.genericName.trim() || null,
-    brandName: form.brandName.trim() || null,
+    medicineName: "",
+    medicineType: "TABLET",
+    barcode: null,
+    qrCode: null,
+    externalCode: null,
+    genericName: null,
+    brandName: null,
     category: null,
     dosageForm: null,
-    strength: form.strength.trim() || null,
+    strength: null,
     unit: null,
     manufacturer: null,
-    defaultDosage: form.defaultDosage.trim() || null,
-    defaultFrequency: form.defaultFrequency.trim() || null,
-    defaultDurationDays: form.defaultDurationDays.trim() ? Number(form.defaultDurationDays) : null,
-    defaultTiming: form.defaultTiming || null,
-    defaultInstructions: form.defaultInstructions.trim() || null,
-    defaultPrice: form.defaultPrice.trim() ? Number(form.defaultPrice) : null,
+    defaultDosage: null,
+    defaultFrequency: null,
+    defaultDurationDays: null,
+    defaultTiming: null,
+    defaultInstructions: null,
+    defaultPrice: null,
     taxRate: null,
-    active: form.active,
+    active: true,
   };
 }
 
@@ -253,18 +221,28 @@ function expiryBadge(expiryDate: string | null) {
   return { label: "Fresh", color: "success" as const };
 }
 
+function daysUntil(dateValue: string | null) {
+  if (!dateValue) return Number.POSITIVE_INFINITY;
+  const today = new Date();
+  const target = new Date(dateValue);
+  return Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+}
+
 export default function InventoryPage() {
   const auth = useAuth();
-  const [tab, setTab] = React.useState<(typeof TABS)[number]["value"]>("medicines");
+  const navigate = useNavigate();
+  const [tab, setTab] = React.useState<(typeof TABS)[number]["value"]>("stocks");
   const [medicines, setMedicines] = React.useState<Medicine[]>([]);
   const [stocks, setStocks] = React.useState<Stock[]>([]);
   const [transactions, setTransactions] = React.useState<InventoryTransaction[]>([]);
   const [lowStock, setLowStock] = React.useState<LowStockItem[]>([]);
   const [locations, setLocations] = React.useState<InventoryLocation[]>([]);
-  const [medicineForm, setMedicineForm] = React.useState<MedicineFormState>(emptyMedicineForm());
   const [stockForm, setStockForm] = React.useState<StockFormState>(emptyStockForm());
   const [transactionForm, setTransactionForm] = React.useState<TransactionFormState>(emptyTransactionForm());
-  const [selectedMedicineId, setSelectedMedicineId] = React.useState<string | null>(null);
   const [selectedStockId, setSelectedStockId] = React.useState<string | null>(null);
   const [selectedLocationId, setSelectedLocationId] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -273,8 +251,20 @@ export default function InventoryPage() {
   const [success, setSuccess] = React.useState<string | null>(null);
   const [stockSearch, setStockSearch] = React.useState("");
   const [transferForm, setTransferForm] = React.useState({ medicineId: "", stockBatchId: "", fromLocationId: "", toLocationId: "", quantity: "", reason: "" });
+  const [stockActionPanel, setStockActionPanel] = React.useState<"add" | "transaction" | "transfer">("add");
+  const [medicineSearchInput, setMedicineSearchInput] = React.useState("");
+  const [quickMedicineOpen, setQuickMedicineOpen] = React.useState(false);
+  const [quickMedicineForm, setQuickMedicineForm] = React.useState<MedicineInput>(emptyQuickMedicineForm());
 
   const medicineById = React.useMemo(() => new Map(medicines.map((medicine) => [medicine.id, medicine])), [medicines]);
+  const medicineAutocompleteOptions = React.useMemo<MedicineAutocompleteOption[]>(
+    () => medicines.map((medicine) => ({ kind: "existing", medicine })),
+    [medicines],
+  );
+  const selectedMedicineOption = React.useMemo<MedicineAutocompleteOption | null>(
+    () => medicineAutocompleteOptions.find((option) => option.kind === "existing" && option.medicine.id === stockForm.medicineId) ?? null,
+    [medicineAutocompleteOptions, stockForm.medicineId],
+  );
   const visibleStocks = React.useMemo(() => {
     const term = stockSearch.trim().toLowerCase();
     return stocks.filter((stock) => {
@@ -285,6 +275,78 @@ export default function InventoryPage() {
       return matchesLocation && matchesTerm;
     });
   }, [stocks, stockSearch, selectedLocationId]);
+  const expiringSoonCount = React.useMemo(() => stocks.filter((stock) => {
+    const diff = daysUntil(stock.expiryDate);
+    return diff >= 0 && diff <= 30;
+  }).length, [stocks]);
+  const totalQuantity = React.useMemo(() => stocks.reduce((sum, stock) => sum + stock.quantityOnHand, 0), [stocks]);
+  const estimatedStockValue = React.useMemo(() => stocks.reduce((sum, stock) => {
+    const rate = stock.sellingPrice ?? stock.unitCost ?? 0;
+    return sum + (stock.quantityOnHand * rate);
+  }, 0), [stocks]);
+  const todayMovementCount = React.useMemo(() => {
+    const todayKey = new Date().toISOString().slice(0, 10);
+    return transactions.filter((transaction) => transaction.createdAt.slice(0, 10) === todayKey).length;
+  }, [transactions]);
+  const paidLocationsLabel = React.useMemo(
+    () => locations.find((location) => location.id === selectedLocationId)?.locationName || "All locations",
+    [locations, selectedLocationId],
+  );
+  const filteredTransactionStocks = React.useMemo(
+    () => stocks.filter((stock) => !transactionForm.medicineId || stock.medicineId === transactionForm.medicineId),
+    [stocks, transactionForm.medicineId],
+  );
+  const filteredTransferStocks = React.useMemo(
+    () => stocks.filter((stock) => !transferForm.medicineId || stock.medicineId === transferForm.medicineId),
+    [stocks, transferForm.medicineId],
+  );
+
+  const openQuickCreateMedicine = React.useCallback((seedText = "") => {
+    setQuickMedicineForm((current) => ({
+      ...emptyQuickMedicineForm(),
+      medicineName: seedText.trim(),
+      barcode: stockForm.barcode.trim() || current.barcode,
+      qrCode: stockForm.qrCode.trim() || current.qrCode,
+      externalCode: stockForm.externalCode.trim() || current.externalCode,
+      defaultPrice: stockForm.sellingPrice.trim() ? Number(stockForm.sellingPrice) : null,
+      active: true,
+    }));
+    setQuickMedicineOpen(true);
+  }, [stockForm.barcode, stockForm.externalCode, stockForm.qrCode, stockForm.sellingPrice]);
+
+  const saveQuickMedicine = async () => {
+    if (!auth.accessToken || !auth.tenantId || !quickMedicineForm.medicineName.trim()) {
+      setError("Enter a medicine name before saving.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await createMedicine(auth.accessToken, auth.tenantId, {
+        ...quickMedicineForm,
+        medicineName: quickMedicineForm.medicineName.trim(),
+        genericName: quickMedicineForm.genericName?.trim() || null,
+        brandName: quickMedicineForm.brandName?.trim() || null,
+        category: quickMedicineForm.category?.trim() || null,
+        dosageForm: quickMedicineForm.dosageForm?.trim() || null,
+        strength: quickMedicineForm.strength?.trim() || null,
+        unit: quickMedicineForm.unit?.trim() || null,
+        manufacturer: quickMedicineForm.manufacturer?.trim() || null,
+        barcode: quickMedicineForm.barcode?.trim() || null,
+        qrCode: quickMedicineForm.qrCode?.trim() || null,
+        externalCode: quickMedicineForm.externalCode?.trim() || null,
+      });
+      await loadAll();
+      setStockForm((current) => ({ ...current, medicineId: created.id }));
+      setMedicineSearchInput(created.medicineName);
+      setQuickMedicineOpen(false);
+      setSuccess("Medicine created. Continue adding the stock batch.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create medicine");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const loadAll = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) {
@@ -336,73 +398,6 @@ export default function InventoryPage() {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
   }
 
-  const saveMedicine = async () => {
-    if (!auth.accessToken || !auth.tenantId || !medicineForm.medicineName.trim()) {
-      setError("Enter a medicine name.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const body = medicineInput(medicineForm);
-      if (selectedMedicineId) {
-        await updateMedicine(auth.accessToken, auth.tenantId, selectedMedicineId, body);
-      } else {
-        await createMedicine(auth.accessToken, auth.tenantId, body);
-      }
-      setMedicineForm(emptyMedicineForm());
-      setSelectedMedicineId(null);
-      await loadAll();
-      setSuccess("Medicine saved");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save medicine");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const editMedicine = (medicine: Medicine) => {
-    setSelectedMedicineId(medicine.id);
-    setMedicineForm({
-      medicineName: medicine.medicineName,
-      medicineType: medicine.medicineType,
-      barcode: medicine.barcode || "",
-      qrCode: medicine.qrCode || "",
-      externalCode: medicine.externalCode || "",
-      genericName: medicine.genericName || "",
-      brandName: medicine.brandName || "",
-      strength: medicine.strength || "",
-      defaultDosage: medicine.defaultDosage || "",
-      defaultFrequency: medicine.defaultFrequency || "",
-      defaultDurationDays: medicine.defaultDurationDays?.toString() || "",
-      defaultTiming: medicine.defaultTiming || "",
-      defaultInstructions: medicine.defaultInstructions || "",
-      defaultPrice: medicine.defaultPrice?.toString() || "",
-      active: medicine.active,
-    });
-  };
-
-  const deactivateSelectedMedicine = async (medicine: Medicine) => {
-    if (!auth.accessToken || !auth.tenantId) {
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      await deactivateMedicine(auth.accessToken, auth.tenantId, medicine.id);
-      await loadAll();
-      if (selectedMedicineId === medicine.id) {
-        setMedicineForm(emptyMedicineForm());
-        setSelectedMedicineId(null);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to deactivate medicine");
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const saveStock = async () => {
     if (!auth.accessToken || !auth.tenantId || !stockForm.medicineId) {
       setError("Select a medicine before saving stock.");
@@ -420,6 +415,7 @@ export default function InventoryPage() {
       }
       setStockForm(emptyStockForm());
       setSelectedStockId(null);
+      setMedicineSearchInput("");
       await loadAll();
       setSuccess("Stock saved");
     } catch (err) {
@@ -431,6 +427,7 @@ export default function InventoryPage() {
 
   const editStock = (stock: Stock) => {
     setSelectedStockId(stock.id);
+    setMedicineSearchInput(stock.medicineName);
     setStockForm({
       medicineId: stock.medicineId,
       locationId: stock.locationId || "",
@@ -447,6 +444,16 @@ export default function InventoryPage() {
       active: stock.active,
     });
   };
+
+  React.useEffect(() => {
+    if (!stockForm.medicineId) {
+      return;
+    }
+    const medicine = medicines.find((row) => row.id === stockForm.medicineId);
+    if (medicine && medicine.medicineName !== medicineSearchInput) {
+      setMedicineSearchInput(medicine.medicineName);
+    }
+  }, [medicines, medicineSearchInput, stockForm.medicineId]);
 
   const saveTransaction = async () => {
     if (!auth.accessToken || !auth.tenantId || !transactionForm.medicineId || !transactionForm.quantity.trim()) {
@@ -468,7 +475,6 @@ export default function InventoryPage() {
     }
   };
 
-  const currentMedicine = selectedMedicineId ? medicines.find((medicine) => medicine.id === selectedMedicineId) || null : null;
   const currentStock = selectedStockId ? stocks.find((stock) => stock.id === selectedStockId) || null : null;
 
   return (
@@ -479,7 +485,7 @@ export default function InventoryPage() {
             Inventory
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Medicine catalogue, stock control, transactions, and low-stock visibility.
+            Physical stock control, batch visibility, expiry monitoring, and inventory movements.
           </Typography>
         </Box>
       </Box>
@@ -503,530 +509,603 @@ export default function InventoryPage() {
         </Box>
       ) : null}
 
-      {tab === "medicines" ? (
-        <Grid container spacing={2}>
-          <Grid size={{ xs: 12, lg: 4 }}>
-            <Card>
-              <CardContent>
-                <Stack spacing={2}>
-                  <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                    {selectedMedicineId ? "Edit medicine" : "Add medicine"}
-                  </Typography>
-                  <TextField label="Medicine name" value={medicineForm.medicineName} onChange={(e) => setMedicineForm((current) => ({ ...current, medicineName: e.target.value }))} />
-                  <Grid container spacing={2}>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <CodeScannerField label="Barcode" value={medicineForm.barcode} onChange={(value) => setMedicineForm((current) => ({ ...current, barcode: value }))} placeholder="Scan or enter barcode" />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <CodeScannerField label="QR code" value={medicineForm.qrCode} onChange={(value) => setMedicineForm((current) => ({ ...current, qrCode: value }))} placeholder="Scan or enter QR code" />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <CodeScannerField label="External code" value={medicineForm.externalCode} onChange={(value) => setMedicineForm((current) => ({ ...current, externalCode: value }))} placeholder="Scan or enter code" />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <FormControl fullWidth>
-                        <InputLabel id="medicine-type-label">Type</InputLabel>
-                        <Select labelId="medicine-type-label" label="Type" value={medicineForm.medicineType} onChange={(e) => setMedicineForm((current) => ({ ...current, medicineType: String(e.target.value) as MedicineType }))}>
-                          {MEDICINE_TYPES.map((type) => (
-                            <MenuItem key={type} value={type}>
-                              {type}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField label="Generic name" value={medicineForm.genericName} onChange={(e) => setMedicineForm((current) => ({ ...current, genericName: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField label="Brand name" value={medicineForm.brandName} onChange={(e) => setMedicineForm((current) => ({ ...current, brandName: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField label="Strength" value={medicineForm.strength} onChange={(e) => setMedicineForm((current) => ({ ...current, strength: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField label="Default dosage" value={medicineForm.defaultDosage} onChange={(e) => setMedicineForm((current) => ({ ...current, defaultDosage: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField label="Default frequency" value={medicineForm.defaultFrequency} onChange={(e) => setMedicineForm((current) => ({ ...current, defaultFrequency: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField label="Default duration (days)" value={medicineForm.defaultDurationDays} onChange={(e) => setMedicineForm((current) => ({ ...current, defaultDurationDays: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <FormControl fullWidth>
-                        <InputLabel id="medicine-timing-label">Default timing</InputLabel>
-                        <Select labelId="medicine-timing-label" label="Default timing" value={medicineForm.defaultTiming} onChange={(e) => setMedicineForm((current) => ({ ...current, defaultTiming: String(e.target.value) as Timing | "" }))}>
-                          <MenuItem value="">None</MenuItem>
-                          {TIMING_OPTIONS.map((item) => (
-                            <MenuItem key={item.value} value={item.value}>
-                              {item.label}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                    <Grid size={12}>
-                      <TextField label="Default instructions" value={medicineForm.defaultInstructions} onChange={(e) => setMedicineForm((current) => ({ ...current, defaultInstructions: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField label="Default price" value={medicineForm.defaultPrice} onChange={(e) => setMedicineForm((current) => ({ ...current, defaultPrice: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <FormControl fullWidth>
-                        <InputLabel id="medicine-active-label">Active</InputLabel>
-                        <Select labelId="medicine-active-label" label="Active" value={medicineForm.active ? "true" : "false"} onChange={(e) => setMedicineForm((current) => ({ ...current, active: String(e.target.value) === "true" }))}>
-                          <MenuItem value="true">Active</MenuItem>
-                          <MenuItem value="false">Inactive</MenuItem>
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                  </Grid>
-                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                    <Button variant="contained" onClick={() => void saveMedicine()} disabled={saving}>
-                      {selectedMedicineId ? "Update" : "Create"}
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setMedicineForm(emptyMedicineForm());
-                        setSelectedMedicineId(null);
-                      }}
-                    >
-                      Reset
-                    </Button>
-                    {currentMedicine ? (
-                      <Button color="error" variant="outlined" onClick={() => void deactivateSelectedMedicine(currentMedicine)} disabled={saving || !currentMedicine.active}>
-                        Deactivate
-                      </Button>
-                    ) : null}
-                  </Box>
-                </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid size={{ xs: 12, lg: 8 }}>
-            <Card>
-              <CardContent>
-                <Stack spacing={2}>
-                  <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                    Medicine catalogue
-                  </Typography>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Name</TableCell>
-                        <TableCell>Generic / Brand</TableCell>
-                        <TableCell>Category</TableCell>
-                        <TableCell>Type</TableCell>
-                        <TableCell>Dosage / Frequency</TableCell>
-                        <TableCell>Duration / Timing</TableCell>
-                        <TableCell>Instructions</TableCell>
-                        <TableCell>Default price</TableCell>
-                        <TableCell>Status</TableCell>
-                        <TableCell align="right">Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {medicines.map((medicine) => (
-                      <TableRow key={medicine.id} hover selected={medicine.id === selectedMedicineId}>
-                        <TableCell>
-                          <Stack spacing={0.25}>
-                            <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                              {medicine.medicineName}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {medicine.genericName || "No generic name"}
-                              </Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              <Typography variant="body2">{medicine.genericName || "-"}</Typography>
-                              <Typography variant="caption" color="text.secondary">{medicine.brandName || "-"}</Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell>{medicine.category || "-"}</TableCell>
-                          <TableCell>{medicine.medicineType}</TableCell>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              <Typography variant="body2">{medicine.defaultDosage || "-"}</Typography>
-                              <Typography variant="caption" color="text.secondary">{medicine.defaultFrequency || "-"}</Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              <Typography variant="body2">{medicine.defaultDurationDays != null ? `${medicine.defaultDurationDays} days` : "-"}</Typography>
-                              <Typography variant="caption" color="text.secondary">{medicine.defaultTiming || "-"}</Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell sx={{ maxWidth: 200 }}>{medicine.defaultInstructions || "-"}</TableCell>
-                          <TableCell>{medicine.defaultPrice ? medicine.defaultPrice.toFixed(2) : "-"}</TableCell>
-                          <TableCell>
-                            <Chip size="small" label={medicine.active ? "Active" : "Inactive"} color={medicine.active ? "success" : "default"} />
-                          </TableCell>
-                          <TableCell align="right">
-                            <Button size="small" onClick={() => editMedicine(medicine)}>
-                              Edit
-                            </Button>
-                            <Button size="small" color="error" onClick={() => void deactivateSelectedMedicine(medicine)} disabled={!medicine.active}>
-                              Deactivate
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-      ) : null}
-
       {tab === "stocks" ? (
         <Grid container spacing={2}>
-          <Grid size={{ xs: 12, lg: 4 }}>
-            <Card>
-              <CardContent>
-                <Stack spacing={2}>
-                  <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                    {selectedStockId ? "Edit stock" : "Add stock"}
-                  </Typography>
-                  <FormControl fullWidth>
-                    <InputLabel id="stock-medicine-label">Medicine</InputLabel>
-                    <Select labelId="stock-medicine-label" label="Medicine" value={stockForm.medicineId} onChange={(e) => setStockForm((current) => ({ ...current, medicineId: String(e.target.value) }))}>
-                      <MenuItem value="">Select medicine</MenuItem>
-                      {medicines.map((medicine) => (
-                        <MenuItem key={medicine.id} value={medicine.id}>
-                          {medicine.medicineName}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <FormControl fullWidth>
-                    <InputLabel id="stock-location-label">Location</InputLabel>
-                    <Select labelId="stock-location-label" label="Location" value={stockForm.locationId} onChange={(e) => setStockForm((current) => ({ ...current, locationId: String(e.target.value) }))}>
-                      <MenuItem value="">Default location</MenuItem>
-                      {locations.map((location) => (
-                        <MenuItem key={location.id} value={location.id}>
-                          {location.locationName}{location.defaultLocation ? " (Default)" : ""}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <TextField label="Batch number" value={stockForm.batchNumber} onChange={(e) => setStockForm((current) => ({ ...current, batchNumber: e.target.value }))} />
-                  <TextField label="Purchase reference" value={stockForm.purchaseReferenceNumber} onChange={(e) => setStockForm((current) => ({ ...current, purchaseReferenceNumber: e.target.value }))} />
-                  <Grid container spacing={2}>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <CodeScannerField label="Barcode" value={stockForm.barcode} onChange={(value) => setStockForm((current) => ({ ...current, barcode: value }))} placeholder="Scan or enter barcode" />
+          <Grid size={12}>
+            <Grid container spacing={1.5}>
+              <Grid size={{ xs: 6, md: 2.4 }}>
+                <CompactStatCard label="Stock batches" value={stocks.length} helper={`${paidLocationsLabel} workspace`} />
+              </Grid>
+              <Grid size={{ xs: 6, md: 2.4 }}>
+                <CompactStatCard label="Low stock" value={lowStock.length} tone={lowStock.length ? "error" : "success"} helper="Needs replenishment" />
+              </Grid>
+              <Grid size={{ xs: 6, md: 2.4 }}>
+                <CompactStatCard label="Expiring soon" value={expiringSoonCount} tone={expiringSoonCount ? "warning" : "success"} helper="Within 30 days" />
+              </Grid>
+              <Grid size={{ xs: 6, md: 2.4 }}>
+                <CompactStatCard label="Total quantity" value={totalQuantity} helper={`Est. value ${formatCurrency(estimatedStockValue)}`} />
+              </Grid>
+              <Grid size={{ xs: 6, md: 2.4 }}>
+                <CompactStatCard label="Today movements" value={todayMovementCount} helper="Transactions posted today" />
+              </Grid>
+            </Grid>
+          </Grid>
+
+          <Grid size={12}>
+            <CompactFilterCard
+              title="Stock operations"
+              subtitle="Inventory manages batch-wise physical stock. Medicine catalogue is maintained in Medicine Master."
+              actions={(
+                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                  <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/medicines")}>Open Medicine Master</Button>
+                  <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/operations?tab=reconciliation")}>Open Reconciliation</Button>
+                </Stack>
+              )}
+            >
+              {medicines.length === 0 ? (
+                <CompactEmptyState
+                  title="No medicines available."
+                  subtitle="Create or upload medicines in Medicine Master before adding stock."
+                  action={<Button size="small" onClick={() => navigate("/pharmacy/medicines")}>Open Medicine Master</Button>}
+                />
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  Use this workspace for batch numbers, expiry, quantity, thresholds, stock adjustments, and transfers.
+                </Typography>
+              )}
+            </CompactFilterCard>
+          </Grid>
+
+          <Grid size={{ xs: 12, lg: 4.2 }}>
+            <Stack spacing={1.5}>
+              <Accordion expanded={stockActionPanel === "add"} onChange={(_, expanded) => setStockActionPanel(expanded ? "add" : "add")} disableGutters sx={{ "&:before": { display: "none" }, borderRadius: 4, overflow: "hidden" }}>
+                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 2, py: 0.5 }}>
+                  <Stack spacing={0.4}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                      {selectedStockId ? "Edit batch" : "Add batch"}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Batch, expiry, and quantity are managed here. Medicine catalogue is maintained in Medicine Master.
+                    </Typography>
+                  </Stack>
+                </AccordionSummary>
+                <AccordionDetails sx={{ px: 2, pb: 2, pt: 0 }}>
+                  <Stack spacing={1.5}>
+                    <Alert severity="info" sx={{ py: 0 }}>
+                      Medicine not in catalogue? Create it here and continue adding this stock batch.
+                    </Alert>
+                    <Grid container spacing={1.25}>
+                      <Grid size={{ xs: 12, md: 8 }}>
+                        <Autocomplete<MedicineAutocompleteOption, false, false, false>
+                          options={medicineAutocompleteOptions}
+                          value={selectedMedicineOption}
+                          inputValue={medicineSearchInput}
+                          onInputChange={(_, value, reason) => {
+                            if (reason !== "reset") {
+                              setMedicineSearchInput(value);
+                            }
+                          }}
+                          filterOptions={(options, state) => {
+                            const term = state.inputValue.trim().toLowerCase();
+                            const filtered = !term
+                              ? options
+                              : options.filter((option) => {
+                                  if (option.kind !== "existing") return false;
+                                  const medicine = option.medicine;
+                                  return [
+                                    medicine.medicineName,
+                                    medicine.genericName,
+                                    medicine.brandName,
+                                    medicine.barcode,
+                                    medicine.qrCode,
+                                    medicine.externalCode,
+                                  ]
+                                    .filter(Boolean)
+                                    .some((value) => String(value).toLowerCase().includes(term));
+                                });
+                            const hasExactMatch = options.some((option) => option.kind === "existing" && option.medicine.medicineName.toLowerCase() === term);
+                            if (term && !hasExactMatch) {
+                              filtered.push({ kind: "create", inputValue: state.inputValue });
+                            }
+                            return filtered.slice(0, 20);
+                          }}
+                          onChange={(_, value) => {
+                            if (!value) {
+                              setStockForm((current) => ({ ...current, medicineId: "" }));
+                              return;
+                            }
+                            if (value.kind === "create") {
+                              openQuickCreateMedicine(value.inputValue);
+                              return;
+                            }
+                            setStockForm((current) => ({ ...current, medicineId: value.medicine.id }));
+                            setMedicineSearchInput(value.medicine.medicineName);
+                          }}
+                          getOptionLabel={(option) => option.kind === "create" ? `Create new medicine: ${option.inputValue}` : option.medicine.medicineName}
+                          isOptionEqualToValue={(option, value) => {
+                            if (option.kind === "create" && value.kind === "create") {
+                              return option.inputValue === value.inputValue;
+                            }
+                            if (option.kind === "existing" && value.kind === "existing") {
+                              return option.medicine.id === value.medicine.id;
+                            }
+                            return false;
+                          }}
+                          noOptionsText="No medicines found"
+                          renderOption={(props, option) => (
+                            <Box component="li" {...props}>
+                              {option.kind === "create" ? (
+                                <Stack spacing={0.2}>
+                                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                    Create new medicine: {option.inputValue}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    Quick add to Medicine Master and continue this stock batch.
+                                  </Typography>
+                                </Stack>
+                              ) : (
+                                <Stack spacing={0.25}>
+                                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                    {option.medicine.medicineName}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {[option.medicine.genericName, option.medicine.brandName].filter(Boolean).join(" / ") || "No generic or brand"}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {[option.medicine.medicineType, option.medicine.strength, option.medicine.defaultPrice != null ? formatCurrency(option.medicine.defaultPrice) : null].filter(Boolean).join(" • ")}
+                                  </Typography>
+                                </Stack>
+                              )}
+                            </Box>
+                          )}
+                          renderInput={(params) => (
+                            <TextField
+                              {...params}
+                              size="small"
+                              label="Medicine"
+                              placeholder="Search by name, brand, generic, barcode, QR, or code"
+                              helperText="Search medicine name, generic, brand, barcode, QR code, or external code."
+                            />
+                          )}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <Button fullWidth variant="outlined" sx={{ height: 40 }} onClick={() => openQuickCreateMedicine(medicineSearchInput)} disabled={saving}>
+                          Quick Add Medicine
+                        </Button>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <FormControl fullWidth size="small">
+                          <InputLabel id="stock-location-label">Location</InputLabel>
+                          <Select labelId="stock-location-label" label="Location" value={stockForm.locationId} onChange={(e) => setStockForm((current) => ({ ...current, locationId: String(e.target.value) }))}>
+                            <MenuItem value="">Default location</MenuItem>
+                            {locations.map((location) => (
+                              <MenuItem key={location.id} value={location.id}>
+                                {location.locationName}{location.defaultLocation ? " (Default)" : ""}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField size="small" fullWidth label="Batch number" value={stockForm.batchNumber} onChange={(e) => setStockForm((current) => ({ ...current, batchNumber: e.target.value }))} />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField size="small" fullWidth label="Purchase reference" value={stockForm.purchaseReferenceNumber} onChange={(e) => setStockForm((current) => ({ ...current, purchaseReferenceNumber: e.target.value }))} />
+                      </Grid>
+                      <Grid size={{ xs: 12 }}>
+                        <Grid container spacing={1.25}>
+                          <Grid size={{ xs: 12, md: 4 }}>
+                            <CodeScannerField label="Barcode" value={stockForm.barcode} onChange={(value) => setStockForm((current) => ({ ...current, barcode: value }))} placeholder="Scan or enter barcode" helperText="Use batch label code if available." />
+                          </Grid>
+                          <Grid size={{ xs: 12, md: 4 }}>
+                            <CodeScannerField label="QR code" value={stockForm.qrCode} onChange={(value) => setStockForm((current) => ({ ...current, qrCode: value }))} placeholder="Scan or enter QR code" />
+                          </Grid>
+                          <Grid size={{ xs: 12, md: 4 }}>
+                            <CodeScannerField label="External code" value={stockForm.externalCode} onChange={(value) => setStockForm((current) => ({ ...current, externalCode: value }))} placeholder="Scan or enter code" />
+                          </Grid>
+                        </Grid>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField size="small" fullWidth label="Expiry date" type="date" value={stockForm.expiryDate} onChange={(e) => setStockForm((current) => ({ ...current, expiryDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField size="small" fullWidth label="Quantity on hand" value={stockForm.quantityOnHand} onChange={(e) => setStockForm((current) => ({ ...current, quantityOnHand: e.target.value }))} />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField size="small" fullWidth label="Low stock threshold" value={stockForm.lowStockThreshold} onChange={(e) => setStockForm((current) => ({ ...current, lowStockThreshold: e.target.value }))} />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <FormControl fullWidth size="small">
+                          <InputLabel id="stock-active-label">Active</InputLabel>
+                          <Select labelId="stock-active-label" label="Active" value={stockForm.active ? "true" : "false"} onChange={(e) => setStockForm((current) => ({ ...current, active: String(e.target.value) === "true" }))}>
+                            <MenuItem value="true">Active</MenuItem>
+                            <MenuItem value="false">Inactive</MenuItem>
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField size="small" fullWidth label="Unit cost" value={stockForm.unitCost} onChange={(e) => setStockForm((current) => ({ ...current, unitCost: e.target.value }))} />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField size="small" fullWidth label="Selling price" value={stockForm.sellingPrice} onChange={(e) => setStockForm((current) => ({ ...current, sellingPrice: e.target.value }))} />
+                      </Grid>
                     </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <CodeScannerField label="QR code" value={stockForm.qrCode} onChange={(value) => setStockForm((current) => ({ ...current, qrCode: value }))} placeholder="Scan or enter QR code" />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <CodeScannerField label="External code" value={stockForm.externalCode} onChange={(value) => setStockForm((current) => ({ ...current, externalCode: value }))} placeholder="Scan or enter code" />
-                    </Grid>
-                  </Grid>
-                  <TextField label="Expiry date" type="date" value={stockForm.expiryDate} onChange={(e) => setStockForm((current) => ({ ...current, expiryDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
-                  <Grid container spacing={2}>
+                    <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                      <Button
+                        onClick={async () => {
+                          await saveStock();
+                        }}
+                        disabled={saving}
+                      >
+                        {selectedStockId ? "Update batch" : "Add batch"}
+                      </Button>
+                      <Button
+                        variant="text"
+                        onClick={() => {
+                          setStockForm(emptyStockForm());
+                          setSelectedStockId(null);
+                          setMedicineSearchInput("");
+                        }}
+                      >
+                        Clear
+                      </Button>
+                      {currentStock ? <Chip size="small" label={`${currentStock.medicineName} • ${currentStock.batchNumber || "No batch"}`} variant="outlined" /> : null}
+                    </Box>
+                  </Stack>
+                </AccordionDetails>
+              </Accordion>
+
+              <Accordion expanded={stockActionPanel === "transaction"} onChange={(_, expanded) => setStockActionPanel(expanded ? "transaction" : "add")} disableGutters sx={{ "&:before": { display: "none" }, borderRadius: 4, overflow: "hidden" }}>
+                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 2, py: 0.5 }}>
+                  <Stack spacing={0.4}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                      Stock adjustment
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Post opening, purchase, adjustment, return, and cancellation transactions without leaving the stock workspace.
+                    </Typography>
+                  </Stack>
+                </AccordionSummary>
+                <AccordionDetails sx={{ px: 2, pb: 2, pt: 0 }}>
+                  <Grid container spacing={1.25}>
                     <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField label="Quantity on hand" value={stockForm.quantityOnHand} onChange={(e) => setStockForm((current) => ({ ...current, quantityOnHand: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField label="Low stock threshold" value={stockForm.lowStockThreshold} onChange={(e) => setStockForm((current) => ({ ...current, lowStockThreshold: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField label="Unit cost" value={stockForm.unitCost} onChange={(e) => setStockForm((current) => ({ ...current, unitCost: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField label="Selling price" value={stockForm.sellingPrice} onChange={(e) => setStockForm((current) => ({ ...current, sellingPrice: e.target.value }))} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <FormControl fullWidth>
-                        <InputLabel id="stock-active-label">Active</InputLabel>
-                        <Select labelId="stock-active-label" label="Active" value={stockForm.active ? "true" : "false"} onChange={(e) => setStockForm((current) => ({ ...current, active: String(e.target.value) === "true" }))}>
-                          <MenuItem value="true">Active</MenuItem>
-                          <MenuItem value="false">Inactive</MenuItem>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="transaction-medicine-label">Medicine</InputLabel>
+                        <Select labelId="transaction-medicine-label" label="Medicine" value={transactionForm.medicineId} onChange={(e) => setTransactionForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))}>
+                          <MenuItem value="">Select medicine</MenuItem>
+                          {medicines.map((medicine) => (
+                            <MenuItem key={medicine.id} value={medicine.id}>
+                              {medicine.medicineName}
+                            </MenuItem>
+                          ))}
                         </Select>
                       </FormControl>
                     </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="transaction-stock-label">Stock batch</InputLabel>
+                        <Select labelId="transaction-stock-label" label="Stock batch" value={transactionForm.stockBatchId} onChange={(e) => setTransactionForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}>
+                          <MenuItem value="">Select batch</MenuItem>
+                          {filteredTransactionStocks.map((stock) => (
+                            <MenuItem key={stock.id} value={stock.id}>
+                              {(stock.batchNumber || "No batch")} • {stock.locationName || "Main Pharmacy"}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="transaction-type-label">Type</InputLabel>
+                        <Select labelId="transaction-type-label" label="Type" value={transactionForm.transactionType} onChange={(e) => setTransactionForm((current) => ({ ...current, transactionType: String(e.target.value) as InventoryTransactionType }))}>
+                          {TRANSACTION_TYPES.map((type) => (
+                            <MenuItem key={type} value={type}>
+                              {transactionLabel(type)}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField size="small" fullWidth label="Quantity" value={transactionForm.quantity} onChange={(e) => setTransactionForm((current) => ({ ...current, quantity: e.target.value }))} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField size="small" fullWidth label="Reference type" value={transactionForm.referenceType} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceType: e.target.value }))} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField size="small" fullWidth label="Reference ID" value={transactionForm.referenceId} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceId: e.target.value }))} />
+                    </Grid>
+                    <Grid size={12}>
+                      <TextField size="small" fullWidth label="Notes" value={transactionForm.notes} onChange={(e) => setTransactionForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} />
+                    </Grid>
+                    <Grid size={12}>
+                      <Button onClick={() => void saveTransaction()} disabled={saving}>
+                        Save transaction
+                      </Button>
+                    </Grid>
                   </Grid>
-                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                    <Button variant="contained" onClick={() => void saveStock()} disabled={saving}>
-                      {selectedStockId ? "Update" : "Create"}
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setStockForm(emptyStockForm());
-                        setSelectedStockId(null);
-                      }}
-                    >
-                      Reset
-                    </Button>
-                    {currentStock ? (
-                      <Chip size="small" label={`${currentStock.medicineName} • ${currentStock.batchNumber || "No batch"}`} variant="outlined" />
-                    ) : null}
-                  </Box>
-                </Stack>
-              </CardContent>
-            </Card>
+                </AccordionDetails>
+              </Accordion>
 
-            <Card sx={{ mt: 2 }}>
-              <CardContent>
-                <Stack spacing={2}>
-                  <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                    Inventory transaction
-                  </Typography>
-                  <FormControl fullWidth>
-                    <InputLabel id="transaction-medicine-label">Medicine</InputLabel>
-                    <Select labelId="transaction-medicine-label" label="Medicine" value={transactionForm.medicineId} onChange={(e) => setTransactionForm((current) => ({ ...current, medicineId: String(e.target.value) }))}>
-                      <MenuItem value="">Select medicine</MenuItem>
-                      {medicines.map((medicine) => (
-                        <MenuItem key={medicine.id} value={medicine.id}>
-                          {medicine.medicineName}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <TextField label="Stock batch ID" value={transactionForm.stockBatchId} onChange={(e) => setTransactionForm((current) => ({ ...current, stockBatchId: e.target.value }))} />
-                    <FormControl fullWidth>
-                      <InputLabel id="transaction-type-label">Type</InputLabel>
-                      <Select labelId="transaction-type-label" label="Type" value={transactionForm.transactionType} onChange={(e) => setTransactionForm((current) => ({ ...current, transactionType: String(e.target.value) as InventoryTransactionType }))}>
-                        {TRANSACTION_TYPES.map((type) => (
-                          <MenuItem key={type} value={type}>
-                            {transactionLabel(type)}
+              <Accordion expanded={stockActionPanel === "transfer"} onChange={(_, expanded) => setStockActionPanel(expanded ? "transfer" : "add")} disableGutters sx={{ "&:before": { display: "none" }, borderRadius: 4, overflow: "hidden" }}>
+                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 2, py: 0.5 }}>
+                  <Stack spacing={0.4}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                      Transfer stock
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Move available stock between locations with a short reason and keep the transaction log in sync.
+                    </Typography>
+                  </Stack>
+                </AccordionSummary>
+                <AccordionDetails sx={{ px: 2, pb: 2, pt: 0 }}>
+                  <Grid container spacing={1.25}>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="transfer-medicine-label">Medicine</InputLabel>
+                        <Select labelId="transfer-medicine-label" label="Medicine" value={transferForm.medicineId} onChange={(e) => setTransferForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))}>
+                          <MenuItem value="">Select medicine</MenuItem>
+                          {medicines.map((medicine) => (
+                            <MenuItem key={medicine.id} value={medicine.id}>
+                              {medicine.medicineName}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="transfer-stock-label">Batch</InputLabel>
+                        <Select labelId="transfer-stock-label" label="Batch" value={transferForm.stockBatchId} onChange={(e) => setTransferForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}>
+                          <MenuItem value="">Select batch</MenuItem>
+                          {filteredTransferStocks.map((stock) => (
+                            <MenuItem key={stock.id} value={stock.id}>
+                              {(stock.batchNumber || "No batch")} • {stock.locationName || "Main Pharmacy"}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="transfer-from-label">From location</InputLabel>
+                        <Select labelId="transfer-from-label" label="From location" value={transferForm.fromLocationId} onChange={(e) => setTransferForm((current) => ({ ...current, fromLocationId: String(e.target.value) }))}>
+                          <MenuItem value="">Select location</MenuItem>
+                          {locations.map((location) => (
+                            <MenuItem key={location.id} value={location.id}>
+                              {location.locationName}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="transfer-to-label">To location</InputLabel>
+                        <Select labelId="transfer-to-label" label="To location" value={transferForm.toLocationId} onChange={(e) => setTransferForm((current) => ({ ...current, toLocationId: String(e.target.value) }))}>
+                          <MenuItem value="">Select location</MenuItem>
+                          {locations.map((location) => (
+                            <MenuItem key={location.id} value={location.id}>
+                              {location.locationName}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField size="small" fullWidth label="Quantity" value={transferForm.quantity} onChange={(e) => setTransferForm((current) => ({ ...current, quantity: e.target.value }))} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField size="small" fullWidth label="Reason" value={transferForm.reason} onChange={(e) => setTransferForm((current) => ({ ...current, reason: e.target.value }))} />
+                    </Grid>
+                    <Grid size={12}>
+                      <Button
+                        variant="outlined"
+                        onClick={async () => {
+                          if (!auth.accessToken || !auth.tenantId) return;
+                          if (!transferForm.medicineId || !transferForm.fromLocationId || !transferForm.toLocationId || !transferForm.quantity.trim()) {
+                            setError("Select medicine, source location, destination location, and quantity.");
+                            return;
+                          }
+                          setSaving(true);
+                          setError(null);
+                          try {
+                            await transferInventoryStock(auth.accessToken, auth.tenantId, {
+                              medicineId: transferForm.medicineId,
+                              stockBatchId: transferForm.stockBatchId || null,
+                              fromLocationId: transferForm.fromLocationId,
+                              toLocationId: transferForm.toLocationId,
+                              quantity: Number(transferForm.quantity),
+                              reason: transferForm.reason.trim() || null,
+                            });
+                            setTransferForm({ medicineId: "", stockBatchId: "", fromLocationId: "", toLocationId: "", quantity: "", reason: "" });
+                            await loadAll();
+                            setSuccess("Stock transfer recorded");
+                          } catch (err) {
+                            setError(err instanceof Error ? err.message : "Failed to transfer stock");
+                          } finally {
+                            setSaving(false);
+                          }
+                        }}
+                        disabled={saving}
+                      >
+                        Transfer
+                      </Button>
+                    </Grid>
+                  </Grid>
+                </AccordionDetails>
+              </Accordion>
+            </Stack>
+          </Grid>
+
+          <Grid size={{ xs: 12, lg: 7.8 }}>
+            <Stack spacing={1.5}>
+              <CompactFilterCard
+                title="Stock workspace"
+                subtitle="Batches, quantities, expiry, and activity in one compact view."
+              >
+                <Grid container spacing={1.25}>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl size="small" fullWidth>
+                      <InputLabel id="stock-filter-location-label">Location</InputLabel>
+                      <Select
+                        labelId="stock-filter-location-label"
+                        label="Location"
+                        value={selectedLocationId || ""}
+                        onChange={(e) => setSelectedLocationId(String(e.target.value) || null)}
+                      >
+                        <MenuItem value="">All locations</MenuItem>
+                        {locations.map((location) => (
+                          <MenuItem key={location.id} value={location.id}>
+                            {location.locationName}{location.defaultLocation ? " (Default)" : ""}
                           </MenuItem>
                         ))}
                       </Select>
                     </FormControl>
-                  <TextField label="Quantity" value={transactionForm.quantity} onChange={(e) => setTransactionForm((current) => ({ ...current, quantity: e.target.value }))} />
-                  <TextField label="Reference type" value={transactionForm.referenceType} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceType: e.target.value }))} />
-                  <TextField label="Reference ID" value={transactionForm.referenceId} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceId: e.target.value }))} />
-                  <TextField label="Notes" value={transactionForm.notes} onChange={(e) => setTransactionForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} />
-                  <Button variant="contained" onClick={() => void saveTransaction()} disabled={saving}>
-                    Save transaction
-                  </Button>
-                </Stack>
-              </CardContent>
-            </Card>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 8 }}>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      label="Scan or enter code"
+                      value={stockSearch}
+                      onChange={(e) => setStockSearch(e.target.value)}
+                      placeholder="barcode / QR / batch / reference"
+                    />
+                  </Grid>
+                </Grid>
+              </CompactFilterCard>
 
-            <Card sx={{ mt: 2 }}>
-              <CardContent>
-                <Stack spacing={2}>
-                  <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                    Transfer stock
-                  </Typography>
-                  <FormControl fullWidth>
-                    <InputLabel id="transfer-medicine-label">Medicine</InputLabel>
-                    <Select labelId="transfer-medicine-label" label="Medicine" value={transferForm.medicineId} onChange={(e) => setTransferForm((current) => ({ ...current, medicineId: String(e.target.value) }))}>
-                      <MenuItem value="">Select medicine</MenuItem>
-                      {medicines.map((medicine) => (
-                        <MenuItem key={medicine.id} value={medicine.id}>
-                          {medicine.medicineName}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <FormControl fullWidth>
-                    <InputLabel id="transfer-stock-label">Batch</InputLabel>
-                    <Select labelId="transfer-stock-label" label="Batch" value={transferForm.stockBatchId} onChange={(e) => setTransferForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}>
-                      <MenuItem value="">Select batch</MenuItem>
-                      {stocks.filter((stock) => !transferForm.medicineId || stock.medicineId === transferForm.medicineId).map((stock) => (
-                        <MenuItem key={stock.id} value={stock.id}>
-                          {stock.batchNumber || stock.id} ({stock.locationName || "Main Pharmacy"})
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <FormControl fullWidth>
-                    <InputLabel id="transfer-from-label">From location</InputLabel>
-                    <Select labelId="transfer-from-label" label="From location" value={transferForm.fromLocationId} onChange={(e) => setTransferForm((current) => ({ ...current, fromLocationId: String(e.target.value) }))}>
-                      <MenuItem value="">Select location</MenuItem>
-                      {locations.map((location) => (
-                        <MenuItem key={location.id} value={location.id}>
-                          {location.locationName}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <FormControl fullWidth>
-                    <InputLabel id="transfer-to-label">To location</InputLabel>
-                    <Select labelId="transfer-to-label" label="To location" value={transferForm.toLocationId} onChange={(e) => setTransferForm((current) => ({ ...current, toLocationId: String(e.target.value) }))}>
-                      <MenuItem value="">Select location</MenuItem>
-                      {locations.map((location) => (
-                        <MenuItem key={location.id} value={location.id}>
-                          {location.locationName}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <TextField label="Quantity" value={transferForm.quantity} onChange={(e) => setTransferForm((current) => ({ ...current, quantity: e.target.value }))} />
-                  <TextField label="Reason" value={transferForm.reason} onChange={(e) => setTransferForm((current) => ({ ...current, reason: e.target.value }))} multiline minRows={2} />
-                  <Button
-                    variant="outlined"
-                    onClick={async () => {
-                      if (!auth.accessToken || !auth.tenantId) return;
-                      if (!transferForm.medicineId || !transferForm.fromLocationId || !transferForm.toLocationId || !transferForm.quantity.trim()) {
-                        setError("Select medicine, source location, destination location, and quantity.");
-                        return;
-                      }
-                      setSaving(true);
-                      setError(null);
-                      try {
-                        await transferInventoryStock(auth.accessToken, auth.tenantId, {
-                          medicineId: transferForm.medicineId,
-                          stockBatchId: transferForm.stockBatchId || null,
-                          fromLocationId: transferForm.fromLocationId,
-                          toLocationId: transferForm.toLocationId,
-                          quantity: Number(transferForm.quantity),
-                          reason: transferForm.reason.trim() || null,
-                        });
-                        setTransferForm({ medicineId: "", stockBatchId: "", fromLocationId: "", toLocationId: "", quantity: "", reason: "" });
-                        await loadAll();
-                        setSuccess("Stock transfer recorded");
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : "Failed to transfer stock");
-                      } finally {
-                        setSaving(false);
-                      }
-                    }}
-                    disabled={saving}
-                  >
-                    Transfer
-                  </Button>
-                </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid size={{ xs: 12, lg: 8 }}>
-            <Card>
-              <CardContent>
-                <Stack spacing={2}>
-                  <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                    Stock list
-                  </Typography>
-                  <FormControl size="small" fullWidth>
-                    <InputLabel id="stock-filter-location-label">Location</InputLabel>
-                    <Select
-                      labelId="stock-filter-location-label"
-                      label="Location"
-                      value={selectedLocationId || ""}
-                      onChange={(e) => setSelectedLocationId(String(e.target.value) || null)}
-                    >
-                      <MenuItem value="">All locations</MenuItem>
-                      {locations.map((location) => (
-                        <MenuItem key={location.id} value={location.id}>
-                          {location.locationName}{location.defaultLocation ? " (Default)" : ""}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <TextField
-                    size="small"
-                    label="Scan or enter code"
-                    value={stockSearch}
-                    onChange={(e) => setStockSearch(e.target.value)}
-                    placeholder="barcode / QR / batch / reference"
-                  />
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Medicine</TableCell>
-                        <TableCell>Location</TableCell>
-                        <TableCell>Batch</TableCell>
-                        <TableCell>Expiry</TableCell>
-                        <TableCell align="right">Qty</TableCell>
-                        <TableCell align="right">Threshold</TableCell>
-                        <TableCell>Status</TableCell>
-                        <TableCell align="right">Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {visibleStocks.map((stock) => (
-                        <TableRow key={stock.id} hover selected={stock.id === selectedStockId}>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                {stock.medicineName}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {stock.medicineType}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {stock.barcode || stock.externalCode || stock.qrCode || stock.purchaseReferenceNumber || "-"}
-                              </Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell>{stock.locationName || "Main Pharmacy"}</TableCell>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              <Typography variant="body2">{stock.batchNumber || "-"}</Typography>
-                              <Typography variant="caption" color="text.secondary">{stock.purchaseReferenceNumber || "-"}</Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              <Chip size="small" label={expiryBadge(stock.expiryDate).label} color={expiryBadge(stock.expiryDate).color} />
-                              <Typography variant="caption" color="text.secondary">{stock.expiryDate || "No expiry date"}</Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell align="right">{stock.quantityOnHand}</TableCell>
-                          <TableCell align="right">{stock.lowStockThreshold ?? "-"}</TableCell>
-                          <TableCell>
-                            <Chip size="small" label={stock.active ? "Active" : "Inactive"} color={stock.active ? statusColor(stock.quantityOnHand, stock.lowStockThreshold) : "default"} />
-                          </TableCell>
-                          <TableCell align="right">
-                            <Button size="small" onClick={() => editStock(stock)}>
-                              Edit
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </Stack>
-              </CardContent>
-            </Card>
+              <Card>
+                <CardContent sx={compactCardContentSx}>
+                  <Stack spacing={1.25}>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                        Stock list
+                      </Typography>
+                      <Chip size="small" label={`${visibleStocks.length} visible batches`} variant="outlined" />
+                    </Box>
+                    {visibleStocks.length === 0 ? (
+                      <CompactEmptyState title="No stock batches match this filter." subtitle="Adjust the location or code filter, or add a fresh batch from the quick actions panel." />
+                    ) : (
+                      <TableContainer sx={{ maxHeight: 432 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>Medicine</TableCell>
+                              <TableCell>Location</TableCell>
+                              <TableCell>Batch</TableCell>
+                              <TableCell>Expiry</TableCell>
+                              <TableCell align="right">Qty</TableCell>
+                              <TableCell align="right">Threshold</TableCell>
+                              <TableCell>Status</TableCell>
+                              <TableCell align="right">Actions</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {visibleStocks.map((stock) => (
+                              <TableRow key={stock.id} hover selected={stock.id === selectedStockId} sx={{ "& td": { py: 0.85, verticalAlign: "top" } }}>
+                                <TableCell>
+                                  <Stack spacing={0.2}>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                      {stock.medicineName}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {stock.medicineType}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {stock.barcode || stock.externalCode || stock.qrCode || stock.purchaseReferenceNumber || "-"}
+                                    </Typography>
+                                  </Stack>
+                                </TableCell>
+                                <TableCell>{stock.locationName || "Main Pharmacy"}</TableCell>
+                                <TableCell>
+                                  <Stack spacing={0.2}>
+                                    <Typography variant="body2">{stock.batchNumber || "-"}</Typography>
+                                    <Typography variant="caption" color="text.secondary">{stock.purchaseReferenceNumber || "-"}</Typography>
+                                  </Stack>
+                                </TableCell>
+                                <TableCell>
+                                  <Stack spacing={0.3}>
+                                    <Chip size="small" label={expiryBadge(stock.expiryDate).label} color={expiryBadge(stock.expiryDate).color} />
+                                    <Typography variant="caption" color="text.secondary">{stock.expiryDate || "No expiry date"}</Typography>
+                                  </Stack>
+                                </TableCell>
+                                <TableCell align="right">{stock.quantityOnHand}</TableCell>
+                                <TableCell align="right">{stock.lowStockThreshold ?? "-"}</TableCell>
+                                <TableCell>
+                                  <Chip size="small" label={stock.active ? "Active" : "Inactive"} color={stock.active ? statusColor(stock.quantityOnHand, stock.lowStockThreshold) : "default"} />
+                                </TableCell>
+                                <TableCell align="right">
+                                  <Button size="small" onClick={() => { editStock(stock); setStockActionPanel("add"); }}>
+                                    Edit
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
+                  </Stack>
+                </CardContent>
+              </Card>
 
-            <Card sx={{ mt: 2 }}>
-              <CardContent>
-                <Stack spacing={2}>
-                  <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                    Inventory transactions
-                  </Typography>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Medicine</TableCell>
-                        <TableCell>Type</TableCell>
-                        <TableCell align="right">Before</TableCell>
-                        <TableCell align="right">After</TableCell>
-                        <TableCell align="right">Quantity</TableCell>
-                        <TableCell>Reference</TableCell>
-                        <TableCell>Adjusted by</TableCell>
-                        <TableCell>Notes</TableCell>
-                        <TableCell>Created</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {transactions.map((transaction) => (
-                        <TableRow key={transaction.id}>
-                          <TableCell>{medicineById.get(transaction.medicineId)?.medicineName || transaction.medicineId}</TableCell>
-                          <TableCell>{transactionLabel(transaction.transactionType)}</TableCell>
-                          <TableCell align="right">{transaction.beforeQuantity ?? "-"}</TableCell>
-                          <TableCell align="right">{transaction.afterQuantity ?? "-"}</TableCell>
-                          <TableCell align="right">{transaction.quantity}</TableCell>
-                          <TableCell>{transaction.referenceType || "-"}</TableCell>
-                          <TableCell>{transaction.createdBy || "-"}</TableCell>
-                          <TableCell>{transaction.notes || "-"}</TableCell>
-                          <TableCell>{new Date(transaction.createdAt).toLocaleString()}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </Stack>
-              </CardContent>
-            </Card>
+              <Card>
+                <CardContent sx={compactCardContentSx}>
+                  <Stack spacing={1.25}>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                        Inventory transactions
+                      </Typography>
+                      <Chip size="small" label={`${transactions.length} logged`} variant="outlined" />
+                    </Box>
+                    {transactions.length === 0 ? (
+                      <CompactEmptyState title="No inventory transactions yet." subtitle="Adjustments, purchases, dispenses, returns, and transfers will appear here once posted." />
+                    ) : (
+                      <TableContainer sx={{ maxHeight: 360 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>Medicine</TableCell>
+                              <TableCell>Type</TableCell>
+                              <TableCell align="right">Before</TableCell>
+                              <TableCell align="right">After</TableCell>
+                              <TableCell align="right">Quantity</TableCell>
+                              <TableCell>Reference</TableCell>
+                              <TableCell>Adjusted by</TableCell>
+                              <TableCell>Notes</TableCell>
+                              <TableCell>Created</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {transactions.map((transaction) => (
+                              <TableRow key={transaction.id} sx={{ "& td": { py: 0.8, verticalAlign: "top" } }}>
+                                <TableCell>{medicineById.get(transaction.medicineId)?.medicineName || transaction.medicineId}</TableCell>
+                                <TableCell>{transactionLabel(transaction.transactionType)}</TableCell>
+                                <TableCell align="right">{transaction.beforeQuantity ?? "-"}</TableCell>
+                                <TableCell align="right">{transaction.afterQuantity ?? "-"}</TableCell>
+                                <TableCell align="right">{transaction.quantity}</TableCell>
+                                <TableCell>
+                                  <Stack spacing={0.2}>
+                                    <Typography variant="caption" color="text.secondary">{transaction.referenceType || "-"}</Typography>
+                                    <Typography variant="body2">{transaction.referenceId || "-"}</Typography>
+                                  </Stack>
+                                </TableCell>
+                                <TableCell>{transaction.createdBy || "-"}</TableCell>
+                                <TableCell sx={{ maxWidth: 240 }}>{transaction.notes || "-"}</TableCell>
+                                <TableCell>{new Date(transaction.createdAt).toLocaleString()}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Stack>
           </Grid>
         </Grid>
       ) : null}
@@ -1093,6 +1172,76 @@ export default function InventoryPage() {
           </Grid>
         </Grid>
       ) : null}
+
+      <Dialog open={quickMedicineOpen} onClose={() => setQuickMedicineOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>Quick Add Medicine</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={1.25} sx={{ mt: 0.25 }}>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField fullWidth size="small" label="Medicine name" value={quickMedicineForm.medicineName} onChange={(e) => setQuickMedicineForm((current) => ({ ...current, medicineName: e.target.value }))} />
+            </Grid>
+            <Grid size={{ xs: 12, md: 3 }}>
+              <FormControl fullWidth size="small">
+                <InputLabel id="quick-medicine-type-label">Type</InputLabel>
+                <Select labelId="quick-medicine-type-label" label="Type" value={quickMedicineForm.medicineType} onChange={(e) => setQuickMedicineForm((current) => ({ ...current, medicineType: String(e.target.value) as MedicineType }))}>
+                  {MEDICINE_TYPES.map((type) => (
+                    <MenuItem key={type} value={type}>{type}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid size={{ xs: 12, md: 3 }}>
+              <FormControl fullWidth size="small">
+                <InputLabel id="quick-medicine-active-label">Active</InputLabel>
+                <Select labelId="quick-medicine-active-label" label="Active" value={quickMedicineForm.active ? "true" : "false"} onChange={(e) => setQuickMedicineForm((current) => ({ ...current, active: String(e.target.value) === "true" }))}>
+                  <MenuItem value="true">Active</MenuItem>
+                  <MenuItem value="false">Inactive</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField fullWidth size="small" label="Generic name" value={quickMedicineForm.genericName || ""} onChange={(e) => setQuickMedicineForm((current) => ({ ...current, genericName: e.target.value || null }))} />
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField fullWidth size="small" label="Brand name" value={quickMedicineForm.brandName || ""} onChange={(e) => setQuickMedicineForm((current) => ({ ...current, brandName: e.target.value || null }))} />
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField fullWidth size="small" label="Category" value={quickMedicineForm.category || ""} onChange={(e) => setQuickMedicineForm((current) => ({ ...current, category: e.target.value || null }))} />
+            </Grid>
+            <Grid size={{ xs: 12, md: 3 }}>
+              <TextField fullWidth size="small" label="Strength" value={quickMedicineForm.strength || ""} onChange={(e) => setQuickMedicineForm((current) => ({ ...current, strength: e.target.value || null }))} />
+            </Grid>
+            <Grid size={{ xs: 12, md: 3 }}>
+              <TextField fullWidth size="small" label="Unit" value={quickMedicineForm.unit || ""} onChange={(e) => setQuickMedicineForm((current) => ({ ...current, unit: e.target.value || null }))} />
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField fullWidth size="small" label="Manufacturer" value={quickMedicineForm.manufacturer || ""} onChange={(e) => setQuickMedicineForm((current) => ({ ...current, manufacturer: e.target.value || null }))} />
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <CodeScannerField size="small" label="Barcode" value={quickMedicineForm.barcode || ""} onChange={(value) => setQuickMedicineForm((current) => ({ ...current, barcode: value || null }))} placeholder="Scan or enter barcode" />
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <CodeScannerField size="small" label="QR code" value={quickMedicineForm.qrCode || ""} onChange={(value) => setQuickMedicineForm((current) => ({ ...current, qrCode: value || null }))} placeholder="Scan or enter QR code" />
+            </Grid>
+            <Grid size={{ xs: 12, md: 4 }}>
+              <CodeScannerField size="small" label="External code" value={quickMedicineForm.externalCode || ""} onChange={(value) => setQuickMedicineForm((current) => ({ ...current, externalCode: value || null }))} placeholder="Scan or enter code" />
+            </Grid>
+            <Grid size={{ xs: 12, md: 3 }}>
+              <TextField fullWidth size="small" type="number" label="Default price" value={quickMedicineForm.defaultPrice ?? ""} onChange={(e) => setQuickMedicineForm((current) => ({ ...current, defaultPrice: e.target.value ? Number(e.target.value) : null }))} />
+            </Grid>
+            <Grid size={{ xs: 12, md: 3 }}>
+              <TextField fullWidth size="small" type="number" label="Tax %" value={quickMedicineForm.taxRate ?? ""} onChange={(e) => setQuickMedicineForm((current) => ({ ...current, taxRate: e.target.value ? Number(e.target.value) : null }))} />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setQuickMedicineOpen(false)}>Cancel</Button>
+          <Button variant="outlined" onClick={() => navigate("/pharmacy/medicines")}>Open Medicine Master</Button>
+          <Button disabled={saving} onClick={() => void saveQuickMedicine()}>
+            {saving ? "Saving..." : "Create Medicine"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 }
