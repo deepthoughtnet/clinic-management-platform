@@ -123,14 +123,14 @@ export default function PaymentsPage() {
   const pendingAmount = rows.reduce((sum, row) => sum + (row.billDueAmount || 0), 0);
   const partiallyPaid = rows.filter((row) => row.billStatus === "PARTIALLY_PAID").length;
 
-  async function handleSendReceipt(row: PaymentLedgerRow) {
+  async function handleSendReceipt(row: PaymentLedgerRow, channel: "EMAIL" | "WHATSAPP") {
     if (!auth.accessToken || !auth.tenantId || !row.receiptId) return;
     setWorkingId(row.id);
     setError(null);
     setSuccess(null);
     try {
-      await sendReceipt(auth.accessToken, auth.tenantId, row.receiptId, "EMAIL");
-      setSuccess("Receipt email request submitted");
+      await sendReceipt(auth.accessToken, auth.tenantId, row.receiptId, channel);
+      setSuccess(`Receipt ${channel === "EMAIL" ? "email" : "WhatsApp"} request submitted`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to send receipt");
     } finally {
@@ -251,19 +251,19 @@ export default function PaymentsPage() {
           ) : rows.length === 0 ? (
             <CompactEmptyState title="No payments found" subtitle="Try widening the filters or clearing the search row." />
           ) : (
-            <Box sx={{ overflowX: "auto" }}>
-              <Table size="small" sx={{ minWidth: 1120 }}>
+            <Box sx={{ overflowX: "auto", maxHeight: 430, overflowY: "auto" }}>
+              <Table stickyHeader size="small" sx={{ minWidth: 1120 }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ py: 0.8 }}>Payment Date</TableCell>
-                    <TableCell sx={{ py: 0.8 }}>Patient</TableCell>
-                    <TableCell sx={{ py: 0.8 }}>Bill Number</TableCell>
-                    <TableCell sx={{ py: 0.8 }} align="right">Amount</TableCell>
-                    <TableCell sx={{ py: 0.8 }}>Mode</TableCell>
-                    <TableCell sx={{ py: 0.8 }}>Reference</TableCell>
-                    <TableCell sx={{ py: 0.8 }}>Received By</TableCell>
-                    <TableCell sx={{ py: 0.8 }}>Bill Status</TableCell>
-                    <TableCell sx={{ py: 0.8 }} align="right">Actions</TableCell>
+                    <TableCell sx={{ py: 0.65 }}>Payment Date</TableCell>
+                    <TableCell sx={{ py: 0.65 }}>Patient</TableCell>
+                    <TableCell sx={{ py: 0.65 }}>Bill Number</TableCell>
+                    <TableCell sx={{ py: 0.65 }} align="right">Amount</TableCell>
+                    <TableCell sx={{ py: 0.65 }}>Mode</TableCell>
+                    <TableCell sx={{ py: 0.65 }}>Reference</TableCell>
+                    <TableCell sx={{ py: 0.65 }}>Received By</TableCell>
+                    <TableCell sx={{ py: 0.65 }}>Bill Status</TableCell>
+                    <TableCell sx={{ py: 0.65 }} align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -283,7 +283,8 @@ export default function PaymentsPage() {
                           {row.receiptId && <Button size="small" variant="text" onClick={() => void loadReceiptPreview(row)}>View Receipt</Button>}
                           {row.receiptId && <Button size="small" variant="text" onClick={() => void loadReceiptPreview(row, true)}>Print Receipt</Button>}
                           {row.receiptId && <Button size="small" variant="text" onClick={() => void handleDownloadReceipt(row)} disabled={workingId === row.id}>Download PDF</Button>}
-                          {canSendReceipt && row.receiptId && <Button size="small" variant="text" onClick={() => void handleSendReceipt(row)} disabled={workingId === row.id}>Send Email</Button>}
+                          {canSendReceipt && row.receiptId && <Button size="small" variant="text" onClick={() => void handleSendReceipt(row, "EMAIL")} disabled={workingId === row.id}>Send Email</Button>}
+                          {canSendReceipt && row.receiptId && <Button size="small" variant="text" onClick={() => void handleSendReceipt(row, "WHATSAPP")} disabled={workingId === row.id}>Send WhatsApp</Button>}
                         </Stack>
                       </TableCell>
                     </TableRow>

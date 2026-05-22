@@ -37,6 +37,8 @@ function statusColor(status: Prescription["status"]) {
 export default function PrescriptionsPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const tenantRole = (auth.tenantRole || "").toUpperCase();
+  const isPharmacyRole = tenantRole === "PHARMA" || tenantRole === "PHARMACY" || tenantRole === "PHARMACIST";
   const [rows, setRows] = React.useState<Prescription[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -155,16 +157,25 @@ export default function PrescriptionsPage() {
                 {rows.map((row) => (
                   <TableRow key={row.id}>
                     <TableCell>{row.prescriptionNumber}</TableCell>
-                    <TableCell>{row.patientName || row.patientNumber || row.patientId}</TableCell>
-                    <TableCell>{row.doctorName || row.doctorUserId}</TableCell>
+                    <TableCell>{row.patientName || row.patientNumber || "Patient"}</TableCell>
+                    <TableCell>{row.doctorName || "Doctor"}</TableCell>
                     <TableCell><Chip size="small" label={row.status} color={statusColor(row.status)} /></TableCell>
-                    <TableCell>{row.consultationId}</TableCell>
+                    <TableCell>{row.consultationId ? "Linked" : "-"}</TableCell>
                     <TableCell align="right">
                       <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
-                        <Button size="small" onClick={() => navigate(`/consultations/${row.consultationId}`)}>Open Workspace</Button>
-                        <Button size="small" disabled={workingId === row.id} onClick={() => void openPdf(row)}>PDF</Button>
-                        <Button size="small" disabled={workingId === row.id} onClick={() => void sendVia(row, "email")}>Email</Button>
-                        <Button size="small" disabled={workingId === row.id} onClick={() => void sendVia(row, "whatsapp")}>WhatsApp</Button>
+                        {isPharmacyRole ? (
+                          <>
+                            <Button size="small" disabled={workingId === row.id} onClick={() => void openPdf(row)}>View / Print</Button>
+                            <Button size="small" onClick={() => navigate("/pharmacy/dispensing")}>Dispense</Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button size="small" disabled={!row.consultationId} onClick={() => navigate(`/consultations/${row.consultationId}`)}>Open Workspace</Button>
+                            <Button size="small" disabled={workingId === row.id} onClick={() => void openPdf(row)}>PDF</Button>
+                            <Button size="small" disabled={workingId === row.id} onClick={() => void sendVia(row, "email")}>Email</Button>
+                            <Button size="small" disabled={workingId === row.id} onClick={() => void sendVia(row, "whatsapp")}>WhatsApp</Button>
+                          </>
+                        )}
                       </Stack>
                     </TableCell>
                   </TableRow>

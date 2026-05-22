@@ -79,6 +79,27 @@ public class PharmacyReconciliationEntity {
     @Column(name = "created_by")
     private UUID createdBy;
 
+    @Column(name = "submitted_by")
+    private UUID submittedBy;
+
+    @Column(name = "submitted_at")
+    private OffsetDateTime submittedAt;
+
+    @Column(name = "reviewed_by")
+    private UUID reviewedBy;
+
+    @Column(name = "review_decision", length = 24)
+    private String reviewDecision;
+
+    @Column(name = "review_reason", columnDefinition = "text")
+    private String reviewReason;
+
+    @Column(name = "posted_by")
+    private UUID postedBy;
+
+    @Column(name = "posted_at")
+    private OffsetDateTime postedAt;
+
     @Column(name = "adjusted_by")
     private UUID adjustedBy;
 
@@ -113,7 +134,7 @@ public class PharmacyReconciliationEntity {
         entity.supplierId = supplierId;
         entity.locationId = locationId;
         entity.systemQuantity = systemQuantity;
-        entity.status = "PENDING";
+        entity.status = "DRAFT";
         entity.createdBy = createdBy;
         entity.createdAt = now;
         entity.updatedAt = now;
@@ -136,7 +157,7 @@ public class PharmacyReconciliationEntity {
         this.physicalQuantity = physicalQuantity;
         this.varianceQuantity = varianceQuantity;
         this.reason = reason;
-        this.status = "PENDING";
+        this.status = "DRAFT";
         this.updatedAt = OffsetDateTime.now();
     }
 
@@ -148,20 +169,78 @@ public class PharmacyReconciliationEntity {
     }
 
     public void applyExtraction() {
-        this.status = "APPLIED";
         this.extractionStatus = "APPLIED";
         this.updatedAt = OffsetDateTime.now();
-        this.appliedAt = this.updatedAt;
     }
 
-    public void confirm(Integer physicalQuantity, int varianceQuantity, String reason, UUID adjustedBy, boolean adjustStock) {
+    public void updateDraft(Integer physicalQuantity, Integer varianceQuantity, String reason) {
         this.physicalQuantity = physicalQuantity;
         this.varianceQuantity = varianceQuantity;
         this.reason = reason;
-        this.status = adjustStock ? "CONFIRMED" : "REVIEWED";
+        this.status = "DRAFT";
+        this.submittedBy = null;
+        this.submittedAt = null;
+        this.reviewedBy = null;
+        this.reviewDecision = null;
+        this.reviewReason = null;
+        this.postedBy = null;
+        this.postedAt = null;
+        this.adjustedBy = null;
+        this.confirmedAt = null;
+        this.reviewedAt = null;
+        this.appliedAt = null;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void submit(UUID submittedBy) {
+        OffsetDateTime now = OffsetDateTime.now();
+        this.status = "SUBMITTED";
+        this.submittedBy = submittedBy;
+        this.submittedAt = now;
+        this.updatedAt = now;
+    }
+
+    public void approve(UUID reviewedBy, String reviewReason) {
+        OffsetDateTime now = OffsetDateTime.now();
+        this.status = "APPROVED";
+        this.reviewedBy = reviewedBy;
+        this.reviewDecision = "APPROVED";
+        this.reviewReason = reviewReason;
+        this.adjustedBy = reviewedBy;
+        this.reviewedAt = now;
+        this.updatedAt = now;
+    }
+
+    public void reject(UUID reviewedBy, String reviewReason) {
+        OffsetDateTime now = OffsetDateTime.now();
+        this.status = "REJECTED";
+        this.reviewedBy = reviewedBy;
+        this.reviewDecision = "REJECTED";
+        this.reviewReason = reviewReason;
+        this.adjustedBy = reviewedBy;
+        this.reviewedAt = now;
+        this.updatedAt = now;
+    }
+
+    public void post(UUID postedBy) {
+        OffsetDateTime now = OffsetDateTime.now();
+        this.status = "POSTED";
+        this.postedBy = postedBy;
+        this.postedAt = now;
+        this.confirmedAt = now;
+        this.appliedAt = now;
+        this.updatedAt = now;
+    }
+
+    public void markLegacyConfirmed(UUID adjustedBy) {
+        OffsetDateTime now = OffsetDateTime.now();
+        this.status = "POSTED";
         this.adjustedBy = adjustedBy;
-        this.confirmedAt = OffsetDateTime.now();
-        this.updatedAt = this.confirmedAt;
+        this.postedBy = adjustedBy;
+        this.postedAt = now;
+        this.confirmedAt = now;
+        this.appliedAt = now;
+        this.updatedAt = now;
     }
 
     public UUID getId() { return id; }
@@ -184,6 +263,13 @@ public class PharmacyReconciliationEntity {
     public java.math.BigDecimal getExtractionConfidence() { return extractionConfidence; }
     public String getExtractedRowsJson() { return extractedRowsJson; }
     public UUID getCreatedBy() { return createdBy; }
+    public UUID getSubmittedBy() { return submittedBy; }
+    public OffsetDateTime getSubmittedAt() { return submittedAt; }
+    public UUID getReviewedBy() { return reviewedBy; }
+    public String getReviewDecision() { return reviewDecision; }
+    public String getReviewReason() { return reviewReason; }
+    public UUID getPostedBy() { return postedBy; }
+    public OffsetDateTime getPostedAt() { return postedAt; }
     public UUID getAdjustedBy() { return adjustedBy; }
     public OffsetDateTime getConfirmedAt() { return confirmedAt; }
     public OffsetDateTime getReviewedAt() { return reviewedAt; }

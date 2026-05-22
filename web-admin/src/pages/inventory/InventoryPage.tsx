@@ -32,7 +32,6 @@ import {
   createStock,
   deactivateMedicine,
   getInventoryLocations,
-  getClinicUsers,
   getInventoryTransactions,
   getLowStock,
   getMedicines,
@@ -41,7 +40,6 @@ import {
   updateMedicine,
   updateStock,
   type InventoryLocation,
-  type ClinicUser,
   type InventoryTransaction,
   type InventoryTransactionInput,
   type InventoryTransactionType,
@@ -262,7 +260,6 @@ export default function InventoryPage() {
   const [stocks, setStocks] = React.useState<Stock[]>([]);
   const [transactions, setTransactions] = React.useState<InventoryTransaction[]>([]);
   const [lowStock, setLowStock] = React.useState<LowStockItem[]>([]);
-  const [clinicUsers, setClinicUsers] = React.useState<ClinicUser[]>([]);
   const [locations, setLocations] = React.useState<InventoryLocation[]>([]);
   const [medicineForm, setMedicineForm] = React.useState<MedicineFormState>(emptyMedicineForm());
   const [stockForm, setStockForm] = React.useState<StockFormState>(emptyStockForm());
@@ -278,7 +275,6 @@ export default function InventoryPage() {
   const [transferForm, setTransferForm] = React.useState({ medicineId: "", stockBatchId: "", fromLocationId: "", toLocationId: "", quantity: "", reason: "" });
 
   const medicineById = React.useMemo(() => new Map(medicines.map((medicine) => [medicine.id, medicine])), [medicines]);
-  const userById = React.useMemo(() => new Map(clinicUsers.map((user) => [user.appUserId, user])), [clinicUsers]);
   const visibleStocks = React.useMemo(() => {
     const term = stockSearch.trim().toLowerCase();
     return stocks.filter((stock) => {
@@ -294,19 +290,17 @@ export default function InventoryPage() {
     if (!auth.accessToken || !auth.tenantId) {
       return;
     }
-    const [medicineRows, stockRows, transactionRows, lowStockRows, userRows, locationRows] = await Promise.all([
+    const [medicineRows, stockRows, transactionRows, lowStockRows, locationRows] = await Promise.all([
       getMedicines(auth.accessToken, auth.tenantId),
       getStocks(auth.accessToken, auth.tenantId),
       getInventoryTransactions(auth.accessToken, auth.tenantId),
       getLowStock(auth.accessToken, auth.tenantId),
-      getClinicUsers(auth.accessToken, auth.tenantId),
       getInventoryLocations(auth.accessToken, auth.tenantId),
     ]);
     setMedicines(medicineRows);
     setStocks(stockRows);
     setTransactions(transactionRows);
     setLowStock(lowStockRows);
-    setClinicUsers(userRows);
     setLocations(locationRows);
     setSelectedLocationId((current) => current || locationRows.find((location) => location.defaultLocation)?.id || null);
   }, [auth.accessToken, auth.tenantId]);
@@ -1023,7 +1017,7 @@ export default function InventoryPage() {
                           <TableCell align="right">{transaction.afterQuantity ?? "-"}</TableCell>
                           <TableCell align="right">{transaction.quantity}</TableCell>
                           <TableCell>{transaction.referenceType || "-"}</TableCell>
-                          <TableCell>{userById.get(transaction.createdBy || "")?.displayName || transaction.createdBy || "-"}</TableCell>
+                          <TableCell>{transaction.createdBy || "-"}</TableCell>
                           <TableCell>{transaction.notes || "-"}</TableCell>
                           <TableCell>{new Date(transaction.createdAt).toLocaleString()}</TableCell>
                         </TableRow>

@@ -33,3 +33,16 @@ export function isCurrentSlot(date: string, slot: DoctorAvailabilitySlot, graceM
   return start.getTime() <= now && now <= end.getTime() + (graceMinutes * 60_000);
 }
 
+export function isTimeWithinSlot(date: string, time: string | null | undefined, slot: DoctorAvailabilitySlot, graceMinutes = BOOKING_TIME_GRACE_MINUTES) {
+  const candidate = toDateTime(date, time);
+  const start = toDateTime(date, slot.slotTime);
+  const end = toDateTime(date, slot.slotEndTime);
+  if (!candidate || !start || !end) {
+    return false;
+  }
+  return start.getTime() <= candidate.getTime() && candidate.getTime() <= end.getTime() + (graceMinutes * 60_000);
+}
+
+export function findSlotForTime(date: string, time: string | null | undefined, slots: DoctorAvailabilitySlot[]) {
+  return slots.find((slot) => isTimeWithinSlot(date, time, slot)) || null;
+}

@@ -22,11 +22,9 @@ import { useAuth } from "../../auth/useAuth";
 import {
   getInventoryTransactions,
   getMedicines,
-  getClinicUsers,
   type InventoryTransaction,
   type InventoryTransactionType,
   type Medicine,
-  type ClinicUser,
 } from "../../api/clinicApi";
 
 const MOVEMENT_TYPES: InventoryTransactionType[] = [
@@ -72,7 +70,6 @@ export default function StockMovementsPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [rows, setRows] = React.useState<InventoryTransaction[]>([]);
   const [medicines, setMedicines] = React.useState<Medicine[]>([]);
-  const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [medicineId, setMedicineId] = React.useState("");
   const [movementType, setMovementType] = React.useState<string>("");
   const [fromDate, setFromDate] = React.useState("");
@@ -83,14 +80,12 @@ export default function StockMovementsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [trx, meds, clinicUsers] = await Promise.all([
+      const [trx, meds] = await Promise.all([
         getInventoryTransactions(auth.accessToken, auth.tenantId),
         getMedicines(auth.accessToken, auth.tenantId),
-        getClinicUsers(auth.accessToken, auth.tenantId),
       ]);
       setRows(trx);
       setMedicines(meds);
-      setUsers(clinicUsers);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load stock movements");
     } finally {
@@ -112,7 +107,6 @@ export default function StockMovementsPage() {
   }, [rows, medicineId, movementType, fromDate, toDate]);
 
   const medicineById = React.useMemo(() => new Map(medicines.map((m) => [m.id, m])), [medicines]);
-  const userById = React.useMemo(() => new Map(users.map((u) => [u.appUserId, u])), [users]);
   const filteredSummary = React.useMemo(() => ({
     total: filtered.length,
     adjustments: filtered.filter((row) => row.transactionType.includes("ADJUSTMENT")).length,
@@ -198,7 +192,7 @@ export default function StockMovementsPage() {
                         {row.referenceType || "-"}
                         {row.referenceId ? <Typography variant="caption" display="block" color="text.secondary">{row.referenceId}</Typography> : null}
                       </TableCell>
-                      <TableCell>{userById.get(row.createdBy || "")?.displayName || row.createdBy || "-"}</TableCell>
+                      <TableCell>{row.createdBy || "-"}</TableCell>
                       <TableCell>{row.notes || row.reason || "-"}</TableCell>
                     </TableRow>
                   ))}

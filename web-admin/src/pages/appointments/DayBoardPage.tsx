@@ -583,10 +583,12 @@ export default function DayBoardPage() {
 
   const tenantRole = (auth.tenantRole || "").toUpperCase();
   const isDoctor = tenantRole === "DOCTOR";
+  const isClinicAdmin = tenantRole === "CLINIC_ADMIN";
   const canManage = auth.hasPermission("appointment.manage") || tenantRole === "RECEPTIONIST" || tenantRole === "CLINIC_ADMIN";
   const canBook = auth.hasPermission("appointment.create") || tenantRole === "RECEPTIONIST" || tenantRole === "CLINIC_ADMIN";
   const canCollect = auth.hasPermission("billing.create") || auth.hasPermission("payment.collect");
-  const canStartConsultation = auth.hasPermission("consultation.create");
+  const canStartConsultation = (isDoctor || isClinicAdmin) && auth.hasPermission("consultation.create");
+  const canOpenWorkspace = (isDoctor || isClinicAdmin) && auth.hasPermission("consultation.create");
   const doctorOptions = users.filter((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
   const selectedDoctorLabel = isDoctor && auth.appUserId
     ? displayDoctorName(users, auth.appUserId)
@@ -1712,9 +1714,13 @@ export default function DayBoardPage() {
                       <Button size="small" variant="outlined" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "NO_SHOW")}>No-show</Button>
                       <Button size="small" variant="outlined" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "CANCELLED")}>Cancel</Button>
                       <Button size="small" variant="outlined" onClick={() => openReschedule(selectedAppointment)}>Reschedule</Button>
-                      <Button size="small" variant="outlined" disabled={!canStartConsultation} onClick={() => void startConsultation(selectedAppointment.id)}>Start consultation</Button>
+                      {canStartConsultation ? (
+                        <Button size="small" variant="outlined" disabled={!canStartConsultation} onClick={() => void startConsultation(selectedAppointment.id)}>Start consultation</Button>
+                      ) : null}
                       <Button size="small" onClick={() => navigate(`/patients/${selectedAppointment.patientId}`)}>Open patient</Button>
-                      <Button size="small" disabled={!selectedAppointment.consultationId} onClick={() => selectedAppointment.consultationId && navigate(`/consultations/${selectedAppointment.consultationId}`)}>Open consultation</Button>
+                      {canOpenWorkspace && selectedAppointment.consultationId ? (
+                        <Button size="small" disabled={!selectedAppointment.consultationId} onClick={() => selectedAppointment.consultationId && navigate(`/consultations/${selectedAppointment.consultationId}`)}>Open consultation</Button>
+                      ) : null}
                     </Stack>
                   </Stack>
                 ) : null}

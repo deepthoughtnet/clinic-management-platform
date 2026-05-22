@@ -123,4 +123,3 @@ SET location_id = s.location_id
 FROM inventory_stocks s
 WHERE r.location_id IS NULL
   AND r.stock_batch_id = s.id;
-

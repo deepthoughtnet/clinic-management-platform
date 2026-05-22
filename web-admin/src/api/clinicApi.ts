@@ -677,7 +677,16 @@ export type BillInput = {
   discountReason: string | null;
   taxAmount: number | null;
   notes: string | null;
-  lines: Array<Omit<BillLine, "id" | "totalPrice"> & { unitPrice: number; quantity: number; referenceId: string | null }>;
+  lines: Array<
+    Omit<BillLine, "id" | "totalPrice"> & {
+      unitPrice: number;
+      quantity: number;
+      referenceId: string | null;
+      lineDiscountAmount?: number | null;
+      batchNumber?: string | null;
+      dispensationReferenceId?: string | null;
+    }
+  >;
 };
 
 export type Payment = {
@@ -1060,6 +1069,13 @@ export type PharmacyReconciliation = {
   reason: string | null;
   status: string;
   createdBy: string | null;
+  submittedBy: string | null;
+  submittedAt: string | null;
+  reviewedBy: string | null;
+  reviewDecision: string | null;
+  reviewReason: string | null;
+  postedBy: string | null;
+  postedAt: string | null;
   adjustedBy: string | null;
   sheetDocumentId: string | null;
   sheetFilename: string | null;
@@ -1091,6 +1107,15 @@ export type PharmacyReconciliationConfirmInput = {
   physicalQuantity: number | null;
   reason: string | null;
   adjustStock: boolean;
+};
+
+export type PharmacyReconciliationDecisionInput = {
+  reason: string | null;
+};
+
+export type PharmacyReconciliationPostInput = {
+  physicalQuantity: number | null;
+  reason: string | null;
 };
 
 export type StockInwardInput = {
@@ -2152,6 +2177,26 @@ export async function listReconciliations(token: string, tenantId: string) {
 
 export async function createReconciliation(token: string, tenantId: string, body: PharmacyReconciliationInput) {
   return httpPost<PharmacyReconciliation>("/api/pharmacy/reconciliations", body, { token, tenantId });
+}
+
+export async function updateReconciliation(token: string, tenantId: string, id: string, body: PharmacyReconciliationInput) {
+  return httpPut<PharmacyReconciliation>(`/api/pharmacy/reconciliations/${id}`, body, { token, tenantId });
+}
+
+export async function submitReconciliation(token: string, tenantId: string, id: string) {
+  return httpPost<PharmacyReconciliation>(`/api/pharmacy/reconciliations/${id}/submit`, undefined, { token, tenantId });
+}
+
+export async function approveReconciliation(token: string, tenantId: string, id: string, body: PharmacyReconciliationDecisionInput = { reason: null }) {
+  return httpPost<PharmacyReconciliation>(`/api/pharmacy/reconciliations/${id}/approve`, body, { token, tenantId });
+}
+
+export async function rejectReconciliation(token: string, tenantId: string, id: string, body: PharmacyReconciliationDecisionInput) {
+  return httpPost<PharmacyReconciliation>(`/api/pharmacy/reconciliations/${id}/reject`, body, { token, tenantId });
+}
+
+export async function postReconciliation(token: string, tenantId: string, id: string, body: PharmacyReconciliationPostInput = { physicalQuantity: null, reason: null }) {
+  return httpPost<PharmacyReconciliation>(`/api/pharmacy/reconciliations/${id}/post`, body, { token, tenantId });
 }
 
 export async function confirmReconciliation(token: string, tenantId: string, id: string, body: PharmacyReconciliationConfirmInput) {

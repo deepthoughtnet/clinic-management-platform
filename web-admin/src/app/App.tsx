@@ -30,6 +30,7 @@ import PaymentsPage from "../pages/finance/PaymentsPage";
 import RefundsPage from "../pages/finance/RefundsPage";
 import NotificationsPage from "../pages/notifications/NotificationsPage";
 import InventoryPage from "../pages/inventory/InventoryPage";
+import PharmacyDashboardPage from "../pages/pharmacy/PharmacyDashboardPage";
 import MedicineMasterPage from "../pages/pharmacy/MedicineMasterPage";
 import StockMovementsPage from "../pages/pharmacy/StockMovementsPage";
 import DispensingPage from "../pages/pharmacy/DispensingPage";
@@ -144,14 +145,22 @@ function ModuleGate({ moduleKey, children }: { moduleKey: "carePilot" | "aiCopil
   return <>{children}</>;
 }
 
+function HomeRedirect() {
+  const auth = useAuth();
+  const tenantRole = (auth.tenantRole || "").toUpperCase();
+  const isPharmacyRole = tenantRole === "PHARMA" || tenantRole === "PHARMACY" || tenantRole === "PHARMACIST";
+  return <Navigate to={isPharmacyRole ? "/pharmacy/dashboard" : "/dashboard"} replace />;
+}
+
 function AuthedApp() {
   const auth = useAuth();
 
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<HomeRedirect />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/pharmacy/dashboard" element={<PharmacyDashboardPage />} />
         <Route path="/patients" element={<PatientsPage />} />
         <Route path="/patients/new" element={<PatientFormPage mode="create" />} />
         <Route path="/patients/:id" element={<PatientDetailPage />} />

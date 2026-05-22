@@ -107,13 +107,21 @@ class RolePermissionMappingsTest {
                     Permissions.DASHBOARD_READ,
                     Permissions.CLINIC_DASHBOARD_READ,
                     Permissions.PRESCRIPTION_READ,
+                    Permissions.MEDICINE_READ,
+                    Permissions.BILLING_CREATE,
                     Permissions.INVENTORY_READ,
-                    Permissions.INVENTORY_MANAGE
+                    Permissions.INVENTORY_MANAGE,
+                    Permissions.REPORT_READ
             );
             assertThat(permissions).doesNotContain(
+                    Permissions.USER_READ,
                     Permissions.CONSULTATION_CREATE,
                     Permissions.CONSULTATION_UPDATE,
-                    Permissions.PRESCRIPTION_FINALIZE
+                    Permissions.CONSULTATION_COMPLETE,
+                    Permissions.PRESCRIPTION_CREATE,
+                    Permissions.PRESCRIPTION_FINALIZE,
+                    Permissions.NOTIFICATION_SEND,
+                    Permissions.NOTIFICATION_MANAGE
             );
         }
     }

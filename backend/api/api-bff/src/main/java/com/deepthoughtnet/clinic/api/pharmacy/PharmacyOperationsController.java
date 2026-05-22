@@ -103,6 +103,46 @@ public class PharmacyOperationsController {
         return service.createReconciliation(tenantId, request, actorAppUserId);
     }
 
+    @PutMapping("/reconciliations/{id}")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public PharmacyReconciliationRecord updateReconciliation(@PathVariable UUID id, @RequestBody ReconciliationCreateRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.updateReconciliation(tenantId, id, request, actorAppUserId);
+    }
+
+    @PostMapping("/reconciliations/{id}/submit")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public PharmacyReconciliationRecord submitReconciliation(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.submitReconciliation(tenantId, id, actorAppUserId);
+    }
+
+    @PostMapping("/reconciliations/{id}/approve")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public PharmacyReconciliationRecord approveReconciliation(@PathVariable UUID id, @RequestBody(required = false) ReconciliationDecisionRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.approveReconciliation(tenantId, id, request, actorAppUserId);
+    }
+
+    @PostMapping("/reconciliations/{id}/reject")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public PharmacyReconciliationRecord rejectReconciliation(@PathVariable UUID id, @RequestBody ReconciliationDecisionRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.rejectReconciliation(tenantId, id, request, actorAppUserId);
+    }
+
+    @PostMapping("/reconciliations/{id}/post")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public PharmacyReconciliationRecord postReconciliation(@PathVariable UUID id, @RequestBody(required = false) ReconciliationPostRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.postReconciliation(tenantId, id, request, actorAppUserId);
+    }
+
     @PostMapping("/reconciliations/{id}/confirm")
     @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
     public PharmacyReconciliationRecord confirmReconciliation(@PathVariable UUID id, @RequestBody ReconciliationConfirmRequest request) {

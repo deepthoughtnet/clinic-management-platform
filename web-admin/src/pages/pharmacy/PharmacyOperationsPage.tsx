@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -26,7 +27,7 @@ import {
 import { useAuth } from "../../auth/useAuth";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import {
-  confirmReconciliation,
+  approveReconciliation,
   createReconciliation,
   createStockInward,
   createSupplier,
@@ -37,6 +38,9 @@ import {
   getStocks,
   listReconciliations,
   listSuppliers,
+  postReconciliation,
+  rejectReconciliation,
+  submitReconciliation as submitReconciliationApi,
   type InventoryLocation,
   type Medicine,
   type PharmacyAnalytics,
@@ -109,12 +113,20 @@ function badgeTone(text: string) {
   if (text === "OUT_OF_STOCK" || text === "EXPIRED") return "error" as const;
   if (text === "LOW_STOCK" || text === "NEAR_EXPIRY") return "warning" as const;
   if (text === "AVAILABLE" || text === "OK") return "success" as const;
+  if (text === "SUBMITTED") return "warning" as const;
+  if (text === "APPROVED") return "info" as const;
+  if (text === "POSTED") return "success" as const;
+  if (text === "REJECTED") return "error" as const;
   return "default" as const;
 }
 
 export default function PharmacyOperationsPage() {
   const auth = useAuth();
-  const [tab, setTab] = React.useState<OpsTab>("dashboard");
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = React.useState<OpsTab>((() => {
+    const value = (searchParams.get("tab") || "dashboard") as OpsTab;
+    return ["dashboard", "suppliers", "inward", "reconciliation", "procurement", "analytics"].includes(value) ? value : "dashboard";
+  })());
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -191,6 +203,13 @@ export default function PharmacyOperationsPage() {
 
   React.useEffect(() => { void loadAll(); }, [loadAll]);
 
+  React.useEffect(() => {
+    const value = (searchParams.get("tab") || "dashboard") as OpsTab;
+    if (["dashboard", "suppliers", "inward", "reconciliation", "procurement", "analytics"].includes(value)) {
+      setTab(value);
+    }
+  }, [searchParams]);
+
   const submitSupplier = async () => {
     if (!auth.accessToken || !auth.tenantId || !supplierForm.supplierName.trim()) return;
     setSaving(true);
@@ -231,7 +250,7 @@ export default function PharmacyOperationsPage() {
     }
   };
 
-  const submitReconciliation = async () => {
+  const createDraftReconciliation = async () => {
     if (!auth.accessToken || !auth.tenantId || !reconForm.medicineId) return;
     setSaving(true);
     setError(null);
@@ -251,30 +270,74 @@ export default function PharmacyOperationsPage() {
       setReconForm(emptyReconciliation);
       setSheetFile(null);
       setSheetUpload(null);
-      setSuccess("Reconciliation session created");
+      setSuccess("Reconciliation draft created");
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create reconciliation session");
+      setError(err instanceof Error ? err.message : "Failed to create reconciliation draft");
     } finally {
       setSaving(false);
     }
   };
 
-  const confirmRecon = async (row: PharmacyReconciliation) => {
+  const submitRecon = async (row: PharmacyReconciliation) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await submitReconciliationApi(auth.accessToken, auth.tenantId, row.id);
+      setSuccess("Reconciliation submitted for review");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to submit reconciliation");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const approveRecon = async (row: PharmacyReconciliation) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await approveReconciliation(auth.accessToken, auth.tenantId, row.id, { reason: row.reason || null });
+      setSuccess("Reconciliation approved");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to approve reconciliation");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const rejectRecon = async (row: PharmacyReconciliation) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await rejectReconciliation(auth.accessToken, auth.tenantId, row.id, { reason: row.reason || "Reconciliation rejected" });
+      setSuccess("Reconciliation rejected");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reject reconciliation");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const postRecon = async (row: PharmacyReconciliation) => {
     if (!auth.accessToken || !auth.tenantId) return;
     const physical = row.physicalQuantity ?? row.systemQuantity;
     setSaving(true);
     setError(null);
     try {
-      await confirmReconciliation(auth.accessToken, auth.tenantId, row.id, {
+      await postReconciliation(auth.accessToken, auth.tenantId, row.id, {
         physicalQuantity: physical,
         reason: row.reason || "Stock count adjustment",
-        adjustStock: true,
       });
-      setSuccess("Reconciliation confirmed");
+      setSuccess("Reconciliation posted");
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to confirm reconciliation");
+      setError(err instanceof Error ? err.message : "Failed to post reconciliation");
     } finally {
       setSaving(false);
     }
@@ -347,6 +410,11 @@ export default function PharmacyOperationsPage() {
   };
 
   const activeMedicines = React.useMemo(() => medicines.filter((m) => m.active), [medicines]);
+  const currentUserId = auth.appUserId || null;
+  const draftCount = React.useMemo(() => reconciliations.filter((row) => ["DRAFT", "REJECTED"].includes((row.status || "").toUpperCase())).length, [reconciliations]);
+  const submittedCount = React.useMemo(() => reconciliations.filter((row) => (row.status || "").toUpperCase() === "SUBMITTED").length, [reconciliations]);
+  const approvedCount = React.useMemo(() => reconciliations.filter((row) => (row.status || "").toUpperCase() === "APPROVED").length, [reconciliations]);
+  const postedCount = React.useMemo(() => reconciliations.filter((row) => (row.status || "").toUpperCase() === "POSTED").length, [reconciliations]);
 
   if (!auth.tenantId) return <Alert severity="info">Select a tenant to access Pharmacy Operations.</Alert>;
 
@@ -547,6 +615,9 @@ export default function PharmacyOperationsPage() {
             <Card><CardContent>
               <Stack spacing={2}>
                 <Typography variant="h6" sx={{ fontWeight: 800 }}>Start stock count</Typography>
+                <Alert severity="info">
+                  4-eye flow: the maker creates the reconciliation draft, submits it, a different user approves or rejects it, and only approved items can be posted to stock.
+                </Alert>
                 <FormControl fullWidth>
                   <InputLabel id="recon-location-label">Location</InputLabel>
                   <Select labelId="recon-location-label" label="Location" value={selectedLocationId} onChange={(e) => setSelectedLocationId(String(e.target.value))}>
@@ -646,27 +717,89 @@ export default function PharmacyOperationsPage() {
                     </Button>
                   </Stack>
                 ) : null}
-                <Button variant="contained" onClick={() => void submitReconciliation()} disabled={saving}>Start stock count</Button>
+                <Button variant="contained" onClick={() => void createDraftReconciliation()} disabled={saving}>Save draft</Button>
               </Stack>
             </CardContent></Card>
           </Grid>
           <Grid size={{ xs: 12, lg: 7 }}>
             <Card><CardContent>
-              <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Active reconciliation sessions</Typography>
+              <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap", mb: 1 }}>
+                <Typography variant="h6" sx={{ fontWeight: 800 }}>Active reconciliation sessions</Typography>
+                <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                  <Chip size="small" label={`Draft ${draftCount}`} color="default" variant="outlined" />
+                  <Chip size="small" label={`Submitted ${submittedCount}`} color="warning" variant="outlined" />
+                  <Chip size="small" label={`Approved ${approvedCount}`} color="info" variant="outlined" />
+                  <Chip size="small" label={`Posted ${postedCount}`} color="success" variant="outlined" />
+                </Stack>
+              </Box>
               {reconciliations.length === 0 ? <Alert severity="info">No reconciliation sessions yet.</Alert> : (
                 <Table size="small">
                   <TableHead><TableRow><TableCell>Medicine</TableCell><TableCell>Batch</TableCell><TableCell align="right">System</TableCell><TableCell align="right">Physical</TableCell><TableCell align="right">Variance</TableCell><TableCell>Status</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
                   <TableBody>
                     {reconciliations.map((row) => (
                       <TableRow key={row.id}>
-                        <TableCell>{row.medicineName || row.medicineId}</TableCell>
-                        <TableCell>{row.batchNumber || "-"}</TableCell>
+                        <TableCell>
+                          <Stack spacing={0.2}>
+                            <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.medicineName || "Medicine"}</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Maker: {row.createdBy === currentUserId ? "You" : row.createdBy || "-"}
+                            </Typography>
+                            {row.submittedBy ? (
+                              <Typography variant="caption" color="text.secondary">
+                                Submitted: {row.submittedBy === currentUserId ? "You" : row.submittedBy}
+                              </Typography>
+                            ) : null}
+                            {row.reviewedBy ? (
+                              <Typography variant="caption" color="text.secondary">
+                                Reviewer: {row.reviewedBy === currentUserId ? "You" : row.reviewedBy}
+                              </Typography>
+                            ) : null}
+                          </Stack>
+                        </TableCell>
+                        <TableCell>
+                          <Stack spacing={0.2}>
+                            <Typography variant="body2">{row.batchNumber || "-"}</Typography>
+                            <Typography variant="caption" color="text.secondary">Created {new Date(row.createdAt).toLocaleString()}</Typography>
+                          </Stack>
+                        </TableCell>
                         <TableCell align="right">{row.systemQuantity}</TableCell>
                         <TableCell align="right">{row.physicalQuantity ?? "-"}</TableCell>
                         <TableCell align="right">{row.varianceQuantity ?? "-"}</TableCell>
-                        <TableCell><Chip size="small" label={row.status} color={badgeTone(row.status)} /></TableCell>
+                        <TableCell>
+                          <Stack spacing={0.25}>
+                            <Chip size="small" label={row.status} color={badgeTone(row.status)} />
+                            <Typography variant="caption" color="text.secondary">
+                              {row.postedAt
+                                ? `Posted ${new Date(row.postedAt).toLocaleString()}`
+                                : row.reviewDecision === "APPROVED" && row.reviewedAt
+                                  ? `Approved ${new Date(row.reviewedAt).toLocaleString()}`
+                                  : row.reviewDecision === "REJECTED" && row.reviewedAt
+                                    ? `Rejected ${new Date(row.reviewedAt).toLocaleString()}`
+                                    : row.submittedAt
+                                      ? `Submitted ${new Date(row.submittedAt).toLocaleString()}`
+                                      : "Awaiting submission"}
+                            </Typography>
+                          </Stack>
+                        </TableCell>
                         <TableCell align="right">
-                          {row.status === "PENDING" ? <Button size="small" onClick={() => void confirmRecon(row)}>Confirm adjustment</Button> : null}
+                          <Stack direction="row" spacing={0.5} justifyContent="flex-end" useFlexGap flexWrap="wrap">
+                            {["DRAFT", "REJECTED"].includes((row.status || "").toUpperCase()) ? (
+                              <Button size="small" onClick={() => void submitRecon(row)} disabled={saving}>Submit</Button>
+                            ) : null}
+                            {row.status === "SUBMITTED" ? (
+                              currentUserId && row.createdBy === currentUserId ? (
+                                <Chip size="small" label="Maker cannot approve own reconciliation" color="warning" variant="outlined" />
+                              ) : (
+                                <>
+                                  <Button size="small" onClick={() => void approveRecon(row)} disabled={saving}>Approve</Button>
+                                  <Button size="small" color="inherit" onClick={() => void rejectRecon(row)} disabled={saving}>Reject</Button>
+                                </>
+                              )
+                            ) : null}
+                            {row.status === "APPROVED" ? (
+                              <Button size="small" onClick={() => void postRecon(row)} disabled={saving}>Post</Button>
+                            ) : null}
+                          </Stack>
                         </TableCell>
                       </TableRow>
                     ))}

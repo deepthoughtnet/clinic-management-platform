@@ -13,6 +13,7 @@ import {
   DialogContent,
   DialogTitle,
   FormControl,
+  FormControlLabel,
   Grid,
   InputLabel,
   List,
@@ -30,7 +31,9 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  Switch,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 
 import { useAuth } from "../../auth/useAuth";
 import {
@@ -60,10 +63,12 @@ import {
 import {
   isBookingTimePast,
   isCurrentSlot,
+  findSlotForTime,
   isSlotExpired,
 } from "./bookingValidation";
+import { CompactEmptyState, CompactStatCard, compactChipSx } from "../../components/compact/CompactUi";
 
-type AppointmentTab = "today" | "upcoming" | "completed" | "archive";
+type AppointmentTab = "today" | "upcoming" | "waitlist" | "completed" | "archive";
 
 type AppointmentPageState = {
   patient?: Patient;
@@ -166,6 +171,19 @@ function arrivalLabel(appointment: Appointment) {
   }
 }
 
+function waitlistStatusLabel(status: WaitlistStatus) {
+  switch (status) {
+    case "WAITING":
+      return "Waiting";
+    case "CONTACTED":
+      return "Contacted";
+    case "BOOKED":
+      return "Booked";
+    case "CANCELLED":
+      return "Cancelled";
+  }
+}
+
 function formatDate(value: string) {
   return new Date(`${value}T00:00:00`).toLocaleDateString();
 }
@@ -197,6 +215,39 @@ function isBookableSlot(date: string, slot: DoctorAvailabilitySlot) {
     return slot.selectable && slot.bookedCount < slot.maxPatientsPerSlot;
   }
   return false;
+}
+
+function slotTone(slot: DoctorAvailabilitySlot) {
+  switch (slot.status) {
+    case "AVAILABLE":
+      return "success";
+    case "PARTIALLY_BOOKED":
+      return "warning";
+    case "FULL":
+      return "error";
+    case "BREAK":
+    case "LEAVE":
+    case "UNAVAILABLE":
+    case "CONFLICTED":
+      return "inherit";
+  }
+}
+
+function slotChipTone(slot: DoctorAvailabilitySlot) {
+  const tone = slotTone(slot);
+  return tone === "inherit" ? "default" : tone;
+}
+
+function slotLabel(slot: DoctorAvailabilitySlot, date: string) {
+  const timeLabel = toFive(slot.slotTime);
+  const capacityLabel = `${slot.bookedCount}/${slot.maxPatientsPerSlot}`;
+  if (isCurrentSlot(date, slot)) {
+    return `${timeLabel} • current • ${capacityLabel}`;
+  }
+  if (isPastSlot(date, slot)) {
+    return `${timeLabel} • past • ${capacityLabel}`;
+  }
+  return `${timeLabel} • ${slot.status.toLowerCase().replace(/_/g, " ")} • ${capacityLabel}`;
 }
 
 function toPatientInput(form: QuickRegisterForm): PatientInput {
@@ -259,7 +310,6 @@ export default function AppointmentsPage() {
   const [type, setType] = React.useState<AppointmentType>("SCHEDULED");
   const [priority, setPriority] = React.useState<AppointmentPriority>("NORMAL");
   const [reason, setReason] = React.useState("");
-  const [calendarDate, setCalendarDate] = React.useState(new Date().toISOString().slice(0, 10));
   const [tab, setTab] = React.useState<AppointmentTab>("today");
   const [listSearch, setListSearch] = React.useState("");
   const [loading, setLoading] = React.useState(true);
@@ -277,6 +327,7 @@ export default function AppointmentsPage() {
   const [rescheduleDate, setRescheduleDate] = React.useState(new Date().toISOString().slice(0, 10));
   const [rescheduleTime, setRescheduleTime] = React.useState("");
   const [rescheduleDoctorUserId, setRescheduleDoctorUserId] = React.useState("");
+  const [emergencyBooking, setEmergencyBooking] = React.useState(false);
   const [adHocConfirmOpen, setAdHocConfirmOpen] = React.useState(false);
   const [adHocConfirmMessage, setAdHocConfirmMessage] = React.useState("");
   const [adHocConfirmPending, setAdHocConfirmPending] = React.useState(false);
@@ -290,14 +341,21 @@ export default function AppointmentsPage() {
   const selectedDoctorId = doctorFilter || doctorUserId || "";
   const requiresAppointmentTime = type !== "WALK_IN";
   const matchingSlot = React.useMemo(
-    () => slots.find((slot) => toFive(slot.slotTime) === toFive(appointmentTime)) || null,
-    [appointmentTime, slots],
+    () => findSlotForTime(appointmentDate, appointmentTime, slots),
+    [appointmentDate, appointmentTime, slots],
   );
   const bookableSlots = React.useMemo(
     () => slots.filter((slot) => isBookableSlot(appointmentDate, slot)),
     [appointmentDate, slots],
   );
-  const manualTimeAllowed = requiresAppointmentTime && Boolean(selectedDoctorId) && bookableSlots.length === 0;
+  const visibleSlots = React.useMemo(
+    () => slots.filter((slot) => isCurrentSlot(appointmentDate, slot) || !isPastSlot(appointmentDate, slot)),
+    [appointmentDate, slots],
+  );
+  const currentSlot = React.useMemo(
+    () => slots.find((slot) => isCurrentSlot(appointmentDate, slot)) || null,
+    [appointmentDate, slots],
+  );
   const adHocBookingNeeded = React.useMemo(
     () => Boolean(
       requiresAppointmentTime
@@ -307,8 +365,9 @@ export default function AppointmentsPage() {
     && !matchingSlot
     && !isPastDateTime(appointmentDate, appointmentTime)
     && slots.length > 0
+    && !emergencyBooking
     ),
-    [appointmentDate, appointmentTime, matchingSlot, requiresAppointmentTime, selectedDoctorId, slots.length],
+    [appointmentDate, appointmentTime, emergencyBooking, matchingSlot, requiresAppointmentTime, selectedDoctorId, slots.length],
   );
   const canCreateAppointment = Boolean(
     selectedPatient
@@ -522,6 +581,8 @@ export default function AppointmentsPage() {
         return todayRows;
       case "upcoming":
         return upcomingRows;
+      case "waitlist":
+        return [];
       case "completed":
         return completedRows;
       case "archive":
@@ -545,12 +606,19 @@ export default function AppointmentsPage() {
       ].some((value) => value.toLowerCase().includes(term));
     });
   }, [listSearch, visibleAppointments]);
-  const calendarRows = React.useMemo(
-    () => appointments
-      .filter((item) => item.appointmentDate === calendarDate)
-      .sort((left, right) => (left.appointmentTime || "").localeCompare(right.appointmentTime || "")),
-    [appointments, calendarDate],
-  );
+  const filteredWaitlist = React.useMemo(() => {
+    const term = listSearch.trim().toLowerCase();
+    if (!term) return waitlist;
+    return waitlist.filter((entry) => [
+      entry.patientName || "",
+      entry.patientNumber || "",
+      entry.patientId,
+      entry.doctorName || "",
+      entry.doctorUserId || "",
+      entry.reason || "",
+      entry.status,
+    ].some((value) => value.toLowerCase().includes(term)));
+  }, [listSearch, waitlist]);
   const slotSummary = React.useMemo(() => ({
     total: slots.length,
     bookable: bookableSlots.length,
@@ -560,6 +628,14 @@ export default function AppointmentsPage() {
     unavailable: slots.filter((slot) => slot.status === "BREAK" || slot.status === "LEAVE" || slot.status === "UNAVAILABLE" || slot.status === "CONFLICTED").length,
     past: slots.filter((slot) => isPastSlot(appointmentDate, slot)).length,
   }), [appointmentDate, bookableSlots, slots]);
+  const summaryStats = React.useMemo(() => ({
+    totalToday: todayRows.length,
+    booked: todayRows.filter((item) => item.status === "BOOKED").length,
+    checkedIn: todayRows.filter((item) => item.status === "WAITING").length,
+    inConsultation: todayRows.filter((item) => item.status === "IN_CONSULTATION").length,
+    waitlist: waitlist.length,
+    availableSlots: bookableSlots.length,
+  }), [bookableSlots.length, todayRows, waitlist.length]);
 
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
@@ -606,6 +682,7 @@ export default function AppointmentsPage() {
       setType("SCHEDULED");
       setPriority("NORMAL");
       setAppointmentTime("");
+      setEmergencyBooking(false);
       await loadAppointments();
       await loadSlots();
       await loadWaitlist();
@@ -625,17 +702,22 @@ export default function AppointmentsPage() {
       setError("Select an available slot or enter an appointment time before saving.");
       return;
     }
+    const timeValue = appointmentTime || "";
+    const matchedSlot = matchingSlot;
     if (type === "WALK_IN") {
       await submitAppointment(false);
       return;
     }
+    if (emergencyBooking && !reason.trim()) {
+      setError("Reason is required for ad-hoc / emergency booking.");
+      return;
+    }
 
-    const timeValue = appointmentTime || "";
-    const matchedSlot = matchingSlot;
-    if (isPastDateTime(appointmentDate, timeValue)) {
+    if (!matchedSlot && isPastDateTime(appointmentDate, timeValue)) {
       setError("Selected time has already passed. Choose a current or future slot.");
       return;
     }
+
     if (matchedSlot) {
       if (isPastSlot(appointmentDate, matchedSlot)) {
         setError("Selected time has already passed. Choose a current or future slot.");
@@ -650,6 +732,11 @@ export default function AppointmentsPage() {
         return;
       }
       await submitAppointment(false);
+      return;
+    }
+
+    if (emergencyBooking) {
+      await submitAppointment(true);
       return;
     }
 
@@ -765,346 +852,418 @@ export default function AppointmentsPage() {
 
   return (
     <Stack spacing={3}>
-      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900, mb: 1 }}>Appointments</Typography>
+      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <Box sx={{ maxWidth: 760 }}>
+          <Typography variant="h4" sx={{ fontWeight: 900, mb: 0.75 }}>Appointments</Typography>
           <Typography variant="body2" color="text.secondary">
-            Search a patient by mobile, name, patient ID, or patient number. Create today’s visit without repeating lookup.
+            Reception flow: search patient, pick doctor and slot, book, waitlist, or check in without scrolling through a long page.
           </Typography>
         </Box>
-        <Button variant="outlined" onClick={() => navigate("/queue")}>Open Queue</Button>
+        <Stack direction="row" spacing={1} flexWrap="wrap">
+          <Button variant="outlined" onClick={() => navigate("/queue")}>Open Queue</Button>
+          <Button variant="outlined" onClick={() => navigate("/appointments/day-board")}>Day Board</Button>
+        </Stack>
       </Box>
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 
-      <Card variant="outlined">
-        <CardContent>
-          <Stack spacing={2}>
-            <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
-              <Box>
-                <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                  {isDoctor ? "My Calendar" : "Clinic Calendar"}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {isDoctor ? "Appointments assigned to you for the selected date." : "Clinic-wide appointment schedule for front-desk planning."}
-                </Typography>
-              </Box>
-              <TextField
-                type="date"
-                label="Calendar date"
-                value={calendarDate}
-                onChange={(event) => setCalendarDate(event.target.value)}
-                InputLabelProps={{ shrink: true }}
-                size="small"
-              />
-            </Box>
-            <Stack direction="row" spacing={1} flexWrap="wrap">
-              <Chip size="small" label={`${calendarRows.length} total`} variant="outlined" />
-              <Chip size="small" label={`${calendarRows.filter((item) => item.status === "BOOKED").length} booked`} color="warning" variant="outlined" />
-              <Chip size="small" label={`${calendarRows.filter((item) => item.status === "WAITING").length} checked in`} color="warning" />
-              <Chip size="small" label={`${calendarRows.filter((item) => item.status === "IN_CONSULTATION").length} in consultation`} color="info" />
-            </Stack>
-            {calendarRows.length === 0 ? (
-              <Alert severity="info">No appointments scheduled for this date.</Alert>
-            ) : (
-              <Stack direction="row" flexWrap="wrap" gap={1}>
-                {calendarRows.map((appointment) => (
-                  <Button
-                    key={appointment.id}
-                    variant="outlined"
-                    size="small"
-                    onClick={() => navigate(`/patients/${appointment.patientId}`)}
-                    sx={{ justifyContent: "flex-start" }}
-                  >
-                    {(appointment.appointmentTime || "No time") + " • " + (appointment.patientName || appointment.patientNumber || "Patient") + " • " + appointment.status}
-                  </Button>
-                ))}
-              </Stack>
-            )}
-          </Stack>
-        </CardContent>
-      </Card>
+      <Grid container spacing={1.25}>
+        <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}><CompactStatCard label="Today appointments" value={summaryStats.totalToday} helper="All active appointments today" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}><CompactStatCard label="Booked" value={summaryStats.booked} tone="warning" helper="Scheduled but not checked in" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}><CompactStatCard label="Checked-in" value={summaryStats.checkedIn} tone="warning" helper="Waiting at reception" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}><CompactStatCard label="In consultation" value={summaryStats.inConsultation} tone="info" helper="With doctor" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}><CompactStatCard label="Waitlist" value={summaryStats.waitlist} tone="secondary" helper="Waiting list entries" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}><CompactStatCard label="Available slots" value={summaryStats.availableSlots} tone="success" helper="Current bookable slots" /></Grid>
+      </Grid>
 
-      <Grid container spacing={2}>
-        {!isDoctor ? (
-          <Grid size={{ xs: 12, lg: 12 }}>
-            <Card>
-              <CardContent>
-                <Stack spacing={2}>
-                  <Typography variant="h6" sx={{ fontWeight: 800 }}>Create appointment</Typography>
-                  <TextField
-                    label="Search patient"
-                    value={patientQuery}
-                    onChange={(event) => {
-                      setSelectedPatient(null);
-                      setPatientQuery(event.target.value);
-                    }}
-                    helperText="Search by patient ID, patient number, mobile, or name"
-                  />
-                  {selectedPatient ? (
-                    <Card variant="outlined" sx={{ bgcolor: "primary.50" }}>
-                      <CardContent sx={{ py: 1.5 }}>
-                        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                          <Box>
-                            <Typography sx={{ fontWeight: 800 }}>{patientLabel(selectedPatient)}</Typography>
-                            <Typography variant="body2" color="text.secondary">{patientSummary(selectedPatient)}</Typography>
-                          </Box>
-                          <Button size="small" onClick={() => setSelectedPatient(null)}>Change</Button>
-                        </Stack>
-                      </CardContent>
-                    </Card>
-                  ) : null}
-                  {patientResults.length > 0 && !selectedPatient ? (
-                    <Card variant="outlined">
-                      <List dense disablePadding>
-                        {patientResults.map((patient) => (
-                          <ListItemButton key={patient.id} onClick={() => {
-                            setSelectedPatient(patient);
-                            setPatientQuery(patientSummary(patient));
-                            setQuickRegisterOpen(false);
-                          }}>
-                            <ListItemText
-                              primary={patientLabel(patient)}
-                              secondary={patientSummary(patient)}
-                            />
-                          </ListItemButton>
-                        ))}
-                      </List>
-                    </Card>
-                  ) : null}
-                  {searchingPatients ? (
-                    <Alert severity="info">Searching for matching patients...</Alert>
-                  ) : patientResults.length === 0 && patientQuery.trim().length >= 2 && !selectedPatient ? (
-                    <Alert severity="info" action={<Button color="inherit" size="small" onClick={openQuickRegister}>Quick Register Patient</Button>}>
-                      No matching patient found. Quick register a family member and continue without searching again.
-                    </Alert>
-                  ) : null}
-                    <FormControl fullWidth>
+      <Grid container spacing={2} alignItems="stretch">
+        <Grid size={{ xs: 12, lg: 5 }}>
+          <Card variant="outlined" sx={{ height: "100%" }}>
+            <CardContent sx={{ p: 1.5 }}>
+              <Stack spacing={1.5}>
+                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
+                  <Box>
+                    <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Create Appointment</Typography>
+                    <Typography variant="body2" color="text.secondary">Patient search, doctor selection, time pick, waitlist, and ad-hoc emergency booking.</Typography>
+                  </Box>
+                  <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                    {selectedDoctorId ? <Chip size="small" label={`Doctor: ${doctorOptions.find((doctor) => doctor.appUserId === selectedDoctorId)?.displayName || selectedDoctorId}`} sx={compactChipSx} /> : null}
+                    <Chip size="small" label={`Date: ${appointmentDate}`} variant="outlined" sx={compactChipSx} />
+                  </Stack>
+                </Box>
+
+                <TextField
+                  size="small"
+                  label="Search patient"
+                  value={patientQuery}
+                  onChange={(event) => {
+                    setSelectedPatient(null);
+                    setPatientQuery(event.target.value);
+                  }}
+                  helperText="Search by patient ID, patient number, mobile, or name"
+                />
+
+                {selectedPatient ? (
+                  <Card variant="outlined" sx={{ bgcolor: alpha("#1976d2", 0.05), borderColor: "primary.light" }}>
+                    <CardContent sx={{ py: 1.25 }}>
+                      <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                        <Box>
+                          <Typography sx={{ fontWeight: 800, lineHeight: 1.2 }}>{patientLabel(selectedPatient)}</Typography>
+                          <Typography variant="body2" color="text.secondary">{patientSummary(selectedPatient)}</Typography>
+                        </Box>
+                        <Button size="small" onClick={() => setSelectedPatient(null)}>Change</Button>
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                ) : null}
+
+                {patientResults.length > 0 && !selectedPatient ? (
+                  <Card variant="outlined">
+                    <List dense disablePadding>
+                      {patientResults.map((patient) => (
+                        <ListItemButton key={patient.id} onClick={() => {
+                          setSelectedPatient(patient);
+                          setPatientQuery(patientSummary(patient));
+                          setQuickRegisterOpen(false);
+                        }}>
+                          <ListItemText primary={patientLabel(patient)} secondary={patientSummary(patient)} />
+                        </ListItemButton>
+                      ))}
+                    </List>
+                  </Card>
+                ) : null}
+
+                {searchingPatients ? (
+                  <Alert severity="info">Searching for matching patients...</Alert>
+                ) : patientResults.length === 0 && patientQuery.trim().length >= 2 && !selectedPatient ? (
+                  <Alert severity="info" action={<Button color="inherit" size="small" onClick={openQuickRegister}>Quick Register Patient</Button>}>
+                    No matching patient found. Quick register and continue.
+                  </Alert>
+                ) : null}
+
+                <Grid container spacing={1}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <FormControl fullWidth size="small">
                       <InputLabel id="doctor-select-label">Doctor</InputLabel>
-                      <Select labelId="doctor-select-label" label="Doctor" value={selectedDoctorId} onChange={(event) => setDoctorUserId(String(event.target.value))} disabled={Boolean(doctorFilter)}>
+                      <Select
+                        labelId="doctor-select-label"
+                        label="Doctor"
+                        value={selectedDoctorId}
+                        onChange={(event) => setDoctorUserId(String(event.target.value))}
+                        disabled={Boolean(doctorFilter)}
+                      >
                         <MenuItem value="">Select doctor</MenuItem>
                         {doctorOptions.map((doctor) => (
                           <MenuItem key={doctor.appUserId} value={doctor.appUserId}>
                             {doctor.displayName || doctor.email || doctor.appUserId}
                           </MenuItem>
                         ))}
-                    </Select>
-                  </FormControl>
-                  <Grid container spacing={2}>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField fullWidth type="date" label="Date" value={appointmentDate} onChange={(event) => setAppointmentDate(event.target.value)} InputLabelProps={{ shrink: true }} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField
-                        fullWidth
-                        type="time"
-                        label="Time"
-                        value={appointmentTime}
-                        onChange={(event) => setAppointmentTime(event.target.value)}
-                        InputLabelProps={{ shrink: true }}
-                        disabled={type === "WALK_IN"}
-                        helperText={
-                          type === "WALK_IN"
-                            ? "Walk-ins are tokenized on arrival."
-                            : manualTimeAllowed
-                              ? "No bookable slots remain for this doctor/date. Enter a time manually to create an ad-hoc booking."
-                              : adHocBookingNeeded
-                                ? "This time is outside availability. Saving will require ad-hoc confirmation."
-                                : "Pick a slot below or enter a current/future time."
-                        }
-                      />
-                    </Grid>
+                      </Select>
+                    </FormControl>
                   </Grid>
-                  {type !== "WALK_IN" ? (
-                    <Card variant="outlined" sx={{ bgcolor: "background.default" }}>
-                      <CardContent>
-                        <Stack spacing={1.5}>
-                          <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
-                            <Box>
-                              <Typography sx={{ fontWeight: 800 }}>Available slots</Typography>
-                              <Typography variant="body2" color="text.secondary">
-                                {slots.length ? "Only future and current bookable slots are shown." : "Select a doctor and date to load the schedule."}
-                              </Typography>
-                            </Box>
-                            <Stack direction="row" spacing={1} flexWrap="wrap">
-                              <Chip size="small" label={`${slotSummary.bookable} bookable`} variant="outlined" />
-                              <Chip size="small" label={`${slotSummary.available} available`} variant="outlined" />
-                              <Chip size="small" label={`${slotSummary.partial} partial`} variant="outlined" />
-                              <Chip size="small" label={`${slotSummary.full} full`} color="error" variant="outlined" />
-                              <Chip size="small" label={`${slotSummary.unavailable} unavailable`} variant="outlined" />
-                              <Chip size="small" label={`${slotSummary.past} past`} variant="outlined" />
-                            </Stack>
-                          </Box>
-                          {slots.length === 0 ? (
-                            <Alert severity="info">No schedule configured. Enter time manually or configure doctor availability.</Alert>
-                          ) : bookableSlots.length === 0 ? (
-                            <Alert severity="info">No bookable slots remain for this doctor today. Choose another date or create ad-hoc booking.</Alert>
-                          ) : (
-                            <Stack direction="row" flexWrap="wrap" gap={1}>
-                              {bookableSlots.map((slot) => {
-                                const timeLabel = slot.slotTime.length >= 5 ? slot.slotTime.slice(0, 5) : slot.slotTime;
-                                const selected = appointmentTime === timeLabel;
-                                const pastSlot = isPastSlot(appointmentDate, slot);
-                                const currentSlot = isCurrentSlot(appointmentDate, slot);
-                                const label = slot.status === "PARTIALLY_BOOKED" && slot.selectable
-                                  ? `${timeLabel} • ${slot.bookedCount}/${slot.maxPatientsPerSlot}`
-                                  : slot.status === "FULL"
-                                    ? `${timeLabel} • ${slot.bookedCount}/${slot.maxPatientsPerSlot} full`
-                                    : pastSlot
-                                      ? `${timeLabel} • Past`
-                                      : currentSlot
-                                        ? `${timeLabel} • Current slot`
-                                      : timeLabel;
-                                return (
-                                  <Button
-                                    key={`${slot.slotTime}-${slot.slotEndTime}`}
-                                    size="small"
-                                    variant={selected ? "contained" : "outlined"}
-                                    color={pastSlot ? "inherit" : (slot.status === "FULL" ? "error" : (slot.status === "PARTIALLY_BOOKED" ? "warning" : (slot.status === "AVAILABLE" ? "primary" : "inherit")))}
-                                    disabled={pastSlot || (slot.status !== "AVAILABLE" && !(slot.status === "PARTIALLY_BOOKED" && slot.selectable))}
-                                    onClick={() => setAppointmentTime(timeLabel)}
-                                  >
-                                    {label}
-                                  </Button>
-                                );
-                              })}
-                            </Stack>
-                          )}
-                          {slots.length > 0 && adHocBookingNeeded ? (
-                            <Alert severity="warning">This time is outside doctor availability. You can continue as an ad-hoc booking when saving.</Alert>
-                          ) : null}
-                        </Stack>
-                      </CardContent>
-                    </Card>
-                  ) : null}
-                  <Stack direction="row" spacing={1}>
-                    <Button variant="outlined" onClick={() => void addToWaitlist()} disabled={!selectedPatient || !selectedDoctorId || !appointmentDate}>Add to Waitlist</Button>
-                  </Stack>
-                  <FormControl fullWidth>
-                    <InputLabel id="appointment-type-label">Type</InputLabel>
-                    <Select labelId="appointment-type-label" label="Type" value={type} onChange={(event) => setType(event.target.value as AppointmentType)}>
-                      {appointmentTypes.map((option) => (
-                        <MenuItem key={option} value={option}>{option}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <FormControl fullWidth>
-                    <InputLabel id="appointment-priority-label">Priority</InputLabel>
-                    <Select labelId="appointment-priority-label" label="Priority" value={priority} onChange={(event) => setPriority(event.target.value as AppointmentPriority)}>
-                      {appointmentPriorities.map((option) => (
-                        <MenuItem key={option} value={option}>{option}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <TextField label="Reason" value={reason} onChange={(event) => setReason(event.target.value)} multiline minRows={3} />
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField size="small" fullWidth type="date" label="Date" value={appointmentDate} onChange={(event) => setAppointmentDate(event.target.value)} InputLabelProps={{ shrink: true }} />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      type="time"
+                      label="Time"
+                      value={appointmentTime}
+                      onChange={(event) => setAppointmentTime(event.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                      disabled={type === "WALK_IN"}
+                      helperText={
+                        type === "WALK_IN"
+                          ? "Walk-ins are tokenized on arrival."
+                          : emergencyBooking
+                            ? "Emergency mode allows manual times outside configured slots."
+                            : bookableSlots.length === 0
+                              ? "No bookable slots remain for this doctor/date. You can still book manually if needed."
+                              : "Pick a slot below or enter a current/future time."
+                      }
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }} sx={{ display: "flex", alignItems: "center" }}>
+                    <FormControlLabel
+                      control={<Switch checked={emergencyBooking} onChange={(event) => setEmergencyBooking(event.target.checked)} />}
+                      label="Ad-hoc / Emergency booking"
+                    />
+                  </Grid>
+                </Grid>
+
+                {emergencyBooking || adHocBookingNeeded ? (
+                  <Alert severity="warning">
+                    This time is outside configured doctor availability. Use only for emergency/ad-hoc booking.
+                  </Alert>
+                ) : null}
+
+                <Grid container spacing={1}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="appointment-type-label">Type</InputLabel>
+                      <Select labelId="appointment-type-label" label="Type" value={type} onChange={(event) => setType(event.target.value as AppointmentType)}>
+                        {appointmentTypes.map((option) => (
+                          <MenuItem key={option} value={option}>{option}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="appointment-priority-label">Priority</InputLabel>
+                      <Select labelId="appointment-priority-label" label="Priority" value={priority} onChange={(event) => setPriority(event.target.value as AppointmentPriority)}>
+                        {appointmentPriorities.map((option) => (
+                          <MenuItem key={option} value={option}>{option}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={12}>
+                    <TextField
+                      size="small"
+                      label="Reason"
+                      value={reason}
+                      onChange={(event) => setReason(event.target.value)}
+                      multiline
+                      minRows={3}
+                      required={emergencyBooking}
+                      helperText={emergencyBooking ? "Required for emergency/ad-hoc booking." : "Optional unless you need a specific visit reason."}
+                    />
+                  </Grid>
+                </Grid>
+
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                   <Button variant="contained" onClick={() => void saveAppointment()} disabled={!canCreateAppointment}>
-                    {type === "WALK_IN" ? "Create Walk-In" : "Create Appointment"}
+                    {emergencyBooking ? "Create Emergency Booking" : (type === "WALK_IN" ? "Create Walk-In" : "Create Appointment")}
+                  </Button>
+                  <Button variant="outlined" onClick={() => void addToWaitlist()} disabled={!selectedPatient || !selectedDoctorId || !appointmentDate}>
+                    Add to Waitlist
                   </Button>
                 </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-        ) : null}
+              </Stack>
+            </CardContent>
+          </Card>
+        </Grid>
 
-        <Grid size={{ xs: 12, lg: 12 }}>
-          <Card>
-            <CardContent>
-              <Stack spacing={2}>
-                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
-                  <Typography variant="h6" sx={{ fontWeight: 800 }}>Appointment list</Typography>
-                  <Button onClick={() => navigate("/queue")}>Go to Queue</Button>
-                </Box>
-                <TextField
-                  size="small"
-                  fullWidth
-                  label="Search Today/Appointments"
-                  value={listSearch}
-                  onChange={(event) => setListSearch(event.target.value)}
-                  placeholder="Appointment ID, token, consultation ID, patient, mobile, doctor"
-                />
-
-                <Tabs value={tab} onChange={(_, value) => setTab(value)}>
-                  <Tab value="today" label={`Today (${todayRows.length})`} />
-                  <Tab value="upcoming" label={`Upcoming (${upcomingRows.length})`} />
-                  <Tab value="completed" label={`Completed (${completedRows.length})`} />
-                  <Tab value="archive" label={`Cancelled / No-show (${archiveRows.length})`} />
-                </Tabs>
-
-                {loading ? (
-                  <Box sx={{ display: "grid", placeItems: "center", minHeight: 220 }}>
-                    <Stack spacing={1} alignItems="center">
-                      <CircularProgress />
-                      <Typography variant="body2" color="text.secondary">
-                        Loading appointments...
-                      </Typography>
-                    </Stack>
+        <Grid size={{ xs: 12, lg: 7 }}>
+          <Card variant="outlined" sx={{ height: "100%" }}>
+            <CardContent sx={{ p: 1.5 }}>
+              <Stack spacing={1.5}>
+                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
+                  <Box>
+                    <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Doctor Available Slots</Typography>
+                    <Typography variant="body2" color="text.secondary">Compact slot timeline. Current slot is highlighted and remains bookable while capacity remains.</Typography>
                   </Box>
-                ) : filteredVisibleAppointments.length === 0 ? (
-                  <Alert severity="info">No appointments were found for the selected tab.</Alert>
+                  <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                    <Chip size="small" label={`${slotSummary.bookable} bookable`} variant="outlined" sx={compactChipSx} />
+                    <Chip size="small" label={`${slotSummary.available} available`} color="success" variant="outlined" sx={compactChipSx} />
+                    <Chip size="small" label={`${slotSummary.partial} partial`} color="warning" variant="outlined" sx={compactChipSx} />
+                    <Chip size="small" label={`${slotSummary.full} full`} color="error" variant="outlined" sx={compactChipSx} />
+                    <Chip size="small" label={`${slotSummary.unavailable} unavailable`} variant="outlined" sx={compactChipSx} />
+                    <Chip size="small" label={`${slotSummary.past} past`} variant="outlined" sx={compactChipSx} />
+                  </Stack>
+                </Box>
+
+                {currentSlot ? (
+                  <Alert severity="info">
+                    Current slot: {slotLabel(currentSlot, appointmentDate)}. If capacity remains, it can still be booked.
+                  </Alert>
+                ) : null}
+
+                {visibleSlots.length === 0 ? (
+                  <CompactEmptyState
+                    title={slots.length === 0 ? "No schedule loaded" : "No current or future slots"}
+                    subtitle={slots.length === 0
+                      ? "Select a doctor and date to load configured availability."
+                      : "Past slots are hidden. Select a current or future slot, or use emergency booking for a manual time."}
+                  />
                 ) : (
-                  <Box sx={{ overflowX: "auto" }}>
-                    <Table size="small" sx={{ minWidth: 920 }}>
-                      <TableHead>
-                      <TableRow>
-                        <TableCell>Patient</TableCell>
-                        <TableCell>Doctor</TableCell>
-                        <TableCell>Date</TableCell>
-                        <TableCell>Time</TableCell>
-                        <TableCell>Token</TableCell>
-                        <TableCell>Priority</TableCell>
-                        <TableCell>Arrival</TableCell>
-                        <TableCell>Status</TableCell>
-                        <TableCell>Actions</TableCell>
-                      </TableRow>
-                      </TableHead>
-                      <TableBody>
-                      {filteredVisibleAppointments.map((appointment) => (
-                        <TableRow key={appointment.id}>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)} sx={{ justifyContent: "flex-start", p: 0, minWidth: 0 }}>
-                                {appointment.patientName || appointment.patientNumber || appointment.patientId}
-                              </Button>
-                              <Typography variant="caption" color="text.secondary">{appointment.patientNumber}</Typography>
-                              <Typography variant="caption" color="text.secondary">{appointment.patientMobile || "-"}</Typography>
-                              <Typography variant="caption" color="text.secondary">Appt: {appointment.id}</Typography>
-                              <Typography variant="caption" color="text.secondary">Consult: {appointment.consultationId || "-"}</Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell>{appointment.doctorName || appointment.doctorUserId}</TableCell>
-                          <TableCell>{formatDate(appointment.appointmentDate)}</TableCell>
-                          <TableCell>{appointment.appointmentTime || "-"}</TableCell>
-                          <TableCell>{appointment.tokenNumber ?? "-"}</TableCell>
-                          <TableCell><Chip size="small" label={appointment.priority || "NORMAL"} color={priorityColor(appointment.priority)} variant="outlined" /></TableCell>
-                          <TableCell>{arrivalLabel(appointment)}</TableCell>
-                          <TableCell><Chip size="small" label={appointment.status} color={statusColor(appointment.status)} /></TableCell>
-                          <TableCell>
-                            <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)}>Patient</Button>
-                            <Button size="small" onClick={() => openReschedule(appointment)}>Reschedule</Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      </TableBody>
-                    </Table>
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gap: 1,
+                      gridTemplateColumns: {
+                        xs: "repeat(auto-fit, minmax(128px, 1fr))",
+                        sm: "repeat(auto-fit, minmax(140px, 1fr))",
+                      },
+                    }}
+                  >
+                    {visibleSlots.map((slot) => {
+                      const timeLabel = toFive(slot.slotTime);
+                      const selected = appointmentTime === timeLabel;
+                      const current = isCurrentSlot(appointmentDate, slot);
+                      const past = isPastSlot(appointmentDate, slot);
+                      const bookable = isBookableSlot(appointmentDate, slot);
+                      return (
+                        <Button
+                          key={`${slot.slotTime}-${slot.slotEndTime}`}
+                          onClick={() => setAppointmentTime(timeLabel)}
+                          disabled={!bookable && !current && !emergencyBooking}
+                          variant={selected ? "contained" : "outlined"}
+                          color={past ? "inherit" : slotTone(slot)}
+                          sx={{
+                            justifyContent: "flex-start",
+                            alignItems: "flex-start",
+                            textAlign: "left",
+                            minHeight: 84,
+                            borderColor: current ? "primary.main" : undefined,
+                            bgcolor: current ? alpha("#1976d2", 0.06) : undefined,
+                            boxShadow: current ? "inset 0 0 0 1px rgba(25,118,210,0.28)" : undefined,
+                          }}
+                        >
+                          <Stack spacing={0.35} sx={{ width: "100%" }}>
+                            <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center" }}>
+                              <Typography sx={{ fontWeight: 800, lineHeight: 1 }}>{timeLabel}</Typography>
+                              {current ? <Chip size="small" label="Current" color="primary" sx={compactChipSx} /> : null}
+                            </Box>
+                            <Typography variant="caption" color="text.secondary">
+                              {slot.slotEndTime.slice(0, 5)} • {slot.bookedCount}/{slot.maxPatientsPerSlot}
+                            </Typography>
+                            <Chip size="small" label={slot.status.replace(/_/g, " ")} color={slotChipTone(slot)} variant="outlined" sx={compactChipSx} />
+                          </Stack>
+                        </Button>
+                      );
+                    })}
                   </Box>
                 )}
+
+                {slots.length > 0 && bookableSlots.length === 0 ? (
+                  <Alert severity="info">No bookable slots remain for this doctor today. Choose another date or use emergency booking.</Alert>
+                ) : null}
               </Stack>
             </CardContent>
           </Card>
         </Grid>
       </Grid>
+
       <Card variant="outlined">
-        <CardContent>
-          <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>Waitlist</Typography>
-          {waitlist.length === 0 ? <Alert severity="info">No waiting entries for selected doctor/date.</Alert> : (
-            <Stack direction="row" flexWrap="wrap" gap={1}>
-              {waitlist.map((item) => (
-                <Button key={item.id} size="small" variant="outlined" onClick={() => void bookFromWaitlist(item)} disabled={!appointmentTime}>
-                  {(item.patientName || item.patientNumber || item.patientId)} • {item.preferredStartTime || "Any"} • {item.status}
-                </Button>
-              ))}
-            </Stack>
-          )}
+        <CardContent sx={{ p: 1.5 }}>
+          <Stack spacing={1.5}>
+            <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+              <Box>
+                <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Today / Upcoming / Waitlist</Typography>
+                <Typography variant="body2" color="text.secondary">Bottom tabs keep the receptionist on one screen for fast booking and check-in.</Typography>
+              </Box>
+              <Button size="small" variant="outlined" onClick={() => void loadAppointments()}>Refresh</Button>
+            </Box>
+
+            <TextField
+              size="small"
+              fullWidth
+              label="Search appointments and waitlist"
+              value={listSearch}
+              onChange={(event) => setListSearch(event.target.value)}
+              placeholder="Appointment ID, token, consultation ID, patient, mobile, doctor"
+            />
+
+            <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="scrollable" scrollButtons="auto">
+              <Tab value="today" label={`Today (${todayRows.length})`} />
+              <Tab value="upcoming" label={`Upcoming (${upcomingRows.length})`} />
+              <Tab value="waitlist" label={`Waitlist (${waitlist.length})`} />
+              <Tab value="completed" label={`Completed (${completedRows.length})`} />
+              <Tab value="archive" label={`Cancelled / No-show (${archiveRows.length})`} />
+            </Tabs>
+
+            {loading ? (
+              <Box sx={{ display: "grid", placeItems: "center", minHeight: 220 }}>
+                <Stack spacing={1} alignItems="center">
+                  <CircularProgress />
+                  <Typography variant="body2" color="text.secondary">Loading appointments...</Typography>
+                </Stack>
+              </Box>
+            ) : tab === "waitlist" ? (
+              filteredWaitlist.length === 0 ? (
+                <Alert severity="info">No waitlist entries were found for the selected doctor/date.</Alert>
+              ) : (
+                <Box sx={{ overflowX: "auto" }}>
+                  <Table size="small" sx={{ minWidth: 980 }}>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Patient</TableCell>
+                        <TableCell>Doctor</TableCell>
+                        <TableCell>Preferred</TableCell>
+                        <TableCell>Reason</TableCell>
+                        <TableCell>Status</TableCell>
+                        <TableCell align="right">Actions</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {filteredWaitlist.map((entry) => (
+                        <TableRow key={entry.id}>
+                          <TableCell>
+                            <Stack spacing={0.2}>
+                              <Typography variant="body2" sx={{ fontWeight: 700 }}>{entry.patientName || entry.patientNumber || entry.patientId}</Typography>
+                              <Typography variant="caption" color="text.secondary">{entry.patientNumber || entry.patientId}</Typography>
+                            </Stack>
+                          </TableCell>
+                          <TableCell>{entry.doctorName || entry.doctorUserId || "Any"}</TableCell>
+                          <TableCell>
+                            <Typography variant="body2">{entry.preferredDate}</Typography>
+                            <Typography variant="caption" color="text.secondary">{entry.preferredStartTime || "Any time"}</Typography>
+                          </TableCell>
+                          <TableCell sx={{ maxWidth: 260, wordBreak: "break-word" }}>{entry.reason || "-"}</TableCell>
+                          <TableCell><Chip size="small" label={waitlistStatusLabel(entry.status)} variant="outlined" sx={compactChipSx} /></TableCell>
+                          <TableCell align="right">
+                            <Button size="small" variant="outlined" onClick={() => void bookFromWaitlist(entry)} disabled={!appointmentTime}>Book</Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Box>
+              )
+            ) : filteredVisibleAppointments.length === 0 ? (
+              <Alert severity="info">No appointments were found for the selected tab.</Alert>
+            ) : (
+              <Box sx={{ overflowX: "auto" }}>
+                <Table size="small" sx={{ minWidth: 920 }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Patient</TableCell>
+                      <TableCell>Doctor</TableCell>
+                      <TableCell>Date</TableCell>
+                      <TableCell>Time</TableCell>
+                      <TableCell>Token</TableCell>
+                      <TableCell>Priority</TableCell>
+                      <TableCell>Arrival</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell align="right">Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {filteredVisibleAppointments.map((appointment) => (
+                      <TableRow key={appointment.id}>
+                        <TableCell>
+                          <Stack spacing={0.2}>
+                            <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)} sx={{ justifyContent: "flex-start", p: 0, minWidth: 0 }}>
+                              {appointment.patientName || appointment.patientNumber || appointment.patientId}
+                            </Button>
+                            <Typography variant="caption" color="text.secondary">{appointment.patientNumber}</Typography>
+                            <Typography variant="caption" color="text.secondary">{appointment.patientMobile || "-"}</Typography>
+                          </Stack>
+                        </TableCell>
+                        <TableCell>{appointment.doctorName || appointment.doctorUserId}</TableCell>
+                        <TableCell>{formatDate(appointment.appointmentDate)}</TableCell>
+                        <TableCell>{appointment.appointmentTime || "-"}</TableCell>
+                        <TableCell>{appointment.tokenNumber ?? "-"}</TableCell>
+                        <TableCell><Chip size="small" label={appointment.priority || "NORMAL"} color={priorityColor(appointment.priority)} variant="outlined" sx={compactChipSx} /></TableCell>
+                        <TableCell>{arrivalLabel(appointment)}</TableCell>
+                        <TableCell><Chip size="small" label={appointment.status} color={statusColor(appointment.status)} sx={compactChipSx} /></TableCell>
+                        <TableCell align="right">
+                          <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap">
+                            <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)}>Patient</Button>
+                            <Button size="small" onClick={() => openReschedule(appointment)}>Reschedule</Button>
+                          </Stack>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Box>
+            )}
+          </Stack>
         </CardContent>
       </Card>
 

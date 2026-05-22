@@ -6,7 +6,7 @@ import {
   Card,
   CardContent,
   Chip,
-  CircularProgress,
+  Collapse,
   Dialog,
   DialogActions,
   DialogContent,
@@ -14,11 +14,14 @@ import {
   FormControl,
   Grid,
   IconButton,
+  InputAdornment,
   InputLabel,
   List,
   ListItemButton,
   ListItemText,
   MenuItem,
+  Menu,
+  Paper,
   Select,
   Stack,
   Table,
@@ -31,6 +34,8 @@ import {
 } from "@mui/material";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
+import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
+import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
@@ -60,6 +65,8 @@ import {
   listBillPayments,
   listBillReceipts,
   listBillRefunds,
+  getClinicUsers,
+  listPaymentsLedger,
   sendBillInvoiceEmail,
   sendReceipt,
   searchBills,
@@ -67,12 +74,12 @@ import {
   type Bill,
   type BillInput,
   type BillItemType,
-  type BillLine,
   type DiscountType,
   type Appointment,
   type ClinicProfile,
-  type Consultation,
+  type ClinicUser,
   type Payment,
+  type PaymentLedgerRow,
   type PaymentMode,
   type Patient,
   type DoctorProfile,
@@ -80,12 +87,17 @@ import {
   type Refund,
 } from "../../api/clinicApi";
 
+type BillItemCategory = BillItemType | "SERVICE" | "PACKAGE";
+
 type BillLineForm = {
-  itemType: BillItemType;
+  itemType: BillItemCategory;
   itemName: string;
   quantity: string;
   unitPrice: string;
+  lineDiscountAmount: string;
+  taxAmount: string;
   referenceId: string;
+  scanCode: string;
   sortOrder: string;
 };
 
@@ -100,6 +112,33 @@ type BillFormState = {
   taxAmount: string;
   notes: string;
   lines: BillLineForm[];
+};
+
+type DraftTotals = {
+  subtotal: number;
+  lineDiscount: number;
+  billDiscount: number;
+  tax: number;
+  total: number;
+};
+
+type QuickChargePreset = {
+  label: string;
+  itemType: BillItemCategory;
+  itemName: string;
+  unitPrice?: string;
+};
+
+type DoctorOption = {
+  appUserId: string;
+  displayName: string;
+  consultationFee: number | null;
+};
+
+type CatalogItem = {
+  itemName: string;
+  itemType: BillItemCategory;
+  unitPrice: string;
 };
 
 type PaymentFormState = {
@@ -117,9 +156,46 @@ type RefundFormState = {
   notes: string;
 };
 
-const BILL_ITEM_TYPES: BillItemType[] = ["CONSULTATION", "MEDICINE", "TEST", "VACCINATION", "PROCEDURE", "OTHER"];
+const BILL_ITEM_CATEGORIES: BillItemCategory[] = ["CONSULTATION", "MEDICINE", "TEST", "VACCINATION", "PROCEDURE", "SERVICE", "PACKAGE", "OTHER"];
+const SCAN_ITEM_TYPE_OPTIONS: Array<{ value: Exclude<BillItemCategory, "CONSULTATION">; label: string }> = [
+  { value: "MEDICINE", label: "Medicine" },
+  { value: "TEST", label: "Lab/Test" },
+  { value: "SERVICE", label: "Service" },
+  { value: "PROCEDURE", label: "Procedure" },
+  { value: "PACKAGE", label: "Package" },
+  { value: "OTHER", label: "Other" },
+];
+const QUICK_CHARGE_PRESETS: QuickChargePreset[] = [
+  { label: "Consultation Fee", itemType: "CONSULTATION", itemName: "Consultation Fee" },
+  { label: "Registration Fee", itemType: "OTHER", itemName: "Registration Fee" },
+  { label: "Follow-up Fee", itemType: "CONSULTATION", itemName: "Follow-up Fee" },
+  { label: "Emergency Fee", itemType: "OTHER", itemName: "Emergency Fee" },
+  { label: "Lab Test", itemType: "TEST", itemName: "Lab Test" },
+  { label: "Medicine", itemType: "MEDICINE", itemName: "Medicine" },
+  { label: "Other Charge", itemType: "OTHER", itemName: "Other Charge" },
+];
 const PAYMENT_MODES: PaymentMode[] = ["CASH", "CARD", "UPI", "PAYTM", "PHONEPE", "GOOGLE_PAY", "BANK_TRANSFER", "CHEQUE", "OTHER"];
 const DISCOUNT_TYPES: DiscountType[] = ["NONE", "AMOUNT", "PERCENTAGE"];
+
+function resolveItemType(value: BillItemCategory): BillItemType {
+  if (value === "SERVICE" || value === "PACKAGE") return "OTHER";
+  return value;
+}
+
+function billItemCategoryLabel(value: BillItemCategory) {
+  switch (value) {
+    case "CONSULTATION": return "Consultation";
+    case "MEDICINE": return "Medicine";
+    case "TEST": return "Lab/Test";
+    case "VACCINATION": return "Vaccination";
+    case "PROCEDURE": return "Procedure";
+    case "SERVICE": return "Service";
+    case "PACKAGE": return "Package";
+    case "OTHER":
+    default:
+      return "Other";
+  }
+}
 
 function emptyBillForm(): BillFormState {
   return {
@@ -132,7 +208,7 @@ function emptyBillForm(): BillFormState {
     discountReason: "",
     taxAmount: "",
     notes: "",
-    lines: [{ itemType: "CONSULTATION", itemName: "", quantity: "1", unitPrice: "", referenceId: "", sortOrder: "1" }],
+    lines: [{ itemType: "CONSULTATION", itemName: "", quantity: "1", unitPrice: "", lineDiscountAmount: "", taxAmount: "", referenceId: "", scanCode: "", sortOrder: "1" }],
   };
 }
 
@@ -145,6 +221,7 @@ function emptyRefundForm(): RefundFormState {
 }
 
 function toBillInput(form: BillFormState): BillInput {
+  const taxAmount = form.lines.reduce((sum, row) => sum + Number(row.taxAmount || "0"), 0);
   return {
     patientId: form.patientId,
     consultationId: form.consultationId.trim() || null,
@@ -153,17 +230,39 @@ function toBillInput(form: BillFormState): BillInput {
     discountType: form.discountType,
     discountValue: form.discountType === "NONE" ? null : (form.discountValue.trim() ? Number(form.discountValue) : 0),
     discountReason: form.discountType === "NONE" ? null : (form.discountReason.trim() || null),
-    taxAmount: form.taxAmount.trim() ? Number(form.taxAmount) : null,
+    taxAmount: taxAmount > 0 ? taxAmount : null,
     notes: form.notes.trim() || null,
     lines: form.lines.filter((row) => row.itemName.trim()).map((row, index) => ({
-      itemType: row.itemType,
+      itemType: resolveItemType(row.itemType),
       itemName: row.itemName.trim(),
       quantity: Number(row.quantity || "1"),
       unitPrice: Number(row.unitPrice || "0"),
       referenceId: row.referenceId.trim() || null,
       sortOrder: row.sortOrder.trim() ? Number(row.sortOrder) : index + 1,
+      lineDiscountAmount: Number(row.lineDiscountAmount || "0"),
+      batchNumber: null,
+      dispensationReferenceId: null,
     })),
   };
+}
+
+function draftBillTotals(form: BillFormState): DraftTotals {
+  const subtotal = form.lines.reduce((sum, row) => sum + (Number(row.quantity || "0") * Number(row.unitPrice || "0")), 0);
+  const lineDiscount = form.lines.reduce((sum, row) => sum + Number(row.lineDiscountAmount || "0"), 0);
+  const taxableSubtotal = Math.max(0, subtotal - lineDiscount);
+  const billDiscount = (() => {
+    if (form.discountType === "NONE") return 0;
+    const discountValue = Number(form.discountValue || "0");
+    if (form.discountType === "PERCENTAGE") return Math.min(100, Math.max(0, discountValue)) * taxableSubtotal / 100;
+    return Math.min(taxableSubtotal, Math.max(0, discountValue));
+  })();
+  const tax = form.lines.reduce((sum, row) => sum + Number(row.taxAmount || "0"), 0);
+  const total = Math.max(0, taxableSubtotal - billDiscount + tax);
+  return { subtotal, lineDiscount, billDiscount, tax, total };
+}
+
+function normalizeDraftText(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function statusColor(status: Bill["status"]) {
@@ -181,7 +280,11 @@ function statusColor(status: Bill["status"]) {
 }
 
 function lineTotal(row: BillLineForm) {
-  return (Number(row.quantity || "0") * Number(row.unitPrice || "0")).toFixed(2);
+  const quantity = Number(row.quantity || "0");
+  const unitPrice = Number(row.unitPrice || "0");
+  const discount = Number(row.lineDiscountAmount || "0");
+  const tax = Number(row.taxAmount || "0");
+  return Math.max(0, quantity * unitPrice - discount + tax).toFixed(2);
 }
 
 function parseMoney(value: string | null) {
@@ -229,6 +332,8 @@ export default function BillsPage() {
   const [receipts, setReceipts] = React.useState<Receipt[]>([]);
   const [refunds, setRefunds] = React.useState<Refund[]>([]);
   const [patients, setPatients] = React.useState<Patient[]>([]);
+  const [clinicUsers, setClinicUsers] = React.useState<ClinicUser[]>([]);
+  const [doctorProfiles, setDoctorProfiles] = React.useState<Record<string, DoctorProfile>>({});
   const [patientQuery, setPatientQuery] = React.useState("");
   const [patientSearchResults, setPatientSearchResults] = React.useState<Patient[]>([]);
   const [billFilterPatient, setBillFilterPatient] = React.useState(consultationPatientId);
@@ -264,6 +369,17 @@ export default function BillsPage() {
   const [consultationDoctorProfile, setConsultationDoctorProfile] = React.useState<DoctorProfile | null>(null);
   const [consultationContextLoading, setConsultationContextLoading] = React.useState(false);
   const [consultationContextError, setConsultationContextError] = React.useState<string | null>(null);
+  const [scanQuery, setScanQuery] = React.useState("");
+  const [scanItemType, setScanItemType] = React.useState<BillItemCategory>("MEDICINE");
+  const [consultationDoctorUserIdForDraft, setConsultationDoctorUserIdForDraft] = React.useState("");
+  const [manualScanPrompt, setManualScanPrompt] = React.useState<string | null>(null);
+  const [paymentLedger, setPaymentLedger] = React.useState<PaymentLedgerRow[]>([]);
+  const [ledgerActionBill, setLedgerActionBill] = React.useState<Bill | null>(null);
+  const [ledgerActionAnchorEl, setLedgerActionAnchorEl] = React.useState<HTMLElement | null>(null);
+  const [ledgerCollapsed, setLedgerCollapsed] = React.useState(false);
+  const scanInputRef = React.useRef<HTMLInputElement | null>(null);
+  const consultationSectionRef = React.useRef<HTMLDivElement | null>(null);
+  const consultationDoctorSelectRef = React.useRef<HTMLInputElement | null>(null);
 
   const canCreateBill = auth.hasPermission("billing.create");
   const canUpdateBill = auth.hasPermission("billing.update") || auth.hasPermission("billing.create");
@@ -290,6 +406,85 @@ export default function BillsPage() {
   const consultationDoctorUserProfileId = consultationAppointment?.doctorUserId || consultationDoctorUserId || "";
   const consultationDoctorLabel = consultationDoctorProfile?.doctorName || consultationAppointment?.doctorName || null;
   const consultationAppointmentLabel = formatAppointmentSummary(consultationAppointment);
+  const doctorOptions = React.useMemo(
+    () => clinicUsers
+      .filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR")
+      .map((user) => {
+        const profile = doctorProfiles[user.appUserId];
+        const fallbackLabel = user.displayName || user.email || user.appUserId;
+        return {
+          appUserId: user.appUserId,
+          displayName: profile?.doctorName || fallbackLabel,
+          consultationFee: profile?.consultationFee ?? null,
+        } satisfies DoctorOption;
+      })
+      .sort((left, right) => left.displayName.localeCompare(right.displayName)),
+    [clinicUsers, doctorProfiles],
+  );
+  const selectedConsultationDoctor = React.useMemo(
+    () => doctorOptions.find((doctor) => doctor.appUserId === consultationDoctorUserIdForDraft) || null,
+    [consultationDoctorUserIdForDraft, doctorOptions],
+  );
+  const consultationFeeQuickAmount = consultationFeeAmount ?? selectedConsultationDoctor?.consultationFee ?? consultationDoctorProfile?.consultationFee ?? null;
+  const selectedPatient = React.useMemo(
+    () => patients.find((patient) => patient.id === form.patientId) || null,
+    [patients, form.patientId],
+  );
+  const patientBills = React.useMemo(
+    () => bills.filter((bill) => bill.patientId === form.patientId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [bills, form.patientId],
+  );
+  const recentPatientPayments = React.useMemo(
+    () => paymentLedger.filter((payment) => payment.patientId === form.patientId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [paymentLedger, form.patientId],
+  );
+  const itemCatalog = React.useMemo(() => {
+    const items = new Map<string, CatalogItem>();
+    bills.forEach((bill) => {
+      bill.lines.forEach((line) => {
+        if (line.itemType === "CONSULTATION") return;
+        const key = normalizeDraftText(`${line.itemName}|${line.itemType}`);
+        if (!items.has(key)) {
+          items.set(key, {
+            itemName: line.itemName,
+            itemType: line.itemType,
+            unitPrice: line.unitPrice ? line.unitPrice.toFixed(2) : "",
+          });
+        }
+      });
+    });
+    return Array.from(items.values()).slice(0, 24);
+  }, [bills]);
+  const consultationCatalogHint = React.useMemo(
+    () => doctorOptions.slice(0, 5).map((doctor) => ({
+      title: `Consultation Fee - ${doctor.displayName}`,
+      subtitle: `Consultation • ${doctor.consultationFee != null ? formatAmount(doctor.consultationFee) : "Fee unavailable"}`,
+      doctorUserId: doctor.appUserId,
+    })),
+    [doctorOptions],
+  );
+  const filteredCatalog = React.useMemo(() => {
+    const query = normalizeDraftText(scanQuery);
+    if (!query) return itemCatalog.slice(0, 6);
+    return itemCatalog
+      .filter((item) => item.itemType === scanItemType || scanItemType === "OTHER" || normalizeDraftText(item.itemName).includes(query))
+      .filter((item) => normalizeDraftText(item.itemName).includes(query) || normalizeDraftText(item.itemType).includes(query))
+      .slice(0, 6);
+  }, [itemCatalog, scanQuery]);
+  const currentDraftTotals = React.useMemo(() => draftBillTotals(form), [form]);
+  const selectedPatientTotalDue = React.useMemo(
+    () => patientBills.reduce((sum, bill) => sum + bill.dueAmount, 0),
+    [patientBills],
+  );
+  const ledgerSummary = React.useMemo(() => {
+    const visibleBills = bills;
+    return {
+      visible: visibleBills.length,
+      paid: visibleBills.filter((bill) => bill.status === "PAID").length,
+      pending: visibleBills.filter((bill) => bill.dueAmount > 0 && bill.status !== "CANCELLED").length,
+      dueTotal: visibleBills.reduce((sum, bill) => sum + bill.dueAmount, 0),
+    };
+  }, [bills]);
 
   const loadBills = React.useCallback(async (override?: {
     patientId?: string;
@@ -322,6 +517,16 @@ export default function BillsPage() {
       : rows);
   }, [auth.accessToken, auth.tenantId, billFilterPatient, billFilterAppointmentId, billFilterStatus, billFilterFromDate, billFilterToDate, billFilterMode, billFilterText]);
 
+  const loadPatientPayments = React.useCallback(async (patientId: string) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    try {
+      const rows = await listPaymentsLedger(auth.accessToken, auth.tenantId, { patientId, size: 8 });
+      setPaymentLedger(rows);
+    } catch {
+      setPaymentLedger([]);
+    }
+  }, [auth.accessToken, auth.tenantId]);
+
   React.useEffect(() => {
     let cancelled = false;
     async function bootstrap() {
@@ -329,11 +534,16 @@ export default function BillsPage() {
       setLoading(true);
       setError(null);
       try {
-        const [billRows, patientRows] = await Promise.all([
+        const [billRows, patientRows, userRows] = await Promise.all([
           searchBills(auth.accessToken, auth.tenantId, {}),
           searchPatients(auth.accessToken, auth.tenantId, { active: true }),
+          getClinicUsers(auth.accessToken, auth.tenantId).catch(() => []),
         ]);
-        if (!cancelled) { setBills(billRows); setPatients(patientRows); }
+        if (!cancelled) {
+          setBills(billRows);
+          setPatients(patientRows);
+          setClinicUsers(userRows);
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load billing data");
       } finally {
@@ -411,6 +621,47 @@ export default function BillsPage() {
   }, [auth.accessToken, auth.tenantId]);
 
   React.useEffect(() => {
+    if (!form.patientId) {
+      setPaymentLedger([]);
+      return;
+    }
+    void loadPatientPayments(form.patientId);
+  }, [form.patientId, loadPatientPayments]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function hydrateDoctorProfiles() {
+      if (!auth.accessToken || !auth.tenantId || clinicUsers.length === 0) {
+        setDoctorProfiles({});
+        return;
+      }
+      const doctors = clinicUsers.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
+      const entries = await Promise.all(
+        doctors.map(async (doctor) => {
+          const profile = await getDoctorProfile(auth.accessToken!, auth.tenantId!, doctor.appUserId).catch(() => null);
+          return [doctor.appUserId, profile] as const;
+        }),
+      );
+      if (!cancelled) {
+        const nextProfiles: Record<string, DoctorProfile> = {};
+        entries.forEach(([doctorUserId, profile]) => {
+          if (profile) nextProfiles[doctorUserId] = profile;
+        });
+        setDoctorProfiles(nextProfiles);
+      }
+    }
+    void hydrateDoctorProfiles();
+    return () => { cancelled = true; };
+  }, [auth.accessToken, auth.tenantId, clinicUsers]);
+
+  React.useEffect(() => {
+    if (!consultationDoctorUserIdForDraft) {
+      const initialDoctor = consultationAppointment?.doctorUserId || consultationDoctorUserId || doctorOptions[0]?.appUserId || "";
+      setConsultationDoctorUserIdForDraft(initialDoctor);
+    }
+  }, [consultationAppointment?.doctorUserId, consultationDoctorUserId, doctorOptions, consultationDoctorUserIdForDraft]);
+
+  React.useEffect(() => {
     let cancelled = false;
     const handle = window.setTimeout(async () => {
       if (!auth.accessToken || !auth.tenantId || patientQuery.trim().length < 2) { setPatientSearchResults([]); return; }
@@ -429,6 +680,11 @@ export default function BillsPage() {
     }, 300);
     return () => { cancelled = true; window.clearTimeout(handle); };
   }, [auth.accessToken, auth.tenantId, patientQuery]);
+
+  React.useEffect(() => {
+    if (!canCreateBill) return;
+    window.setTimeout(() => scanInputRef.current?.focus(), 80);
+  }, [canCreateBill]);
 
   React.useEffect(() => {
     if (invoiceAutoPrint && invoicePreview && !invoicePreviewLoading) {
@@ -547,24 +803,6 @@ export default function BillsPage() {
   };
 
   const refundableAmount = selectedBill ? Math.max(0, selectedBill.paidAmount - selectedBill.refundedAmount) : 0;
-
-  const createNewBill = async () => {
-    if (!auth.accessToken || !auth.tenantId || !form.patientId) { setError("Select a patient before creating a bill."); return; }
-    if (form.discountType !== "NONE" && !form.discountReason.trim() && Number(form.discountValue || "0") > 0) {
-      setError("Discount reason is required when discount > 0.");
-      return;
-    }
-    setSaving(true); setError(null); setSuccess(null);
-    try {
-      const saved = await createBill(auth.accessToken, auth.tenantId, toBillInput(form));
-      setSuccess("Bill created");
-      setForm(emptyBillForm());
-      await loadBills();
-      await selectBill(saved);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create bill");
-    } finally { setSaving(false); }
-  };
 
   const submitRefund = async () => {
     if (!auth.accessToken || !auth.tenantId || !selectedBill) return;
@@ -715,390 +953,817 @@ export default function BillsPage() {
       : { ...current, lines: current.lines.filter((_, lineIndex) => lineIndex !== index) }));
   };
 
-  const addBillLine = () => {
+  const addBillLine = (preset?: Partial<BillLineForm> & { itemType?: BillItemCategory }) => {
     setForm((current) => ({
       ...current,
       lines: [
         ...current.lines,
         {
-          itemType: "OTHER",
-          itemName: "",
+          itemType: preset?.itemType || "OTHER",
+          itemName: preset?.itemName || "",
           quantity: "1",
-          unitPrice: "",
-          referenceId: "",
+          unitPrice: preset?.unitPrice || "",
+          lineDiscountAmount: preset?.lineDiscountAmount || "",
+          taxAmount: preset?.taxAmount || "",
+          referenceId: preset?.referenceId || "",
+          scanCode: preset?.scanCode || "",
           sortOrder: String(current.lines.length + 1),
         },
       ],
     }));
   };
 
+  const addPresetLine = (preset: QuickChargePreset) => {
+    addBillLine({
+      itemType: preset.itemType,
+      itemName: preset.itemName,
+      unitPrice: preset.unitPrice || "",
+    });
+  };
+
+  const addManualScanItem = () => {
+    const value = manualScanPrompt || scanQuery.trim();
+    if (!value) return;
+    addBillLine({
+      itemType: scanItemType,
+      itemName: value,
+      referenceId: value,
+      scanCode: value,
+    });
+    setScanQuery("");
+    setManualScanPrompt(null);
+  };
+
+  const addScannedItem = () => {
+    const query = scanQuery.trim();
+    if (!query) return;
+    const normalized = normalizeDraftText(query);
+    const currentMatchIndex = form.lines.findIndex((row) => {
+      const rowName = normalizeDraftText(row.itemName);
+      const rowScan = normalizeDraftText(row.scanCode);
+      const rowReference = normalizeDraftText(row.referenceId);
+      return rowName === normalized || rowScan === normalized || rowReference === normalized;
+    });
+    if (currentMatchIndex >= 0) {
+      patchBillLine(currentMatchIndex, {
+        quantity: String(Number(form.lines[currentMatchIndex].quantity || "1") + 1),
+        scanCode: query,
+      });
+      setSuccess("Item added");
+      setManualScanPrompt(null);
+      setScanQuery("");
+      return;
+    }
+    const catalogMatch = itemCatalog.find((item) => normalizeDraftText(item.itemName) === normalized || normalizeDraftText(item.itemType) === normalized);
+    if (catalogMatch) {
+      addBillLine({
+        itemType: catalogMatch.itemType,
+        itemName: catalogMatch.itemName,
+        unitPrice: catalogMatch.unitPrice,
+        referenceId: query,
+        scanCode: query,
+      });
+      setSuccess("Item added");
+      setManualScanPrompt(null);
+      setScanQuery("");
+      return;
+    }
+    setManualScanPrompt(query);
+  };
+
+  const createBillFromDraft = async (collectPayment = false) => {
+    if (!auth.accessToken || !auth.tenantId || !form.patientId) { setError("Select a patient before creating a bill."); return; }
+    if (form.discountType !== "NONE" && !form.discountReason.trim() && Number(form.discountValue || "0") > 0) {
+      setError("Discount reason is required when discount > 0.");
+      return;
+    }
+    if (form.lines.filter((row) => row.itemName.trim()).length === 0) {
+      setError("Add at least one bill line before creating a bill.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const saved = await createBill(auth.accessToken, auth.tenantId, toBillInput(form));
+      setSuccess("Bill created");
+      setForm({
+        ...emptyBillForm(),
+        patientId: form.patientId,
+        consultationId: form.consultationId,
+        appointmentId: form.appointmentId,
+      });
+      setScanQuery("");
+      setManualScanPrompt(null);
+      window.setTimeout(() => scanInputRef.current?.focus(), 50);
+      await loadBills();
+      await selectBill(saved);
+      if (collectPayment) {
+        setPaymentForm({ ...emptyPaymentForm(), amount: saved.dueAmount.toFixed(2) });
+        setPaymentOpen(true);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create bill");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openLedgerActions = (bill: Bill, anchorEl: HTMLElement) => {
+    setLedgerActionBill(bill);
+    setLedgerActionAnchorEl(anchorEl);
+  };
+
+  const closeLedgerActions = () => {
+    setLedgerActionBill(null);
+    setLedgerActionAnchorEl(null);
+  };
+
+  const ledgerMenuItems = ledgerActionBill ? [
+    <MenuItem key="view" onClick={() => { void selectBill(ledgerActionBill); closeLedgerActions(); }}>View Bill</MenuItem>,
+    <MenuItem key="invoice" onClick={() => { void openInvoicePreviewAction(ledgerActionBill); closeLedgerActions(); }}>View Invoice</MenuItem>,
+    <MenuItem key="print" onClick={() => { void openInvoicePreviewAction(ledgerActionBill, true); closeLedgerActions(); }}>Print Invoice</MenuItem>,
+    <MenuItem key="pdf" onClick={() => { void openInvoicePdf(ledgerActionBill); closeLedgerActions(); }}>Download PDF</MenuItem>,
+    canCollectPayment ? <MenuItem key="pay" disabled={ledgerActionBill.status === "PAID" || ledgerActionBill.status === "CANCELLED" || ledgerActionBill.dueAmount <= 0} onClick={() => { openPaymentDialog(ledgerActionBill); closeLedgerActions(); }}>Add payment</MenuItem> : null,
+    canRefund ? <MenuItem key="refund" disabled={ledgerActionBill.status === "CANCELLED" || (ledgerActionBill.paidAmount - ledgerActionBill.refundedAmount) <= 0} onClick={() => { setSelectedBill(ledgerActionBill); setRefundOpen(true); closeLedgerActions(); }}>Refund</MenuItem> : null,
+    canSendInvoice ? <MenuItem key="send" disabled={workingId === ledgerActionBill.id || !ledgerActionBill.patientId} onClick={() => { void sendInvoiceAction(ledgerActionBill); closeLedgerActions(); }}>Send invoice email</MenuItem> : null,
+    canUpdateBill ? <MenuItem key="issue" disabled={workingId === ledgerActionBill.id || ledgerActionBill.status !== "DRAFT"} onClick={() => { void issueCurrentBill(ledgerActionBill); closeLedgerActions(); }}>Issue</MenuItem> : null,
+    canUpdateBill ? <MenuItem key="cancel" disabled={workingId === ledgerActionBill.id || ledgerActionBill.status === "PAID"} onClick={() => { void cancelCurrentBill(ledgerActionBill); closeLedgerActions(); }}>Cancel</MenuItem> : null,
+  ].filter(Boolean) : null;
+  const consultationAppointmentDisplay = consultationAppointmentLabel ? `Appointment: ${consultationAppointmentLabel}` : "Appointment: —";
+  const consultationDoctorDisplay = consultationDoctorLabel ? `Doctor: ${consultationDoctorLabel}` : "Doctor: —";
+  const consultationPatientDisplay = consultationPatientLabel ? `Patient: ${consultationPatientLabel}` : "Patient: —";
+  const consultationFeeDisplay = `Consultation fee: ${formatAmount(resolvedConsultationFee)}`;
+  let consultationFeeDialog: React.ReactNode = null;
+  if (consultationFeeRequested && resolvedConsultationFee != null) {
+    consultationFeeDialog = (
+      <ConsultationFeeDialog
+        open={consultationFeeOpen}
+        title="Collect consultation fee"
+        reasonLabel={consultationReason}
+        appointmentLabel={consultationAppointmentDisplay}
+        doctorLabel={consultationDoctorDisplay}
+        patientLabel={consultationPatientDisplay}
+        feeLabel={consultationFeeDisplay}
+        submitLabel="Collect Fee"
+        onClose={() => setConsultationFeeOpen(false)}
+        onSubmit={submitConsultationFee}
+      />
+    );
+  }
+
   return (
-    <>
-    <Stack className="no-print" spacing={3}>
-      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900, mb: 1 }}>Billing</Typography>
-          <Typography variant="body2" color="text.secondary">Bills, payments, receipts, and clinic-friendly charge capture.</Typography>
+    <Box>
+      <Stack className="no-print" spacing={3}>
+        <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+          <Box>
+            <Typography variant="h4" sx={{ fontWeight: 900, mb: 1 }}>Billing</Typography>
+            <Typography variant="body2" color="text.secondary">Split-screen cashier workspace with scan-first item entry.</Typography>
+          </Box>
+          <Stack direction="row" spacing={1}>
+            <Button variant="outlined" onClick={() => void loadBills()}>Refresh</Button>
+            <Button variant="text" onClick={() => scanInputRef.current?.focus()}>Focus scan</Button>
+          </Stack>
         </Box>
-        <Button variant="outlined" onClick={() => void loadBills()}>Refresh</Button>
-      </Box>
 
-      {error ? <Alert severity="error">{error}</Alert> : null}
-      {success ? <Alert severity="success">{success}</Alert> : null}
+        {error ? <Alert severity="error">{error}</Alert> : null}
+        {success ? <Alert severity="success">{success}</Alert> : null}
 
-      {consultationAppointmentId ? (
-        <Card variant="outlined">
-          <CardContent>
-            <Stack spacing={1.5}>
-              <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
-                <Box>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Consultation fee collection</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Payment reason: Consultation Fee
-                  </Typography>
+        {consultationAppointmentId ? (
+          <Card variant="outlined">
+            <CardContent sx={{ p: 1.5 }}>
+              <Stack spacing={1.25}>
+                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Consultation fee collection</Typography>
+                    <Typography variant="body2" color="text.secondary">Payment reason: Consultation Fee</Typography>
+                  </Box>
+                  {consultationReturnTo ? (
+                    <Button variant="outlined" disabled={!success} onClick={() => navigate(consultationReturnTo)}>Return to Queue</Button>
+                  ) : null}
                 </Box>
-                {consultationReturnTo ? (
-                  <Button variant="outlined" disabled={!success} onClick={() => navigate(consultationReturnTo)}>
-                    Return to Queue
-                  </Button>
+                <Stack direction="row" spacing={1} flexWrap="wrap">
+                  {consultationAppointmentLabel ? <Chip size="small" label={consultationAppointmentLabel} variant="outlined" /> : null}
+                  {consultationPatientLabel ? <Chip size="small" label={`Patient: ${consultationPatientLabel}`} variant="outlined" /> : null}
+                  {consultationDoctorLabel ? <Chip size="small" label={`Doctor: ${consultationDoctorLabel}`} variant="outlined" /> : null}
+                  {consultationContextLoading
+                    ? <Chip size="small" label="Consultation fee: loading…" variant="outlined" />
+                    : resolvedConsultationFee != null
+                      ? <Chip size="small" label={`Consultation fee: ${formatAmount(resolvedConsultationFee)}`} color="warning" variant="outlined" />
+                      : <Chip size="small" label="Consultation fee missing" color="default" variant="outlined" />}
+                </Stack>
+                {consultationContextError ? <Alert severity="warning">{consultationContextError}</Alert> : null}
+                {consultationContextLoading ? (
+                  <Alert severity="info">Loading appointment billing context…</Alert>
+                ) : resolvedConsultationFee != null ? (
+                  <Button variant="contained" onClick={() => setConsultationFeeOpen(true)}>Collect consultation fee</Button>
+                ) : (
+                  <Alert severity="warning">Doctor consultation fee is not configured. Open the doctor profile to configure the fee before collecting payment.</Alert>
+                )}
+                {consultationDoctorUserProfileId ? (
+                  <Button variant="text" onClick={() => navigate(`/doctors/${consultationDoctorUserProfileId}`)}>Open doctor profile</Button>
                 ) : null}
-              </Box>
-              <Stack direction="row" spacing={1} flexWrap="wrap">
-                {consultationAppointmentLabel ? <Chip size="small" label={consultationAppointmentLabel} variant="outlined" /> : null}
-                {consultationPatientLabel ? <Chip size="small" label={`Patient: ${consultationPatientLabel}`} variant="outlined" /> : null}
-                {consultationDoctorLabel ? <Chip size="small" label={`Doctor: ${consultationDoctorLabel}`} variant="outlined" /> : null}
-                {consultationContextLoading
-                  ? <Chip size="small" label="Consultation fee: loading…" variant="outlined" />
-                  : resolvedConsultationFee != null
-                    ? <Chip size="small" label={`Consultation fee: ${formatAmount(resolvedConsultationFee)}`} color="warning" variant="outlined" />
-                    : <Chip size="small" label="Consultation fee missing" color="default" variant="outlined" />}
               </Stack>
-              {consultationContextError ? (
-                <Alert severity="warning">
-                  {consultationContextError}
-                </Alert>
-              ) : null}
-              {consultationContextLoading ? (
-                <Alert severity="info">Loading appointment billing context…</Alert>
-              ) : resolvedConsultationFee != null ? (
-                <Button variant="contained" onClick={() => setConsultationFeeOpen(true)}>
-                  Collect consultation fee
-                </Button>
-              ) : (
-                <Alert severity="warning">Doctor consultation fee is not configured. Open the doctor profile to configure the fee before collecting payment.</Alert>
-              )}
-              {consultationDoctorUserProfileId ? (
-                <Button variant="text" onClick={() => navigate(`/doctors/${consultationDoctorUserProfileId}`)}>
-                  Open doctor profile
-                </Button>
-              ) : null}
-            </Stack>
-          </CardContent>
-        </Card>
-      ) : null}
+            </CardContent>
+          </Card>
+        ) : null}
 
-      <Grid container spacing={2}>
-        {canCreateBill ? (
-          <Grid size={{ xs: 12, lg: 5 }}>
-            <Card variant="outlined">
-              <CardContent sx={{ p: 1.5 }}>
-                <Stack spacing={1.25}>
-                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <Grid container spacing={2} alignItems="stretch">
+          <Grid size={{ xs: 12, lg: 8 }}>
+            <Card variant="outlined" sx={{ height: "100%" }}>
+              <CardContent sx={{ p: 1.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
+                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap", alignItems: "flex-start" }}>
+                  <Box>
+                    <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Bill Builder</Typography>
+                    <Typography variant="body2" color="text.secondary">Search a patient, scan or type items, and keep the draft visible while you work.</Typography>
+                  </Box>
+                  <Stack direction="row" spacing={0.75} flexWrap="wrap" justifyContent="flex-end">
+                    <Chip size="small" label={form.patientId ? (selectedPatient?.patientNumber || selectedPatient?.mobile || "Selected patient") : "No patient selected"} variant="outlined" sx={compactChipSx} />
+                    <Chip size="small" label={`Lines: ${form.lines.filter((row) => row.itemName.trim()).length}`} variant="outlined" sx={compactChipSx} />
+                    <Chip size="small" label={`Draft total: ${formatAmount(currentDraftTotals.total)}`} color="warning" variant="outlined" sx={compactChipSx} />
+                  </Stack>
+                </Box>
+
+                <Grid container spacing={1.25}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      {...denseTextFieldProps}
+                      label="Search patient"
+                      value={patientQuery}
+                      onChange={(e) => setPatientQuery(e.target.value)}
+                      helperText="Search by patient number, mobile, or name"
+                    />
+                    {patientSearchResults.length > 0 && !form.patientId ? (
+                      <Card variant="outlined" sx={{ mt: 1, borderRadius: 2 }}>
+                        <List dense disablePadding>
+                          {patientSearchResults.map((patient) => (
+                            <ListItemButton key={patient.id} onClick={() => setForm((current) => ({ ...current, patientId: patient.id }))}>
+                              <ListItemText
+                                primary={`${patient.firstName} ${patient.lastName}`.trim()}
+                                secondary={`${patient.patientNumber} • ${patient.mobile}`}
+                              />
+                            </ListItemButton>
+                          ))}
+                        </List>
+                      </Card>
+                    ) : null}
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    {selectedPatient ? (
+                      <Card variant="outlined" sx={{ height: "100%" }}>
+                        <CardContent sx={{ p: 1.25 }}>
+                          <Stack spacing={0.75}>
+                            <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "flex-start" }}>
+                              <Box>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{`${selectedPatient.firstName} ${selectedPatient.lastName}`.trim()}</Typography>
+                                <Typography variant="body2" color="text.secondary">{selectedPatient.patientNumber} • {selectedPatient.mobile}</Typography>
+                              </Box>
+                              <Button size="small" variant="text" onClick={() => setForm((current) => ({ ...current, patientId: "", consultationId: "", appointmentId: "" }))}>Clear</Button>
+                            </Box>
+                            <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                              <Chip size="small" label={`Due: ${formatAmount(selectedPatientTotalDue)}`} color="warning" variant="outlined" sx={compactChipSx} />
+                              {consultationAppointmentLabel ? <Chip size="small" label={consultationAppointmentLabel} variant="outlined" sx={compactChipSx} /> : null}
+                              {consultationDoctorLabel ? <Chip size="small" label={consultationDoctorLabel} variant="outlined" sx={compactChipSx} /> : null}
+                            </Stack>
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <CompactEmptyState title="Search or select a patient to start billing." subtitle="The builder stays visible so the cashier can keep working without a drawer." />
+                    )}
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <TextField {...denseTextFieldProps} type="date" label="Bill date" value={form.billDate} onChange={(e) => setForm((current) => ({ ...current, billDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl {...denseSelectProps}>
+                      <InputLabel id="discount-type-label">Discount type</InputLabel>
+                      <Select labelId="discount-type-label" label="Discount type" value={form.discountType} onChange={(e) => setForm((current) => ({ ...current, discountType: e.target.value as DiscountType }))}>
+                        {DISCOUNT_TYPES.map((d) => <MenuItem key={d} value={d}>{d}</MenuItem>)}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <TextField
+                      {...denseTextFieldProps}
+                      label={form.discountType === "PERCENTAGE" ? "Discount (%)" : "Discount value"}
+                      value={form.discountValue}
+                      onChange={(e) => setForm((current) => ({ ...current, discountValue: e.target.value }))}
+                      disabled={form.discountType === "NONE"}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <TextField {...denseTextFieldProps} label="Consultation ID" value={form.consultationId} onChange={(e) => setForm((current) => ({ ...current, consultationId: e.target.value }))} />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <TextField {...denseTextFieldProps} label="Appointment ID" value={form.appointmentId} onChange={(e) => setForm((current) => ({ ...current, appointmentId: e.target.value }))} />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <TextField {...denseTextFieldProps} label="Source" value={consultationAppointmentId ? "Appointment billing" : "Manual billing"} InputProps={{ readOnly: true }} />
+                  </Grid>
+                  <Grid size={12}>
+                    <TextField {...denseTextFieldProps} label="Discount reason" value={form.discountReason} onChange={(e) => setForm((current) => ({ ...current, discountReason: e.target.value }))} disabled={form.discountType === "NONE"} required={form.discountType !== "NONE" && Number(form.discountValue || "0") > 0} />
+                  </Grid>
+                  <Grid size={12}>
+                    <TextField {...denseTextFieldProps} label="Notes" value={form.notes} onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} />
+                  </Grid>
+                </Grid>
+
+                <Box ref={consultationSectionRef} sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
                     <Box>
-                      <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Create bill</Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Compact charge entry with dense line-item editing.
-                      </Typography>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Consultation Fee</Typography>
+                      <Typography variant="body2" color="text.secondary">Pick a consultant, confirm the fee, and add it as a bill line without exposing internal IDs.</Typography>
                     </Box>
-                    {form.patientId ? (
-                      <Chip
-                        size="small"
-                        label={patients.find((p) => p.id === form.patientId)?.patientNumber || form.patientId}
-                        onDelete={() => setForm((current) => ({ ...current, patientId: "" }))}
-                        sx={compactChipSx}
+                    {consultationAppointmentLabel ? <Chip size="small" label={consultationAppointmentLabel} variant="outlined" sx={compactChipSx} /> : null}
+                  </Box>
+                  <Grid container spacing={1.25} alignItems="stretch">
+                    <Grid size={{ xs: 12, md: 5 }}>
+                      <FormControl {...denseSelectProps}>
+                        <InputLabel id="consultation-doctor-label">Consultant</InputLabel>
+                        <Select
+                          labelId="consultation-doctor-label"
+                          inputRef={consultationDoctorSelectRef}
+                          label="Consultant"
+                          value={consultationDoctorUserIdForDraft}
+                          onChange={(e) => setConsultationDoctorUserIdForDraft(String(e.target.value))}
+                        >
+                          {doctorOptions.map((doctor) => (
+                            <MenuItem key={doctor.appUserId} value={doctor.appUserId}>{doctor.displayName}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 3 }}>
+                      <TextField
+                        {...denseTextFieldProps}
+                        label="Fee"
+                        value={consultationFeeQuickAmount != null ? formatAmount(consultationFeeQuickAmount) : "Fee unavailable"}
+                        InputProps={{ readOnly: true }}
                       />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <Button
+                        fullWidth
+                        variant="contained"
+                        sx={{ height: "100%" }}
+                        onClick={() => {
+                          if (!consultationDoctorUserIdForDraft) return;
+                          const consultationDoctor = doctorOptions.find((doctor) => doctor.appUserId === consultationDoctorUserIdForDraft) || null;
+                          addBillLine({
+                            itemType: "CONSULTATION",
+                            itemName: `Consultation Fee - ${consultationDoctor?.displayName || "Doctor"}`,
+                            unitPrice: consultationFeeQuickAmount != null ? String(consultationFeeQuickAmount) : "",
+                            referenceId: consultationDoctorUserIdForDraft,
+                            scanCode: `CONSULTATION:${consultationDoctorUserIdForDraft}`,
+                          });
+                          setSuccess("Consultation fee added");
+                        }}
+                        disabled={!consultationDoctorUserIdForDraft}
+                      >
+                        Add Consultation Fee
+                      </Button>
+                    </Grid>
+                  </Grid>
+                  {consultationAppointment ? (
+                    <Alert severity="info" sx={{ py: 0.5 }}>
+                      {consultationAppointment.patientName || consultationAppointment.patientNumber || "Patient"} • {consultationAppointmentLabel}
+                    </Alert>
+                  ) : null}
+                  {consultationCatalogHint.length > 0 ? (
+                    <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                      {consultationCatalogHint.map((hint) => (
+                        <Chip
+                          key={hint.doctorUserId}
+                          label={hint.title}
+                          size="small"
+                          variant="outlined"
+                          sx={compactChipSx}
+                          onClick={() => {
+                            setConsultationDoctorUserIdForDraft(hint.doctorUserId);
+                            consultationDoctorSelectRef.current?.focus();
+                          }}
+                        />
+                      ))}
+                    </Stack>
+                  ) : null}
+                </Box>
+
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                    <Box>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Scan / Search Item Entry</Typography>
+                      <Typography variant="body2" color="text.secondary">Scan or search medicines, tests, services, procedures, packages, and other billable items.</Typography>
+                    </Box>
+                    {scanQuery.trim() ? (
+                      <Button size="small" variant="outlined" onClick={addScannedItem}>Add / Match</Button>
                     ) : null}
                   </Box>
-
-                  <TextField
-                    {...denseTextFieldProps}
-                    label="Search patient"
-                    value={patientQuery}
-                    onChange={(e) => setPatientQuery(e.target.value)}
-                    helperText="Search by patient number, mobile, or name"
-                  />
-
-                  {patientSearchResults.length > 0 && !form.patientId ? (
-                    <Card variant="outlined" sx={{ borderRadius: 2 }}>
+                  <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
+                    <FormControl {...denseSelectProps} sx={{ minWidth: { md: 180 } }}>
+                      <InputLabel id="scan-item-type-label">Item type</InputLabel>
+                      <Select
+                        labelId="scan-item-type-label"
+                        label="Item type"
+                        value={scanItemType}
+                        onChange={(e) => setScanItemType(e.target.value as Exclude<BillItemCategory, "CONSULTATION">)}
+                      >
+                        {SCAN_ITEM_TYPE_OPTIONS.map((option) => (
+                          <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    <TextField
+                      {...denseTextFieldProps}
+                      inputRef={scanInputRef}
+                      label="Scan barcode or search medicine, test, service, package"
+                      placeholder="Scan barcode or search medicine, test, service, package"
+                      value={scanQuery}
+                      onChange={(e) => setScanQuery(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addScannedItem(); } }}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchRoundedIcon fontSize="small" />
+                          </InputAdornment>
+                        ),
+                      }}
+                    />
+                    <Button size="small" variant="outlined" onClick={addScannedItem} disabled={!scanQuery.trim()}>Add</Button>
+                  </Stack>
+                  {manualScanPrompt ? (
+                    <Alert
+                      severity="warning"
+                      action={(
+                        <Button color="inherit" size="small" onClick={addManualScanItem}>
+                          Add manual item
+                        </Button>
+                      )}
+                    >
+                      Item not found. Add as manual item?
+                    </Alert>
+                  ) : null}
+                  {filteredCatalog.length > 0 ? (
+                    <Paper variant="outlined" sx={{ borderRadius: 2, overflow: "hidden" }}>
                       <List dense disablePadding>
-                        {patientSearchResults.map((patient) => (
-                          <ListItemButton key={patient.id} onClick={() => setForm((current) => ({ ...current, patientId: patient.id }))}>
+                        {filteredCatalog.map((item) => (
+                          <ListItemButton key={`${item.itemName}-${item.itemType}`} onClick={() => {
+                            addBillLine({
+                              itemType: item.itemType,
+                              itemName: item.itemName,
+                              unitPrice: item.unitPrice,
+                              referenceId: scanQuery.trim() || item.itemName,
+                              scanCode: scanQuery.trim() || item.itemName,
+                            });
+                            setManualScanPrompt(null);
+                            setScanQuery("");
+                          }}>
                             <ListItemText
-                              primary={`${patient.firstName} ${patient.lastName}`.trim()}
-                              secondary={`${patient.patientNumber} • ${patient.mobile}`}
+                              primary={item.itemName}
+                              secondary={`${billItemCategoryLabel(item.itemType)}${item.unitPrice ? ` • ${formatAmount(Number(item.unitPrice))}` : ""}`}
                             />
                           </ListItemButton>
                         ))}
                       </List>
-                    </Card>
+                    </Paper>
                   ) : null}
+                </Box>
 
-                  <Grid container spacing={1}>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <TextField {...denseTextFieldProps} type="date" label="Bill date" value={form.billDate} onChange={(e) => setForm((current) => ({ ...current, billDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <FormControl {...denseSelectProps}>
-                        <InputLabel id="discount-type-label">Discount type</InputLabel>
-                        <Select labelId="discount-type-label" label="Discount type" value={form.discountType} onChange={(e) => setForm((current) => ({ ...current, discountType: e.target.value as DiscountType }))}>
-                          {DISCOUNT_TYPES.map((d) => <MenuItem key={d} value={d}>{d}</MenuItem>)}
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <TextField
-                        {...denseTextFieldProps}
-                        label={form.discountType === "PERCENTAGE" ? "Discount (%)" : "Discount value"}
-                        value={form.discountValue}
-                        onChange={(e) => setForm((current) => ({ ...current, discountValue: e.target.value }))}
-                        disabled={form.discountType === "NONE"}
-                      />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <TextField
-                        {...denseTextFieldProps}
-                        label="Tax"
-                        value={form.taxAmount}
-                        onChange={(e) => setForm((current) => ({ ...current, taxAmount: e.target.value }))}
-                      />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <TextField
-                        {...denseTextFieldProps}
-                        label="Consultation ID"
-                        value={form.consultationId}
-                        onChange={(e) => setForm((current) => ({ ...current, consultationId: e.target.value }))}
-                      />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <TextField
-                        {...denseTextFieldProps}
-                        label="Appointment ID"
-                        value={form.appointmentId}
-                        onChange={(e) => setForm((current) => ({ ...current, appointmentId: e.target.value }))}
-                      />
-                    </Grid>
-                    <Grid size={12}>
-                      <TextField
-                        {...denseTextFieldProps}
-                        label="Discount reason"
-                        value={form.discountReason}
-                        onChange={(e) => setForm((current) => ({ ...current, discountReason: e.target.value }))}
-                        disabled={form.discountType === "NONE"}
-                        required={form.discountType !== "NONE" && Number(form.discountValue || "0") > 0}
-                      />
-                    </Grid>
-                    <Grid size={12}>
-                      <TextField
-                        {...denseTextFieldProps}
-                        label="Notes"
-                        value={form.notes}
-                        onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))}
-                        multiline
-                        minRows={2}
-                      />
-                    </Grid>
-                  </Grid>
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Quick Add</Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    {QUICK_CHARGE_PRESETS.map((preset) => (
+                      <Button
+                        key={preset.label}
+                        size="small"
+                        variant="outlined"
+                        onClick={() => {
+                          if (preset.itemType === "CONSULTATION") {
+                            consultationSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                            consultationDoctorSelectRef.current?.focus();
+                            return;
+                          }
+                          addPresetLine(preset);
+                        }}
+                      >
+                        {preset.label}
+                      </Button>
+                    ))}
+                  </Stack>
+                </Box>
 
-                  <Box>
-                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", mb: 0.75, flexWrap: "wrap" }}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Line items</Typography>
-                      <Button size="small" startIcon={<AddRoundedIcon />} onClick={addBillLine}>Add line</Button>
-                    </Box>
-                    <Box sx={{ overflowX: "auto" }}>
-                      <Table size="small" sx={{ minWidth: 780 }}>
-                        <TableHead>
-                          <TableRow>
-                            <TableCell sx={{ py: 0.7 }}>Type</TableCell>
-                            <TableCell sx={{ py: 0.7 }}>Item</TableCell>
-                            <TableCell sx={{ py: 0.7 }} align="right">Qty</TableCell>
-                            <TableCell sx={{ py: 0.7 }} align="right">Unit</TableCell>
-                            <TableCell sx={{ py: 0.7 }}>Reference</TableCell>
-                            <TableCell sx={{ py: 0.7 }} align="right">Order</TableCell>
-                            <TableCell sx={{ py: 0.7 }} align="right">Total</TableCell>
-                            <TableCell sx={{ py: 0.7 }} align="right">Action</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {form.lines.map((row, index) => (
-                            <TableRow key={`${index}-${row.sortOrder}`} hover>
-                              <TableCell sx={{ py: 0.5, minWidth: 140 }}>
-                                <FormControl fullWidth size="small">
-                                  <Select
-                                    value={row.itemType}
-                                    onChange={(e) => patchBillLine(index, { itemType: String(e.target.value) as BillItemType })}
-                                  >
-                                    {BILL_ITEM_TYPES.map((option) => <MenuItem key={option} value={option}>{option}</MenuItem>)}
-                                  </Select>
-                                </FormControl>
-                              </TableCell>
-                              <TableCell sx={{ py: 0.5, minWidth: 220 }}>
-                                <TextField size="small" value={row.itemName} onChange={(e) => patchBillLine(index, { itemName: e.target.value })} fullWidth />
-                              </TableCell>
-                              <TableCell sx={{ py: 0.5, width: 96 }} align="right">
-                                <TextField size="small" type="number" value={row.quantity} onChange={(e) => patchBillLine(index, { quantity: e.target.value })} />
-                              </TableCell>
-                              <TableCell sx={{ py: 0.5, width: 120 }} align="right">
-                                <TextField size="small" type="number" value={row.unitPrice} onChange={(e) => patchBillLine(index, { unitPrice: e.target.value })} />
-                              </TableCell>
-                              <TableCell sx={{ py: 0.5, minWidth: 150 }}>
-                                <TextField size="small" value={row.referenceId} onChange={(e) => patchBillLine(index, { referenceId: e.target.value })} fullWidth />
-                              </TableCell>
-                              <TableCell sx={{ py: 0.5, width: 96 }} align="right">
-                                <TextField size="small" type="number" value={row.sortOrder} onChange={(e) => patchBillLine(index, { sortOrder: e.target.value })} />
-                              </TableCell>
-                              <TableCell sx={{ py: 0.5, whiteSpace: "nowrap" }} align="right">
-                                <Typography variant="body2" sx={{ fontWeight: 700 }}>{lineTotal(row)}</Typography>
-                              </TableCell>
-                              <TableCell sx={{ py: 0.5 }} align="right">
-                                <IconButton size="small" onClick={() => removeBillLine(index)} disabled={form.lines.length === 1}>
-                                  <DeleteOutlineRoundedIcon fontSize="small" />
-                                </IconButton>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </Box>
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Line items</Typography>
+                    <Button size="small" startIcon={<AddRoundedIcon />} onClick={() => addBillLine()}>Add line</Button>
                   </Box>
+                  <Table size="small" sx={{ width: "100%", tableLayout: "fixed", "& .MuiTableCell-root": { py: 0.75, px: 0.75, verticalAlign: "top" } }}>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ width: "28%" }}>Item</TableCell>
+                        <TableCell sx={{ width: "13%" }}>Type</TableCell>
+                        <TableCell sx={{ width: "8%" }} align="right">Qty</TableCell>
+                        <TableCell sx={{ width: "12%" }} align="right">Unit</TableCell>
+                        <TableCell sx={{ width: "12%" }} align="right">Discount</TableCell>
+                        <TableCell sx={{ width: "10%" }} align="right">Tax</TableCell>
+                        <TableCell sx={{ width: "11%" }} align="right">Total</TableCell>
+                        <TableCell sx={{ width: "6%" }} align="right">Remove</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {form.lines.map((row, index) => (
+                        <TableRow key={`${index}-${row.sortOrder}`} hover>
+                          <TableCell>
+                            <Stack spacing={0.25}>
+                              <TextField size="small" value={row.itemName} onChange={(e) => patchBillLine(index, { itemName: e.target.value })} fullWidth />
+                            </Stack>
+                          </TableCell>
+                          <TableCell>
+                            <FormControl fullWidth size="small">
+                              <Select value={row.itemType} onChange={(e) => patchBillLine(index, { itemType: String(e.target.value) as BillItemCategory })}>
+                                {BILL_ITEM_CATEGORIES.map((option) => <MenuItem key={option} value={option}>{billItemCategoryLabel(option)}</MenuItem>)}
+                              </Select>
+                            </FormControl>
+                          </TableCell>
+                          <TableCell align="right">
+                            <TextField size="small" fullWidth type="number" value={row.quantity} onChange={(e) => patchBillLine(index, { quantity: e.target.value })} />
+                          </TableCell>
+                          <TableCell align="right">
+                            <TextField size="small" fullWidth type="number" value={row.unitPrice} onChange={(e) => patchBillLine(index, { unitPrice: e.target.value })} />
+                          </TableCell>
+                          <TableCell align="right">
+                            <TextField size="small" fullWidth type="number" value={row.lineDiscountAmount} onChange={(e) => patchBillLine(index, { lineDiscountAmount: e.target.value })} />
+                          </TableCell>
+                          <TableCell align="right">
+                            <TextField size="small" fullWidth type="number" value={row.taxAmount} onChange={(e) => patchBillLine(index, { taxAmount: e.target.value })} />
+                          </TableCell>
+                          <TableCell align="right">
+                            <Typography variant="body2" sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>{lineTotal(row)}</Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <IconButton size="small" onClick={() => removeBillLine(index)} disabled={form.lines.length === 1}>
+                              <DeleteOutlineRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Box>
 
-                  <Button variant="contained" disabled={saving} onClick={() => void createNewBill()}>
-                    {saving ? "Saving..." : "Create Bill"}
-                  </Button>
-                </Stack>
+                <Box sx={{ position: "sticky", bottom: 0, zIndex: 1, mt: 0.5, pt: 1, bgcolor: "background.paper", borderTop: "1px solid", borderColor: "divider" }}>
+                  <Stack spacing={1}>
+                    <Stack direction="row" spacing={1} flexWrap="wrap">
+                      <Chip size="small" label={`Subtotal: ${formatAmount(currentDraftTotals.subtotal)}`} variant="outlined" sx={compactChipSx} />
+                      <Chip size="small" label={`Discount: ${formatAmount(currentDraftTotals.lineDiscount + currentDraftTotals.billDiscount)}`} variant="outlined" sx={compactChipSx} />
+                      <Chip size="small" label={`Tax: ${formatAmount(currentDraftTotals.tax)}`} variant="outlined" sx={compactChipSx} />
+                      <Chip size="small" label={`Grand total: ${formatAmount(currentDraftTotals.total)}`} color="warning" variant="outlined" sx={compactChipSx} />
+                      <Chip size="small" label="Paid: ₹0.00" variant="outlined" sx={compactChipSx} />
+                      <Chip size="small" label={`Due: ${formatAmount(currentDraftTotals.total)}`} color="warning" variant="outlined" sx={compactChipSx} />
+                    </Stack>
+                    <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
+                      <Button variant="outlined" size="small" onClick={() => { setForm(emptyBillForm()); setScanQuery(""); setManualScanPrompt(null); }} disabled={saving}>Reset draft</Button>
+                      <Button variant="contained" size="small" onClick={() => void createBillFromDraft(false)} disabled={saving || !canCreateBill}>
+                        {saving ? "Saving..." : "Create Bill"}
+                      </Button>
+                      {canCollectPayment ? (
+                        <Button variant="outlined" size="small" onClick={() => void createBillFromDraft(true)} disabled={saving || !canCreateBill}>
+                          Create &amp; Collect Payment
+                        </Button>
+                      ) : null}
+                      <Button variant="text" size="small" onClick={() => { if (selectedBill) void openInvoicePreviewAction(selectedBill, true); }} disabled={!selectedBill}>
+                        Print Invoice
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Box>
               </CardContent>
             </Card>
           </Grid>
-        ) : null}
 
-        <Grid size={{ xs: 12, lg: canCreateBill ? 7 : 12 }}>
-          <Card variant="outlined">
-            <CardContent sx={{ p: 1.5 }}>
-              <Stack spacing={1.25}>
-                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "flex-start", flexWrap: "wrap" }}>
-                  <Box>
-                    <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Bills</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Compact bill ledger with dense filtering and action controls.
-                    </Typography>
-                  </Box>
-                  <Button size="small" variant="outlined" onClick={() => void loadBills()}>Refresh</Button>
+          <Grid size={{ xs: 12, lg: 4 }}>
+            <Stack spacing={2}>
+              {selectedPatient ? (
+                <Card variant="outlined">
+                  <CardContent sx={{ p: 1.25 }}>
+                    <Stack spacing={1}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "flex-start" }}>
+                        <Box>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Patient context</Typography>
+                          <Typography variant="body2" color="text.secondary">{selectedPatient.patientNumber}</Typography>
+                        </Box>
+                        <Button size="small" variant="text" onClick={() => navigate(`/patients/${selectedPatient.id}`)}>Open patient</Button>
+                      </Box>
+                      <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                        <Chip size="small" label={selectedPatient.mobile || "No mobile"} variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`Due: ${formatAmount(selectedPatientTotalDue)}`} color="warning" variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`Bills: ${patientBills.length}`} variant="outlined" sx={compactChipSx} />
+                      </Stack>
+                      {patientBills[0] ? (
+                        <Box sx={{ display: "grid", gap: 0.5 }}>
+                          <Typography variant="body2"><strong>Last bill:</strong> {patientBills[0].billNumber}</Typography>
+                          <Typography variant="body2" color="text.secondary">{patientBills[0].billDate} • Due {formatAmount(patientBills[0].dueAmount)}</Typography>
+                        </Box>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">No previous bills found for this patient.</Typography>
+                      )}
+                      <Stack direction="row" spacing={1} flexWrap="wrap">
+                        <Button size="small" variant="outlined" onClick={() => { if (form.patientId) { setBillFilterPatient(form.patientId); void loadBills({ patientId: form.patientId }); } }}>View bills</Button>
+                        <Button size="small" variant="outlined" onClick={() => { const bill = selectedBill || patientBills[0]; if (bill) openPaymentDialog(bill); }} disabled={!selectedBill && patientBills.length === 0}>Collect payment</Button>
+                        <Button size="small" variant="outlined" onClick={() => { const bill = selectedBill || patientBills[0]; if (bill) void openInvoicePreviewAction(bill, true); }} disabled={!selectedBill && patientBills.length === 0}>Print last invoice</Button>
+                      </Stack>
+                      {patientBills.length > 0 ? (
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">Recent bills</Typography>
+                          <List dense disablePadding>
+                            {patientBills.slice(0, 4).map((bill) => (
+                              <ListItemButton key={bill.id} onClick={() => void selectBill(bill)} sx={{ borderRadius: 1 }}>
+                                <ListItemText
+                                  primary={`${bill.billNumber} • ${formatAmount(bill.dueAmount)}`}
+                                  secondary={`${bill.billDate} • ${bill.status}`}
+                                />
+                              </ListItemButton>
+                            ))}
+                          </List>
+                        </Box>
+                      ) : null}
+                    </Stack>
+                  </CardContent>
+                </Card>
+              ) : (
+                <CompactEmptyState title="Search or select a patient to start billing." subtitle="Patient history, due summary, and quick actions appear here once a patient is selected." />
+              )}
+
+              {recentPatientPayments.length > 0 ? (
+                <Card variant="outlined">
+                  <CardContent sx={{ p: 1.25 }}>
+                    <Stack spacing={1}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center" }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Recent payments</Typography>
+                        <Typography variant="caption" color="text.secondary">{recentPatientPayments.length}</Typography>
+                      </Box>
+                      <List dense disablePadding>
+                        {recentPatientPayments.slice(0, 5).map((payment) => (
+                          <ListItemButton
+                            key={payment.id}
+                            sx={{ borderRadius: 1 }}
+                            onClick={() => {
+                              if (!payment.receiptId) return;
+                              void openReceiptPreviewAction({
+                                id: payment.receiptId,
+                                tenantId: auth.tenantId || "",
+                                receiptNumber: payment.receiptNumber || "",
+                                billId: payment.billId,
+                                paymentId: payment.id,
+                                receiptDate: payment.receiptDate || payment.paymentDate,
+                                amount: payment.amount,
+                                createdAt: payment.createdAt,
+                              }, payment);
+                            }}
+                          >
+                            <ListItemText
+                              primary={`${formatAmount(payment.amount)} • ${payment.paymentMode}`}
+                              secondary={`${payment.billNumber} • ${payment.paymentDateTime || payment.paymentDate}`}
+                            />
+                          </ListItemButton>
+                        ))}
+                      </List>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {selectedBill ? (
+                <Card variant="outlined">
+                  <CardContent sx={{ p: 1.25 }}>
+                    <Stack spacing={1}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "flex-start" }}>
+                        <Box>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{selectedBill.billNumber}</Typography>
+                          <Typography variant="body2" color="text.secondary">{selectedBill.patientName || selectedBill.patientNumber || selectedBill.patientId}</Typography>
+                        </Box>
+                        <Chip label={selectedBill.status} color={statusColor(selectedBill.status)} sx={compactChipSx} />
+                      </Box>
+                      <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                        <Chip size="small" label={`Due: ${formatAmount(selectedBill.dueAmount)}`} color="warning" variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`Paid: ${formatAmount(selectedBill.paidAmount)}`} variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`Refunded: ${formatAmount(selectedBill.refundedAmount)}`} variant="outlined" sx={compactChipSx} />
+                      </Stack>
+                      <Grid container spacing={1}>
+                        <Grid size={{ xs: 6 }}><Typography variant="body2">Subtotal: {formatAmount(selectedBill.subtotalAmount)}</Typography></Grid>
+                        <Grid size={{ xs: 6 }}><Typography variant="body2">Discount: {formatAmount(selectedBill.discountAmount)}</Typography></Grid>
+                        <Grid size={{ xs: 6 }}><Typography variant="body2">Tax: {formatAmount(selectedBill.taxAmount)}</Typography></Grid>
+                        <Grid size={{ xs: 6 }}><Typography variant="body2">Total: {formatAmount(selectedBill.totalAmount)}</Typography></Grid>
+                      </Grid>
+                      <Stack direction="row" spacing={1} flexWrap="wrap">
+                        <Button size="small" variant="outlined" onClick={() => void openInvoicePreviewAction(selectedBill)}>View Invoice</Button>
+                        <Button size="small" variant="outlined" onClick={() => void openInvoicePreviewAction(selectedBill, true)}>Print Invoice</Button>
+                        <Button size="small" variant="outlined" onClick={() => void openInvoicePdf(selectedBill)}>Download PDF</Button>
+                        {canCollectPayment ? <Button size="small" variant="outlined" onClick={() => openPaymentDialog(selectedBill)} disabled={selectedBill.status === "PAID" || selectedBill.status === "CANCELLED" || selectedBill.dueAmount <= 0}>Add payment</Button> : null}
+                        {canRefund ? <Button size="small" variant="outlined" onClick={() => { setRefundOpen(true); }} disabled={selectedBill.status === "CANCELLED" || (selectedBill.paidAmount - selectedBill.refundedAmount) <= 0}>Refund</Button> : null}
+                        {canSendInvoice ? <Button size="small" variant="outlined" onClick={() => void sendInvoiceAction(selectedBill)} disabled={workingId === selectedBill.id || !selectedBill.patientId}>Send invoice email</Button> : null}
+                        {canUpdateBill ? <Button size="small" variant="outlined" onClick={() => void issueCurrentBill(selectedBill)} disabled={workingId === selectedBill.id || selectedBill.status !== "DRAFT"}>Issue</Button> : null}
+                        {canUpdateBill ? <Button size="small" variant="outlined" onClick={() => void cancelCurrentBill(selectedBill)} disabled={workingId === selectedBill.id || selectedBill.status === "PAID"}>Cancel</Button> : null}
+                      </Stack>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              ) : null}
+            </Stack>
+          </Grid>
+
+        </Grid>
+
+        <Card variant="outlined">
+          <CardContent sx={{ p: 1.25 }}>
+            <Stack spacing={1}>
+              <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "flex-start", flexWrap: "wrap" }}>
+                <Box>
+                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Bill Ledger</Typography>
+                    <Chip size="small" label={`Bills ${ledgerSummary.visible}`} variant="outlined" sx={compactChipSx} />
+                    <Chip size="small" label={`Paid ${ledgerSummary.paid}`} color="success" variant="outlined" sx={compactChipSx} />
+                    <Chip size="small" label={`Pending ${ledgerSummary.pending}`} color="warning" variant="outlined" sx={compactChipSx} />
+                    <Chip size="small" label={`Due ${formatAmount(ledgerSummary.dueTotal)}`} color="warning" variant="outlined" sx={compactChipSx} />
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary">Compact bill list with actions for invoice, PDF, refund, and receipt delivery.</Typography>
                 </Box>
-                <Grid container spacing={1}>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField {...denseTextFieldProps} label="Patient ID" value={billFilterPatient} onChange={(e) => setBillFilterPatient(e.target.value)} />
+                <Stack direction="row" spacing={1} flexWrap="wrap">
+                  <Button size="small" variant="outlined" onClick={() => setLedgerCollapsed((current) => !current)}>
+                    {ledgerCollapsed ? "Expand" : "Collapse"}
+                  </Button>
+                  <Button size="small" variant="outlined" onClick={() => void loadBills()}>Refresh</Button>
+                  <Button size="small" variant="text" onClick={() => scanInputRef.current?.focus()}>Focus scan</Button>
+                </Stack>
+              </Box>
+              <Collapse in={!ledgerCollapsed} timeout="auto" unmountOnExit={false}>
+                <Stack spacing={1}>
+                  <Grid container spacing={1}>
+                    <Grid size={{ xs: 12, md: 3 }}>
+                      <TextField {...denseTextFieldProps} label="Ledger search" value={billFilterText} onChange={(e) => setBillFilterText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadBills(); }} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 2 }}>
+                      <FormControl {...denseSelectProps}>
+                        <InputLabel id="bill-status-label">Status</InputLabel>
+                        <Select labelId="bill-status-label" label="Status" value={billFilterStatus} onChange={(e) => setBillFilterStatus(String(e.target.value))}>
+                          <MenuItem value="">All</MenuItem>
+                          {["DRAFT", "ISSUED", "UNPAID", "PARTIALLY_PAID", "PAID", "CANCELLED", "REFUNDED", "PARTIALLY_REFUNDED"].map((status) => (
+                            <MenuItem key={status} value={status}>{status}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 2 }}>
+                      <TextField {...denseTextFieldProps} type="date" label="From" value={billFilterFromDate} onChange={(e) => setBillFilterFromDate(e.target.value)} InputLabelProps={{ shrink: true }} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 2 }}>
+                      <TextField {...denseTextFieldProps} type="date" label="To" value={billFilterToDate} onChange={(e) => setBillFilterToDate(e.target.value)} InputLabelProps={{ shrink: true }} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 3 }}>
+                      <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
+                        <Button size="small" variant="outlined" onClick={() => void loadBills()}>Apply filters</Button>
+                        <Button size="small" variant="text" onClick={() => { setBillFilterText(""); setBillFilterStatus(""); setBillFilterFromDate(""); setBillFilterToDate(""); setBillFilterMode(""); setBillFilterPatient(consultationPatientId); setBillFilterAppointmentId(consultationAppointmentId); void loadBills({ patientId: "", appointmentId: "", status: "", fromDate: "", toDate: "", paymentMode: "", text: "" }); }}>Clear</Button>
+                      </Stack>
+                    </Grid>
                   </Grid>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField {...denseTextFieldProps} label="Patient/Bill search" value={billFilterText} onChange={(e) => setBillFilterText(e.target.value)} />
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <FormControl {...denseSelectProps}>
-                      <InputLabel id="bill-status-filter-label">Status</InputLabel>
-                      <Select labelId="bill-status-filter-label" label="Status" value={billFilterStatus} onChange={(e) => setBillFilterStatus(String(e.target.value))}>
-                        <MenuItem value="">All</MenuItem>
-                        {["DRAFT","UNPAID","ISSUED","PARTIALLY_PAID","PAID","PARTIALLY_REFUNDED","REFUNDED","CANCELLED"].map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 3 }}>
-                    <TextField {...denseTextFieldProps} type="date" label="From" value={billFilterFromDate} onChange={(e) => setBillFilterFromDate(e.target.value)} InputLabelProps={{ shrink: true }} />
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 3 }}>
-                    <TextField {...denseTextFieldProps} type="date" label="To" value={billFilterToDate} onChange={(e) => setBillFilterToDate(e.target.value)} InputLabelProps={{ shrink: true }} />
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 3 }}>
-                    <FormControl {...denseSelectProps}>
-                      <InputLabel id="payment-mode-filter-label">Payment mode</InputLabel>
-                      <Select labelId="payment-mode-filter-label" label="Payment mode" value={billFilterMode} onChange={(e) => setBillFilterMode(String(e.target.value))}>
-                        <MenuItem value="">All</MenuItem>
-                        {PAYMENT_MODES.map((m) => <MenuItem key={m} value={m}>{m}</MenuItem>)}
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 3 }} sx={{ display: "flex", gap: 1 }}>
-                    <Button variant="outlined" size="small" fullWidth onClick={() => void loadBills()}>Filter</Button>
-                    <Button
-                      variant="text"
-                      size="small"
-                      fullWidth
-                      onClick={() => {
-                        setBillFilterPatient("");
-                        setBillFilterStatus("");
-                        setBillFilterText("");
-                        setBillFilterMode("");
-                        setBillFilterFromDate("");
-                        setBillFilterToDate("");
-                        void loadBills({
-                          patientId: "",
-                          appointmentId: "",
-                          status: "",
-                          fromDate: "",
-                          toDate: "",
-                          paymentMode: "",
-                          text: "",
-                        });
-                      }}
-                    >
-                      Clear
-                    </Button>
-                  </Grid>
-                </Grid>
-
-                {loading ? (
-                  <CompactEmptyState title="Loading bills…" subtitle="Refreshing the compact bill ledger." />
-                ) : bills.length === 0 ? (
-                  <CompactEmptyState title="No bills were found" subtitle="Widen the filters or create a new bill from the left panel." />
-                ) : (
-                  <Box sx={{ overflowX: "auto" }}>
-                    <Table size="small" sx={{ minWidth: 980 }}>
+                  <Box sx={{ overflowX: "hidden" }}>
+                    <Table size="small" sx={{ width: "100%", tableLayout: "fixed", "& .MuiTableCell-root": { py: 0.75, px: 0.75 } }}>
                       <TableHead>
                         <TableRow>
-                          <TableCell sx={{ py: 0.8 }}>Bill</TableCell>
-                          <TableCell sx={{ py: 0.8 }}>Patient</TableCell>
-                          <TableCell sx={{ py: 0.8 }}>Status</TableCell>
-                          <TableCell sx={{ py: 0.8 }} align="right">Total</TableCell>
-                          <TableCell sx={{ py: 0.8 }} align="right">Paid</TableCell>
-                          <TableCell sx={{ py: 0.8 }} align="right">Refunded</TableCell>
-                          <TableCell sx={{ py: 0.8 }} align="right">Due</TableCell>
-                          <TableCell sx={{ py: 0.8 }} align="right">Actions</TableCell>
+                          <TableCell sx={{ width: "20%" }}>Bill</TableCell>
+                          <TableCell sx={{ width: "22%" }}>Patient</TableCell>
+                          <TableCell sx={{ width: "12%" }}>Status</TableCell>
+                          <TableCell sx={{ width: "10%" }} align="right">Due</TableCell>
+                          <TableCell sx={{ width: "10%" }} align="right">Paid</TableCell>
+                          <TableCell sx={{ width: "12%" }} align="right">Date</TableCell>
+                          <TableCell sx={{ width: "14%" }} align="right">Actions</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {bills.map((bill) => (
+                        {bills.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 12).map((bill) => (
                           <TableRow key={bill.id} hover selected={selectedBill?.id === bill.id}>
-                            <TableCell sx={{ py: 0.65 }}>
-                              <Stack spacing={0.15}>
-                                <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.1 }}>{bill.billNumber}</Typography>
-                                <Typography variant="caption" color="text.secondary">{bill.billDate}</Typography>
+                            <TableCell>
+                              <Stack spacing={0.25}>
+                                <Typography variant="body2" sx={{ fontWeight: 800 }}>{bill.billNumber}</Typography>
+                                <Typography variant="caption" color="text.secondary">{bill.consultationId ? "Consultation bill" : "Bill"}{bill.appointmentId ? ` • Appointment ${bill.appointmentId}` : ""}</Typography>
                               </Stack>
                             </TableCell>
-                            <TableCell sx={{ py: 0.65, maxWidth: 160, wordBreak: "break-word" }}>{bill.patientName || bill.patientNumber || bill.patientId}</TableCell>
-                            <TableCell sx={{ py: 0.65 }}><Chip size="small" label={bill.status} color={statusColor(bill.status)} sx={compactChipSx} /></TableCell>
-                            <TableCell sx={{ py: 0.65 }} align="right">{bill.totalAmount.toFixed(2)}</TableCell>
-                            <TableCell sx={{ py: 0.65 }} align="right">{bill.paidAmount.toFixed(2)}</TableCell>
-                            <TableCell sx={{ py: 0.65 }} align="right">{bill.refundedAmount.toFixed(2)}</TableCell>
-                            <TableCell sx={{ py: 0.65 }} align="right">{bill.dueAmount.toFixed(2)}</TableCell>
-                            <TableCell sx={{ py: 0.65 }} align="right">
-                              <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap">
-                                <Button size="small" variant="text" onClick={() => void selectBill(bill)}>View Bill</Button>
-                                <Button size="small" variant="text" onClick={() => void openInvoicePreviewAction(bill)}>View Invoice</Button>
-                                <Button size="small" variant="text" onClick={() => void openInvoicePreviewAction(bill, true)}>Print Invoice</Button>
-                                {canUpdateBill ? <Button size="small" variant="text" onClick={() => void issueCurrentBill(bill)} disabled={workingId === bill.id || bill.status !== "DRAFT"}>Issue</Button> : null}
-                                {canCollectPayment ? <Button size="small" variant="text" onClick={() => void openPaymentDialog(bill)} disabled={bill.status === "PAID" || bill.status === "CANCELLED" || bill.dueAmount <= 0}>Add payment</Button> : null}
-                                {canRefund ? <Button size="small" variant="text" onClick={() => { setSelectedBill(bill); setRefundOpen(true); }} disabled={bill.status === "CANCELLED" || (bill.paidAmount - bill.refundedAmount) <= 0}>Refund</Button> : null}
-                                <Button size="small" variant="text" onClick={() => void openInvoicePdf(bill)}>Download PDF</Button>
-                                {canSendInvoice ? <Button size="small" variant="text" disabled={workingId === bill.id || !bill.patientId} onClick={() => void sendInvoiceAction(bill)}>Send invoice email</Button> : null}
-                                {canUpdateBill ? <Button size="small" variant="text" onClick={() => void cancelCurrentBill(bill)} disabled={workingId === bill.id || bill.status === "PAID"}>Cancel</Button> : null}
+                            <TableCell>
+                              <Typography variant="body2" noWrap>{bill.patientName || bill.patientNumber || bill.patientId}</Typography>
+                              <Typography variant="caption" color="text.secondary" noWrap>{bill.patientNumber || "-"}</Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Chip size="small" label={bill.status} color={statusColor(bill.status)} variant="outlined" sx={compactChipSx} />
+                            </TableCell>
+                            <TableCell align="right"><Typography variant="body2" sx={{ fontWeight: 700 }}>{formatAmount(bill.dueAmount)}</Typography></TableCell>
+                            <TableCell align="right">{formatAmount(bill.paidAmount)}</TableCell>
+                            <TableCell align="right">{bill.billDate}</TableCell>
+                            <TableCell align="right">
+                              <Stack direction="row" spacing={0.5} justifyContent="flex-end" flexWrap="wrap">
+                                <Button size="small" variant="outlined" onClick={() => void selectBill(bill)}>View</Button>
+                                <IconButton size="small" onClick={(e) => openLedgerActions(bill, e.currentTarget)}>
+                                  <MoreVertRoundedIcon fontSize="small" />
+                                </IconButton>
                               </Stack>
                             </TableCell>
                           </TableRow>
@@ -1106,88 +1771,75 @@ export default function BillsPage() {
                       </TableBody>
                     </Table>
                   </Box>
-                )}
-              </Stack>
-            </CardContent>
-          </Card>
+                </Stack>
+              </Collapse>
+            </Stack>
+          </CardContent>
+        </Card>
+      </Stack>
 
-          {selectedBill ? <Card sx={{ mt: 2 }}><CardContent><Stack spacing={2}><Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}><Box><Typography variant="h6" sx={{ fontWeight: 800 }}>{selectedBill.billNumber}</Typography><Typography variant="body2" color="text.secondary">{selectedBill.patientName || selectedBill.patientNumber || selectedBill.patientId}</Typography></Box><Chip label={selectedBill.status} color={statusColor(selectedBill.status)} /></Box>
-            <Grid container spacing={2}>
-              <Grid size={{ xs: 12, md: 3 }}><Typography variant="body2">Subtotal: {selectedBill.subtotalAmount.toFixed(2)}</Typography></Grid>
-              <Grid size={{ xs: 12, md: 3 }}><Typography variant="body2">Discount: {selectedBill.discountType} ({selectedBill.discountValue.toFixed(2)})</Typography></Grid>
-              <Grid size={{ xs: 12, md: 3 }}><Typography variant="body2">Discount amount: {selectedBill.discountAmount.toFixed(2)}</Typography></Grid>
-              <Grid size={{ xs: 12, md: 3 }}><Typography variant="body2">Final total: {selectedBill.totalAmount.toFixed(2)}</Typography></Grid>
-              <Grid size={{ xs: 12, md: 3 }}><Typography variant="body2">Paid amount: {selectedBill.paidAmount.toFixed(2)}</Typography></Grid>
-              <Grid size={{ xs: 12, md: 3 }}><Typography variant="body2">Refunded amount: {selectedBill.refundedAmount.toFixed(2)}</Typography></Grid>
-              <Grid size={{ xs: 12, md: 3 }}><Typography variant="body2">Net paid: {selectedBill.netPaidAmount.toFixed(2)}</Typography></Grid>
-              <Grid size={{ xs: 12, md: 3 }}><Typography variant="body2">Balance: {selectedBill.dueAmount.toFixed(2)}</Typography></Grid>
-            </Grid>
-            {selectedBill.discountReason ? <Alert severity="info">Discount reason: {selectedBill.discountReason}</Alert> : null}
+      <Menu anchorEl={ledgerActionAnchorEl} open={Boolean(ledgerActionBill && ledgerActionAnchorEl)} onClose={closeLedgerActions}>
+        {ledgerMenuItems}
+      </Menu>
 
-            <Stack spacing={1}><Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Line items</Typography><Table size="small"><TableHead><TableRow><TableCell>Type</TableCell><TableCell>Name</TableCell><TableCell align="right">Qty</TableCell><TableCell align="right">Unit</TableCell><TableCell align="right">Total</TableCell></TableRow></TableHead><TableBody>{selectedBill.lines.map((line: BillLine) => <TableRow key={line.id || `${line.itemName}-${line.sortOrder}`}><TableCell>{line.itemType}</TableCell><TableCell>{line.itemName}</TableCell><TableCell align="right">{line.quantity}</TableCell><TableCell align="right">{line.unitPrice.toFixed(2)}</TableCell><TableCell align="right">{line.totalPrice.toFixed(2)}</TableCell></TableRow>)}</TableBody></Table></Stack>
+      <Dialog open={paymentOpen} onClose={() => setPaymentOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Collect payment</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField fullWidth label="Payment date" type="date" value={paymentForm.paymentDate} onChange={(e) => setPaymentForm((c) => ({ ...c, paymentDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
+            <TextField fullWidth label="Amount" value={paymentForm.amount} onChange={(e) => setPaymentForm((c) => ({ ...c, amount: e.target.value }))} />
+            <FormControl fullWidth><InputLabel id="payment-mode-label">Mode</InputLabel><Select labelId="payment-mode-label" label="Mode" value={paymentForm.paymentMode} onChange={(e) => setPaymentForm((c) => ({ ...c, paymentMode: e.target.value as PaymentMode }))}>{PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}</Select></FormControl>
+            <TextField fullWidth label={paymentForm.paymentMode === "CASH" ? "Reference number (optional)" : "Reference number"} required={paymentForm.paymentMode !== "CASH"} value={paymentForm.referenceNumber} onChange={(e) => setPaymentForm((c) => ({ ...c, referenceNumber: e.target.value }))} />
+            <TextField fullWidth label="Notes" multiline minRows={2} value={paymentForm.notes} onChange={(e) => setPaymentForm((c) => ({ ...c, notes: e.target.value }))} />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPaymentOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={() => void submitPayment()} disabled={saving}>{saving ? "Collecting..." : "Collect Payment"}</Button>
+        </DialogActions>
+      </Dialog>
 
-            <Stack spacing={1}><Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Payment history</Typography>{payments.length === 0 ? <Alert severity="info">No payments recorded for this bill.</Alert> : <Table size="small"><TableHead><TableRow><TableCell>Date</TableCell><TableCell>Mode</TableCell><TableCell>Reference</TableCell><TableCell>Received by</TableCell><TableCell>Notes</TableCell><TableCell align="right">Amount</TableCell><TableCell align="right">Receipt</TableCell></TableRow></TableHead><TableBody>{payments.map((payment) => <TableRow key={payment.id}><TableCell>{payment.paymentDateTime || payment.paymentDate}</TableCell><TableCell>{payment.paymentMode}</TableCell><TableCell>{payment.referenceNumber || "-"}</TableCell><TableCell>{payment.receivedBy || "-"}</TableCell><TableCell>{payment.notes || "-"}</TableCell><TableCell align="right">{payment.amount.toFixed(2)}</TableCell><TableCell align="right">{payment.receiptId ? <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap"><Button size="small" onClick={() => void openReceiptPreviewAction({ id: payment.receiptId!, tenantId: auth.tenantId || "", receiptNumber: payment.receiptNumber || "", billId: payment.billId, paymentId: payment.id, receiptDate: payment.receiptDate || payment.paymentDate, amount: payment.amount, createdAt: payment.createdAt }, payment)}>View Receipt</Button><Button size="small" onClick={() => void openReceiptPreviewAction({ id: payment.receiptId!, tenantId: auth.tenantId || "", receiptNumber: payment.receiptNumber || "", billId: payment.billId, paymentId: payment.id, receiptDate: payment.receiptDate || payment.paymentDate, amount: payment.amount, createdAt: payment.createdAt }, payment, true)}>Print Receipt</Button><Button size="small" onClick={() => void openReceiptPdf({ id: payment.receiptId!, tenantId: auth.tenantId || "", receiptNumber: payment.receiptNumber || "", billId: payment.billId, paymentId: payment.id, receiptDate: payment.receiptDate || payment.paymentDate, amount: payment.amount, createdAt: payment.createdAt })}>Download Receipt PDF</Button></Stack> : "-"}</TableCell></TableRow>)}</TableBody></Table>}</Stack>
+      <Dialog open={refundOpen} onClose={() => setRefundOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Refund</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Alert severity="info">Refundable amount: {refundableAmount.toFixed(2)}</Alert>
+            <TextField fullWidth label="Amount" value={refundForm.amount} onChange={(e) => setRefundForm((c) => ({ ...c, amount: e.target.value }))} />
+            <FormControl fullWidth><InputLabel id="refund-mode-label">Mode</InputLabel><Select labelId="refund-mode-label" label="Mode" value={refundForm.refundMode} onChange={(e) => setRefundForm((c) => ({ ...c, refundMode: e.target.value as PaymentMode }))}>{PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}</Select></FormControl>
+            <TextField fullWidth label="Reason" required value={refundForm.reason} onChange={(e) => setRefundForm((c) => ({ ...c, reason: e.target.value }))} />
+            <TextField fullWidth label="Notes" multiline minRows={2} value={refundForm.notes} onChange={(e) => setRefundForm((c) => ({ ...c, notes: e.target.value }))} />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRefundOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={() => void submitRefund()} disabled={saving}>{saving ? "Saving..." : "Refund"}</Button>
+        </DialogActions>
+      </Dialog>
 
-            <Stack spacing={1}><Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Refund history</Typography>{refunds.length === 0 ? <Alert severity="info">No refunds recorded for this bill.</Alert> : <Table size="small"><TableHead><TableRow><TableCell>Time</TableCell><TableCell>Mode</TableCell><TableCell>Reason</TableCell><TableCell>Notes</TableCell><TableCell align="right">Amount</TableCell></TableRow></TableHead><TableBody>{refunds.map((refund) => <TableRow key={refund.id}><TableCell>{refund.refundedAt}</TableCell><TableCell>{refund.refundMode || "-"}</TableCell><TableCell>{refund.reason}</TableCell><TableCell>{refund.notes || "-"}</TableCell><TableCell align="right">{refund.amount.toFixed(2)}</TableCell></TableRow>)}</TableBody></Table>}</Stack>
+      {consultationFeeDialog}
 
-            <Stack spacing={1}><Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Receipts</Typography>{receipts.length === 0 ? <Alert severity="info">No receipts generated for this bill.</Alert> : <Table size="small"><TableHead><TableRow><TableCell>Receipt</TableCell><TableCell>Date</TableCell><TableCell align="right">Amount</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>{receipts.map((receipt) => <TableRow key={receipt.id}><TableCell>{receipt.receiptNumber}</TableCell><TableCell>{receipt.receiptDate}</TableCell><TableCell align="right">{receipt.amount.toFixed(2)}</TableCell><TableCell align="right"><Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap"><Button size="small" onClick={() => void openReceiptPreviewAction(receipt, payments.find((payment) => payment.id === receipt.paymentId) || null)}>View Receipt</Button><Button size="small" onClick={() => void openReceiptPreviewAction(receipt, payments.find((payment) => payment.id === receipt.paymentId) || null, true)}>Print Receipt</Button><Button size="small" disabled={workingId === receipt.id} onClick={() => void openReceiptPdf(receipt)}>Download Receipt PDF</Button>{canSendReceipt ? <Button size="small" disabled={workingId === receipt.id} onClick={() => void sendReceiptAction(receipt, "email")}>Email</Button> : null}{canSendReceipt ? <Button size="small" disabled={workingId === receipt.id} onClick={() => void sendReceiptAction(receipt, "whatsapp")}>WhatsApp</Button> : null}</Stack></TableCell></TableRow>)}</TableBody></Table>}</Stack>
-          </Stack></CardContent></Card> : null}
-        </Grid>
-      </Grid>
-
-      <Dialog open={paymentOpen} onClose={() => setPaymentOpen(false)} fullWidth maxWidth="sm"><DialogTitle>Collect payment</DialogTitle><DialogContent><Stack spacing={2} sx={{ mt: 1 }}>
-        <TextField fullWidth label="Payment date" type="date" value={paymentForm.paymentDate} onChange={(e) => setPaymentForm((c) => ({ ...c, paymentDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
-        <TextField fullWidth label="Amount" value={paymentForm.amount} onChange={(e) => setPaymentForm((c) => ({ ...c, amount: e.target.value }))} />
-        <FormControl fullWidth><InputLabel id="payment-mode-label">Mode</InputLabel><Select labelId="payment-mode-label" label="Mode" value={paymentForm.paymentMode} onChange={(e) => setPaymentForm((c) => ({ ...c, paymentMode: e.target.value as PaymentMode }))}>{PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}</Select></FormControl>
-        <TextField fullWidth label={paymentForm.paymentMode === "CASH" ? "Reference number (optional)" : "Reference number"} required={paymentForm.paymentMode !== "CASH"} value={paymentForm.referenceNumber} onChange={(e) => setPaymentForm((c) => ({ ...c, referenceNumber: e.target.value }))} />
-        <TextField fullWidth label="Notes" multiline minRows={2} value={paymentForm.notes} onChange={(e) => setPaymentForm((c) => ({ ...c, notes: e.target.value }))} />
-      </Stack></DialogContent><DialogActions><Button onClick={() => setPaymentOpen(false)}>Cancel</Button><Button variant="contained" onClick={() => void submitPayment()} disabled={saving}>{saving ? "Collecting..." : "Collect Payment"}</Button></DialogActions></Dialog>
-
-      <Dialog open={refundOpen} onClose={() => setRefundOpen(false)} fullWidth maxWidth="sm"><DialogTitle>Refund</DialogTitle><DialogContent><Stack spacing={2} sx={{ mt: 1 }}>
-        <Alert severity="info">Refundable amount: {refundableAmount.toFixed(2)}</Alert>
-        <TextField fullWidth label="Amount" value={refundForm.amount} onChange={(e) => setRefundForm((c) => ({ ...c, amount: e.target.value }))} />
-        <FormControl fullWidth><InputLabel id="refund-mode-label">Mode</InputLabel><Select labelId="refund-mode-label" label="Mode" value={refundForm.refundMode} onChange={(e) => setRefundForm((c) => ({ ...c, refundMode: e.target.value as PaymentMode }))}>{PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}</Select></FormControl>
-        <TextField fullWidth label="Reason" required value={refundForm.reason} onChange={(e) => setRefundForm((c) => ({ ...c, reason: e.target.value }))} />
-        <TextField fullWidth label="Notes" multiline minRows={2} value={refundForm.notes} onChange={(e) => setRefundForm((c) => ({ ...c, notes: e.target.value }))} />
-      </Stack></DialogContent><DialogActions><Button onClick={() => setRefundOpen(false)}>Cancel</Button><Button variant="contained" onClick={() => void submitRefund()} disabled={saving}>{saving ? "Saving..." : "Refund"}</Button></DialogActions></Dialog>
-
-      {consultationFeeRequested && resolvedConsultationFee != null ? (
-        <ConsultationFeeDialog
-          open={consultationFeeOpen}
-          title="Collect consultation fee"
-          reasonLabel={consultationReason}
-          appointmentLabel={consultationAppointmentLabel ? `Appointment: ${consultationAppointmentLabel}` : "Appointment: —"}
-          doctorLabel={consultationDoctorLabel ? `Doctor: ${consultationDoctorLabel}` : "Doctor: —"}
-          patientLabel={consultationPatientLabel ? `Patient: ${consultationPatientLabel}` : "Patient: —"}
-          feeLabel={`Consultation fee: ${formatAmount(resolvedConsultationFee)}`}
-          submitLabel="Collect Fee"
-          onClose={() => setConsultationFeeOpen(false)}
-          onSubmit={submitConsultationFee}
-        />
-      ) : null}
-    </Stack>
-    <InvoicePrintDialog
-      open={Boolean(invoicePreview || invoicePreviewLoading)}
-      loading={invoicePreviewLoading}
-      data={invoicePreview}
-      onClose={() => {
-        setInvoicePreview(null);
-        setInvoicePreviewLoading(false);
-        setInvoiceAutoPrint(false);
-      }}
-      onPrint={() => window.print()}
-    />
-    <ReceiptPrintDialog
-      open={Boolean(receiptPreview || receiptPreviewLoading)}
-      loading={receiptPreviewLoading}
-      data={receiptPreview}
-      onClose={() => {
-        setReceiptPreview(null);
-        setReceiptPreviewLoading(false);
-        setReceiptAutoPrint(false);
-      }}
-      onPrint={() => window.print()}
-    />
-    </>
+      <InvoicePrintDialog
+        open={Boolean(invoicePreview || invoicePreviewLoading)}
+        loading={invoicePreviewLoading}
+        data={invoicePreview}
+        onClose={() => {
+          setInvoicePreview(null);
+          setInvoicePreviewLoading(false);
+          setInvoiceAutoPrint(false);
+        }}
+        onPrint={() => window.print()}
+      />
+      <ReceiptPrintDialog
+        open={Boolean(receiptPreview || receiptPreviewLoading)}
+        loading={receiptPreviewLoading}
+        data={receiptPreview}
+        onClose={() => {
+          setReceiptPreview(null);
+          setReceiptPreviewLoading(false);
+          setReceiptAutoPrint(false);
+        }}
+        onPrint={() => window.print()}
+      />
+    </Box>
   );
 }

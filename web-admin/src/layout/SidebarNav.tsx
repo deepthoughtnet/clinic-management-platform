@@ -74,6 +74,7 @@ function iconFor(key: string): React.ReactNode {
     "platform-analytics": <BarChartRoundedIcon fontSize="small" />,
     "platform-health": <MonitorHeartRoundedIcon fontSize="small" />,
     dashboard: <DashboardRoundedIcon fontSize="small" />,
+    "pharmacy-dashboard": <LocalPharmacyRoundedIcon fontSize="small" />,
     patients: <PeopleAltRoundedIcon fontSize="small" />,
     appointments: <EventRoundedIcon fontSize="small" />,
     "day-board": <ViewWeekRoundedIcon fontSize="small" />,
@@ -112,8 +113,10 @@ function iconFor(key: string): React.ReactNode {
 function roleDefaultExpanded(roles: Set<string>, groupKey: string): boolean {
   const isPlatformAdmin = roles.has("PLATFORM_ADMIN");
   const isBillingUser = roles.has("BILLING_USER");
+  const isPharmacyRole = roles.has("PHARMA") || roles.has("PHARMACY") || roles.has("PHARMACIST");
   if (isPlatformAdmin) return groupKey === "platform";
   if (isBillingUser) return groupKey === "finance";
+  if (isPharmacyRole) return groupKey === "pharmacy";
   if (groupKey === "operations" || groupKey === "clinical") return true;
   return false;
 }

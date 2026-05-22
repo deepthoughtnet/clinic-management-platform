@@ -259,6 +259,103 @@ public class PharmacyOperationsService {
     }
 
     @Transactional
+    public PharmacyReconciliationRecord updateReconciliation(UUID tenantId, UUID id, ReconciliationCreateRequest request, UUID actorAppUserId) {
+        PharmacyReconciliationEntity entity = reconciliationRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Reconciliation session not found"));
+        if (!"DRAFT".equalsIgnoreCase(entity.getStatus()) && !"REJECTED".equalsIgnoreCase(entity.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only draft or rejected reconciliations can be updated");
+        }
+        if (request == null || request.medicineId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Medicine is required");
+        }
+        MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, request.medicineId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Medicine not found"));
+        UUID locationId = resolveLocationId(tenantId, request.locationId());
+        StockEntity stock = request.stockBatchId() == null ? null : stockRepository.findByTenantIdAndId(tenantId, request.stockBatchId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Stock batch not found"));
+        if (stock != null && !stock.getMedicineId().equals(medicine.getId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected stock batch does not belong to the selected medicine");
+        }
+        SupplierEntity supplier = request.supplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, request.supplierId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        int systemQuantity = stock != null ? stock.getQuantityOnHand() : stockRepository.findByTenantIdAndMedicineId(tenantId, medicine.getId()).stream().mapToInt(StockEntity::getQuantityOnHand).sum();
+        Integer physicalQuantity = request.physicalQuantity();
+        Integer varianceQuantity = physicalQuantity == null ? entity.getVarianceQuantity() : physicalQuantity - systemQuantity;
+        entity = reconciliationRepository.save(entity);
+        entity.captureCount(physicalQuantity == null ? entity.getPhysicalQuantity() : physicalQuantity, varianceQuantity == null ? 0 : varianceQuantity, normalizeNullable(request.reason()));
+        entity = reconciliationRepository.save(entity);
+        return toRecord(entity, medicine, supplier);
+    }
+
+    @Transactional
+    public PharmacyReconciliationRecord submitReconciliation(UUID tenantId, UUID id, UUID actorAppUserId) {
+        PharmacyReconciliationEntity entity = reconciliationRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Reconciliation session not found"));
+        if (!"DRAFT".equalsIgnoreCase(entity.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only draft reconciliations can be submitted");
+        }
+        if (entity.getMedicineId() != null && entity.getPhysicalQuantity() == null) {
+            entity.captureCount(entity.getSystemQuantity(), 0, entity.getReason());
+        }
+        entity.submit(actorAppUserId);
+        PharmacyReconciliationEntity saved = reconciliationRepository.save(entity);
+        return toRecord(saved,
+                saved.getMedicineId() == null ? null : medicineRepository.findByTenantIdAndId(tenantId, saved.getMedicineId()).orElse(null),
+                saved.getSupplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId()).orElse(null));
+    }
+
+    @Transactional
+    public PharmacyReconciliationRecord approveReconciliation(UUID tenantId, UUID id, ReconciliationDecisionRequest request, UUID actorAppUserId) {
+        PharmacyReconciliationEntity entity = reconciliationRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Reconciliation session not found"));
+        ensureSubmitted(entity);
+        ensureDifferentReviewer(entity, actorAppUserId);
+        entity.approve(actorAppUserId, normalizeNullable(request == null ? null : request.reason()));
+        PharmacyReconciliationEntity saved = reconciliationRepository.save(entity);
+        return toRecord(saved,
+                saved.getMedicineId() == null ? null : medicineRepository.findByTenantIdAndId(tenantId, saved.getMedicineId()).orElse(null),
+                saved.getSupplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId()).orElse(null));
+    }
+
+    @Transactional
+    public PharmacyReconciliationRecord rejectReconciliation(UUID tenantId, UUID id, ReconciliationDecisionRequest request, UUID actorAppUserId) {
+        if (request == null || !StringUtils.hasText(request.reason())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Rejection reason is required");
+        }
+        PharmacyReconciliationEntity entity = reconciliationRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Reconciliation session not found"));
+        ensureSubmitted(entity);
+        ensureDifferentReviewer(entity, actorAppUserId);
+        entity.reject(actorAppUserId, normalizeNullable(request.reason()));
+        PharmacyReconciliationEntity saved = reconciliationRepository.save(entity);
+        return toRecord(saved,
+                saved.getMedicineId() == null ? null : medicineRepository.findByTenantIdAndId(tenantId, saved.getMedicineId()).orElse(null),
+                saved.getSupplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId()).orElse(null));
+    }
+
+    @Transactional
+    public PharmacyReconciliationRecord postReconciliation(UUID tenantId, UUID id, ReconciliationPostRequest request, UUID actorAppUserId) {
+        PharmacyReconciliationEntity entity = reconciliationRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Reconciliation session not found"));
+        if (!"APPROVED".equalsIgnoreCase(entity.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only approved reconciliations can be posted");
+        }
+        if (entity.getMedicineId() == null) {
+            if (!StringUtils.hasText(entity.getExtractedRowsJson())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Upload and review extracted rows before posting this stock sheet.");
+            }
+            applyReviewedRows(tenantId, entity, request == null ? null : request.reason(), actorAppUserId);
+        } else {
+            applyCountAdjustment(tenantId, entity, request, actorAppUserId);
+        }
+        entity.post(actorAppUserId);
+        PharmacyReconciliationEntity saved = reconciliationRepository.save(entity);
+        return toRecord(saved,
+                saved.getMedicineId() == null ? null : medicineRepository.findByTenantIdAndId(tenantId, saved.getMedicineId()).orElse(null),
+                saved.getSupplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId()).orElse(null));
+    }
+
+    @Transactional
     public ReconciliationUploadResponse uploadReconciliationSheet(UUID tenantId, UUID reconciliationId, MultipartFile file) throws Exception {
         if (file == null || file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Sheet file is required");
@@ -298,46 +395,7 @@ public class PharmacyOperationsService {
 
     @Transactional
     public PharmacyReconciliationRecord confirmReconciliation(UUID tenantId, UUID id, ReconciliationConfirmRequest request, UUID actorAppUserId) {
-        PharmacyReconciliationEntity entity = reconciliationRepository.findByTenantIdAndId(tenantId, id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Reconciliation session not found"));
-        if (entity.getMedicineId() == null) {
-            if (!StringUtils.hasText(entity.getExtractedRowsJson())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Upload and review extracted rows before confirming this stock sheet.");
-            }
-            applyReviewedRows(tenantId, entity, request, actorAppUserId);
-            PharmacyReconciliationEntity saved = reconciliationRepository.save(entity);
-            SupplierEntity supplier = entity.getSupplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, entity.getSupplierId()).orElse(null);
-            return toRecord(saved, null, supplier);
-        }
-        MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, entity.getMedicineId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Medicine not found"));
-        StockEntity stock = entity.getStockBatchId() == null ? null : stockRepository.findByTenantIdAndId(tenantId, entity.getStockBatchId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Stock batch not found"));
-        int physical = request != null && request.physicalQuantity() != null ? request.physicalQuantity() : entity.getSystemQuantity();
-        int variance = physical - entity.getSystemQuantity();
-        if (request != null && request.adjustStock() && variance != 0 && stock != null) {
-            inventoryService.createTransaction(
-                    tenantId,
-                    new InventoryTransactionCommand(
-                            medicine.getId(),
-                            stock.getId(),
-                            stock.getLocationId(),
-                            null,
-                            variance > 0 ? InventoryTransactionType.ADJUSTMENT_IN : InventoryTransactionType.ADJUSTMENT_OUT,
-                            Math.abs(variance),
-                            normalizeNullable(request.reason()),
-                            "RECONCILIATION",
-                            entity.getId(),
-                            actorAppUserId,
-                            "Reconciliation adjustment"
-                    ),
-                    actorAppUserId
-            );
-        }
-        entity.confirm(physical, variance, normalizeNullable(request == null ? null : request.reason()), actorAppUserId, request != null && request.adjustStock());
-        PharmacyReconciliationEntity saved = reconciliationRepository.save(entity);
-        SupplierEntity supplier = entity.getSupplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, entity.getSupplierId()).orElse(null);
-        return toRecord(saved, medicine, supplier);
+        return postReconciliation(tenantId, id, new ReconciliationPostRequest(request == null ? null : request.physicalQuantity(), request == null ? null : request.reason()), actorAppUserId);
     }
 
     @Transactional
@@ -837,7 +895,45 @@ public class PharmacyOperationsService {
                 ? null
                 : stockRepository.findByTenantIdAndId(entity.getTenantId(), entity.getStockBatchId()).map(StockEntity::getBatchNumber).orElse(null);
         InventoryLocationEntity location = entity.getLocationId() == null ? null : locationRepository.findByTenantIdAndId(entity.getTenantId(), entity.getLocationId()).orElse(null);
-        return new PharmacyReconciliationRecord(entity.getId(), entity.getTenantId(), entity.getMedicineId(), medicine == null ? null : medicine.getMedicineName(), entity.getStockBatchId(), batchNumber, entity.getSupplierId(), supplier == null ? null : supplier.getSupplierName(), entity.getSystemQuantity(), entity.getPhysicalQuantity(), entity.getVarianceQuantity(), entity.getReason(), entity.getStatus(), entity.getCreatedBy(), entity.getAdjustedBy(), entity.getSheetDocumentId(), entity.getSheetFilename(), entity.getSheetMediaType(), entity.getSheetStorageKey(), entity.getExtractionStatus(), entity.getExtractionProvider(), entity.getExtractionConfidence(), deserializeOcrRows(entity.getExtractedRowsJson()), entity.getLocationId(), location == null ? null : location.getLocationName(), entity.getConfirmedAt(), entity.getReviewedAt(), entity.getAppliedAt(), entity.getCreatedAt(), entity.getUpdatedAt());
+        return new PharmacyReconciliationRecord(
+                entity.getId(),
+                entity.getTenantId(),
+                entity.getMedicineId(),
+                medicine == null ? null : medicine.getMedicineName(),
+                entity.getStockBatchId(),
+                batchNumber,
+                entity.getSupplierId(),
+                supplier == null ? null : supplier.getSupplierName(),
+                entity.getSystemQuantity(),
+                entity.getPhysicalQuantity(),
+                entity.getVarianceQuantity(),
+                entity.getReason(),
+                entity.getStatus(),
+                entity.getCreatedBy(),
+                entity.getSubmittedBy(),
+                entity.getSubmittedAt(),
+                entity.getReviewedBy(),
+                entity.getReviewDecision(),
+                entity.getReviewReason(),
+                entity.getPostedBy(),
+                entity.getPostedAt(),
+                entity.getAdjustedBy(),
+                entity.getSheetDocumentId(),
+                entity.getSheetFilename(),
+                entity.getSheetMediaType(),
+                entity.getSheetStorageKey(),
+                entity.getExtractionStatus(),
+                entity.getExtractionProvider(),
+                entity.getExtractionConfidence(),
+                deserializeOcrRows(entity.getExtractedRowsJson()),
+                entity.getLocationId(),
+                location == null ? null : location.getLocationName(),
+                entity.getConfirmedAt(),
+                entity.getReviewedAt(),
+                entity.getAppliedAt(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt()
+        );
     }
 
     private List<OcrExtractionRowRecord> deserializeOcrRows(String json) {
@@ -1155,7 +1251,40 @@ public class PharmacyOperationsService {
         }
     }
 
-    private void applyReviewedRows(UUID tenantId, PharmacyReconciliationEntity entity, ReconciliationConfirmRequest request, UUID actorAppUserId) {
+    private void applyCountAdjustment(UUID tenantId, PharmacyReconciliationEntity entity, ReconciliationPostRequest request, UUID actorAppUserId) {
+        MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, entity.getMedicineId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Medicine not found"));
+        StockEntity stock = entity.getStockBatchId() == null ? null : stockRepository.findByTenantIdAndId(tenantId, entity.getStockBatchId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Stock batch not found"));
+        int physical = request != null && request.physicalQuantity() != null ? request.physicalQuantity() : (entity.getPhysicalQuantity() == null ? entity.getSystemQuantity() : entity.getPhysicalQuantity());
+        int variance = physical - entity.getSystemQuantity();
+        if (request != null && StringUtils.hasText(request.reason())) {
+            entity.captureCount(physical, variance, normalizeNullable(request.reason()));
+        } else if (entity.getPhysicalQuantity() == null || !Objects.equals(entity.getPhysicalQuantity(), physical) || !Objects.equals(entity.getVarianceQuantity(), variance)) {
+            entity.captureCount(physical, variance, entity.getReason());
+        }
+        if (variance != 0 && stock != null) {
+            inventoryService.createTransaction(
+                    tenantId,
+                    new InventoryTransactionCommand(
+                            medicine.getId(),
+                            stock.getId(),
+                            stock.getLocationId(),
+                            null,
+                            variance > 0 ? InventoryTransactionType.ADJUSTMENT_IN : InventoryTransactionType.ADJUSTMENT_OUT,
+                            Math.abs(variance),
+                            entity.getReason(),
+                            "RECONCILIATION",
+                            entity.getId(),
+                            actorAppUserId,
+                            "Reconciliation adjustment"
+                    ),
+                    actorAppUserId
+            );
+        }
+    }
+
+    private void applyReviewedRows(UUID tenantId, PharmacyReconciliationEntity entity, String note, UUID actorAppUserId) {
         List<OcrExtractionRowRecord> rows = deserializeOcrRows(entity.getExtractedRowsJson());
         if (rows.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No extracted stock sheet rows are available for review");
@@ -1205,7 +1334,7 @@ public class PharmacyOperationsService {
                                 "RECONCILIATION",
                                 entity.getId(),
                                 actorAppUserId,
-                                row.notes()
+                                note == null ? row.notes() : note
                         ),
                         actorAppUserId
                 );
@@ -1226,13 +1355,25 @@ public class PharmacyOperationsService {
                                 "RECONCILIATION",
                                 entity.getId(),
                                 actorAppUserId,
-                                row.notes()
+                                note == null ? row.notes() : note
                         ),
                         actorAppUserId
                 );
             }
         }
         entity.applyExtraction();
+    }
+
+    private void ensureSubmitted(PharmacyReconciliationEntity entity) {
+        if (!"SUBMITTED".equalsIgnoreCase(entity.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only submitted reconciliations can be reviewed");
+        }
+    }
+
+    private void ensureDifferentReviewer(PharmacyReconciliationEntity entity, UUID reviewerId) {
+        if (entity.getCreatedBy() != null && entity.getCreatedBy().equals(reviewerId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Maker cannot approve own reconciliation.");
+        }
     }
 
     private Optional<MedicineEntity> findMedicineForSheetRow(UUID tenantId, OcrExtractionRowRecord row) {

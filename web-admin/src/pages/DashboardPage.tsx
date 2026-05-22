@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -168,6 +168,7 @@ export default function DashboardPage() {
   const isReceptionist = tenantRole === "RECEPTIONIST";
   const isAuditor = tenantRole === "AUDITOR";
   const isClinicAdmin = tenantRole === "CLINIC_ADMIN";
+  const isPharmacyRole = tenantRole === "PHARMA" || tenantRole === "PHARMACY" || tenantRole === "PHARMACIST";
   const canBilling = auth.hasPermission("billing.read") || auth.hasPermission("payment.collect") || tenantRole === "CLINIC_ADMIN" || isBillingUser;
 
   const [dashboard, setDashboard] = React.useState<ClinicDashboard | null>(null);
@@ -287,6 +288,7 @@ export default function DashboardPage() {
   }
 
   if (!auth.tenantId) return <Alert severity="warning">No tenant selected for this session.</Alert>;
+  if (isPharmacyRole) return <Navigate to="/pharmacy/dashboard" replace />;
 
   const doctorOptions = users.filter((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
   const selectedDoctor = doctorOptions.find((doctor) => doctor.appUserId === doctorUserId) || null;

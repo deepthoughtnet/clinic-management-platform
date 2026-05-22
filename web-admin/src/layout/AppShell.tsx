@@ -57,14 +57,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </Box>
       )}
 
-      <Box sx={{ flex: 1, minWidth: 0 }}>
+      <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <Box className="no-print">
           <TopBar
             onToggleSidebar={() => (isMobile ? setMobileOpen(true) : setDesktopOpen((value) => !value))}
           />
         </Box>
 
-        <Box sx={{ p: { xs: 2, md: 3 } }}>{children}</Box>
+        <Box sx={{ flex: 1, p: { xs: 2, md: 3 } }}>{children}</Box>
         <Box className="no-print">
           <Footer />
         </Box>

@@ -225,6 +225,17 @@ record ReconciliationConfirmRequest(
 ) {
 }
 
+record ReconciliationDecisionRequest(
+        String reason
+) {
+}
+
+record ReconciliationPostRequest(
+        Integer physicalQuantity,
+        String reason
+) {
+}
+
 record ReconciliationUploadResponse(
         UUID reconciliationId,
         String fileName,
@@ -252,6 +263,13 @@ record PharmacyReconciliationRecord(
         String reason,
         String status,
         UUID createdBy,
+        UUID submittedBy,
+        OffsetDateTime submittedAt,
+        UUID reviewedBy,
+        String reviewDecision,
+        String reviewReason,
+        UUID postedBy,
+        OffsetDateTime postedAt,
         UUID adjustedBy,
         UUID sheetDocumentId,
         String sheetFilename,

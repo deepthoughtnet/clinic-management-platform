@@ -24,6 +24,8 @@ import { getPlatformTenants } from "../api/clinicApi";
 function formatPathLabel(pathname: string): string {
   if (pathname === "/") return "Dashboard";
   if (pathname === "/dashboard") return "Dashboard";
+  if (pathname === "/pharmacy/dashboard") return "Pharmacy Dashboard";
+  if (pathname.startsWith("/pharmacy/operations")) return "Pharmacy Operations";
   if (pathname.startsWith("/platform/tenants")) return "Platform Tenants";
   if (pathname.startsWith("/platform/plans")) return "Plans / Modules";
   if (pathname.startsWith("/platform/users")) return "Users / Admins";
@@ -75,10 +77,12 @@ export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => voi
 
   return (
     <AppBar
-      position="static"
+      position="sticky"
       color="inherit"
       elevation={0}
       sx={{
+        top: 0,
+        zIndex: (theme) => theme.zIndex.drawer - 1,
         borderBottom: "1px solid",
         borderColor: "divider",
         bgcolor: alpha("#ffffff", 0.95),

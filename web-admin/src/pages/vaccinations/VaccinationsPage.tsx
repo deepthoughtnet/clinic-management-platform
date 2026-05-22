@@ -31,6 +31,7 @@ import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 
 import { useAuth } from "../../auth/useAuth";
+import { CompactEmptyState, compactChipSx } from "../../components/compact/CompactUi";
 import {
   createVaccine,
   deactivateVaccine,
@@ -291,12 +292,12 @@ export default function VaccinationsPage() {
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 5 }}>
           <Card>
-            <CardContent>
-              <Stack spacing={2}>
+            <CardContent sx={{ p: 1.25 }}>
+              <Stack spacing={1.25}>
                 <Typography variant="h6" sx={{ fontWeight: 800 }}>
                   Record vaccination
                 </Typography>
-                <TextField label="Search patient" value={patientQuery} onChange={(e) => setPatientQuery(e.target.value)} helperText="Search by patient number, mobile, or name" />
+                <TextField size="small" label="Search patient" value={patientQuery} onChange={(e) => setPatientQuery(e.target.value)} helperText="Search by patient number, mobile, or name" />
                 {patientSearchResults.length > 0 && !selectedPatient ? (
                   <Card variant="outlined">
                     <List dense disablePadding>
@@ -312,10 +313,11 @@ export default function VaccinationsPage() {
                   <Chip
                     label={`${selectedPatient.firstName} ${selectedPatient.lastName} • ${selectedPatient.patientNumber}`}
                     onDelete={() => setSelectedPatient(null)}
+                    sx={compactChipSx}
                   />
                 ) : null}
 
-                <FormControl fullWidth>
+                <FormControl fullWidth size="small">
                   <InputLabel id="vaccination-vaccine-label">Vaccine</InputLabel>
                   <Select
                     labelId="vaccination-vaccine-label"
@@ -331,24 +333,24 @@ export default function VaccinationsPage() {
                   </Select>
                 </FormControl>
 
-                <Grid container spacing={2}>
+                <Grid container spacing={1}>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField fullWidth label="Dose number" value={vaccinationForm.doseNumber} onChange={(e) => setVaccinationForm((current) => ({ ...current, doseNumber: e.target.value }))} />
+                    <TextField size="small" fullWidth label="Dose number" value={vaccinationForm.doseNumber} onChange={(e) => setVaccinationForm((current) => ({ ...current, doseNumber: e.target.value }))} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField fullWidth label="Given date" type="date" value={vaccinationForm.givenDate} onChange={(e) => setVaccinationForm((current) => ({ ...current, givenDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                    <TextField size="small" fullWidth label="Given date" type="date" value={vaccinationForm.givenDate} onChange={(e) => setVaccinationForm((current) => ({ ...current, givenDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField fullWidth label="Next due date" type="date" value={vaccinationForm.nextDueDate} onChange={(e) => setVaccinationForm((current) => ({ ...current, nextDueDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                    <TextField size="small" fullWidth label="Next due date" type="date" value={vaccinationForm.nextDueDate} onChange={(e) => setVaccinationForm((current) => ({ ...current, nextDueDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField fullWidth label="Batch number" value={vaccinationForm.batchNumber} onChange={(e) => setVaccinationForm((current) => ({ ...current, batchNumber: e.target.value }))} />
+                    <TextField size="small" fullWidth label="Batch number" value={vaccinationForm.batchNumber} onChange={(e) => setVaccinationForm((current) => ({ ...current, batchNumber: e.target.value }))} />
                   </Grid>
                   <Grid size={12}>
-                    <TextField fullWidth label="Notes" value={vaccinationForm.notes} onChange={(e) => setVaccinationForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} />
+                    <TextField size="small" fullWidth label="Notes" value={vaccinationForm.notes} onChange={(e) => setVaccinationForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <FormControl fullWidth>
+                    <FormControl fullWidth size="small">
                       <InputLabel id="vaccination-admin-label">Administered by</InputLabel>
                       <Select
                         labelId="vaccination-admin-label"
@@ -366,10 +368,10 @@ export default function VaccinationsPage() {
                     </FormControl>
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField fullWidth label="Bill ID" value={vaccinationForm.billId} onChange={(e) => setVaccinationForm((current) => ({ ...current, billId: e.target.value }))} disabled={!vaccinationForm.addToBill} />
+                    <TextField size="small" fullWidth label="Bill ID" value={vaccinationForm.billId} onChange={(e) => setVaccinationForm((current) => ({ ...current, billId: e.target.value }))} disabled={!vaccinationForm.addToBill} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField fullWidth label="Bill item unit price" value={vaccinationForm.billItemUnitPrice} onChange={(e) => setVaccinationForm((current) => ({ ...current, billItemUnitPrice: e.target.value }))} disabled={!vaccinationForm.addToBill} />
+                    <TextField size="small" fullWidth label="Bill item unit price" value={vaccinationForm.billItemUnitPrice} onChange={(e) => setVaccinationForm((current) => ({ ...current, billItemUnitPrice: e.target.value }))} disabled={!vaccinationForm.addToBill} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
                     <FormControlLabel
@@ -384,7 +386,7 @@ export default function VaccinationsPage() {
                   </Grid>
                 </Grid>
 
-                <Button variant="contained" onClick={() => void recordVaccination()} disabled={saving}>
+                <Button variant="contained" size="small" onClick={() => void recordVaccination()} disabled={saving}>
                   {saving ? "Saving..." : "Record Vaccination"}
                 </Button>
               </Stack>
@@ -392,28 +394,29 @@ export default function VaccinationsPage() {
           </Card>
 
           <Card sx={{ mt: 2 }}>
-            <CardContent>
-              <Stack spacing={2}>
+            <CardContent sx={{ p: 1.25 }}>
+              <Stack spacing={1.25}>
                 <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
                   <Typography variant="h6" sx={{ fontWeight: 800 }}>
                     Vaccine master
                   </Typography>
-                  <Button startIcon={<AddRoundedIcon />} onClick={() => setVaccineForm(emptyVaccineForm())}>
+                  <Button size="small" startIcon={<AddRoundedIcon />} onClick={() => setVaccineForm(emptyVaccineForm())}>
                     Reset
                   </Button>
                 </Box>
-                <Grid container spacing={2}>
+                <Grid container spacing={1}>
                   <Grid size={12}>
-                    <TextField fullWidth label="Vaccine name" value={vaccineForm.vaccineName} onChange={(e) => setVaccineForm((current) => ({ ...current, vaccineName: e.target.value }))} />
+                    <TextField size="small" fullWidth label="Vaccine name" value={vaccineForm.vaccineName} onChange={(e) => setVaccineForm((current) => ({ ...current, vaccineName: e.target.value }))} />
                   </Grid>
                   <Grid size={12}>
-                    <TextField fullWidth label="Description" value={vaccineForm.description ?? ""} onChange={(e) => setVaccineForm((current) => ({ ...current, description: e.target.value }))} multiline minRows={2} />
+                    <TextField size="small" fullWidth label="Description" value={vaccineForm.description ?? ""} onChange={(e) => setVaccineForm((current) => ({ ...current, description: e.target.value }))} multiline minRows={2} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField fullWidth label="Age group" value={vaccineForm.ageGroup ?? ""} onChange={(e) => setVaccineForm((current) => ({ ...current, ageGroup: e.target.value }))} />
+                    <TextField size="small" fullWidth label="Age group" value={vaccineForm.ageGroup ?? ""} onChange={(e) => setVaccineForm((current) => ({ ...current, ageGroup: e.target.value }))} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 3 }}>
                     <TextField
+                      size="small"
                       fullWidth
                       label="Gap days"
                       value={vaccineForm.recommendedGapDays ?? ""}
@@ -422,6 +425,7 @@ export default function VaccinationsPage() {
                   </Grid>
                   <Grid size={{ xs: 12, md: 3 }}>
                     <TextField
+                      size="small"
                       fullWidth
                       label="Default price"
                       value={vaccineForm.defaultPrice ?? ""}
@@ -440,7 +444,7 @@ export default function VaccinationsPage() {
                     />
                   </Grid>
                 </Grid>
-                <Button variant="contained" onClick={() => void saveVaccine()} disabled={saving}>
+                <Button variant="contained" size="small" onClick={() => void saveVaccine()} disabled={saving}>
                   Save Vaccine
                 </Button>
               </Stack>
@@ -451,8 +455,8 @@ export default function VaccinationsPage() {
         <Grid size={{ xs: 12, lg: 7 }}>
           <Stack spacing={2}>
             <Card>
-              <CardContent>
-                <Stack spacing={2}>
+              <CardContent sx={{ p: 1.25 }}>
+                <Stack spacing={1.25}>
                   <Typography variant="h6" sx={{ fontWeight: 800 }}>
                     Due vaccinations
                   </Typography>
@@ -461,15 +465,15 @@ export default function VaccinationsPage() {
                       <CircularProgress />
                     </Box>
                   ) : dueRows.length === 0 ? (
-                    <Alert severity="info">No due vaccinations found.</Alert>
+                    <CompactEmptyState title="No due vaccinations found." />
                   ) : (
                     <Table size="small">
                       <TableHead>
                         <TableRow>
-                          <TableCell>Patient</TableCell>
-                          <TableCell>Vaccine</TableCell>
-                          <TableCell>Given</TableCell>
-                          <TableCell>Next due</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Patient</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Vaccine</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Given</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Next due</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -491,8 +495,8 @@ export default function VaccinationsPage() {
             </Card>
 
             <Card>
-              <CardContent>
-                <Stack spacing={2}>
+              <CardContent sx={{ p: 1.25 }}>
+                <Stack spacing={1.25}>
                   <Typography variant="h6" sx={{ fontWeight: 800 }}>
                     Overdue vaccinations
                   </Typography>
@@ -501,15 +505,15 @@ export default function VaccinationsPage() {
                       <CircularProgress />
                     </Box>
                   ) : overdueRows.length === 0 ? (
-                    <Alert severity="info">No overdue vaccinations found.</Alert>
+                    <CompactEmptyState title="No overdue vaccinations found." />
                   ) : (
                     <Table size="small">
                       <TableHead>
                         <TableRow>
-                          <TableCell>Patient</TableCell>
-                          <TableCell>Vaccine</TableCell>
-                          <TableCell>Given</TableCell>
-                          <TableCell>Next due</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Patient</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Vaccine</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Given</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Next due</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -531,23 +535,23 @@ export default function VaccinationsPage() {
             </Card>
 
             <Card>
-              <CardContent>
-                <Stack spacing={2}>
+              <CardContent sx={{ p: 1.25 }}>
+                <Stack spacing={1.25}>
                   <Typography variant="h6" sx={{ fontWeight: 800 }}>
                     Vaccine list
                   </Typography>
                   {vaccines.length === 0 ? (
-                    <Alert severity="info">No vaccines were found.</Alert>
+                    <CompactEmptyState title="No vaccines were found." />
                   ) : (
                     <Table size="small">
                       <TableHead>
                         <TableRow>
-                          <TableCell>Name</TableCell>
-                          <TableCell>Age group</TableCell>
-                          <TableCell>Gap days</TableCell>
-                          <TableCell>Default price</TableCell>
-                          <TableCell>Status</TableCell>
-                          <TableCell align="right">Actions</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Name</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Age group</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Gap days</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Default price</TableCell>
+                          <TableCell sx={{ py: 0.7 }}>Status</TableCell>
+                          <TableCell sx={{ py: 0.7 }} align="right">Actions</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
