@@ -35,6 +35,7 @@ import MedicineMasterPage from "../pages/pharmacy/MedicineMasterPage";
 import StockMovementsPage from "../pages/pharmacy/StockMovementsPage";
 import DispensingPage from "../pages/pharmacy/DispensingPage";
 import PharmacyOperationsPage from "../pages/pharmacy/PharmacyOperationsPage";
+import PharmacyPosPage from "../pages/pharmacy/PharmacyPosPage";
 import ReportsPage from "../pages/reports/ReportsPage";
 import VaccinationsPage from "../pages/vaccinations/VaccinationsPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
@@ -178,6 +179,7 @@ function AuthedApp() {
         <Route path="/vaccinations" element={<VaccinationsPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/pharmacy/operations" element={<PharmacyOperationsPage />} />
+        <Route path="/pharmacy/pos" element={<PharmacyPosPage />} />
         <Route path="/pharmacy/medicines" element={<MedicineMasterPage />} />
         <Route path="/pharmacy/stock-movements" element={<StockMovementsPage />} />
         <Route path="/pharmacy/dispensing" element={<DispensingPage />} />

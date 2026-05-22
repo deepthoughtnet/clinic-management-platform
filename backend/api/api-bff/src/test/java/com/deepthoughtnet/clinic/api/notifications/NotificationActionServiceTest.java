@@ -75,7 +75,7 @@ class NotificationActionServiceTest {
         );
 
         when(notificationHistoryService.queue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
-                .thenReturn(mock(NotificationHistoryRecord.class));
+                .thenReturn(notificationHistoryRecord());
         PatientEntity patient = mock(PatientEntity.class);
         when(patient.getId()).thenReturn(patientId);
         when(patient.getFirstName()).thenReturn("Asha");
@@ -198,7 +198,7 @@ class NotificationActionServiceTest {
         when(billingService.findById(tenantId, bill.id())).thenReturn(Optional.of(bill));
         when(billingService.generateBillPdf(tenantId, bill.id(), actorId)).thenReturn(new BillPdf("bill.pdf", new byte[] {1, 2}));
         when(notificationHistoryService.queue(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
-                .thenReturn(mock(NotificationHistoryRecord.class));
+                .thenReturn(notificationHistoryRecord());
         org.mockito.Mockito.doThrow(new NotificationDeliveryException("Email delivery failed", null)).when(notificationProvider).send(any());
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.sendInvoiceEmail(tenantId, bill.id(), actorId))
@@ -235,6 +235,30 @@ class NotificationActionServiceTest {
                 OffsetDateTime.now(),
                 OffsetDateTime.now(),
                 List.of()
+        );
+    }
+
+    private NotificationHistoryRecord notificationHistoryRecord() {
+        OffsetDateTime now = OffsetDateTime.now();
+        return new NotificationHistoryRecord(
+                UUID.randomUUID(),
+                tenantId,
+                patientId,
+                "EVENT",
+                "email",
+                "asha@example.com",
+                "Subject",
+                "Message",
+                "QUEUED",
+                null,
+                "TEST",
+                UUID.randomUUID(),
+                "dedupe-key",
+                null,
+                0,
+                null,
+                now,
+                now
         );
     }
 }

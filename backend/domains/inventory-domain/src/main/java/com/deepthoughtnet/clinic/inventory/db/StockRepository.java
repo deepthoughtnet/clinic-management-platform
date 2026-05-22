@@ -3,7 +3,11 @@ package com.deepthoughtnet.clinic.inventory.db;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface StockRepository extends JpaRepository<StockEntity, UUID> {
     List<StockEntity> findByTenantIdOrderByUpdatedAtDesc(UUID tenantId);
@@ -21,4 +25,24 @@ public interface StockRepository extends JpaRepository<StockEntity, UUID> {
     boolean existsByTenantIdAndBarcodeIgnoreCaseAndIdNot(UUID tenantId, String barcode, UUID id);
     boolean existsByTenantIdAndQrCodeIgnoreCaseAndIdNot(UUID tenantId, String qrCode, UUID id);
     boolean existsByTenantIdAndExternalCodeIgnoreCaseAndIdNot(UUID tenantId, String externalCode, UUID id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select stock
+            from StockEntity stock
+            where stock.tenantId = :tenantId
+              and stock.locationId = :locationId
+              and stock.medicineId = :medicineId
+              and stock.active = true
+              and stock.quantityOnHand > 0
+            order by
+              case when stock.expiryDate is null then 1 else 0 end asc,
+              stock.expiryDate asc,
+              stock.updatedAt asc
+            """)
+    List<StockEntity> findSellableBatchesForUpdate(
+            @Param("tenantId") UUID tenantId,
+            @Param("locationId") UUID locationId,
+            @Param("medicineId") UUID medicineId
+    );
 }

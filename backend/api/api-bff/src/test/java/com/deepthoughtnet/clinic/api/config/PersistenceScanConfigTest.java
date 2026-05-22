@@ -7,6 +7,8 @@ import com.deepthoughtnet.clinic.api.reliability.db.IdempotencyKeyRepository;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.db.ClinicalAiJobRepository;
 import com.deepthoughtnet.clinic.identity.db.TenantPlanEntity;
 import com.deepthoughtnet.clinic.identity.db.TenantPlanRepository;
+import com.deepthoughtnet.clinic.inventory.db.PharmacySalePrescriptionRepository;
+import com.deepthoughtnet.clinic.inventory.db.PharmacySaleRepository;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -32,11 +34,27 @@ class PersistenceScanConfigTest {
     private IdempotencyKeyRepository idempotencyKeyRepository;
 
     @Autowired
+    private PharmacySaleRepository pharmacySaleRepository;
+
+    @Autowired
+    private PharmacySalePrescriptionRepository pharmacySalePrescriptionRepository;
+
+    @Autowired
     private TestEntityManager entityManager;
 
     @Test
     void clinicalAiJobRepositoryIsRegistered() {
         assertThat(clinicalAiJobRepository).isNotNull();
+    }
+
+    @Test
+    void pharmacySaleRepositoryIsRegistered() {
+        assertThat(pharmacySaleRepository).isNotNull();
+    }
+
+    @Test
+    void pharmacySalePrescriptionRepositoryIsRegistered() {
+        assertThat(pharmacySalePrescriptionRepository).isNotNull();
     }
 
     @Test

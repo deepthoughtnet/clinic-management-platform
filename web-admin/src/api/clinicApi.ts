@@ -805,6 +805,158 @@ export type Receipt = {
   createdAt: string;
 };
 
+export type PharmacyPosMedicine = {
+  medicineId: string;
+  medicineName: string;
+  genericName: string | null;
+  brandName: string | null;
+  barcode: string | null;
+  qrCode: string | null;
+  externalCode: string | null;
+  totalAvailableQuantity: number;
+  defaultUnitPrice: number;
+  taxRate: number;
+  earliestExpiryDate: string | null;
+};
+
+export type PharmacyPosBatch = {
+  stockBatchId: string;
+  medicineId: string;
+  batchNumber: string | null;
+  expiryDate: string | null;
+  availableQuantity: number;
+  unitPrice: number;
+  expired: boolean;
+  locationName: string | null;
+};
+
+export type PharmacyPosSaleItem = {
+  id: string;
+  medicineId: string;
+  medicineName: string;
+  stockBatchId: string | null;
+  batchNumber: string | null;
+  expiryDate: string | null;
+  quantity: number;
+  returnedQuantity: number;
+  unitPrice: number;
+  discount: number;
+  tax: number;
+  lineTotal: number;
+};
+
+export type PharmacyPosSalePayment = {
+  id: string;
+  amount: number;
+  paymentMode: PaymentMode;
+  referenceNumber: string | null;
+  receiptNumber: string;
+  paymentDate: string;
+  paymentDateTime: string | null;
+  createdAt: string;
+};
+
+export type PharmacyPosSaleReturn = {
+  id: string;
+  returnNumber: string;
+  saleItemId: string;
+  medicineId: string;
+  stockBatchId: string | null;
+  quantity: number;
+  grossAmount: number;
+  discountAmount: number;
+  taxAmount: number;
+  refundAmount: number;
+  reusable: boolean;
+  reason: string;
+  refundMode: PaymentMode | null;
+  referenceNumber: string | null;
+  notes: string | null;
+  createdAt: string;
+};
+
+export type PharmacyPosSale = {
+  id: string;
+  saleNumber: string;
+  patientId: string | null;
+  patientName: string | null;
+  customerName: string | null;
+  customerMobile: string | null;
+  prescriptionDocumentId: string | null;
+  prescriptionFileName: string | null;
+  prescriptionUploadedAt: string | null;
+  saleDateTime: string;
+  subtotal: number;
+  discount: number;
+  tax: number;
+  total: number;
+  paidAmount: number;
+  dueAmount: number;
+  status: string;
+  notes: string | null;
+  fefoExplanation: string;
+  createdAt: string;
+  items: PharmacyPosSaleItem[];
+  payments: PharmacyPosSalePayment[];
+  returns: PharmacyPosSaleReturn[];
+};
+
+export type PharmacyPosCreateSaleInput = {
+  patientId: string | null;
+  customerName: string | null;
+  customerMobile: string | null;
+  prescriptionDocumentId?: string | null;
+  saleDateTime?: string | null;
+  discount?: number | null;
+  tax?: number | null;
+  paidAmount?: number | null;
+  paymentMode?: PaymentMode | null;
+  paymentReference?: string | null;
+  paymentNotes?: string | null;
+  notes?: string | null;
+  items: Array<{
+    medicineId: string;
+    quantity: number;
+    unitPrice?: number | null;
+    discount?: number | null;
+    tax?: number | null;
+  }>;
+};
+
+export type PharmacyPosPrescriptionUpload = {
+  documentId: string;
+  fileName: string;
+  mediaType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+};
+
+export type PharmacyPosPrescriptionDownloadUrl = {
+  url: string;
+  expiresInSeconds: string;
+};
+
+export type PharmacyPosPaymentInput = {
+  amount: number;
+  paymentMode: PaymentMode;
+  referenceNumber?: string | null;
+  notes?: string | null;
+  paymentDate?: string | null;
+  paymentDateTime?: string | null;
+};
+
+export type PharmacyPosReturnInput = {
+  reason: string;
+  refundMode?: PaymentMode | null;
+  referenceNumber?: string | null;
+  notes?: string | null;
+  items: Array<{
+    saleItemId: string;
+    quantity: number;
+    reusable: boolean;
+  }>;
+};
+
 export type VaccineMaster = {
   id: string;
   tenantId: string;
@@ -1831,6 +1983,66 @@ export async function getReceiptPdf(token: string, tenantId: string, id: string)
   return {
     blob,
     filename: match?.[1] || `receipt-${id}.pdf`,
+  };
+}
+
+export async function searchPharmacyPosMedicines(token: string, tenantId: string, query: string) {
+  const suffix = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : "";
+  return httpGet<PharmacyPosMedicine[]>(`/api/pharmacy/pos/search-medicines${suffix}`, { token, tenantId });
+}
+
+export async function getPharmacyPosAvailableBatches(token: string, tenantId: string, medicineId: string) {
+  return httpGet<PharmacyPosBatch[]>(`/api/pharmacy/pos/available-batches?medicineId=${encodeURIComponent(medicineId)}`, { token, tenantId });
+}
+
+export async function createPharmacyPosSale(token: string, tenantId: string, body: PharmacyPosCreateSaleInput) {
+  return httpPost<PharmacyPosSale>("/api/pharmacy/pos/sales", body, { token, tenantId });
+}
+
+export async function uploadPharmacyPosPrescription(token: string, tenantId: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return httpPostForm<PharmacyPosPrescriptionUpload>("/api/pharmacy/pos/prescriptions/upload", formData, { token, tenantId });
+}
+
+export async function getPharmacyPosPrescriptionDownloadUrl(token: string, tenantId: string, documentId: string) {
+  return httpGet<PharmacyPosPrescriptionDownloadUrl>(`/api/pharmacy/pos/prescriptions/${documentId}/download-url`, { token, tenantId });
+}
+
+export async function listPharmacyPosSales(token: string, tenantId: string) {
+  return httpGet<PharmacyPosSale[]>("/api/pharmacy/pos/sales", { token, tenantId });
+}
+
+export async function getPharmacyPosSale(token: string, tenantId: string, id: string) {
+  return httpGet<PharmacyPosSale>(`/api/pharmacy/pos/sales/${id}`, { token, tenantId });
+}
+
+export async function addPharmacyPosPayment(token: string, tenantId: string, saleId: string, body: PharmacyPosPaymentInput) {
+  return httpPost<PharmacyPosSale>(`/api/pharmacy/pos/sales/${saleId}/payment`, body, { token, tenantId });
+}
+
+export async function returnPharmacyPosSale(token: string, tenantId: string, saleId: string, body: PharmacyPosReturnInput) {
+  return httpPost<PharmacyPosSale>(`/api/pharmacy/pos/sales/${saleId}/return`, body, { token, tenantId });
+}
+
+export async function getPharmacyPosReceiptPdf(token: string, tenantId: string, saleId: string) {
+  const res = await fetch(`${(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "")}/api/pharmacy/pos/sales/${saleId}/receipt`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Tenant-Id": tenantId,
+      Accept: "application/pdf",
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  return {
+    blob,
+    filename: match?.[1] || `sale-${saleId}-receipt.pdf`,
   };
 }
 
