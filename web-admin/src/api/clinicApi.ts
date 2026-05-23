@@ -32,7 +32,9 @@ export type InventoryTransactionType =
   | "OPENING"
   | "PURCHASE"
   | "SALE"
-  | "ADJUSTMENT";
+  | "ADJUSTMENT"
+  | "TRANSFER_IN"
+  | "TRANSFER_OUT";
 export type ClinicalDocumentType =
   | "LAB_REPORT"
   | "PRESCRIPTION"
@@ -1127,6 +1129,9 @@ export type InventoryTransaction = {
   createdBy: string | null;
   notes: string | null;
   createdAt: string;
+  batchNumber: string | null;
+  adjustedByName: string | null;
+  businessReference: string | null;
 };
 
 export type InventoryTransactionInput = {

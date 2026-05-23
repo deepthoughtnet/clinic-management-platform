@@ -31,10 +31,16 @@ import org.springframework.web.bind.annotation.RestController;
 public class InventoryController {
     private final InventoryService inventoryService;
     private final PharmacyOperationsService pharmacyOperationsService;
+    private final InventoryTransactionViewMapper inventoryTransactionViewMapper;
 
-    public InventoryController(InventoryService inventoryService, PharmacyOperationsService pharmacyOperationsService) {
+    public InventoryController(
+            InventoryService inventoryService,
+            PharmacyOperationsService pharmacyOperationsService,
+            InventoryTransactionViewMapper inventoryTransactionViewMapper
+    ) {
         this.inventoryService = inventoryService;
         this.pharmacyOperationsService = pharmacyOperationsService;
+        this.inventoryTransactionViewMapper = inventoryTransactionViewMapper;
     }
 
     @GetMapping("/stocks")
@@ -95,17 +101,18 @@ public class InventoryController {
     @PostMapping("/transactions")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('billing.create')")
-    public InventoryTransactionRecord createTransaction(@jakarta.validation.Valid @RequestBody InventoryTransactionCommand request) {
+    public InventoryTransactionResponse createTransaction(@jakarta.validation.Valid @RequestBody InventoryTransactionCommand request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return inventoryService.createTransaction(tenantId, request, actorAppUserId);
+        InventoryTransactionRecord saved = inventoryService.createTransaction(tenantId, request, actorAppUserId);
+        return inventoryTransactionViewMapper.toResponses(tenantId, List.of(saved)).getFirst();
     }
 
     @GetMapping("/transactions")
     @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read') or @permissionChecker.hasPermission('audit.read')")
-    public List<InventoryTransactionRecord> listTransactions() {
+    public List<InventoryTransactionResponse> listTransactions() {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        return inventoryService.listTransactions(tenantId);
+        return inventoryTransactionViewMapper.toResponses(tenantId, inventoryService.listTransactions(tenantId));
     }
 
     @GetMapping("/low-stock")

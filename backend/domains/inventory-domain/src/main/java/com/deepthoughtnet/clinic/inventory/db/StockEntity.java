@@ -5,6 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -17,6 +18,9 @@ import java.util.UUID;
         indexes = {
                 @Index(name = "ix_inventory_stocks_tenant_medicine", columnList = "tenant_id,medicine_id"),
                 @Index(name = "ix_inventory_stocks_tenant_active", columnList = "tenant_id,active")
+        },
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uq_inventory_stocks_tenant_medicine_location_batch", columnNames = {"tenant_id", "medicine_id", "location_id", "batch_number"})
         }
 )
 public class StockEntity {

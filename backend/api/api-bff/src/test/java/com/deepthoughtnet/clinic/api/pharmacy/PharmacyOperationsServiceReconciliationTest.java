@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.inventory.service.PrescriptionDispensingService;
@@ -36,6 +38,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 class PharmacyOperationsServiceReconciliationTest {
@@ -131,7 +138,8 @@ class PharmacyOperationsServiceReconciliationTest {
                 dispensingService,
                 storageService,
                 ocrProvider,
-                objectMapper
+                objectMapper,
+                new NoOpTransactionManager()
         );
     }
 
@@ -160,6 +168,7 @@ class PharmacyOperationsServiceReconciliationTest {
         assertThat(posted.postedAt()).isNotNull();
         assertThat(posted.confirmedAt()).isNotNull();
         assertThat(stock.getQuantityOnHand()).isEqualTo(7);
+        verify(inventoryService).createTransaction(eq(TENANT_ID), any(InventoryTransactionCommand.class), eq(REVIEWER_ID));
     }
 
     @Test
@@ -173,5 +182,20 @@ class PharmacyOperationsServiceReconciliationTest {
         assertThatThrownBy(() -> service.rejectReconciliation(TENANT_ID, entity.getId(), new ReconciliationDecisionRequest(""), REVIEWER_ID))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
+    }
+
+    private static final class NoOpTransactionManager implements PlatformTransactionManager {
+        @Override
+        public TransactionStatus getTransaction(TransactionDefinition definition) throws TransactionException {
+            return new SimpleTransactionStatus();
+        }
+
+        @Override
+        public void commit(TransactionStatus status) throws TransactionException {
+        }
+
+        @Override
+        public void rollback(TransactionStatus status) throws TransactionException {
+        }
     }
 }

@@ -95,6 +95,8 @@ type ReturnLineDraft = {
   reusable: boolean;
 };
 
+type CodeScanMode = "BARCODE" | "QR";
+
 const PAYMENT_MODES: PaymentMode[] = ["CASH", "UPI", "CARD", "PHONEPE", "GOOGLE_PAY", "PAYTM", "BANK_TRANSFER", "CHEQUE", "OTHER"];
 const POS_ROLES = new Set(["CLINIC_ADMIN", "PHARMACIST", "PHARMACY", "PHARMA"]);
 const HELD_CART_STORAGE_KEY = "pharmacy-pos-held-cart";
@@ -248,6 +250,10 @@ function validatePrescriptionFile(file: File) {
   return null;
 }
 
+function scanModeLabel(mode: CodeScanMode) {
+  return mode === "QR" ? "QR" : "barcode";
+}
+
 export default function PharmacyPosPage() {
   const auth = useAuth();
   const token = auth.accessToken;
@@ -259,6 +265,10 @@ export default function PharmacyPosPage() {
   const cameraVideoRef = React.useRef<HTMLVideoElement | null>(null);
   const cameraCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
+  const codeScannerVideoRef = React.useRef<HTMLVideoElement | null>(null);
+  const codeScannerControlsRef = React.useRef<{ stop: () => void } | null>(null);
+  const codeScannerReaderRef = React.useRef<{ reset?: () => void } | null>(null);
+  const codeScanHandledRef = React.useRef(false);
   const actionLockRef = React.useRef<string | null>(null);
 
   const [loading, setLoading] = React.useState(true);
@@ -272,6 +282,10 @@ export default function PharmacyPosPage() {
   const [scanError, setScanError] = React.useState<string | null>(null);
   const [capturedImageUrl, setCapturedImageUrl] = React.useState<string | null>(null);
   const [capturedImageBlob, setCapturedImageBlob] = React.useState<Blob | null>(null);
+  const [codeScanDialogOpen, setCodeScanDialogOpen] = React.useState(false);
+  const [codeScanMode, setCodeScanMode] = React.useState<CodeScanMode>("BARCODE");
+  const [codeScanError, setCodeScanError] = React.useState<string | null>(null);
+  const [codeScanStatus, setCodeScanStatus] = React.useState<string>("Align the code inside the frame.");
 
   const [medicineQuery, setMedicineQuery] = React.useState("");
   const [medicineResults, setMedicineResults] = React.useState<PharmacyPosMedicine[]>([]);
@@ -430,6 +444,17 @@ export default function PharmacyPosPage() {
     }
   }, []);
 
+  const stopCodeScanner = React.useCallback(() => {
+    codeScanHandledRef.current = false;
+    codeScannerControlsRef.current?.stop();
+    codeScannerControlsRef.current = null;
+    codeScannerReaderRef.current?.reset?.();
+    codeScannerReaderRef.current = null;
+    if (codeScannerVideoRef.current) {
+      codeScannerVideoRef.current.srcObject = null;
+    }
+  }, []);
+
   const resetCapturedImage = React.useCallback(() => {
     setCapturedImageBlob(null);
     setCapturedImageUrl((current) => {
@@ -492,7 +517,8 @@ export default function PharmacyPosPage() {
       }
       return null;
     });
-  }, [stopCameraStream]);
+    stopCodeScanner();
+  }, [stopCameraStream, stopCodeScanner]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -621,6 +647,36 @@ export default function PharmacyPosPage() {
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
     }
   }, [batchPreview, tenantId, token]);
+
+  const handleScannedCode = React.useCallback(async (rawValue: string, mode: CodeScanMode) => {
+    if (!token || !tenantId) {
+      return;
+    }
+    const value = rawValue.trim();
+    if (!value) {
+      setCodeScanError(`No ${scanModeLabel(mode)} content was detected. Try again.`);
+      window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      return;
+    }
+    setMedicineQuery(value);
+    setCodeScanStatus(`Detected ${scanModeLabel(mode)}: ${value}`);
+    try {
+      const rows = await searchPharmacyPosMedicines(token, tenantId, value);
+      setMedicineResults(rows);
+      if (!rows.length) {
+        setError("No medicine found for this code. If stock exists, only expired stock may be available.");
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+        return;
+      }
+      await addMedicine(rows[0]);
+      setSuccess(`${scanModeLabel(mode) === "QR" ? "QR" : "Barcode"} scan added ${rows[0].medicineName} using FEFO-eligible stock.`);
+      setCodeScanDialogOpen(false);
+      setCodeScanError(null);
+    } catch {
+      setError("Medicine lookup failed after scanning. Please retry or use the search box.");
+      window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    }
+  }, [addMedicine, tenantId, token]);
 
   const updateCartLine = React.useCallback((medicineId: string, patch: Partial<CartLine>) => {
     setSelectedCartMedicineId(medicineId);
@@ -782,93 +838,6 @@ export default function PharmacyPosPage() {
     }
   }, [beginAction, cart, cartHasStockIssue, clearDraft, currentShift, customerMobile, customerName, endAction, notes, paidAmount, paymentMode, paymentReference, prescription, refreshMedicineResults, refreshSales, refreshShifts, selectSale, selectedPatient, tenantId, token]);
 
-  React.useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      const tag = target?.tagName;
-      const inEditable = tag === "INPUT" || tag === "TEXTAREA" || target?.getAttribute("contenteditable") === "true";
-
-      if (event.key === "Escape") {
-        if (scanDialogOpen) {
-          event.preventDefault();
-          setScanDialogOpen(false);
-          stopCameraStream();
-          resetCapturedImage();
-          setScanError(null);
-          return;
-        }
-        if (recentDrawerOpen) {
-          event.preventDefault();
-          setRecentDrawerOpen(false);
-          return;
-        }
-        if (medicineQuery.trim()) {
-          event.preventDefault();
-          setMedicineQuery("");
-          window.setTimeout(() => searchInputRef.current?.focus(), 0);
-        }
-        return;
-      }
-
-      if (event.key === "F2") {
-        event.preventDefault();
-        paidAmountInputRef.current?.focus();
-        paidAmountInputRef.current?.select();
-        return;
-      }
-
-      if (event.key === "F4") {
-        event.preventDefault();
-        if (!submitting && cart.length && !cartHasStockIssue) {
-          void submitSale();
-        }
-        return;
-      }
-
-      if (!selectedCartMedicineId || scanDialogOpen || recentDrawerOpen || inEditable) {
-        return;
-      }
-
-      if ((event.key === "+" || event.key === "=") && !event.ctrlKey && !event.metaKey) {
-        event.preventDefault();
-        setCart((current) => current.map((line) =>
-          line.medicineId === selectedCartMedicineId
-            ? { ...line, quantity: String(numeric(line.quantity) + 1) }
-            : line,
-        ));
-        return;
-      }
-
-      if (event.key === "-" && !event.ctrlKey && !event.metaKey) {
-        event.preventDefault();
-        setCart((current) => current.map((line) =>
-          line.medicineId === selectedCartMedicineId
-            ? { ...line, quantity: String(Math.max(1, numeric(line.quantity) - 1)) }
-            : line,
-        ));
-        return;
-      }
-
-      if (tag !== "BUTTON") {
-        window.setTimeout(() => searchInputRef.current?.focus(), 0);
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [
-    cart.length,
-    cartHasStockIssue,
-    medicineQuery,
-    recentDrawerOpen,
-    resetCapturedImage,
-    scanDialogOpen,
-    selectedCartMedicineId,
-    stopCameraStream,
-    submitSale,
-    submitting,
-  ]);
-
   const printReceipt = React.useCallback(async (saleId: string) => {
     if (!token || !tenantId) return;
     try {
@@ -959,6 +928,185 @@ export default function PharmacyPosPage() {
     setScanDialogOpen(false);
     resetCapturedImage();
   }, [capturedImageBlob, resetCapturedImage, uploadPrescription]);
+
+  const startCodeScanner = React.useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCodeScanError("No camera available on this device. Use the search box or a hardware scanner instead.");
+      return;
+    }
+    const videoElement = codeScannerVideoRef.current;
+    if (!videoElement) {
+      setCodeScanError("Scanner preview is not ready yet.");
+      return;
+    }
+    try {
+      stopCodeScanner();
+      codeScanHandledRef.current = false;
+      setCodeScanError(null);
+      setCodeScanStatus(
+        codeScanMode === "QR"
+          ? "Point the camera at the medicine QR code."
+          : "Point the camera at the medicine barcode.",
+      );
+      const zxing = await import("@zxing/browser");
+      const reader = codeScanMode === "QR"
+        ? new zxing.BrowserQRCodeReader()
+        : new zxing.BrowserMultiFormatReader();
+      codeScannerReaderRef.current = reader as { reset?: () => void };
+      const controls = await reader.decodeFromVideoDevice(undefined, videoElement, (result, error, activeControls) => {
+        if (result && !codeScanHandledRef.current) {
+          codeScanHandledRef.current = true;
+          codeScannerControlsRef.current = activeControls;
+          activeControls.stop();
+          void handleScannedCode(result.getText(), codeScanMode);
+          return;
+        }
+        if (!error) {
+          return;
+        }
+        const errorName = error instanceof Error ? error.name : "";
+        if (errorName === "NotFoundException" || errorName === "ChecksumException" || errorName === "FormatException") {
+          return;
+        }
+        setCodeScanError("Scanner could not read this code. Retake and try again.");
+      });
+      codeScannerControlsRef.current = controls;
+    } catch (err) {
+      if (err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "SecurityError")) {
+        setCodeScanError("Camera access denied. Use the search box or hardware scanner instead.");
+        return;
+      }
+      if (err instanceof DOMException && (err.name === "NotFoundError" || err.name === "OverconstrainedError" || err.name === "DevicesNotFoundError")) {
+        setCodeScanError("No camera available on this device. Use the search box or a hardware scanner instead.");
+        return;
+      }
+      setCodeScanError("Unable to start the scanner. Use the search box or hardware scanner instead.");
+    }
+  }, [codeScanMode, handleScannedCode, stopCodeScanner]);
+
+  const openCodeScanner = React.useCallback((mode: CodeScanMode) => {
+    setCodeScanMode(mode);
+    setCodeScanDialogOpen(true);
+  }, []);
+
+  const closeCodeScanner = React.useCallback(() => {
+    setCodeScanDialogOpen(false);
+    setCodeScanError(null);
+    setCodeScanStatus("Align the code inside the frame.");
+    stopCodeScanner();
+    window.setTimeout(() => searchInputRef.current?.focus(), 0);
+  }, [stopCodeScanner]);
+
+  const restartCodeScanner = React.useCallback(() => {
+    codeScanHandledRef.current = false;
+    setCodeScanError(null);
+    void startCodeScanner();
+  }, [startCodeScanner]);
+
+  React.useEffect(() => {
+    if (!codeScanDialogOpen) {
+      stopCodeScanner();
+      return;
+    }
+    void startCodeScanner();
+    return () => {
+      stopCodeScanner();
+    };
+  }, [codeScanDialogOpen, codeScanMode, startCodeScanner, stopCodeScanner]);
+
+  React.useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const inEditable = tag === "INPUT" || tag === "TEXTAREA" || target?.getAttribute("contenteditable") === "true";
+
+      if (event.key === "Escape") {
+        if (codeScanDialogOpen) {
+          event.preventDefault();
+          closeCodeScanner();
+          return;
+        }
+        if (scanDialogOpen) {
+          event.preventDefault();
+          setScanDialogOpen(false);
+          stopCameraStream();
+          resetCapturedImage();
+          setScanError(null);
+          return;
+        }
+        if (recentDrawerOpen) {
+          event.preventDefault();
+          setRecentDrawerOpen(false);
+          return;
+        }
+        if (medicineQuery.trim()) {
+          event.preventDefault();
+          setMedicineQuery("");
+          window.setTimeout(() => searchInputRef.current?.focus(), 0);
+        }
+        return;
+      }
+
+      if (event.key === "F2") {
+        event.preventDefault();
+        paidAmountInputRef.current?.focus();
+        paidAmountInputRef.current?.select();
+        return;
+      }
+
+      if (event.key === "F4") {
+        event.preventDefault();
+        if (!submitting && cart.length && !cartHasStockIssue) {
+          void submitSale();
+        }
+        return;
+      }
+
+      if (!selectedCartMedicineId || scanDialogOpen || codeScanDialogOpen || recentDrawerOpen || inEditable) {
+        return;
+      }
+
+      if ((event.key === "+" || event.key === "=") && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        setCart((current) => current.map((line) =>
+          line.medicineId === selectedCartMedicineId
+            ? { ...line, quantity: String(numeric(line.quantity) + 1) }
+            : line,
+        ));
+        return;
+      }
+
+      if (event.key === "-" && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        setCart((current) => current.map((line) =>
+          line.medicineId === selectedCartMedicineId
+            ? { ...line, quantity: String(Math.max(1, numeric(line.quantity) - 1)) }
+            : line,
+        ));
+        return;
+      }
+
+      if (tag !== "BUTTON") {
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    cart.length,
+    cartHasStockIssue,
+    closeCodeScanner,
+    codeScanDialogOpen,
+    medicineQuery,
+    recentDrawerOpen,
+    resetCapturedImage,
+    scanDialogOpen,
+    selectedCartMedicineId,
+    stopCameraStream,
+    submitSale,
+    submitting,
+  ]);
 
   const submitPayment = React.useCallback(async () => {
     if (!token || !tenantId || !selectedSale) return;
@@ -1126,6 +1274,12 @@ export default function PharmacyPosPage() {
           </Button>
           <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => setScanDialogOpen(true)}>
             Scan Prescription
+          </Button>
+          <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("BARCODE")}>
+            Scan Barcode
+          </Button>
+          <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("QR")}>
+            Scan QR
           </Button>
           <Button
             size="small"
@@ -1782,6 +1936,49 @@ export default function PharmacyPosPage() {
           <Button onClick={() => setCloseShiftDialogOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={() => void submitCloseShift()} disabled={submitting || !currentShift}>{activeAction === "close-shift" ? "Closing..." : "Close Shift"}</Button>
         </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={codeScanDialogOpen}
+        onClose={closeCodeScanner}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>{codeScanMode === "QR" ? "Scan QR Code" : "Scan Barcode"}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            {codeScanError ? <Alert severity="warning">{codeScanError}</Alert> : null}
+            <Typography variant="body2" color="text.secondary">
+              The scanned value will populate the POS search box, trigger medicine lookup, and add the best FEFO-eligible result automatically.
+            </Typography>
+            <Box
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 2,
+                overflow: "hidden",
+                bgcolor: "grey.100",
+                minHeight: 280,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Box component="video" ref={codeScannerVideoRef} muted playsInline autoPlay sx={{ width: "100%", display: "block" }} />
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              {codeScanStatus}
+            </Typography>
+            <Stack direction="row" spacing={1}>
+              <Button variant="outlined" onClick={restartCodeScanner}>
+                Retake
+              </Button>
+              <Button variant="text" onClick={closeCodeScanner}>
+                Cancel
+              </Button>
+            </Stack>
+          </Stack>
+        </DialogContent>
       </Dialog>
 
       <Dialog

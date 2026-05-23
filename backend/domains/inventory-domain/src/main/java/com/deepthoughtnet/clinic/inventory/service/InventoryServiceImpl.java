@@ -35,6 +35,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -154,9 +155,17 @@ public class InventoryServiceImpl implements InventoryService {
         requireTenant(tenantId);
         validateStock(tenantId, command);
         UUID locationId = resolveLocationId(tenantId, command.locationId());
+        ensureUniqueStockBatch(tenantId, command.medicineId(), locationId, command.batchNumber(), null);
         StockEntity entity = StockEntity.create(tenantId, command.medicineId(), locationId);
+        int beforeQuantity = entity.getQuantityOnHand();
         applyStock(entity, command);
-        StockEntity saved = stockRepository.save(entity);
+        StockEntity saved;
+        try {
+            saved = stockRepository.save(entity);
+        } catch (DataIntegrityViolationException ex) {
+            throw translateStockIntegrityViolation(ex);
+        }
+        recordStockQuantityAudit(tenantId, saved, beforeQuantity, saved.getQuantityOnHand(), command, actorAppUserId, true);
         auditStock(tenantId, saved, "stock.created", actorAppUserId, "Created stock batch");
         return toRecord(saved, medicineRepository.findByTenantIdAndId(tenantId, saved.getMedicineId()).orElse(null));
     }
@@ -167,10 +176,19 @@ public class InventoryServiceImpl implements InventoryService {
         requireTenant(tenantId);
         requireId(id, "id");
         validateStock(tenantId, command);
+        UUID locationId = resolveLocationId(tenantId, command.locationId());
+        ensureUniqueStockBatch(tenantId, command.medicineId(), locationId, command.batchNumber(), id);
         StockEntity entity = stockRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Stock not found"));
+        int beforeQuantity = entity.getQuantityOnHand();
         applyStock(entity, command);
-        StockEntity saved = stockRepository.save(entity);
+        StockEntity saved;
+        try {
+            saved = stockRepository.save(entity);
+        } catch (DataIntegrityViolationException ex) {
+            throw translateStockIntegrityViolation(ex);
+        }
+        recordStockQuantityAudit(tenantId, saved, beforeQuantity, saved.getQuantityOnHand(), command, actorAppUserId, false);
         auditStock(tenantId, saved, "stock.updated", actorAppUserId, "Updated stock batch");
         return toRecord(saved, medicineRepository.findByTenantIdAndId(tenantId, saved.getMedicineId()).orElse(null));
     }
@@ -429,6 +447,63 @@ public class InventoryServiceImpl implements InventoryService {
         entity.update(resolveLocationId(entity.getTenantId(), command.locationId()), normalizeNullable(command.barcode()), normalizeNullable(command.qrCode()), normalizeNullable(command.externalCode()), normalizeNullable(command.batchNumber()), normalizeNullable(command.purchaseReferenceNumber()), command.expiryDate(), command.purchaseDate(), normalizeNullable(command.supplierName()), command.quantityReceived() == null ? Math.max(0, command.quantityOnHand()) : Math.max(0, command.quantityReceived()), Math.max(0, command.quantityOnHand()), command.lowStockThreshold(), normalizeMoney(command.unitCost()), normalizeMoney(command.purchasePrice()), normalizeMoney(command.sellingPrice()), command.active());
     }
 
+    private void recordStockQuantityAudit(
+            UUID tenantId,
+            StockEntity stock,
+            int beforeQuantity,
+            int afterQuantity,
+            StockUpsertCommand command,
+            UUID actorAppUserId,
+            boolean created
+    ) {
+        int delta = afterQuantity - beforeQuantity;
+        if (delta == 0) {
+            return;
+        }
+
+        InventoryTransactionType transactionType = delta > 0
+                ? stockInTransactionType(command)
+                : InventoryTransactionType.ADJUSTMENT_OUT;
+        String reason = delta > 0
+                ? (created ? "Stock batch created" : "Stock batch quantity increased")
+                : "Stock batch quantity reduced";
+        String notes = stockAuditReference(command, stock);
+
+        InventoryTransactionEntity entity = transactionRepository.save(InventoryTransactionEntity.create(
+                tenantId,
+                stock.getMedicineId(),
+                stock.getId(),
+                stock.getLocationId(),
+                null,
+                transactionType.name(),
+                Math.abs(delta),
+                beforeQuantity,
+                afterQuantity,
+                "STOCK_INWARD",
+                null,
+                actorAppUserId,
+                reason,
+                notes
+        ));
+        auditTransaction(tenantId, entity, "inventory.transaction.created", actorAppUserId, "Created inventory transaction");
+    }
+
+    private InventoryTransactionType stockInTransactionType(StockUpsertCommand command) {
+        return StringUtils.hasText(command.purchaseReferenceNumber())
+                ? InventoryTransactionType.PURCHASE
+                : InventoryTransactionType.STOCK_IN;
+    }
+
+    private String stockAuditReference(StockUpsertCommand command, StockEntity stock) {
+        if (StringUtils.hasText(command.purchaseReferenceNumber())) {
+            return command.purchaseReferenceNumber().trim();
+        }
+        if (StringUtils.hasText(stock.getBatchNumber())) {
+            return "Batch " + stock.getBatchNumber().trim();
+        }
+        return "Inventory stock update";
+    }
+
     private void validateMedicine(MedicineUpsertCommand command) {
         if (command == null) throw new IllegalArgumentException("command is required");
         if (!StringUtils.hasText(command.medicineName())) throw new IllegalArgumentException("medicineName is required");
@@ -439,6 +514,18 @@ public class InventoryServiceImpl implements InventoryService {
         if (command == null) throw new IllegalArgumentException("command is required");
         requireId(command.medicineId(), "medicineId");
         if (medicineRepository.findByTenantIdAndId(tenantId, command.medicineId()).isEmpty()) throw new IllegalArgumentException("Medicine not found");
+    }
+
+    private void ensureUniqueStockBatch(UUID tenantId, UUID medicineId, UUID locationId, String batchNumber, UUID id) {
+        if (!StringUtils.hasText(batchNumber)) {
+            return;
+        }
+        boolean duplicate = id == null
+                ? stockRepository.findByTenantIdAndMedicineIdAndLocationIdAndBatchNumberIgnoreCase(tenantId, medicineId, locationId, batchNumber).isPresent()
+                : stockRepository.existsByTenantIdAndMedicineIdAndLocationIdAndBatchNumberIgnoreCaseAndIdNot(tenantId, medicineId, locationId, batchNumber, id);
+        if (duplicate) {
+            throw new IllegalArgumentException("Stock batch already exists for this medicine and location. Edit existing batch or use a different batch number.");
+        }
     }
 
     private void validateTransaction(UUID tenantId, InventoryTransactionCommand command) {
@@ -502,6 +589,13 @@ public class InventoryServiceImpl implements InventoryService {
 
     private void auditTransaction(UUID tenantId, InventoryTransactionEntity entity, String action, UUID actorAppUserId, String message) {
         auditEventPublisher.record(new AuditEventCommand(tenantId, TRANSACTION_ENTITY, entity.getId(), action, actorAppUserId, OffsetDateTime.now(), message, detailsJson(entity)));
+    }
+
+    private IllegalArgumentException translateStockIntegrityViolation(DataIntegrityViolationException ex) {
+        if (ex != null && ex.getMessage() != null && ex.getMessage().contains("uq_inventory_stocks_tenant_medicine_location_batch")) {
+            return new IllegalArgumentException("Stock batch already exists for this medicine and location. Edit existing batch or use a different batch number.", ex);
+        }
+        return new IllegalArgumentException("Stock could not be saved", ex);
     }
 
     private String detailsJson(Object entity) {

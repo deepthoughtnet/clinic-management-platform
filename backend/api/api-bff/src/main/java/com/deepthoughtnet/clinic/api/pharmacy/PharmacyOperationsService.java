@@ -50,13 +50,18 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Stream;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.csv.CSVRecord;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
@@ -67,6 +72,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @Service
 public class PharmacyOperationsService {
     private static final int EXPIRY_WARNING_DAYS = 30;
+    private static final Logger log = LoggerFactory.getLogger(PharmacyOperationsService.class);
 
     private final InventoryService inventoryService;
     private final MedicineRepository medicineRepository;
@@ -81,6 +87,7 @@ public class PharmacyOperationsService {
     private final ObjectStorageService storageService;
     private final ObjectProvider<OcrProvider> ocrProvider;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate requiresNewTransactionTemplate;
 
     public PharmacyOperationsService(
             InventoryService inventoryService,
@@ -95,7 +102,8 @@ public class PharmacyOperationsService {
             PrescriptionDispensingService dispensingService,
             ObjectStorageService storageService,
             ObjectProvider<OcrProvider> ocrProvider,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            PlatformTransactionManager transactionManager
     ) {
         this.inventoryService = inventoryService;
         this.medicineRepository = medicineRepository;
@@ -110,6 +118,8 @@ public class PharmacyOperationsService {
         this.storageService = storageService;
         this.ocrProvider = ocrProvider;
         this.objectMapper = objectMapper;
+        this.requiresNewTransactionTemplate = new TransactionTemplate(transactionManager);
+        this.requiresNewTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     @Transactional(readOnly = true)
@@ -150,7 +160,6 @@ public class PharmacyOperationsService {
         return new InventoryLocationRecord(record.id(), record.tenantId(), record.locationName(), record.locationCode(), record.locationType(), record.defaultLocation(), record.active(), record.createdAt(), record.updatedAt());
     }
 
-    @Transactional
     public MedicineImportResult importMedicines(UUID tenantId, byte[] csvBytes, UUID actorAppUserId) {
         if (csvBytes == null || csvBytes.length == 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "CSV file is required");
@@ -160,13 +169,22 @@ public class PharmacyOperationsService {
         int updated = 0;
         int skipped = 0;
         int failed = 0;
+        ImportDuplicateTracker duplicateTracker = buildDuplicateTracker(tenantId);
 
         try (CSVParser parser = CSVParser.parse(new String(csvBytes, StandardCharsets.UTF_8), CSVFormat.DEFAULT.builder().setHeader().setSkipHeaderRecord(true).setTrim(true).build())) {
             int rowNumber = 1;
             for (CSVRecord record : parser) {
                 rowNumber++;
                 try {
-                    MedicineImportOutcome outcome = importMedicineRow(tenantId, record, actorAppUserId, rowNumber);
+                    ParsedMedicineImportRow parsedRow = parseMedicineImportRow(record, rowNumber);
+                    String duplicateMessage = duplicateTracker.duplicateMessage(parsedRow.command());
+                    if (duplicateMessage != null) {
+                        skipped++;
+                        rows.add(new MedicineImportRowResult(rowNumber, parsedRow.medicineName(), "SKIPPED", duplicateMessage, null, null));
+                        continue;
+                    }
+                    MedicineImportOutcome outcome = requiresNewTransactionTemplate.execute(status -> persistMedicineImportRow(tenantId, parsedRow, actorAppUserId));
+                    duplicateTracker.registerSuccessfulImport(parsedRow.command());
                     rows.add(new MedicineImportRowResult(rowNumber, outcome.medicineName, outcome.status, outcome.message, outcome.medicineId, outcome.stockId));
                     switch (outcome.status) {
                         case "CREATED" -> created++;
@@ -177,7 +195,7 @@ public class PharmacyOperationsService {
                 } catch (RuntimeException ex) {
                     failed++;
                     String medicineName = value(record, "medicineName");
-                    rows.add(new MedicineImportRowResult(rowNumber, medicineName, "FAILED", friendlyMessage(ex.getMessage()), null, null));
+                    rows.add(new MedicineImportRowResult(rowNumber, medicineName, "FAILED", friendlyMessage(ex), null, null));
                 }
             }
         } catch (Exception ex) {
@@ -186,6 +204,7 @@ public class PharmacyOperationsService {
 
         String failedRowsCsv = buildFailedRowsCsv(rows);
         int total = created + updated + skipped + failed;
+        log.info("Medicine CSV import summary tenantId={} totalRows={} successCount={} failedCount={}", tenantId, total, created + updated + skipped, failed);
         return new MedicineImportResult(total, created, updated, skipped, failed, rows, failedRowsCsv);
     }
 
@@ -498,6 +517,9 @@ public class PharmacyOperationsService {
                 ? inventoryService.createStock(tenantId, command, actorAppUserId)
                 : inventoryService.updateStock(tenantId, existing.getId(), command, actorAppUserId);
 
+        InventoryTransactionType inwardTransactionType = StringUtils.hasText(request.purchaseReferenceNumber())
+                ? InventoryTransactionType.PURCHASE
+                : InventoryTransactionType.STOCK_IN;
         if (quantity > 0 && existing == null) {
             inventoryService.createTransaction(
                     tenantId,
@@ -506,7 +528,7 @@ public class PharmacyOperationsService {
                             saved.id(),
                             locationId,
                             null,
-                            InventoryTransactionType.OPENING,
+                            inwardTransactionType,
                             quantity,
                             "Opening stock inward",
                             "STOCK_INWARD",
@@ -524,7 +546,7 @@ public class PharmacyOperationsService {
                             saved.id(),
                             locationId,
                             null,
-                            InventoryTransactionType.PURCHASE,
+                            inwardTransactionType,
                             quantity,
                             "Purchase stock inward",
                             "STOCK_INWARD",
@@ -639,6 +661,7 @@ public class PharmacyOperationsService {
             }
             MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, item.medicineId())
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Medicine not found"));
+            StockEntity existing = findStockBatch(tenantId, medicine.getId(), location.getId(), item.batchNumber(), entity.getReceiptNumber()).orElse(null);
             StockUpsertCommand command = new StockUpsertCommand(
                     medicine.getId(),
                     location.getId(),
@@ -646,19 +669,21 @@ public class PharmacyOperationsService {
                     null,
                     null,
                     normalizeNullable(item.batchNumber()),
-                    null,
+                    entity.getReceiptNumber(),
                     parseDate(item.expiryDate(), "expiryDate"),
                     entity.getReceivedAt().toLocalDate(),
                     supplier.getSupplierName(),
-                    item.quantity(),
-                    item.quantity(),
+                    existing == null ? item.quantity() : existing.getQuantityReceived() + item.quantity(),
+                    existing == null ? 0 : existing.getQuantityOnHand(),
                     null,
                     item.unitCost(),
                     item.unitCost(),
                     item.sellingPrice(),
                     true
             );
-            StockRecord stock = inventoryService.createStock(tenantId, command, actorAppUserId);
+            StockRecord stock = existing == null
+                    ? inventoryService.createStock(tenantId, command, actorAppUserId)
+                    : inventoryService.updateStock(tenantId, existing.getId(), command, actorAppUserId);
             inventoryService.createTransaction(
                     tenantId,
                     new InventoryTransactionCommand(
@@ -766,7 +791,7 @@ public class PharmacyOperationsService {
                 .toList();
     }
 
-    private MedicineImportOutcome importMedicineRow(UUID tenantId, CSVRecord record, UUID actorAppUserId, int rowNumber) {
+    private ParsedMedicineImportRow parseMedicineImportRow(CSVRecord record, int rowNumber) {
         String medicineName = required(record, "medicineName");
         String genericName = value(record, "genericName");
         String brandName = value(record, "brandName");
@@ -787,7 +812,6 @@ public class PharmacyOperationsService {
         String externalCode = value(record, "externalCode");
         boolean active = parseBoolean(value(record, "active"), true);
 
-        MedicineEntity existing = findMedicineForImport(tenantId, medicineName, form, strength).orElse(null);
         MedicineUpsertCommand command = new MedicineUpsertCommand(
                 medicineName,
                 medicineTypeFromForm(form),
@@ -811,25 +835,36 @@ public class PharmacyOperationsService {
                 active
         );
 
-        boolean sameMedicine = existing != null && sameMedicine(existing, command);
-        MedicineRecord saved = existing == null
-                ? inventoryService.createMedicine(tenantId, command, actorAppUserId)
-                : inventoryService.updateMedicine(tenantId, existing.getId(), command, actorAppUserId);
+        ParsedStockImportData stockData = hasStockColumns(record)
+                ? new ParsedStockImportData(
+                        parseInteger(value(record, "quantityOnHand"), "quantityOnHand"),
+                        parseInteger(value(record, "lowStockThreshold"), "lowStockThreshold"),
+                        parseDecimal(value(record, "unitCost"), "unitCost"),
+                        parseDecimal(value(record, "sellingPrice"), "sellingPrice"),
+                        value(record, "batchNumber"),
+                        value(record, "purchaseReferenceNumber"),
+                        parseDate(value(record, "expiryDate"), "expiryDate"),
+                        parseDate(value(record, "purchaseDate"), "purchaseDate"),
+                        value(record, "supplierName"),
+                        value(record, "barcode"),
+                        value(record, "qrCode"),
+                        value(record, "externalCode")
+                )
+                : null;
+        return new ParsedMedicineImportRow(rowNumber, medicineName, command, stockData);
+    }
+
+    private MedicineImportOutcome persistMedicineImportRow(UUID tenantId, ParsedMedicineImportRow row, UUID actorAppUserId) {
+        MedicineRecord saved = inventoryService.createMedicine(tenantId, row.command(), actorAppUserId);
 
         UUID stockId = null;
-        if (hasStockColumns(record)) {
-            StockUpsertCommand stockCommand = buildStockCommand(record, tenantId, saved.id(), saved.medicineName(), existing, actorAppUserId);
-            StockEntity existingStock = findStockForImport(tenantId, saved.id(), stockCommand).orElse(null);
-            StockRecord stockRecord = existingStock == null
-                    ? inventoryService.createStock(tenantId, stockCommand, actorAppUserId)
-                    : inventoryService.updateStock(tenantId, existingStock.getId(), stockCommand, actorAppUserId);
+        if (row.stockData() != null) {
+            StockUpsertCommand stockCommand = row.stockData().toCommand(tenantId, saved.id());
+            StockRecord stockRecord = inventoryService.createStock(tenantId, stockCommand, actorAppUserId);
             stockId = stockRecord.id();
         }
 
-        if (sameMedicine && stockId == null) {
-            return new MedicineImportOutcome("SKIPPED", "No changes required", saved.id(), null, saved.medicineName());
-        }
-        return new MedicineImportOutcome(existing == null ? "CREATED" : "UPDATED", existing == null ? "Created medicine" : "Updated medicine", saved.id(), stockId, saved.medicineName());
+        return new MedicineImportOutcome("CREATED", "Created medicine", saved.id(), stockId, saved.medicineName());
     }
 
     private StockUpsertCommand buildStockCommand(CSVRecord record, UUID tenantId, UUID medicineId, String medicineName, MedicineEntity existingMedicine, UUID actorAppUserId) {
@@ -1057,6 +1092,13 @@ public class PharmacyOperationsService {
 
     private String friendlyMessage(String message) {
         return message == null || message.isBlank() ? "Import row failed" : message;
+    }
+
+    private String friendlyMessage(Throwable throwable) {
+        if (throwable instanceof ResponseStatusException responseStatusException && StringUtils.hasText(responseStatusException.getReason())) {
+            return responseStatusException.getReason();
+        }
+        return friendlyMessage(throwable == null ? null : throwable.getMessage());
     }
 
     private String required(CSVRecord record, String column) {
@@ -1582,5 +1624,98 @@ public class PharmacyOperationsService {
     }
 
     private record MedicineImportOutcome(String status, String message, UUID medicineId, UUID stockId, String medicineName) {
+    }
+
+    private ImportDuplicateTracker buildDuplicateTracker(UUID tenantId) {
+        ImportDuplicateTracker tracker = new ImportDuplicateTracker();
+        for (MedicineEntity medicine : medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)) {
+            tracker.registerExisting(medicine.getMedicineName(), medicine.getBarcode(), medicine.getExternalCode());
+        }
+        return tracker;
+    }
+
+    private record ParsedMedicineImportRow(int rowNumber, String medicineName, MedicineUpsertCommand command, ParsedStockImportData stockData) {
+    }
+
+    private record ParsedStockImportData(
+            Integer quantityOnHand,
+            Integer lowStockThreshold,
+            BigDecimal unitCost,
+            BigDecimal sellingPrice,
+            String batchNumber,
+            String purchaseReferenceNumber,
+            LocalDate expiryDate,
+            LocalDate purchaseDate,
+            String supplierName,
+            String barcode,
+            String qrCode,
+            String externalCode
+    ) {
+        private StockUpsertCommand toCommand(UUID tenantId, UUID medicineId) {
+            return new StockUpsertCommand(
+                    medicineId,
+                    null,
+                    barcode,
+                    qrCode,
+                    externalCode,
+                    batchNumber,
+                    purchaseReferenceNumber,
+                    expiryDate,
+                    purchaseDate,
+                    supplierName,
+                    quantityOnHand == null ? 0 : quantityOnHand,
+                    quantityOnHand == null ? 0 : quantityOnHand,
+                    lowStockThreshold,
+                    unitCost,
+                    unitCost,
+                    sellingPrice,
+                    true
+            );
+        }
+    }
+
+    private static final class ImportDuplicateTracker {
+        private final Map<String, String> existingKeys = new HashMap<>();
+        private final Map<String, String> importedKeys = new HashMap<>();
+
+        private void registerExisting(String medicineName, String barcode, String externalCode) {
+            registerKey(existingKeys, "name", medicineName);
+            registerKey(existingKeys, "barcode", barcode);
+            registerKey(existingKeys, "externalCode", externalCode);
+        }
+
+        private String duplicateMessage(MedicineUpsertCommand command) {
+            if (hasKey(existingKeys, "name", command.medicineName())
+                    || hasKey(existingKeys, "barcode", command.barcode())
+                    || hasKey(existingKeys, "externalCode", command.externalCode())
+                    || hasKey(importedKeys, "name", command.medicineName())
+                    || hasKey(importedKeys, "barcode", command.barcode())
+                    || hasKey(importedKeys, "externalCode", command.externalCode())) {
+                return "Medicine already exists";
+            }
+            return null;
+        }
+
+        private void registerSuccessfulImport(MedicineUpsertCommand command) {
+            registerKey(importedKeys, "name", command.medicineName());
+            registerKey(importedKeys, "barcode", command.barcode());
+            registerKey(importedKeys, "externalCode", command.externalCode());
+        }
+
+        private static boolean hasKey(Map<String, String> keys, String field, String value) {
+            String normalized = normalizeKey(field, value);
+            return normalized != null && keys.containsKey(normalized);
+        }
+
+        private static void registerKey(Map<String, String> keys, String field, String value) {
+            String normalized = normalizeKey(field, value);
+            if (normalized != null) {
+                keys.put(normalized, normalized);
+            }
+        }
+
+        private static String normalizeKey(String field, String value) {
+            return StringUtils.hasText(value) ? field + ":" + value.trim().toLowerCase(Locale.ROOT) : null;
+        }
     }
 }

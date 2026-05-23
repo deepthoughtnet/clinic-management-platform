@@ -207,6 +207,8 @@ function transactionLabel(type: InventoryTransactionType) {
     STOCK_IN: "Stock In",
     ADJUSTMENT_IN: "Adjustment In",
     ADJUSTMENT_OUT: "Adjustment Out",
+    TRANSFER_IN: "Transfer In",
+    TRANSFER_OUT: "Transfer Out",
   };
   return labels[type] || type;
 }
@@ -419,7 +421,10 @@ export default function InventoryPage() {
       await loadAll();
       setSuccess("Stock saved");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save stock");
+      const message = err instanceof Error ? err.message : "Failed to save stock";
+      setError(message.includes("Stock batch already exists")
+        ? "Stock batch already exists for this medicine and location. Edit existing batch or use a different batch number."
+        : message);
     } finally {
       setSaving(false);
     }

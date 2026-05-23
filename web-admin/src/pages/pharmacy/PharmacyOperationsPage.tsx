@@ -153,6 +153,12 @@ function formatDate(value: string | null | undefined) {
   return new Date(value).toLocaleDateString();
 }
 
+function actorLabel(actorId: string | null | undefined, currentUserId: string | null, fallback: string) {
+  if (!actorId) return "-";
+  if (actorId === currentUserId) return "You";
+  return fallback;
+}
+
 function renderMedicineDescriptor(medicine: Medicine) {
   return [medicine.medicineType, medicine.strength, medicine.defaultPrice != null ? `INR ${money(medicine.defaultPrice)}` : null].filter(Boolean).join(" • ");
 }
@@ -220,6 +226,9 @@ export default function PharmacyOperationsPage() {
     [reconciliations, selectedReconciliationId],
   );
   const selectedReconciliationRows = reviewRows.length ? reviewRows : selectedReconciliation?.extractedRows ?? [];
+  const stockMap = React.useMemo(() => new Map(stocks.map((stock) => [stock.id, stock])), [stocks]);
+  const purchaseOrderMap = React.useMemo(() => new Map(purchaseOrders.map((row) => [row.id, row])), [purchaseOrders]);
+  const supplierInvoiceMap = React.useMemo(() => new Map(supplierInvoices.map((row) => [row.id, row])), [supplierInvoices]);
 
   const draftCount = React.useMemo(() => reconciliations.filter((row) => ["DRAFT", "REJECTED"].includes((row.status || "").toUpperCase())).length, [reconciliations]);
   const submittedCount = React.useMemo(() => reconciliations.filter((row) => (row.status || "").toUpperCase() === "SUBMITTED").length, [reconciliations]);
@@ -826,9 +835,16 @@ export default function PharmacyOperationsPage() {
                       {(dashboard?.recentStockMovements || []).slice(0, 12).map((row) => (
                         <TableRow key={row.id} hover>
                           <TableCell>
-                            <Typography variant="body2" sx={{ fontWeight: 700 }}>{medicines.find((m) => m.id === row.medicineId)?.medicineName || row.medicineId}</Typography>
+                            <Stack spacing={0.2}>
+                              <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                {medicines.find((m) => m.id === row.medicineId)?.medicineName || "Medicine"}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {row.businessReference || row.transactionType.replace(/_/g, " ")}
+                              </Typography>
+                            </Stack>
                           </TableCell>
-                          <TableCell>{row.stockBatchId || "-"}</TableCell>
+                          <TableCell>{row.batchNumber || stockMap.get(row.stockBatchId || "")?.batchNumber || "-"}</TableCell>
                           <TableCell align="right">{row.afterQuantity ?? "-"}</TableCell>
                           <TableCell>{formatDate(row.createdAt)}</TableCell>
                         </TableRow>
@@ -907,7 +923,7 @@ export default function PharmacyOperationsPage() {
                           .filter((stock) => (!reconForm.medicineId || stock.medicineId === reconForm.medicineId) && (!selectedLocationId || stock.locationId === selectedLocationId))
                           .map((stock) => (
                             <MenuItem key={stock.id} value={stock.id}>
-                              {stock.medicineName} - {stock.batchNumber || stock.id}
+                              {stock.medicineName} - {stock.batchNumber || "Batch pending"}
                             </MenuItem>
                           ))}
                       </Select>
@@ -984,7 +1000,7 @@ export default function PharmacyOperationsPage() {
                                   <TableCell>
                                     <Stack spacing={0.2}>
                                       <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                        {row.medicineCode || selectedReconciliation?.medicineName || "Map in backend flow"}
+                                        {row.medicineCode || selectedReconciliation?.medicineName || "Row-level mapping backend pending"}
                                       </Typography>
                                       <Typography variant="caption" color="text.secondary">
                                         Use Medicine Master for missing catalogue items.
@@ -1035,14 +1051,21 @@ export default function PharmacyOperationsPage() {
                       </Stack>
                     </CompactFilterCard>
 
-                    <CompactFilterCard title="Selected session" subtitle={selectedReconciliation ? selectedReconciliation.id : "No session selected"}>
+                    <CompactFilterCard
+                      title="Selected session"
+                      subtitle={
+                        selectedReconciliation
+                          ? `${selectedReconciliation.batchNumber || "No batch"} • ${selectedReconciliation.locationName || "Default location"}`
+                          : "No session selected"
+                      }
+                    >
                       {selectedReconciliation ? (
                         <Stack spacing={0.45}>
                           <Typography variant="caption" color="text.secondary">Created {formatDateTime(selectedReconciliation.createdAt)}</Typography>
-                          <Typography variant="caption" color="text.secondary">Maker: {selectedReconciliation.createdBy === currentUserId ? "You" : selectedReconciliation.createdBy || "-"}</Typography>
-                          <Typography variant="caption" color="text.secondary">Submitted: {selectedReconciliation.submittedBy ? (selectedReconciliation.submittedBy === currentUserId ? "You" : selectedReconciliation.submittedBy) : "-"}</Typography>
-                          <Typography variant="caption" color="text.secondary">Reviewer: {selectedReconciliation.reviewedBy ? (selectedReconciliation.reviewedBy === currentUserId ? "You" : selectedReconciliation.reviewedBy) : "-"}</Typography>
-                          <Typography variant="caption" color="text.secondary">Posted: {selectedReconciliation.postedBy ? (selectedReconciliation.postedBy === currentUserId ? "You" : selectedReconciliation.postedBy) : "-"}</Typography>
+                          <Typography variant="caption" color="text.secondary">Maker: {actorLabel(selectedReconciliation.createdBy, currentUserId, "Pharmacy user")}</Typography>
+                          <Typography variant="caption" color="text.secondary">Submitted: {actorLabel(selectedReconciliation.submittedBy, currentUserId, "Pharmacy reviewer")}</Typography>
+                          <Typography variant="caption" color="text.secondary">Reviewer: {actorLabel(selectedReconciliation.reviewedBy, currentUserId, "Approving reviewer")}</Typography>
+                          <Typography variant="caption" color="text.secondary">Posted: {actorLabel(selectedReconciliation.postedBy, currentUserId, "Posting pharmacist")}</Typography>
                           <Chip size="small" label={selectedReconciliation.status} color={badgeTone(selectedReconciliation.status)} sx={compactChipSx} />
                         </Stack>
                       ) : (
@@ -1267,7 +1290,12 @@ export default function PharmacyOperationsPage() {
                       ) : procurementTab === "po" ? (
                         purchaseOrders.map((row) => (
                           <TableRow key={row.id} hover>
-                            <TableCell>{row.poNumber}</TableCell>
+                            <TableCell>
+                              <Stack spacing={0.2}>
+                                <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.poNumber}</Typography>
+                                <Typography variant="caption" color="text.secondary">{row.supplierName || "Supplier pending"}</Typography>
+                              </Stack>
+                            </TableCell>
                             <TableCell>{formatDate(row.orderDate)}</TableCell>
                             <TableCell><Chip size="small" label={row.matchingStatus || "Draft"} sx={compactChipSx} /></TableCell>
                             <TableCell align="right">-</TableCell>
@@ -1276,7 +1304,15 @@ export default function PharmacyOperationsPage() {
                       ) : procurementTab === "invoice" ? (
                         supplierInvoices.map((row) => (
                           <TableRow key={row.id} hover>
-                            <TableCell>{row.invoiceNumber}</TableCell>
+                            <TableCell>
+                              <Stack spacing={0.2}>
+                                <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.invoiceNumber}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {row.supplierName || "Supplier pending"}
+                                  {row.purchaseOrderId ? ` • PO ${purchaseOrderMap.get(row.purchaseOrderId)?.poNumber || "linked"}` : ""}
+                                </Typography>
+                              </Stack>
+                            </TableCell>
                             <TableCell>{formatDate(row.invoiceDate)}</TableCell>
                             <TableCell><Chip size="small" label={row.matchingStatus || "Draft"} sx={compactChipSx} /></TableCell>
                             <TableCell align="right">-</TableCell>
@@ -1285,7 +1321,16 @@ export default function PharmacyOperationsPage() {
                       ) : (
                         goodsReceipts.map((row) => (
                           <TableRow key={row.id} hover>
-                            <TableCell>{row.receiptNumber}</TableCell>
+                            <TableCell>
+                              <Stack spacing={0.2}>
+                                <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.receiptNumber}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {row.supplierName || "Supplier pending"}
+                                  {row.supplierInvoiceId ? ` • Inv ${supplierInvoiceMap.get(row.supplierInvoiceId)?.invoiceNumber || "linked"}` : ""}
+                                  {row.purchaseOrderId ? ` • PO ${purchaseOrderMap.get(row.purchaseOrderId)?.poNumber || "linked"}` : ""}
+                                </Typography>
+                              </Stack>
+                            </TableCell>
                             <TableCell>{formatDateTime(row.receivedAt)}</TableCell>
                             <TableCell><Chip size="small" label={row.matchingStatus} color={badgeTone(row.matchingStatus)} sx={compactChipSx} /></TableCell>
                             <TableCell align="right">
@@ -1333,7 +1378,7 @@ export default function PharmacyOperationsPage() {
                     <TableBody>
                       {analytics.fastMovingMedicines.map((row) => (
                         <TableRow key={row.medicineId}>
-                          <TableCell>{row.medicineName || row.medicineId}</TableCell>
+                          <TableCell>{row.medicineName || "Medicine"}</TableCell>
                           <TableCell align="right">{row.dispensedQuantity}</TableCell>
                           <TableCell align="right">{row.availableQuantity}</TableCell>
                         </TableRow>

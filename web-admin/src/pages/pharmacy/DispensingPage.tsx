@@ -94,6 +94,10 @@ function formatTimestamp(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString() : "-";
 }
 
+function patientLabel(name: string | null | undefined) {
+  return name?.trim() || "Linked patient";
+}
+
 export default function DispensingPage() {
   const auth = useAuth();
   const [loading, setLoading] = React.useState(true);
@@ -131,7 +135,7 @@ export default function DispensingPage() {
     const term = search.trim().toLowerCase();
     if (!term) return rows;
     return rows.filter((row) =>
-      [row.prescriptionNumber, row.patientName, row.doctorName, row.patientId, row.prescriptionTimestamp]
+      [row.prescriptionNumber, row.patientName, row.doctorName, row.prescriptionTimestamp]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term)),
     );
@@ -289,7 +293,7 @@ export default function DispensingPage() {
                         </TableCell>
                         <TableCell>
                           <Stack spacing={0.25}>
-                            <Typography variant="body2">{row.patientName || row.patientId}</Typography>
+                            <Typography variant="body2">{patientLabel(row.patientName)}</Typography>
                             <Typography variant="caption" color="text.secondary">{row.doctorName || "-"}</Typography>
                           </Stack>
                         </TableCell>
@@ -332,11 +336,11 @@ export default function DispensingPage() {
           {!selected ? null : (
             <Stack spacing={2} sx={{ mt: 0.5 }}>
               <Grid container spacing={2}>
-                <Grid size={{ xs: 12, md: 4 }}><Typography variant="body2">Patient: <strong>{selected.patientName || selected.patientId}</strong></Typography></Grid>
+                <Grid size={{ xs: 12, md: 4 }}><Typography variant="body2">Patient: <strong>{patientLabel(selected.patientName)}</strong></Typography></Grid>
                 <Grid size={{ xs: 12, md: 4 }}><Typography variant="body2">Doctor: <strong>{selected.doctorName || "-"}</strong></Typography></Grid>
                 <Grid size={{ xs: 12, md: 4 }}><Typography variant="body2">Prescription: <strong>{formatTimestamp(selected.prescriptionTimestamp)}</strong></Typography></Grid>
                 <Grid size={{ xs: 12, md: 4 }}><Typography variant="body2">Billing: <strong>{selected.billingStatus}</strong></Typography></Grid>
-                <Grid size={{ xs: 12, md: 4 }}>{selected.billedBillId ? <Typography variant="body2">Bill Id: <strong>{selected.billedBillId}</strong></Typography> : null}</Grid>
+                <Grid size={{ xs: 12, md: 4 }}>{selected.billedBillId ? <Typography variant="body2">Bill: <strong>Generated</strong></Typography> : null}</Grid>
               </Grid>
               <Table size="small">
                 <TableHead>
