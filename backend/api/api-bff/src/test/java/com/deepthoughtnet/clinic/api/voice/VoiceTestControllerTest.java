@@ -46,4 +46,20 @@ class VoiceTestControllerTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Audio file is required");
     }
+
+    @Test
+    void statusEndpointDelegatesToService() {
+        VoiceOrchestratorService service = mock(VoiceOrchestratorService.class);
+        VoiceTestController controller = new VoiceTestController(service);
+        when(service.status(true)).thenReturn(new VoiceStatusResponse(
+                true,
+                new VoiceServiceStatus("FASTER_WHISPER", true, true, "ready"),
+                new VoiceServiceStatus("PIPER", true, true, "ready"),
+                new VoiceProviderTrace("faster-whisper", "gemini", "piper")
+        ));
+
+        controller.status(true);
+
+        verify(service).status(true);
+    }
 }

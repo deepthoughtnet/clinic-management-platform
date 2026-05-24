@@ -1,14 +1,35 @@
+import logging
 import os
+import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from faster_whisper import WhisperModel
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("clinic-faster-whisper")
 
 app = FastAPI(title="clinic-faster-whisper")
 
 _model_cache: dict[str, WhisperModel] = {}
+_ready_cache: dict[str, bool] = {}
+SUPPORTED_TYPES = {
+    "audio/webm",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/mp4",
+    "audio/x-m4a",
+    "audio/aac",
+    "application/octet-stream",
+}
+SUPPORTED_EXTENSIONS = {".webm", ".wav", ".mp3", ".m4a", ".mp4", ".aac"}
 
 
 def configured_model_name() -> str:
@@ -27,26 +48,127 @@ def configured_compute_type() -> str:
     return os.getenv("FASTER_WHISPER_COMPUTE_TYPE", "int8")
 
 
+def model_cache_key(model_name: str) -> str:
+    return f"{model_name}:{configured_device()}:{configured_compute_type()}"
+
+
 def get_model(model_name: str) -> WhisperModel:
-    cache_key = f"{model_name}:{configured_device()}:{configured_compute_type()}"
+    cache_key = model_cache_key(model_name)
     if cache_key not in _model_cache:
+        logger.info("faster_whisper.model.load.start model=%s device=%s computeType=%s", model_name, configured_device(), configured_compute_type())
+        started = time.perf_counter()
         _model_cache[cache_key] = WhisperModel(
             model_name,
             device=configured_device(),
             compute_type=configured_compute_type(),
             download_root="/models",
         )
+        _ready_cache[cache_key] = True
+        logger.info("faster_whisper.model.load.complete model=%s durationMs=%s", model_name, int((time.perf_counter() - started) * 1000))
     return _model_cache[cache_key]
 
 
+def model_loaded(model_name: str) -> bool:
+    return _ready_cache.get(model_cache_key(model_name), False)
+
+
+def normalize_content_type(value: Optional[str]) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    return raw.split(";", 1)[0].strip()
+
+
+def validate_upload(file: UploadFile, audio_bytes: bytes) -> tuple[str, str]:
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail={"error": "empty_audio", "detail": "Audio file is empty."})
+    content_type = normalize_content_type(file.content_type)
+    suffix = Path(file.filename or "voice-test.webm").suffix.lower()
+    if content_type and content_type not in SUPPORTED_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "unsupported_audio_content_type",
+                "detail": f"Unsupported audio content type: {content_type}",
+            },
+        )
+    if suffix not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "unsupported_audio_extension",
+                "detail": f"Unsupported audio file extension: {suffix or 'unknown'}",
+            },
+        )
+    return content_type, suffix
+
+
+@app.on_event("startup")
+def startup() -> None:
+    try:
+        completed = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, check=False)
+        first_line = (completed.stdout or completed.stderr or "").splitlines()[0] if (completed.stdout or completed.stderr) else "unknown"
+        logger.info("faster_whisper.ffmpeg.startup version=%s", first_line)
+    except Exception:
+        logger.exception("faster_whisper.ffmpeg.startup.failed")
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        payload = detail
+    else:
+        payload = {"error": "voice_transcription_failed", "detail": str(detail)}
+    return JSONResponse(status_code=exc.status_code, content=payload)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.warning("faster_whisper.request.validation_failed errors=%s", exc.errors())
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "invalid_multipart_request",
+            "detail": "Invalid multipart form. Expected field name 'file'.",
+        },
+    )
+
+
 @app.get("/health")
-def health() -> dict[str, str]:
+def health() -> dict[str, object]:
     return {
         "status": "ok",
         "provider": "faster-whisper",
         "model": configured_model_name(),
         "language": configured_language(),
+        "modelLoaded": model_loaded(configured_model_name()),
     }
+
+
+@app.get("/ready")
+def ready() -> dict[str, object]:
+    selected_model = configured_model_name()
+    try:
+        get_model(selected_model)
+        return {
+            "status": "ready",
+            "provider": "faster-whisper",
+            "model": selected_model,
+            "language": configured_language(),
+            "modelLoaded": True,
+            "message": "Faster-Whisper model loaded.",
+        }
+    except Exception as exc:
+        logger.exception("faster_whisper.ready.failed model=%s", selected_model)
+        return {
+            "status": "warming",
+            "provider": "faster-whisper",
+            "model": selected_model,
+            "language": configured_language(),
+            "modelLoaded": False,
+            "message": f"Model warm-up failed: {exc}",
+        }
 
 
 @app.post("/transcribe")
@@ -56,13 +178,22 @@ async def transcribe(
     model: Optional[str] = Form(None),
 ) -> dict[str, str]:
     audio_bytes = await file.read()
-    if not audio_bytes:
-        raise HTTPException(status_code=400, detail="Audio file is empty.")
+    normalized_content_type, suffix = validate_upload(file, audio_bytes)
 
     selected_model = model or configured_model_name()
     selected_language = language or configured_language()
-    suffix = Path(file.filename or "voice-test.webm").suffix or ".webm"
     temp_path = None
+    started = time.perf_counter()
+    logger.info(
+        "faster_whisper.transcribe.start model=%s language=%s sizeBytes=%s contentType=%s normalizedContentType=%s filename=%s extension=%s",
+        selected_model,
+        selected_language,
+        len(audio_bytes),
+        file.content_type,
+        normalized_content_type,
+        file.filename,
+        suffix,
+    )
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             temp_file.write(audio_bytes)
@@ -76,13 +207,37 @@ async def transcribe(
         )
         transcript = " ".join(segment.text.strip() for segment in segments if segment.text).strip()
         if not transcript:
-            raise HTTPException(status_code=422, detail="Audio could not be transcribed.")
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "empty_transcript", "detail": "Audio could not be transcribed."},
+            )
+        logger.info(
+            "faster_whisper.transcribe.complete model=%s durationMs=%s detectedLanguage=%s",
+            selected_model,
+            int((time.perf_counter() - started) * 1000),
+            info.language or selected_language,
+        )
         return {
             "text": transcript,
             "provider": "FASTER_WHISPER",
             "language": info.language or selected_language,
             "model": selected_model,
         }
+    except HTTPException as exc:
+        logger.warning(
+            "faster_whisper.transcribe.validation_failed model=%s filename=%s contentType=%s detail=%s",
+            selected_model,
+            file.filename,
+            normalized_content_type,
+            exc.detail,
+        )
+        raise
+    except Exception as exc:
+        logger.exception("faster_whisper.transcribe.failed model=%s filename=%s", selected_model, file.filename)
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "ffmpeg_decode_failed", "detail": f"Audio could not be transcribed: {exc}"},
+        ) from exc
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)

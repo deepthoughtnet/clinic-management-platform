@@ -30,6 +30,9 @@ spring:
     multipart:
       max-file-size: 25MB
       max-request-size: 25MB
+  mvc:
+    async:
+      request-timeout: ${SPRING_MVC_ASYNC_REQUEST_TIMEOUT:180000}
 
 server:
   port: 8089
@@ -181,6 +184,8 @@ voice:
       base-url: ${FASTER_WHISPER_BASE_URL:http://faster-whisper:8000}
       model: ${FASTER_WHISPER_MODEL:base}
       language: ${FASTER_WHISPER_LANGUAGE:en}
+      connect-timeout-ms: ${FASTER_WHISPER_CONNECT_TIMEOUT_MS:5000}
+      read-timeout-ms: ${FASTER_WHISPER_READ_TIMEOUT_MS:180000}
     deepgram:
       api-key: ${DEEPGRAM_API_KEY:}
       model: ${DEEPGRAM_MODEL:nova-2}
@@ -190,6 +195,8 @@ voice:
     piper:
       base-url: ${PIPER_TTS_BASE_URL:http://piper-tts:8001}
       voice: ${PIPER_VOICE:en_US-lessac-medium}
+      connect-timeout-ms: ${PIPER_TTS_CONNECT_TIMEOUT_MS:5000}
+      read-timeout-ms: ${PIPER_TTS_READ_TIMEOUT_MS:120000}
     elevenlabs:
       api-key: ${ELEVENLABS_API_KEY:}
       voice-id: ${ELEVENLABS_VOICE_ID:}

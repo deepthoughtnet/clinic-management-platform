@@ -6,6 +6,7 @@ import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
+import java.util.Map;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpEntity;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
@@ -31,8 +33,8 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.restTemplate = builder
-                .setConnectTimeout(Duration.ofSeconds(10))
-                .setReadTimeout(Duration.ofSeconds(120))
+                .setConnectTimeout(Duration.ofMillis(properties.getStt().getFasterWhisper().getConnectTimeoutMs()))
+                .setReadTimeout(Duration.ofMillis(properties.getStt().getFasterWhisper().getReadTimeoutMs()))
                 .build();
     }
 
@@ -75,10 +77,34 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
                 throw new IllegalStateException("Audio could not be transcribed");
             }
             return new VoiceTranscriptionResult(transcript.trim(), providerName(), null);
+        } catch (HttpStatusCodeException ex) {
+            throw new IllegalStateException(extractErrorMessage(ex), ex);
         } catch (RestClientException ex) {
             throw new IllegalStateException("Local STT service unavailable", ex);
         } catch (Exception ex) {
             throw new IllegalStateException("Audio could not be transcribed", ex);
+        }
+    }
+
+    public VoiceServiceStatus status(boolean warmup) {
+        if (!isReady()) {
+            return new VoiceServiceStatus("FASTER_WHISPER", false, false, "Local STT service unavailable");
+        }
+        try {
+            String baseUrl = properties.getStt().getFasterWhisper().getBaseUrl().replaceAll("/+$", "");
+            String endpoint = baseUrl + (warmup ? "/ready" : "/health");
+            ResponseEntity<Map> response = restTemplate.getForEntity(endpoint, Map.class);
+            Map<?, ?> body = response.getBody();
+            boolean ready = warmup
+                    ? booleanValue(body, "modelLoaded")
+                    : response.getStatusCode().is2xxSuccessful();
+            String message = stringValue(body, "message");
+            if (!StringUtils.hasText(message)) {
+                message = warmup ? "Faster-Whisper model ready." : "Faster-Whisper reachable.";
+            }
+            return new VoiceServiceStatus("FASTER_WHISPER", true, ready, message);
+        } catch (RestClientException ex) {
+            return new VoiceServiceStatus("FASTER_WHISPER", false, false, "Local STT service unavailable");
         }
     }
 
@@ -103,5 +129,41 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
         } catch (Exception ex) {
             return MediaType.APPLICATION_OCTET_STREAM;
         }
+    }
+
+    private boolean booleanValue(Map<?, ?> body, String key) {
+        if (body == null) {
+            return false;
+        }
+        Object value = body.get(key);
+        return value instanceof Boolean bool ? bool : Boolean.parseBoolean(String.valueOf(value));
+    }
+
+    private String stringValue(Map<?, ?> body, String key) {
+        if (body == null) {
+            return null;
+        }
+        Object value = body.get(key);
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private String extractErrorMessage(HttpStatusCodeException ex) {
+        String body = ex.getResponseBodyAsString();
+        if (!StringUtils.hasText(body)) {
+            return "Local STT service unavailable";
+        }
+        try {
+            JsonNode root = objectMapper.readTree(body);
+            String detail = root.path("detail").asText("");
+            if (StringUtils.hasText(detail)) {
+                return detail;
+            }
+            String error = root.path("error").asText("");
+            if (StringUtils.hasText(error)) {
+                return error;
+            }
+        } catch (Exception ignored) {
+        }
+        return body;
     }
 }

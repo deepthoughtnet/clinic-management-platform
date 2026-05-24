@@ -17,3 +17,26 @@ record VoiceProviderTrace(
 ) {
 }
 
+record VoiceStatusResponse(
+        boolean enabled,
+        VoiceServiceStatus stt,
+        VoiceServiceStatus tts,
+        VoiceProviderTrace providerTrace
+) {
+}
+
+record VoiceLiveStatusResponse(
+        boolean websocketEnabled,
+        String websocketPath,
+        String authMode,
+        String tenantMode
+) {
+}
+
+record VoiceServiceStatus(
+        String provider,
+        boolean reachable,
+        boolean ready,
+        String message
+) {
+}

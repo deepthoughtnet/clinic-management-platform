@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityCon
 import com.deepthoughtnet.clinic.identity.exception.TenantModuleDisabledException;
 import com.deepthoughtnet.clinic.platform.spring.context.CorrelationId;
 import jakarta.servlet.http.HttpServletRequest;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -150,6 +151,17 @@ public class GlobalRestExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<?> handleUnhandled(Exception ex, HttpServletRequest req) {
+        if (isClientDisconnect(ex)) {
+            log.warn(
+                    "voice.response.client-disconnected requestId={} correlationId={} {} {} error={}",
+                    correlationId(req),
+                    correlationId(req),
+                    req.getMethod(),
+                    req.getRequestURI(),
+                    summarizeDisconnect(ex)
+            );
+            return ResponseEntity.noContent().build();
+        }
         log.error(
                 "Unhandled exception requestId={} correlationId={} {} {}",
                 correlationId(req),
@@ -243,5 +255,47 @@ public class GlobalRestExceptionHandler {
             return fallback;
         }
         return normalized;
+    }
+
+    private boolean isClientDisconnect(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String className = current.getClass().getName();
+            String message = current.getMessage();
+            if ("org.springframework.web.context.request.async.AsyncRequestNotUsableException".equals(className)) {
+                return true;
+            }
+            if (current instanceof IOException && containsDisconnectSignal(message)) {
+                return true;
+            }
+            if (containsDisconnectSignal(message)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private boolean containsDisconnectSignal(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String normalized = message.toLowerCase(Locale.ROOT);
+        return normalized.contains("broken pipe")
+                || normalized.contains("connection reset by peer")
+                || normalized.contains("connection aborted")
+                || normalized.contains("clientabortexception")
+                || normalized.contains("asyncrequestnotusableexception");
+    }
+
+    private String summarizeDisconnect(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current.getMessage() != null && !current.getMessage().isBlank()) {
+                return current.getClass().getSimpleName() + ": " + current.getMessage();
+            }
+            current = current.getCause();
+        }
+        return throwable.getClass().getSimpleName();
     }
 }

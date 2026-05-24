@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.voice;
 
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -14,6 +15,18 @@ public class VoiceTestController {
 
     public VoiceTestController(VoiceOrchestratorService voiceOrchestratorService) {
         this.voiceOrchestratorService = voiceOrchestratorService;
+    }
+
+    @GetMapping("/status")
+    @PreAuthorize("@permissionChecker.hasPermission('ai.voice.test')")
+    public VoiceStatusResponse status(@RequestParam(value = "warmup", defaultValue = "false") boolean warmup) {
+        return voiceOrchestratorService.status(warmup);
+    }
+
+    @GetMapping("/live-status")
+    @PreAuthorize("@permissionChecker.hasPermission('ai.voice.test')")
+    public VoiceLiveStatusResponse liveStatus() {
+        return voiceOrchestratorService.liveStatus();
     }
 
     @PostMapping("/test")

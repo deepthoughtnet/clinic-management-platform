@@ -24,8 +24,8 @@ public class PiperTextToSpeechProvider implements TextToSpeechProvider {
     public PiperTextToSpeechProvider(VoiceTestProperties properties, RestTemplateBuilder builder) {
         this.properties = properties;
         this.restTemplate = builder
-                .setConnectTimeout(Duration.ofSeconds(10))
-                .setReadTimeout(Duration.ofSeconds(120))
+                .setConnectTimeout(Duration.ofMillis(properties.getTts().getPiper().getConnectTimeoutMs()))
+                .setReadTimeout(Duration.ofMillis(properties.getTts().getPiper().getReadTimeoutMs()))
                 .build();
     }
 
@@ -72,5 +72,48 @@ public class PiperTextToSpeechProvider implements TextToSpeechProvider {
         } catch (Exception ex) {
             throw new IllegalStateException("Audio could not be synthesized", ex);
         }
+    }
+
+    public VoiceServiceStatus status(boolean warmup) {
+        if (!isReady()) {
+            return new VoiceServiceStatus("PIPER", false, false, "Local TTS service unavailable");
+        }
+        try {
+            String baseUrl = properties.getTts().getPiper().getBaseUrl().replaceAll("/+$", "");
+            String endpoint = baseUrl + (warmup ? "/ready" : "/health");
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    endpoint,
+                    HttpMethod.GET,
+                    new HttpEntity<>(new HttpHeaders()),
+                    Map.class
+            );
+            Map<?, ?> body = response.getBody();
+            boolean ready = warmup
+                    ? booleanValue(body, "voiceLoaded")
+                    : response.getStatusCode().is2xxSuccessful();
+            String message = stringValue(body, "message");
+            if (!StringUtils.hasText(message)) {
+                message = warmup ? "Piper voice ready." : "Piper reachable.";
+            }
+            return new VoiceServiceStatus("PIPER", true, ready, message);
+        } catch (RestClientException ex) {
+            return new VoiceServiceStatus("PIPER", false, false, "Local TTS service unavailable");
+        }
+    }
+
+    private boolean booleanValue(Map<?, ?> body, String key) {
+        if (body == null) {
+            return false;
+        }
+        Object value = body.get(key);
+        return value instanceof Boolean bool ? bool : Boolean.parseBoolean(String.valueOf(value));
+    }
+
+    private String stringValue(Map<?, ?> body, String key) {
+        if (body == null) {
+            return null;
+        }
+        Object value = body.get(key);
+        return value == null ? null : String.valueOf(value);
     }
 }

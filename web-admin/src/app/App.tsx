@@ -212,7 +212,7 @@ function AuthedApp() {
         <Route path="/admin/ai-ops" element={<ModuleGate moduleKey="aiCopilot"><AiOpsPage /></ModuleGate>} />
         <Route path="/admin/platform-ops" element={<PlatformOpsPage />} />
         <Route path="/admin/realtime-ai" element={<ModuleGate moduleKey="aiCopilot"><RealtimeAiPage /></ModuleGate>} />
-        <Route path="/ai/voice-test" element={<ModuleGate moduleKey="aiCopilot"><VoiceTestPage /></ModuleGate>} />
+                <Route path="/ai/voice-test" element={<VoiceTestPage />} />
         <Route path="/doctors/availability" element={<DoctorAvailabilityPage />} />
         <Route path="/doctors/:id" element={<DoctorDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

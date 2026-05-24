@@ -18,6 +18,8 @@ import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import java.io.IOException;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -25,12 +27,15 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class VoiceOrchestratorService {
+    private static final Logger log = LoggerFactory.getLogger(VoiceOrchestratorService.class);
     private static final String VOICE_TEST_ENTITY_TYPE = "VOICE_TEST";
     private static final String VOICE_TEST_SUCCESS = "VOICE_TEST_COMPLETED";
     private static final String VOICE_TEST_FAILED = "VOICE_TEST_FAILED";
@@ -41,19 +46,25 @@ public class VoiceOrchestratorService {
     private final AuditEventPublisher auditEventPublisher;
     private final VoiceTestProperties properties;
     private final ObjectMapper objectMapper;
+    private final FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider;
+    private final PiperTextToSpeechProvider piperTextToSpeechProvider;
 
     public VoiceOrchestratorService(List<SpeechToTextProvider> sttProviders,
                                     List<TextToSpeechProvider> ttsProviders,
                                     AiOrchestrationService aiOrchestrationService,
                                     AuditEventPublisher auditEventPublisher,
                                     VoiceTestProperties properties,
-                                    ObjectMapper objectMapper) {
+                                    ObjectMapper objectMapper,
+                                    FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider,
+                                    PiperTextToSpeechProvider piperTextToSpeechProvider) {
         this.sttProviders = sttProviders;
         this.ttsProviders = ttsProviders;
         this.aiOrchestrationService = aiOrchestrationService;
         this.auditEventPublisher = auditEventPublisher;
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.fasterWhisperSpeechToTextProvider = fasterWhisperSpeechToTextProvider;
+        this.piperTextToSpeechProvider = piperTextToSpeechProvider;
     }
 
     public VoiceTestResponse processAudio(MultipartFile audio, String context, String language) {
@@ -87,8 +98,21 @@ public class VoiceOrchestratorService {
         UUID requestId = UUID.randomUUID();
         String normalizedLanguage = StringUtils.hasText(language) ? language.trim() : "en";
         validateAudio(originalFilename, contentType);
+        Instant requestStart = Instant.now();
+        log.info("voice.request.start requestId={} tenantId={} contentType={} sizeBytes={} filename={}",
+                requestId,
+                tenantId,
+                contentType,
+                audioBytes.length,
+                safeFilename(originalFilename));
 
         try {
+            Instant sttStart = Instant.now();
+            log.info("voice.stt.start requestId={} providerOrder={} sizeBytes={} contentType={}",
+                    requestId,
+                    properties.getStt().getProviderOrder(),
+                    audioBytes.length,
+                    contentType);
             VoiceTranscriptionResult transcription = transcribe(
                     new VoiceTranscriptionRequest(
                             tenantId,
@@ -98,6 +122,12 @@ public class VoiceOrchestratorService {
                             normalizedLanguage
                     )
             );
+            log.info("voice.stt.complete requestId={} provider={} durationMs={} transcriptPreview={}",
+                    requestId,
+                    transcription.providerName(),
+                    Duration.between(sttStart, Instant.now()).toMillis(),
+                    preview(transcription.transcript()));
+            Instant llmStart = Instant.now();
             AiOrchestrationResponse aiResponse = aiOrchestrationService.complete(new AiOrchestrationRequest(
                     AiProductCode.GENERIC,
                     tenantId,
@@ -111,26 +141,56 @@ public class VoiceOrchestratorService {
                     requestContext.correlationId(),
                     "voice.test"
             ));
+            log.info("voice.llm.complete requestId={} provider={} durationMs={}",
+                    requestId,
+                    aiResponse.provider(),
+                    Duration.between(llmStart, Instant.now()).toMillis());
             String assistantText = StringUtils.hasText(aiResponse.outputText())
                     ? aiResponse.outputText()
                     : "I heard your request. Please verify the transcript and continue the conversation.";
+            Instant ttsStart = Instant.now();
             VoiceSynthesisResult synthesis = synthesize(new VoiceSynthesisRequest(tenantId, assistantText, normalizedLanguage));
+            log.info("voice.tts.complete requestId={} provider={} durationMs={} playableAudio={}",
+                    requestId,
+                    synthesis.providerName(),
+                    Duration.between(ttsStart, Instant.now()).toMillis(),
+                    hasPlayableAudio(synthesis));
+
+            byte[] audioPayload = hasPlayableAudio(synthesis) ? synthesis.audioBytes() : null;
+            log.info("voice.response.serialize.start requestId={} hasAudio={} audioBytes={}",
+                    requestId,
+                    audioPayload != null,
+                    audioPayload == null ? 0 : audioPayload.length);
+            String audioBase64 = audioPayload == null ? null : Base64.getEncoder().encodeToString(audioPayload);
+            log.info("voice.response.serialize.complete requestId={} audioBase64Chars={}",
+                    requestId,
+                    audioBase64 == null ? 0 : audioBase64.length());
 
             VoiceTestResponse response = new VoiceTestResponse(
                     requestId.toString(),
                     transcription.transcript(),
                     assistantText,
-                    hasPlayableAudio(synthesis) ? synthesis.contentType() : null,
-                    hasPlayableAudio(synthesis) ? Base64.getEncoder().encodeToString(synthesis.audioBytes()) : null,
+                    audioPayload == null ? null : synthesis.contentType(),
+                    audioBase64,
                     new VoiceProviderTrace(
                             transcription.providerName(),
                             aiResponse.provider(),
                             synthesis.providerName()
                     )
             );
+            log.info("voice.request.complete requestId={} durationMs={} sttProvider={} llmProvider={} ttsProvider={}",
+                    requestId,
+                    Duration.between(requestStart, Instant.now()).toMillis(),
+                    response.providerTrace().sttProvider(),
+                    response.providerTrace().llmProvider(),
+                    response.providerTrace().ttsProvider());
             publishAudit(requestId, tenantId, requestContext.appUserId(), requestContext.correlationId(), response, true, null);
             return response;
         } catch (Exception ex) {
+            log.warn("voice.request.failed requestId={} durationMs={} error={}",
+                    requestId,
+                    Duration.between(requestStart, Instant.now()).toMillis(),
+                    ex.getMessage());
             publishAudit(
                     requestId,
                     tenantId,
@@ -144,16 +204,42 @@ public class VoiceOrchestratorService {
         }
     }
 
+    public VoiceStatusResponse status(boolean warmup) {
+        VoiceServiceStatus sttStatus = fasterWhisperSpeechToTextProvider.status(warmup);
+        VoiceServiceStatus ttsStatus = piperTextToSpeechProvider.status(warmup);
+        return new VoiceStatusResponse(
+                properties.isEnabled(),
+                sttStatus,
+                ttsStatus,
+                new VoiceProviderTrace(
+                        firstProvider(properties.getStt().getProviderOrder(), "mock"),
+                        firstProvider(properties.getLlm().getProviderOrder(), "mock"),
+                        firstProvider(properties.getTts().getProviderOrder(), "mock")
+                )
+        );
+    }
+
+    public VoiceLiveStatusResponse liveStatus() {
+        return new VoiceLiveStatusResponse(
+                properties.isEnabled(),
+                "/ws/voice/test",
+                "JWT_QUERY_TOKEN",
+                "QUERY_TENANT_ID"
+        );
+    }
+
     private VoiceTranscriptionResult transcribe(VoiceTranscriptionRequest request) {
         List<String> providerOrder = properties.getStt().getProviderOrder();
         IllegalStateException lastFailure = null;
         for (SpeechToTextProvider provider : orderedSttProviders(providerOrder)) {
             if (!provider.isReady()) {
+                log.info("voice.stt.skip provider={} reason=not-ready", provider.providerName());
                 continue;
             }
             try {
                 return provider.transcribe(request);
             } catch (RuntimeException ex) {
+                log.warn("voice.stt.fallback provider={} reason={}", provider.providerName(), ex.getMessage());
                 lastFailure = new IllegalStateException(ex.getMessage(), ex);
             }
         }
@@ -168,6 +254,7 @@ public class VoiceOrchestratorService {
         IllegalStateException lastFailure = null;
         for (TextToSpeechProvider provider : orderedTtsProviders(providerOrder)) {
             if (!provider.isReady()) {
+                log.info("voice.tts.skip provider={} reason=not-ready", provider.providerName());
                 continue;
             }
             try {
@@ -176,6 +263,7 @@ public class VoiceOrchestratorService {
                     return result;
                 }
             } catch (RuntimeException ex) {
+                log.warn("voice.tts.fallback provider={} reason={}", provider.providerName(), ex.getMessage());
                 lastFailure = new IllegalStateException(ex.getMessage(), ex);
             }
         }
@@ -290,5 +378,24 @@ public class VoiceOrchestratorService {
         } catch (JsonProcessingException ex) {
             return "{}";
         }
+    }
+
+    private String firstProvider(List<String> providerOrder, String fallback) {
+        return providerOrder == null || providerOrder.isEmpty() ? fallback : providerOrder.getFirst();
+    }
+
+    private String preview(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        String normalized = value.replaceAll("\\s+", " ").trim();
+        return normalized.length() <= 80 ? normalized : normalized.substring(0, 80) + "...";
+    }
+
+    private String safeFilename(String originalFilename) {
+        if (!StringUtils.hasText(originalFilename)) {
+            return "voice-input";
+        }
+        return originalFilename.replaceAll("[\\r\\n]", "_");
     }
 }

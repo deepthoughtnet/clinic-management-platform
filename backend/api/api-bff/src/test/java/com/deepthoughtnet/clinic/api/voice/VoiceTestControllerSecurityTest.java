@@ -16,4 +16,12 @@ class VoiceTestControllerSecurityTest {
         assertThat(method.getAnnotation(PreAuthorize.class).value())
                 .isEqualTo("@permissionChecker.hasPermission('ai.voice.test')");
     }
+
+    @Test
+    void statusEndpointRequiresAiVoicePermission() throws Exception {
+        Method method = VoiceTestController.class.getMethod("status", boolean.class);
+
+        assertThat(method.getAnnotation(PreAuthorize.class).value())
+                .isEqualTo("@permissionChecker.hasPermission('ai.voice.test')");
+    }
 }

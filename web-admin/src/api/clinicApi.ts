@@ -262,6 +262,27 @@ export type VoiceTestResponse = {
   providerTrace: VoiceProviderTrace | null;
 };
 
+export type VoiceServiceStatus = {
+  provider: string;
+  reachable: boolean;
+  ready: boolean;
+  message: string | null;
+};
+
+export type VoiceStatusResponse = {
+  enabled: boolean;
+  stt: VoiceServiceStatus;
+  tts: VoiceServiceStatus;
+  providerTrace: VoiceProviderTrace | null;
+};
+
+export type VoiceLiveStatusResponse = {
+  websocketEnabled: boolean;
+  websocketPath: string;
+  authMode: string;
+  tenantMode: string;
+};
+
 export type ReportRow = Record<string, string | number | boolean | null>;
 
 export type CashCounterSummary = {
@@ -2242,6 +2263,15 @@ export async function runVoiceTest(
   if (input.context?.trim()) formData.append("context", input.context.trim());
   if (input.language?.trim()) formData.append("language", input.language.trim());
   return httpPostForm<VoiceTestResponse>("/api/voice/test", formData, { token, tenantId });
+}
+
+export async function getVoiceTestStatus(token: string, tenantId: string, warmup = false) {
+  const suffix = warmup ? "?warmup=true" : "";
+  return httpGet<VoiceStatusResponse>(`/api/voice/status${suffix}`, { token, tenantId });
+}
+
+export async function getVoiceLiveStatus(token: string, tenantId: string) {
+  return httpGet<VoiceLiveStatusResponse>("/api/voice/live-status", { token, tenantId });
 }
 
 export async function sendPrescription(token: string, tenantId: string, id: string, channel: string = "email") {

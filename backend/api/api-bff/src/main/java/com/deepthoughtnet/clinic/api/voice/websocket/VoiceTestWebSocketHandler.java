@@ -14,12 +14,15 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
+    private static final Logger log = LoggerFactory.getLogger(VoiceTestWebSocketHandler.class);
     private static final Set<String> ALLOWED_ROLES = Set.of("PLATFORM_ADMIN", "TENANT_ADMIN", "CLINIC_ADMIN", "RECEPTIONIST");
 
     private final ObjectMapper objectMapper;
@@ -35,16 +38,22 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         @SuppressWarnings("unchecked")
         Set<String> roles = (Set<String>) session.getAttributes().getOrDefault("roles", Set.of());
+        String tenantId = String.valueOf(session.getAttributes().get("tenantId"));
+        log.info("voice.websocket.connect.attempt sessionId={} tenantId={} roles={}", session.getId(), tenantId, roles);
         if (roles.stream().noneMatch(ALLOWED_ROLES::contains)) {
+            log.warn("voice.websocket.auth.failed sessionId={} tenantId={} reason=unauthorized-role roles={}",
+                    session.getId(), tenantId, roles);
             session.close(CloseStatus.NOT_ACCEPTABLE.withReason("Unauthorized role"));
             return;
         }
-        String tenantId = String.valueOf(session.getAttributes().get("tenantId"));
         if (tenantId == null || tenantId.isBlank() || "null".equalsIgnoreCase(tenantId)) {
+            log.warn("voice.websocket.auth.failed sessionId={} reason=missing-tenant", session.getId());
             session.close(CloseStatus.NOT_ACCEPTABLE.withReason("Missing tenant context"));
             return;
         }
+        log.info("voice.websocket.tenant.resolved sessionId={} tenantId={}", session.getId(), tenantId);
         sessionStates.put(session.getId(), new SessionState(session.getId()));
+        log.info("voice.websocket.auth.success sessionId={} tenantId={} roles={}", session.getId(), tenantId, roles);
         sendEvent(session, Map.of(
                 "type", "session.connected",
                 "message", "WebSocket connected"

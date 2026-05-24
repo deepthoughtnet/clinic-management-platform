@@ -20,7 +20,8 @@ import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import AutorenewRoundedIcon from "@mui/icons-material/AutorenewRounded";
 import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import LinkOffRoundedIcon from "@mui/icons-material/LinkOffRounded";
-import { runVoiceTest, type VoiceProviderTrace, type VoiceTestResponse } from "../../api/clinicApi";
+import { getVoiceLiveStatus, getVoiceTestStatus, runVoiceTest, type VoiceLiveStatusResponse, type VoiceProviderTrace, type VoiceStatusResponse, type VoiceTestResponse } from "../../api/clinicApi";
+import { ApiClientError } from "../../api/restClient";
 import { useAuth } from "../../auth/useAuth";
 
 const SUPPORTED_AUDIO_TYPES = ["audio/wav", "audio/webm", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a", "audio/aac"];
@@ -117,8 +118,16 @@ async function blobToBase64(blob: Blob) {
   return btoa(binary);
 }
 
+function toVoiceError(err: unknown) {
+  if (err instanceof ApiClientError && err.status === 504) {
+    return "Voice processing timed out. First local model load can take longer; please retry.";
+  }
+  return err instanceof Error ? err.message : "Voice test failed.";
+}
+
 export default function VoiceTestPage() {
   const { accessToken, tenantId, hasPermission } = useAuth();
+  const canUseVoiceTest = hasPermission("ai.voice.test");
 
   const [tab, setTab] = useState<VoiceTab>("file");
   const [language, setLanguage] = useState("en");
@@ -130,6 +139,10 @@ export default function VoiceTestPage() {
   const [fileInfo, setFileInfo] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [fileRecording, setFileRecording] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [processingStage, setProcessingStage] = useState<string | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatusResponse | null>(null);
+  const [liveStatusInfo, setLiveStatusInfo] = useState<VoiceLiveStatusResponse | null>(null);
 
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("disconnected");
   const [liveInfo, setLiveInfo] = useState<string | null>(null);
@@ -163,6 +176,14 @@ export default function VoiceTestPage() {
       closeLiveSession(false);
     };
   }, []);
+
+  useEffect(() => {
+    if (!accessToken || !tenantId || !canUseVoiceTest) {
+      return;
+    }
+    void refreshVoiceStatus(false);
+    void refreshLiveStatus();
+  }, [accessToken, tenantId, canUseVoiceTest]);
 
   function appendLiveEvent(message: string) {
     setLiveEvents((current) => [new Date().toLocaleTimeString() + " • " + message, ...current].slice(0, 20));
@@ -254,13 +275,16 @@ export default function VoiceTestPage() {
     setFileError(null);
     setFileInfo(null);
     setFileResult(null);
+    setProcessingStage("Processing STT/LLM/TTS...");
     try {
       const response = await runVoiceTest(accessToken, tenantId, { audio: selectedFile, context, language });
       setFileResult(response);
       setFileInfo(response.audioBase64 ? "Voice loop completed. Transcript, assistant response, and audio are ready." : "Voice loop completed. Text response is available, but no TTS audio was generated.");
+      void refreshVoiceStatus(false);
     } catch (err) {
-      setFileError((err as Error).message || "Voice test failed.");
+      setFileError(toVoiceError(err));
     } finally {
+      setProcessingStage(null);
       setFileLoading(false);
     }
   }
@@ -271,6 +295,34 @@ export default function VoiceTestPage() {
     setFileError(null);
     setFileInfo(null);
     setContext("");
+    setProcessingStage(null);
+  }
+
+  async function refreshVoiceStatus(warmup: boolean) {
+    if (!accessToken || !tenantId) return;
+    setStatusLoading(true);
+    setFileError(null);
+    try {
+      const response = await getVoiceTestStatus(accessToken, tenantId, warmup);
+      setVoiceStatus(response);
+      if (warmup) {
+        setFileInfo("Local voice services checked. First request should now be faster if models were still loading.");
+      }
+    } catch (err) {
+      setFileError(toVoiceError(err));
+    } finally {
+      setStatusLoading(false);
+    }
+  }
+
+  async function refreshLiveStatus() {
+    if (!accessToken || !tenantId) return;
+    try {
+      const response = await getVoiceLiveStatus(accessToken, tenantId);
+      setLiveStatusInfo(response);
+    } catch {
+      setLiveStatusInfo(null);
+    }
   }
 
   function bindLiveSocket(socket: WebSocket) {
@@ -291,6 +343,11 @@ export default function VoiceTestPage() {
           const sessionId = String(payload.sessionId || "");
           setLiveSessionId(sessionId || null);
           appendLiveEvent("Session started.");
+          return;
+        }
+        if (type === "session.connected") {
+          setLiveInfo("WebSocket authenticated and tenant context resolved.");
+          appendLiveEvent("AUTHENTICATED • tenant resolved.");
           return;
         }
         if (type === "transcript.partial") {
@@ -336,12 +393,22 @@ export default function VoiceTestPage() {
     };
     socket.onerror = () => {
       setLiveStatus("disconnected");
-      setLiveError("WebSocket connection failed. Check tenant selection and authentication.");
+      const details = liveStatusInfo
+        ? `Expected path ${liveStatusInfo.websocketPath} with ${liveStatusInfo.authMode} and ${liveStatusInfo.tenantMode}.`
+        : "Check tenant selection and authentication.";
+      setLiveError(`WebSocket connection failed. ${details}`);
+      appendLiveEvent("CONNECT_FAILED");
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       stopLiveStream();
       liveSocketRef.current = null;
       setLiveStatus("disconnected");
+      if (event.reason) {
+        setLiveError(`WebSocket closed: ${event.reason}`);
+        appendLiveEvent(`DISCONNECTED • code=${event.code} reason=${event.reason}`);
+      } else {
+        appendLiveEvent(`DISCONNECTED • code=${event.code}`);
+      }
     };
   }
 
@@ -355,7 +422,9 @@ export default function VoiceTestPage() {
     setLiveError(null);
     setLiveInfo(null);
     setLiveStatus("connecting");
-    const socket = new WebSocket(resolveWebSocketUrl(accessToken, tenantId));
+    const websocketUrl = resolveWebSocketUrl(accessToken, tenantId);
+    appendLiveEvent(`CONNECTING • ${websocketUrl}`);
+    const socket = new WebSocket(websocketUrl);
     liveSocketRef.current = socket;
     bindLiveSocket(socket);
     return socket;
@@ -442,7 +511,7 @@ export default function VoiceTestPage() {
     return <Alert severity="info">Select a clinic tenant to run the voice test harness.</Alert>;
   }
 
-  if (!hasPermission("ai.voice.test")) {
+  if (!canUseVoiceTest) {
     return <Alert severity="error">You do not have permission to use the AI voice test harness.</Alert>;
   }
 
@@ -459,9 +528,9 @@ export default function VoiceTestPage() {
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap">
           <Chip size="small" color="primary" label="AI Copilot" />
-          <Chip size="small" variant="outlined" label="STT: Faster-Whisper / Mock" />
-          <Chip size="small" variant="outlined" label="LLM: Gemini / Groq / Mock" />
-          <Chip size="small" variant="outlined" label="TTS: Piper / Mock" />
+          <Chip size="small" variant="outlined" label={`STT: ${formatProvider(voiceStatus?.providerTrace?.sttProvider || "faster-whisper")} / Mock`} />
+          <Chip size="small" variant="outlined" label={`LLM: ${formatProvider(voiceStatus?.providerTrace?.llmProvider || "gemini")} / Groq / Mock`} />
+          <Chip size="small" variant="outlined" label={`TTS: ${formatProvider(voiceStatus?.providerTrace?.ttsProvider || "piper")} / Mock`} />
           <Chip size="small" variant="outlined" label={`Live: ${liveStatus}`} color={liveStatusTone(liveStatus)} />
         </Stack>
       </Stack>
@@ -478,6 +547,7 @@ export default function VoiceTestPage() {
             <Stack spacing={2.5}>
               {fileError ? <Alert severity="error">{fileError}</Alert> : null}
               {fileInfo ? <Alert severity="info">{fileInfo}</Alert> : null}
+              {processingStage ? <Alert severity="info">{processingStage}</Alert> : null}
 
               <Stack direction={{ xs: "column", xl: "row" }} spacing={2} alignItems="stretch">
                 <Paper variant="outlined" sx={{ p: 2, flex: 1, minWidth: 0 }}>
@@ -532,6 +602,28 @@ export default function VoiceTestPage() {
                       </Typography>
                     </Paper>
 
+                    <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
+                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }}>
+                        <Box>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                            Local voice services
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            STT: {voiceStatus?.stt?.message || "Status not loaded"} | TTS: {voiceStatus?.tts?.message || "Status not loaded"}
+                          </Typography>
+                        </Box>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={statusLoading ? <CircularProgress size={14} color="inherit" /> : <AutorenewRoundedIcon />}
+                          disabled={statusLoading || fileLoading}
+                          onClick={() => void refreshVoiceStatus(true)}
+                        >
+                          {statusLoading ? "Warming..." : "Warm up local voice services"}
+                        </Button>
+                      </Stack>
+                    </Paper>
+
                     <Stack direction="row" spacing={1}>
                       <Button
                         variant="contained"
@@ -581,6 +673,11 @@ export default function VoiceTestPage() {
             <Stack spacing={2.5}>
               {liveError ? <Alert severity="error">{liveError}</Alert> : null}
               {liveInfo ? <Alert severity="info">{liveInfo}</Alert> : null}
+              {liveStatusInfo ? (
+                <Alert severity="info">
+                  Live websocket path: <strong>{liveStatusInfo.websocketPath}</strong> • auth: <strong>{liveStatusInfo.authMode}</strong> • tenant: <strong>{liveStatusInfo.tenantMode}</strong>
+                </Alert>
+              ) : null}
 
               <Stack direction={{ xs: "column", lg: "row" }} spacing={2} alignItems="stretch">
                 <Paper variant="outlined" sx={{ p: 2, flex: 1, minWidth: 0 }}>

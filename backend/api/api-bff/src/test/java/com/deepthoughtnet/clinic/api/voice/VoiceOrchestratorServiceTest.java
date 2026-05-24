@@ -71,7 +71,9 @@ class VoiceOrchestratorServiceTest {
                 aiOrchestrationService,
                 mock(AuditEventPublisher.class),
                 properties,
-                new ObjectMapper()
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
         );
 
         VoiceTestResponse response = service.processAudio(
@@ -115,7 +117,9 @@ class VoiceOrchestratorServiceTest {
                 aiOrchestrationService,
                 mock(AuditEventPublisher.class),
                 properties,
-                new ObjectMapper()
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
         );
 
         VoiceTestResponse response = service.processAudio(
@@ -137,7 +141,9 @@ class VoiceOrchestratorServiceTest {
                 mock(AiOrchestrationService.class),
                 mock(AuditEventPublisher.class),
                 properties,
-                new ObjectMapper()
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
         );
 
         assertThatThrownBy(() -> service.processAudio(
@@ -160,7 +166,9 @@ class VoiceOrchestratorServiceTest {
                 mock(AiOrchestrationService.class),
                 mock(AuditEventPublisher.class),
                 new VoiceTestProperties(),
-                new ObjectMapper()
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
         );
 
         assertThatThrownBy(() -> service.processAudio(

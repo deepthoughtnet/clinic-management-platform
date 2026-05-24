@@ -58,6 +58,8 @@ public class VoiceTestProperties {
         private String baseUrl = "http://faster-whisper:8000";
         private String model = "base";
         private String language = "en";
+        private int connectTimeoutMs = 5000;
+        private int readTimeoutMs = 180000;
 
         public String getBaseUrl() {
             return baseUrl;
@@ -81,6 +83,22 @@ public class VoiceTestProperties {
 
         public void setLanguage(String language) {
             this.language = language;
+        }
+
+        public int getConnectTimeoutMs() {
+            return connectTimeoutMs;
+        }
+
+        public void setConnectTimeoutMs(int connectTimeoutMs) {
+            this.connectTimeoutMs = connectTimeoutMs;
+        }
+
+        public int getReadTimeoutMs() {
+            return readTimeoutMs;
+        }
+
+        public void setReadTimeoutMs(int readTimeoutMs) {
+            this.readTimeoutMs = readTimeoutMs;
         }
     }
 
@@ -139,6 +157,8 @@ public class VoiceTestProperties {
     public static class Piper {
         private String baseUrl = "http://piper-tts:8001";
         private String voice = "en_US-lessac-medium";
+        private int connectTimeoutMs = 5000;
+        private int readTimeoutMs = 120000;
 
         public String getBaseUrl() {
             return baseUrl;
@@ -154,6 +174,22 @@ public class VoiceTestProperties {
 
         public void setVoice(String voice) {
             this.voice = voice;
+        }
+
+        public int getConnectTimeoutMs() {
+            return connectTimeoutMs;
+        }
+
+        public void setConnectTimeoutMs(int connectTimeoutMs) {
+            this.connectTimeoutMs = connectTimeoutMs;
+        }
+
+        public int getReadTimeoutMs() {
+            return readTimeoutMs;
+        }
+
+        public void setReadTimeoutMs(int readTimeoutMs) {
+            this.readTimeoutMs = readTimeoutMs;
         }
     }
 
