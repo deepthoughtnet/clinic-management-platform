@@ -55,7 +55,7 @@ public class VoiceWebSocketAuthInterceptor implements HandshakeInterceptor {
                 collection.forEach(role -> roles.add(String.valueOf(role).toUpperCase(java.util.Locale.ROOT)));
             }
         }
-        Arrays.asList("PLATFORM_ADMIN", "CLINIC_ADMIN", "AUDITOR", "RECEPTIONIST").forEach(allowed -> {
+        Arrays.asList("PLATFORM_ADMIN", "TENANT_ADMIN", "CLINIC_ADMIN", "AUDITOR", "RECEPTIONIST").forEach(allowed -> {
             if (roles.contains("ROLE_" + allowed)) {
                 roles.add(allowed);
             }

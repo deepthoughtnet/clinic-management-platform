@@ -174,5 +174,28 @@ logging:
     org.springframework.security: INFO
 
 voice:
+  enabled: ${VOICE_TEST_ENABLED:true}
+  stt:
+    provider-order: ${VOICE_STT_PROVIDER_ORDER:faster-whisper,mock}
+    faster-whisper:
+      base-url: ${FASTER_WHISPER_BASE_URL:http://faster-whisper:8000}
+      model: ${FASTER_WHISPER_MODEL:base}
+      language: ${FASTER_WHISPER_LANGUAGE:en}
+    deepgram:
+      api-key: ${DEEPGRAM_API_KEY:}
+      model: ${DEEPGRAM_MODEL:nova-2}
+      base-url: ${DEEPGRAM_BASE_URL:https://api.deepgram.com/v1/listen}
+  tts:
+    provider-order: ${VOICE_TTS_PROVIDER_ORDER:piper,mock}
+    piper:
+      base-url: ${PIPER_TTS_BASE_URL:http://piper-tts:8001}
+      voice: ${PIPER_VOICE:en_US-lessac-medium}
+    elevenlabs:
+      api-key: ${ELEVENLABS_API_KEY:}
+      voice-id: ${ELEVENLABS_VOICE_ID:}
+      model: ${ELEVENLABS_MODEL:eleven_multilingual_v2}
+      base-url: ${ELEVENLABS_BASE_URL:https://api.elevenlabs.io/v1/text-to-speech}
+  llm:
+    provider-order: ${VOICE_LLM_PROVIDER_ORDER:gemini,groq,mock}
   runtime:
     summary-endpoint: ${VOICE_RUNTIME_SUMMARY_ENDPOINT:http://127.0.0.1:8091/metrics/summary}

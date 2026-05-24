@@ -158,6 +158,19 @@ class RolePermissionMappingsTest {
     }
 
     @Test
+    void voiceTestPermissionIsLimitedToOperationalAiRoles() {
+        Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
+        Set<String> tenantAdmin = RolePermissionMappings.permissionsForRole(Roles.TENANT_ADMIN);
+        Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);
+        Set<String> doctor = RolePermissionMappings.permissionsForRole(Roles.DOCTOR);
+
+        assertThat(clinicAdmin).contains(Permissions.AI_VOICE_TEST);
+        assertThat(tenantAdmin).contains(Permissions.AI_VOICE_TEST);
+        assertThat(receptionist).contains(Permissions.AI_VOICE_TEST);
+        assertThat(doctor).doesNotContain(Permissions.AI_VOICE_TEST);
+    }
+
+    @Test
     void carePilotWebinarPermissionsFollowOperationalRoleModel() {
         Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
         Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);

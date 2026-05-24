@@ -25,6 +25,22 @@ x-clinic-ai-env: &clinic-ai-env
   TESSERACT_OCR_ENGINE_MODE: ${TESSERACT_OCR_ENGINE_MODE:-1}
   TESSERACT_REQUIRE_DATA_PATH: ${TESSERACT_REQUIRE_DATA_PATH:-false}
   CLINIC_OCR_MAX_PAGES: ${CLINIC_OCR_MAX_PAGES:-10}
+  VOICE_TEST_ENABLED: ${VOICE_TEST_ENABLED:-true}
+  VOICE_STT_PROVIDER_ORDER: ${VOICE_STT_PROVIDER_ORDER:-faster-whisper,mock}
+  FASTER_WHISPER_BASE_URL: ${FASTER_WHISPER_BASE_URL:-http://faster-whisper:8000}
+  FASTER_WHISPER_MODEL: ${FASTER_WHISPER_MODEL:-base}
+  FASTER_WHISPER_LANGUAGE: ${FASTER_WHISPER_LANGUAGE:-en}
+  DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+  DEEPGRAM_MODEL: ${DEEPGRAM_MODEL:-nova-2}
+  DEEPGRAM_BASE_URL: ${DEEPGRAM_BASE_URL:-https://api.deepgram.com/v1/listen}
+  VOICE_TTS_PROVIDER_ORDER: ${VOICE_TTS_PROVIDER_ORDER:-piper,mock}
+  PIPER_TTS_BASE_URL: ${PIPER_TTS_BASE_URL:-http://piper-tts:8001}
+  PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-medium}
+  ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+  ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
+  ELEVENLABS_MODEL: ${ELEVENLABS_MODEL:-eleven_multilingual_v2}
+  ELEVENLABS_BASE_URL: ${ELEVENLABS_BASE_URL:-https://api.elevenlabs.io/v1/text-to-speech}
+  VOICE_LLM_PROVIDER_ORDER: ${VOICE_LLM_PROVIDER_ORDER:-gemini,groq,mock}
 
 services:
   postgres:
@@ -107,6 +123,45 @@ services:
       retries: 5
       start_period: 25s
 
+  faster-whisper:
+    build:
+      context: ./voice/faster-whisper
+      dockerfile: Dockerfile
+    container_name: clinic-faster-whisper
+    restart: unless-stopped
+    environment:
+      FASTER_WHISPER_MODEL: ${FASTER_WHISPER_MODEL:-base}
+      FASTER_WHISPER_LANGUAGE: ${FASTER_WHISPER_LANGUAGE:-en}
+      FASTER_WHISPER_DEVICE: ${FASTER_WHISPER_DEVICE:-cpu}
+      FASTER_WHISPER_COMPUTE_TYPE: ${FASTER_WHISPER_COMPUTE_TYPE:-int8}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    volumes:
+      - faster_whisper_models:/models
+
+  piper-tts:
+    build:
+      context: ./voice/piper
+      dockerfile: Dockerfile
+    container_name: clinic-piper-tts
+    restart: unless-stopped
+    environment:
+      PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-medium}
+      PIPER_MODEL_DIR: ${PIPER_MODEL_DIR:-/models/piper}
+      PIPER_VOICE_DOWNLOAD_BASE: ${PIPER_VOICE_DOWNLOAD_BASE:-https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8001/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    volumes:
+      - piper_tts_models:/models/piper
+
   realtime-voice-gateway:
     build:
       context: ../backend/realtime/realtime-voice-runtime-python
@@ -184,6 +239,10 @@ services:
         condition: service_started
       minio:
         condition: service_started
+      faster-whisper:
+        condition: service_healthy
+      piper-tts:
+        condition: service_healthy
 
   web-admin:
     profiles: ["frontend"]
@@ -219,3 +278,5 @@ volumes:
   clinic_management_minio_data:
   realtime_voice_model_cache:
   whisper_stt_models:
+  faster_whisper_models:
+  piper_tts_models:

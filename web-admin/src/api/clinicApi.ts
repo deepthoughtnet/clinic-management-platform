@@ -247,6 +247,21 @@ export type NotificationHistory = {
   updatedAt: string;
 };
 
+export type VoiceProviderTrace = {
+  sttProvider: string | null;
+  llmProvider: string | null;
+  ttsProvider: string | null;
+};
+
+export type VoiceTestResponse = {
+  requestId: string;
+  transcript: string | null;
+  assistantText: string | null;
+  audioContentType: string | null;
+  audioBase64: string | null;
+  providerTrace: VoiceProviderTrace | null;
+};
+
 export type ReportRow = Record<string, string | number | boolean | null>;
 
 export type CashCounterSummary = {
@@ -2211,6 +2226,22 @@ export async function getPatientNotifications(token: string, tenantId: string, p
 
 export async function retryNotification(token: string, tenantId: string, id: string) {
   return httpPost<NotificationHistory>(`/api/notifications/${id}/retry`, undefined, { token, tenantId });
+}
+
+export async function runVoiceTest(
+  token: string,
+  tenantId: string,
+  input: {
+    audio: File;
+    context?: string;
+    language?: string;
+  },
+) {
+  const formData = new FormData();
+  formData.append("audio", input.audio);
+  if (input.context?.trim()) formData.append("context", input.context.trim());
+  if (input.language?.trim()) formData.append("language", input.language.trim());
+  return httpPostForm<VoiceTestResponse>("/api/voice/test", formData, { token, tenantId });
 }
 
 export async function sendPrescription(token: string, tenantId: string, id: string, channel: string = "email") {

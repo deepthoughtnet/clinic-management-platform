@@ -14,6 +14,7 @@ import IntegrationsPage from "../pages/admin/IntegrationsPage";
 import AiOpsPage from "../pages/admin/AiOpsPage";
 import PlatformOpsPage from "../pages/admin/PlatformOpsPage";
 import RealtimeAiPage from "../pages/admin/RealtimeAiPage";
+import VoiceTestPage from "../pages/ai/VoiceTestPage";
 import DoctorDetailPage from "../pages/doctors/DoctorDetailPage";
 import DoctorAvailabilityPage from "../pages/doctors/DoctorAvailabilityPage";
 import PatientsPage from "../pages/patients/PatientsPage";
@@ -211,6 +212,7 @@ function AuthedApp() {
         <Route path="/admin/ai-ops" element={<ModuleGate moduleKey="aiCopilot"><AiOpsPage /></ModuleGate>} />
         <Route path="/admin/platform-ops" element={<PlatformOpsPage />} />
         <Route path="/admin/realtime-ai" element={<ModuleGate moduleKey="aiCopilot"><RealtimeAiPage /></ModuleGate>} />
+        <Route path="/ai/voice-test" element={<ModuleGate moduleKey="aiCopilot"><VoiceTestPage /></ModuleGate>} />
         <Route path="/doctors/availability" element={<DoctorAvailabilityPage />} />
         <Route path="/doctors/:id" element={<DoctorDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

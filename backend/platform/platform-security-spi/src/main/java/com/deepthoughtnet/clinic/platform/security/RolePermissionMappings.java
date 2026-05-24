@@ -194,7 +194,8 @@ public final class RolePermissionMappings {
                     Permissions.CAREPILOT_LEAD_UPDATE,
                     Permissions.CAREPILOT_LEAD_CONVERT,
                     Permissions.CAREPILOT_WEBINAR_READ,
-                    Permissions.CAREPILOT_WEBINAR_MANAGE
+                    Permissions.CAREPILOT_WEBINAR_MANAGE,
+                    Permissions.AI_VOICE_TEST
             )
     );
 
@@ -253,6 +254,7 @@ public final class RolePermissionMappings {
             Permissions.CAREPILOT_LEAD_UPDATE,
             Permissions.CAREPILOT_LEAD_CONVERT,
             Permissions.CAREPILOT_WEBINAR_READ,
+            Permissions.AI_VOICE_TEST,
             Permissions.CAREPILOT_WEBINAR_MANAGE
     );
 

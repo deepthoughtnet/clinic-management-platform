@@ -1,5 +1,7 @@
 package com.deepthoughtnet.clinic.api.realtime.websocket;
 
+import com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService;
+import com.deepthoughtnet.clinic.api.voice.VoiceTestWebSocketHandler;
 import com.deepthoughtnet.clinic.realtime.voice.events.VoiceSessionEventBus;
 import com.deepthoughtnet.clinic.realtime.voice.metrics.RealtimeVoiceGatewayMetrics;
 import com.deepthoughtnet.clinic.realtime.voice.session.RealtimeVoiceSessionService;
@@ -18,20 +20,26 @@ public class VoiceWebSocketConfig implements WebSocketConfigurer {
     private final ObjectMapper objectMapper;
     private final VoiceWebSocketAuthInterceptor authInterceptor;
     private final RealtimeVoiceSessionService sessionService;
+    private final VoiceOrchestratorService voiceOrchestratorService;
 
     public VoiceWebSocketConfig(VoiceSessionEventBus eventBus, RealtimeVoiceGatewayMetrics metrics,
                                 ObjectMapper objectMapper, VoiceWebSocketAuthInterceptor authInterceptor,
-                                RealtimeVoiceSessionService sessionService) {
+                                RealtimeVoiceSessionService sessionService,
+                                VoiceOrchestratorService voiceOrchestratorService) {
         this.eventBus = eventBus;
         this.metrics = metrics;
         this.objectMapper = objectMapper;
         this.authInterceptor = authInterceptor;
         this.sessionService = sessionService;
+        this.voiceOrchestratorService = voiceOrchestratorService;
     }
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(new VoiceSessionWebSocketHandler(eventBus, metrics, objectMapper, sessionService), "/ws/voice/session/*")
+                .addInterceptors(authInterceptor)
+                .setAllowedOrigins("*");
+        registry.addHandler(new VoiceTestWebSocketHandler(objectMapper, voiceOrchestratorService), "/ws/voice/test")
                 .addInterceptors(authInterceptor)
                 .setAllowedOrigins("*");
     }
