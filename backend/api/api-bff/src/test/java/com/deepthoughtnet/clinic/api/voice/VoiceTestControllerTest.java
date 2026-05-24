@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -28,7 +29,7 @@ class VoiceTestControllerTest {
         RequestContextHolder.set(new RequestContext(TenantId.of(UUID.randomUUID()), UUID.randomUUID(), "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid"));
         MockMultipartFile file = new MockMultipartFile("audio", "sample.webm", "audio/webm", "voice".getBytes());
         when(service.processAudio(file, "context", "en")).thenReturn(
-                new VoiceTestResponse("req-1", "hello", "hi", null, null, new VoiceProviderTrace("mock", "gemini", "mock"))
+                new VoiceTestResponse("req-1", "hello", "hi", null, null, new VoiceProviderTrace("mock", "gemini", "mock"), List.of())
         );
 
         controller.test(file, "context", "en");
@@ -61,5 +62,17 @@ class VoiceTestControllerTest {
         controller.status(true);
 
         verify(service).status(true);
+    }
+
+    @Test
+    void debugSttEndpointDelegatesToService() {
+        VoiceOrchestratorService service = mock(VoiceOrchestratorService.class);
+        VoiceTestController controller = new VoiceTestController(service);
+        MockMultipartFile file = new MockMultipartFile("audio", "sample.wav", "audio/wav", "voice".getBytes());
+        when(service.debugStt(file, "en")).thenReturn(new VoiceSttDebugResponse("req-2", "hello", "FASTER_WHISPER", List.of()));
+
+        controller.debugStt(file, "en");
+
+        verify(service).debugStt(file, "en");
     }
 }

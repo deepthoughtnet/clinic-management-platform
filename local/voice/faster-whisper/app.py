@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import subprocess
@@ -20,6 +21,7 @@ _model_cache: dict[str, WhisperModel] = {}
 _ready_cache: dict[str, bool] = {}
 SUPPORTED_TYPES = {
     "audio/webm",
+    "audio/ogg",
     "audio/wav",
     "audio/x-wav",
     "audio/mpeg",
@@ -29,7 +31,7 @@ SUPPORTED_TYPES = {
     "audio/aac",
     "application/octet-stream",
 }
-SUPPORTED_EXTENSIONS = {".webm", ".wav", ".mp3", ".m4a", ".mp4", ".aac"}
+SUPPORTED_EXTENSIONS = {".webm", ".ogg", ".wav", ".mp3", ".m4a", ".mp4", ".aac"}
 
 
 def configured_model_name() -> str:
@@ -81,26 +83,81 @@ def normalize_content_type(value: Optional[str]) -> str:
 
 def validate_upload(file: UploadFile, audio_bytes: bytes) -> tuple[str, str]:
     if not audio_bytes:
-        raise HTTPException(status_code=400, detail={"error": "empty_audio", "detail": "Audio file is empty."})
+        raise HTTPException(status_code=400, detail={
+            "error": "INVALID_AUDIO_UPLOAD",
+            "detail": "Audio file is empty.",
+            "filename": file.filename,
+            "contentType": file.content_type,
+            "sizeBytes": 0,
+        })
     content_type = normalize_content_type(file.content_type)
     suffix = Path(file.filename or "voice-test.webm").suffix.lower()
     if content_type and content_type not in SUPPORTED_TYPES:
         raise HTTPException(
             status_code=422,
             detail={
-                "error": "unsupported_audio_content_type",
+                "error": "INVALID_AUDIO_UPLOAD",
                 "detail": f"Unsupported audio content type: {content_type}",
+                "filename": file.filename,
+                "contentType": file.content_type,
+                "sizeBytes": len(audio_bytes),
             },
         )
     if suffix not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=422,
             detail={
-                "error": "unsupported_audio_extension",
+                "error": "INVALID_AUDIO_UPLOAD",
                 "detail": f"Unsupported audio file extension: {suffix or 'unknown'}",
+                "filename": file.filename,
+                "contentType": file.content_type,
+                "sizeBytes": len(audio_bytes),
             },
         )
     return content_type, suffix
+
+
+def run_ffprobe(path: str) -> dict[str, object]:
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=format_name,duration:stream=codec_name,sample_rate,channels",
+        "-of",
+        "json",
+        path,
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    parsed = None
+    if stdout:
+        try:
+            parsed = json.loads(stdout)
+        except json.JSONDecodeError:
+            parsed = None
+    return {
+        "ok": completed.returncode == 0,
+        "returnCode": completed.returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+        "parsed": parsed,
+    }
+
+
+def should_convert_to_wav(content_type: str, suffix: str) -> bool:
+    return content_type in {"audio/webm", "audio/ogg"} or suffix in {".webm", ".ogg"}
+
+
+def convert_to_wav(input_path: str) -> str:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as output_file:
+        output_path = output_file.name
+    command = ["ffmpeg", "-y", "-i", input_path, output_path]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or "ffmpeg conversion failed").strip())
+    return output_path
 
 
 @app.on_event("startup")
@@ -129,7 +186,7 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError) 
     return JSONResponse(
         status_code=422,
         content={
-            "error": "invalid_multipart_request",
+            "error": "INVALID_AUDIO_UPLOAD",
             "detail": "Invalid multipart form. Expected field name 'file'.",
         },
     )
@@ -176,13 +233,15 @@ async def transcribe(
     file: UploadFile = File(...),
     language: Optional[str] = Form(None),
     model: Optional[str] = Form(None),
-) -> dict[str, str]:
+) -> dict[str, object]:
     audio_bytes = await file.read()
     normalized_content_type, suffix = validate_upload(file, audio_bytes)
 
     selected_model = model or configured_model_name()
     selected_language = language or configured_language()
     temp_path = None
+    transcription_path = None
+    ffprobe_result = None
     started = time.perf_counter()
     logger.info(
         "faster_whisper.transcribe.start model=%s language=%s sizeBytes=%s contentType=%s normalizedContentType=%s filename=%s extension=%s",
@@ -199,9 +258,55 @@ async def transcribe(
             temp_file.write(audio_bytes)
             temp_path = temp_file.name
 
+        ffprobe_result = run_ffprobe(temp_path)
+        logger.info(
+            "faster_whisper.ffprobe filename=%s contentType=%s sizeBytes=%s suffix=%s ok=%s stdout=%s stderr=%s",
+            file.filename,
+            normalized_content_type,
+            len(audio_bytes),
+            suffix,
+            ffprobe_result["ok"],
+            (ffprobe_result["stdout"] or "")[:400],
+            (ffprobe_result["stderr"] or "")[:400],
+        )
+        if not ffprobe_result["ok"]:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "INVALID_AUDIO_UPLOAD",
+                    "detail": "ffprobe could not read the uploaded audio container.",
+                    "filename": file.filename,
+                    "contentType": file.content_type,
+                    "sizeBytes": len(audio_bytes),
+                    "ffprobe": ffprobe_result,
+                },
+            )
+
+        transcription_path = temp_path
+        if should_convert_to_wav(normalized_content_type, suffix):
+            try:
+                transcription_path = convert_to_wav(temp_path)
+                logger.info(
+                    "faster_whisper.transcode.complete filename=%s sourceSuffix=%s targetSuffix=.wav",
+                    file.filename,
+                    suffix,
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error": "INVALID_AUDIO_UPLOAD",
+                        "detail": f"ffmpeg decode failed: {exc}",
+                        "filename": file.filename,
+                        "contentType": file.content_type,
+                        "sizeBytes": len(audio_bytes),
+                        "ffprobe": ffprobe_result,
+                    },
+                )
+
         model_instance = get_model(selected_model)
         segments, info = model_instance.transcribe(
-            temp_path,
+            transcription_path,
             language=selected_language,
             vad_filter=True,
         )
@@ -209,7 +314,14 @@ async def transcribe(
         if not transcript:
             raise HTTPException(
                 status_code=422,
-                detail={"error": "empty_transcript", "detail": "Audio could not be transcribed."},
+                detail={
+                    "error": "INVALID_AUDIO_UPLOAD",
+                    "detail": "Audio could not be transcribed.",
+                    "filename": file.filename,
+                    "contentType": file.content_type,
+                    "sizeBytes": len(audio_bytes),
+                    "ffprobe": ffprobe_result,
+                },
             )
         logger.info(
             "faster_whisper.transcribe.complete model=%s durationMs=%s detectedLanguage=%s",
@@ -236,8 +348,17 @@ async def transcribe(
         logger.exception("faster_whisper.transcribe.failed model=%s filename=%s", selected_model, file.filename)
         raise HTTPException(
             status_code=422,
-            detail={"error": "ffmpeg_decode_failed", "detail": f"Audio could not be transcribed: {exc}"},
+            detail={
+                "error": "INVALID_AUDIO_UPLOAD",
+                "detail": f"Audio could not be transcribed: {exc}",
+                "filename": file.filename,
+                "contentType": file.content_type,
+                "sizeBytes": len(audio_bytes),
+                "ffprobe": ffprobe_result,
+            },
         ) from exc
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
+        if transcription_path and transcription_path != temp_path and os.path.exists(transcription_path):
+            os.unlink(transcription_path)

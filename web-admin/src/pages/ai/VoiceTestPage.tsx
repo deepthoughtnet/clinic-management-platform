@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -13,6 +16,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 import MicRoundedIcon from "@mui/icons-material/MicRounded";
 import StopRoundedIcon from "@mui/icons-material/StopRounded";
 import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
@@ -20,14 +24,25 @@ import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import AutorenewRoundedIcon from "@mui/icons-material/AutorenewRounded";
 import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import LinkOffRoundedIcon from "@mui/icons-material/LinkOffRounded";
-import { getVoiceLiveStatus, getVoiceTestStatus, runVoiceTest, type VoiceLiveStatusResponse, type VoiceProviderTrace, type VoiceStatusResponse, type VoiceTestResponse } from "../../api/clinicApi";
+import { getVoiceLiveStatus, getVoiceTestStatus, runVoiceSttDebug, runVoiceTest, type VoiceDebugTraceEntry, type VoiceLiveStatusResponse, type VoiceProviderTrace, type VoiceStatusResponse, type VoiceSttDebugResponse, type VoiceTestResponse } from "../../api/clinicApi";
 import { ApiClientError } from "../../api/restClient";
 import { useAuth } from "../../auth/useAuth";
 
-const SUPPORTED_AUDIO_TYPES = ["audio/wav", "audio/webm", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a", "audio/aac"];
+const SUPPORTED_AUDIO_TYPES = ["audio/wav", "audio/webm", "audio/ogg", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a", "audio/aac"];
+const LIVE_AUDIO_BASE64_CHUNK_SIZE = 32 * 1024;
 
 type VoiceTab = "file" | "live";
 type LiveStatus = "disconnected" | "connecting" | "connected" | "recording" | "processing";
+
+type CapturedAudioDebug = {
+  recorderMimeType: string;
+  chunkCount: number;
+  chunkSizes: number[];
+  finalBlobSize: number;
+  finalBlobType: string;
+  uploadFilename: string;
+  uploadMimeType: string;
+};
 
 function formatProvider(value: string | null | undefined) {
   if (!value) return "Not used";
@@ -96,6 +111,61 @@ function ProviderTraceBlock({ trace, requestId }: { trace: VoiceProviderTrace | 
   );
 }
 
+function formatSize(sizeBytes: number | null | undefined) {
+  if (typeof sizeBytes !== "number" || Number.isNaN(sizeBytes)) return "Unknown";
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  return `${Math.round(sizeBytes / 1024)} KB`;
+}
+
+function DebugTracePanel({ trace }: { trace: VoiceDebugTraceEntry[] | null | undefined }) {
+  if (!trace || trace.length === 0) return null;
+  return (
+    <Accordion disableGutters>
+      <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+          Debug Trace
+        </Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Stack spacing={1}>
+          {trace.map((entry, index) => (
+            <Paper key={`${entry.stage}-${index}`} variant="outlined" sx={{ p: 1.25, bgcolor: "background.default" }}>
+              <Stack direction={{ xs: "column", md: "row" }} spacing={1} justifyContent="space-between">
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                  {entry.stage}
+                </Typography>
+                <Chip size="small" color={entry.ok ? "success" : "warning"} label={entry.ok ? "OK" : "Check"} />
+              </Stack>
+              <Typography variant="body2" color="text.secondary">
+                {[
+                  entry.provider ? `provider=${entry.provider}` : null,
+                  entry.from ? `from=${entry.from}` : null,
+                  entry.to ? `to=${entry.to}` : null,
+                  entry.filename ? `file=${entry.filename}` : null,
+                  entry.contentType ? `type=${entry.contentType}` : null,
+                  typeof entry.sizeBytes === "number" ? `size=${formatSize(entry.sizeBytes)}` : null,
+                  entry.multipartField ? `field=${entry.multipartField}` : null,
+                  typeof entry.status === "number" ? `status=${entry.status}` : null,
+                  typeof entry.durationMs === "number" ? `duration=${entry.durationMs}ms` : null,
+                  typeof entry.transcriptLength === "number" ? `transcriptLength=${entry.transcriptLength}` : null,
+                  entry.reason ? `reason=${entry.reason}` : null,
+                  entry.url ? `url=${entry.url}` : null,
+                  entry.savedPath ? `savedPath=${entry.savedPath}` : null,
+                ].filter(Boolean).join(" • ")}
+              </Typography>
+              {entry.bodyPreview ? (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block", whiteSpace: "pre-wrap" }}>
+                  {entry.bodyPreview}
+                </Typography>
+              ) : null}
+            </Paper>
+          ))}
+        </Stack>
+      </AccordionDetails>
+    </Accordion>
+  );
+}
+
 function resolveWebSocketUrl(token: string, tenantId: string) {
   const explicitBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
   const base = explicitBase && explicitBase.length > 0 ? explicitBase : window.location.origin;
@@ -118,6 +188,45 @@ async function blobToBase64(blob: Blob) {
   return btoa(binary);
 }
 
+function splitBase64Chunks(base64: string, chunkSize = LIVE_AUDIO_BASE64_CHUNK_SIZE) {
+  const chunks: string[] = [];
+  for (let index = 0; index < base64.length; index += chunkSize) {
+    chunks.push(base64.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function maskWebSocketUrl(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    if (url.searchParams.has("token")) {
+      url.searchParams.set("token", "***");
+    }
+    return url.toString();
+  } catch {
+    return rawUrl.replace(/token=[^&]+/i, "token=***");
+  }
+}
+
+function selectRecordingMimeType() {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/ogg",
+  ];
+  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || "";
+}
+
+function resolveAudioExtensionFromType(type: string) {
+  const normalized = type.toLowerCase();
+  if (normalized.includes("mpeg") || normalized.includes("mp3")) return "mp3";
+  if (normalized.includes("wav")) return "wav";
+  if (normalized.includes("ogg")) return "ogg";
+  if (normalized.includes("mp4") || normalized.includes("m4a")) return "m4a";
+  return "webm";
+}
+
 function toVoiceError(err: unknown) {
   if (err instanceof ApiClientError && err.status === 504) {
     return "Voice processing timed out. First local model load can take longer; please retry.";
@@ -135,8 +244,12 @@ export default function VoiceTestPage() {
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileResult, setFileResult] = useState<VoiceTestResponse | null>(null);
+  const [sttDebugResult, setSttDebugResult] = useState<VoiceSttDebugResponse | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileInfo, setFileInfo] = useState<string | null>(null);
+  const [fileCaptureInfo, setFileCaptureInfo] = useState<string | null>(null);
+  const [capturedAudioDebug, setCapturedAudioDebug] = useState<CapturedAudioDebug | null>(null);
+  const [capturedAudioUrl, setCapturedAudioUrl] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [fileRecording, setFileRecording] = useState(false);
   const [statusLoading, setStatusLoading] = useState(false);
@@ -146,6 +259,7 @@ export default function VoiceTestPage() {
 
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("disconnected");
   const [liveInfo, setLiveInfo] = useState<string | null>(null);
+  const [liveCaptureInfo, setLiveCaptureInfo] = useState<string | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [liveAssistantText, setLiveAssistantText] = useState("");
@@ -157,10 +271,18 @@ export default function VoiceTestPage() {
   const fileMediaRecorderRef = useRef<MediaRecorder | null>(null);
   const fileMediaStreamRef = useRef<MediaStream | null>(null);
   const fileChunksRef = useRef<Blob[]>([]);
+  const fileRecordingStopPromiseRef = useRef<Promise<void> | null>(null);
 
   const liveMediaRecorderRef = useRef<MediaRecorder | null>(null);
   const liveMediaStreamRef = useRef<MediaStream | null>(null);
   const liveSocketRef = useRef<WebSocket | null>(null);
+  const liveSendQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const liveChunkSequenceRef = useRef(0);
+  const liveChunkFilenameRef = useRef<string | null>(null);
+  const liveChunkContentTypeRef = useRef("audio/webm");
+  const liveRecordedBytesRef = useRef(0);
+  const liveAssistantAudioChunksRef = useRef<Map<number, string>>(new Map());
+  const liveAssistantAudioExpectedChunksRef = useRef(0);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -171,11 +293,14 @@ export default function VoiceTestPage() {
 
   useEffect(() => {
     return () => {
+      if (capturedAudioUrl) {
+        URL.revokeObjectURL(capturedAudioUrl);
+      }
       stopFileStream();
       stopLiveStream();
       closeLiveSession(false);
     };
-  }, []);
+  }, [capturedAudioUrl]);
 
   useEffect(() => {
     if (!accessToken || !tenantId || !canUseVoiceTest) {
@@ -208,30 +333,68 @@ export default function VoiceTestPage() {
   async function startFileRecording() {
     setFileError(null);
     setFileInfo(null);
+    setCapturedAudioDebug(null);
+    if (capturedAudioUrl) {
+      URL.revokeObjectURL(capturedAudioUrl);
+      setCapturedAudioUrl(null);
+    }
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         setFileError("Microphone recording is not available in this browser. Upload an audio file instead.");
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+      const mimeType = selectRecordingMimeType();
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       fileChunksRef.current = [];
+      fileRecordingStopPromiseRef.current = new Promise((resolve) => {
+        recorder.onstop = () => {
+          const type = recorder.mimeType || fileChunksRef.current[0]?.type || "audio/webm";
+          const extension = resolveAudioExtensionFromType(type);
+          const blob = new Blob(fileChunksRef.current, { type });
+          const chunkSizes = fileChunksRef.current.map((chunk) => chunk.size);
+          console.info("[voice-test] browser recording captured", {
+            mimeType: recorder.mimeType,
+            blobType: blob.type,
+            extension,
+            sizeBytes: blob.size,
+            chunkCount: fileChunksRef.current.length,
+            chunkSizes,
+          });
+          const recordedFile = new File([blob], `voice-test-${Date.now()}.${extension}`, { type });
+          console.info("[voice-test] prepared upload file", {
+            mimeType: type,
+            extension,
+            sizeBytes: recordedFile.size,
+          });
+          if (capturedAudioUrl) {
+            URL.revokeObjectURL(capturedAudioUrl);
+          }
+          const objectUrl = URL.createObjectURL(blob);
+          setCapturedAudioUrl(objectUrl);
+          setCapturedAudioDebug({
+            recorderMimeType: recorder.mimeType || type,
+            chunkCount: fileChunksRef.current.length,
+            chunkSizes,
+            finalBlobSize: blob.size,
+            finalBlobType: blob.type || type,
+            uploadFilename: recordedFile.name,
+            uploadMimeType: type,
+          });
+          setFileCaptureInfo(`Captured ${recorder.mimeType || blob.type || type} (${formatSize(blob.size)}) • Uploading original ${type || "unknown"} as ${recordedFile.name} (${formatSize(recordedFile.size)}).`);
+          setSelectedFile(recordedFile);
+          setFileInfo("Microphone recording captured. Review, download if needed, and send it to the backend voice harness.");
+          setFileRecording(false);
+          stopFileStream();
+          resolve();
+        };
+      });
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) fileChunksRef.current.push(event.data);
       };
-      recorder.onstop = () => {
-        const type = recorder.mimeType || "audio/webm";
-        const extension = type.includes("mpeg") ? "mp3" : type.includes("wav") ? "wav" : "webm";
-        const blob = new Blob(fileChunksRef.current, { type });
-        setSelectedFile(new File([blob], `voice-test-${Date.now()}.${extension}`, { type }));
-        setFileInfo("Microphone recording captured. Review and send it to the backend voice harness.");
-        setFileRecording(false);
-        stopFileStream();
-      };
       fileMediaStreamRef.current = stream;
       fileMediaRecorderRef.current = recorder;
-      recorder.start();
+      recorder.start(1000);
       setFileRecording(true);
     } catch {
       stopFileStream();
@@ -243,6 +406,7 @@ export default function VoiceTestPage() {
   function stopFileRecording() {
     if (fileMediaRecorderRef.current && fileMediaRecorderRef.current.state !== "inactive") {
       fileMediaRecorderRef.current.stop();
+      void fileRecordingStopPromiseRef.current;
       return;
     }
     stopFileStream();
@@ -257,6 +421,7 @@ export default function VoiceTestPage() {
       SUPPORTED_AUDIO_TYPES.includes(contentType) ||
       extension.endsWith(".wav") ||
       extension.endsWith(".webm") ||
+      extension.endsWith(".ogg") ||
       extension.endsWith(".mp3") ||
       extension.endsWith(".m4a");
     if (!supported) {
@@ -264,17 +429,30 @@ export default function VoiceTestPage() {
       return;
     }
     setSelectedFile(file);
+    setFileCaptureInfo(`Selected ${file.type || "unknown"} file for upload (${formatSize(file.size)}).`);
+    setCapturedAudioDebug(null);
+    if (capturedAudioUrl) {
+      URL.revokeObjectURL(capturedAudioUrl);
+      setCapturedAudioUrl(null);
+    }
     setFileResult(null);
+    setSttDebugResult(null);
     setFileError(null);
     setFileInfo(`Loaded ${file.name}. Send it to run the STT to LLM to TTS loop.`);
   }
 
   async function submitFileTest() {
     if (!accessToken || !tenantId || !selectedFile) return;
+    console.info("[voice-test] submitting file", {
+      filename: selectedFile.name,
+      mimeType: selectedFile.type,
+      sizeBytes: selectedFile.size,
+    });
     setFileLoading(true);
     setFileError(null);
     setFileInfo(null);
     setFileResult(null);
+    setSttDebugResult(null);
     setProcessingStage("Processing STT/LLM/TTS...");
     try {
       const response = await runVoiceTest(accessToken, tenantId, { audio: selectedFile, context, language });
@@ -289,11 +467,37 @@ export default function VoiceTestPage() {
     }
   }
 
-  function resetFileTest() {
-    setSelectedFile(null);
-    setFileResult(null);
+  async function submitSttDebug() {
+    if (!accessToken || !tenantId || !selectedFile) return;
+    setFileLoading(true);
     setFileError(null);
     setFileInfo(null);
+    setSttDebugResult(null);
+    setProcessingStage("Running STT debug...");
+    try {
+      const response = await runVoiceSttDebug(accessToken, tenantId, { audio: selectedFile, language });
+      setSttDebugResult(response);
+      setFileInfo("STT-only debug completed. Review the trace below.");
+    } catch (err) {
+      setFileError(toVoiceError(err));
+    } finally {
+      setProcessingStage(null);
+      setFileLoading(false);
+    }
+  }
+
+  function resetFileTest() {
+    if (capturedAudioUrl) {
+      URL.revokeObjectURL(capturedAudioUrl);
+      setCapturedAudioUrl(null);
+    }
+    setSelectedFile(null);
+    setFileResult(null);
+    setSttDebugResult(null);
+    setFileError(null);
+    setFileInfo(null);
+    setFileCaptureInfo(null);
+    setCapturedAudioDebug(null);
     setContext("");
     setProcessingStage(null);
   }
@@ -354,6 +558,18 @@ export default function VoiceTestPage() {
           appendLiveEvent(String(payload.text || "Receiving audio"));
           return;
         }
+        if (type === "audio.chunk.received") {
+          const sequence = Number(payload.sequence || 0);
+          const totalChunks = Number(payload.totalChunks || 0);
+          appendLiveEvent(`Chunk acknowledged ${sequence}/${totalChunks}.`);
+          return;
+        }
+        if (type === "audio.buffer.complete") {
+          const totalChunks = Number(payload.totalChunks || 0);
+          const sizeBytes = Number(payload.sizeBytes || 0);
+          appendLiveEvent(`Audio buffered ${totalChunks} chunks • ${formatSize(sizeBytes)}.`);
+          return;
+        }
         if (type === "transcript.final") {
           setLiveTranscript(String(payload.text || ""));
           setLiveStatus("connected");
@@ -364,6 +580,44 @@ export default function VoiceTestPage() {
           setLiveAssistantText(String(payload.text || ""));
           setLiveProviderTrace((payload.providerTrace as VoiceProviderTrace | null) ?? null);
           appendLiveEvent("Assistant text received.");
+          return;
+        }
+        if (type === "assistant.audio.chunk") {
+          const sequence = Number(payload.sequence || 0);
+          const totalChunks = Number(payload.totalChunks || 0);
+          const audioBase64Chunk = String(payload.audioBase64Chunk || "");
+          if (sequence > 0 && audioBase64Chunk) {
+            liveAssistantAudioChunksRef.current.set(sequence, audioBase64Chunk);
+            if (totalChunks > 0) {
+              liveAssistantAudioExpectedChunksRef.current = totalChunks;
+            }
+            appendLiveEvent(`Assistant audio chunk ${sequence}/${totalChunks || "?"} received.`);
+          }
+          return;
+        }
+        if (type === "assistant.audio.end") {
+          const contentType = String(payload.contentType || "audio/mpeg");
+          const totalChunks = liveAssistantAudioExpectedChunksRef.current;
+          if (totalChunks <= 0) {
+            setLiveError("Assistant audio response was incomplete.");
+            appendLiveEvent("Assistant audio ended without chunk metadata.");
+            return;
+          }
+          const chunks: string[] = [];
+          for (let index = 1; index <= totalChunks; index += 1) {
+            const chunk = liveAssistantAudioChunksRef.current.get(index);
+            if (!chunk) {
+              setLiveError(`Assistant audio response is missing chunk ${index}.`);
+              appendLiveEvent(`Assistant audio missing chunk ${index}.`);
+              return;
+            }
+            chunks.push(chunk);
+          }
+          setLiveAudioDataUrl(`data:${contentType};base64,${chunks.join("")}`);
+          liveAssistantAudioChunksRef.current.clear();
+          liveAssistantAudioExpectedChunksRef.current = 0;
+          setLiveProviderTrace((payload.providerTrace as VoiceProviderTrace | null) ?? null);
+          appendLiveEvent(`Assistant audio reconstructed from ${totalChunks} chunk${totalChunks === 1 ? "" : "s"}.`);
           return;
         }
         if (type === "assistant.audio") {
@@ -403,6 +657,13 @@ export default function VoiceTestPage() {
       stopLiveStream();
       liveSocketRef.current = null;
       setLiveStatus("disconnected");
+      liveAssistantAudioChunksRef.current.clear();
+      liveAssistantAudioExpectedChunksRef.current = 0;
+      if (event.code === 1009) {
+        setLiveError("WebSocket message too large. Audio/response chunking failed.");
+        appendLiveEvent(`DISCONNECTED • code=${event.code} reason=message too large`);
+        return;
+      }
       if (event.reason) {
         setLiveError(`WebSocket closed: ${event.reason}`);
         appendLiveEvent(`DISCONNECTED • code=${event.code} reason=${event.reason}`);
@@ -423,7 +684,7 @@ export default function VoiceTestPage() {
     setLiveInfo(null);
     setLiveStatus("connecting");
     const websocketUrl = resolveWebSocketUrl(accessToken, tenantId);
-    appendLiveEvent(`CONNECTING • ${websocketUrl}`);
+    appendLiveEvent(`CONNECTING • ${maskWebSocketUrl(websocketUrl)}`);
     const socket = new WebSocket(websocketUrl);
     liveSocketRef.current = socket;
     bindLiveSocket(socket);
@@ -436,6 +697,14 @@ export default function VoiceTestPage() {
     setLiveAudioDataUrl(null);
     setLiveProviderTrace(null);
     setLiveEvents([]);
+    setLiveCaptureInfo(null);
+    liveChunkSequenceRef.current = 0;
+    liveChunkFilenameRef.current = null;
+    liveChunkContentTypeRef.current = "audio/webm";
+    liveRecordedBytesRef.current = 0;
+    liveSendQueueRef.current = Promise.resolve();
+    liveAssistantAudioChunksRef.current.clear();
+    liveAssistantAudioExpectedChunksRef.current = 0;
     ensureLiveSocket();
   }
 
@@ -449,29 +718,67 @@ export default function VoiceTestPage() {
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+      const mimeType = selectRecordingMimeType();
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      recorder.ondataavailable = async (event) => {
+      const recordingType = recorder.mimeType || mimeType || "audio/webm";
+      const filename = `voice-live-${Date.now()}.${resolveAudioExtensionFromType(recordingType)}`;
+      liveChunkSequenceRef.current = 0;
+      liveChunkFilenameRef.current = filename;
+      liveChunkContentTypeRef.current = recordingType;
+      liveRecordedBytesRef.current = 0;
+      liveSendQueueRef.current = Promise.resolve();
+      setLiveCaptureInfo(`Captured ${recordingType} • Uploading original ${recordingType} as ${filename}.`);
+      recorder.ondataavailable = (event) => {
         if (!event.data || event.data.size === 0) return;
         if (socket.readyState !== WebSocket.OPEN) return;
-        const audioBase64 = await blobToBase64(event.data);
-        socket.send(JSON.stringify({
-          type: "audio.chunk",
-          audioBase64,
-          contentType: event.data.type || "audio/webm",
-        }));
+        liveRecordedBytesRef.current += event.data.size;
+        const capturedType = event.data.type || recordingType || "audio/webm";
+        liveChunkContentTypeRef.current = capturedType;
+        setLiveCaptureInfo(`Captured ${capturedType} • Uploading original ${capturedType} as ${filename} (${formatSize(liveRecordedBytesRef.current)}).`);
+        liveSendQueueRef.current = liveSendQueueRef.current.then(async () => {
+          const audioBase64 = await blobToBase64(event.data);
+          const base64Chunks = splitBase64Chunks(audioBase64);
+          base64Chunks.forEach((audioBase64Chunk) => {
+            liveChunkSequenceRef.current += 1;
+            socket.send(JSON.stringify({
+              type: "audio.chunk",
+              sequence: liveChunkSequenceRef.current,
+              contentType: capturedType,
+              filename,
+              audioBase64Chunk,
+            }));
+          });
+          appendLiveEvent(`Uploaded ${base64Chunks.length} audio chunk${base64Chunks.length === 1 ? "" : "s"} from recorder slice • ${formatSize(event.data.size)}.`);
+        }).catch(() => {
+          setLiveError("Live microphone audio could not be prepared for upload.");
+        });
       };
       recorder.onstop = () => {
+        console.info("[voice-live] browser recording captured", {
+          mimeType: recorder.mimeType,
+          blobType: liveChunkContentTypeRef.current,
+          filename,
+          sizeBytes: liveRecordedBytesRef.current,
+        });
         stopLiveStream();
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "audio.end" }));
-        }
         setLiveStatus("processing");
-        appendLiveEvent("Audio stream ended. Waiting for transcript and response.");
+        void liveSendQueueRef.current.then(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+              type: "audio.end",
+              filename,
+              contentType: liveChunkContentTypeRef.current || recordingType || "audio/webm",
+              totalChunks: liveChunkSequenceRef.current,
+            }));
+          }
+          appendLiveEvent(`Audio stream ended. Uploaded ${liveChunkSequenceRef.current} websocket chunk${liveChunkSequenceRef.current === 1 ? "" : "s"} • waiting for transcript and response.`);
+        }).catch(() => {
+          setLiveStatus("connected");
+        });
       };
       liveMediaStreamRef.current = stream;
       liveMediaRecorderRef.current = recorder;
-      recorder.start(750);
+      recorder.start(500);
       setLiveStatus("recording");
       appendLiveEvent("Microphone streaming started.");
     } catch {
@@ -487,10 +794,8 @@ export default function VoiceTestPage() {
       return;
     }
     stopLiveStream();
-    if (liveSocketRef.current?.readyState === WebSocket.OPEN) {
-      liveSocketRef.current.send(JSON.stringify({ type: "audio.end" }));
-    }
-    setLiveStatus("processing");
+    liveSendQueueRef.current = Promise.resolve();
+    setLiveStatus("connected");
   }
 
   function closeLiveSession(resetState = true) {
@@ -503,6 +808,7 @@ export default function VoiceTestPage() {
     setLiveStatus("disconnected");
     if (resetState) {
       setLiveInfo(null);
+      setLiveCaptureInfo(null);
       appendLiveEvent("Live voice session closed by user.");
     }
   }
@@ -569,7 +875,7 @@ export default function VoiceTestPage() {
                         ref={fileInputRef}
                         hidden
                         type="file"
-                        accept=".wav,.webm,.mp3,.m4a,audio/*"
+                        accept=".wav,.webm,.ogg,.mp3,.m4a,audio/*"
                         onChange={(event) => handleFileSelected(event.target.files?.[0] ?? null)}
                       />
                     </Stack>
@@ -600,7 +906,56 @@ export default function VoiceTestPage() {
                       <Typography variant="body2" color="text.secondary">
                         {selectedFile ? `${selectedFile.name} • ${Math.ceil(selectedFile.size / 1024)} KB` : "Record or upload an audio sample to begin."}
                       </Typography>
+                      {selectedFile ? (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                          MIME: {selectedFile.type || "unknown"} • Size: {formatSize(selectedFile.size)}
+                        </Typography>
+                      ) : null}
+                      {fileCaptureInfo ? (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                          {fileCaptureInfo}
+                        </Typography>
+                      ) : null}
+                      {capturedAudioUrl && capturedAudioDebug ? (
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ mt: 1 }}>
+                          <Button
+                            component="a"
+                            href={capturedAudioUrl}
+                            download={capturedAudioDebug.uploadFilename}
+                            variant="outlined"
+                            size="small"
+                          >
+                            Download captured audio
+                          </Button>
+                          <Typography variant="caption" color="text.secondary" sx={{ alignSelf: "center" }}>
+                            {capturedAudioDebug.uploadFilename}
+                          </Typography>
+                        </Stack>
+                      ) : null}
                     </Paper>
+
+                    {capturedAudioDebug ? (
+                      <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                          Browser recording debug
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          MediaRecorder MIME: {capturedAudioDebug.recorderMimeType || "unknown"}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Final blob: {capturedAudioDebug.finalBlobType || "unknown"} • {formatSize(capturedAudioDebug.finalBlobSize)}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Upload file: {capturedAudioDebug.uploadFilename} • {capturedAudioDebug.uploadMimeType || "unknown"}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Chunk count: {capturedAudioDebug.chunkCount}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5, whiteSpace: "pre-wrap" }}>
+                          Chunk sizes: {capturedAudioDebug.chunkSizes.length > 0 ? capturedAudioDebug.chunkSizes.map((size) => formatSize(size)).join(", ") : "No chunks captured"}
+                        </Typography>
+                      </Paper>
+                    ) : null}
 
                     <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }}>
@@ -633,6 +988,9 @@ export default function VoiceTestPage() {
                       >
                         {fileLoading ? "Processing..." : "Send to backend"}
                       </Button>
+                      <Button variant="outlined" disabled={fileLoading || !selectedFile} onClick={submitSttDebug}>
+                        Debug STT only
+                      </Button>
                       <Button variant="text" startIcon={<AutorenewRoundedIcon />} disabled={fileLoading} onClick={resetFileTest}>
                         Reset
                       </Button>
@@ -663,6 +1021,17 @@ export default function VoiceTestPage() {
                     </Paper>
 
                     <ProviderTraceBlock trace={fileResult?.providerTrace} requestId={fileResult?.requestId ?? null} />
+                    <DebugTracePanel trace={fileResult?.voiceDebugTrace ?? sttDebugResult?.voiceDebugTrace} />
+                    {sttDebugResult ? (
+                      <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                          STT Debug Result
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Provider: {formatProvider(sttDebugResult.sttProvider)} • Transcript: {sttDebugResult.transcript || "No transcript"}
+                        </Typography>
+                      </Paper>
+                    ) : null}
                   </Stack>
                 </Paper>
               </Stack>
@@ -673,6 +1042,7 @@ export default function VoiceTestPage() {
             <Stack spacing={2.5}>
               {liveError ? <Alert severity="error">{liveError}</Alert> : null}
               {liveInfo ? <Alert severity="info">{liveInfo}</Alert> : null}
+              {liveCaptureInfo ? <Alert severity="info">{liveCaptureInfo}</Alert> : null}
               {liveStatusInfo ? (
                 <Alert severity="info">
                   Live websocket path: <strong>{liveStatusInfo.websocketPath}</strong> • auth: <strong>{liveStatusInfo.authMode}</strong> • tenant: <strong>{liveStatusInfo.tenantMode}</strong>

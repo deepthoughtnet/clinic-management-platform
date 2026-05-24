@@ -206,3 +206,6 @@ voice:
     provider-order: ${VOICE_LLM_PROVIDER_ORDER:gemini,groq,mock}
   runtime:
     summary-endpoint: ${VOICE_RUNTIME_SUMMARY_ENDPOINT:http://127.0.0.1:8091/metrics/summary}
+  debug:
+    save-audio: ${VOICE_DEBUG_SAVE_AUDIO:false}
+    audio-dir: ${VOICE_DEBUG_AUDIO_DIR:/tmp/clinic-voice-debug}

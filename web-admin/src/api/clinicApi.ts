@@ -253,6 +253,25 @@ export type VoiceProviderTrace = {
   ttsProvider: string | null;
 };
 
+export type VoiceDebugTraceEntry = {
+  stage: string;
+  ok: boolean;
+  provider: string | null;
+  from: string | null;
+  to: string | null;
+  filename: string | null;
+  contentType: string | null;
+  sizeBytes: number | null;
+  url: string | null;
+  multipartField: string | null;
+  status: number | null;
+  bodyPreview: string | null;
+  durationMs: number | null;
+  transcriptLength: number | null;
+  reason: string | null;
+  savedPath: string | null;
+};
+
 export type VoiceTestResponse = {
   requestId: string;
   transcript: string | null;
@@ -260,6 +279,14 @@ export type VoiceTestResponse = {
   audioContentType: string | null;
   audioBase64: string | null;
   providerTrace: VoiceProviderTrace | null;
+  voiceDebugTrace: VoiceDebugTraceEntry[] | null;
+};
+
+export type VoiceSttDebugResponse = {
+  requestId: string;
+  transcript: string | null;
+  sttProvider: string | null;
+  voiceDebugTrace: VoiceDebugTraceEntry[] | null;
 };
 
 export type VoiceServiceStatus = {
@@ -2263,6 +2290,20 @@ export async function runVoiceTest(
   if (input.context?.trim()) formData.append("context", input.context.trim());
   if (input.language?.trim()) formData.append("language", input.language.trim());
   return httpPostForm<VoiceTestResponse>("/api/voice/test", formData, { token, tenantId });
+}
+
+export async function runVoiceSttDebug(
+  token: string,
+  tenantId: string,
+  input: {
+    audio: File;
+    language?: string;
+  },
+) {
+  const formData = new FormData();
+  formData.append("audio", input.audio);
+  if (input.language?.trim()) formData.append("language", input.language.trim());
+  return httpPostForm<VoiceSttDebugResponse>("/api/voice/debug/stt", formData, { token, tenantId });
 }
 
 export async function getVoiceTestStatus(token: string, tenantId: string, warmup = false) {

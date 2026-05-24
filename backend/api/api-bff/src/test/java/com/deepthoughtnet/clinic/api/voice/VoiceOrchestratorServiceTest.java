@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService;
@@ -177,5 +180,114 @@ class VoiceOrchestratorServiceTest {
                 null
         )).isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("Audio file is required");
+    }
+
+    @Test
+    void configFasterWhisperSelectsFasterWhisperProvider() {
+        VoiceTestResponse response = runWithConfiguredProvider("faster-whisper");
+        assertThat(response.providerTrace().sttProvider()).isEqualTo("FASTER_WHISPER");
+        assertThat(response.voiceDebugTrace()).extracting(VoiceDebugTraceEntry::stage)
+                .contains("FASTER_WHISPER_REQUEST", "FASTER_WHISPER_RESPONSE", "STT_RESULT");
+    }
+
+    @Test
+    void configUpperSnakeFasterWhisperSelectsFasterWhisperProvider() {
+        VoiceTestResponse response = runWithConfiguredProvider("FASTER_WHISPER");
+        assertThat(response.providerTrace().sttProvider()).isEqualTo("FASTER_WHISPER");
+    }
+
+    @Test
+    void configLowerSnakeFasterWhisperSelectsFasterWhisperProvider() {
+        VoiceTestResponse response = runWithConfiguredProvider("faster_whisper");
+        assertThat(response.providerTrace().sttProvider()).isEqualTo("FASTER_WHISPER");
+    }
+
+    @Test
+    void missingConfiguredProviderIsRecordedInDebugTrace() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-4"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("not-a-provider", "mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        AiOrchestrationService ai = mock(AiOrchestrationService.class);
+        when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "gemini", "gemini", "Fallback", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+        ));
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(new MockVoiceTextToSpeechProvider()),
+                ai,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
+        );
+
+        VoiceTestResponse response = service.processAudio(
+                new MockMultipartFile("audio", "sample.wav", "audio/wav", "voice".getBytes()),
+                null,
+                null
+        );
+
+        assertThat(response.voiceDebugTrace()).anySatisfy(entry -> {
+            assertThat(entry.stage()).isEqualTo("STT_PROVIDER_MISSING");
+            assertThat(entry.provider()).isEqualTo("not-a-provider");
+        });
+    }
+
+    private VoiceTestResponse runWithConfiguredProvider(String configuredProvider) {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-provider"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of(configuredProvider, "mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        AiOrchestrationService ai = mock(AiOrchestrationService.class);
+        when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "gemini", "gemini", "Handled", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+        ));
+
+        FasterWhisperSpeechToTextProvider fasterWhisper = mock(FasterWhisperSpeechToTextProvider.class);
+        when(fasterWhisper.providerName()).thenReturn("faster-whisper");
+        when(fasterWhisper.isReady()).thenReturn(true);
+        when(fasterWhisper.transcribeWithDebug(any(), any())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            List<VoiceDebugTraceEntry> trace = (List<VoiceDebugTraceEntry>) invocation.getArgument(1);
+            trace.add(new VoiceDebugTraceEntry("FASTER_WHISPER_REQUEST", true, "faster-whisper", null, null, "sample.wav", "audio/wav", 5L, "http://faster-whisper:8000/transcribe", "file", null, null, null, null, null, null));
+            trace.add(new VoiceDebugTraceEntry("FASTER_WHISPER_RESPONSE", true, "faster-whisper", null, null, "sample.wav", "audio/wav", 5L, "http://faster-whisper:8000/transcribe", "file", 200, "{\"text\":\"hello\"}", 5L, null, null, null));
+            trace.add(new VoiceDebugTraceEntry("STT_RESULT", true, "FASTER_WHISPER", null, null, "sample.wav", "audio/wav", 5L, null, null, 200, null, 5L, 5, null, null));
+            return new VoiceTranscriptionResult("hello", "FASTER_WHISPER", null);
+        });
+        PiperTextToSpeechProvider piper = mock(PiperTextToSpeechProvider.class);
+
+        MockVoiceSpeechToTextProvider mockProvider = spy(new MockVoiceSpeechToTextProvider());
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(fasterWhisper, mockProvider),
+                List.of(new MockVoiceTextToSpeechProvider()),
+                ai,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                fasterWhisper,
+                piper
+        );
+
+        VoiceTestResponse response = service.processAudio(
+                new MockMultipartFile("audio", "sample.wav", "audio/wav", "voice".getBytes()),
+                null,
+                null
+        );
+
+        verify(fasterWhisper).transcribeWithDebug(any(), any());
+        verify(mockProvider, never()).transcribe(any());
+        return response;
     }
 }

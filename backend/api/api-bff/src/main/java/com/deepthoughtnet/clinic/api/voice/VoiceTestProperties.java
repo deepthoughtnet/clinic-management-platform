@@ -11,6 +11,7 @@ public class VoiceTestProperties {
     private final Stt stt = new Stt();
     private final Tts tts = new Tts();
     private final Llm llm = new Llm();
+    private final Debug debug = new Debug();
 
     public boolean isEnabled() {
         return enabled;
@@ -30,6 +31,10 @@ public class VoiceTestProperties {
 
     public Llm getLlm() {
         return llm;
+    }
+
+    public Debug getDebug() {
+        return debug;
     }
 
     public static class Stt {
@@ -241,6 +246,27 @@ public class VoiceTestProperties {
 
         public void setProviderOrder(List<String> providerOrder) {
             this.providerOrder = providerOrder;
+        }
+    }
+
+    public static class Debug {
+        private boolean saveAudio = false;
+        private String audioDir = "/tmp/clinic-voice-debug";
+
+        public boolean isSaveAudio() {
+            return saveAudio;
+        }
+
+        public void setSaveAudio(boolean saveAudio) {
+            this.saveAudio = saveAudio;
+        }
+
+        public String getAudioDir() {
+            return audioDir;
+        }
+
+        public void setAudioDir(String audioDir) {
+            this.audioDir = audioDir;
         }
     }
 }

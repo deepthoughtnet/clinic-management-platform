@@ -38,4 +38,13 @@ public class VoiceTestController {
     ) {
         return voiceOrchestratorService.processAudio(audio, context, language);
     }
+
+    @PostMapping("/debug/stt")
+    @PreAuthorize("@permissionChecker.hasPermission('ai.voice.test')")
+    public VoiceSttDebugResponse debugStt(
+            @RequestParam("audio") MultipartFile audio,
+            @RequestParam(value = "language", required = false) String language
+    ) {
+        return voiceOrchestratorService.debugStt(audio, language);
+    }
 }

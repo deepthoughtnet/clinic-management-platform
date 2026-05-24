@@ -6,7 +6,16 @@ record VoiceTestResponse(
         String assistantText,
         String audioContentType,
         String audioBase64,
-        VoiceProviderTrace providerTrace
+        VoiceProviderTrace providerTrace,
+        java.util.List<VoiceDebugTraceEntry> voiceDebugTrace
+) {
+}
+
+record VoiceSttDebugResponse(
+        String requestId,
+        String transcript,
+        String sttProvider,
+        java.util.List<VoiceDebugTraceEntry> voiceDebugTrace
 ) {
 }
 
@@ -38,5 +47,25 @@ record VoiceServiceStatus(
         boolean reachable,
         boolean ready,
         String message
+) {
+}
+
+record VoiceDebugTraceEntry(
+        String stage,
+        boolean ok,
+        String provider,
+        String from,
+        String to,
+        String filename,
+        String contentType,
+        Long sizeBytes,
+        String url,
+        String multipartField,
+        Integer status,
+        String bodyPreview,
+        Long durationMs,
+        Integer transcriptLength,
+        String reason,
+        String savedPath
 ) {
 }

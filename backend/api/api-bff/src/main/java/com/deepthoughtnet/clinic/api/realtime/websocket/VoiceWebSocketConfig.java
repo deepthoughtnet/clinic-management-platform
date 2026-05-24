@@ -6,7 +6,9 @@ import com.deepthoughtnet.clinic.realtime.voice.events.VoiceSessionEventBus;
 import com.deepthoughtnet.clinic.realtime.voice.metrics.RealtimeVoiceGatewayMetrics;
 import com.deepthoughtnet.clinic.realtime.voice.session.RealtimeVoiceSessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.socket.server.standard.ServletServerContainerFactoryBean;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
@@ -42,5 +44,13 @@ public class VoiceWebSocketConfig implements WebSocketConfigurer {
         registry.addHandler(new VoiceTestWebSocketHandler(objectMapper, voiceOrchestratorService), "/ws/voice/test")
                 .addInterceptors(authInterceptor)
                 .setAllowedOrigins("*");
+    }
+
+    @Bean
+    ServletServerContainerFactoryBean voiceWebSocketContainer() {
+        ServletServerContainerFactoryBean container = new ServletServerContainerFactoryBean();
+        container.setMaxTextMessageBufferSize(256 * 1024);
+        container.setMaxBinaryMessageBufferSize(256 * 1024);
+        return container;
     }
 }

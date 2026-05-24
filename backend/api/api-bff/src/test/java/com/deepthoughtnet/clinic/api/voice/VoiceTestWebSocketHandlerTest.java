@@ -34,22 +34,101 @@ class VoiceTestWebSocketHandlerTest {
                         "I can help you with that.",
                         null,
                         null,
-                        new VoiceProviderTrace("mock", "gemini", "mock")
+                        new VoiceProviderTrace("mock", "gemini", "mock"),
+                        List.of()
                 )
         );
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), orchestrator);
         SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-1");
+        String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
 
         handler.afterConnectionEstablished(fixture.session);
         handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"language\":\"en-IN\",\"context\":\"clinic receptionist test\"}"));
-        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"audioBase64\":\"" + Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8)) + "\",\"contentType\":\"audio/webm\"}"));
-        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":1,\"filename\":\"voice-live-1.webm\",\"audioBase64Chunk\":\"" + audioBase64 + "\",\"contentType\":\"audio/webm\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"filename\":\"voice-live-1.webm\",\"contentType\":\"audio/webm\",\"totalChunks\":1}"));
 
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"session.started\""));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"audio.chunk.received\""));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"audio.buffer.complete\""));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"transcript.final\"") && payload.contains("book an appointment"));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"assistant.text\"") && payload.contains("help you with that"));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"session.closed\""));
         verify(orchestrator).processBufferedAudio(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void missingChunkReturnsClearError() throws Exception {
+        VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), mock(VoiceOrchestratorService.class));
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-4");
+        String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":2,\"filename\":\"voice-live-2.webm\",\"audioBase64Chunk\":\"" + audioBase64 + "\",\"contentType\":\"audio/webm\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"filename\":\"voice-live-2.webm\",\"contentType\":\"audio/webm\",\"totalChunks\":2}"));
+
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"error\"") && payload.contains("Missing chunks"));
+    }
+
+    @Test
+    void streamedChunksCanDeclareTotalOnlyAtAudioEnd() throws Exception {
+        VoiceOrchestratorService orchestrator = mock(VoiceOrchestratorService.class);
+        when(orchestrator.processBufferedAudio(any(), any(), any(), any(), any())).thenReturn(
+                new VoiceTestResponse(
+                        "req-2",
+                        "Live websocket transcript.",
+                        "Here is the live response.",
+                        null,
+                        null,
+                        new VoiceProviderTrace("faster-whisper", "gemini", "piper"),
+                        List.of()
+                )
+        );
+        VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), orchestrator);
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-5");
+
+        String fullBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
+        String partOne = fullBase64.substring(0, fullBase64.length() / 2);
+        String partTwo = fullBase64.substring(fullBase64.length() / 2);
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"filename\":\"voice-live-3.webm\",\"audioBase64Chunk\":\"" + partOne + "\",\"contentType\":\"audio/webm;codecs=opus\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":2,\"filename\":\"voice-live-3.webm\",\"audioBase64Chunk\":\"" + partTwo + "\",\"contentType\":\"audio/webm;codecs=opus\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"filename\":\"voice-live-3.webm\",\"contentType\":\"audio/webm;codecs=opus\",\"totalChunks\":2}"));
+
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"audio.buffer.complete\""));
+        verify(orchestrator).processBufferedAudio(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void assistantAudioIsReturnedAsChunkedEvents() throws Exception {
+        VoiceOrchestratorService orchestrator = mock(VoiceOrchestratorService.class);
+        String largeAudioBase64 = "A".repeat(40_000);
+        when(orchestrator.processBufferedAudio(any(), any(), any(), any(), any())).thenReturn(
+                new VoiceTestResponse(
+                        "req-3",
+                        "Transcript.",
+                        "Assistant response.",
+                        "audio/wav",
+                        largeAudioBase64,
+                        new VoiceProviderTrace("faster-whisper", "gemini", "piper"),
+                        List.of()
+                )
+        );
+        VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), orchestrator);
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("CLINIC_ADMIN"), "session-6");
+        String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.chunk\",\"sequence\":1,\"totalChunks\":1,\"filename\":\"voice-live-1.webm\",\"audioBase64Chunk\":\"" + audioBase64 + "\",\"contentType\":\"audio/webm\"}"));
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"audio.end\",\"filename\":\"voice-live-1.webm\",\"contentType\":\"audio/webm\",\"totalChunks\":1}"));
+
+        assertThat(fixture.payloads()).noneMatch(payload -> payload.contains("\"type\":\"assistant.audio\""));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"assistant.audio.chunk\"") && payload.contains("\"sequence\":1"));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"assistant.audio.chunk\"") && payload.contains("\"sequence\":2"));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"assistant.audio.end\"") && payload.contains("\"contentType\":\"audio/wav\""));
     }
 
     @Test

@@ -18,15 +18,20 @@ import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -65,6 +70,7 @@ public class VoiceOrchestratorService {
         this.objectMapper = objectMapper;
         this.fasterWhisperSpeechToTextProvider = fasterWhisperSpeechToTextProvider;
         this.piperTextToSpeechProvider = piperTextToSpeechProvider;
+        log.info("voice.stt.providers.available={}", sttProviders.stream().map(this::providerKey).toList());
     }
 
     public VoiceTestResponse processAudio(MultipartFile audio, String context, String language) {
@@ -74,10 +80,57 @@ public class VoiceOrchestratorService {
         if (audio == null || audio.isEmpty()) {
             throw new IllegalArgumentException("Audio file is required.");
         }
+        log.info("voice.audio.received filename={} contentType={} sizeBytes={}",
+                safeFilename(audio.getOriginalFilename()),
+                audio.getContentType(),
+                audio.getSize());
         try {
             return processBufferedAudio(audio.getBytes(), audio.getContentType(), audio.getOriginalFilename(), context, language);
         } catch (IOException ex) {
             throw new IllegalStateException("Voice test failed: " + ex.getMessage(), ex);
+        }
+    }
+
+    public VoiceSttDebugResponse debugStt(MultipartFile audio, String language) {
+        if (!properties.isEnabled()) {
+            throw new IllegalArgumentException("Voice test is disabled.");
+        }
+        if (audio == null || audio.isEmpty()) {
+            throw new IllegalArgumentException("Audio file is required.");
+        }
+        try {
+            byte[] audioBytes = audio.getBytes();
+            if (audioBytes.length == 0) {
+                throw new IllegalArgumentException("Audio file is required.");
+            }
+            RequestContextHolder.requireTenantId();
+            UUID requestId = UUID.randomUUID();
+            String normalizedLanguage = StringUtils.hasText(language) ? language.trim() : "en";
+            validateAudio(audio.getOriginalFilename(), audio.getContentType());
+            List<VoiceDebugTraceEntry> debugTrace = new ArrayList<>();
+            debugTrace.add(trace("BACKEND_RECEIVED_AUDIO", true, null, null, null,
+                    safeFilename(audio.getOriginalFilename()), audio.getContentType(), (long) audioBytes.length,
+                    null, null, null, null, null, null, null, null));
+            saveInspectionAudio(requestId, audioBytes, audio.getOriginalFilename(), audio.getContentType(), debugTrace);
+            saveDebugAudioIfEnabled(requestId, audioBytes, audio.getOriginalFilename(), debugTrace);
+            VoiceTranscriptionResult transcription = transcribe(
+                    new VoiceTranscriptionRequest(
+                            RequestContextHolder.requireTenantId(),
+                            audioBytes,
+                            audio.getContentType(),
+                            audio.getOriginalFilename(),
+                            normalizedLanguage
+                    ),
+                    debugTrace
+            );
+            return new VoiceSttDebugResponse(
+                    requestId.toString(),
+                    transcription.transcript(),
+                    transcription.providerName(),
+                    List.copyOf(debugTrace)
+            );
+        } catch (IOException ex) {
+            throw new IllegalStateException("Voice STT debug failed: " + ex.getMessage(), ex);
         }
     }
 
@@ -99,6 +152,12 @@ public class VoiceOrchestratorService {
         String normalizedLanguage = StringUtils.hasText(language) ? language.trim() : "en";
         validateAudio(originalFilename, contentType);
         Instant requestStart = Instant.now();
+        List<VoiceDebugTraceEntry> debugTrace = new ArrayList<>();
+        debugTrace.add(trace("BACKEND_RECEIVED_AUDIO", true, null, null, null,
+                safeFilename(originalFilename), contentType, (long) audioBytes.length,
+                null, null, null, null, null, null, null, null));
+        saveInspectionAudio(requestId, audioBytes, originalFilename, contentType, debugTrace);
+        saveDebugAudioIfEnabled(requestId, audioBytes, originalFilename, debugTrace);
         log.info("voice.request.start requestId={} tenantId={} contentType={} sizeBytes={} filename={}",
                 requestId,
                 tenantId,
@@ -120,7 +179,8 @@ public class VoiceOrchestratorService {
                             contentType,
                             originalFilename,
                             normalizedLanguage
-                    )
+                    ),
+                    debugTrace
             );
             log.info("voice.stt.complete requestId={} provider={} durationMs={} transcriptPreview={}",
                     requestId,
@@ -176,7 +236,8 @@ public class VoiceOrchestratorService {
                             transcription.providerName(),
                             aiResponse.provider(),
                             synthesis.providerName()
-                    )
+                    ),
+                    List.copyOf(debugTrace)
             );
             log.info("voice.request.complete requestId={} durationMs={} sttProvider={} llmProvider={} ttsProvider={}",
                     requestId,
@@ -196,7 +257,7 @@ public class VoiceOrchestratorService {
                     tenantId,
                     requestContext.appUserId(),
                     requestContext.correlationId(),
-                    new VoiceTestResponse(requestId.toString(), null, null, null, null, new VoiceProviderTrace(null, null, null)),
+                    new VoiceTestResponse(requestId.toString(), null, null, null, null, new VoiceProviderTrace(null, null, null), List.copyOf(debugTrace)),
                     false,
                     ex.getMessage()
             );
@@ -228,18 +289,78 @@ public class VoiceOrchestratorService {
         );
     }
 
-    private VoiceTranscriptionResult transcribe(VoiceTranscriptionRequest request) {
+    private VoiceTranscriptionResult transcribe(VoiceTranscriptionRequest request, List<VoiceDebugTraceEntry> debugTrace) {
         List<String> providerOrder = properties.getStt().getProviderOrder();
+        log.info("voice.stt.provider-order={}", providerOrder);
+        List<String> availableProviders = sttProviders.stream().map(this::providerKey).toList();
+        for (String configured : providerOrder) {
+            String normalizedConfigured = normalizeProviderKey(configured);
+            if (!availableProviders.contains(normalizedConfigured)) {
+                log.warn("voice.stt.provider.missing configured={} available={}", normalizedConfigured, availableProviders);
+                if (debugTrace != null) {
+                    debugTrace.add(trace(
+                            "STT_PROVIDER_MISSING",
+                            false,
+                            normalizedConfigured,
+                            null,
+                            null,
+                            safeFilename(request.filename()),
+                            request.contentType(),
+                            sizeOf(request.audioBytes()),
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            "Configured STT provider is not registered in the runtime.",
+                            null
+                    ));
+                }
+            }
+        }
         IllegalStateException lastFailure = null;
-        for (SpeechToTextProvider provider : orderedSttProviders(providerOrder)) {
+        List<SpeechToTextProvider> orderedProviders = orderedSttProviders(providerOrder);
+        for (int index = 0; index < orderedProviders.size(); index += 1) {
+            SpeechToTextProvider provider = orderedProviders.get(index);
+            log.info("voice.stt.provider.try provider={}", provider.providerName());
             if (!provider.isReady()) {
                 log.info("voice.stt.skip provider={} reason=not-ready", provider.providerName());
                 continue;
             }
             try {
-                return provider.transcribe(request);
+                if (provider instanceof FasterWhisperSpeechToTextProvider fasterWhisperProvider) {
+                    return fasterWhisperProvider.transcribeWithDebug(request, debugTrace);
+                }
+                VoiceTranscriptionResult result = provider.transcribe(request);
+                if (debugTrace != null) {
+                    debugTrace.add(trace("STT_RESULT", true, result.providerName(), null, null,
+                            safeFilename(request.filename()), request.contentType(), sizeOf(request.audioBytes()),
+                            null, null, null, null, null, result.transcript() == null ? 0 : result.transcript().length(), null, null));
+                }
+                return result;
             } catch (RuntimeException ex) {
                 log.warn("voice.stt.fallback provider={} reason={}", provider.providerName(), ex.getMessage());
+                if (debugTrace != null) {
+                    debugTrace.add(trace(
+                            "STT_FALLBACK",
+                            false,
+                            null,
+                            provider.providerName(),
+                            index + 1 < orderedProviders.size() ? orderedProviders.get(index + 1).providerName() : null,
+                            safeFilename(request.filename()),
+                            request.contentType(),
+                            sizeOf(request.audioBytes()),
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            ex.getMessage(),
+                            null
+                    ));
+                }
                 lastFailure = new IllegalStateException(ex.getMessage(), ex);
             }
         }
@@ -278,10 +399,10 @@ public class VoiceOrchestratorService {
             return sttProviders;
         }
         Map<String, SpeechToTextProvider> byName = new LinkedHashMap<>();
-        sttProviders.forEach(provider -> byName.put(provider.providerName().toLowerCase(Locale.ROOT), provider));
+        sttProviders.forEach(provider -> byName.put(providerKey(provider), provider));
         List<SpeechToTextProvider> ordered = new java.util.ArrayList<>();
         for (String name : configuredOrder) {
-            SpeechToTextProvider provider = byName.remove(name.toLowerCase(Locale.ROOT));
+            SpeechToTextProvider provider = byName.remove(normalizeProviderKey(name));
             if (provider != null) {
                 ordered.add(provider);
             }
@@ -397,5 +518,150 @@ public class VoiceOrchestratorService {
             return "voice-input";
         }
         return originalFilename.replaceAll("[\\r\\n]", "_");
+    }
+
+    private void saveDebugAudioIfEnabled(UUID requestId,
+                                         byte[] audioBytes,
+                                         String originalFilename,
+                                         List<VoiceDebugTraceEntry> debugTrace) {
+        if (!properties.getDebug().isSaveAudio()) {
+            return;
+        }
+        try {
+            Path audioDir = Path.of(properties.getDebug().getAudioDir());
+            Files.createDirectories(audioDir);
+            String suffix = fileSuffix(originalFilename);
+            Path output = audioDir.resolve(requestId + suffix);
+            Files.write(output, audioBytes);
+            log.info("voice.audio.saved requestId={} path={}", requestId, output);
+            if (debugTrace != null) {
+                debugTrace.add(trace("BACKEND_AUDIO_SAVED", true, null, null, null,
+                        safeFilename(originalFilename), null, (long) audioBytes.length,
+                        null, null, null, null, null, null, null, output.toString()));
+            }
+        } catch (IOException ex) {
+            log.warn("voice.audio.save_failed requestId={} reason={}", requestId, ex.getMessage());
+        }
+    }
+
+    private void saveInspectionAudio(UUID requestId,
+                                     byte[] audioBytes,
+                                     String originalFilename,
+                                     String contentType,
+                                     List<VoiceDebugTraceEntry> debugTrace) {
+        try {
+            Path audioDir = Path.of(properties.getDebug().getAudioDir());
+            cleanupExpiredDebugAudio(audioDir);
+            Files.createDirectories(audioDir);
+            String suffix = fileSuffix(originalFilename);
+            Path output = audioDir.resolve(requestId + suffix);
+            Files.write(output, audioBytes);
+            log.info("voice.audio.saved requestId={} filename={} contentType={} sizeBytes={} savedPath={}",
+                    requestId,
+                    safeFilename(originalFilename),
+                    contentType,
+                    audioBytes.length,
+                    output);
+            if (debugTrace != null) {
+                debugTrace.add(trace("BACKEND_AUDIO_SAVED", true, null, null, null,
+                        safeFilename(originalFilename), contentType, (long) audioBytes.length,
+                        null, null, null, null, null, null, null, output.toString()));
+            }
+        } catch (IOException ex) {
+            log.warn("voice.audio.save_failed requestId={} reason={}", requestId, ex.getMessage());
+        }
+    }
+
+    private void cleanupExpiredDebugAudio(Path audioDir) {
+        try {
+            if (!Files.exists(audioDir)) {
+                return;
+            }
+            Instant cutoff = Instant.now().minus(Duration.ofHours(1));
+            try (Stream<Path> paths = Files.list(audioDir)) {
+                paths.filter(Files::isRegularFile).forEach(path -> deleteIfOlderThan(path, cutoff));
+            }
+        } catch (IOException ex) {
+            log.debug("voice.audio.cleanup_skipped reason={}", ex.getMessage());
+        }
+    }
+
+    private void deleteIfOlderThan(Path path, Instant cutoff) {
+        try {
+            FileTime modifiedTime = Files.getLastModifiedTime(path);
+            if (modifiedTime.toInstant().isBefore(cutoff)) {
+                Files.deleteIfExists(path);
+            }
+        } catch (IOException ex) {
+            log.debug("voice.audio.cleanup_failed path={} reason={}", path, ex.getMessage());
+        }
+    }
+
+    private String fileSuffix(String originalFilename) {
+        if (!StringUtils.hasText(originalFilename)) {
+            return ".bin";
+        }
+        int dotIndex = originalFilename.lastIndexOf('.');
+        if (dotIndex < 0 || dotIndex == originalFilename.length() - 1) {
+            return ".bin";
+        }
+        return originalFilename.substring(dotIndex);
+    }
+
+    private Long sizeOf(byte[] audioBytes) {
+        return audioBytes == null ? null : (long) audioBytes.length;
+    }
+
+    private VoiceDebugTraceEntry trace(String stage,
+                                       boolean ok,
+                                       String provider,
+                                       String from,
+                                       String to,
+                                       String filename,
+                                       String contentType,
+                                       Long sizeBytes,
+                                       String url,
+                                       String multipartField,
+                                       Integer status,
+                                       String bodyPreview,
+                                       Long durationMs,
+                                       Integer transcriptLength,
+                                       String reason,
+                                       String savedPath) {
+        return new VoiceDebugTraceEntry(
+                stage,
+                ok,
+                provider,
+                from,
+                to,
+                filename,
+                contentType,
+                sizeBytes,
+                url,
+                multipartField,
+                status,
+                bodyPreview,
+                durationMs,
+                transcriptLength,
+                reason,
+                savedPath
+        );
+    }
+
+    private String providerKey(SpeechToTextProvider provider) {
+        return normalizeProviderKey(provider.providerName());
+    }
+
+    private String normalizeProviderKey(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT)
+                .replace('_', '-')
+                .replace(' ', '-');
+        if ("fasterwhisper".equals(normalized)) {
+            return "faster-whisper";
+        }
+        return normalized;
     }
 }
