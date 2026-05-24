@@ -26,6 +26,7 @@ import com.deepthoughtnet.clinic.inventory.db.SupplierInvoiceRepository;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.deepthoughtnet.clinic.ocr.spi.OcrProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -67,6 +68,7 @@ class PharmacyOperationsServiceReconciliationTest {
     private ObjectStorageService storageService;
     private ObjectProvider<OcrProvider> ocrProvider;
     private ObjectMapper objectMapper;
+    private AuditEventPublisher auditEventPublisher;
     private PharmacyOperationsService service;
     private MedicineEntity medicine;
     private StockEntity stock;
@@ -88,6 +90,7 @@ class PharmacyOperationsServiceReconciliationTest {
         storageService = mock(ObjectStorageService.class);
         ocrProvider = mock(ObjectProvider.class);
         objectMapper = new ObjectMapper();
+        auditEventPublisher = mock(AuditEventPublisher.class);
 
         medicine = mock(MedicineEntity.class);
         stock = StockEntity.create(TENANT_ID, MEDICINE_ID, LOCATION_ID);
@@ -136,6 +139,7 @@ class PharmacyOperationsServiceReconciliationTest {
                 supplierInvoiceRepository,
                 goodsReceiptRepository,
                 dispensingService,
+                auditEventPublisher,
                 storageService,
                 ocrProvider,
                 objectMapper,
@@ -169,6 +173,7 @@ class PharmacyOperationsServiceReconciliationTest {
         assertThat(posted.confirmedAt()).isNotNull();
         assertThat(stock.getQuantityOnHand()).isEqualTo(7);
         verify(inventoryService).createTransaction(eq(TENANT_ID), any(InventoryTransactionCommand.class), eq(REVIEWER_ID));
+        verify(auditEventPublisher, org.mockito.Mockito.atLeast(3)).record(any());
     }
 
     @Test

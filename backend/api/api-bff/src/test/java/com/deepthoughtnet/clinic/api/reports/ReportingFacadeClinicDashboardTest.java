@@ -23,6 +23,13 @@ import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationStatus;
 import com.deepthoughtnet.clinic.consultation.service.model.TemperatureUnit;
+import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
+import com.deepthoughtnet.clinic.inventory.db.MedicineRepository;
+import com.deepthoughtnet.clinic.inventory.db.PharmacyCashierShiftRepository;
+import com.deepthoughtnet.clinic.inventory.db.PharmacySaleItemRepository;
+import com.deepthoughtnet.clinic.inventory.db.PharmacySalePaymentRepository;
+import com.deepthoughtnet.clinic.inventory.db.PharmacySaleRepository;
+import com.deepthoughtnet.clinic.inventory.db.PharmacySaleReturnRepository;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.notification.service.NotificationCenterService;
@@ -51,6 +58,13 @@ class ReportingFacadeClinicDashboardTest {
     @Mock private VaccinationService vaccinationService;
     @Mock private PrescriptionService prescriptionService;
     @Mock private InventoryService inventoryService;
+    @Mock private MedicineRepository medicineRepository;
+    @Mock private PharmacySaleRepository pharmacySaleRepository;
+    @Mock private PharmacySaleItemRepository pharmacySaleItemRepository;
+    @Mock private PharmacySalePaymentRepository pharmacySalePaymentRepository;
+    @Mock private PharmacySaleReturnRepository pharmacySaleReturnRepository;
+    @Mock private PharmacyCashierShiftRepository pharmacyCashierShiftRepository;
+    @Mock private AppUserRepository appUserRepository;
     @Mock private PatientRepository patientRepository;
     @Mock private NotificationCenterService notificationCenterService;
 
@@ -65,6 +79,13 @@ class ReportingFacadeClinicDashboardTest {
                 vaccinationService,
                 prescriptionService,
                 inventoryService,
+                medicineRepository,
+                pharmacySaleRepository,
+                pharmacySaleItemRepository,
+                pharmacySalePaymentRepository,
+                pharmacySaleReturnRepository,
+                pharmacyCashierShiftRepository,
+                appUserRepository,
                 patientRepository,
                 notificationCenterService
         );

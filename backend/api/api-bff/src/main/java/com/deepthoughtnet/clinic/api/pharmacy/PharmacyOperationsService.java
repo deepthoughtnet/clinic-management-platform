@@ -27,6 +27,9 @@ import com.deepthoughtnet.clinic.inventory.service.model.MedicineRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineUpsertCommand;
 import com.deepthoughtnet.clinic.inventory.service.model.StockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockUpsertCommand;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.deepthoughtnet.clinic.ocr.spi.OcrDocument;
 import com.deepthoughtnet.clinic.ocr.spi.OcrProvider;
@@ -84,6 +87,7 @@ public class PharmacyOperationsService {
     private final SupplierInvoiceRepository supplierInvoiceRepository;
     private final GoodsReceiptRepository goodsReceiptRepository;
     private final PrescriptionDispensingService dispensingService;
+    private final AuditEventPublisher auditEventPublisher;
     private final ObjectStorageService storageService;
     private final ObjectProvider<OcrProvider> ocrProvider;
     private final ObjectMapper objectMapper;
@@ -100,6 +104,7 @@ public class PharmacyOperationsService {
             SupplierInvoiceRepository supplierInvoiceRepository,
             GoodsReceiptRepository goodsReceiptRepository,
             PrescriptionDispensingService dispensingService,
+            AuditEventPublisher auditEventPublisher,
             ObjectStorageService storageService,
             ObjectProvider<OcrProvider> ocrProvider,
             ObjectMapper objectMapper,
@@ -115,6 +120,7 @@ public class PharmacyOperationsService {
         this.supplierInvoiceRepository = supplierInvoiceRepository;
         this.goodsReceiptRepository = goodsReceiptRepository;
         this.dispensingService = dispensingService;
+        this.auditEventPublisher = auditEventPublisher;
         this.storageService = storageService;
         this.ocrProvider = ocrProvider;
         this.objectMapper = objectMapper;
@@ -205,6 +211,21 @@ public class PharmacyOperationsService {
         String failedRowsCsv = buildFailedRowsCsv(rows);
         int total = created + updated + skipped + failed;
         log.info("Medicine CSV import summary tenantId={} totalRows={} successCount={} failedCount={}", tenantId, total, created + updated + skipped, failed);
+        audit(
+                "pharmacy.medicine.imported",
+                "MEDICINE_IMPORT",
+                tenantId,
+                tenantId,
+                actorAppUserId,
+                "Imported medicine master CSV",
+                Map.of(
+                        "totalRows", total,
+                        "createdCount", created,
+                        "updatedCount", updated,
+                        "skippedCount", skipped,
+                        "failedCount", failed
+                )
+        );
         return new MedicineImportResult(total, created, updated, skipped, failed, rows, failedRowsCsv);
     }
 
@@ -325,6 +346,7 @@ public class PharmacyOperationsService {
             entity.captureCount(physical, physical - systemQuantity, normalizeNullable(request.reason()));
             entity = reconciliationRepository.save(entity);
         }
+        auditReconciliation("pharmacy.reconciliation.created", tenantId, entity, actorAppUserId, "Created pharmacy reconciliation");
         return toRecord(entity, medicine, supplier);
     }
 
@@ -354,6 +376,7 @@ public class PharmacyOperationsService {
         entity = reconciliationRepository.save(entity);
         entity.captureCount(physicalQuantity == null ? entity.getPhysicalQuantity() : physicalQuantity, varianceQuantity == null ? 0 : varianceQuantity, normalizeNullable(request.reason()));
         entity = reconciliationRepository.save(entity);
+        auditReconciliation("pharmacy.reconciliation.updated", tenantId, entity, actorAppUserId, "Updated pharmacy reconciliation");
         return toRecord(entity, medicine, supplier);
     }
 
@@ -369,6 +392,7 @@ public class PharmacyOperationsService {
         }
         entity.submit(actorAppUserId);
         PharmacyReconciliationEntity saved = reconciliationRepository.save(entity);
+        auditReconciliation("pharmacy.reconciliation.submitted", tenantId, saved, actorAppUserId, "Submitted pharmacy reconciliation");
         return toRecord(saved,
                 saved.getMedicineId() == null ? null : medicineRepository.findByTenantIdAndId(tenantId, saved.getMedicineId()).orElse(null),
                 saved.getSupplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId()).orElse(null));
@@ -382,6 +406,7 @@ public class PharmacyOperationsService {
         ensureDifferentReviewer(entity, actorAppUserId);
         entity.approve(actorAppUserId, normalizeNullable(request == null ? null : request.reason()));
         PharmacyReconciliationEntity saved = reconciliationRepository.save(entity);
+        auditReconciliation("pharmacy.reconciliation.approved", tenantId, saved, actorAppUserId, "Approved pharmacy reconciliation");
         return toRecord(saved,
                 saved.getMedicineId() == null ? null : medicineRepository.findByTenantIdAndId(tenantId, saved.getMedicineId()).orElse(null),
                 saved.getSupplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId()).orElse(null));
@@ -398,6 +423,7 @@ public class PharmacyOperationsService {
         ensureDifferentReviewer(entity, actorAppUserId);
         entity.reject(actorAppUserId, normalizeNullable(request.reason()));
         PharmacyReconciliationEntity saved = reconciliationRepository.save(entity);
+        auditReconciliation("pharmacy.reconciliation.rejected", tenantId, saved, actorAppUserId, "Rejected pharmacy reconciliation");
         return toRecord(saved,
                 saved.getMedicineId() == null ? null : medicineRepository.findByTenantIdAndId(tenantId, saved.getMedicineId()).orElse(null),
                 saved.getSupplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId()).orElse(null));
@@ -420,6 +446,7 @@ public class PharmacyOperationsService {
         }
         entity.post(actorAppUserId);
         PharmacyReconciliationEntity saved = reconciliationRepository.save(entity);
+        auditReconciliation("pharmacy.reconciliation.posted", tenantId, saved, actorAppUserId, "Posted pharmacy reconciliation");
         return toRecord(saved,
                 saved.getMedicineId() == null ? null : medicineRepository.findByTenantIdAndId(tenantId, saved.getMedicineId()).orElse(null),
                 saved.getSupplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId()).orElse(null));
@@ -445,6 +472,19 @@ public class PharmacyOperationsService {
         String extractionStatus = rows.isEmpty() ? "FAILED" : "EXTRACTED";
         entity.attachSheet(null, filename, file.getContentType(), storageKey, extractionStatus, extractionProvider, confidence, rowsJson);
         reconciliationRepository.save(entity);
+        auditReconciliation(
+                "pharmacy.reconciliation.sheet_uploaded",
+                tenantId,
+                entity,
+                null,
+                "Uploaded stock reconciliation sheet",
+                Map.of(
+                        "fileName", filename,
+                        "extractionStatus", extractionStatus,
+                        "extractionProvider", extractionProvider,
+                        "rowCount", rows.size()
+                )
+        );
         return new ReconciliationUploadResponse(entity.getId(), filename, file.getContentType(), storageKey, extractionStatus, extractionProvider, confidence, rows);
     }
 
@@ -458,6 +498,17 @@ public class PharmacyOperationsService {
             entity.captureCount(entity.getPhysicalQuantity(), entity.getVarianceQuantity() == null ? 0 : entity.getVarianceQuantity(), normalizeNullable(request.reviewNote()));
         }
         reconciliationRepository.save(entity);
+        Map<String, Object> reviewAuditDetails = new LinkedHashMap<>();
+        reviewAuditDetails.put("rowCount", request == null || request.rows() == null ? 0 : request.rows().size());
+        reviewAuditDetails.put("reviewNote", normalizeNullable(request == null ? null : request.reviewNote()));
+        auditReconciliation(
+                "pharmacy.reconciliation.sheet_reviewed",
+                tenantId,
+                entity,
+                actorAppUserId,
+                "Reviewed stock reconciliation extraction",
+                reviewAuditDetails
+        );
         SupplierEntity supplier = entity.getSupplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, entity.getSupplierId()).orElse(null);
         MedicineEntity medicine = entity.getMedicineId() == null ? null : medicineRepository.findByTenantIdAndId(tenantId, entity.getMedicineId()).orElse(null);
         return toRecord(entity, medicine, supplier);
@@ -1181,6 +1232,65 @@ public class PharmacyOperationsService {
 
     private String normalize(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private void auditReconciliation(String action, UUID tenantId, PharmacyReconciliationEntity entity, UUID actorAppUserId, String summary) {
+        auditReconciliation(action, tenantId, entity, actorAppUserId, summary, Map.of());
+    }
+
+    private void auditReconciliation(String action, UUID tenantId, PharmacyReconciliationEntity entity, UUID actorAppUserId, String summary, Map<String, Object> extraDetails) {
+        if (entity == null) {
+            return;
+        }
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("reconciliationId", entity.getId());
+        details.put("status", entity.getStatus());
+        details.put("medicineId", entity.getMedicineId());
+        details.put("stockBatchId", entity.getStockBatchId());
+        details.put("locationId", entity.getLocationId());
+        details.put("supplierId", entity.getSupplierId());
+        details.put("systemQuantity", entity.getSystemQuantity());
+        details.put("physicalQuantity", entity.getPhysicalQuantity());
+        details.put("varianceQuantity", entity.getVarianceQuantity());
+        details.put("reviewDecision", entity.getReviewDecision());
+        details.put("sheetFilename", entity.getSheetFilename());
+        details.put("correlationId", currentCorrelationId());
+        details.putAll(extraDetails);
+        audit(action, "PHARMACY_RECONCILIATION", tenantId, entity.getId(), actorAppUserId, summary, details);
+    }
+
+    private void audit(String action, String entityType, UUID tenantId, UUID entityId, UUID actorAppUserId, String summary, Map<String, Object> details) {
+        try {
+            auditEventPublisher.record(new AuditEventCommand(
+                    tenantId,
+                    entityType,
+                    entityId,
+                    action,
+                    actorAppUserId,
+                    OffsetDateTime.now(),
+                    summary,
+                    objectMapper.writeValueAsString(details)
+            ));
+        } catch (JsonProcessingException ex) {
+            auditEventPublisher.record(new AuditEventCommand(
+                    tenantId,
+                    entityType,
+                    entityId,
+                    action,
+                    actorAppUserId,
+                    OffsetDateTime.now(),
+                    summary,
+                    "{}"
+            ));
+        }
+    }
+
+    private String currentCorrelationId() {
+        try {
+            return RequestContextHolder.get() == null ? null : RequestContextHolder.get().correlationId();
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     private String normalizeNullable(String value) {

@@ -26,6 +26,7 @@ import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCom
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType;
 import com.deepthoughtnet.clinic.inventory.service.model.StockRecord;
 import com.deepthoughtnet.clinic.inventory.service.model.StockUpsertCommand;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.deepthoughtnet.clinic.ocr.spi.OcrProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -103,6 +104,7 @@ class PharmacyOperationsServiceGoodsReceiptTest {
                 supplierInvoiceRepository,
                 goodsReceiptRepository,
                 dispensingService,
+                mock(AuditEventPublisher.class),
                 storageService,
                 ocrProvider,
                 new ObjectMapper(),

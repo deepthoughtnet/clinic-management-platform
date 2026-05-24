@@ -21,6 +21,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useAuth } from "../../auth/useAuth";
+import { CompactEmptyState, CompactFilterCard, CompactStatCard, compactChipSx } from "../../components/compact/CompactUi";
 import {
   getInventoryTransactions,
   getMedicines,
@@ -107,6 +108,15 @@ function formatExpiry(expiryDate: string | null) {
   return new Date(expiryDate).toLocaleDateString();
 }
 
+function mapMovementError(err: unknown) {
+  const message = err instanceof Error ? err.message : "";
+  if (!message) return "Stock movement history could not be loaded. Please refresh the page.";
+  if (/internal server error/i.test(message)) {
+    return "Stock movement history could not be loaded right now. Please refresh and try again.";
+  }
+  return message;
+}
+
 export default function StockMovementsPage() {
   const auth = useAuth();
   const [loading, setLoading] = React.useState(true);
@@ -137,7 +147,7 @@ export default function StockMovementsPage() {
       setMedicines(meds);
       setStocks(stockRows);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load stock movements");
+      setError(mapMovementError(err));
     } finally {
       setLoading(false);
     }
@@ -191,68 +201,70 @@ export default function StockMovementsPage() {
         <Button variant="outlined" onClick={() => void load()}>Refresh</Button>
       </Box>
 
-      <Grid container spacing={1.5}>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Rows</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{filteredSummary.total}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Adjustments</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{filteredSummary.adjustments}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Stock in</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{filteredSummary.stockIns}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Dispense related</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{filteredSummary.dispenseRelated}</Typography></CardContent></Card></Grid>
+      <Grid container spacing={1.25}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><CompactStatCard label="Rows" value={filteredSummary.total} helper="Movement rows in the current filter window" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><CompactStatCard label="Adjustments" value={filteredSummary.adjustments} helper="Manual and reconciliation-related adjustments" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><CompactStatCard label="Stock In" value={filteredSummary.stockIns} tone="success" helper="Opening, purchase, and inward movement rows" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><CompactStatCard label="Dispense Related" value={filteredSummary.dispenseRelated} tone="warning" helper="Sale and dispense-linked outward rows" /></Grid>
       </Grid>
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 
-      <Card>
-        <CardContent>
-          <Stack spacing={1.5}>
-            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-              {FILTER_TYPES.map((chip) => (
-                <Chip
-                  key={chip.label}
-                  size="small"
-                  label={chip.label}
-                  color={chipFilter === chip.value ? "primary" : "default"}
-                  variant={chipFilter === chip.value ? "filled" : "outlined"}
-                  onClick={() => setChipFilter(chip.value)}
-                />
-              ))}
-            </Stack>
-
-            <Grid container spacing={1.5}>
-              <Grid size={{ xs: 12, md: 3 }}>
-                <TextField select size="small" fullWidth label="Medicine" value={medicineId} onChange={(e) => setMedicineId(e.target.value)}>
-                  <MenuItem value="">All</MenuItem>
-                  {medicines.map((m) => <MenuItem key={m.id} value={m.id}>{m.medicineName}</MenuItem>)}
-                </TextField>
-              </Grid>
-              <Grid size={{ xs: 12, md: 3 }}>
-                <TextField select size="small" fullWidth label="Movement type" value={movementType} onChange={(e) => setMovementType(e.target.value)}>
-                  <MenuItem value="">All</MenuItem>
-                  {MOVEMENT_TYPES.map((t) => <MenuItem key={t} value={t}>{movementLabel(t)}</MenuItem>)}
-                </TextField>
-              </Grid>
-              <Grid size={{ xs: 12, md: 2.5 }}>
-                <TextField size="small" fullWidth type="date" label="From" value={fromDate} onChange={(e) => setFromDate(e.target.value)} InputLabelProps={{ shrink: true }} />
-              </Grid>
-              <Grid size={{ xs: 12, md: 2.5 }}>
-                <TextField size="small" fullWidth type="date" label="To" value={toDate} onChange={(e) => setToDate(e.target.value)} InputLabelProps={{ shrink: true }} />
-              </Grid>
-              <Grid size={{ xs: 12, md: 1 }}>
-                <Button
-                  size="small"
-                  onClick={() => {
-                    setMedicineId("");
-                    setMovementType("");
-                    setChipFilter("");
-                    setFromDate("");
-                    setToDate("");
-                  }}
-                >
-                  Reset
-                </Button>
-              </Grid>
-            </Grid>
+      <CompactFilterCard
+        title="Filters"
+        subtitle="Keep the audit trail compact by narrowing to medicine, movement type, and date range."
+      >
+        <Stack spacing={1.25}>
+          <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+            {FILTER_TYPES.map((chip) => (
+              <Chip
+                key={chip.label}
+                size="small"
+                label={chip.label}
+                color={chipFilter === chip.value ? "primary" : "default"}
+                variant={chipFilter === chip.value ? "filled" : "outlined"}
+                sx={compactChipSx}
+                onClick={() => setChipFilter(chip.value)}
+              />
+            ))}
           </Stack>
-        </CardContent>
-      </Card>
+
+          <Grid container spacing={1.25}>
+            <Grid size={{ xs: 12, md: 3 }}>
+              <TextField select size="small" fullWidth label="Medicine" value={medicineId} onChange={(e) => setMedicineId(e.target.value)}>
+                <MenuItem value="">All</MenuItem>
+                {medicines.map((m) => <MenuItem key={m.id} value={m.id}>{m.medicineName}</MenuItem>)}
+              </TextField>
+            </Grid>
+            <Grid size={{ xs: 12, md: 3 }}>
+              <TextField select size="small" fullWidth label="Movement type" value={movementType} onChange={(e) => setMovementType(e.target.value)}>
+                <MenuItem value="">All</MenuItem>
+                {MOVEMENT_TYPES.map((t) => <MenuItem key={t} value={t}>{movementLabel(t)}</MenuItem>)}
+              </TextField>
+            </Grid>
+            <Grid size={{ xs: 12, md: 2.5 }}>
+              <TextField size="small" fullWidth type="date" label="From" value={fromDate} onChange={(e) => setFromDate(e.target.value)} InputLabelProps={{ shrink: true }} />
+            </Grid>
+            <Grid size={{ xs: 12, md: 2.5 }}>
+              <TextField size="small" fullWidth type="date" label="To" value={toDate} onChange={(e) => setToDate(e.target.value)} InputLabelProps={{ shrink: true }} />
+            </Grid>
+            <Grid size={{ xs: 12, md: 1 }}>
+              <Button
+                size="small"
+                onClick={() => {
+                  setMedicineId("");
+                  setMovementType("");
+                  setChipFilter("");
+                  setFromDate("");
+                  setToDate("");
+                }}
+              >
+                Reset
+              </Button>
+            </Grid>
+          </Grid>
+        </Stack>
+      </CompactFilterCard>
 
       {loading ? <Box sx={{ minHeight: 220, display: "grid", placeItems: "center" }}><CircularProgress /></Box> : null}
 
@@ -260,10 +272,13 @@ export default function StockMovementsPage() {
         <Card>
           <CardContent>
             {filtered.length === 0 ? (
-              <Alert severity="info">No stock movements match the current filters. Clear the filters to review the full audit trail.</Alert>
+              <CompactEmptyState
+                title="No stock movements match these filters"
+                subtitle="Clear one or more filters to review the full tenant-scoped audit trail."
+              />
             ) : (
-              <Box sx={{ overflowX: "auto" }}>
-                <Table size="small" sx={{ minWidth: 980 }}>
+              <Box sx={{ overflowX: "auto", overflowY: "auto", maxHeight: 560 }}>
+                <Table stickyHeader size="small" sx={{ minWidth: 980 }}>
                   <TableHead>
                     <TableRow>
                       <TableCell>Date</TableCell>
@@ -298,7 +313,7 @@ export default function StockMovementsPage() {
                           <TableCell align="right">{row.afterQuantity ?? "-"}</TableCell>
                           <TableCell align="right">{row.quantity}</TableCell>
                           <TableCell>{row.businessReference || movementLabel(row.transactionType)}</TableCell>
-                          <TableCell>{row.adjustedByName || "System"}</TableCell>
+                          <TableCell>{row.adjustedByName || "System action"}</TableCell>
                           <TableCell>{row.notes || row.reason || "-"}</TableCell>
                         </TableRow>
                       );
@@ -337,7 +352,7 @@ export default function StockMovementsPage() {
               <Stack spacing={1}>
                 {selectedStockMovements.length === 0 ? (
                   <Alert severity="info">No movements found for this batch in the current filter window.</Alert>
-                ) : selectedStockMovements.map((row) => (
+                ) : selectedStockMovements.slice(0, 10).map((row) => (
                   <Card key={row.id} variant="outlined">
                     <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
                       <Stack spacing={0.5}>

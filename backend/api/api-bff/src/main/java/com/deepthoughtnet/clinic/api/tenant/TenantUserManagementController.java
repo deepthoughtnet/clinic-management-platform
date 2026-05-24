@@ -83,20 +83,11 @@ public class TenantUserManagementController {
             created = tenantUserManagementService.updateStatus(tenantId, created.appUserId(), false);
         }
         ensureDoctorCalendarForCurrentRole(tenantId, created.appUserId(), created.membershipRole(), request.active(), "tenant.user.created");
-        auditEventPublisher.record(new AuditEventCommand(
-                tenantId,
-                "TENANT_USER",
-                created.appUserId(),
-                "tenant.user.created",
-                RequestContextHolder.require().appUserId(),
-                OffsetDateTime.now(),
-                "Created tenant user",
-                toJson(Map.of(
-                        "email", created.email(),
-                        "displayName", created.displayName(),
-                        "role", created.membershipRole(),
-                        "active", request.active()
-                ))
+        audit("tenant.user.created", created.appUserId(), "Created tenant user", Map.of(
+                "email", created.email(),
+                "displayName", created.displayName(),
+                "role", created.membershipRole(),
+                "active", request.active()
         ));
         return toResponse(created);
     }
@@ -110,8 +101,20 @@ public class TenantUserManagementController {
             String role = normalizeRole(request.role());
             enforceRoleAssignmentBoundary(role);
             record = tenantUserManagementService.updateRole(tenantId, appUserId, role);
+            audit("tenant.user.role.updated", record.appUserId(), "Updated tenant user role", Map.of(
+                    "email", record.email(),
+                    "displayName", record.displayName(),
+                    "role", record.membershipRole(),
+                    "active", request.active()
+            ));
         }
         ensureDoctorCalendarForCurrentRole(tenantId, record.appUserId(), record.membershipRole(), request.active(), "tenant.user.updated");
+        audit(request.active() ? "tenant.user.activated" : "tenant.user.deactivated", record.appUserId(), request.active() ? "Activated tenant user" : "Deactivated tenant user", Map.of(
+                "email", record.email(),
+                "displayName", record.displayName(),
+                "role", record.membershipRole(),
+                "active", request.active()
+        ));
         return toResponse(record);
     }
 
@@ -124,6 +127,12 @@ public class TenantUserManagementController {
         TenantUserRecord record = tenantUserManagementService.updateRole(tenantId, appUserId, role);
         boolean active = record.membershipStatus() != null && "ACTIVE".equalsIgnoreCase(record.membershipStatus());
         ensureDoctorCalendarForCurrentRole(tenantId, record.appUserId(), record.membershipRole(), active, "tenant.user.role.assigned");
+        audit("tenant.user.role.assigned", record.appUserId(), "Assigned tenant user role", Map.of(
+                "email", record.email(),
+                "displayName", record.displayName(),
+                "role", record.membershipRole(),
+                "active", active
+        ));
         return toResponse(record);
     }
 
@@ -131,12 +140,18 @@ public class TenantUserManagementController {
     @PreAuthorize("@permissionChecker.hasAnyPermission('tenant.users.reset.password','tenant.users.manage','user.manage')")
     public ClinicUserResponse resetPassword(@PathVariable UUID appUserId, @Valid @RequestBody ResetPasswordRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
-        return toResponse(tenantUserManagementService.resetPassword(
+        TenantUserRecord record = tenantUserManagementService.resetPassword(
                 tenantId,
                 appUserId,
                 request.tempPassword(),
                 request.temporary()
+        );
+        audit("tenant.user.password_reset", record.appUserId(), "Reset tenant user password", Map.of(
+                "email", record.email(),
+                "displayName", record.displayName(),
+                "temporary", request.temporary()
         ));
+        return toResponse(record);
     }
 
     private void enforceRoleAssignmentBoundary(String role) {
@@ -225,5 +240,21 @@ public class TenantUserManagementController {
         } catch (Exception ex) {
             return "{}";
         }
+    }
+
+    private void audit(String action, UUID entityId, String summary, Map<String, Object> details) {
+        Map<String, Object> payload = new java.util.LinkedHashMap<>(details);
+        payload.put("correlationId", RequestContextHolder.require().correlationId());
+        payload.put("tenantRole", RequestContextHolder.require().tenantRole());
+        auditEventPublisher.record(new AuditEventCommand(
+                RequestContextHolder.requireTenantId(),
+                "TENANT_USER",
+                entityId,
+                action,
+                RequestContextHolder.require().appUserId(),
+                OffsetDateTime.now(),
+                summary,
+                toJson(payload)
+        ));
     }
 }

@@ -20,6 +20,7 @@ import com.deepthoughtnet.clinic.inventory.db.SupplierRepository;
 import com.deepthoughtnet.clinic.inventory.db.SupplierInvoiceRepository;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineRecord;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.deepthoughtnet.clinic.ocr.spi.OcrProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -75,6 +76,7 @@ class PharmacyOperationsServiceImportTest {
                 supplierInvoiceRepository,
                 goodsReceiptRepository,
                 dispensingService,
+                mock(AuditEventPublisher.class),
                 storageService,
                 ocrProvider,
                 new ObjectMapper(),

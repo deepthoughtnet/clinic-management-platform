@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementServic
 import com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationQueueResult;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
@@ -72,13 +73,63 @@ class NotificationActionServiceReminderTest {
         when(appointmentService.search(eq(TENANT_ID), any())).thenReturn(List.of(due, skippedStatus, outsideWindow));
         when(appointmentService.findById(eq(TENANT_ID), eq(due.id()))).thenReturn(due);
         when(patientRepository.findByTenantIdAndId(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patient()));
-        when(notificationHistoryService.queue(eq(TENANT_ID), eq(PATIENT_ID), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), eq(due.id()), eq(ACTOR_ID)))
-                .thenReturn(new NotificationHistoryRecord(UUID.randomUUID(), TENANT_ID, PATIENT_ID, "APPOINTMENT_REMINDER", "email", "patient@clinic.local", "Appointment reminder", "msg", "PENDING", null, "APPOINTMENT", due.id(), "dedup", null, 0, null, now, now));
+        when(notificationHistoryService.queueDetailed(eq(TENANT_ID), eq(PATIENT_ID), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), eq(due.id()), eq(ACTOR_ID)))
+                .thenReturn(new NotificationQueueResult(
+                        new NotificationHistoryRecord(UUID.randomUUID(), TENANT_ID, PATIENT_ID, "APPOINTMENT_REMINDER", "email", "patient@clinic.local", "Appointment reminder", "msg", "PENDING", null, "APPOINTMENT", due.id(), "dedup", null, 0, null, now, now),
+                        true
+                ));
 
-        int queued = service.queueAppointmentReminders(TENANT_ID, null, ACTOR_ID);
+        NotificationActionService.ReminderQueueSummary queued = service.queueAppointmentReminders(TENANT_ID, null, ACTOR_ID);
 
-        assertThat(queued).isEqualTo(1);
-        Mockito.verify(notificationHistoryService, Mockito.times(1)).queue(eq(TENANT_ID), eq(PATIENT_ID), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), eq(due.id()), eq(ACTOR_ID));
+        assertThat(queued.queuedCount()).isEqualTo(1);
+        assertThat(queued.skippedDuplicateCount()).isZero();
+        assertThat(queued.failedCount()).isZero();
+        Mockito.verify(notificationHistoryService, Mockito.times(1)).queueDetailed(eq(TENANT_ID), eq(PATIENT_ID), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), eq(due.id()), eq(ACTOR_ID));
+    }
+
+    @Test
+    void duplicateReminderIsCountedAsSkippedNotQueued() {
+        NotificationHistoryService notificationHistoryService = Mockito.mock(NotificationHistoryService.class);
+        PrescriptionService prescriptionService = Mockito.mock(PrescriptionService.class);
+        BillingService billingService = Mockito.mock(BillingService.class);
+        AppointmentService appointmentService = Mockito.mock(AppointmentService.class);
+        ConsultationService consultationService = Mockito.mock(ConsultationService.class);
+        VaccinationService vaccinationService = Mockito.mock(VaccinationService.class);
+        PlatformTenantManagementService tenantManagementService = Mockito.mock(PlatformTenantManagementService.class);
+        PatientRepository patientRepository = Mockito.mock(PatientRepository.class);
+        NotificationProvider notificationProvider = Mockito.mock(NotificationProvider.class);
+        PrescriptionTemplateService prescriptionTemplateService = Mockito.mock(PrescriptionTemplateService.class);
+
+        NotificationActionService service = new NotificationActionService(
+                notificationHistoryService,
+                prescriptionService,
+                billingService,
+                appointmentService,
+                consultationService,
+                vaccinationService,
+                tenantManagementService,
+                patientRepository,
+                notificationProvider,
+                prescriptionTemplateService
+        );
+
+        OffsetDateTime now = OffsetDateTime.now();
+        AppointmentRecord due = appointment(UUID.randomUUID(), now.plusHours(2).plusMinutes(5).toLocalDate(), now.plusHours(2).plusMinutes(5).toLocalTime(), AppointmentStatus.BOOKED);
+
+        when(appointmentService.search(eq(TENANT_ID), any())).thenReturn(List.of(due));
+        when(appointmentService.findById(eq(TENANT_ID), eq(due.id()))).thenReturn(due);
+        when(patientRepository.findByTenantIdAndId(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patient()));
+        when(notificationHistoryService.queueDetailed(eq(TENANT_ID), eq(PATIENT_ID), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), eq(due.id()), eq(ACTOR_ID)))
+                .thenReturn(new NotificationQueueResult(
+                        new NotificationHistoryRecord(UUID.randomUUID(), TENANT_ID, PATIENT_ID, "APPOINTMENT_REMINDER", "email", "patient@clinic.local", "Appointment reminder", "msg", "PENDING", null, "APPOINTMENT", due.id(), "dedup", null, 0, null, now, now),
+                        false
+                ));
+
+        NotificationActionService.ReminderQueueSummary queued = service.queueAppointmentReminders(TENANT_ID, null, ACTOR_ID);
+
+        assertThat(queued.queuedCount()).isZero();
+        assertThat(queued.skippedDuplicateCount()).isEqualTo(1);
+        assertThat(queued.failedCount()).isZero();
     }
 
     private AppointmentRecord appointment(UUID id, LocalDate date, LocalTime time, AppointmentStatus status) {

@@ -25,7 +25,7 @@ public class NotificationController {
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasPermission('notification.read') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('notification.read')")
     public List<NotificationHistoryRecord> list(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String eventType,

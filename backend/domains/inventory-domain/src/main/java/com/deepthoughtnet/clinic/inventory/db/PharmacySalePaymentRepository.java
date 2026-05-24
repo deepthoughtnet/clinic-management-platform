@@ -8,5 +8,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface PharmacySalePaymentRepository extends JpaRepository<PharmacySalePaymentEntity, UUID> {
     List<PharmacySalePaymentEntity> findByTenantIdAndSaleIdOrderByCreatedAtAsc(UUID tenantId, UUID saleId);
     List<PharmacySalePaymentEntity> findByTenantIdAndCashierShiftIdOrderByCreatedAtAsc(UUID tenantId, UUID cashierShiftId);
+    List<PharmacySalePaymentEntity> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
     Optional<PharmacySalePaymentEntity> findByTenantIdAndReceiptNumber(UUID tenantId, String receiptNumber);
 }

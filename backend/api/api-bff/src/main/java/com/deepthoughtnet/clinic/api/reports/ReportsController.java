@@ -142,18 +142,76 @@ public class ReportsController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false) UUID doctorUserId,
-            @RequestParam(required = false) UUID patientId
+            @RequestParam(required = false) UUID patientId,
+            @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) String source
     ) {
-        return reportingFacade.revenue(RequestContextHolder.requireTenantId(), from, to, doctorUserId, patientId);
+        return reportingFacade.revenue(RequestContextHolder.requireTenantId(), from, to, doctorUserId, patientId, paymentMode, source);
+    }
+
+    @GetMapping("/daily-sales")
+    @PreAuthorize("@permissionChecker.hasPermission('report.read')")
+    public List<Map<String, Object>> dailySales(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) String source
+    ) {
+        return reportingFacade.dailySales(RequestContextHolder.requireTenantId(), from, to, paymentMode, source);
+    }
+
+    @GetMapping("/medicine-sales")
+    @PreAuthorize("@permissionChecker.hasPermission('report.read')")
+    public List<Map<String, Object>> medicineSales(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String paymentMode
+    ) {
+        return reportingFacade.medicineSales(RequestContextHolder.requireTenantId(), from, to, paymentMode);
     }
 
     @GetMapping("/payment-modes")
     @PreAuthorize("@permissionChecker.hasPermission('report.read')")
     public List<Map<String, Object>> paymentModes(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) String source
+    ) {
+        return reportingFacade.paymentModes(RequestContextHolder.requireTenantId(), from, to, paymentMode, source);
+    }
+
+    @GetMapping("/cash-counter-summary")
+    @PreAuthorize("@permissionChecker.hasPermission('report.read')")
+    public Map<String, Object> cashCounterSummary(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) String source,
+            @RequestParam(required = false) String search
+    ) {
+        return reportingFacade.cashCounterSummary(RequestContextHolder.requireTenantId(), from, to, paymentMode, source, search);
+    }
+
+    @GetMapping("/cash-counter-ledger")
+    @PreAuthorize("@permissionChecker.hasPermission('report.read')")
+    public List<Map<String, Object>> cashCounterLedger(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) String source,
+            @RequestParam(required = false) String search
+    ) {
+        return reportingFacade.cashCounterLedger(RequestContextHolder.requireTenantId(), from, to, paymentMode, source, search);
+    }
+
+    @GetMapping("/cashier-shifts")
+    @PreAuthorize("@permissionChecker.hasPermission('report.read')")
+    public List<Map<String, Object>> cashierShifts(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to
     ) {
-        return reportingFacade.paymentModes(RequestContextHolder.requireTenantId(), from, to);
+        return reportingFacade.cashierShifts(RequestContextHolder.requireTenantId(), from, to);
     }
 
     @GetMapping("/pending-dues")

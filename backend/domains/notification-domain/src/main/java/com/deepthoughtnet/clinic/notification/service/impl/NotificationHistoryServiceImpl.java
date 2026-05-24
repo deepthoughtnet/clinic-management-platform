@@ -6,6 +6,7 @@ import com.deepthoughtnet.clinic.notification.model.NotificationEventPayload;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryFilter;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationQueueResult;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.outbox.OutboxEventCommand;
@@ -80,7 +81,7 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
 
     @Override
     @Transactional
-    public NotificationHistoryRecord queue(
+    public NotificationQueueResult queueDetailed(
             UUID tenantId,
             UUID patientId,
             String eventType,
@@ -97,7 +98,7 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
         String deduplicationKey = buildDeduplicationKey(tenantId, eventType, patientId, recipient, sourceType, sourceId);
         NotificationHistoryEntity existing = repository.findByTenantIdAndDeduplicationKey(tenantId, deduplicationKey).orElse(null);
         if (existing != null) {
-            return toRecord(existing);
+            return new NotificationQueueResult(toRecord(existing), false);
         }
 
         NotificationHistoryEntity entity = NotificationHistoryEntity.create(
@@ -127,7 +128,7 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
             repository.save(saved);
         }
         audit(tenantId, saved, "notification.created", actorAppUserId, "Queued notification");
-        return toRecord(saved);
+        return new NotificationQueueResult(toRecord(saved), true);
     }
 
     @Override

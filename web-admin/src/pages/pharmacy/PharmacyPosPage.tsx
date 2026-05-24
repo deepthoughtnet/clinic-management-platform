@@ -1,10 +1,14 @@
 import * as React from "react";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
   Checkbox,
   Chip,
+  Collapse,
   Divider,
   Dialog,
   DialogActions,
@@ -32,6 +36,7 @@ import {
 import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
 import CameraAltRoundedIcon from "@mui/icons-material/CameraAltRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
+import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import LocalPrintshopOutlinedIcon from "@mui/icons-material/LocalPrintshopOutlined";
 import PauseCircleOutlineRoundedIcon from "@mui/icons-material/PauseCircleOutlineRounded";
@@ -254,6 +259,10 @@ function scanModeLabel(mode: CodeScanMode) {
   return mode === "QR" ? "QR" : "barcode";
 }
 
+function shiftStatusLabel(shift: PharmacyPosShift | null) {
+  return shift ? shift.status : "NO OPEN SHIFT";
+}
+
 export default function PharmacyPosPage() {
   const auth = useAuth();
   const token = auth.accessToken;
@@ -330,6 +339,14 @@ export default function PharmacyPosPage() {
   const [returnReason, setReturnReason] = React.useState("");
   const [returnMode, setReturnMode] = React.useState<PaymentMode>("CASH");
   const [returnReference, setReturnReference] = React.useState("");
+  const [returnDrawerOpen, setReturnDrawerOpen] = React.useState(false);
+  const [shiftHistoryDrawerOpen, setShiftHistoryDrawerOpen] = React.useState(false);
+  const [customerSectionOpen, setCustomerSectionOpen] = React.useState(true);
+  const [prescriptionSectionOpen, setPrescriptionSectionOpen] = React.useState(false);
+  const [previewDialogOpen, setPreviewDialogOpen] = React.useState(false);
+  const [previewDocumentName, setPreviewDocumentName] = React.useState<string | null>(null);
+  const [previewDocumentUrl, setPreviewDocumentUrl] = React.useState<string | null>(null);
+  const [previewDocumentIsImage, setPreviewDocumentIsImage] = React.useState(false);
 
   const subtotal = React.useMemo(() => cart.reduce((sum, line) => sum + lineGross(line), 0), [cart]);
   const discountTotal = React.useMemo(() => cart.reduce((sum, line) => sum + numeric(line.discount), 0), [cart]);
@@ -367,6 +384,14 @@ export default function PharmacyPosPage() {
     const actualTotal = numeric(actualCashAmount) + numeric(actualUpiAmount) + numeric(actualCardAmount) + numeric(actualOtherAmount);
     return actualTotal - (currentShift?.expectedTotalAmount ?? 0);
   }, [actualCardAmount, actualCashAmount, actualOtherAmount, actualUpiAmount, currentShift]);
+  const customerSummary = React.useMemo(() => {
+    const name = selectedPatient
+      ? `${selectedPatient.firstName} ${selectedPatient.lastName}`.trim()
+      : customerName.trim();
+    const mobile = customerMobile.trim();
+    if (!name && !mobile) return "No customer selected";
+    return `${name || "Walk-in"}${mobile ? ` • ${mobile}` : ""}`;
+  }, [customerMobile, customerName, selectedPatient]);
 
   const beginAction = React.useCallback((name: string) => {
     if (actionLockRef.current) return false;
@@ -394,8 +419,21 @@ export default function PharmacyPosPage() {
     setPatientResults([]);
     setSelectedPatient(null);
     setPrescription(null);
+    setCustomerSectionOpen(true);
+    setPrescriptionSectionOpen(false);
     window.setTimeout(() => searchInputRef.current?.focus(), 0);
   }, []);
+
+  const confirmClearDraft = React.useCallback(() => {
+    if (!cart.length && !customerName.trim() && !customerMobile.trim() && !paidAmount.trim() && !prescription) {
+      clearDraft();
+      return;
+    }
+    if (!window.confirm("Clear the current POS cart, customer details, and attached prescription?")) {
+      return;
+    }
+    clearDraft();
+  }, [cart.length, clearDraft, customerMobile, customerName, paidAmount, prescription]);
 
   const refreshSales = React.useCallback(async () => {
     if (!token || !tenantId || !canAccessPos) return;
@@ -702,7 +740,15 @@ export default function PharmacyPosPage() {
     setReturnMode("CASH");
     setReturnReason("");
     setReturnReference("");
-    setRecentDrawerOpen(false);
+  }, []);
+
+  const clearCustomerSelection = React.useCallback(() => {
+    setSelectedPatient(null);
+    setPatientQuery("");
+    setPatientResults([]);
+    setCustomerName("");
+    setCustomerMobile("");
+    setCustomerSectionOpen(true);
   }, []);
 
   const holdCurrentCart = React.useCallback(() => {
@@ -852,11 +898,20 @@ export default function PharmacyPosPage() {
     if (!token || !tenantId) return;
     try {
       const { url } = await getPharmacyPosPrescriptionDownloadUrl(token, tenantId, documentId);
-      window.open(url, "_blank", "noopener,noreferrer");
+      const currentName = prescription?.documentId === documentId
+        ? prescription.fileName
+        : selectedSale?.prescriptionDocumentId === documentId
+          ? selectedSale.prescriptionFileName
+          : "Prescription";
+      const currentMediaType = prescription?.documentId === documentId ? prescription.mediaType : null;
+      setPreviewDocumentName(currentName ?? "Prescription");
+      setPreviewDocumentUrl(url);
+      setPreviewDocumentIsImage(isImageFile(currentName, currentMediaType));
+      setPreviewDialogOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to open prescription preview");
     }
-  }, [tenantId, token]);
+  }, [prescription, selectedSale, tenantId, token]);
 
   const uploadPrescription = React.useCallback(async (file: File | null) => {
     if (!file || !token || !tenantId) return;
@@ -869,6 +924,7 @@ export default function PharmacyPosPage() {
     try {
       const uploaded = await uploadPharmacyPosPrescription(token, tenantId, file);
       setPrescription(uploaded);
+      setPrescriptionSectionOpen(true);
       setSuccess(`Prescription ${uploaded.fileName} uploaded for this draft sale.`);
       setError(null);
     } catch (err) {
@@ -1173,6 +1229,7 @@ export default function PharmacyPosPage() {
       setBatchPreview({});
       await Promise.all([refreshSales(), refreshShifts(), refreshMedicineResults(medicineQuery)]);
       selectSale(sale);
+      setReturnDrawerOpen(false);
       const newReturns = sale.returns.filter((item) => !existingReturnIds.has(item.id));
       const returnNumbers = Array.from(new Set(newReturns.map((item) => item.returnNumber))).join(", ");
       setSuccess(`Return ${returnNumbers || "processed"} for sale ${sale.saleNumber}. Refund recorded ${money(newReturns.reduce((sum, item) => sum + item.refundAmount, 0))}. Reusable items were restocked with RETURN audit movements.`);
@@ -1269,17 +1326,17 @@ export default function PharmacyPosPage() {
           />
         </Stack>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-          <Button size="small" variant="outlined" startIcon={<AttachFileRoundedIcon />} onClick={() => prescriptionInputRef.current?.click()}>
-            Upload Prescription
-          </Button>
-          <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => setScanDialogOpen(true)}>
-            Scan Prescription
-          </Button>
           <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("BARCODE")}>
             Scan Barcode
           </Button>
           <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("QR")}>
             Scan QR
+          </Button>
+          <Button size="small" variant="outlined" startIcon={<AttachFileRoundedIcon />} onClick={() => { setPrescriptionSectionOpen(true); prescriptionInputRef.current?.click(); }}>
+            Upload Prescription
+          </Button>
+          <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => { setPrescriptionSectionOpen(true); setScanDialogOpen(true); }}>
+            Scan Prescription
           </Button>
           <Button
             size="small"
@@ -1289,12 +1346,18 @@ export default function PharmacyPosPage() {
           >
             {cart.length ? "Hold Cart" : heldDraft ? "Resume Held" : "Hold Cart"}
           </Button>
-          <Button size="small" variant="outlined" color="inherit" startIcon={<RestartAltRoundedIcon />} onClick={clearDraft}>
+          <Button size="small" variant="outlined" color="inherit" startIcon={<RestartAltRoundedIcon />} onClick={confirmClearDraft}>
             Clear Cart
           </Button>
           <Button size="small" variant="outlined" startIcon={<HistoryRoundedIcon />} onClick={() => setRecentDrawerOpen(true)}>
             Recent Sales
           </Button>
+          <Chip
+            size="small"
+            label={shiftStatusLabel(currentShift)}
+            color={currentShift ? "success" : "default"}
+            variant={currentShift ? "filled" : "outlined"}
+          />
         </Stack>
         <input
           ref={prescriptionInputRef}
@@ -1339,8 +1402,8 @@ export default function PharmacyPosPage() {
                   <Typography variant="subtitle1" fontWeight={700}>Matched Medicines</Typography>
                   <Typography variant="caption" color="text.secondary">{loading ? "Loading..." : `${medicineResults.length} results`}</Typography>
                 </Stack>
-                <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
-                  <Table size="small" sx={{ tableLayout: "fixed" }}>
+                <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, maxHeight: 280 }}>
+                  <Table size="small" stickyHeader sx={{ tableLayout: "fixed" }}>
                     <TableHead>
                       <TableRow>
                         <TableCell>Medicine</TableCell>
@@ -1405,8 +1468,8 @@ export default function PharmacyPosPage() {
                   <Typography variant="subtitle1" fontWeight={700}>Cart</Typography>
                   <Typography variant="caption" color="text.secondary">Compact FEFO checkout table</Typography>
                 </Stack>
-                <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
-                  <Table size="small" sx={{ tableLayout: "fixed" }}>
+                <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, maxHeight: 420 }}>
+                  <Table size="small" stickyHeader sx={{ tableLayout: "fixed" }}>
                     <TableHead>
                       <TableRow>
                         <TableCell>Medicine</TableCell>
@@ -1494,116 +1557,211 @@ export default function PharmacyPosPage() {
                 </Typography>
               </Stack>
             </Box>
+
+            <Box
+              sx={{
+                ...panelSx,
+                position: { lg: "sticky" },
+                bottom: { lg: 16 },
+                zIndex: 2,
+                boxShadow: { lg: 6 },
+              }}
+            >
+              <Stack spacing={1.25}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Typography variant="subtitle1" fontWeight={700}>Checkout</Typography>
+                  <Chip size="small" label={cart.length ? `${cart.length} line${cart.length === 1 ? "" : "s"}` : "Empty cart"} color={cart.length ? "primary" : "default"} />
+                </Stack>
+                <Grid container spacing={1}>
+                  <Grid size={{ xs: 6, md: 2.4 }}>
+                    <Typography variant="caption" color="text.secondary">Subtotal</Typography>
+                    <Typography variant="body2" fontWeight={600}>{money(subtotal)}</Typography>
+                  </Grid>
+                  <Grid size={{ xs: 6, md: 2.4 }}>
+                    <Typography variant="caption" color="text.secondary">Discount</Typography>
+                    <Typography variant="body2" fontWeight={600}>{money(discountTotal)}</Typography>
+                  </Grid>
+                  <Grid size={{ xs: 6, md: 2.4 }}>
+                    <Typography variant="caption" color="text.secondary">Tax</Typography>
+                    <Typography variant="body2" fontWeight={600}>{money(taxTotal)}</Typography>
+                  </Grid>
+                  <Grid size={{ xs: 6, md: 2.4 }}>
+                    <Typography variant="caption" color="text.secondary">Grand total</Typography>
+                    <Typography variant="body2" fontWeight={700}>{money(total)}</Typography>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 2.4 }}>
+                    <Typography variant="caption" color="text.secondary">Due</Typography>
+                    <Typography variant="body2" fontWeight={700}>{money(duePreview)}</Typography>
+                  </Grid>
+                </Grid>
+                <Button
+                  variant="contained"
+                  size="large"
+                  startIcon={<ShoppingCartCheckoutRoundedIcon />}
+                  disabled={submitting || !cart.length || cartHasStockIssue || collectingPaymentWithoutShift}
+                  onClick={() => void submitSale()}
+                >
+                  {activeAction === "sale" ? "Completing Sale..." : "Complete Sale"}
+                </Button>
+              </Stack>
+            </Box>
           </Stack>
         </Grid>
 
         <Grid size={{ xs: 12, lg: 3.6 }}>
           <Stack spacing={2} sx={{ position: { lg: "sticky" }, top: { lg: STICKY_TOP }, alignSelf: "flex-start" }}>
-            <Box sx={panelSx}>
-              <Stack spacing={1.25}>
-                <Typography variant="subtitle1" fontWeight={700}>Customer</Typography>
-                <TextField
-                  size="small"
-                  label="Search patient"
-                  value={patientQuery}
-                  onChange={(event) => setPatientQuery(event.target.value)}
-                  placeholder="Type 2+ letters"
-                  fullWidth
-                />
-                {patientResults.length ? (
-                  <List dense sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, py: 0, maxHeight: 150, overflow: "auto" }}>
-                    {patientResults.map((patient) => (
-                      <ListItemButton
-                        key={patient.id}
-                        onClick={() => {
-                          setSelectedPatient(patient);
-                          setCustomerName(`${patient.firstName} ${patient.lastName}`.trim());
-                          setCustomerMobile(patient.mobile);
-                          setPatientResults([]);
-                          setPatientQuery("");
-                        }}
-                      >
-                        <ListItemText primary={`${patient.firstName} ${patient.lastName}`} secondary={`${patient.patientNumber} | ${patient.mobile}`} />
-                      </ListItemButton>
-                    ))}
-                  </List>
-                ) : null}
-                {selectedPatient ? (
-                  <Chip
-                    color="primary"
-                    label={`Patient: ${selectedPatient.firstName} ${selectedPatient.lastName}`}
-                    onDelete={() => setSelectedPatient(null)}
-                  />
-                ) : null}
-                <TextField size="small" label="Walk-in name" value={customerName} onChange={(event) => setCustomerName(event.target.value)} fullWidth />
-                <TextField size="small" label="Mobile" value={customerMobile} onChange={(event) => setCustomerMobile(event.target.value)} fullWidth />
-              </Stack>
-            </Box>
-
-            <Box sx={panelSx}>
-              <Stack spacing={1.25}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                  <Typography variant="subtitle1" fontWeight={700}>Prescription</Typography>
-                  <Stack direction="row" spacing={1}>
-                    <Button size="small" variant="text" onClick={() => prescriptionInputRef.current?.click()}>Upload File</Button>
-                    <Button size="small" variant="text" onClick={() => setScanDialogOpen(true)}>Scan Prescription</Button>
-                  </Stack>
+            <Accordion expanded={customerSectionOpen} onChange={(_, expanded) => setCustomerSectionOpen(expanded)} disableGutters sx={panelSx}>
+              <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
+                <Stack spacing={0.25}>
+                  <Typography variant="subtitle1" fontWeight={700}>Customer</Typography>
+                  <Typography variant="caption" color="text.secondary">{customerSummary}</Typography>
                 </Stack>
-                {prescription ? (
-                  <Stack spacing={1}>
-                    <Chip icon={<AttachFileRoundedIcon />} label={prescription.fileName} variant="outlined" />
-                    {prescriptionPreviewUrl && isImageFile(prescription.fileName, prescription.mediaType) ? (
-                      <Box
-                        component="img"
-                        src={prescriptionPreviewUrl}
-                        alt={prescription.fileName}
-                        sx={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 2, border: "1px solid", borderColor: "divider" }}
-                      />
-                    ) : null}
-                    <Stack direction="row" spacing={1}>
-                      <Button size="small" startIcon={<PreviewRoundedIcon />} onClick={() => void previewPrescription(prescription.documentId)}>
-                        Open Preview
-                      </Button>
-                      <Button size="small" color="inherit" onClick={() => setPrescription(null)}>
-                        Remove
-                      </Button>
-                      <Button size="small" color="inherit" onClick={() => prescriptionInputRef.current?.click()}>
-                        Replace
-                      </Button>
-                    </Stack>
+              </AccordionSummary>
+              <AccordionDetails sx={{ px: 0, pb: 0 }}>
+                <Stack spacing={1.25}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Typography variant="caption" color="text.secondary">
+                      {selectedPatient || customerName.trim() || customerMobile.trim() ? "Customer summary ready for checkout." : "Select a patient or enter walk-in details."}
+                    </Typography>
+                    <Button size="small" color="inherit" onClick={clearCustomerSelection} disabled={!selectedPatient && !customerName.trim() && !customerMobile.trim() && !patientQuery.trim()}>
+                      Clear
+                    </Button>
                   </Stack>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    Upload a PDF or image when a medicine or local regulation requires a prescription. OTC sales still remain allowed.
+                  <TextField
+                    size="small"
+                    label="Search patient"
+                    value={patientQuery}
+                    onFocus={() => setCustomerSectionOpen(true)}
+                    onChange={(event) => setPatientQuery(event.target.value)}
+                    placeholder="Type 2+ letters"
+                    fullWidth
+                  />
+                  <Collapse in={patientResults.length > 0}>
+                    <List dense sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, py: 0, maxHeight: 150, overflow: "auto" }}>
+                      {patientResults.map((patient) => (
+                        <ListItemButton
+                          key={patient.id}
+                          onClick={() => {
+                            setSelectedPatient(patient);
+                            setCustomerName(`${patient.firstName} ${patient.lastName}`.trim());
+                            setCustomerMobile(patient.mobile);
+                            setPatientResults([]);
+                            setPatientQuery("");
+                            setCustomerSectionOpen(false);
+                          }}
+                        >
+                          <ListItemText primary={`${patient.firstName} ${patient.lastName}`} secondary={`${patient.patientNumber} | ${patient.mobile}`} />
+                        </ListItemButton>
+                      ))}
+                    </List>
+                  </Collapse>
+                  {selectedPatient ? (
+                    <Chip
+                      color="primary"
+                      label={`Patient: ${selectedPatient.firstName} ${selectedPatient.lastName}`}
+                      onDelete={clearCustomerSelection}
+                    />
+                  ) : null}
+                  <TextField
+                    size="small"
+                    label="Walk-in name"
+                    value={customerName}
+                    onFocus={() => setCustomerSectionOpen(true)}
+                    onChange={(event) => setCustomerName(event.target.value)}
+                    fullWidth
+                  />
+                  <TextField
+                    size="small"
+                    label="Mobile"
+                    value={customerMobile}
+                    onFocus={() => setCustomerSectionOpen(true)}
+                    onChange={(event) => setCustomerMobile(event.target.value)}
+                    fullWidth
+                  />
+                </Stack>
+              </AccordionDetails>
+            </Accordion>
+
+            <Accordion expanded={prescriptionSectionOpen} onChange={(_, expanded) => setPrescriptionSectionOpen(expanded)} disableGutters sx={panelSx}>
+              <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
+                <Stack spacing={0.25}>
+                  <Typography variant="subtitle1" fontWeight={700}>Prescription</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {prescription ? "1 prescription attached" : "No prescription attached"}
                   </Typography>
-                )}
-                <Alert severity="info" sx={{ py: 0 }}>
-                  Scanned prescription is saved as supporting document. Verify before sale.
-                </Alert>
-                <Typography variant="caption" color="text.secondary">
-                  Upload prescription when required by medicine/regulation.
-                </Typography>
-              </Stack>
-            </Box>
+                </Stack>
+              </AccordionSummary>
+              <AccordionDetails sx={{ px: 0, pb: 0 }}>
+                <Stack spacing={1.25}>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    <Button size="small" variant="text" onClick={() => { setPrescriptionSectionOpen(true); prescriptionInputRef.current?.click(); }}>Upload File</Button>
+                    <Button size="small" variant="text" onClick={() => { setPrescriptionSectionOpen(true); setScanDialogOpen(true); }}>Scan Prescription</Button>
+                  </Stack>
+                  {prescription ? (
+                    <Stack spacing={1}>
+                      <Chip icon={<AttachFileRoundedIcon />} label={prescription.fileName} variant="outlined" />
+                      {prescriptionPreviewUrl && isImageFile(prescription.fileName, prescription.mediaType) ? (
+                        <Box
+                          component="img"
+                          src={prescriptionPreviewUrl}
+                          alt={prescription.fileName}
+                          sx={{ width: "100%", maxHeight: 128, objectFit: "cover", borderRadius: 2, border: "1px solid", borderColor: "divider" }}
+                        />
+                      ) : null}
+                      <Stack direction="row" spacing={1} flexWrap="wrap">
+                        <Button size="small" startIcon={<PreviewRoundedIcon />} onClick={() => void previewPrescription(prescription.documentId)}>
+                          Open Preview
+                        </Button>
+                        <Button size="small" color="inherit" onClick={() => setPrescription(null)}>
+                          Remove
+                        </Button>
+                        <Button size="small" color="inherit" onClick={() => prescriptionInputRef.current?.click()}>
+                          Replace
+                        </Button>
+                      </Stack>
+                    </Stack>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      Upload a PDF or image when a medicine or local regulation requires a prescription. OTC sales still remain allowed.
+                    </Typography>
+                  )}
+                  <Alert severity="info" sx={{ py: 0 }}>
+                    Scanned prescription is saved as supporting document. Verify before sale.
+                  </Alert>
+                  <Typography variant="caption" color="text.secondary">
+                    Upload prescription when required by medicine/regulation.
+                  </Typography>
+                </Stack>
+              </AccordionDetails>
+            </Accordion>
 
             <Box sx={panelSx}>
               <Stack spacing={1.25}>
                 <Typography variant="subtitle1" fontWeight={700}>Payment</Typography>
-                <TextField inputRef={paidAmountInputRef} size="small" label="Paid amount" value={paidAmount} onChange={(event) => setPaidAmount(event.target.value)} fullWidth />
-                <Select size="small" value={paymentMode} onChange={(event) => setPaymentMode(event.target.value as PaymentMode)} fullWidth disabled={collectingPaymentWithoutShift}>
-                  {PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}
-                </Select>
-                <TextField size="small" label="Reference" value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} fullWidth disabled={collectingPaymentWithoutShift} />
+                <Grid container spacing={1}>
+                  <Grid size={{ xs: 12, sm: 6, lg: 12 }}>
+                    <TextField inputRef={paidAmountInputRef} size="small" label="Paid amount" value={paidAmount} onChange={(event) => setPaidAmount(event.target.value)} fullWidth />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6, lg: 12 }}>
+                    <Select size="small" value={paymentMode} onChange={(event) => setPaymentMode(event.target.value as PaymentMode)} fullWidth disabled={collectingPaymentWithoutShift}>
+                      {PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}
+                    </Select>
+                  </Grid>
+                  <Grid size={12}>
+                    <TextField size="small" label="Reference" value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} fullWidth disabled={collectingPaymentWithoutShift} />
+                  </Grid>
+                </Grid>
+                {collectingPaymentWithoutShift ? <Typography variant="caption" color="warning.main">Open cashier shift before collecting payment.</Typography> : null}
               </Stack>
             </Box>
 
             <Box sx={panelSx}>
-              <Stack spacing={1}>
+              <Stack spacing={1.25}>
                 <Stack direction="row" justifyContent="space-between" alignItems="center">
                   <Typography variant="subtitle1" fontWeight={700}>Shift</Typography>
                   <Chip
                     size="small"
-                    label={currentShift ? currentShift.status : "NO OPEN SHIFT"}
+                    label={shiftStatusLabel(currentShift)}
                     color={currentShift ? "success" : "default"}
                     variant={currentShift ? "filled" : "outlined"}
                   />
@@ -1613,90 +1771,61 @@ export default function PharmacyPosPage() {
                     ? `Opened ${new Date(currentShift.openedAt).toLocaleString()} for cashier ${currentShift.cashierUserId}.`
                     : "No open cashier shift. Open a shift before collecting POS payments."}
                 </Typography>
-                <Stack direction="row" spacing={1}>
+                <Stack direction="row" spacing={1} flexWrap="wrap">
                   <Button size="small" variant="outlined" disabled={Boolean(currentShift)} onClick={() => setOpenShiftDialogOpen(true)}>Open Shift</Button>
                   <Button size="small" variant="outlined" color="inherit" disabled={!currentShift} onClick={openCloseShiftDialog}>Close Shift</Button>
+                  <Button size="small" variant="outlined" color="inherit" onClick={() => setShiftHistoryDrawerOpen(true)}>View Shift History</Button>
                 </Stack>
-                <Stack direction="row" justifyContent="space-between">
-                  <Typography variant="body2">Opening cash</Typography>
-                  <Typography variant="body2">{money(currentShift?.openingCashAmount ?? 0)}</Typography>
-                </Stack>
-                <Stack direction="row" justifyContent="space-between">
-                  <Typography variant="body2">Expected cash</Typography>
-                  <Typography variant="body2">{money(currentShift?.expectedCashAmount ?? 0)}</Typography>
-                </Stack>
-                <Stack direction="row" justifyContent="space-between">
-                  <Typography variant="body2">Expected UPI</Typography>
-                  <Typography variant="body2">{money(currentShift?.expectedUpiAmount ?? 0)}</Typography>
-                </Stack>
-                <Stack direction="row" justifyContent="space-between">
-                  <Typography variant="body2">Expected card</Typography>
-                  <Typography variant="body2">{money(currentShift?.expectedCardAmount ?? 0)}</Typography>
-                </Stack>
-                <Stack direction="row" justifyContent="space-between">
-                  <Typography variant="body2">Expected other</Typography>
-                  <Typography variant="body2">{money(currentShift?.expectedOtherAmount ?? 0)}</Typography>
-                </Stack>
-                <Stack direction="row" justifyContent="space-between">
-                  <Typography variant="body2">Total expected</Typography>
-                  <Typography variant="body2">{money(currentShift?.expectedTotalAmount ?? 0)}</Typography>
-                </Stack>
-                <Divider />
-                <Typography variant="body2" fontWeight={600}>Recent shifts</Typography>
-                <Stack spacing={0.75}>
-                  {shiftHistory.slice(0, 4).map((shift) => (
-                    <Box key={shift.id} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 1 }}>
-                      <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                        {new Date(shift.openedAt).toLocaleString()} | {shift.status}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                        Expected {money(shift.expectedTotalAmount)} | Actual {money(shift.actualTotalAmount)} | Variance {money(shift.varianceAmount)}
-                      </Typography>
-                    </Box>
-                  ))}
-                  {!shiftHistory.length ? <Typography variant="caption" color="text.secondary">No cashier shifts yet.</Typography> : null}
-                </Stack>
-              </Stack>
-            </Box>
-
-            <Box sx={panelSx}>
-              <Stack spacing={1}>
-                <Typography variant="subtitle1" fontWeight={700}>Totals</Typography>
-                <Stack direction="row" justifyContent="space-between"><Typography variant="body2">Subtotal</Typography><Typography variant="body2">{money(subtotal)}</Typography></Stack>
-                <Stack direction="row" justifyContent="space-between"><Typography variant="body2">Discount</Typography><Typography variant="body2">{money(discountTotal)}</Typography></Stack>
-                <Stack direction="row" justifyContent="space-between"><Typography variant="body2">Tax</Typography><Typography variant="body2">{money(taxTotal)}</Typography></Stack>
-                <Divider />
-                <Stack direction="row" justifyContent="space-between"><Typography fontWeight={700}>Grand Total</Typography><Typography fontWeight={700}>{money(total)}</Typography></Stack>
-                <Stack direction="row" justifyContent="space-between"><Typography color={duePreview > 0 ? "warning.main" : "success.main"}>Due</Typography><Typography color={duePreview > 0 ? "warning.main" : "success.main"}>{money(duePreview)}</Typography></Stack>
-                <TextField size="small" label="Notes" value={notes} onChange={(event) => setNotes(event.target.value)} multiline minRows={2} fullWidth />
-                <Button
-                  variant="contained"
-                  startIcon={<ShoppingCartCheckoutRoundedIcon />}
-                  disabled={submitting || !cart.length || cartHasStockIssue || collectingPaymentWithoutShift}
-                  onClick={() => void submitSale()}
-                >
-                  {activeAction === "sale" ? "Completing Sale..." : "Complete Sale"}
-                </Button>
-              </Stack>
-            </Box>
-
-            {selectedSale ? (
-              <Box sx={panelSx}>
-                <Stack spacing={1.25}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
-                    <Box>
-                      <Typography variant="subtitle1" fontWeight={700}>{selectedSale.saleNumber}</Typography>
-                      <Typography variant="caption" color="text.secondary">{saleDisplayName(selectedSale)} | {selectedSale.status}</Typography>
-                    </Box>
-                    <Stack direction="row" spacing={1}>
-                      <Button size="small" variant="outlined" onClick={() => setRecentDrawerOpen(true)}>
-                        Find Sale
-                      </Button>
-                      <Button size="small" startIcon={<LocalPrintshopOutlinedIcon />} onClick={() => void printReceipt(selectedSale.id)}>
-                        Receipt
-                      </Button>
-                    </Stack>
+                {[
+                  ["Expected cash", money(currentShift?.expectedCashAmount ?? 0)],
+                  ["Expected UPI", money(currentShift?.expectedUpiAmount ?? 0)],
+                  ["Expected card", money(currentShift?.expectedCardAmount ?? 0)],
+                  ["Expected other", money(currentShift?.expectedOtherAmount ?? 0)],
+                  ["Total expected", money(currentShift?.expectedTotalAmount ?? 0)],
+                ].map(([label, value]) => (
+                  <Stack key={label} direction="row" justifyContent="space-between">
+                    <Typography variant="body2">{label}</Typography>
+                    <Typography variant="body2">{value}</Typography>
                   </Stack>
+                ))}
+                <TextField size="small" label="Notes" value={notes} onChange={(event) => setNotes(event.target.value)} multiline minRows={2} fullWidth />
+              </Stack>
+            </Box>
+          </Stack>
+        </Grid>
+      </Grid>
+
+      <Drawer anchor="right" open={recentDrawerOpen} onClose={() => setRecentDrawerOpen(false)}>
+        <Box sx={{ width: { xs: 360, md: 540 }, p: 2 }}>
+          <Stack spacing={1.5}>
+            <Typography variant="h6">Recent Sales</Typography>
+            <TextField
+              size="small"
+              label="Find prior sale"
+              value={saleSearchQuery}
+              onChange={(event) => setSaleSearchQuery(event.target.value)}
+              placeholder="Sale no, customer, mobile"
+              fullWidth
+            />
+            <List dense sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, py: 0, maxHeight: 280, overflow: "auto" }}>
+              {filteredSales.slice(0, 8).map((sale) => (
+                <ListItemButton key={sale.id} selected={selectedSaleId === sale.id} onClick={() => selectSale(sale)}>
+                  <ListItemText
+                    primary={`${sale.saleNumber} | ${sale.status}`}
+                    secondary={`${saleDisplayName(sale)} | ${money(sale.total)} | Due ${money(sale.dueAmount)}`}
+                  />
+                </ListItemButton>
+              ))}
+              {!filteredSales.length ? <ListItemText sx={{ px: 2, py: 1 }} primary="No matching pharmacy sales." /> : null}
+            </List>
+            {selectedSale ? (
+              <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 1.5 }}>
+                <Stack spacing={1.1}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Typography variant="subtitle1" fontWeight={700}>{selectedSale.saleNumber}</Typography>
+                    <Chip size="small" label={selectedSale.status} color={selectedSale.status === "COMPLETED" ? "success" : "default"} />
+                  </Stack>
+                  <Typography variant="body2" fontWeight={600}>{saleDisplayName(selectedSale)}</Typography>
                   <Typography variant="caption" color="text.secondary">
                     Sale date {new Date(selectedSale.saleDateTime).toLocaleString()} | Payments {selectedSale.payments.length} | Returns {selectedSale.returns.length}
                   </Typography>
@@ -1728,6 +1857,14 @@ export default function PharmacyPosPage() {
                       </IconButton>
                     </Stack>
                   ) : null}
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    <Button size="small" startIcon={<LocalPrintshopOutlinedIcon />} onClick={() => void printReceipt(selectedSale.id)}>
+                      Receipt
+                    </Button>
+                    <Button size="small" variant="outlined" color="warning" onClick={() => setReturnDrawerOpen(true)}>
+                      Return
+                    </Button>
+                  </Stack>
                   <Divider />
                   <Typography variant="body2" fontWeight={600}>Add payment</Typography>
                   <TextField size="small" label="Amount" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} fullWidth />
@@ -1739,138 +1876,127 @@ export default function PharmacyPosPage() {
                     {activeAction === "payment" ? "Recording Payment..." : "Record Payment"}
                   </Button>
                   {paymentTopupBlocked ? <Typography variant="caption" color="warning.main">Open cashier shift before collecting payment.</Typography> : null}
-                  <Divider />
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
-                    <Typography variant="body2" fontWeight={600}>Return / Refund</Typography>
-                    <Chip size="small" label={`${selectedSale.items.length} sale item${selectedSale.items.length === 1 ? "" : "s"}`} variant="outlined" />
-                  </Stack>
-                  <Stack spacing={1} sx={{ maxHeight: 220, overflow: "auto", pr: 0.5 }}>
-                    {selectedSale.items.map((item) => {
-                      const draft = returnDraft[item.id] ?? { selected: false, quantity: "1", reusable: true };
-                      const remaining = returnableQuantity(item);
-                      const selectedQty = Math.min(remaining, Math.max(0, numeric(draft.quantity)));
-                      return (
-                        <Box key={item.id} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 1 }}>
-                          <Stack spacing={0.75}>
-                            <Stack direction="row" spacing={1} alignItems="center">
-                              <Checkbox
-                                size="small"
-                                checked={draft.selected}
-                                disabled={remaining <= 0}
-                                onChange={(event) => setReturnDraft((current) => ({
-                                  ...current,
-                                  [item.id]: {
-                                    ...(current[item.id] ?? draft),
-                                    selected: event.target.checked,
-                                  },
-                                }))}
-                              />
-                              <Box sx={{ minWidth: 0, flex: 1 }}>
-                                <Typography variant="body2" fontWeight={600}>{item.medicineName}</Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  Batch {item.batchNumber ?? "NA"} | Sold {item.quantity} | Returned {item.returnedQuantity} | Returnable {remaining}
-                                </Typography>
-                              </Box>
-                            </Stack>
-                            <Stack direction="row" spacing={1}>
-                              <TextField
-                                size="small"
-                                label="Return qty"
-                                value={draft.quantity}
-                                disabled={!draft.selected || remaining <= 0}
-                                onChange={(event) => setReturnDraft((current) => ({
-                                  ...current,
-                                  [item.id]: {
-                                    ...(current[item.id] ?? draft),
-                                    quantity: event.target.value,
-                                  },
-                                }))}
-                                fullWidth
-                              />
-                              <Select
-                                size="small"
-                                value={draft.reusable ? "true" : "false"}
-                                disabled={!draft.selected || remaining <= 0}
-                                onChange={(event) => setReturnDraft((current) => ({
-                                  ...current,
-                                  [item.id]: {
-                                    ...(current[item.id] ?? draft),
-                                    reusable: event.target.value === "true",
-                                  },
-                                }))}
-                                fullWidth
-                              >
-                                <MenuItem value="true">Reusable</MenuItem>
-                                <MenuItem value="false">Discard</MenuItem>
-                              </Select>
-                            </Stack>
-                            <Typography variant="caption" color="text.secondary">
-                              Refund estimate {money(proratedRefundAmount(item, selectedQty))}. {draft.reusable ? "Reusable items restock into inventory." : "Discarded items stay out of stock."}
-                            </Typography>
-                          </Stack>
-                        </Box>
-                      );
-                    })}
-                  </Stack>
-                  <Select size="small" value={returnMode} onChange={(event) => setReturnMode(event.target.value as PaymentMode)} fullWidth>
-                    {PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}
-                  </Select>
-                  <TextField size="small" label="Reason" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} fullWidth />
-                  <TextField size="small" label="Refund reference" value={returnReference} onChange={(event) => setReturnReference(event.target.value)} fullWidth />
-                  <Alert severity="info" sx={{ py: 0 }}>
-                    Refund estimate {money(refundEstimate)}. Reusable lines: {reusableSelectedCount}. Discard lines: {discardSelectedCount}.
-                  </Alert>
-                  <Button size="small" variant="outlined" color="warning" disabled={submitting || !selectedSale.items.length} onClick={() => void submitReturn()}>
-                    {activeAction === "return" ? "Processing Return..." : "Process Return"}
-                  </Button>
-                  {selectedSale.returns.length ? (
-                    <>
-                      <Divider />
-                      <Typography variant="body2" fontWeight={600}>Return history</Typography>
-                      <Stack spacing={0.75}>
-                        {selectedSale.returns.slice().reverse().slice(0, 4).map((returned) => (
-                          <Box key={returned.id} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 1 }}>
-                            <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                              {returned.returnNumber} | Qty {returned.quantity} | Refund {money(returned.refundAmount)}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                              {returned.reusable ? "Reusable restock" : "Discarded"} | {returned.refundMode ?? "No refund mode"} | {returned.reason}
-                            </Typography>
-                          </Box>
-                        ))}
-                      </Stack>
-                    </>
-                  ) : null}
                 </Stack>
               </Box>
             ) : null}
           </Stack>
-        </Grid>
-      </Grid>
+        </Box>
+      </Drawer>
 
-      <Drawer anchor="right" open={recentDrawerOpen} onClose={() => setRecentDrawerOpen(false)}>
-        <Box sx={{ width: { xs: 320, sm: 380 }, p: 2 }}>
+      <Drawer anchor="right" open={returnDrawerOpen} onClose={() => setReturnDrawerOpen(false)}>
+        <Box sx={{ width: { xs: 360, md: 520 }, p: 2 }}>
           <Stack spacing={1.25}>
-            <Typography variant="h6">Recent Sales</Typography>
-            <TextField
-              size="small"
-              label="Find prior sale"
-              value={saleSearchQuery}
-              onChange={(event) => setSaleSearchQuery(event.target.value)}
-              placeholder="Sale no, customer, mobile"
-              fullWidth
-            />
-            <List dense sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, py: 0 }}>
-              {filteredSales.slice(0, 5).map((sale) => (
-                <ListItemButton key={sale.id} selected={selectedSaleId === sale.id} onClick={() => selectSale(sale)}>
-                  <ListItemText
-                    primary={`${sale.saleNumber} | ${sale.status}`}
-                    secondary={`${saleDisplayName(sale)} | ${money(sale.total)} | Due ${money(sale.dueAmount)}`}
-                  />
-                </ListItemButton>
-              ))}
-              {!filteredSales.length ? <ListItemText sx={{ px: 2, py: 1 }} primary="No matching pharmacy sales." /> : null}
-            </List>
+            <Typography variant="h6">Process Return / Refund</Typography>
+            {selectedSale ? (
+              <>
+                <Typography variant="body2" fontWeight={600}>{selectedSale.saleNumber} • {saleDisplayName(selectedSale)}</Typography>
+                <Stack spacing={1} sx={{ maxHeight: "50vh", overflow: "auto", pr: 0.5 }}>
+                  {selectedSale.items.map((item) => {
+                    const draft = returnDraft[item.id] ?? { selected: false, quantity: "1", reusable: true };
+                    const remaining = returnableQuantity(item);
+                    const selectedQty = Math.min(remaining, Math.max(0, numeric(draft.quantity)));
+                    return (
+                      <Box key={item.id} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 1 }}>
+                        <Stack spacing={0.75}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Checkbox
+                              size="small"
+                              checked={draft.selected}
+                              disabled={remaining <= 0}
+                              onChange={(event) => setReturnDraft((current) => ({
+                                ...current,
+                                [item.id]: {
+                                  ...(current[item.id] ?? draft),
+                                  selected: event.target.checked,
+                                },
+                              }))}
+                            />
+                            <Box sx={{ minWidth: 0, flex: 1 }}>
+                              <Typography variant="body2" fontWeight={600}>{item.medicineName}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Batch {item.batchNumber ?? "NA"} | Sold {item.quantity} | Returned {item.returnedQuantity} | Returnable {remaining}
+                              </Typography>
+                            </Box>
+                          </Stack>
+                          <Stack direction="row" spacing={1}>
+                            <TextField
+                              size="small"
+                              label="Return qty"
+                              value={draft.quantity}
+                              disabled={!draft.selected || remaining <= 0}
+                              onChange={(event) => setReturnDraft((current) => ({
+                                ...current,
+                                [item.id]: {
+                                  ...(current[item.id] ?? draft),
+                                  quantity: event.target.value,
+                                },
+                              }))}
+                              fullWidth
+                            />
+                            <Select
+                              size="small"
+                              value={draft.reusable ? "true" : "false"}
+                              disabled={!draft.selected || remaining <= 0}
+                              onChange={(event) => setReturnDraft((current) => ({
+                                ...current,
+                                [item.id]: {
+                                  ...(current[item.id] ?? draft),
+                                  reusable: event.target.value === "true",
+                                },
+                              }))}
+                              fullWidth
+                            >
+                              <MenuItem value="true">Reusable</MenuItem>
+                              <MenuItem value="false">Discard</MenuItem>
+                            </Select>
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary">
+                            Refund estimate {money(proratedRefundAmount(item, selectedQty))}. {draft.reusable ? "Reusable items restock into inventory." : "Discarded items stay out of stock."}
+                          </Typography>
+                        </Stack>
+                      </Box>
+                    );
+                  })}
+                </Stack>
+                <Select size="small" value={returnMode} onChange={(event) => setReturnMode(event.target.value as PaymentMode)} fullWidth>
+                  {PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}
+                </Select>
+                <TextField size="small" label="Reason" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} fullWidth />
+                <TextField size="small" label="Refund reference" value={returnReference} onChange={(event) => setReturnReference(event.target.value)} fullWidth />
+                <Alert severity="info" sx={{ py: 0 }}>
+                  Refund estimate {money(refundEstimate)}. Reusable lines: {reusableSelectedCount}. Discard lines: {discardSelectedCount}.
+                </Alert>
+                <Stack direction="row" spacing={1}>
+                  <Button onClick={() => setReturnDrawerOpen(false)}>Cancel</Button>
+                  <Button size="small" variant="outlined" color="warning" disabled={submitting || !selectedSale.items.length} onClick={() => void submitReturn()}>
+                    {activeAction === "return" ? "Processing Return..." : "Process Return"}
+                  </Button>
+                </Stack>
+              </>
+            ) : (
+              <Typography variant="body2" color="text.secondary">Select a sale from Recent Sales first.</Typography>
+            )}
+          </Stack>
+        </Box>
+      </Drawer>
+
+      <Drawer anchor="right" open={shiftHistoryDrawerOpen} onClose={() => setShiftHistoryDrawerOpen(false)}>
+        <Box sx={{ width: { xs: 340, sm: 420 }, p: 2 }}>
+          <Stack spacing={1.25}>
+            <Typography variant="h6">Shift History</Typography>
+            {shiftHistory.map((shift) => (
+              <Box key={shift.id} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 1.25 }}>
+                <Typography variant="body2" fontWeight={600}>
+                  {shift.status} • {new Date(shift.openedAt).toLocaleString()}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                  Cashier {shift.cashierUserId} • Closed {shift.closedAt ? new Date(shift.closedAt).toLocaleString() : "Open"}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                  Expected {money(shift.expectedTotalAmount)} • Actual {money(shift.actualTotalAmount ?? 0)} • Variance {money(shift.varianceAmount ?? 0)}
+                </Typography>
+              </Box>
+            ))}
           </Stack>
         </Box>
       </Drawer>
@@ -2051,6 +2177,24 @@ export default function PharmacyPosPage() {
           >
             Close
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={previewDialogOpen} onClose={() => setPreviewDialogOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>{previewDocumentName ?? "Prescription Preview"}</DialogTitle>
+        <DialogContent>
+          <Box sx={{ minHeight: 480, pt: 1 }}>
+            {previewDocumentUrl ? (
+              previewDocumentIsImage ? (
+                <Box component="img" src={previewDocumentUrl} alt={previewDocumentName ?? "Prescription"} sx={{ width: "100%", borderRadius: 2 }} />
+              ) : (
+                <Box component="iframe" src={previewDocumentUrl} title={previewDocumentName ?? "Prescription"} sx={{ width: "100%", minHeight: 520, border: 0, borderRadius: 2 }} />
+              )
+            ) : null}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPreviewDialogOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
     </Stack>

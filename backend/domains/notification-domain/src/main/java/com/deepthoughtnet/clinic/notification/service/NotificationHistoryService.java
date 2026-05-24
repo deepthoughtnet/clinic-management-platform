@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.notification.service;
 
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationQueueResult;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -13,7 +14,23 @@ public interface NotificationHistoryService {
 
     List<NotificationHistoryRecord> listByPatient(UUID tenantId, UUID patientId);
 
-    NotificationHistoryRecord queue(
+    default NotificationHistoryRecord queue(
+            UUID tenantId,
+            UUID patientId,
+            String eventType,
+            String channel,
+            String recipient,
+            String subject,
+            String message,
+            String sourceType,
+            UUID sourceId,
+            UUID actorAppUserId
+    ) {
+        return queueDetailed(tenantId, patientId, eventType, channel, recipient, subject, message, sourceType, sourceId, actorAppUserId)
+                .notification();
+    }
+
+    NotificationQueueResult queueDetailed(
             UUID tenantId,
             UUID patientId,
             String eventType,

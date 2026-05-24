@@ -24,6 +24,7 @@ import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationQueueResult;
 import com.deepthoughtnet.clinic.notify.NotificationDeliveryException;
 import com.deepthoughtnet.clinic.notify.NotificationProvider;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
@@ -83,6 +84,8 @@ class NotificationActionServiceTest {
         when(patient.getEmail()).thenReturn("asha@example.com");
         when(patient.getMobile()).thenReturn("9999999999");
         when(patientRepository.findByTenantIdAndId(eq(tenantId), eq(patientId))).thenReturn(Optional.of(patient));
+        when(notificationHistoryService.queueDetailed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new NotificationQueueResult(notificationHistoryRecord(), true));
     }
 
     @Test
@@ -119,10 +122,10 @@ class NotificationActionServiceTest {
                 )
         ));
 
-        int queued = service.queuePaymentReminders(tenantId, actorId);
+        NotificationActionService.ReminderQueueSummary queued = service.queuePaymentReminders(tenantId, actorId);
 
-        assertThat(queued).isEqualTo(1);
-        Mockito.verify(notificationHistoryService).queue(
+        assertThat(queued.queuedCount()).isEqualTo(1);
+        Mockito.verify(notificationHistoryService).queueDetailed(
                 eq(tenantId),
                 eq(patientId),
                 eq("PAYMENT_REMINDER"),
@@ -161,10 +164,10 @@ class NotificationActionServiceTest {
         when(appointmentService.search(eq(tenantId), any(AppointmentSearchCriteria.class))).thenReturn(List.of(appointment));
         when(appointmentService.findById(eq(tenantId), eq(appointment.id()))).thenReturn(appointment);
 
-        int queued = service.queueMissedAppointmentReminders(tenantId, LocalDate.now(), actorId);
+        NotificationActionService.ReminderQueueSummary queued = service.queueMissedAppointmentReminders(tenantId, LocalDate.now(), actorId);
 
-        assertThat(queued).isEqualTo(1);
-        Mockito.verify(notificationHistoryService).queue(
+        assertThat(queued.queuedCount()).isEqualTo(1);
+        Mockito.verify(notificationHistoryService).queueDetailed(
                 eq(tenantId),
                 eq(patientId),
                 eq("MISSED_APPOINTMENT_REMINDER"),

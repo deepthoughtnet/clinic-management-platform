@@ -10,6 +10,7 @@ import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementServic
 import com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationQueueResult;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
@@ -30,11 +31,15 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 public class NotificationActionService {
+    private static final Logger log = LoggerFactory.getLogger(NotificationActionService.class);
+
     private final NotificationHistoryService notificationHistoryService;
     private final PrescriptionService prescriptionService;
     private final BillingService billingService;
@@ -174,7 +179,7 @@ public class NotificationActionService {
         }
     }
 
-    public int queueAppointmentReminders(UUID tenantId, LocalDate appointmentDate, UUID actorAppUserId) {
+    public ReminderQueueSummary queueAppointmentReminders(UUID tenantId, LocalDate appointmentDate, UUID actorAppUserId) {
         LocalDate windowDate = appointmentDate;
         OffsetDateTime now = OffsetDateTime.now();
         return appointmentService.search(tenantId, new com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria(null, null, windowDate, null, null))
@@ -182,25 +187,25 @@ public class NotificationActionService {
                 .filter(appointment -> appointment.status() == com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus.BOOKED)
                 .filter(appointment -> appointment.appointmentTime() != null)
                 .filter(appointment -> shouldSendReminder(now, appointment.appointmentDate(), appointment.appointmentTime()))
-                .mapToInt(appointment -> queueAppointmentReminder(tenantId, appointment.id(), actorAppUserId))
-                .sum();
+                .map(appointment -> queueAppointmentReminder(tenantId, appointment.id(), actorAppUserId))
+                .reduce(ReminderQueueSummary.empty(), ReminderQueueSummary::add);
     }
 
-    public int queueFollowUpReminders(UUID tenantId, LocalDate dueDate, UUID actorAppUserId) {
+    public ReminderQueueSummary queueFollowUpReminders(UUID tenantId, LocalDate dueDate, UUID actorAppUserId) {
         return consultationService.list(tenantId).stream()
                 .filter(record -> record.followUpDate() != null && !record.followUpDate().isAfter(dueDate))
                 .filter(record -> record.status() == ConsultationStatus.COMPLETED || record.status() == ConsultationStatus.DRAFT)
-                .mapToInt(record -> queueFollowUpReminder(tenantId, record, actorAppUserId))
-                .sum();
+                .map(record -> queueFollowUpReminder(tenantId, record, actorAppUserId))
+                .reduce(ReminderQueueSummary.empty(), ReminderQueueSummary::add);
     }
 
-    public int queueVaccinationReminders(UUID tenantId, UUID actorAppUserId) {
+    public ReminderQueueSummary queueVaccinationReminders(UUID tenantId, UUID actorAppUserId) {
         return vaccinationService.listDue(tenantId).stream()
-                .mapToInt(vaccination -> {
+                .map(vaccination -> {
                     PatientEntity patient = patient(tenantId, vaccination.patientId());
                     String channel = normalizeChannel("email");
                     String recipient = resolveRecipient(patient, channel);
-                    notificationHistoryService.queue(
+                    return queueReminder(() -> notificationHistoryService.queueDetailed(
                             tenantId,
                             patient.getId(),
                             "VACCINATION_REMINDER",
@@ -211,38 +216,37 @@ public class NotificationActionService {
                             "PATIENT_VACCINATION",
                             vaccination.id(),
                             actorAppUserId
-                    );
-                    return 1;
-                }).sum();
+                    ));
+                }).reduce(ReminderQueueSummary.empty(), ReminderQueueSummary::add);
     }
 
-    public int queuePaymentReminders(UUID tenantId, UUID actorAppUserId) {
+    public ReminderQueueSummary queuePaymentReminders(UUID tenantId, UUID actorAppUserId) {
         return billingService.list(tenantId, new com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria(null, null, null, null, null, null)).stream()
                 .filter(bill -> bill.dueAmount() != null && bill.dueAmount().compareTo(java.math.BigDecimal.ZERO) > 0)
                 .filter(bill -> bill.status() == com.deepthoughtnet.clinic.billing.service.model.BillStatus.UNPAID
                         || bill.status() == com.deepthoughtnet.clinic.billing.service.model.BillStatus.PARTIALLY_PAID
                         || bill.status() == com.deepthoughtnet.clinic.billing.service.model.BillStatus.ISSUED)
-                .mapToInt(bill -> queuePaymentReminder(tenantId, bill, actorAppUserId))
-                .sum();
+                .map(bill -> queuePaymentReminder(tenantId, bill, actorAppUserId))
+                .reduce(ReminderQueueSummary.empty(), ReminderQueueSummary::add);
     }
 
-    public int queueMissedAppointmentReminders(UUID tenantId, LocalDate missedBeforeDate, UUID actorAppUserId) {
+    public ReminderQueueSummary queueMissedAppointmentReminders(UUID tenantId, LocalDate missedBeforeDate, UUID actorAppUserId) {
         LocalDate cutoff = missedBeforeDate == null ? LocalDate.now() : missedBeforeDate;
         return appointmentService.search(tenantId, new com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria(null, null, null, null, null))
                 .stream()
                 .filter(appointment -> appointment.appointmentDate() != null && appointment.appointmentDate().isBefore(cutoff))
                 .filter(appointment -> appointment.status() == com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus.BOOKED
                         || appointment.status() == com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus.WAITING)
-                .mapToInt(appointment -> queueMissedAppointmentReminder(tenantId, appointment.id(), actorAppUserId))
-                .sum();
+                .map(appointment -> queueMissedAppointmentReminder(tenantId, appointment.id(), actorAppUserId))
+                .reduce(ReminderQueueSummary.empty(), ReminderQueueSummary::add);
     }
 
-    private int queueAppointmentReminder(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
+    private ReminderQueueSummary queueAppointmentReminder(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
         var appointment = appointmentService.findById(tenantId, appointmentId);
         PatientEntity patient = patient(tenantId, appointment.patientId());
         String channel = normalizeChannel("email");
         String recipient = resolveRecipient(patient, channel);
-        notificationHistoryService.queue(
+        return queueReminder(() -> notificationHistoryService.queueDetailed(
                 tenantId,
                 patient.getId(),
                 "APPOINTMENT_REMINDER",
@@ -253,8 +257,7 @@ public class NotificationActionService {
                 "APPOINTMENT",
                 appointment.id(),
                 actorAppUserId
-        );
-        return 1;
+        ));
     }
 
     private boolean shouldSendReminder(OffsetDateTime now, LocalDate appointmentDate, java.time.LocalTime appointmentTime) {
@@ -266,30 +269,29 @@ public class NotificationActionService {
         return !diff.isNegative() && diff.minus(targetWindow).abs().compareTo(slack) <= 0;
     }
 
-    private int queueFollowUpReminder(UUID tenantId, ConsultationRecord consultation, UUID actorAppUserId) {
+    private ReminderQueueSummary queueFollowUpReminder(UUID tenantId, ConsultationRecord consultation, UUID actorAppUserId) {
         PatientEntity patient = patient(tenantId, consultation.patientId());
         String channel = normalizeChannel("email");
         String recipient = resolveRecipient(patient, channel);
-        notificationHistoryService.queue(
+        return queueReminder(() -> notificationHistoryService.queueDetailed(
                 tenantId,
                 patient.getId(),
                 "FOLLOW_UP_REMINDER",
                 channel,
                 recipient,
                 "Follow-up reminder",
-                "Follow-up due on " + consultation.followUpDate() + " for consultation " + consultation.id(),
+                "Follow-up due on " + consultation.followUpDate() + ". Please schedule the next visit.",
                 "CONSULTATION",
                 consultation.id(),
                 actorAppUserId
-        );
-        return 1;
+        ));
     }
 
-    private int queuePaymentReminder(UUID tenantId, BillRecord bill, UUID actorAppUserId) {
+    private ReminderQueueSummary queuePaymentReminder(UUID tenantId, BillRecord bill, UUID actorAppUserId) {
         PatientEntity patient = patient(tenantId, bill.patientId());
         String channel = normalizeChannel("email");
         String recipient = resolveRecipient(patient, channel);
-        notificationHistoryService.queue(
+        return queueReminder(() -> notificationHistoryService.queueDetailed(
                 tenantId,
                 patient.getId(),
                 "PAYMENT_REMINDER",
@@ -300,16 +302,15 @@ public class NotificationActionService {
                 "BILL",
                 bill.id(),
                 actorAppUserId
-        );
-        return 1;
+        ));
     }
 
-    private int queueMissedAppointmentReminder(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
+    private ReminderQueueSummary queueMissedAppointmentReminder(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
         var appointment = appointmentService.findById(tenantId, appointmentId);
         PatientEntity patient = patient(tenantId, appointment.patientId());
         String channel = normalizeChannel("email");
         String recipient = resolveRecipient(patient, channel);
-        notificationHistoryService.queue(
+        return queueReminder(() -> notificationHistoryService.queueDetailed(
                 tenantId,
                 patient.getId(),
                 "MISSED_APPOINTMENT_REMINDER",
@@ -320,8 +321,17 @@ public class NotificationActionService {
                 "APPOINTMENT",
                 appointment.id(),
                 actorAppUserId
-        );
-        return 1;
+        ));
+    }
+
+    private ReminderQueueSummary queueReminder(ReminderQueueOperation operation) {
+        try {
+            NotificationQueueResult result = operation.queue();
+            return result.created() ? ReminderQueueSummary.queued() : ReminderQueueSummary.skippedDuplicate();
+        } catch (RuntimeException ex) {
+            log.warn("Failed to queue reminder notification", ex);
+            return ReminderQueueSummary.failed();
+        }
     }
 
     private PatientEntity patient(UUID tenantId, UUID patientId) {
@@ -359,4 +369,35 @@ public class NotificationActionService {
     }
 
     public record InvoiceEmailResult(boolean sent, String message, String recipientEmail, OffsetDateTime sentAt) {}
+
+    @FunctionalInterface
+    private interface ReminderQueueOperation {
+        NotificationQueueResult queue();
+    }
+
+    public record ReminderQueueSummary(int queuedCount, int skippedDuplicateCount, int failedCount) {
+        public static ReminderQueueSummary empty() {
+            return new ReminderQueueSummary(0, 0, 0);
+        }
+
+        public static ReminderQueueSummary queued() {
+            return new ReminderQueueSummary(1, 0, 0);
+        }
+
+        public static ReminderQueueSummary skippedDuplicate() {
+            return new ReminderQueueSummary(0, 1, 0);
+        }
+
+        public static ReminderQueueSummary failed() {
+            return new ReminderQueueSummary(0, 0, 1);
+        }
+
+        public ReminderQueueSummary add(ReminderQueueSummary other) {
+            return new ReminderQueueSummary(
+                    queuedCount + other.queuedCount,
+                    skippedDuplicateCount + other.skippedDuplicateCount,
+                    failedCount + other.failedCount
+            );
+        }
+    }
 }

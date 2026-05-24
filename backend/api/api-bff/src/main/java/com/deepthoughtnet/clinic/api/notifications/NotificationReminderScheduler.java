@@ -28,17 +28,22 @@ public class NotificationReminderScheduler {
 
     @Scheduled(fixedDelayString = "${clinic.notifications.scheduler.fixedDelay:PT5M}")
     public void run() {
-        int queued = 0;
+        NotificationActionService.ReminderQueueSummary totals = NotificationActionService.ReminderQueueSummary.empty();
         LocalDate today = LocalDate.now();
         for (var tenant : tenantManagementService.list()) {
-            queued += notificationActionService.queueAppointmentReminders(tenant.id(), null, null);
-            queued += notificationActionService.queueMissedAppointmentReminders(tenant.id(), today, null);
-            queued += notificationActionService.queueFollowUpReminders(tenant.id(), today, null);
-            queued += notificationActionService.queueVaccinationReminders(tenant.id(), null);
-            queued += notificationActionService.queuePaymentReminders(tenant.id(), null);
+            totals = totals.add(notificationActionService.queueAppointmentReminders(tenant.id(), null, null));
+            totals = totals.add(notificationActionService.queueMissedAppointmentReminders(tenant.id(), today, null));
+            totals = totals.add(notificationActionService.queueFollowUpReminders(tenant.id(), today, null));
+            totals = totals.add(notificationActionService.queueVaccinationReminders(tenant.id(), null));
+            totals = totals.add(notificationActionService.queuePaymentReminders(tenant.id(), null));
         }
-        if (queued > 0) {
-            log.info("Queued {} reminder notification(s)", queued);
+        if (totals.queuedCount() > 0 || totals.skippedDuplicateCount() > 0 || totals.failedCount() > 0) {
+            log.info(
+                    "Reminder queue run complete: queuedCount={}, skippedDuplicateCount={}, failedCount={}",
+                    totals.queuedCount(),
+                    totals.skippedDuplicateCount(),
+                    totals.failedCount()
+            );
         }
     }
 }

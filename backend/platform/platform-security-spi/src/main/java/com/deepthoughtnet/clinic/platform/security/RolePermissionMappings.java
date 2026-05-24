@@ -244,6 +244,7 @@ public final class RolePermissionMappings {
             Permissions.PRESCRIPTION_READ,
             Permissions.PRESCRIPTION_PRINT,
             Permissions.PRESCRIPTION_SEND,
+            Permissions.NOTIFICATION_READ,
             Permissions.CLINIC_DOCUMENT_UPLOAD,
             Permissions.CLINIC_DOCUMENT_READ,
             Permissions.CAREPILOT_LEAD_READ,

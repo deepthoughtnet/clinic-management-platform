@@ -19,7 +19,8 @@ class RolePermissionMappingsTest {
                 Permissions.PATIENT_UPDATE,
                 Permissions.APPOINTMENT_MANAGE,
                 Permissions.QUEUE_READ,
-                Permissions.QUEUE_UPDATE
+                Permissions.QUEUE_UPDATE,
+                Permissions.NOTIFICATION_READ
         );
         assertThat(permissions).doesNotContain(
                 Permissions.CONSULTATION_CREATE,

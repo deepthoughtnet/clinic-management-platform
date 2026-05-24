@@ -26,6 +26,7 @@ import ConsultationsPage from "../pages/consultations/ConsultationsPage";
 import ConsultationWorkspacePage from "../pages/consultations/ConsultationWorkspacePage";
 import PrescriptionsPage from "../pages/prescriptions/PrescriptionsPage";
 import BillsPage from "../pages/billing/BillsPage";
+import CashCounterPage from "../pages/finance/CashCounterPage";
 import PaymentsPage from "../pages/finance/PaymentsPage";
 import RefundsPage from "../pages/finance/RefundsPage";
 import NotificationsPage from "../pages/notifications/NotificationsPage";
@@ -173,6 +174,7 @@ function AuthedApp() {
         <Route path="/consultations/:id" element={<ConsultationWorkspacePage />} />
         <Route path="/prescriptions" element={<PrescriptionsPage />} />
         <Route path="/billing" element={<BillsPage />} />
+        <Route path="/finance/cash-counter" element={<CashCounterPage />} />
         <Route path="/finance/payments" element={<PaymentsPage />} />
         <Route path="/finance/refunds" element={<RefundsPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />

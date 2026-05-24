@@ -249,6 +249,34 @@ export type NotificationHistory = {
 
 export type ReportRow = Record<string, string | number | boolean | null>;
 
+export type CashCounterSummary = {
+  todayTotalCollected: number;
+  clinicBillingCollected: number;
+  pharmacyPosCollected: number;
+  refundsReturns: number;
+  netCash: number;
+  netUpi: number;
+  netCard: number;
+  netOther: number;
+  openCashierShifts: number;
+  varianceAlerts: number;
+};
+
+export type CashCounterLedgerRow = {
+  dateTime: string | null;
+  source: string;
+  businessReference: string;
+  receiptNumber: string;
+  patientCustomer: string;
+  paymentMode: string;
+  grossAmount: number;
+  refundAmount: number;
+  netAmount: number;
+  cashier: string;
+  shiftReference: string;
+  status: string;
+};
+
 export type ClinicProfile = {
   id: string;
   tenantId: string;
@@ -2309,6 +2337,9 @@ function buildReportQuery(params: {
   doctorUserId?: string | null;
   patientId?: string | null;
   status?: string | null;
+  paymentMode?: string | null;
+  source?: string | null;
+  search?: string | null;
 } = {}) {
   const query = new URLSearchParams();
   if (params.from) query.set("from", params.from);
@@ -2316,6 +2347,9 @@ function buildReportQuery(params: {
   if (params.doctorUserId) query.set("doctorUserId", params.doctorUserId);
   if (params.patientId) query.set("patientId", params.patientId);
   if (params.status) query.set("status", params.status);
+  if (params.paymentMode) query.set("paymentMode", params.paymentMode);
+  if (params.source) query.set("source", params.source);
+  if (params.search) query.set("search", params.search);
   return query.toString() ? `?${query.toString()}` : "";
 }
 
@@ -2338,13 +2372,53 @@ export async function getDoctorConsultationsReport(
 export async function getRevenueReport(
   token: string,
   tenantId: string,
-  params?: { from?: string | null; to?: string | null; doctorUserId?: string | null; patientId?: string | null },
+  params?: { from?: string | null; to?: string | null; doctorUserId?: string | null; patientId?: string | null; paymentMode?: string | null; source?: string | null },
 ) {
   return httpGet<ReportRow[]>(`/api/reports/revenue${buildReportQuery(params)}`, { token, tenantId });
 }
 
-export async function getPaymentModesReport(token: string, tenantId: string, params?: { from?: string | null; to?: string | null }) {
+export async function getDailySalesReport(
+  token: string,
+  tenantId: string,
+  params?: { from?: string | null; to?: string | null; paymentMode?: string | null; source?: string | null },
+) {
+  return httpGet<ReportRow[]>(`/api/reports/daily-sales${buildReportQuery(params)}`, { token, tenantId });
+}
+
+export async function getMedicineSalesReport(
+  token: string,
+  tenantId: string,
+  params?: { from?: string | null; to?: string | null; paymentMode?: string | null },
+) {
+  return httpGet<ReportRow[]>(`/api/reports/medicine-sales${buildReportQuery(params)}`, { token, tenantId });
+}
+
+export async function getPaymentModesReport(
+  token: string,
+  tenantId: string,
+  params?: { from?: string | null; to?: string | null; paymentMode?: string | null; source?: string | null },
+) {
   return httpGet<ReportRow[]>(`/api/reports/payment-modes${buildReportQuery(params)}`, { token, tenantId });
+}
+
+export async function getCashierShiftsReport(token: string, tenantId: string, params?: { from?: string | null; to?: string | null }) {
+  return httpGet<ReportRow[]>(`/api/reports/cashier-shifts${buildReportQuery(params)}`, { token, tenantId });
+}
+
+export async function getCashCounterSummary(
+  token: string,
+  tenantId: string,
+  params?: { from?: string | null; to?: string | null; paymentMode?: string | null; source?: string | null; search?: string | null },
+) {
+  return httpGet<CashCounterSummary>(`/api/reports/cash-counter-summary${buildReportQuery(params)}`, { token, tenantId });
+}
+
+export async function getCashCounterLedger(
+  token: string,
+  tenantId: string,
+  params?: { from?: string | null; to?: string | null; paymentMode?: string | null; source?: string | null; search?: string | null },
+) {
+  return httpGet<CashCounterLedgerRow[]>(`/api/reports/cash-counter-ledger${buildReportQuery(params)}`, { token, tenantId });
 }
 
 export async function getPendingDuesReport(token: string, tenantId: string) {

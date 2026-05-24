@@ -37,6 +37,7 @@ class InventoryServiceImplStockTest {
     private MedicineRepository medicineRepository;
     private StockRepository stockRepository;
     private InventoryLocationRepository locationRepository;
+    private AuditEventPublisher auditEventPublisher;
     private List<InventoryTransactionEntity> savedTransactions;
     private InventoryServiceImpl service;
 
@@ -46,7 +47,7 @@ class InventoryServiceImplStockTest {
         stockRepository = mock(StockRepository.class);
         InventoryTransactionRepository transactionRepository = mock(InventoryTransactionRepository.class);
         locationRepository = mock(InventoryLocationRepository.class);
-        AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
+        auditEventPublisher = mock(AuditEventPublisher.class);
         savedTransactions = new ArrayList<>();
 
         MedicineEntity medicine = mock(MedicineEntity.class);
@@ -97,6 +98,7 @@ class InventoryServiceImplStockTest {
         assertThat(second.barcode()).isEqualTo("890100000001");
         assertThat(savedTransactions).hasSize(2);
         assertThat(savedTransactions).allSatisfy(tx -> assertThat(tx.getTransactionType()).isEqualTo("STOCK_IN"));
+        org.mockito.Mockito.verify(auditEventPublisher, org.mockito.Mockito.atLeast(4)).record(any());
     }
 
     @Test
@@ -147,6 +149,7 @@ class InventoryServiceImplStockTest {
         assertThat(tx.getAfterQuantity()).isEqualTo(15);
         assertThat(tx.getQuantity()).isEqualTo(5);
         assertThat(tx.getNotes()).isEqualTo("REF-1");
+        org.mockito.Mockito.verify(auditEventPublisher, org.mockito.Mockito.atLeast(2)).record(any());
     }
 
     private StockUpsertCommand stockCommand(String batchNumber, String barcode) {

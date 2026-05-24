@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.billing.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +33,7 @@ import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -52,6 +54,7 @@ class BillingServicePaymentTest {
     private BillRefundRepository billRefundRepository;
     private ReceiptRepository receiptRepository;
     private PatientRepository patientRepository;
+    private AuditEventPublisher auditEventPublisher;
     private BillingService service;
 
     @BeforeEach
@@ -62,6 +65,7 @@ class BillingServicePaymentTest {
         billRefundRepository = mock(BillRefundRepository.class);
         receiptRepository = mock(ReceiptRepository.class);
         patientRepository = mock(PatientRepository.class);
+        auditEventPublisher = mock(AuditEventPublisher.class);
         service = new BillingService(
                 billRepository,
                 billLineRepository,
@@ -75,7 +79,7 @@ class BillingServicePaymentTest {
                 mock(AppointmentService.class),
                 mock(InventoryService.class),
                 mock(TenantUserManagementService.class),
-                mock(AuditEventPublisher.class),
+                auditEventPublisher,
                 new ObjectMapper()
         );
         when(billRepository.save(any(BillEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -102,6 +106,7 @@ class BillingServicePaymentTest {
         assertThat(bill.getStatus()).isEqualTo(BillStatus.PARTIALLY_PAID);
         assertThat(bill.getPaidAmount()).isEqualByComparingTo("40.00");
         assertThat(bill.getDueAmount()).isEqualByComparingTo("60.00");
+        org.mockito.Mockito.verify(auditEventPublisher, org.mockito.Mockito.atLeastOnce()).record(argThat(command -> "payment.collected".equals(command.action())));
     }
 
     @Test
@@ -196,6 +201,7 @@ class BillingServicePaymentTest {
         service.refund(tenantId, bill.getId(), new RefundCommand(payments.get(0).getId(), new BigDecimal("20.00"), "partial", PaymentMode.CASH, null, null), actorId);
 
         assertThat(bill.getStatus()).isEqualTo(BillStatus.PARTIALLY_REFUNDED);
+        org.mockito.Mockito.verify(auditEventPublisher, org.mockito.Mockito.atLeastOnce()).record(argThat(command -> "refund.created".equals(command.action())));
     }
 
     @Test

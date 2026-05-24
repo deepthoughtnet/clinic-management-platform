@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -136,6 +137,40 @@ class TenantUserManagementControllerTest {
         assertFalse(permissions.contains(Permissions.TENANT_USERS_MANAGE));
         assertFalse(permissions.contains(Permissions.TENANT_USERS_ROLE_ASSIGN));
         assertFalse(permissions.contains(Permissions.TENANT_USERS_RESET_PASSWORD));
+    }
+
+    @Test
+    void updateAuditsDeactivateAndRoleChange() {
+        UUID appUserId = UUID.randomUUID();
+        when(tenantUserManagementService.updateStatus(tenantId, appUserId, false)).thenReturn(record("RECEPTIONIST"));
+        when(tenantUserManagementService.updateRole(tenantId, appUserId, "BILLING_USER")).thenReturn(record("BILLING_USER"));
+
+        controller.update(appUserId, new TenantUserManagementController.UpdateTenantUserRequest(false, "BILLING_USER"));
+
+        verify(tenantUserManagementService).updateStatus(tenantId, appUserId, false);
+        verify(tenantUserManagementService).updateRole(tenantId, appUserId, "BILLING_USER");
+        verify(auditEventPublisher, org.mockito.Mockito.times(2)).record(any());
+    }
+
+    @Test
+    void assignRoleAuditsAssignment() {
+        UUID appUserId = UUID.randomUUID();
+        when(tenantUserManagementService.updateRole(tenantId, appUserId, "DOCTOR")).thenReturn(record("DOCTOR"));
+
+        controller.assignRole(appUserId, new TenantUserManagementController.AssignRoleRequest("DOCTOR"));
+
+        verify(tenantUserManagementService).updateRole(tenantId, appUserId, "DOCTOR");
+        verify(auditEventPublisher).record(any());
+    }
+
+    @Test
+    void resetPasswordAuditsEvent() {
+        UUID appUserId = UUID.randomUUID();
+        when(tenantUserManagementService.resetPassword(eq(tenantId), eq(appUserId), eq("Temp@1234"), eq(true))).thenReturn(record("RECEPTIONIST"));
+
+        controller.resetPassword(appUserId, new TenantUserManagementController.ResetPasswordRequest("Temp@1234", true));
+
+        verify(auditEventPublisher).record(any());
     }
 
     private TenantUserManagementController.CreateTenantUserRequest request(String role, String temporaryPassword) {

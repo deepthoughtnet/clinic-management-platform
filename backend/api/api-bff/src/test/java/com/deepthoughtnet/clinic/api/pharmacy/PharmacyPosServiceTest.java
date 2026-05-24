@@ -64,6 +64,7 @@ class PharmacyPosServiceTest {
     private PharmacySalePaymentRepository salePaymentRepository;
     private PharmacySaleReturnRepository saleReturnRepository;
     private PharmacySalePrescriptionRepository salePrescriptionRepository;
+    private AuditEventPublisher auditEventPublisher;
     private ObjectStorageService storageService;
     private PharmacyPosService service;
 
@@ -89,6 +90,7 @@ class PharmacyPosServiceTest {
         salePaymentRepository = mock(PharmacySalePaymentRepository.class);
         saleReturnRepository = mock(PharmacySaleReturnRepository.class);
         salePrescriptionRepository = mock(PharmacySalePrescriptionRepository.class);
+        auditEventPublisher = mock(AuditEventPublisher.class);
         storageService = mock(ObjectStorageService.class);
 
         location = InventoryLocationEntity.create(tenantId, "Main Pharmacy", "MAIN", "PHARMACY", true);
@@ -212,7 +214,7 @@ class PharmacyPosServiceTest {
                 saleItemRepository,
                 salePaymentRepository,
                 saleReturnRepository,
-                mock(AuditEventPublisher.class),
+                auditEventPublisher,
                 salePrescriptionRepository,
                 storageService,
                 new ObjectMapper()
@@ -258,6 +260,7 @@ class PharmacyPosServiceTest {
         verify(inventoryService, org.mockito.Mockito.times(2)).createTransaction(eq(tenantId), captor.capture(), eq(actorId));
         assertThat(captor.getAllValues()).extracting(InventoryTransactionCommand::stockBatchId)
                 .containsExactly(earliest.getId(), later.getId());
+        verify(auditEventPublisher).record(any());
     }
 
     @Test
@@ -335,6 +338,7 @@ class PharmacyPosServiceTest {
         ArgumentCaptor<InventoryTransactionCommand> captor = ArgumentCaptor.forClass(InventoryTransactionCommand.class);
         verify(inventoryService, org.mockito.Mockito.atLeastOnce()).createTransaction(eq(tenantId), captor.capture(), eq(actorId));
         assertThat(captor.getAllValues().stream().anyMatch(command -> command.transactionType() == com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.RETURN)).isTrue();
+        verify(auditEventPublisher, org.mockito.Mockito.atLeast(2)).record(any());
     }
 
     @Test
