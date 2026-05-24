@@ -30,7 +30,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "dashboard", label: "Dashboard", path: "/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_ASSISTANT"] },
       { key: "day-board", label: "Day Board", path: "/appointments/day-board", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"] },
       { key: "appointments", label: "Appointments", path: "/appointments", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"] },
-      { key: "notifications", label: "Notifications", path: "/notifications", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN"] },
+      { key: "notifications", label: "Notifications", path: "/notifications", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN"] },
       { key: "queue", label: "My Queue", path: "/queue", requiresTenant: true, rolesAny: ["DOCTOR"] },
       { key: "queue-ops", label: "Queue", path: "/queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST"] },
       { key: "doctor-availability", label: "Doctor Availability", path: "/doctors/availability", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "AUDITOR"] },

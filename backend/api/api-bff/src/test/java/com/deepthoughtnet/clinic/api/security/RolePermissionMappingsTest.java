@@ -147,6 +147,17 @@ class RolePermissionMappingsTest {
     }
 
     @Test
+    void clinicAdminCanReadOperationalNotificationsWhileDoctorCannot() {
+        Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
+        Set<String> tenantAdmin = RolePermissionMappings.permissionsForRole(Roles.TENANT_ADMIN);
+        Set<String> doctor = RolePermissionMappings.permissionsForRole(Roles.DOCTOR);
+
+        assertThat(clinicAdmin).contains(Permissions.NOTIFICATION_READ);
+        assertThat(tenantAdmin).contains(Permissions.NOTIFICATION_READ);
+        assertThat(doctor).doesNotContain(Permissions.NOTIFICATION_READ);
+    }
+
+    @Test
     void carePilotWebinarPermissionsFollowOperationalRoleModel() {
         Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
         Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);

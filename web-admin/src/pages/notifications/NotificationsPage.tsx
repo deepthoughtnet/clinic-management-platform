@@ -73,11 +73,8 @@ function statusColor(status: NotificationHistory["status"]) {
 
 export default function NotificationsPage() {
   const auth = useAuth();
-  const canView =
-    auth.rolesUpper.includes("CLINIC_ADMIN") ||
-    auth.rolesUpper.includes("RECEPTIONIST") ||
-    auth.rolesUpper.includes("AUDITOR") ||
-    (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
+  const canView = Boolean(auth.tenantId) && auth.hasPermission("notification.read");
+  const canRetry = auth.hasPermission("notification.retry") || auth.hasPermission("settings.manage");
   const [rows, setRows] = React.useState<NotificationHistory[]>([]);
   const [patients, setPatients] = React.useState<Patient[]>([]);
   const [filters, setFilters] = React.useState({
@@ -355,7 +352,7 @@ export default function NotificationsPage() {
                     <TableCell>Message preview</TableCell>
                     <TableCell>Queued</TableCell>
                     <TableCell>Sent</TableCell>
-                    <TableCell align="right">Actions</TableCell>
+                    {canRetry ? <TableCell align="right">Actions</TableCell> : null}
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -392,11 +389,13 @@ export default function NotificationsPage() {
                       </TableCell>
                       <TableCell>{new Date(row.createdAt).toLocaleString()}</TableCell>
                       <TableCell>{row.sentAt ? new Date(row.sentAt).toLocaleString() : "-"}</TableCell>
-                      <TableCell align="right">
-                        <Button size="small" disabled={workingId === row.id || (row.status !== "FAILED" && row.status !== "SKIPPED")} onClick={() => void retry(row.id)}>
-                          Retry
-                        </Button>
-                      </TableCell>
+                      {canRetry ? (
+                        <TableCell align="right">
+                          <Button size="small" disabled={workingId === row.id || (row.status !== "FAILED" && row.status !== "SKIPPED")} onClick={() => void retry(row.id)}>
+                            Retry
+                          </Button>
+                        </TableCell>
+                      ) : null}
                     </TableRow>
                   ))}
                 </TableBody>

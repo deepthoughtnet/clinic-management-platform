@@ -167,6 +167,7 @@ public final class RolePermissionMappings {
             Set.of(
                     Permissions.CLINIC_PROFILE_READ,
                     Permissions.CLINIC_PROFILE_UPDATE,
+                    Permissions.NOTIFICATION_READ,
                     Permissions.CLINIC_DOCUMENT_UPLOAD,
                     Permissions.CLINIC_DOCUMENT_AGENT_UPLOAD,
             Permissions.CLINIC_DOCUMENT_READ,
