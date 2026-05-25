@@ -520,8 +520,19 @@ export default function VoiceTestPage() {
   }
 
   function isHindiTtsVoiceConfigured() {
-    const configuredVoice = (voiceStatus?.ttsConfiguredVoice || "").toLowerCase();
-    return configuredVoice.startsWith("hi_") || configuredVoice.startsWith("hi-");
+    return Boolean(voiceStatus?.ttsHindiConfigured);
+  }
+
+  function hindiTtsStatusMessage() {
+    const hindiVoice = voiceStatus?.ttsConfiguredVoices?.hi;
+    if (isHindiTtsVoiceConfigured() && hindiVoice) {
+      return `Hindi Piper voice configured: ${hindiVoice}.`;
+    }
+    if (voiceStatus?.ttsFallbackVoiceEnabled) {
+      const fallbackVoice = voiceStatus?.ttsConfiguredVoices?.en || voiceStatus?.ttsConfiguredVoices?.default || voiceStatus?.ttsConfiguredVoice;
+      return `Hindi STT is enabled, but a Hindi Piper voice is not configured. Text responses will still work, and audio may use ${fallbackVoice || "the default voice"}.`;
+    }
+    return "Hindi STT is enabled, but a Hindi Piper voice is not configured. Text responses will still work, but Hindi audio playback is unavailable.";
   }
 
   function clearLiveResumeTimer() {
@@ -1585,6 +1596,12 @@ export default function VoiceTestPage() {
                       <MenuItem value="auto">Auto Detect</MenuItem>
                     </TextField>
 
+                    {language === "hi" ? (
+                      <Alert severity={isHindiTtsVoiceConfigured() ? "info" : "warning"}>
+                        {hindiTtsStatusMessage()}
+                      </Alert>
+                    ) : null}
+
                     <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
                       <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
                         Selected audio
@@ -1852,9 +1869,9 @@ export default function VoiceTestPage() {
                         />
                       </Stack>
                     </Paper>
-                    {language === "hi" && !isHindiTtsVoiceConfigured() ? (
-                      <Alert severity="warning">
-                        Hindi STT is enabled, but a Hindi Piper voice is not configured. Text responses will still work, and audio may use the default voice.
+                    {language === "hi" ? (
+                      <Alert severity={isHindiTtsVoiceConfigured() ? "info" : "warning"}>
+                        {hindiTtsStatusMessage()}
                       </Alert>
                     ) : null}
                     <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>

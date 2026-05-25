@@ -58,7 +58,10 @@ class VoiceTestControllerTest {
                 new VoiceServiceStatus("PIPER", true, true, "ready"),
                 new VoiceProviderTrace("faster-whisper", "gemini", "piper"),
                 "en",
-                "en_US-lessac-medium"
+                "en_US-lessac-medium",
+                java.util.Map.of("default", "en_US-lessac-medium", "en", "en_US-lessac-medium"),
+                false,
+                true
         ));
 
         controller.status(true);

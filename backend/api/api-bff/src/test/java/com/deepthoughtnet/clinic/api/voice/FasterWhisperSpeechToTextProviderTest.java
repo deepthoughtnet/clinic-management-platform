@@ -42,6 +42,7 @@ class FasterWhisperSpeechToTextProviderTest {
                     assertThat(body).contains("filename=\"sample.webm\"");
                     assertThat(body).contains("Content-Type: audio/webm");
                     assertThat(body).contains("name=\"language\"");
+                    assertThat(body).contains("name=\"task\"");
                     assertThat(body).contains("name=\"model\"");
                 })
                 .andRespond(withSuccess("{\"text\":\"Hello from local whisper\"}", MediaType.APPLICATION_JSON));
@@ -55,6 +56,38 @@ class FasterWhisperSpeechToTextProviderTest {
         ));
 
         assertThat(result.transcript()).isEqualTo("Hello from local whisper");
+        assertThat(result.providerName()).isEqualTo("FASTER_WHISPER");
+        server.verify();
+    }
+
+    @Test
+    void transcribePropagatesHindiLanguageAndUsesTranscribeTask() {
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().getFasterWhisper().setBaseUrl("http://faster-whisper:8000");
+        FasterWhisperSpeechToTextProvider provider = new FasterWhisperSpeechToTextProvider(properties, new RestTemplateBuilder(), new ObjectMapper());
+        RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(once(), requestTo("http://faster-whisper:8000/transcribe"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(request -> {
+                    MockClientHttpRequest httpRequest = (MockClientHttpRequest) request;
+                    String body = httpRequest.getBodyAsString(StandardCharsets.UTF_8);
+                    assertThat(body).contains("name=\"language\"");
+                    assertThat(body).contains("\r\nhi\r\n");
+                    assertThat(body).contains("name=\"task\"");
+                    assertThat(body).contains("\r\ntranscribe\r\n");
+                })
+                .andRespond(withSuccess("{\"text\":\"मुझे अपॉइंटमेंट बुक करनी है\",\"language\":\"hi\"}", MediaType.APPLICATION_JSON));
+
+        var result = provider.transcribe(new VoiceTranscriptionRequest(
+                UUID.randomUUID(),
+                "audio".getBytes(StandardCharsets.UTF_8),
+                "audio/webm",
+                "sample.webm",
+                "hi"
+        ));
+
+        assertThat(result.transcript()).isEqualTo("मुझे अपॉइंटमेंट बुक करनी है");
         assertThat(result.providerName()).isEqualTo("FASTER_WHISPER");
         server.verify();
     }

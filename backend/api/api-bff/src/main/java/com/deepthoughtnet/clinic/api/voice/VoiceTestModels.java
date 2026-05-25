@@ -32,7 +32,10 @@ record VoiceStatusResponse(
         VoiceServiceStatus tts,
         VoiceProviderTrace providerTrace,
         String sttConfiguredLanguage,
-        String ttsConfiguredVoice
+        String ttsConfiguredVoice,
+        java.util.Map<String, String> ttsConfiguredVoices,
+        boolean ttsHindiConfigured,
+        boolean ttsFallbackVoiceEnabled
 ) {
 }
 

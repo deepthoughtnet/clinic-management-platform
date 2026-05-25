@@ -38,7 +38,11 @@ Set in `local/.env.full-docker`:
 - `VOICE_LLM_PROVIDER_ORDER=gemini,groq,mock`
 - `VOICE_TTS_PROVIDER_ORDER=piper,mock`
 - `PIPER_TTS_BASE_URL=http://piper-tts:8001`
-- `PIPER_VOICE=en_US-lessac-medium`
+- `PIPER_DEFAULT_VOICE=en_US-lessac-medium`
+- `PIPER_ENGLISH_VOICE=en_US-lessac-medium`
+- `PIPER_HINDI_VOICE=hi_IN-rohan-medium`
+- `PIPER_ALLOW_FALLBACK_VOICE=true`
+- `PIPER_MODEL_HOST_DIR=./voice/piper/models`
 
 Hosted providers remain supported:
 
@@ -93,11 +97,30 @@ The default configuration uses CPU-safe inference. Reduce latency by using a sma
 
 ### Piper voice is missing
 
-`piper-tts` downloads the configured voice model into `/models/piper` on first synthesis request.
+The local stack mounts Piper models from:
+
+- host path: `local/voice/piper/models/`
+- container path: `/models/piper`
+
+For Hindi TTS, place both files in `local/voice/piper/models/`:
+
+- `hi_IN-rohan-medium.onnx`
+- `hi_IN-rohan-medium.onnx.json`
+
+Then set:
+
+- `PIPER_HINDI_VOICE=hi_IN-rohan-medium`
+
+The service can still synthesize English with `PIPER_ENGLISH_VOICE` / `PIPER_DEFAULT_VOICE`.
+If `PIPER_HINDI_VOICE` is blank or the Hindi model files are unavailable, the UI shows that Hindi TTS is not configured. Text responses still work, and audio can fall back to the default voice when `PIPER_ALLOW_FALLBACK_VOICE=true`.
+
+`piper-tts` can also download the configured voice model into `/models/piper` on first synthesis request if direct model placement is not used.
 
 Check:
 
-- `PIPER_VOICE`
+- `PIPER_DEFAULT_VOICE`
+- `PIPER_ENGLISH_VOICE`
+- `PIPER_HINDI_VOICE`
 - container logs for `piper-tts`
 
 ### Browser microphone permissions

@@ -167,6 +167,9 @@ public class VoiceTestProperties {
     public static class Piper {
         private String baseUrl = "http://piper-tts:8001";
         private String voice = "en_US-lessac-medium";
+        private String englishVoice = "en_US-lessac-medium";
+        private String hindiVoice;
+        private boolean allowFallbackVoice = true;
         private int connectTimeoutMs = 5000;
         private int readTimeoutMs = 120000;
 
@@ -184,6 +187,30 @@ public class VoiceTestProperties {
 
         public void setVoice(String voice) {
             this.voice = voice;
+        }
+
+        public String getEnglishVoice() {
+            return englishVoice;
+        }
+
+        public void setEnglishVoice(String englishVoice) {
+            this.englishVoice = englishVoice;
+        }
+
+        public String getHindiVoice() {
+            return hindiVoice;
+        }
+
+        public void setHindiVoice(String hindiVoice) {
+            this.hindiVoice = hindiVoice;
+        }
+
+        public boolean isAllowFallbackVoice() {
+            return allowFallbackVoice;
+        }
+
+        public void setAllowFallbackVoice(boolean allowFallbackVoice) {
+            this.allowFallbackVoice = allowFallbackVoice;
         }
 
         public int getConnectTimeoutMs() {

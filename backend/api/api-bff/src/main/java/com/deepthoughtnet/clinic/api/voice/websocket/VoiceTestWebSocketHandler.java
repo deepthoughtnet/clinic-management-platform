@@ -97,7 +97,7 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
 
     private void handleSessionStart(WebSocketSession session, JsonNode root) throws IOException {
         SessionState state = requireState(session);
-        state.language = root.path("language").asText("en");
+        state.language = root.path("language").asText("auto");
         state.context = root.path("context").asText("General voice test harness conversation.");
         state.contentType = null;
         state.startedAt = Instant.now();
@@ -516,7 +516,7 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
     static final class SessionState {
         private final String sessionId;
         private final Map<Integer, String> audioChunks = new LinkedHashMap<>();
-        private String language = "en";
+        private String language = "auto";
         private String context = "General voice test harness conversation.";
         private String contentType;
         private String filename;

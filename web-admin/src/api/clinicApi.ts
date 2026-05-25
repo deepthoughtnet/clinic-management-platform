@@ -303,6 +303,9 @@ export type VoiceStatusResponse = {
   providerTrace: VoiceProviderTrace | null;
   sttConfiguredLanguage: string | null;
   ttsConfiguredVoice: string | null;
+  ttsConfiguredVoices: Record<string, string> | null;
+  ttsHindiConfigured: boolean;
+  ttsFallbackVoiceEnabled: boolean;
 };
 
 export type VoiceLiveStatusResponse = {

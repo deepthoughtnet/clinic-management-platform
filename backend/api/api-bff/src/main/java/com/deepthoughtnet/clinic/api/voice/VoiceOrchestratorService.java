@@ -279,7 +279,10 @@ public class VoiceOrchestratorService {
                         firstProvider(properties.getTts().getProviderOrder(), "mock")
                 ),
                 properties.getStt().getFasterWhisper().getLanguage(),
-                properties.getTts().getPiper().getVoice()
+                properties.getTts().getPiper().getVoice(),
+                java.util.Map.copyOf(piperTextToSpeechProvider.configuredVoices()),
+                piperTextToSpeechProvider.isLanguageVoiceConfigured("hi"),
+                piperTextToSpeechProvider.isFallbackVoiceAllowed()
         );
     }
 
@@ -444,19 +447,32 @@ public class VoiceOrchestratorService {
     }
 
     private Map<String, Object> llmInput(String transcript, String context, String language) {
+        String responseLanguage = StringUtils.hasText(language) ? language : "auto";
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("transcript", trimToSafeSpeech(transcript, 320));
         input.put("conversationContext", compactVoiceContext(context));
-        input.put("language", StringUtils.hasText(language) ? language : "auto");
+        input.put("language", responseLanguage);
         input.put("responseContract", "{\"answer\":\"short spoken response\",\"suggestedActions\":[]}");
         input.put(
                 "instruction",
                 "Return ONLY compact valid JSON. No markdown. No newlines. No extra keys. "
                         + "Use exactly {\"answer\":\"short spoken response\",\"suggestedActions\":[]}. "
                         + "Keep answer under " + properties.getLlm().getMaxAnswerWords()
-                        + " words. Speak like a helpful clinic receptionist."
+                        + " words. Speak like a helpful clinic receptionist. "
+                        + languageInstruction(responseLanguage)
         );
         return input;
+    }
+
+    private String languageInstruction(String language) {
+        String normalized = normalizeLanguageHint(language);
+        if ("hi".equals(normalized)) {
+            return "Respond only in simple spoken Hindi written in Devanagari.";
+        }
+        if ("en".equals(normalized)) {
+            return "Respond only in English.";
+        }
+        return "Respond in the same language as the transcript.";
     }
 
     private String compactVoiceContext(String context) {

@@ -99,6 +99,7 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
                     && !"auto-detect".equalsIgnoreCase(request.language().trim())) {
                 body.add("language", request.language().trim());
             }
+            body.add("task", "transcribe");
             body.add("model", properties.getStt().getFasterWhisper().getModel());
 
             ResponseEntity<String> response = restTemplate.postForEntity(

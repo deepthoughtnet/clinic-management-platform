@@ -194,7 +194,10 @@ voice:
     provider-order: ${VOICE_TTS_PROVIDER_ORDER:piper,mock}
     piper:
       base-url: ${PIPER_TTS_BASE_URL:http://piper-tts:8001}
-      voice: ${PIPER_VOICE:en_US-lessac-medium}
+      voice: ${PIPER_DEFAULT_VOICE:${PIPER_VOICE:en_US-lessac-medium}}
+      english-voice: ${PIPER_ENGLISH_VOICE:en_US-lessac-medium}
+      hindi-voice: ${PIPER_HINDI_VOICE:}
+      allow-fallback-voice: ${PIPER_ALLOW_FALLBACK_VOICE:true}
       connect-timeout-ms: ${PIPER_TTS_CONNECT_TIMEOUT_MS:5000}
       read-timeout-ms: ${PIPER_TTS_READ_TIMEOUT_MS:120000}
     elevenlabs:

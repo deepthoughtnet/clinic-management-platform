@@ -6,7 +6,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -23,7 +23,7 @@ class SynthesisRequest(BaseModel):
 
 
 def configured_voice() -> str:
-    return os.getenv("PIPER_VOICE", "en_US-lessac-medium")
+    return os.getenv("PIPER_DEFAULT_VOICE") or os.getenv("PIPER_VOICE", "en_US-lessac-medium")
 
 
 def model_dir() -> Path:
@@ -61,34 +61,34 @@ def ensure_voice_files(voice: str) -> tuple[Path, Path]:
 
 
 @app.get("/health")
-def health() -> dict[str, object]:
-    voice = configured_voice()
+def health(voice: str | None = Query(default=None)) -> dict[str, object]:
+    selected_voice = (voice or configured_voice()).strip()
     return {
         "status": "ok",
         "provider": "piper",
-        "voice": voice,
-        "voiceLoaded": voice in _voice_ready,
+        "voice": selected_voice,
+        "voiceLoaded": selected_voice in _voice_ready,
     }
 
 
 @app.get("/ready")
-def ready() -> dict[str, object]:
-    voice = configured_voice()
+def ready(voice: str | None = Query(default=None)) -> dict[str, object]:
+    selected_voice = (voice or configured_voice()).strip()
     try:
-        ensure_voice_files(voice)
+        ensure_voice_files(selected_voice)
         return {
             "status": "ready",
             "provider": "piper",
-            "voice": voice,
+            "voice": selected_voice,
             "voiceLoaded": True,
             "message": "Piper voice assets ready.",
         }
     except Exception as exc:
-        logger.exception("piper.ready.failed voice=%s", voice)
+        logger.exception("piper.ready.failed voice=%s", selected_voice)
         return {
             "status": "warming",
             "provider": "piper",
-            "voice": voice,
+            "voice": selected_voice,
             "voiceLoaded": False,
             "message": f"Piper voice unavailable: {exc}",
         }
@@ -100,7 +100,7 @@ def synthesize(request: SynthesisRequest) -> Response:
     if not text:
         raise HTTPException(status_code=400, detail="Text is required.")
 
-    voice = request.voice or configured_voice()
+    voice = (request.voice or configured_voice()).strip()
     try:
         model_path, _ = ensure_voice_files(voice)
     except Exception as exc:

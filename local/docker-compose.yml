@@ -37,7 +37,10 @@ x-clinic-ai-env: &clinic-ai-env
   DEEPGRAM_BASE_URL: ${DEEPGRAM_BASE_URL:-https://api.deepgram.com/v1/listen}
   VOICE_TTS_PROVIDER_ORDER: ${VOICE_TTS_PROVIDER_ORDER:-piper,mock}
   PIPER_TTS_BASE_URL: ${PIPER_TTS_BASE_URL:-http://piper-tts:8001}
-  PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-medium}
+  PIPER_DEFAULT_VOICE: ${PIPER_DEFAULT_VOICE:-en_US-lessac-medium}
+  PIPER_ENGLISH_VOICE: ${PIPER_ENGLISH_VOICE:-en_US-lessac-medium}
+  PIPER_HINDI_VOICE: ${PIPER_HINDI_VOICE:-hi_IN-rohan-medium}
+  PIPER_ALLOW_FALLBACK_VOICE: ${PIPER_ALLOW_FALLBACK_VOICE:-true}
   PIPER_TTS_CONNECT_TIMEOUT_MS: ${PIPER_TTS_CONNECT_TIMEOUT_MS:-5000}
   PIPER_TTS_READ_TIMEOUT_MS: ${PIPER_TTS_READ_TIMEOUT_MS:-120000}
   ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
@@ -154,7 +157,11 @@ services:
     container_name: clinic-piper-tts
     restart: unless-stopped
     environment:
-      PIPER_VOICE: ${PIPER_VOICE:-en_US-lessac-medium}
+      PIPER_DEFAULT_VOICE: ${PIPER_DEFAULT_VOICE:-en_US-lessac-medium}
+      PIPER_ENGLISH_VOICE: ${PIPER_ENGLISH_VOICE:-en_US-lessac-medium}
+      PIPER_HINDI_VOICE: ${PIPER_HINDI_VOICE:-hi_IN-rohan-medium}
+      PIPER_ALLOW_FALLBACK_VOICE: ${PIPER_ALLOW_FALLBACK_VOICE:-true}
+      PIPER_VOICE: ${PIPER_DEFAULT_VOICE:-en_US-lessac-medium}
       PIPER_MODEL_DIR: ${PIPER_MODEL_DIR:-/models/piper}
       PIPER_VOICE_DOWNLOAD_BASE: ${PIPER_VOICE_DOWNLOAD_BASE:-https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0}
     healthcheck:
@@ -164,7 +171,7 @@ services:
       retries: 5
       start_period: 25s
     volumes:
-      - piper_tts_models:/models/piper
+      - ${PIPER_MODEL_HOST_DIR:-./voice/piper/models}:/models/piper
 
   realtime-voice-gateway:
     build:
@@ -283,4 +290,3 @@ volumes:
   realtime_voice_model_cache:
   whisper_stt_models:
   faster_whisper_models:
-  piper_tts_models:

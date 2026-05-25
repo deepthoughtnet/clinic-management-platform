@@ -26,9 +26,11 @@ import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -385,6 +387,102 @@ class VoiceOrchestratorServiceTest {
         );
 
         assertThat(response.assistantText()).isEqualTo("Sorry, I missed that. Could you please repeat?");
+    }
+
+    @Test
+    void processAudioPropagatesHindiLanguageToTtsProvider() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-hi-tts"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("mock"));
+        properties.getTts().setProviderOrder(List.of("capture"));
+        AiOrchestrationService ai = mock(AiOrchestrationService.class);
+        when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "GEMINI", "gemini", "{\"answer\":\"Namaste, aap kis samay aana chahenge?\",\"suggestedActions\":[]}",
+                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+        ));
+
+        AtomicReference<String> capturedLanguage = new AtomicReference<>();
+        TextToSpeechProvider captureTts = new TextToSpeechProvider() {
+            @Override
+            public String providerName() {
+                return "capture";
+            }
+
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public VoiceSynthesisResult synthesize(VoiceSynthesisRequest request) {
+                capturedLanguage.set(request.language());
+                return new VoiceSynthesisResult("wav".getBytes(StandardCharsets.UTF_8), "audio/wav", "capture", null);
+            }
+        };
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(captureTts),
+                ai,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
+        );
+
+        VoiceTestResponse response = service.processAudio(
+                new MockMultipartFile("audio", "sample.webm", "audio/webm", "voice".getBytes()),
+                null,
+                "hi"
+        );
+
+        assertThat(capturedLanguage.get()).isEqualTo("hi");
+        assertThat(response.providerTrace().ttsProvider()).isEqualTo("capture");
+    }
+
+    @Test
+    void voiceLlmRequestPinsHindiResponsesToSpokenHindi() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-voice-hi"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        AiOrchestrationService ai = mock(AiOrchestrationService.class);
+        when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "GEMINI", "gemini", "{\"answer\":\"नमस्ते, आप किस समय आना चाहेंगे?\",\"suggestedActions\":[]}",
+                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+        ));
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(new MockVoiceTextToSpeechProvider()),
+                ai,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
+        );
+
+        service.processAudio(
+                new MockMultipartFile("audio", "sample.webm", "audio/webm", "voice".getBytes()),
+                "Hindi appointment booking",
+                "hi"
+        );
+
+        ArgumentCaptor<AiOrchestrationRequest> requestCaptor = ArgumentCaptor.forClass(AiOrchestrationRequest.class);
+        verify(ai).complete(requestCaptor.capture());
+        AiOrchestrationRequest request = requestCaptor.getValue();
+        assertThat(String.valueOf(request.inputVariables().get("language"))).isEqualTo("hi");
+        assertThat(String.valueOf(request.inputVariables().get("instruction"))).contains("Respond only in simple spoken Hindi written in Devanagari.");
     }
 
     @Test

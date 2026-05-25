@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.voice;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.ExpectedCount.once;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -24,11 +25,13 @@ class PiperTextToSpeechProviderTest {
     void synthesizeReturnsWaveAudioFromLocalService() {
         VoiceTestProperties properties = new VoiceTestProperties();
         properties.getTts().getPiper().setBaseUrl("http://piper-tts:8001");
+        properties.getTts().getPiper().setEnglishVoice("en_US-lessac-medium");
         PiperTextToSpeechProvider provider = new PiperTextToSpeechProvider(properties, new RestTemplateBuilder());
         RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
         MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
         server.expect(once(), requestTo("http://piper-tts:8001/synthesize"))
                 .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("{\"text\":\"Hello there\",\"voice\":\"en_US-lessac-medium\"}"))
                 .andRespond(withSuccess("wav-audio".getBytes(StandardCharsets.UTF_8), MediaType.parseMediaType("audio/wav")));
 
         var result = provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Hello there", "en"));
@@ -51,6 +54,47 @@ class PiperTextToSpeechProviderTest {
 
         assertThatThrownBy(() -> provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Hello there", "en")))
                 .hasMessageContaining("Audio could not be synthesized");
+        server.verify();
+    }
+
+    @Test
+    void synthesizeUsesConfiguredHindiVoiceWhenRequested() {
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getTts().getPiper().setBaseUrl("http://piper-tts:8001");
+        properties.getTts().getPiper().setEnglishVoice("en_US-lessac-medium");
+        properties.getTts().getPiper().setHindiVoice("hi_IN-rohan-medium");
+        PiperTextToSpeechProvider provider = new PiperTextToSpeechProvider(properties, new RestTemplateBuilder());
+        RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(once(), requestTo("http://piper-tts:8001/synthesize"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("{\"text\":\"Namaste\",\"voice\":\"hi_IN-rohan-medium\"}"))
+                .andRespond(withSuccess("wav-audio".getBytes(StandardCharsets.UTF_8), MediaType.parseMediaType("audio/wav")));
+
+        var result = provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Namaste", "hi"));
+
+        assertThat(result.providerName()).isEqualTo("piper");
+        server.verify();
+    }
+
+    @Test
+    void synthesizeFallsBackToEnglishVoiceWhenHindiVoiceIsMissing() {
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getTts().getPiper().setBaseUrl("http://piper-tts:8001");
+        properties.getTts().getPiper().setEnglishVoice("en_US-lessac-medium");
+        properties.getTts().getPiper().setAllowFallbackVoice(true);
+        PiperTextToSpeechProvider provider = new PiperTextToSpeechProvider(properties, new RestTemplateBuilder());
+        RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(once(), requestTo("http://piper-tts:8001/synthesize"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("{\"text\":\"Namaste\",\"voice\":\"en_US-lessac-medium\"}"))
+                .andRespond(withSuccess("wav-audio".getBytes(StandardCharsets.UTF_8), MediaType.parseMediaType("audio/wav")));
+
+        var result = provider.synthesize(new VoiceSynthesisRequest(UUID.randomUUID(), "Namaste", "hi"));
+
+        assertThat(result.providerName()).isEqualTo("piper");
+        assertThat(provider.isLanguageVoiceConfigured("hi")).isFalse();
         server.verify();
     }
 }

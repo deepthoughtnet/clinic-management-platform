@@ -232,6 +232,7 @@ def ready() -> dict[str, object]:
 async def transcribe(
     file: UploadFile = File(...),
     language: Optional[str] = Form(None),
+    task: Optional[str] = Form(None),
     model: Optional[str] = Form(None),
 ) -> dict[str, object]:
     audio_bytes = await file.read()
@@ -239,16 +240,21 @@ async def transcribe(
 
     selected_model = model or configured_model_name()
     selected_language = (language or "").strip() or None
+    selected_task = (task or "").strip().lower() or "transcribe"
     if selected_language and selected_language.lower() in {"auto", "auto-detect"}:
         selected_language = None
+    if selected_task != "transcribe":
+        logger.warning("faster_whisper.transcribe.unsupported_task requested=%s forcing=transcribe", selected_task)
+        selected_task = "transcribe"
     temp_path = None
     transcription_path = None
     ffprobe_result = None
     started = time.perf_counter()
     logger.info(
-        "faster_whisper.transcribe.start model=%s language=%s sizeBytes=%s contentType=%s normalizedContentType=%s filename=%s extension=%s",
+        "faster_whisper.transcribe.start model=%s language=%s task=%s sizeBytes=%s contentType=%s normalizedContentType=%s filename=%s extension=%s",
         selected_model,
         selected_language or "auto",
+        selected_task,
         len(audio_bytes),
         file.content_type,
         normalized_content_type,
@@ -310,6 +316,7 @@ async def transcribe(
         segments, info = model_instance.transcribe(
             transcription_path,
             language=selected_language,
+            task="transcribe",
             vad_filter=True,
         )
         transcript = " ".join(segment.text.strip() for segment in segments if segment.text).strip()
@@ -334,7 +341,7 @@ async def transcribe(
         return {
             "text": transcript,
             "provider": "FASTER_WHISPER",
-            "language": info.language or selected_language or configured_language(),
+            "language": info.language or selected_language,
             "model": selected_model,
         }
     except HTTPException as exc:
