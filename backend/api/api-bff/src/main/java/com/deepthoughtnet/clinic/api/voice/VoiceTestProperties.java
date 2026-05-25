@@ -244,6 +244,10 @@ public class VoiceTestProperties {
 
     public static class Llm {
         private List<String> providerOrder = List.of("gemini", "groq", "mock");
+        private int maxOutputTokens = 1024;
+        private int maxHistoryTurns = 4;
+        private int maxHistoryChars = 900;
+        private int maxAnswerWords = 35;
 
         public List<String> getProviderOrder() {
             return providerOrder;
@@ -251,6 +255,38 @@ public class VoiceTestProperties {
 
         public void setProviderOrder(List<String> providerOrder) {
             this.providerOrder = providerOrder;
+        }
+
+        public int getMaxOutputTokens() {
+            return maxOutputTokens;
+        }
+
+        public void setMaxOutputTokens(int maxOutputTokens) {
+            this.maxOutputTokens = maxOutputTokens;
+        }
+
+        public int getMaxHistoryTurns() {
+            return maxHistoryTurns;
+        }
+
+        public void setMaxHistoryTurns(int maxHistoryTurns) {
+            this.maxHistoryTurns = maxHistoryTurns;
+        }
+
+        public int getMaxHistoryChars() {
+            return maxHistoryChars;
+        }
+
+        public void setMaxHistoryChars(int maxHistoryChars) {
+            this.maxHistoryChars = maxHistoryChars;
+        }
+
+        public int getMaxAnswerWords() {
+            return maxAnswerWords;
+        }
+
+        public void setMaxAnswerWords(int maxAnswerWords) {
+            this.maxAnswerWords = maxAnswerWords;
         }
     }
 

@@ -30,6 +30,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -38,6 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class AiOrchestrationServiceImpl implements AiOrchestrationService {
     private static final Logger log = LoggerFactory.getLogger(AiOrchestrationServiceImpl.class);
+    private static final Pattern ANSWER_FIELD_PATTERN = Pattern.compile("\"answer\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
     private final AiPromptTemplateRegistryService templateRegistry;
     private final AiProviderRouter providerRouter;
     private final AiRequestAuditService auditService;
@@ -432,8 +435,19 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
             boolean likelyTruncatedJson = looksLikeJson(raw);
             log.warn("AI provider response parsing fallback used. provider={}, error={}, rawPreview=\"{}\"",
                     response.providerName(), safeMessage(ex), trimTo(raw.replaceAll("[\\r\\n\\t]+", " "), 300));
+            String extractedAnswer = extractAnswerFromMalformedJson(raw);
+            if (extractedAnswer != null) {
+                return new ParsedOutput(
+                        extractedAnswer,
+                        fallbackStructuredJson(extractedAnswer),
+                        List.of(),
+                        List.of("AI returned partially structured output. Please verify."),
+                        response.confidence(),
+                        raw
+                );
+            }
             if (likelyTruncatedJson) {
-                return invalidParsedOutput("AI response was incomplete. Please retry.", response.confidence(), "AI response was incomplete. Please retry.");
+                return invalidParsedOutput("Sorry, I missed that. Could you please repeat?", response.confidence(), "Sorry, I missed that. Could you please repeat?");
             }
             return new ParsedOutput(
                     raw,
@@ -478,6 +492,40 @@ public class AiOrchestrationServiceImpl implements AiOrchestrationService {
                 || normalized.contains("\"medicine\": \"medicine name\"")
                 || normalized.contains("\"diagnosis\": \"short name\"")
                 || normalized.contains("one short sentence up to 140 chars");
+    }
+
+    private String extractAnswerFromMalformedJson(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        Matcher matcher = ANSWER_FIELD_PATTERN.matcher(raw);
+        if (!matcher.find()) {
+            int answerIndex = raw.indexOf("\"answer\"");
+            if (answerIndex < 0) {
+                return null;
+            }
+            int colonIndex = raw.indexOf(':', answerIndex);
+            int openingQuoteIndex = colonIndex < 0 ? -1 : raw.indexOf('"', colonIndex + 1);
+            if (openingQuoteIndex < 0) {
+                return null;
+            }
+            int endIndex = raw.indexOf("\",", openingQuoteIndex + 1);
+            if (endIndex < 0) {
+                endIndex = raw.indexOf("\"}", openingQuoteIndex + 1);
+            }
+            String partial = endIndex > openingQuoteIndex
+                    ? raw.substring(openingQuoteIndex + 1, endIndex)
+                    : raw.substring(openingQuoteIndex + 1);
+            partial = partial.replaceAll("[\\r\\n\\t]+", " ").trim();
+            return partial.isBlank() ? null : partial;
+        }
+        String extracted = matcher.group(1)
+                .replace("\\n", " ")
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\")
+                .replaceAll("\\s{2,}", " ")
+                .trim();
+        return extracted.isBlank() ? null : extracted;
     }
 
     private JsonNode normalizeArrayOutput(JsonNode arrayNode) {

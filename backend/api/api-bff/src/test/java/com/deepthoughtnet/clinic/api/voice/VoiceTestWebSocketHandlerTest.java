@@ -100,7 +100,7 @@ class VoiceTestWebSocketHandlerTest {
         List<String> contexts = contextCaptor.getAllValues();
         assertThat(contexts).hasSize(2);
         assertThat(contexts.get(0)).contains("clinic receptionist test");
-        assertThat(contexts.get(1)).contains("Conversation history:");
+        assertThat(contexts.get(1)).contains("Recent conversation:");
         assertThat(contexts.get(1)).contains("I want to book an appointment.");
         assertThat(contexts.get(1)).contains("Sure, which day works for you?");
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"turn.complete\"") && payload.contains("\"turnIndex\":1"));

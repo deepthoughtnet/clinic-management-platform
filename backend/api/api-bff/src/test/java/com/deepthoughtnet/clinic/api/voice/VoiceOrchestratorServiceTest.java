@@ -18,6 +18,7 @@ import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionRequest;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationResponse;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProductCode;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
@@ -30,6 +31,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockMultipartFile;
 
 class VoiceOrchestratorServiceTest {
@@ -301,6 +303,88 @@ class VoiceOrchestratorServiceTest {
     void llmProviderOrderChangesDoNotAffectSttProviderSelection() {
         VoiceTestResponse response = runWithConfiguredProvider("faster-whisper", List.of("groq", "gemini", "mock"));
         assertThat(response.providerTrace().sttProvider()).isEqualTo("FASTER_WHISPER");
+    }
+
+    @Test
+    void voiceLlmRequestUsesCompactPromptAndVoiceSpecificMaxTokens() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-voice-llm"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        properties.getLlm().setMaxOutputTokens(1536);
+        properties.getLlm().setMaxAnswerWords(35);
+        properties.getLlm().setMaxHistoryChars(120);
+        AiOrchestrationService ai = mock(AiOrchestrationService.class);
+        when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "GEMINI", "gemini", "{\"answer\":\"Sure, what day works best for you?\",\"suggestedActions\":[]}",
+                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+        ));
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(new MockVoiceTextToSpeechProvider()),
+                ai,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
+        );
+
+        service.processAudio(
+                new MockMultipartFile("audio", "sample.webm", "audio/webm", "voice".getBytes()),
+                "Conversation history: User: hello Assistant: hello again and again and again and again and again.",
+                "en"
+        );
+
+        ArgumentCaptor<AiOrchestrationRequest> requestCaptor = ArgumentCaptor.forClass(AiOrchestrationRequest.class);
+        verify(ai).complete(requestCaptor.capture());
+        AiOrchestrationRequest request = requestCaptor.getValue();
+        assertThat(request.maxTokens()).isEqualTo(1536);
+        assertThat(request.inputVariables()).containsKeys("transcript", "conversationContext", "instruction", "responseContract");
+        assertThat(String.valueOf(request.inputVariables().get("instruction"))).contains("Return ONLY compact valid JSON");
+        assertThat(String.valueOf(request.inputVariables().get("instruction"))).contains("under 35 words");
+        assertThat(String.valueOf(request.inputVariables().get("conversationContext")).length()).isLessThanOrEqualTo(123);
+    }
+
+    @Test
+    void truncatedVoiceJsonFallsBackToShortSpokenReply() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-voice-fallback"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        AiOrchestrationService ai = mock(AiOrchestrationService.class);
+        when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "GEMINI", "gemini", "AI response was incomplete. Please retry.",
+                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+        ));
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(new MockVoiceTextToSpeechProvider()),
+                ai,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
+        );
+
+        VoiceTestResponse response = service.processAudio(
+                new MockMultipartFile("audio", "sample.webm", "audio/webm", "voice".getBytes()),
+                null,
+                "en"
+        );
+
+        assertThat(response.assistantText()).isEqualTo("Sorry, I missed that. Could you please repeat?");
     }
 
     @Test

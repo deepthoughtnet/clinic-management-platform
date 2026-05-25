@@ -252,6 +252,25 @@ class AiOrchestrationServiceImplTest {
     }
 
     @Test
+    void malformedJsonFallbackExtractsAnswerWhenReadable() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+
+        AiOrchestrationRequest request = request();
+        AiPromptTemplateDefinition template = template();
+        when(registry.resolve(request)).thenReturn(template);
+        AiProvider gemini = provider("GEMINI", "{\"answer\":\"You're booked for tomorrow", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION)).thenReturn(List.of(gemini));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("You're booked for tomorrow", response.outputText());
+        assertEquals("GEMINI", response.provider());
+    }
+
+    @Test
     void coreHasNoClinicRepositoryDependencies() {
         for (Field field : AiOrchestrationServiceImpl.class.getDeclaredFields()) {
             String typeName = field.getType().getName();
@@ -335,9 +354,9 @@ class AiOrchestrationServiceImplTest {
         ));
 
         AiOrchestrationResponse response = service.complete(request);
-        assertEquals("AI response was incomplete. Please retry.", response.outputText());
+        assertEquals("Sorry, I missed that. Could you please repeat?", response.outputText());
         assertNotNull(response.structuredJson());
-        assertTrue(response.structuredJson().contains("AI response was incomplete. Please retry."));
+        assertTrue(response.structuredJson().contains("Sorry, I missed that. Could you please repeat?"));
         assertFalse(response.outputText().contains("{\"diagnosis\""));
     }
 

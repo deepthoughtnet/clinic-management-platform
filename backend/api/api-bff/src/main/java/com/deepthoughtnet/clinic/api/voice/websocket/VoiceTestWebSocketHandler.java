@@ -10,7 +10,6 @@ import java.io.ByteArrayOutputStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
@@ -36,7 +35,8 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
     private static final int MAX_TOTAL_AUDIO_BYTES = 10 * 1024 * 1024;
     private static final Duration MAX_SESSION_DURATION = Duration.ofMinutes(15);
     private static final int MAX_TURNS_PER_SESSION = 20;
-    private static final int MAX_HISTORY_TURNS = 6;
+    private static final int MAX_HISTORY_TURNS = 4;
+    private static final int MAX_HISTORY_ENTRY_CHARS = 160;
 
     private final ObjectMapper objectMapper;
     private final VoiceOrchestratorService voiceOrchestratorService;
@@ -478,13 +478,11 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
             if (!builder.isEmpty()) {
                 builder.append("\n\n");
             }
-            builder.append("Conversation history:\n");
+            builder.append("Recent conversation:\n");
             for (TurnHistoryEntry entry : state.history) {
-                builder.append("Turn ").append(entry.turnIndex())
-                        .append(" at ").append(entry.timestamp().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME))
-                        .append(":\n");
-                builder.append("User: ").append(entry.userTranscript()).append("\n");
-                builder.append("Assistant: ").append(entry.assistantReply()).append("\n");
+                builder.append("Turn ").append(entry.turnIndex()).append(":\n");
+                builder.append("User: ").append(trimHistoryText(entry.userTranscript())).append("\n");
+                builder.append("Assistant: ").append(trimHistoryText(entry.assistantReply())).append("\n");
             }
         }
         return builder.isEmpty() ? "General voice test harness conversation." : builder.toString();
@@ -494,6 +492,16 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         while (history.size() > MAX_HISTORY_TURNS) {
             history.removeFirst();
         }
+    }
+
+    private String trimHistoryText(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = value.replaceAll("[\\r\\n\\t]+", " ").replaceAll("\\s{2,}", " ").trim();
+        return normalized.length() <= MAX_HISTORY_ENTRY_CHARS
+                ? normalized
+                : normalized.substring(0, MAX_HISTORY_ENTRY_CHARS) + "...";
     }
 
     @SuppressWarnings("unchecked")

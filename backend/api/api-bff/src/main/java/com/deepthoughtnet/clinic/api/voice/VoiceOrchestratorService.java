@@ -32,6 +32,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -44,6 +46,7 @@ public class VoiceOrchestratorService {
     private static final String VOICE_TEST_ENTITY_TYPE = "VOICE_TEST";
     private static final String VOICE_TEST_SUCCESS = "VOICE_TEST_COMPLETED";
     private static final String VOICE_TEST_FAILED = "VOICE_TEST_FAILED";
+    private static final Pattern JSON_ANSWER_PATTERN = Pattern.compile("\"answer\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
 
     private final List<SpeechToTextProvider> sttProviders;
     private final List<TextToSpeechProvider> ttsProviders;
@@ -196,7 +199,7 @@ public class VoiceOrchestratorService {
                     "generic.copilot.v1",
                     llmInput(transcription.transcript(), context, normalizedLanguage),
                     List.of(),
-                    512,
+                    properties.getLlm().getMaxOutputTokens(),
                     0.2d,
                     requestContext.correlationId(),
                     "voice.test"
@@ -205,9 +208,7 @@ public class VoiceOrchestratorService {
                     requestId,
                     aiResponse.provider(),
                     Duration.between(llmStart, Instant.now()).toMillis());
-            String assistantText = StringUtils.hasText(aiResponse.outputText())
-                    ? aiResponse.outputText()
-                    : "I heard your request. Please verify the transcript and continue the conversation.";
+            String assistantText = sanitizeVoiceAssistantText(aiResponse.outputText());
             Instant ttsStart = Instant.now();
             VoiceSynthesisResult synthesis = synthesize(new VoiceSynthesisRequest(tenantId, assistantText, normalizedLanguage));
             log.info("voice.tts.complete requestId={} provider={} durationMs={} playableAudio={}",
@@ -444,11 +445,115 @@ public class VoiceOrchestratorService {
 
     private Map<String, Object> llmInput(String transcript, String context, String language) {
         Map<String, Object> input = new LinkedHashMap<>();
-        input.put("transcript", transcript);
-        input.put("context", StringUtils.hasText(context) ? context.trim() : "General voice test harness conversation.");
+        input.put("transcript", trimToSafeSpeech(transcript, 320));
+        input.put("conversationContext", compactVoiceContext(context));
         input.put("language", StringUtils.hasText(language) ? language : "auto");
-        input.put("instruction", "Respond like a concise AI receptionist assistant. Keep the answer clear and short.");
+        input.put("responseContract", "{\"answer\":\"short spoken response\",\"suggestedActions\":[]}");
+        input.put(
+                "instruction",
+                "Return ONLY compact valid JSON. No markdown. No newlines. No extra keys. "
+                        + "Use exactly {\"answer\":\"short spoken response\",\"suggestedActions\":[]}. "
+                        + "Keep answer under " + properties.getLlm().getMaxAnswerWords()
+                        + " words. Speak like a helpful clinic receptionist."
+        );
         return input;
+    }
+
+    private String compactVoiceContext(String context) {
+        String fallback = "General voice test harness conversation.";
+        if (!StringUtils.hasText(context)) {
+            return fallback;
+        }
+        String normalized = context.replaceAll("[\\r\\n\\t]+", " ").replaceAll("\\s{2,}", " ").trim();
+        int limit = Math.max(200, properties.getLlm().getMaxHistoryChars());
+        return normalized.length() <= limit ? normalized : normalized.substring(0, limit) + "...";
+    }
+
+    private String sanitizeVoiceAssistantText(String raw) {
+        String candidate = extractAnswerCandidate(raw);
+        if (!StringUtils.hasText(candidate)) {
+            return "Sorry, I missed that. Could you please repeat?";
+        }
+        String cleaned = candidate
+                .replaceAll("```+", " ")
+                .replaceAll("[*_#>`-]+", " ")
+                .replaceAll("[\\r\\n\\t]+", " ")
+                .replaceAll("\\s{2,}", " ")
+                .trim();
+        if (!StringUtils.hasText(cleaned)
+                || cleaned.equalsIgnoreCase("AI response was incomplete. Please retry.")
+                || cleaned.equalsIgnoreCase("AI returned an invalid response. Please retry.")) {
+            return "Sorry, I missed that. Could you please repeat?";
+        }
+        String[] words = cleaned.split("\\s+");
+        int maxWords = Math.max(10, properties.getLlm().getMaxAnswerWords());
+        if (words.length > maxWords) {
+            cleaned = String.join(" ", java.util.Arrays.copyOf(words, maxWords)).trim();
+            if (!cleaned.endsWith(".") && !cleaned.endsWith("?") && !cleaned.endsWith("!")) {
+                cleaned = cleaned + ".";
+            }
+        }
+        return cleaned;
+    }
+
+    private String extractAnswerCandidate(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        try {
+            var node = objectMapper.readTree(trimmed);
+            if (node.isObject()) {
+                String answer = firstNonBlank(
+                        text(node, "answer"),
+                        text(node, "outputText"),
+                        text(node, "summary")
+                );
+                if (StringUtils.hasText(answer)) {
+                    return answer;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        Matcher matcher = JSON_ANSWER_PATTERN.matcher(trimmed);
+        if (matcher.find()) {
+            return matcher.group(1)
+                    .replace("\\n", " ")
+                    .replace("\\\"", "\"")
+                    .replace("\\\\", "\\");
+        }
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            return null;
+        }
+        return trimmed;
+    }
+
+    private String trimToSafeSpeech(String value, int maxChars) {
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        String normalized = value.replaceAll("[\\r\\n\\t]+", " ").replaceAll("\\s{2,}", " ").trim();
+        return normalized.length() <= maxChars ? normalized : normalized.substring(0, maxChars) + "...";
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String text(com.fasterxml.jackson.databind.JsonNode node, String field) {
+        if (node == null || !node.has(field) || !node.get(field).isValueNode()) {
+            return null;
+        }
+        String value = node.get(field).asText(null);
+        return StringUtils.hasText(value) ? value : null;
     }
 
     private String normalizeLanguageHint(String language) {
