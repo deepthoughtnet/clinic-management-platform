@@ -238,7 +238,9 @@ async def transcribe(
     normalized_content_type, suffix = validate_upload(file, audio_bytes)
 
     selected_model = model or configured_model_name()
-    selected_language = language or configured_language()
+    selected_language = (language or "").strip() or None
+    if selected_language and selected_language.lower() in {"auto", "auto-detect"}:
+        selected_language = None
     temp_path = None
     transcription_path = None
     ffprobe_result = None
@@ -246,7 +248,7 @@ async def transcribe(
     logger.info(
         "faster_whisper.transcribe.start model=%s language=%s sizeBytes=%s contentType=%s normalizedContentType=%s filename=%s extension=%s",
         selected_model,
-        selected_language,
+        selected_language or "auto",
         len(audio_bytes),
         file.content_type,
         normalized_content_type,
@@ -327,12 +329,12 @@ async def transcribe(
             "faster_whisper.transcribe.complete model=%s durationMs=%s detectedLanguage=%s",
             selected_model,
             int((time.perf_counter() - started) * 1000),
-            info.language or selected_language,
+            info.language or selected_language or configured_language(),
         )
         return {
             "text": transcript,
             "provider": "FASTER_WHISPER",
-            "language": info.language or selected_language,
+            "language": info.language or selected_language or configured_language(),
             "model": selected_model,
         }
     except HTTPException as exc:

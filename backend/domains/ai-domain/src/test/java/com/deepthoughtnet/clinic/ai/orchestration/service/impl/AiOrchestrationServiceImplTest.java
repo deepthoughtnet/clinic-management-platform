@@ -151,6 +151,48 @@ class AiOrchestrationServiceImplTest {
     }
 
     @Test
+    void fallsBackFromGeminiToGroqOnQuotaExceeded() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+
+        AiOrchestrationRequest request = request();
+        AiPromptTemplateDefinition template = template();
+        when(registry.resolve(request)).thenReturn(template);
+        AiProvider gemini = failingProvider("GEMINI", "Gemini quota exceeded.", 429);
+        AiProvider groq = provider("GROQ", "{\"answer\":\"Groq handled the fallback\"}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION)).thenReturn(List.of(gemini, groq));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GROQ", response.provider());
+        assertTrue(response.fallbackUsed());
+        assertTrue(response.outputText().contains("Groq handled the fallback"));
+    }
+
+    @Test
+    void fallsBackFromGeminiToGroqOnTimeout() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+
+        AiOrchestrationRequest request = request();
+        AiPromptTemplateDefinition template = template();
+        when(registry.resolve(request)).thenReturn(template);
+        AiProvider gemini = failingProvider("GEMINI", "Gemini request timed out.", null);
+        AiProvider groq = provider("GROQ", "{\"answer\":\"Groq answered after timeout fallback\"}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION)).thenReturn(List.of(gemini, groq));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GROQ", response.provider());
+        assertTrue(response.fallbackUsed());
+        assertTrue(response.outputText().contains("Groq answered after timeout fallback"));
+    }
+
+    @Test
     void doesNotFallbackOnFatalProviderFailure() {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);
@@ -185,6 +227,28 @@ class AiOrchestrationServiceImplTest {
         when(router.resolveCandidates(AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION)).thenReturn(List.of(gemini, groq));
 
         assertThrows(AiProviderException.class, () -> service.complete(request));
+    }
+
+    @Test
+    void returnsFriendlyFallbackWhenAllProvidersFail() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+
+        AiOrchestrationRequest request = request();
+        AiPromptTemplateDefinition template = template();
+        when(registry.resolve(request)).thenReturn(template);
+        AiProvider gemini = failingProvider("GEMINI", "Gemini quota exceeded.", 429);
+        AiProvider groq = failingProvider("GROQ", "Groq provider unavailable.", 503);
+        when(router.resolveCandidates(AiTaskType.RECONCILIATION_EXCEPTION_EXPLANATION)).thenReturn(List.of(gemini, groq));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertTrue(response.fallbackUsed());
+        assertEquals(null, response.provider());
+        assertEquals("AI providers are temporarily unavailable. Please retry.", response.errorMessage());
+        assertTrue(response.outputText().contains("fallback summary"));
     }
 
     @Test
@@ -362,6 +426,10 @@ class AiOrchestrationServiceImplTest {
     }
 
     private AiProvider failingProvider(String name, String message) {
+        return failingProvider(name, message, 503);
+    }
+
+    private AiProvider failingProvider(String name, String message, Integer statusCode) {
         return new AiProvider() {
             @Override
             public String providerName() {
@@ -375,7 +443,7 @@ class AiOrchestrationServiceImplTest {
 
             @Override
             public AiProviderResponse complete(AiProviderRequest request) {
-                throw AiProviderException.retryable(message, 503, name, "model", "/chat/completions", null);
+                throw AiProviderException.retryable(message, statusCode, name, "model", "/chat/completions", null);
             }
 
             @Override

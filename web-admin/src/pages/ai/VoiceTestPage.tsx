@@ -9,6 +9,8 @@ import {
   Chip,
   CircularProgress,
   Divider,
+  LinearProgress,
+  MenuItem,
   Paper,
   Stack,
   Tab,
@@ -29,12 +31,38 @@ import { ApiClientError } from "../../api/restClient";
 import { useAuth } from "../../auth/useAuth";
 
 const SUPPORTED_AUDIO_TYPES = ["audio/wav", "audio/webm", "audio/ogg", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a", "audio/aac"];
-const LIVE_AUDIO_BASE64_CHUNK_SIZE = 32 * 1024;
+const LIVE_AUDIO_BASE64_CHUNK_SIZE = 24 * 1024;
+const FILE_SILENCE_THRESHOLD = 0.015;
+const LIVE_SPEECH_START_THRESHOLD = 0.03;
+const LIVE_SPEECH_END_THRESHOLD = 0.015;
+const LIVE_MIN_SPEECH_MS = 300;
+const LIVE_SILENCE_TIMEOUT_MS = 1500;
+const LIVE_MAX_UTTERANCE_MS = 30000;
+const LIVE_LISTEN_RESUME_DELAY_MS = 350;
 
 type VoiceTab = "file" | "live";
-type LiveStatus = "disconnected" | "connecting" | "connected" | "recording" | "processing";
+type LiveStatus =
+  | "idle"
+  | "connecting"
+  | "session_started"
+  | "listening"
+  | "speech_detected"
+  | "finalizing_audio"
+  | "processing"
+  | "playing_response"
+  | "ending"
+  | "ended"
+  | "error";
+type LiveConversationTurn = {
+  turnIndex: number;
+  transcript: string;
+  assistantText: string;
+  providerTrace: VoiceProviderTrace | null;
+  requestId?: string | null;
+};
 
 type CapturedAudioDebug = {
+  deviceLabel: string;
   recorderMimeType: string;
   chunkCount: number;
   chunkSizes: number[];
@@ -42,6 +70,25 @@ type CapturedAudioDebug = {
   finalBlobType: string;
   uploadFilename: string;
   uploadMimeType: string;
+  durationMs: number;
+  averageRms: number;
+  peakLevel: number;
+  silent: boolean;
+};
+
+type LiveCapturedAudioDebug = {
+  recorderMimeType: string;
+  chunkCount: number;
+  chunkSizes: number[];
+  finalBlobSize: number;
+  finalBlobType: string;
+  uploadFilename: string;
+  uploadMimeType: string;
+};
+
+type AudioInputDevice = {
+  deviceId: string;
+  label: string;
 };
 
 function formatProvider(value: string | null | undefined) {
@@ -64,16 +111,54 @@ function ResultBlock({ label, value, empty }: { label: string; value: string | n
 
 function liveStatusTone(status: LiveStatus) {
   switch (status) {
-    case "connected":
+    case "session_started":
       return "success";
-    case "recording":
+    case "listening":
       return "warning";
+    case "speech_detected":
+      return "warning";
+    case "playing_response":
+      return "secondary";
     case "processing":
+    case "finalizing_audio":
       return "info";
     case "connecting":
       return "info";
+    case "ending":
+      return "warning";
+    case "error":
+      return "error";
     default:
       return "default";
+  }
+}
+
+function liveStatusLabel(status: LiveStatus) {
+  switch (status) {
+    case "idle":
+      return "Disconnected";
+    case "connecting":
+      return "Connecting…";
+    case "session_started":
+      return "Session started";
+    case "listening":
+      return "Listening… speak now";
+    case "speech_detected":
+      return "Speech detected";
+    case "finalizing_audio":
+      return "Finalizing audio…";
+    case "processing":
+      return "Processing…";
+    case "playing_response":
+      return "Playing assistant response…";
+    case "ending":
+      return "Ending session…";
+    case "ended":
+      return "Session ended";
+    case "error":
+      return "Error";
+    default:
+      return status;
   }
 }
 
@@ -115,6 +200,17 @@ function formatSize(sizeBytes: number | null | undefined) {
   if (typeof sizeBytes !== "number" || Number.isNaN(sizeBytes)) return "Unknown";
   if (sizeBytes < 1024) return `${sizeBytes} B`;
   return `${Math.round(sizeBytes / 1024)} KB`;
+}
+
+function formatDuration(durationMs: number | null | undefined) {
+  if (typeof durationMs !== "number" || Number.isNaN(durationMs) || durationMs <= 0) return "Unknown";
+  if (durationMs < 1000) return `${durationMs} ms`;
+  return `${(durationMs / 1000).toFixed(1)} s`;
+}
+
+function formatLevel(level: number | null | undefined) {
+  if (typeof level !== "number" || Number.isNaN(level)) return "0.000";
+  return level.toFixed(3);
 }
 
 function DebugTracePanel({ trace }: { trace: VoiceDebugTraceEntry[] | null | undefined }) {
@@ -256,8 +352,16 @@ export default function VoiceTestPage() {
   const [processingStage, setProcessingStage] = useState<string | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatusResponse | null>(null);
   const [liveStatusInfo, setLiveStatusInfo] = useState<VoiceLiveStatusResponse | null>(null);
+  const [audioInputDevices, setAudioInputDevices] = useState<AudioInputDevice[]>([]);
+  const [selectedAudioInputId, setSelectedAudioInputId] = useState("");
+  const [micDeviceInfo, setMicDeviceInfo] = useState<string | null>(null);
+  const [micLevel, setMicLevel] = useState(0);
+  const [micPeak, setMicPeak] = useState(0);
+  const [speechDetected, setSpeechDetected] = useState(false);
+  const [silenceDetected, setSilenceDetected] = useState(false);
+  const [fileSilenceWarning, setFileSilenceWarning] = useState<string | null>(null);
 
-  const [liveStatus, setLiveStatus] = useState<LiveStatus>("disconnected");
+  const [liveStatus, setLiveStatus] = useState<LiveStatus>("idle");
   const [liveInfo, setLiveInfo] = useState<string | null>(null);
   const [liveCaptureInfo, setLiveCaptureInfo] = useState<string | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
@@ -267,14 +371,19 @@ export default function VoiceTestPage() {
   const [liveAudioDataUrl, setLiveAudioDataUrl] = useState<string | null>(null);
   const [liveEvents, setLiveEvents] = useState<string[]>([]);
   const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
+  const [liveCapturedAudioDebug, setLiveCapturedAudioDebug] = useState<LiveCapturedAudioDebug | null>(null);
+  const [liveConversation, setLiveConversation] = useState<LiveConversationTurn[]>([]);
+  const [livePlaybackError, setLivePlaybackError] = useState<string | null>(null);
 
   const fileMediaRecorderRef = useRef<MediaRecorder | null>(null);
   const fileMediaStreamRef = useRef<MediaStream | null>(null);
   const fileChunksRef = useRef<Blob[]>([]);
   const fileRecordingStopPromiseRef = useRef<Promise<void> | null>(null);
+  const fileRecordingStatsRef = useRef({ startedAt: 0, rmsTotal: 0, rmsSamples: 0, peakLevel: 0 });
 
   const liveMediaRecorderRef = useRef<MediaRecorder | null>(null);
   const liveMediaStreamRef = useRef<MediaStream | null>(null);
+  const liveChunksRef = useRef<Blob[]>([]);
   const liveSocketRef = useRef<WebSocket | null>(null);
   const liveSendQueueRef = useRef<Promise<void>>(Promise.resolve());
   const liveChunkSequenceRef = useRef(0);
@@ -283,6 +392,31 @@ export default function VoiceTestPage() {
   const liveRecordedBytesRef = useRef(0);
   const liveAssistantAudioChunksRef = useRef<Map<number, string>>(new Map());
   const liveAssistantAudioExpectedChunksRef = useRef(0);
+  const liveCurrentTurnRef = useRef<number | null>(null);
+  const livePendingTranscriptRef = useRef("");
+  const livePendingAssistantRef = useRef("");
+  const livePendingProviderTraceRef = useRef<VoiceProviderTrace | null>(null);
+  const livePendingRequestIdRef = useRef<string | null>(null);
+  const liveTurnHasAudioRef = useRef(false);
+  const liveSpeechStartedAtRef = useRef<number | null>(null);
+  const liveFirstSpeechAtRef = useRef<number | null>(null);
+  const liveLastSpeechAtRef = useRef<number | null>(null);
+  const liveSpeechDetectedRef = useRef(false);
+  const liveSpeechFrameActiveRef = useRef(false);
+  const liveAutoStopTriggeredRef = useRef(false);
+  const liveSessionStartedAtRef = useRef<number | null>(null);
+  const monitoringIntervalRef = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const levelDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const liveAudioElementRef = useRef<HTMLAudioElement | null>(null);
+  const liveAutoResumeRef = useRef(false);
+  const liveResumeTimerRef = useRef<number | null>(null);
+  const liveStartingMicRef = useRef(false);
+  const livePendingAutoPlayRef = useRef(false);
+  const liveStatusRef = useRef<LiveStatus>("idle");
+  const liveEndedByUserRef = useRef(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -296,11 +430,25 @@ export default function VoiceTestPage() {
       if (capturedAudioUrl) {
         URL.revokeObjectURL(capturedAudioUrl);
       }
+      stopAudioMonitoring();
       stopFileStream();
       stopLiveStream();
+      if (liveResumeTimerRef.current != null) {
+        window.clearTimeout(liveResumeTimerRef.current);
+        liveResumeTimerRef.current = null;
+      }
+      liveAudioElementRef.current?.pause();
       closeLiveSession(false);
     };
   }, [capturedAudioUrl]);
+
+  useEffect(() => {
+    if (!liveAudioDataUrl || !livePendingAutoPlayRef.current) {
+      return;
+    }
+    livePendingAutoPlayRef.current = false;
+    void playLiveResponse(true);
+  }, [liveAudioDataUrl]);
 
   useEffect(() => {
     if (!accessToken || !tenantId || !canUseVoiceTest) {
@@ -310,8 +458,255 @@ export default function VoiceTestPage() {
     void refreshLiveStatus();
   }, [accessToken, tenantId, canUseVoiceTest]);
 
+  useEffect(() => {
+    liveStatusRef.current = liveStatus;
+  }, [liveStatus]);
+
+  useEffect(() => {
+    void refreshAudioInputDevices();
+    const handler = () => {
+      void refreshAudioInputDevices();
+    };
+    navigator.mediaDevices?.addEventListener?.("devicechange", handler);
+    return () => {
+      navigator.mediaDevices?.removeEventListener?.("devicechange", handler);
+    };
+  }, []);
+
   function appendLiveEvent(message: string) {
     setLiveEvents((current) => [new Date().toLocaleTimeString() + " • " + message, ...current].slice(0, 20));
+  }
+
+  function updateLiveStatus(status: LiveStatus) {
+    liveStatusRef.current = status;
+    setLiveStatus(status);
+  }
+
+  async function refreshAudioInputDevices() {
+    try {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices
+        .filter((device) => device.kind === "audioinput")
+        .map((device, index) => ({
+          deviceId: device.deviceId,
+          label: device.label || `Microphone ${index + 1}`,
+        }));
+      setAudioInputDevices(inputs);
+      if (!selectedAudioInputId && inputs.length > 0) {
+        setSelectedAudioInputId(inputs[0].deviceId);
+      }
+    } catch {
+      setAudioInputDevices([]);
+    }
+  }
+
+  function selectedMicrophoneLabel() {
+    if (!selectedAudioInputId) return "Default microphone";
+    return audioInputDevices.find((device) => device.deviceId === selectedAudioInputId)?.label || "Selected microphone";
+  }
+
+  function requestedAudioConstraints(): MediaStreamConstraints["audio"] {
+    if (!selectedAudioInputId) {
+      return true;
+    }
+    return { deviceId: { exact: selectedAudioInputId } };
+  }
+
+  function selectedLanguageLabel() {
+    if (language === "hi") return "Hindi";
+    if (language === "auto") return "Auto Detect";
+    return "English";
+  }
+
+  function isHindiTtsVoiceConfigured() {
+    const configuredVoice = (voiceStatus?.ttsConfiguredVoice || "").toLowerCase();
+    return configuredVoice.startsWith("hi_") || configuredVoice.startsWith("hi-");
+  }
+
+  function clearLiveResumeTimer() {
+    if (liveResumeTimerRef.current != null) {
+      window.clearTimeout(liveResumeTimerRef.current);
+      liveResumeTimerRef.current = null;
+    }
+  }
+
+  function canAutoResumeListening() {
+    if (!liveAutoResumeRef.current) return { ok: false, reason: "auto_resume_disabled" };
+    if (liveEndedByUserRef.current) return { ok: false, reason: "session_ending" };
+    if (!liveSocketRef.current || liveSocketRef.current.readyState !== WebSocket.OPEN) return { ok: false, reason: "socket_not_open" };
+    if (liveStartingMicRef.current) return { ok: false, reason: "mic_start_pending" };
+    if (liveMediaRecorderRef.current && liveMediaRecorderRef.current.state !== "inactive") return { ok: false, reason: "recorder_active" };
+    if (liveStatusRef.current === "processing" || liveStatusRef.current === "finalizing_audio" || liveStatusRef.current === "playing_response" || liveStatusRef.current === "ending") {
+      return { ok: false, reason: `status_${liveStatusRef.current}` };
+    }
+    return { ok: true, reason: "ok" };
+  }
+
+  function scheduleLiveListeningResume(reason: string, delayMs = LIVE_LISTEN_RESUME_DELAY_MS) {
+    clearLiveResumeTimer();
+    const resumeCheck = canAutoResumeListening();
+    if (!resumeCheck.ok) {
+      appendLiveEvent(`auto_listening_resume_skipped ${resumeCheck.reason}`);
+      return;
+    }
+    liveResumeTimerRef.current = window.setTimeout(() => {
+      liveResumeTimerRef.current = null;
+      const delayedCheck = canAutoResumeListening();
+      if (!delayedCheck.ok) {
+        appendLiveEvent(`auto_listening_resume_skipped ${delayedCheck.reason}`);
+        return;
+      }
+      appendLiveEvent(`auto_listening_resume ${reason}`);
+      void startLiveMic({ automatic: true, reason });
+    }, delayMs);
+  }
+
+  async function playLiveResponse(autoTriggered = false) {
+    const audioElement = liveAudioElementRef.current;
+    if (!audioElement || !liveAudioDataUrl) {
+      return;
+    }
+    try {
+      if (liveStatusRef.current === "listening" || liveStatusRef.current === "speech_detected") {
+        stopLiveStream();
+      }
+      audioElement.currentTime = 0;
+      setLivePlaybackError(null);
+      updateLiveStatus("playing_response");
+      appendLiveEvent("response_play_started");
+      await audioElement.play();
+    } catch {
+      const warning = "Assistant audio autoplay was blocked by the browser. Use Play Response to continue.";
+      setLivePlaybackError(warning);
+      appendLiveEvent("response_play_blocked");
+      if (autoTriggered) {
+        scheduleLiveListeningResume("autoplay_blocked");
+      }
+    }
+  }
+
+  function handleLiveResponseEnded() {
+    appendLiveEvent("response_play_ended");
+    if (liveAutoResumeRef.current) {
+      updateLiveStatus("session_started");
+      scheduleLiveListeningResume("playback_ended");
+    } else {
+      updateLiveStatus("session_started");
+    }
+  }
+
+  function stopAudioMonitoring() {
+    if (monitoringIntervalRef.current != null) {
+      window.clearInterval(monitoringIntervalRef.current);
+      monitoringIntervalRef.current = null;
+    }
+    sourceNodeRef.current?.disconnect();
+    analyserRef.current?.disconnect();
+    sourceNodeRef.current = null;
+    analyserRef.current = null;
+    levelDataRef.current = null;
+    if (audioContextRef.current) {
+      void audioContextRef.current.close().catch(() => undefined);
+      audioContextRef.current = null;
+    }
+    setMicLevel(0);
+    setMicPeak(0);
+    setSpeechDetected(false);
+    setSilenceDetected(false);
+  }
+
+  function startAudioMonitoring(stream: MediaStream, mode: "file" | "live") {
+    stopAudioMonitoring();
+    const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextCtor) {
+      return;
+    }
+    const contextInstance = new AudioContextCtor();
+    const source = contextInstance.createMediaStreamSource(stream);
+    const analyser = contextInstance.createAnalyser();
+    analyser.fftSize = 2048;
+    const data = new Uint8Array(new ArrayBuffer(analyser.fftSize));
+    source.connect(analyser);
+    audioContextRef.current = contextInstance;
+    sourceNodeRef.current = source;
+    analyserRef.current = analyser;
+    levelDataRef.current = data;
+    monitoringIntervalRef.current = window.setInterval(() => {
+      if (!analyserRef.current || !levelDataRef.current) return;
+      analyserRef.current.getByteTimeDomainData(levelDataRef.current);
+      let sumSquares = 0;
+      let peak = 0;
+      for (const sample of levelDataRef.current) {
+        const normalized = (sample - 128) / 128;
+        const absolute = Math.abs(normalized);
+        sumSquares += normalized * normalized;
+        if (absolute > peak) {
+          peak = absolute;
+        }
+      }
+      const rms = Math.sqrt(sumSquares / levelDataRef.current.length);
+      setMicLevel(rms);
+      setMicPeak(peak);
+
+      if (mode === "file") {
+        fileRecordingStatsRef.current.rmsTotal += rms;
+        fileRecordingStatsRef.current.rmsSamples += 1;
+        fileRecordingStatsRef.current.peakLevel = Math.max(fileRecordingStatsRef.current.peakLevel, peak);
+        setSilenceDetected(rms < FILE_SILENCE_THRESHOLD);
+        setSpeechDetected(rms >= FILE_SILENCE_THRESHOLD);
+        return;
+      }
+
+      const now = Date.now();
+      const isSpeechFrame = rms >= LIVE_SPEECH_START_THRESHOLD;
+      if (isSpeechFrame) {
+        if (!liveSpeechFrameActiveRef.current && liveSpeechDetectedRef.current) {
+          appendLiveEvent("vad_speech_resumed");
+        }
+        liveSpeechFrameActiveRef.current = true;
+        if (!liveSpeechDetectedRef.current) {
+          liveSpeechDetectedRef.current = true;
+          liveSpeechStartedAtRef.current = now;
+          liveFirstSpeechAtRef.current = liveFirstSpeechAtRef.current ?? now;
+          appendLiveEvent("vad_speech_started");
+        }
+        liveLastSpeechAtRef.current = now;
+        liveAutoStopTriggeredRef.current = false;
+        setSpeechDetected(true);
+        setSilenceDetected(false);
+        if (liveStatusRef.current === "listening" || liveStatusRef.current === "session_started") {
+          updateLiveStatus("speech_detected");
+        }
+      } else {
+        if (liveSpeechFrameActiveRef.current && liveSpeechDetectedRef.current) {
+          appendLiveEvent("vad_speech_ended");
+        }
+        liveSpeechFrameActiveRef.current = false;
+        setSpeechDetected(false);
+        setSilenceDetected(true);
+        if (liveStatusRef.current === "speech_detected") {
+          updateLiveStatus("listening");
+        }
+      }
+
+      if (liveSpeechDetectedRef.current && liveLastSpeechAtRef.current && liveSpeechStartedAtRef.current) {
+        const speechDuration = now - liveSpeechStartedAtRef.current;
+        const silenceDuration = now - liveLastSpeechAtRef.current;
+        if (rms <= LIVE_SPEECH_END_THRESHOLD && speechDuration >= LIVE_MIN_SPEECH_MS && silenceDuration >= LIVE_SILENCE_TIMEOUT_MS && !liveAutoStopTriggeredRef.current) {
+          liveAutoStopTriggeredRef.current = true;
+          appendLiveEvent("silence_timeout");
+          stopLiveMic();
+          return;
+        }
+      }
+
+      if (liveSessionStartedAtRef.current && now - liveSessionStartedAtRef.current >= LIVE_MAX_UTTERANCE_MS && !liveAutoStopTriggeredRef.current) {
+        liveAutoStopTriggeredRef.current = true;
+        appendLiveEvent("max_utterance_reached");
+        stopLiveMic();
+      }
+    }, 100);
   }
 
   function stopFileStream() {
@@ -320,6 +715,7 @@ export default function VoiceTestPage() {
       fileMediaStreamRef.current.getTracks().forEach((track) => track.stop());
       fileMediaStreamRef.current = null;
     }
+    stopAudioMonitoring();
   }
 
   function stopLiveStream() {
@@ -328,12 +724,14 @@ export default function VoiceTestPage() {
       liveMediaStreamRef.current.getTracks().forEach((track) => track.stop());
       liveMediaStreamRef.current = null;
     }
+    stopAudioMonitoring();
   }
 
   async function startFileRecording() {
     setFileError(null);
     setFileInfo(null);
     setCapturedAudioDebug(null);
+    setFileSilenceWarning(null);
     if (capturedAudioUrl) {
       URL.revokeObjectURL(capturedAudioUrl);
       setCapturedAudioUrl(null);
@@ -343,9 +741,18 @@ export default function VoiceTestPage() {
         setFileError("Microphone recording is not available in this browser. Upload an audio file instead.");
         return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: requestedAudioConstraints() });
+      await refreshAudioInputDevices();
       const mimeType = selectRecordingMimeType();
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const deviceLabel = selectedMicrophoneLabel();
+      console.info("[voice-test] starting browser recording", {
+        selectedMimeType: mimeType || recorder.mimeType || "browser-default",
+        deviceLabel,
+      });
+      setMicDeviceInfo(deviceLabel);
+      fileRecordingStatsRef.current = { startedAt: Date.now(), rmsTotal: 0, rmsSamples: 0, peakLevel: 0 };
+      startAudioMonitoring(stream, "file");
       fileChunksRef.current = [];
       fileRecordingStopPromiseRef.current = new Promise((resolve) => {
         recorder.onstop = () => {
@@ -353,6 +760,12 @@ export default function VoiceTestPage() {
           const extension = resolveAudioExtensionFromType(type);
           const blob = new Blob(fileChunksRef.current, { type });
           const chunkSizes = fileChunksRef.current.map((chunk) => chunk.size);
+          const durationMs = Math.max(0, Date.now() - fileRecordingStatsRef.current.startedAt);
+          const averageRms = fileRecordingStatsRef.current.rmsSamples > 0
+            ? fileRecordingStatsRef.current.rmsTotal / fileRecordingStatsRef.current.rmsSamples
+            : 0;
+          const peakLevel = fileRecordingStatsRef.current.peakLevel;
+          const silent = averageRms < FILE_SILENCE_THRESHOLD && peakLevel < FILE_SILENCE_THRESHOLD * 2;
           console.info("[voice-test] browser recording captured", {
             mimeType: recorder.mimeType,
             blobType: blob.type,
@@ -360,6 +773,10 @@ export default function VoiceTestPage() {
             sizeBytes: blob.size,
             chunkCount: fileChunksRef.current.length,
             chunkSizes,
+            durationMs,
+            averageRms,
+            peakLevel,
+            deviceLabel,
           });
           const recordedFile = new File([blob], `voice-test-${Date.now()}.${extension}`, { type });
           console.info("[voice-test] prepared upload file", {
@@ -373,6 +790,7 @@ export default function VoiceTestPage() {
           const objectUrl = URL.createObjectURL(blob);
           setCapturedAudioUrl(objectUrl);
           setCapturedAudioDebug({
+            deviceLabel,
             recorderMimeType: recorder.mimeType || type,
             chunkCount: fileChunksRef.current.length,
             chunkSizes,
@@ -380,21 +798,33 @@ export default function VoiceTestPage() {
             finalBlobType: blob.type || type,
             uploadFilename: recordedFile.name,
             uploadMimeType: type,
+            durationMs,
+            averageRms,
+            peakLevel,
+            silent,
           });
+          setFileSilenceWarning(silent ? "Recorded audio appears silent. Check the selected microphone device, permission, and input level before sending." : null);
           setFileCaptureInfo(`Captured ${recorder.mimeType || blob.type || type} (${formatSize(blob.size)}) • Uploading original ${type || "unknown"} as ${recordedFile.name} (${formatSize(recordedFile.size)}).`);
           setSelectedFile(recordedFile);
           setFileInfo("Microphone recording captured. Review, download if needed, and send it to the backend voice harness.");
           setFileRecording(false);
+          fileRecordingStopPromiseRef.current = null;
           stopFileStream();
           resolve();
         };
       });
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) fileChunksRef.current.push(event.data);
+        if (event.data.size <= 0) return;
+        fileChunksRef.current.push(event.data);
+        console.info("[voice-test] recorder dataavailable", {
+          chunkCount: fileChunksRef.current.length,
+          chunkSizeBytes: event.data.size,
+          chunkType: event.data.type || recorder.mimeType || "unknown",
+        });
       };
       fileMediaStreamRef.current = stream;
       fileMediaRecorderRef.current = recorder;
-      recorder.start(1000);
+      recorder.start();
       setFileRecording(true);
     } catch {
       stopFileStream();
@@ -431,6 +861,7 @@ export default function VoiceTestPage() {
     setSelectedFile(file);
     setFileCaptureInfo(`Selected ${file.type || "unknown"} file for upload (${formatSize(file.size)}).`);
     setCapturedAudioDebug(null);
+    setFileSilenceWarning(null);
     if (capturedAudioUrl) {
       URL.revokeObjectURL(capturedAudioUrl);
       setCapturedAudioUrl(null);
@@ -498,6 +929,7 @@ export default function VoiceTestPage() {
     setFileInfo(null);
     setFileCaptureInfo(null);
     setCapturedAudioDebug(null);
+    setFileSilenceWarning(null);
     setContext("");
     setProcessingStage(null);
   }
@@ -531,8 +963,9 @@ export default function VoiceTestPage() {
 
   function bindLiveSocket(socket: WebSocket) {
     socket.onopen = () => {
-      setLiveStatus("connected");
+      updateLiveStatus("connecting");
       appendLiveEvent("Live voice session connected.");
+      appendLiveEvent("session_start");
       socket.send(JSON.stringify({
         type: "session.start",
         language,
@@ -546,7 +979,12 @@ export default function VoiceTestPage() {
         if (type === "session.started") {
           const sessionId = String(payload.sessionId || "");
           setLiveSessionId(sessionId || null);
-          appendLiveEvent("Session started.");
+          appendLiveEvent("session_started");
+          updateLiveStatus("session_started");
+          setLiveInfo(`Session started for ${selectedLanguageLabel()}.`);
+          if (liveAutoResumeRef.current) {
+            scheduleLiveListeningResume("session_started", 0);
+          }
           return;
         }
         if (type === "session.connected") {
@@ -561,7 +999,11 @@ export default function VoiceTestPage() {
         if (type === "audio.chunk.received") {
           const sequence = Number(payload.sequence || 0);
           const totalChunks = Number(payload.totalChunks || 0);
-          appendLiveEvent(`Chunk acknowledged ${sequence}/${totalChunks}.`);
+          appendLiveEvent(`CHUNK_RECEIVED ${sequence}/${totalChunks}.`);
+          return;
+        }
+        if (type === "turn.audio.received") {
+          appendLiveEvent(`turn_audio_received ${Number(payload.sequence || 0)}/${Number(payload.totalChunks || 0)}`);
           return;
         }
         if (type === "audio.buffer.complete") {
@@ -570,16 +1012,58 @@ export default function VoiceTestPage() {
           appendLiveEvent(`Audio buffered ${totalChunks} chunks • ${formatSize(sizeBytes)}.`);
           return;
         }
+        if (type === "audio.decoded") {
+          const sizeBytes = Number(payload.sizeBytes || 0);
+          appendLiveEvent(`AUDIO_DECODED • ${formatSize(sizeBytes)}.`);
+          return;
+        }
+        if (type === "stt.started") {
+          updateLiveStatus("processing");
+          appendLiveEvent("STT_STARTED");
+          return;
+        }
+        if (type === "turn.started") {
+          const turnIndex = Number(payload.turnIndex || 0);
+          liveCurrentTurnRef.current = turnIndex > 0 ? turnIndex : null;
+          livePendingTranscriptRef.current = "";
+          livePendingAssistantRef.current = "";
+          livePendingProviderTraceRef.current = null;
+          livePendingRequestIdRef.current = null;
+          appendLiveEvent(`turn_started ${turnIndex || "?"}`);
+          return;
+        }
         if (type === "transcript.final") {
-          setLiveTranscript(String(payload.text || ""));
-          setLiveStatus("connected");
+          const text = String(payload.text || "");
+          const turnIndex = Number(payload.turnIndex || liveCurrentTurnRef.current || 0);
+          liveCurrentTurnRef.current = turnIndex > 0 ? turnIndex : liveCurrentTurnRef.current;
+          livePendingTranscriptRef.current = text;
+          setLiveTranscript(text);
           appendLiveEvent("Transcript finalized.");
           return;
         }
+        if (type === "stt.complete") {
+          appendLiveEvent(`STT_COMPLETE • provider=${formatProvider(String(payload.provider || ""))}`);
+          return;
+        }
+        if (type === "turn.stt.complete") {
+          appendLiveEvent(`turn_stt_complete ${Number(payload.turnIndex || 0) || "?"} • provider=${formatProvider(String(payload.provider || ""))}`);
+          return;
+        }
         if (type === "assistant.text") {
-          setLiveAssistantText(String(payload.text || ""));
-          setLiveProviderTrace((payload.providerTrace as VoiceProviderTrace | null) ?? null);
+          const text = String(payload.text || "");
+          const trace = (payload.providerTrace as VoiceProviderTrace | null) ?? null;
+          const requestId = typeof payload.requestId === "string" ? payload.requestId : null;
+          livePendingAssistantRef.current = text;
+          livePendingProviderTraceRef.current = trace;
+          livePendingRequestIdRef.current = requestId;
+          setLiveAssistantText(text);
+          setLiveProviderTrace(trace);
+          updateLiveStatus("processing");
           appendLiveEvent("Assistant text received.");
+          return;
+        }
+        if (type === "turn.llm.complete") {
+          appendLiveEvent(`turn_llm_complete ${Number(payload.turnIndex || 0) || "?"} • provider=${formatProvider(String(payload.provider || ""))}`);
           return;
         }
         if (type === "assistant.audio.chunk") {
@@ -587,6 +1071,7 @@ export default function VoiceTestPage() {
           const totalChunks = Number(payload.totalChunks || 0);
           const audioBase64Chunk = String(payload.audioBase64Chunk || "");
           if (sequence > 0 && audioBase64Chunk) {
+            liveTurnHasAudioRef.current = true;
             liveAssistantAudioChunksRef.current.set(sequence, audioBase64Chunk);
             if (totalChunks > 0) {
               liveAssistantAudioExpectedChunksRef.current = totalChunks;
@@ -614,39 +1099,85 @@ export default function VoiceTestPage() {
             chunks.push(chunk);
           }
           setLiveAudioDataUrl(`data:${contentType};base64,${chunks.join("")}`);
+          livePendingAutoPlayRef.current = true;
           liveAssistantAudioChunksRef.current.clear();
           liveAssistantAudioExpectedChunksRef.current = 0;
           setLiveProviderTrace((payload.providerTrace as VoiceProviderTrace | null) ?? null);
+          appendLiveEvent("response_audio_received");
           appendLiveEvent(`Assistant audio reconstructed from ${totalChunks} chunk${totalChunks === 1 ? "" : "s"}.`);
+          return;
+        }
+        if (type === "turn.tts.complete") {
+          appendLiveEvent(`turn_tts_complete ${Number(payload.turnIndex || 0) || "?"} • provider=${formatProvider(String(payload.provider || ""))}`);
           return;
         }
         if (type === "assistant.audio") {
           const audioBase64 = String(payload.audioBase64 || "");
           const contentType = String(payload.contentType || "audio/mpeg");
           if (audioBase64) {
+            liveTurnHasAudioRef.current = true;
             setLiveAudioDataUrl(`data:${contentType};base64,${audioBase64}`);
+            livePendingAutoPlayRef.current = true;
+            appendLiveEvent("response_audio_received");
           }
           setLiveProviderTrace((payload.providerTrace as VoiceProviderTrace | null) ?? null);
           appendLiveEvent("Assistant audio received.");
           return;
         }
+        if (type === "session.completed") {
+          appendLiveEvent("Session completed.");
+          return;
+        }
+        if (type === "turn.complete") {
+          const turnIndex = Number(payload.turnIndex || liveCurrentTurnRef.current || 0);
+          const trace = (payload.providerTrace as VoiceProviderTrace | null) ?? livePendingProviderTraceRef.current;
+          const requestId = typeof payload.requestId === "string"
+            ? payload.requestId
+            : livePendingRequestIdRef.current;
+          if (turnIndex > 0) {
+            setLiveConversation((current) => [
+              ...current,
+              {
+                turnIndex,
+                transcript: livePendingTranscriptRef.current,
+                assistantText: livePendingAssistantRef.current,
+                providerTrace: trace,
+                requestId,
+              },
+            ]);
+          }
+          if (!liveTurnHasAudioRef.current) {
+            updateLiveStatus("session_started");
+            if (liveAutoResumeRef.current) {
+              scheduleLiveListeningResume("turn_complete_no_audio");
+            }
+          }
+          appendLiveEvent(`turn_complete ${turnIndex || "?"}`);
+          return;
+        }
         if (type === "session.closed") {
-          setLiveStatus("disconnected");
+          updateLiveStatus("ended");
           appendLiveEvent("Session closed.");
           return;
         }
+        if (type === "session.ended") {
+          appendLiveEvent("session_ended");
+          setLiveInfo("Session ended.");
+          return;
+        }
         if (type === "error") {
-          setLiveStatus("connected");
+          updateLiveStatus("error");
           setLiveError(String(payload.message || "Live voice test failed."));
           appendLiveEvent("Error received from websocket server.");
           return;
         }
       } catch {
+        updateLiveStatus("error");
         setLiveError("Live websocket returned an unreadable message.");
       }
     };
     socket.onerror = () => {
-      setLiveStatus("disconnected");
+      updateLiveStatus("error");
       const details = liveStatusInfo
         ? `Expected path ${liveStatusInfo.websocketPath} with ${liveStatusInfo.authMode} and ${liveStatusInfo.tenantMode}.`
         : "Check tenant selection and authentication.";
@@ -655,16 +1186,22 @@ export default function VoiceTestPage() {
     };
     socket.onclose = (event) => {
       stopLiveStream();
+      clearLiveResumeTimer();
       liveSocketRef.current = null;
-      setLiveStatus("disconnected");
+      liveAutoResumeRef.current = false;
+      updateLiveStatus(liveEndedByUserRef.current ? "ended" : "idle");
       liveAssistantAudioChunksRef.current.clear();
       liveAssistantAudioExpectedChunksRef.current = 0;
       if (event.code === 1009) {
+        updateLiveStatus("error");
         setLiveError("WebSocket message too large. Audio/response chunking failed.");
         appendLiveEvent(`DISCONNECTED • code=${event.code} reason=message too large`);
         return;
       }
       if (event.reason) {
+        if (!liveEndedByUserRef.current) {
+          updateLiveStatus("error");
+        }
         setLiveError(`WebSocket closed: ${event.reason}`);
         appendLiveEvent(`DISCONNECTED • code=${event.code} reason=${event.reason}`);
       } else {
@@ -682,7 +1219,7 @@ export default function VoiceTestPage() {
     }
     setLiveError(null);
     setLiveInfo(null);
-    setLiveStatus("connecting");
+    updateLiveStatus("connecting");
     const websocketUrl = resolveWebSocketUrl(accessToken, tenantId);
     appendLiveEvent(`CONNECTING • ${maskWebSocketUrl(websocketUrl)}`);
     const socket = new WebSocket(websocketUrl);
@@ -695,9 +1232,12 @@ export default function VoiceTestPage() {
     setLiveTranscript("");
     setLiveAssistantText("");
     setLiveAudioDataUrl(null);
+    setLivePlaybackError(null);
     setLiveProviderTrace(null);
     setLiveEvents([]);
     setLiveCaptureInfo(null);
+    setLiveCapturedAudioDebug(null);
+    setLiveConversation([]);
     liveChunkSequenceRef.current = 0;
     liveChunkFilenameRef.current = null;
     liveChunkContentTypeRef.current = "audio/webm";
@@ -705,110 +1245,221 @@ export default function VoiceTestPage() {
     liveSendQueueRef.current = Promise.resolve();
     liveAssistantAudioChunksRef.current.clear();
     liveAssistantAudioExpectedChunksRef.current = 0;
+    liveCurrentTurnRef.current = null;
+    livePendingTranscriptRef.current = "";
+    livePendingAssistantRef.current = "";
+    livePendingProviderTraceRef.current = null;
+    livePendingRequestIdRef.current = null;
+    liveTurnHasAudioRef.current = false;
+    liveSpeechStartedAtRef.current = null;
+    liveFirstSpeechAtRef.current = null;
+    liveLastSpeechAtRef.current = null;
+    liveSpeechDetectedRef.current = false;
+    liveSpeechFrameActiveRef.current = false;
+    liveAutoStopTriggeredRef.current = false;
+    liveSessionStartedAtRef.current = null;
+    setSpeechDetected(false);
+    setSilenceDetected(false);
+    liveAutoResumeRef.current = true;
+    liveEndedByUserRef.current = false;
+    updateLiveStatus("connecting");
     ensureLiveSocket();
   }
 
-  async function startLiveMic() {
+  async function startLiveMic(options?: { automatic?: boolean; reason?: string }) {
+    if (liveStartingMicRef.current) {
+      return;
+    }
+    if (
+      liveStatusRef.current === "listening" ||
+      liveStatusRef.current === "speech_detected" ||
+      liveStatusRef.current === "processing" ||
+      liveStatusRef.current === "finalizing_audio" ||
+      liveStatusRef.current === "playing_response" ||
+      liveStatusRef.current === "ending"
+    ) {
+      return;
+    }
     setLiveError(null);
     setLiveInfo(null);
     try {
+      liveStartingMicRef.current = true;
+      clearLiveResumeTimer();
       const socket = ensureLiveSocket();
       if (!navigator.mediaDevices?.getUserMedia) {
         setLiveError("Microphone recording is not available in this browser.");
         return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: requestedAudioConstraints() });
+      await refreshAudioInputDevices();
       const mimeType = selectRecordingMimeType();
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       const recordingType = recorder.mimeType || mimeType || "audio/webm";
       const filename = `voice-live-${Date.now()}.${resolveAudioExtensionFromType(recordingType)}`;
+      console.info("[voice-live] starting browser recording", {
+        selectedMimeType: mimeType || recorder.mimeType || "browser-default",
+        deviceLabel: selectedMicrophoneLabel(),
+      });
+      setMicDeviceInfo(selectedMicrophoneLabel());
+      setLiveCapturedAudioDebug(null);
       liveChunkSequenceRef.current = 0;
       liveChunkFilenameRef.current = filename;
       liveChunkContentTypeRef.current = recordingType;
       liveRecordedBytesRef.current = 0;
+      liveChunksRef.current = [];
       liveSendQueueRef.current = Promise.resolve();
-      setLiveCaptureInfo(`Captured ${recordingType} • Uploading original ${recordingType} as ${filename}.`);
+      livePendingTranscriptRef.current = "";
+      livePendingAssistantRef.current = "";
+      livePendingProviderTraceRef.current = null;
+      livePendingRequestIdRef.current = null;
+      liveTurnHasAudioRef.current = false;
+      liveSpeechStartedAtRef.current = null;
+      liveFirstSpeechAtRef.current = null;
+      liveLastSpeechAtRef.current = null;
+      liveSpeechDetectedRef.current = false;
+      liveSpeechFrameActiveRef.current = false;
+      liveAutoStopTriggeredRef.current = false;
+      liveSessionStartedAtRef.current = Date.now();
+      startAudioMonitoring(stream, "live");
+      appendLiveEvent(options?.automatic ? "auto_listening_start" : "vad_listening");
+      setLiveCaptureInfo(`Recording ${recordingType} from ${selectedMicrophoneLabel()} • final upload will use ${filename}.`);
       recorder.ondataavailable = (event) => {
         if (!event.data || event.data.size === 0) return;
-        if (socket.readyState !== WebSocket.OPEN) return;
+        liveChunksRef.current.push(event.data);
         liveRecordedBytesRef.current += event.data.size;
         const capturedType = event.data.type || recordingType || "audio/webm";
         liveChunkContentTypeRef.current = capturedType;
-        setLiveCaptureInfo(`Captured ${capturedType} • Uploading original ${capturedType} as ${filename} (${formatSize(liveRecordedBytesRef.current)}).`);
-        liveSendQueueRef.current = liveSendQueueRef.current.then(async () => {
-          const audioBase64 = await blobToBase64(event.data);
-          const base64Chunks = splitBase64Chunks(audioBase64);
-          base64Chunks.forEach((audioBase64Chunk) => {
-            liveChunkSequenceRef.current += 1;
-            socket.send(JSON.stringify({
-              type: "audio.chunk",
-              sequence: liveChunkSequenceRef.current,
-              contentType: capturedType,
-              filename,
-              audioBase64Chunk,
-            }));
-          });
-          appendLiveEvent(`Uploaded ${base64Chunks.length} audio chunk${base64Chunks.length === 1 ? "" : "s"} from recorder slice • ${formatSize(event.data.size)}.`);
-        }).catch(() => {
-          setLiveError("Live microphone audio could not be prepared for upload.");
+        setLiveCaptureInfo(`Recording ${capturedType} • buffered ${liveChunksRef.current.length} chunk${liveChunksRef.current.length === 1 ? "" : "s"} (${formatSize(liveRecordedBytesRef.current)}) before final upload.`);
+        console.info("[voice-live] recorder dataavailable", {
+          chunkCount: liveChunksRef.current.length,
+          chunkSizeBytes: event.data.size,
+          chunkType: capturedType,
         });
       };
       recorder.onstop = () => {
+        const finalType = liveChunkContentTypeRef.current || recorder.mimeType || recordingType || "audio/webm";
+        const blob = new Blob(liveChunksRef.current, { type: finalType });
+        const chunkSizes = liveChunksRef.current.map((chunk) => chunk.size);
+        setLiveCapturedAudioDebug({
+          recorderMimeType: recorder.mimeType || finalType,
+          chunkCount: liveChunksRef.current.length,
+          chunkSizes,
+          finalBlobSize: blob.size,
+          finalBlobType: blob.type || finalType,
+          uploadFilename: filename,
+          uploadMimeType: finalType,
+        });
         console.info("[voice-live] browser recording captured", {
           mimeType: recorder.mimeType,
-          blobType: liveChunkContentTypeRef.current,
+          chunkCount: liveChunksRef.current.length,
+          chunkSizes,
+          blobType: blob.type || finalType,
           filename,
-          sizeBytes: liveRecordedBytesRef.current,
+          sizeBytes: blob.size,
         });
         stopLiveStream();
-        setLiveStatus("processing");
+        if (blob.size === 0 || liveChunksRef.current.length === 0) {
+          updateLiveStatus("session_started");
+          setLiveInfo("No recorded audio was captured. Choose the active microphone and speak clearly before stopping.");
+          appendLiveEvent("NO_SPEECH_DETECTED");
+          if (liveAutoResumeRef.current) {
+            scheduleLiveListeningResume("empty_turn");
+          }
+          return;
+        }
+        if (!liveSpeechDetectedRef.current) {
+          updateLiveStatus("session_started");
+          setLiveInfo("No speech detected. Choose the active microphone and speak clearly before stopping.");
+          appendLiveEvent("NO_SPEECH_DETECTED");
+          if (liveAutoResumeRef.current) {
+            scheduleLiveListeningResume("silent_turn");
+          }
+          return;
+        }
+        updateLiveStatus("finalizing_audio");
+        setLiveCaptureInfo(`Captured ${blob.type || finalType} • Uploading finalized ${blob.type || finalType} as ${filename} (${formatSize(blob.size)}).`);
+        appendLiveEvent("audio_finalizing");
+        appendLiveEvent(`audio_blob_finalized mime=${blob.type || finalType} size=${formatSize(blob.size)} chunks=${liveChunksRef.current.length}`);
         void liveSendQueueRef.current.then(() => {
-          if (socket.readyState === WebSocket.OPEN) {
+          if (socket.readyState !== WebSocket.OPEN) {
+            throw new Error("Live websocket session is not connected.");
+          }
+          updateLiveStatus("processing");
+          return blobToBase64(blob).then((audioBase64) => {
+            const base64Chunks = splitBase64Chunks(audioBase64);
+            base64Chunks.forEach((audioBase64Chunk) => {
+              liveChunkSequenceRef.current += 1;
+              socket.send(JSON.stringify({
+                type: "audio.chunk",
+                sequence: liveChunkSequenceRef.current,
+                totalChunks: base64Chunks.length,
+                contentType: blob.type || finalType,
+                filename,
+                audioBase64Chunk,
+              }));
+            });
+            appendLiveEvent(`turn_sent chunks=${base64Chunks.length} size=${formatSize(blob.size)} language=${selectedLanguageLabel()}`);
             socket.send(JSON.stringify({
               type: "audio.end",
               filename,
-              contentType: liveChunkContentTypeRef.current || recordingType || "audio/webm",
+              contentType: blob.type || finalType,
               totalChunks: liveChunkSequenceRef.current,
             }));
-          }
-          appendLiveEvent(`Audio stream ended. Uploaded ${liveChunkSequenceRef.current} websocket chunk${liveChunkSequenceRef.current === 1 ? "" : "s"} • waiting for transcript and response.`);
+            appendLiveEvent("AUDIO_END_SENT");
+            appendLiveEvent(`Audio stream ended. Uploaded ${liveChunkSequenceRef.current} websocket chunk${liveChunkSequenceRef.current === 1 ? "" : "s"} • waiting for transcript and response.`);
+          });
         }).catch(() => {
-          setLiveStatus("connected");
+          updateLiveStatus("error");
+          setLiveError("Live microphone audio could not be prepared for upload.");
+          if (liveAutoResumeRef.current) {
+            scheduleLiveListeningResume("turn_send_failed");
+          }
         });
       };
       liveMediaStreamRef.current = stream;
       liveMediaRecorderRef.current = recorder;
-      recorder.start(500);
-      setLiveStatus("recording");
-      appendLiveEvent("Microphone streaming started.");
+      recorder.start();
+      updateLiveStatus("listening");
+      appendLiveEvent(`recorder_started ${options?.reason || (options?.automatic ? "automatic" : "manual")}`);
     } catch {
       stopLiveStream();
-      setLiveStatus("disconnected");
+      updateLiveStatus("error");
       setLiveError("Microphone access was denied. You can still use the file-based voice test.");
+    } finally {
+      liveStartingMicRef.current = false;
     }
   }
 
   function stopLiveMic() {
     if (liveMediaRecorderRef.current && liveMediaRecorderRef.current.state !== "inactive") {
+      appendLiveEvent("recorder_stopped");
+      updateLiveStatus("finalizing_audio");
       liveMediaRecorderRef.current.stop();
       return;
     }
     stopLiveStream();
     liveSendQueueRef.current = Promise.resolve();
-    setLiveStatus("connected");
+    updateLiveStatus("session_started");
   }
 
   function closeLiveSession(resetState = true) {
+    liveAutoResumeRef.current = false;
+    liveEndedByUserRef.current = true;
+    clearLiveResumeTimer();
+    liveAudioElementRef.current?.pause();
+    updateLiveStatus("ending");
     stopLiveStream();
     if (liveSocketRef.current && liveSocketRef.current.readyState === WebSocket.OPEN) {
       liveSocketRef.current.send(JSON.stringify({ type: "session.close" }));
       liveSocketRef.current.close();
     }
     liveSocketRef.current = null;
-    setLiveStatus("disconnected");
+    updateLiveStatus("ended");
     if (resetState) {
       setLiveInfo(null);
       setLiveCaptureInfo(null);
+      setLivePlaybackError(null);
+      appendLiveEvent("session_ended");
       appendLiveEvent("Live voice session closed by user.");
     }
   }
@@ -837,7 +1488,7 @@ export default function VoiceTestPage() {
           <Chip size="small" variant="outlined" label={`STT: ${formatProvider(voiceStatus?.providerTrace?.sttProvider || "faster-whisper")} / Mock`} />
           <Chip size="small" variant="outlined" label={`LLM: ${formatProvider(voiceStatus?.providerTrace?.llmProvider || "gemini")} / Groq / Mock`} />
           <Chip size="small" variant="outlined" label={`TTS: ${formatProvider(voiceStatus?.providerTrace?.ttsProvider || "piper")} / Mock`} />
-          <Chip size="small" variant="outlined" label={`Live: ${liveStatus}`} color={liveStatusTone(liveStatus)} />
+          <Chip size="small" variant="outlined" label={`Live: ${liveStatusLabel(liveStatus)}`} color={liveStatusTone(liveStatus)} />
         </Stack>
       </Stack>
 
@@ -854,6 +1505,7 @@ export default function VoiceTestPage() {
               {fileError ? <Alert severity="error">{fileError}</Alert> : null}
               {fileInfo ? <Alert severity="info">{fileInfo}</Alert> : null}
               {processingStage ? <Alert severity="info">{processingStage}</Alert> : null}
+              {fileSilenceWarning ? <Alert severity="warning">{fileSilenceWarning}</Alert> : null}
 
               <Stack direction={{ xs: "column", xl: "row" }} spacing={2} alignItems="stretch">
                 <Paper variant="outlined" sx={{ p: 2, flex: 1, minWidth: 0 }}>
@@ -881,6 +1533,35 @@ export default function VoiceTestPage() {
                     </Stack>
 
                     <TextField
+                      select
+                      size="small"
+                      label="Microphone device"
+                      value={selectedAudioInputId}
+                      onChange={(event) => setSelectedAudioInputId(event.target.value)}
+                      helperText={micDeviceInfo ? `Active device: ${micDeviceInfo}` : "Choose the microphone used for browser recording."}
+                    >
+                      {audioInputDevices.length === 0 ? (
+                        <MenuItem value="">Default microphone</MenuItem>
+                      ) : (
+                        audioInputDevices.map((device) => (
+                          <MenuItem key={device.deviceId} value={device.deviceId}>
+                            {device.label}
+                          </MenuItem>
+                        ))
+                      )}
+                    </TextField>
+
+                    <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+                        Microphone level
+                      </Typography>
+                      <LinearProgress variant="determinate" value={Math.min(100, micPeak * 100)} sx={{ height: 10, borderRadius: 999 }} />
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: "block" }}>
+                        RMS {formatLevel(micLevel)} • Peak {formatLevel(micPeak)} • {speechDetected ? "Speech detected" : silenceDetected ? "Silence detected" : "Listening"}
+                      </Typography>
+                    </Paper>
+
+                    <TextField
                       size="small"
                       label="Optional context"
                       multiline
@@ -891,13 +1572,18 @@ export default function VoiceTestPage() {
                     />
 
                     <TextField
+                      select
                       size="small"
                       label="Language"
                       value={language}
                       onChange={(event) => setLanguage(event.target.value)}
                       helperText="Simple language hint passed to STT/TTS where supported."
                       sx={{ maxWidth: 220 }}
-                    />
+                    >
+                      <MenuItem value="en">English</MenuItem>
+                      <MenuItem value="hi">Hindi</MenuItem>
+                      <MenuItem value="auto">Auto Detect</MenuItem>
+                    </TextField>
 
                     <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
                       <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
@@ -932,6 +1618,11 @@ export default function VoiceTestPage() {
                           </Typography>
                         </Stack>
                       ) : null}
+                      {capturedAudioUrl ? (
+                        <Box sx={{ mt: 1.25 }}>
+                          <audio controls src={capturedAudioUrl} style={{ width: "100%" }} />
+                        </Box>
+                      ) : null}
                     </Paper>
 
                     {capturedAudioDebug ? (
@@ -947,6 +1638,12 @@ export default function VoiceTestPage() {
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
                           Upload file: {capturedAudioDebug.uploadFilename} • {capturedAudioDebug.uploadMimeType || "unknown"}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Duration: {formatDuration(capturedAudioDebug.durationMs)} • Device: {capturedAudioDebug.deviceLabel}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          RMS: {formatLevel(capturedAudioDebug.averageRms)} • Peak: {formatLevel(capturedAudioDebug.peakLevel)} • {capturedAudioDebug.silent ? "Silence warning" : "Voice detected"}
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
                           Chunk count: {capturedAudioDebug.chunkCount}
@@ -1045,7 +1742,7 @@ export default function VoiceTestPage() {
               {liveCaptureInfo ? <Alert severity="info">{liveCaptureInfo}</Alert> : null}
               {liveStatusInfo ? (
                 <Alert severity="info">
-                  Live websocket path: <strong>{liveStatusInfo.websocketPath}</strong> • auth: <strong>{liveStatusInfo.authMode}</strong> • tenant: <strong>{liveStatusInfo.tenantMode}</strong>
+                  Live websocket path: <strong>{liveStatusInfo.websocketPath}</strong> • auth: <strong>{liveStatusInfo.authMode}</strong> • tenant: <strong>{liveStatusInfo.tenantMode}</strong> • VAD: <strong>{liveStatusInfo.vadMode}</strong> ({liveStatusInfo.vadProvider})
                 </Alert>
               ) : null}
 
@@ -1063,24 +1760,69 @@ export default function VoiceTestPage() {
                       placeholder="clinic receptionist test"
                     />
                     <TextField
+                      select
                       size="small"
                       label="Language"
                       value={language}
                       onChange={(event) => setLanguage(event.target.value)}
+                      helperText="English, Hindi, or Auto Detect for live STT/TTS."
                       sx={{ maxWidth: 220 }}
-                    />
+                    >
+                      <MenuItem value="en">English</MenuItem>
+                      <MenuItem value="hi">Hindi</MenuItem>
+                      <MenuItem value="auto">Auto Detect</MenuItem>
+                    </TextField>
+                    <TextField
+                      select
+                      size="small"
+                      label="Microphone device"
+                      value={selectedAudioInputId}
+                      onChange={(event) => setSelectedAudioInputId(event.target.value)}
+                      helperText={micDeviceInfo ? `Active device: ${micDeviceInfo}` : "Choose the microphone used for live voice testing."}
+                    >
+                      {audioInputDevices.length === 0 ? (
+                        <MenuItem value="">Default microphone</MenuItem>
+                      ) : (
+                        audioInputDevices.map((device) => (
+                          <MenuItem key={device.deviceId} value={device.deviceId}>
+                            {device.label}
+                          </MenuItem>
+                        ))
+                      )}
+                    </TextField>
                     <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                      <Button variant="contained" startIcon={<LinkRoundedIcon />} onClick={startLiveSession} disabled={liveStatus === "connecting" || liveStatus === "connected" || liveStatus === "recording" || liveStatus === "processing"}>
+                      <Button variant="contained" startIcon={<LinkRoundedIcon />} onClick={startLiveSession} disabled={liveStatus !== "idle" && liveStatus !== "ended"}>
                         Start session
                       </Button>
-                      <Button variant="contained" color="secondary" startIcon={<MicRoundedIcon />} onClick={startLiveMic} disabled={liveStatus === "recording" || liveStatus === "processing"}>
-                        Start mic
+                      <Button
+                        variant="contained"
+                        color="secondary"
+                        startIcon={<MicRoundedIcon />}
+                        onClick={() => void startLiveMic({ automatic: false, reason: "manual_button" })}
+                        disabled={
+                          liveStatus === "idle" ||
+                          liveStatus === "connecting" ||
+                          liveStatus === "listening" ||
+                          liveStatus === "speech_detected" ||
+                          liveStatus === "finalizing_audio" ||
+                          liveStatus === "processing" ||
+                          liveStatus === "playing_response" ||
+                          liveStatus === "ending"
+                        }
+                      >
+                        Manual turn
                       </Button>
-                      <Button variant="outlined" color="warning" startIcon={<StopRoundedIcon />} onClick={stopLiveMic} disabled={liveStatus !== "recording"}>
-                        Stop mic
+                      <Button
+                        variant="outlined"
+                        color="warning"
+                        startIcon={<StopRoundedIcon />}
+                        onClick={stopLiveMic}
+                        disabled={liveStatus !== "listening" && liveStatus !== "speech_detected"}
+                      >
+                        Stop turn / Send
                       </Button>
-                      <Button variant="text" startIcon={<LinkOffRoundedIcon />} onClick={() => closeLiveSession()} disabled={liveStatus === "disconnected"}>
-                        Close session
+                      <Button variant="text" startIcon={<LinkOffRoundedIcon />} onClick={() => closeLiveSession()} disabled={liveStatus === "idle" || liveStatus === "ended" || liveStatus === "ending"}>
+                        End session
                       </Button>
                     </Stack>
                     <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
@@ -1088,10 +1830,61 @@ export default function VoiceTestPage() {
                         Connection status
                       </Typography>
                       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                        <Chip size="small" color={liveStatusTone(liveStatus)} label={liveStatus} />
+                        <Chip size="small" color={liveStatusTone(liveStatus)} label={liveStatusLabel(liveStatus)} />
                         <Chip size="small" variant="outlined" label={`Session: ${liveSessionId ?? "Pending"}`} />
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color={speechDetected ? "success" : silenceDetected ? "warning" : "default"}
+                          label={
+                            speechDetected
+                              ? "Speech detected"
+                              : silenceDetected
+                                ? "Silence detected"
+                                : liveStatus === "listening"
+                                  ? "Listening"
+                                  : liveStatus === "playing_response"
+                                    ? "Playing response"
+                                    : liveStatus === "processing"
+                                      ? "Processing"
+                                      : "Mic idle"
+                          }
+                        />
                       </Stack>
                     </Paper>
+                    {language === "hi" && !isHindiTtsVoiceConfigured() ? (
+                      <Alert severity="warning">
+                        Hindi STT is enabled, but a Hindi Piper voice is not configured. Text responses will still work, and audio may use the default voice.
+                      </Alert>
+                    ) : null}
+                    <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+                        Voice activity
+                      </Typography>
+                      <LinearProgress variant="determinate" value={Math.min(100, micPeak * 100)} sx={{ height: 10, borderRadius: 999 }} />
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: "block" }}>
+                        RMS {formatLevel(micLevel)} • Peak {formatLevel(micPeak)} • start {formatLevel(LIVE_SPEECH_START_THRESHOLD)} • end {formatLevel(LIVE_SPEECH_END_THRESHOLD)}
+                      </Typography>
+                    </Paper>
+                    {liveCapturedAudioDebug ? (
+                      <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                          Captured audio debug
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Recorder MIME: {liveCapturedAudioDebug.recorderMimeType || "unknown"}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Chunks: {liveCapturedAudioDebug.chunkCount} • Sizes: {liveCapturedAudioDebug.chunkSizes.map((size) => formatSize(size)).join(", ") || "None"}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Final blob: {liveCapturedAudioDebug.finalBlobType || "unknown"} • {formatSize(liveCapturedAudioDebug.finalBlobSize)}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Upload file: {liveCapturedAudioDebug.uploadFilename} • {liveCapturedAudioDebug.uploadMimeType || "unknown"}
+                        </Typography>
+                      </Paper>
+                    ) : null}
                   </Stack>
                 </Paper>
 
@@ -1104,10 +1897,49 @@ export default function VoiceTestPage() {
                     <ResultBlock label="Assistant response" value={liveAssistantText} empty="Assistant text will appear after the buffered audio is processed." />
                     <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
                       <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+                        Conversation turns
+                      </Typography>
+                      {liveConversation.length === 0 ? (
+                        <Typography variant="body2" color="text.secondary">
+                          Completed turns will accumulate here for the active websocket session.
+                        </Typography>
+                      ) : (
+                        <Stack spacing={1}>
+                          {liveConversation.map((turn) => (
+                            <Paper key={`${turn.turnIndex}-${turn.requestId || "turn"}`} variant="outlined" sx={{ p: 1.25 }}>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                                Turn {turn.turnIndex}
+                              </Typography>
+                              <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+                                User: {turn.transcript || "No transcript"}
+                              </Typography>
+                              <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", mt: 0.5 }}>
+                                Assistant: {turn.assistantText || "No reply"}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                                Providers: STT {formatProvider(turn.providerTrace?.sttProvider)} • LLM {formatProvider(turn.providerTrace?.llmProvider)} • TTS {formatProvider(turn.providerTrace?.ttsProvider)}
+                              </Typography>
+                            </Paper>
+                          ))}
+                        </Stack>
+                      )}
+                    </Paper>
+                    <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
                         Playback
                       </Typography>
+                      {livePlaybackError ? (
+                        <Alert severity="warning" sx={{ mb: 1 }}>
+                          {livePlaybackError}
+                        </Alert>
+                      ) : null}
                       {liveAudioDataUrl ? (
-                        <audio controls src={liveAudioDataUrl} style={{ width: "100%" }} />
+                        <Stack spacing={1}>
+                          <audio ref={liveAudioElementRef} controls src={liveAudioDataUrl} style={{ width: "100%" }} onEnded={handleLiveResponseEnded} />
+                          <Button variant="outlined" onClick={() => void playLiveResponse(false)}>
+                            Play response
+                          </Button>
+                        </Stack>
                       ) : (
                         <Typography variant="body2" color="text.secondary">
                           No playable TTS audio was returned yet. Mock TTS fallback will still return assistant text.

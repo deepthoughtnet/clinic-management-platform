@@ -94,9 +94,11 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
 
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
             body.add("file", audioPart(request));
-            body.add("language", StringUtils.hasText(request.language())
-                    ? request.language()
-                    : properties.getStt().getFasterWhisper().getLanguage());
+            if (StringUtils.hasText(request.language())
+                    && !"auto".equalsIgnoreCase(request.language().trim())
+                    && !"auto-detect".equalsIgnoreCase(request.language().trim())) {
+                body.add("language", request.language().trim());
+            }
             body.add("model", properties.getStt().getFasterWhisper().getModel());
 
             ResponseEntity<String> response = restTemplate.postForEntity(
@@ -189,10 +191,45 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
         ByteArrayResource resource = new ByteArrayResource(request.audioBytes()) {
             @Override
             public String getFilename() {
-                return StringUtils.hasText(request.filename()) ? request.filename() : "voice-test.webm";
+                return normalizedFilename(request.filename(), request.contentType());
             }
         };
         return new HttpEntity<>(resource, partHeaders);
+    }
+
+    private String normalizedFilename(String filename, String contentType) {
+        if (!StringUtils.hasText(filename)) {
+            return defaultFilenameForContentType(contentType);
+        }
+        String normalizedContentType = StringUtils.hasText(contentType)
+                ? contentType.trim().toLowerCase(java.util.Locale.ROOT)
+                : "";
+        if (normalizedContentType.startsWith("audio/webm") && filename.toLowerCase(java.util.Locale.ROOT).endsWith(".weba")) {
+            return filename.substring(0, filename.length() - 5) + ".webm";
+        }
+        return filename;
+    }
+
+    private String defaultFilenameForContentType(String contentType) {
+        String normalizedContentType = StringUtils.hasText(contentType)
+                ? contentType.trim().toLowerCase(java.util.Locale.ROOT)
+                : "";
+        if (normalizedContentType.startsWith("audio/webm")) {
+            return "voice-test.webm";
+        }
+        if (normalizedContentType.startsWith("audio/ogg")) {
+            return "voice-test.ogg";
+        }
+        if (normalizedContentType.startsWith("audio/wav") || normalizedContentType.startsWith("audio/x-wav")) {
+            return "voice-test.wav";
+        }
+        if (normalizedContentType.startsWith("audio/mp4") || normalizedContentType.startsWith("audio/x-m4a")) {
+            return "voice-test.m4a";
+        }
+        if (normalizedContentType.startsWith("audio/mpeg") || normalizedContentType.startsWith("audio/mp3")) {
+            return "voice-test.mp3";
+        }
+        return "voice-test.webm";
     }
 
     private MediaType parseContentType(String value) {

@@ -56,7 +56,9 @@ class VoiceTestControllerTest {
                 true,
                 new VoiceServiceStatus("FASTER_WHISPER", true, true, "ready"),
                 new VoiceServiceStatus("PIPER", true, true, "ready"),
-                new VoiceProviderTrace("faster-whisper", "gemini", "piper")
+                new VoiceProviderTrace("faster-whisper", "gemini", "piper"),
+                "en",
+                "en_US-lessac-medium"
         ));
 
         controller.status(true);

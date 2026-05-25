@@ -30,7 +30,9 @@ record VoiceStatusResponse(
         boolean enabled,
         VoiceServiceStatus stt,
         VoiceServiceStatus tts,
-        VoiceProviderTrace providerTrace
+        VoiceProviderTrace providerTrace,
+        String sttConfiguredLanguage,
+        String ttsConfiguredVoice
 ) {
 }
 
@@ -38,7 +40,9 @@ record VoiceLiveStatusResponse(
         boolean websocketEnabled,
         String websocketPath,
         String authMode,
-        String tenantMode
+        String tenantMode,
+        String vadMode,
+        String vadProvider
 ) {
 }
 

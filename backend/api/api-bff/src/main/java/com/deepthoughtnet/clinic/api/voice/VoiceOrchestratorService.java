@@ -70,7 +70,7 @@ public class VoiceOrchestratorService {
         this.objectMapper = objectMapper;
         this.fasterWhisperSpeechToTextProvider = fasterWhisperSpeechToTextProvider;
         this.piperTextToSpeechProvider = piperTextToSpeechProvider;
-        log.info("voice.stt.providers.available={}", sttProviders.stream().map(this::providerKey).toList());
+        log.info("voice.stt.providers.available={}", sttProviderRegistry().keySet().stream().toList());
     }
 
     public VoiceTestResponse processAudio(MultipartFile audio, String context, String language) {
@@ -105,7 +105,7 @@ public class VoiceOrchestratorService {
             }
             RequestContextHolder.requireTenantId();
             UUID requestId = UUID.randomUUID();
-            String normalizedLanguage = StringUtils.hasText(language) ? language.trim() : "en";
+            String normalizedLanguage = normalizeLanguageHint(language);
             validateAudio(audio.getOriginalFilename(), audio.getContentType());
             List<VoiceDebugTraceEntry> debugTrace = new ArrayList<>();
             debugTrace.add(trace("BACKEND_RECEIVED_AUDIO", true, null, null, null,
@@ -149,7 +149,7 @@ public class VoiceOrchestratorService {
         RequestContext requestContext = RequestContextHolder.require();
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID requestId = UUID.randomUUID();
-        String normalizedLanguage = StringUtils.hasText(language) ? language.trim() : "en";
+        String normalizedLanguage = normalizeLanguageHint(language);
         validateAudio(originalFilename, contentType);
         Instant requestStart = Instant.now();
         List<VoiceDebugTraceEntry> debugTrace = new ArrayList<>();
@@ -276,7 +276,9 @@ public class VoiceOrchestratorService {
                         firstProvider(properties.getStt().getProviderOrder(), "mock"),
                         firstProvider(properties.getLlm().getProviderOrder(), "mock"),
                         firstProvider(properties.getTts().getProviderOrder(), "mock")
-                )
+                ),
+                properties.getStt().getFasterWhisper().getLanguage(),
+                properties.getTts().getPiper().getVoice()
         );
     }
 
@@ -285,14 +287,16 @@ public class VoiceOrchestratorService {
                 properties.isEnabled(),
                 "/ws/voice/test",
                 "JWT_QUERY_TOKEN",
-                "QUERY_TENANT_ID"
+                "QUERY_TENANT_ID",
+                properties.getVad().isEnabled() ? "FRONTEND_RMS_READY" : "DISABLED",
+                properties.getVad().getProvider()
         );
     }
 
     private VoiceTranscriptionResult transcribe(VoiceTranscriptionRequest request, List<VoiceDebugTraceEntry> debugTrace) {
         List<String> providerOrder = properties.getStt().getProviderOrder();
         log.info("voice.stt.provider-order={}", providerOrder);
-        List<String> availableProviders = sttProviders.stream().map(this::providerKey).toList();
+        List<String> availableProviders = sttProviderRegistry().keySet().stream().toList();
         for (String configured : providerOrder) {
             String normalizedConfigured = normalizeProviderKey(configured);
             if (!availableProviders.contains(normalizedConfigured)) {
@@ -395,11 +399,10 @@ public class VoiceOrchestratorService {
     }
 
     private List<SpeechToTextProvider> orderedSttProviders(List<String> configuredOrder) {
+        Map<String, SpeechToTextProvider> byName = sttProviderRegistry();
         if (configuredOrder == null || configuredOrder.isEmpty()) {
-            return sttProviders;
+            return new java.util.ArrayList<>(byName.values());
         }
-        Map<String, SpeechToTextProvider> byName = new LinkedHashMap<>();
-        sttProviders.forEach(provider -> byName.put(providerKey(provider), provider));
         List<SpeechToTextProvider> ordered = new java.util.ArrayList<>();
         for (String name : configuredOrder) {
             SpeechToTextProvider provider = byName.remove(normalizeProviderKey(name));
@@ -409,6 +412,17 @@ public class VoiceOrchestratorService {
         }
         ordered.addAll(byName.values());
         return ordered;
+    }
+
+    private Map<String, SpeechToTextProvider> sttProviderRegistry() {
+        Map<String, SpeechToTextProvider> byName = new LinkedHashMap<>();
+        if (fasterWhisperSpeechToTextProvider != null) {
+            byName.put(providerKey(fasterWhisperSpeechToTextProvider), fasterWhisperSpeechToTextProvider);
+        }
+        for (SpeechToTextProvider provider : sttProviders) {
+            byName.putIfAbsent(providerKey(provider), provider);
+        }
+        return byName;
     }
 
     private List<TextToSpeechProvider> orderedTtsProviders(List<String> configuredOrder) {
@@ -432,9 +446,20 @@ public class VoiceOrchestratorService {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("transcript", transcript);
         input.put("context", StringUtils.hasText(context) ? context.trim() : "General voice test harness conversation.");
-        input.put("language", language);
+        input.put("language", StringUtils.hasText(language) ? language : "auto");
         input.put("instruction", "Respond like a concise AI receptionist assistant. Keep the answer clear and short.");
         return input;
+    }
+
+    private String normalizeLanguageHint(String language) {
+        if (!StringUtils.hasText(language)) {
+            return null;
+        }
+        String normalized = language.trim().toLowerCase(Locale.ROOT);
+        if (normalized.isBlank() || "auto".equals(normalized) || "auto-detect".equals(normalized)) {
+            return null;
+        }
+        return normalized;
     }
 
     private void validateAudio(String originalFilename, String rawContentType) {

@@ -301,6 +301,8 @@ export type VoiceStatusResponse = {
   stt: VoiceServiceStatus;
   tts: VoiceServiceStatus;
   providerTrace: VoiceProviderTrace | null;
+  sttConfiguredLanguage: string | null;
+  ttsConfiguredVoice: string | null;
 };
 
 export type VoiceLiveStatusResponse = {
@@ -308,6 +310,8 @@ export type VoiceLiveStatusResponse = {
   websocketPath: string;
   authMode: string;
   tenantMode: string;
+  vadMode: string;
+  vadProvider: string;
 };
 
 export type ReportRow = Record<string, string | number | boolean | null>;
@@ -2286,7 +2290,7 @@ export async function runVoiceTest(
   },
 ) {
   const formData = new FormData();
-  formData.append("audio", input.audio);
+  formData.append("audio", input.audio, normalizeVoiceUploadFilename(input.audio));
   if (input.context?.trim()) formData.append("context", input.context.trim());
   if (input.language?.trim()) formData.append("language", input.language.trim());
   return httpPostForm<VoiceTestResponse>("/api/voice/test", formData, { token, tenantId });
@@ -2301,9 +2305,19 @@ export async function runVoiceSttDebug(
   },
 ) {
   const formData = new FormData();
-  formData.append("audio", input.audio);
+  formData.append("audio", input.audio, normalizeVoiceUploadFilename(input.audio));
   if (input.language?.trim()) formData.append("language", input.language.trim());
   return httpPostForm<VoiceSttDebugResponse>("/api/voice/debug/stt", formData, { token, tenantId });
+}
+
+function normalizeVoiceUploadFilename(audio: File): string {
+  const originalName = audio.name?.trim() || "voice-test";
+  const lowerName = originalName.toLowerCase();
+  const normalizedType = (audio.type || "").toLowerCase().split(";", 1)[0].trim();
+  if (normalizedType === "audio/webm" && lowerName.endsWith(".weba")) {
+    return originalName.slice(0, -5) + ".webm";
+  }
+  return originalName;
 }
 
 export async function getVoiceTestStatus(token: string, tenantId: string, warmup = false) {

@@ -11,6 +11,7 @@ public class VoiceTestProperties {
     private final Stt stt = new Stt();
     private final Tts tts = new Tts();
     private final Llm llm = new Llm();
+    private final Vad vad = new Vad();
     private final Debug debug = new Debug();
 
     public boolean isEnabled() {
@@ -31,6 +32,10 @@ public class VoiceTestProperties {
 
     public Llm getLlm() {
         return llm;
+    }
+
+    public Vad getVad() {
+        return vad;
     }
 
     public Debug getDebug() {
@@ -246,6 +251,72 @@ public class VoiceTestProperties {
 
         public void setProviderOrder(List<String> providerOrder) {
             this.providerOrder = providerOrder;
+        }
+    }
+
+    public static class Vad {
+        private boolean enabled = true;
+        private String provider = "noop";
+        private double speechStartThreshold = 0.03;
+        private double speechEndThreshold = 0.015;
+        private int minSpeechMs = 300;
+        private int silenceTimeoutMs = 1500;
+        private int maxUtteranceMs = 30000;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getProvider() {
+            return provider;
+        }
+
+        public void setProvider(String provider) {
+            this.provider = provider;
+        }
+
+        public double getSpeechStartThreshold() {
+            return speechStartThreshold;
+        }
+
+        public void setSpeechStartThreshold(double speechStartThreshold) {
+            this.speechStartThreshold = speechStartThreshold;
+        }
+
+        public double getSpeechEndThreshold() {
+            return speechEndThreshold;
+        }
+
+        public void setSpeechEndThreshold(double speechEndThreshold) {
+            this.speechEndThreshold = speechEndThreshold;
+        }
+
+        public int getMinSpeechMs() {
+            return minSpeechMs;
+        }
+
+        public void setMinSpeechMs(int minSpeechMs) {
+            this.minSpeechMs = minSpeechMs;
+        }
+
+        public int getSilenceTimeoutMs() {
+            return silenceTimeoutMs;
+        }
+
+        public void setSilenceTimeoutMs(int silenceTimeoutMs) {
+            this.silenceTimeoutMs = silenceTimeoutMs;
+        }
+
+        public int getMaxUtteranceMs() {
+            return maxUtteranceMs;
+        }
+
+        public void setMaxUtteranceMs(int maxUtteranceMs) {
+            this.maxUtteranceMs = maxUtteranceMs;
         }
     }
 

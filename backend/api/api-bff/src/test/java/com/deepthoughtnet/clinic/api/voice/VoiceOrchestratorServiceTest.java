@@ -136,6 +136,56 @@ class VoiceOrchestratorServiceTest {
     }
 
     @Test
+    void processAudioReflectsGroqWhenLlmFallbackIsUsed() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-groq"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        AiOrchestrationService aiOrchestrationService = mock(AiOrchestrationService.class);
+        when(aiOrchestrationService.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiProductCode.GENERIC,
+                AiTaskType.GENERIC_COPILOT,
+                "GROQ",
+                "llama-3.1-8b-instant",
+                "Groq handled the response after Gemini fallback.",
+                null,
+                BigDecimal.valueOf(0.87),
+                List.of(),
+                List.of(),
+                List.of("Fallback provider was used. Please verify before acting."),
+                null,
+                25L,
+                true,
+                null
+        ));
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(new MockVoiceTextToSpeechProvider()),
+                aiOrchestrationService,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
+        );
+
+        VoiceTestResponse response = service.processAudio(
+                new MockMultipartFile("audio", "sample.m4a", "audio/mp4", "voice".getBytes()),
+                "Voice fallback validation",
+                "en"
+        );
+
+        assertThat(response.assistantText()).contains("Groq handled the response");
+        assertThat(response.providerTrace().llmProvider()).isEqualTo("GROQ");
+    }
+
+    @Test
     void missingTenantContextIsRejected() {
         VoiceTestProperties properties = new VoiceTestProperties();
         VoiceOrchestratorService service = new VoiceOrchestratorService(
@@ -203,6 +253,57 @@ class VoiceOrchestratorServiceTest {
     }
 
     @Test
+    void configuredFasterWhisperUsesDedicatedBeanEvenIfInjectedProviderListMissesIt() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-dedicated"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("faster-whisper", "mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        properties.getLlm().setProviderOrder(List.of("gemini", "groq", "mock"));
+        AiOrchestrationService ai = mock(AiOrchestrationService.class);
+        when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "gemini", "gemini", "Handled", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+        ));
+
+        FasterWhisperSpeechToTextProvider fasterWhisper = mock(FasterWhisperSpeechToTextProvider.class);
+        when(fasterWhisper.providerName()).thenReturn("faster-whisper");
+        when(fasterWhisper.isReady()).thenReturn(true);
+        when(fasterWhisper.transcribeWithDebug(any(), any())).thenReturn(new VoiceTranscriptionResult("hello", "FASTER_WHISPER", null));
+
+        MockVoiceSpeechToTextProvider mockProvider = spy(new MockVoiceSpeechToTextProvider());
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(mockProvider),
+                List.of(new MockVoiceTextToSpeechProvider()),
+                ai,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                fasterWhisper,
+                mock(PiperTextToSpeechProvider.class)
+        );
+
+        VoiceTestResponse response = service.processAudio(
+                new MockMultipartFile("audio", "sample.m4a", "audio/mp4", "voice".getBytes()),
+                null,
+                null
+        );
+
+        assertThat(response.providerTrace().sttProvider()).isEqualTo("FASTER_WHISPER");
+        verify(fasterWhisper).transcribeWithDebug(any(), any());
+        verify(mockProvider, never()).transcribe(any());
+    }
+
+    @Test
+    void llmProviderOrderChangesDoNotAffectSttProviderSelection() {
+        VoiceTestResponse response = runWithConfiguredProvider("faster-whisper", List.of("groq", "gemini", "mock"));
+        assertThat(response.providerTrace().sttProvider()).isEqualTo("FASTER_WHISPER");
+    }
+
+    @Test
     void missingConfiguredProviderIsRecordedInDebugTrace() {
         UUID tenantId = UUID.randomUUID();
         UUID actorId = UUID.randomUUID();
@@ -241,6 +342,10 @@ class VoiceOrchestratorServiceTest {
     }
 
     private VoiceTestResponse runWithConfiguredProvider(String configuredProvider) {
+        return runWithConfiguredProvider(configuredProvider, List.of("gemini", "groq", "mock"));
+    }
+
+    private VoiceTestResponse runWithConfiguredProvider(String configuredProvider, List<String> llmOrder) {
         UUID tenantId = UUID.randomUUID();
         UUID actorId = UUID.randomUUID();
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-provider"));
@@ -248,6 +353,7 @@ class VoiceOrchestratorServiceTest {
         VoiceTestProperties properties = new VoiceTestProperties();
         properties.getStt().setProviderOrder(List.of(configuredProvider, "mock"));
         properties.getTts().setProviderOrder(List.of("mock"));
+        properties.getLlm().setProviderOrder(llmOrder);
         AiOrchestrationService ai = mock(AiOrchestrationService.class);
         when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,

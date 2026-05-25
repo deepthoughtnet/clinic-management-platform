@@ -110,4 +110,37 @@ class FasterWhisperSpeechToTextProviderTest {
         assertThat(result.providerName()).isEqualTo("FASTER_WHISPER");
         server.verify();
     }
+
+    @Test
+    void transcribeNormalizesWebaFilenameForWebmUploads() {
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().getFasterWhisper().setBaseUrl("http://faster-whisper:8000");
+        FasterWhisperSpeechToTextProvider provider = new FasterWhisperSpeechToTextProvider(properties, new RestTemplateBuilder(), new ObjectMapper());
+        RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(once(), requestTo("http://faster-whisper:8000/transcribe"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header(HttpHeaders.CONTENT_TYPE, org.hamcrest.Matchers.containsString("multipart/form-data")))
+                .andExpect(request -> {
+                    MockClientHttpRequest httpRequest = (MockClientHttpRequest) request;
+                    String body = httpRequest.getBodyAsString(StandardCharsets.UTF_8);
+                    assertThat(body).contains("name=\"file\"");
+                    assertThat(body).contains("filename=\"sample.webm\"");
+                    assertThat(body).doesNotContain("filename=\"sample.weba\"");
+                    assertThat(body).contains("Content-Type: audio/webm");
+                })
+                .andRespond(withSuccess("{\"text\":\"Hello from normalized webm\"}", MediaType.APPLICATION_JSON));
+
+        var result = provider.transcribe(new VoiceTranscriptionRequest(
+                UUID.randomUUID(),
+                "audio".getBytes(StandardCharsets.UTF_8),
+                "audio/webm",
+                "sample.weba",
+                "en"
+        ));
+
+        assertThat(result.transcript()).isEqualTo("Hello from normalized webm");
+        assertThat(result.providerName()).isEqualTo("FASTER_WHISPER");
+        server.verify();
+    }
 }
