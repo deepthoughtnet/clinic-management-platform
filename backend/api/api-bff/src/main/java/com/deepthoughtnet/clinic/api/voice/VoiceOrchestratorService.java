@@ -36,6 +36,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -56,6 +57,7 @@ public class VoiceOrchestratorService {
     private final ObjectMapper objectMapper;
     private final FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider;
     private final PiperTextToSpeechProvider piperTextToSpeechProvider;
+    private final VoiceAppointmentWorkflowService voiceAppointmentWorkflowService;
 
     public VoiceOrchestratorService(List<SpeechToTextProvider> sttProviders,
                                     List<TextToSpeechProvider> ttsProviders,
@@ -65,6 +67,20 @@ public class VoiceOrchestratorService {
                                     ObjectMapper objectMapper,
                                     FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider,
                                     PiperTextToSpeechProvider piperTextToSpeechProvider) {
+        this(sttProviders, ttsProviders, aiOrchestrationService, auditEventPublisher, properties, objectMapper,
+                fasterWhisperSpeechToTextProvider, piperTextToSpeechProvider, null);
+    }
+
+    @Autowired
+    public VoiceOrchestratorService(List<SpeechToTextProvider> sttProviders,
+                                    List<TextToSpeechProvider> ttsProviders,
+                                    AiOrchestrationService aiOrchestrationService,
+                                    AuditEventPublisher auditEventPublisher,
+                                    VoiceTestProperties properties,
+                                    ObjectMapper objectMapper,
+                                    FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider,
+                                    PiperTextToSpeechProvider piperTextToSpeechProvider,
+                                    VoiceAppointmentWorkflowService voiceAppointmentWorkflowService) {
         this.sttProviders = sttProviders;
         this.ttsProviders = ttsProviders;
         this.aiOrchestrationService = aiOrchestrationService;
@@ -73,10 +89,15 @@ public class VoiceOrchestratorService {
         this.objectMapper = objectMapper;
         this.fasterWhisperSpeechToTextProvider = fasterWhisperSpeechToTextProvider;
         this.piperTextToSpeechProvider = piperTextToSpeechProvider;
+        this.voiceAppointmentWorkflowService = voiceAppointmentWorkflowService;
         log.info("voice.stt.providers.available={}", sttProviderRegistry().keySet().stream().toList());
     }
 
     public VoiceTestResponse processAudio(MultipartFile audio, String context, String language) {
+        return processAudio(audio, context, language, null);
+    }
+
+    public VoiceTestResponse processAudio(MultipartFile audio, String context, String language, String workflowMode) {
         if (!properties.isEnabled()) {
             throw new IllegalArgumentException("Voice test is disabled.");
         }
@@ -88,7 +109,7 @@ public class VoiceOrchestratorService {
                 audio.getContentType(),
                 audio.getSize());
         try {
-            return processBufferedAudio(audio.getBytes(), audio.getContentType(), audio.getOriginalFilename(), context, language);
+            return processBufferedAudio(audio.getBytes(), audio.getContentType(), audio.getOriginalFilename(), context, language, workflowMode, null);
         } catch (IOException ex) {
             throw new IllegalStateException("Voice test failed: " + ex.getMessage(), ex);
         }
@@ -142,6 +163,16 @@ public class VoiceOrchestratorService {
                                                   String originalFilename,
                                                   String context,
                                                   String language) {
+        return processBufferedAudio(audioBytes, contentType, originalFilename, context, language, null, null);
+    }
+
+    public VoiceTestResponse processBufferedAudio(byte[] audioBytes,
+                                                  String contentType,
+                                                  String originalFilename,
+                                                  String context,
+                                                  String language,
+                                                  String workflowMode,
+                                                  VoiceWorkflowSummary existingWorkflowSummary) {
         if (!properties.isEnabled()) {
             throw new IllegalArgumentException("Voice test is disabled.");
         }
@@ -191,13 +222,22 @@ public class VoiceOrchestratorService {
                     Duration.between(sttStart, Instant.now()).toMillis(),
                     preview(transcription.transcript()));
             Instant llmStart = Instant.now();
+            VoiceWorkflowMode resolvedWorkflowMode = VoiceWorkflowMode.from(workflowMode);
+            VoiceWorkflowSummary workflowSummary = resolveWorkflowSummary(
+                    resolvedWorkflowMode,
+                    tenantId,
+                    transcription.transcript(),
+                    normalizedLanguage,
+                    existingWorkflowSummary
+            );
+            logWorkflowState(requestId, resolvedWorkflowMode, workflowSummary);
             AiOrchestrationResponse aiResponse = aiOrchestrationService.complete(new AiOrchestrationRequest(
                     AiProductCode.GENERIC,
                     tenantId,
                     requestContext.appUserId(),
                     AiTaskType.GENERIC_COPILOT,
                     "generic.copilot.v1",
-                    llmInput(transcription.transcript(), context, normalizedLanguage),
+                    llmInput(transcription.transcript(), context, normalizedLanguage, resolvedWorkflowMode, workflowSummary),
                     List.of(),
                     properties.getLlm().getMaxOutputTokens(),
                     0.2d,
@@ -208,6 +248,24 @@ public class VoiceOrchestratorService {
                     requestId,
                     aiResponse.provider(),
                     Duration.between(llmStart, Instant.now()).toMillis());
+            debugTrace.add(trace(
+                    "LLM_RESULT",
+                    true,
+                    aiResponse.provider(),
+                    null,
+                    null,
+                    safeFilename(originalFilename),
+                    contentType,
+                    (long) audioBytes.length,
+                    null,
+                    null,
+                    null,
+                    preview(aiResponse.outputText()),
+                    Duration.between(llmStart, Instant.now()).toMillis(),
+                    null,
+                    null,
+                    null
+            ));
             String assistantText = sanitizeVoiceAssistantText(aiResponse.outputText());
             Instant ttsStart = Instant.now();
             VoiceSynthesisResult synthesis = synthesize(new VoiceSynthesisRequest(tenantId, assistantText, normalizedLanguage));
@@ -216,6 +274,24 @@ public class VoiceOrchestratorService {
                     synthesis.providerName(),
                     Duration.between(ttsStart, Instant.now()).toMillis(),
                     hasPlayableAudio(synthesis));
+            debugTrace.add(trace(
+                    "TTS_RESULT",
+                    synthesis != null,
+                    synthesis == null ? null : synthesis.providerName(),
+                    null,
+                    null,
+                    safeFilename(originalFilename),
+                    contentType,
+                    (long) audioBytes.length,
+                    null,
+                    null,
+                    null,
+                    synthesis == null ? null : synthesis.providerMessage(),
+                    Duration.between(ttsStart, Instant.now()).toMillis(),
+                    null,
+                    null,
+                    null
+            ));
 
             byte[] audioPayload = hasPlayableAudio(synthesis) ? synthesis.audioBytes() : null;
             log.info("voice.response.serialize.start requestId={} hasAudio={} audioBytes={}",
@@ -238,7 +314,8 @@ public class VoiceOrchestratorService {
                             aiResponse.provider(),
                             synthesis.providerName()
                     ),
-                    List.copyOf(debugTrace)
+                    List.copyOf(debugTrace),
+                    workflowSummary
             );
             log.info("voice.request.complete requestId={} durationMs={} sttProvider={} llmProvider={} ttsProvider={}",
                     requestId,
@@ -258,7 +335,7 @@ public class VoiceOrchestratorService {
                     tenantId,
                     requestContext.appUserId(),
                     requestContext.correlationId(),
-                    new VoiceTestResponse(requestId.toString(), null, null, null, null, new VoiceProviderTrace(null, null, null), List.copyOf(debugTrace)),
+                    new VoiceTestResponse(requestId.toString(), null, null, null, null, new VoiceProviderTrace(null, null, null), List.copyOf(debugTrace), existingWorkflowSummary),
                     false,
                     ex.getMessage()
             );
@@ -293,7 +370,13 @@ public class VoiceOrchestratorService {
                 "JWT_QUERY_TOKEN",
                 "QUERY_TENANT_ID",
                 properties.getVad().isEnabled() ? "FRONTEND_RMS_READY" : "DISABLED",
-                properties.getVad().getProvider()
+                properties.getVad().getProvider(),
+                properties.getLive().getHeartbeatIntervalMs(),
+                properties.getLive().getStaleAfterMs(),
+                properties.getLive().getMaxSessionDurationSeconds(),
+                properties.getLive().getMaxIdleSeconds(),
+                properties.getLive().getMaxTurnsPerSession(),
+                properties.getLive().getMaxAudioBytesPerTurn()
         );
     }
 
@@ -446,22 +529,90 @@ public class VoiceOrchestratorService {
         return ordered;
     }
 
-    private Map<String, Object> llmInput(String transcript, String context, String language) {
+    private VoiceWorkflowSummary resolveWorkflowSummary(VoiceWorkflowMode workflowMode,
+                                                        UUID tenantId,
+                                                        String transcript,
+                                                        String language,
+                                                        VoiceWorkflowSummary existingWorkflowSummary) {
+        if (workflowMode != VoiceWorkflowMode.APPOINTMENT_BOOKING || voiceAppointmentWorkflowService == null) {
+            return null;
+        }
+        return voiceAppointmentWorkflowService.resolve(tenantId, transcript, language, existingWorkflowSummary);
+    }
+
+    private void logWorkflowState(UUID requestId, VoiceWorkflowMode workflowMode, VoiceWorkflowSummary workflowSummary) {
+        if (workflowMode != VoiceWorkflowMode.APPOINTMENT_BOOKING || workflowSummary == null) {
+            return;
+        }
+        log.info("voice.workflow.state requestId={} workflowMode={} intentState={} missingFields={} suggestedSlot={} confirmationRequested={} handoffRequired={}",
+                requestId,
+                workflowMode.configValue(),
+                workflowSummary.intentState(),
+                workflowSummary.missingFields(),
+                workflowSummary.suggestedSlot() == null
+                        ? null
+                        : workflowSummary.suggestedSlot().appointmentDate() + " " + workflowSummary.suggestedSlot().slotTime(),
+                workflowSummary.confirmationRequested(),
+                workflowSummary.handoffRequired());
+    }
+
+    private Map<String, Object> llmInput(String transcript,
+                                         String context,
+                                         String language,
+                                         VoiceWorkflowMode workflowMode,
+                                         VoiceWorkflowSummary workflowSummary) {
         String responseLanguage = StringUtils.hasText(language) ? language : "auto";
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("transcript", trimToSafeSpeech(transcript, 320));
         input.put("conversationContext", compactVoiceContext(context));
         input.put("language", responseLanguage);
         input.put("responseContract", "{\"answer\":\"short spoken response\",\"suggestedActions\":[]}");
+        if (workflowMode == VoiceWorkflowMode.APPOINTMENT_BOOKING && workflowSummary != null) {
+            input.put("workflowMode", workflowMode.configValue());
+            input.put("workflowState", workflowSummary);
+        }
         input.put(
                 "instruction",
                 "Return ONLY compact valid JSON. No markdown. No newlines. No extra keys. "
                         + "Use exactly {\"answer\":\"short spoken response\",\"suggestedActions\":[]}. "
                         + "Keep answer under " + properties.getLlm().getMaxAnswerWords()
                         + " words. Speak like a helpful clinic receptionist. "
+                        + workflowInstruction(workflowMode, workflowSummary)
+                        + " "
                         + languageInstruction(responseLanguage)
         );
         return input;
+    }
+
+    private String workflowInstruction(VoiceWorkflowMode workflowMode, VoiceWorkflowSummary workflowSummary) {
+        if (workflowMode != VoiceWorkflowMode.APPOINTMENT_BOOKING || workflowSummary == null) {
+            return "";
+        }
+        StringBuilder instruction = new StringBuilder();
+        instruction.append("This conversation is in appointment booking workflow mode. ");
+        instruction.append("Current intent state is ").append(workflowSummary.intentState()).append(". ");
+        if (workflowSummary.missingFields() != null && !workflowSummary.missingFields().isEmpty()) {
+            instruction.append("Missing fields: ").append(String.join(", ", workflowSummary.missingFields())).append(". ");
+        }
+        if (workflowSummary.suggestedSlot() != null) {
+            instruction.append("Suggested slot: ")
+                    .append(workflowSummary.suggestedSlot().doctorName()).append(" on ")
+                    .append(workflowSummary.suggestedSlot().appointmentDate()).append(" at ")
+                    .append(workflowSummary.suggestedSlot().slotTime()).append(". ");
+        }
+        if (workflowSummary.confirmationRequested()) {
+            instruction.append("Ask only for explicit confirmation and do not claim the appointment is booked. ");
+        }
+        if (workflowSummary.bookingConfirmed()) {
+            instruction.append("Acknowledge the confirmation, but do not claim the appointment is booked yet. Explain that a receptionist will finalize it. ");
+        }
+        if (workflowSummary.handoffRequired()) {
+            instruction.append("Politely hand the conversation off to a human receptionist. ");
+        }
+        if (StringUtils.hasText(workflowSummary.nextPrompt())) {
+            instruction.append("Follow this workflow guidance exactly: ").append(workflowSummary.nextPrompt()).append(" ");
+        }
+        return instruction.toString().trim();
     }
 
     private String languageInstruction(String language) {

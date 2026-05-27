@@ -20,6 +20,7 @@ import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -142,6 +143,31 @@ class AppointmentServiceStatusTransitionTest {
 
         assertThat(service.updateStatus(TENANT_ID, entity.getId(), new AppointmentStatusUpdateCommand(AppointmentStatus.CANCELLED, "Patient requested"), ACTOR_ID).status())
                 .isEqualTo(AppointmentStatus.CANCELLED);
+    }
+
+    @Test
+    void storesPaymentBypassAuditFieldsWhenCheckingInWithPendingPayment() {
+        AppointmentEntity entity = appointment(AppointmentStatus.BOOKED);
+        when(appointmentRepository.findByTenantIdAndId(TENANT_ID, entity.getId())).thenReturn(Optional.of(entity));
+
+        var updated = service.updateStatus(
+                TENANT_ID,
+                entity.getId(),
+                new AppointmentStatusUpdateCommand(
+                        AppointmentStatus.WAITING,
+                        null,
+                        "EMERGENCY",
+                        "Elderly patient needs immediate check-in",
+                        new BigDecimal("900.00")
+                ),
+                ACTOR_ID
+        );
+
+        assertThat(updated.status()).isEqualTo(AppointmentStatus.WAITING);
+        assertThat(updated.paymentBypassReason()).isEqualTo("EMERGENCY");
+        assertThat(updated.paymentBypassNotes()).isEqualTo("Elderly patient needs immediate check-in");
+        assertThat(updated.paymentBypassedBy()).isEqualTo(ACTOR_ID);
+        assertThat(updated.paymentBypassedAt()).isNotNull();
     }
 
     private AppointmentEntity appointment(AppointmentStatus status) {

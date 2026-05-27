@@ -6,6 +6,8 @@ import jakarta.validation.constraints.Size;
 
 public record AppointmentStatusRequest(
         @NotNull AppointmentStatus status,
-        @Size(max = 512) String comment
+        @Size(max = 512) String comment,
+        @Size(max = 64) String paymentBypassReason,
+        @Size(max = 512) String paymentBypassNotes
 ) {
 }

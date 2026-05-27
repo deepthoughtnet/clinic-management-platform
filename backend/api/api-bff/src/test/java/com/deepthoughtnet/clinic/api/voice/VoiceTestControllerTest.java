@@ -28,22 +28,22 @@ class VoiceTestControllerTest {
         VoiceTestController controller = new VoiceTestController(service);
         RequestContextHolder.set(new RequestContext(TenantId.of(UUID.randomUUID()), UUID.randomUUID(), "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid"));
         MockMultipartFile file = new MockMultipartFile("audio", "sample.webm", "audio/webm", "voice".getBytes());
-        when(service.processAudio(file, "context", "en")).thenReturn(
+        when(service.processAudio(file, "context", "en", "appointment-booking")).thenReturn(
                 new VoiceTestResponse("req-1", "hello", "hi", null, null, new VoiceProviderTrace("mock", "gemini", "mock"), List.of())
         );
 
-        controller.test(file, "context", "en");
+        controller.test(file, "context", "en", "appointment-booking");
 
-        verify(service).processAudio(file, "context", "en");
+        verify(service).processAudio(file, "context", "en", "appointment-booking");
     }
 
     @Test
     void missingAudioIsRejectedByServiceContract() {
         VoiceOrchestratorService service = mock(VoiceOrchestratorService.class);
         VoiceTestController controller = new VoiceTestController(service);
-        when(service.processAudio(null, null, null)).thenThrow(new IllegalArgumentException("Audio file is required."));
+        when(service.processAudio(null, null, null, null)).thenThrow(new IllegalArgumentException("Audio file is required."));
 
-        assertThatThrownBy(() -> controller.test(null, null, null))
+        assertThatThrownBy(() -> controller.test(null, null, null, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Audio file is required");
     }

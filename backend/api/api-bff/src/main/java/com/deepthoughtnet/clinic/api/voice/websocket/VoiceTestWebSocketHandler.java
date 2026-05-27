@@ -31,20 +31,18 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
     private static final Set<String> ALLOWED_ROLES = Set.of("PLATFORM_ADMIN", "TENANT_ADMIN", "CLINIC_ADMIN", "RECEPTIONIST");
     private static final int MAX_CHUNK_BASE64_CHARS = 32 * 1024;
     private static final int RESPONSE_CHUNK_BASE64_CHARS = 24 * 1024;
-    private static final int MAX_TOTAL_CHUNKS = 1000;
-    private static final int MAX_TOTAL_AUDIO_BYTES = 10 * 1024 * 1024;
-    private static final Duration MAX_SESSION_DURATION = Duration.ofMinutes(15);
-    private static final int MAX_TURNS_PER_SESSION = 20;
     private static final int MAX_HISTORY_TURNS = 4;
     private static final int MAX_HISTORY_ENTRY_CHARS = 160;
 
     private final ObjectMapper objectMapper;
     private final VoiceOrchestratorService voiceOrchestratorService;
+    private final VoiceTestProperties properties;
     private final Map<String, SessionState> sessionStates = new ConcurrentHashMap<>();
 
-    public VoiceTestWebSocketHandler(ObjectMapper objectMapper, VoiceOrchestratorService voiceOrchestratorService) {
+    public VoiceTestWebSocketHandler(ObjectMapper objectMapper, VoiceOrchestratorService voiceOrchestratorService, VoiceTestProperties properties) {
         this.objectMapper = objectMapper;
         this.voiceOrchestratorService = voiceOrchestratorService;
+        this.properties = properties;
     }
 
     @Override
@@ -67,6 +65,7 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         log.info("voice.websocket.tenant.resolved sessionId={} tenantId={}", session.getId(), tenantId);
         sessionStates.put(session.getId(), new SessionState(session.getId()));
         log.info("voice.websocket.auth.success sessionId={} tenantId={} roles={}", session.getId(), tenantId, roles);
+        log.info("voice.session.started sessionId={} tenantId={}", session.getId(), tenantId);
         sendEvent(session, Map.of(
                 "type", "session.connected",
                 "message", "WebSocket connected"
@@ -81,6 +80,7 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
             case "session.start" -> handleSessionStart(session, root);
             case "audio.chunk" -> handleAudioChunk(session, root);
             case "audio.end" -> handleAudioEnd(session, root);
+            case "heartbeat" -> handleHeartbeat(session);
             case "session.close" -> handleSessionClose(session);
             default -> sendError(session, "Unsupported websocket message type.");
         }
@@ -92,15 +92,25 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        SessionState state = sessionStates.get(session.getId());
+        if (state != null) {
+            log.info("voice.session.ended sessionId={} turnCount={} reason=socket_closed code={}",
+                    state.sessionId, state.turnCount, status.getCode());
+        }
         sessionStates.remove(session.getId());
     }
 
     private void handleSessionStart(WebSocketSession session, JsonNode root) throws IOException {
         SessionState state = requireState(session);
+        state.touch();
         state.language = root.path("language").asText("auto");
         state.context = root.path("context").asText("General voice test harness conversation.");
+        state.workflowMode = VoiceWorkflowMode.from(root.path("workflowMode").asText(null));
+        state.workflowSummary = null;
         state.contentType = null;
         state.startedAt = Instant.now();
+        state.lastActivityAt = Instant.now();
+        state.lastHeartbeatAt = Instant.now();
         state.closed = false;
         state.filename = null;
         state.expectedTotalChunks = 0;
@@ -110,24 +120,25 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         state.turnCount = 0;
         state.history.clear();
         state.audioChunks.clear();
+        log.info("voice.session.workflow sessionId={} workflowMode={} language={}",
+                state.sessionId, state.workflowMode.configValue(), state.language);
         sendEvent(session, Map.of(
                 "type", "session.started",
                 "sessionId", state.sessionId,
                 "language", state.language,
-                "context", state.context
+                "context", state.context,
+                "workflowMode", state.workflowMode.configValue()
         ));
     }
 
     private void handleAudioChunk(WebSocketSession session, JsonNode root) throws IOException {
         SessionState state = requireState(session);
-        if (state.closed) {
-            sendError(session, "Session is closed. Start a new session.");
+        if (enforceSessionPolicies(session, state)) {
             return;
         }
-        if (state.startedAt != null && Duration.between(state.startedAt, Instant.now()).compareTo(MAX_SESSION_DURATION) > 0) {
-            sendError(session, "Live voice session exceeded the supported duration.");
-            clearAudioBuffer(state);
-            state.closed = true;
+        state.touch();
+        if (state.closed) {
+            sendError(session, "Session is closed. Start a new session.");
             return;
         }
         if (state.turnInProgress) {
@@ -142,16 +153,21 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         audioBase64Chunk = stripDataUrlPrefix(audioBase64Chunk);
         int sequence = root.path("sequence").asInt(0);
         int totalChunks = root.path("totalChunks").asInt(0);
+        if (sequence > properties.getLive().getMaxTurnsPerSession() * MAX_CHUNK_BASE64_CHARS) {
+            sendError(session, "Audio chunk metadata is invalid.");
+            clearAudioBuffer(state);
+            return;
+        }
         if (sequence <= 0) {
             sendError(session, "Audio chunk metadata is invalid.");
             return;
         }
-        if (sequence > MAX_TOTAL_CHUNKS) {
+        if (sequence > maxTotalChunks()) {
             sendError(session, "Audio recording exceeds the supported chunk count.");
             clearAudioBuffer(state);
             return;
         }
-        if (totalChunks > MAX_TOTAL_CHUNKS) {
+        if (totalChunks > maxTotalChunks()) {
             sendError(session, "Audio recording exceeds the supported chunk count.");
             clearAudioBuffer(state);
             return;
@@ -183,7 +199,7 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
             state.base64CharsReceived += audioBase64Chunk.length() - previousChunk.length();
         }
         long estimatedDecodedBytes = (state.base64CharsReceived * 3L) / 4L;
-        if (estimatedDecodedBytes > MAX_TOTAL_AUDIO_BYTES) {
+        if (estimatedDecodedBytes > properties.getLive().getMaxAudioBytesPerTurn()) {
             sendError(session, "Audio recording exceeds the 10 MB limit.");
             clearAudioBuffer(state);
             return;
@@ -210,6 +226,10 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
 
     private void handleAudioEnd(WebSocketSession session, JsonNode root) throws IOException {
         SessionState state = requireState(session);
+        if (enforceSessionPolicies(session, state)) {
+            return;
+        }
+        state.touch();
         int declaredTotalChunks = root.path("totalChunks").asInt(state.expectedTotalChunks);
         if (declaredTotalChunks > 0 && state.expectedTotalChunks > 0 && declaredTotalChunks != state.expectedTotalChunks) {
             sendError(session, "Audio end metadata did not match the received chunks.");
@@ -220,7 +240,7 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
             sendError(session, "No audio chunks were received.");
             return;
         }
-        if (state.turnCount >= MAX_TURNS_PER_SESSION) {
+        if (state.turnCount >= properties.getLive().getMaxTurnsPerSession()) {
             sendError(session, "Live voice session reached the supported turn limit.");
             clearAudioBuffer(state);
             state.closed = true;
@@ -253,7 +273,7 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
             clearAudioBuffer(state);
             return;
         }
-        if (audioBytes.length > MAX_TOTAL_AUDIO_BYTES) {
+        if (audioBytes.length > properties.getLive().getMaxAudioBytesPerTurn()) {
             sendError(session, "Audio recording exceeds the 10 MB limit.");
             clearAudioBuffer(state);
             return;
@@ -279,6 +299,9 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         Set<String> roles = castRoles(session.getAttributes().get("roles"));
         int turnIndex = state.turnCount + 1;
         state.turnInProgress = true;
+        Instant turnStartedAt = Instant.now();
+        log.info("voice.turn.started sessionId={} turnIndex={} workflowMode={} language={} contentType={} filename={} sizeBytes={}",
+                state.sessionId, turnIndex, state.workflowMode.configValue(), state.language, state.contentType, state.filename, audioBytes.length);
 
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), null, subject, roles, firstRole(roles), state.sessionId));
         try {
@@ -295,9 +318,12 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
                     state.contentType == null ? "audio/webm" : state.contentType,
                     state.filename == null ? "voice-test-stream.webm" : state.filename,
                     buildConversationContext(state),
-                    state.language
+                    state.language,
+                    state.workflowMode.configValue(),
+                    state.workflowSummary
             );
             state.turnCount = turnIndex;
+            state.workflowSummary = response.workflowSummary();
             state.history.add(new TurnHistoryEntry(
                     turnIndex,
                     response.transcript() == null ? "" : response.transcript(),
@@ -305,6 +331,8 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
                     OffsetDateTime.now()
             ));
             trimHistory(state.history);
+            VoiceTurnMetrics metrics = buildMetrics(response.voiceDebugTrace(), response.providerTrace(), state.language, audioBytes.length,
+                    Duration.between(turnStartedAt, Instant.now()).toMillis());
             sendEvent(session, Map.of(
                     "type", "transcript.final",
                     "text", response.transcript() == null ? "" : response.transcript(),
@@ -321,13 +349,14 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
                     "turnIndex", turnIndex,
                     "provider", response.providerTrace() == null ? null : response.providerTrace().sttProvider()
             ));
-            sendEvent(session, Map.of(
-                    "type", "assistant.text",
-                    "text", response.assistantText() == null ? "" : response.assistantText(),
-                    "providerTrace", response.providerTrace(),
-                    "requestId", response.requestId(),
-                    "turnIndex", turnIndex
-            ));
+            Map<String, Object> assistantTextEvent = new LinkedHashMap<>();
+            assistantTextEvent.put("type", "assistant.text");
+            assistantTextEvent.put("text", response.assistantText() == null ? "" : response.assistantText());
+            assistantTextEvent.put("providerTrace", response.providerTrace());
+            assistantTextEvent.put("requestId", response.requestId());
+            assistantTextEvent.put("turnIndex", turnIndex);
+            assistantTextEvent.put("workflowSummary", response.workflowSummary());
+            sendEvent(session, assistantTextEvent);
             sendEvent(session, Map.of(
                     "type", "turn.llm.complete",
                     "sessionId", state.sessionId,
@@ -343,21 +372,31 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
                         "provider", response.providerTrace() == null ? null : response.providerTrace().ttsProvider()
                 ));
             }
-            sendEvent(session, Map.of(
-                    "type", "session.completed",
-                    "sessionId", state.sessionId,
-                    "turnIndex", turnIndex,
-                    "requestId", response.requestId(),
-                    "providerTrace", response.providerTrace()
-            ));
-            sendEvent(session, Map.of(
-                    "type", "turn.complete",
-                    "sessionId", state.sessionId,
-                    "turnIndex", turnIndex,
-                    "requestId", response.requestId(),
-                    "providerTrace", response.providerTrace()
-            ));
+            Map<String, Object> sessionCompletedEvent = new LinkedHashMap<>();
+            sessionCompletedEvent.put("type", "session.completed");
+            sessionCompletedEvent.put("sessionId", state.sessionId);
+            sessionCompletedEvent.put("turnIndex", turnIndex);
+            sessionCompletedEvent.put("requestId", response.requestId());
+            sessionCompletedEvent.put("providerTrace", response.providerTrace());
+            sessionCompletedEvent.put("workflowSummary", response.workflowSummary());
+            sendEvent(session, sessionCompletedEvent);
+            Map<String, Object> turnCompletedEvent = new LinkedHashMap<>();
+            turnCompletedEvent.put("type", "turn.complete");
+            turnCompletedEvent.put("sessionId", state.sessionId);
+            turnCompletedEvent.put("turnIndex", turnIndex);
+            turnCompletedEvent.put("requestId", response.requestId());
+            turnCompletedEvent.put("providerTrace", response.providerTrace());
+            turnCompletedEvent.put("workflowSummary", response.workflowSummary());
+            turnCompletedEvent.put("metrics", metrics);
+            sendEvent(session, turnCompletedEvent);
+            log.info("voice.turn.completed sessionId={} turnIndex={} requestId={} totalDurationMs={} sttProvider={} llmProvider={} ttsProvider={}",
+                    state.sessionId, turnIndex, response.requestId(), metrics.totalDurationMs(),
+                    metrics.sttProvider(), metrics.llmProvider(), metrics.ttsProvider());
+            log.info("voice.turn.metrics sessionId={} turnIndex={} captureDurationMs={} sttDurationMs={} llmDurationMs={} ttsDurationMs={} totalDurationMs={} language={}",
+                    state.sessionId, turnIndex, metrics.captureDurationMs(), metrics.sttDurationMs(), metrics.llmDurationMs(),
+                    metrics.ttsDurationMs(), metrics.totalDurationMs(), metrics.language());
         } catch (Exception ex) {
+            log.warn("voice.turn.failed sessionId={} turnIndex={} error={}", state.sessionId, turnIndex, ex.getMessage());
             sendError(session, ex.getMessage() == null ? "Voice websocket processing failed." : ex.getMessage());
         } finally {
             RequestContextHolder.clear();
@@ -370,6 +409,8 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         SessionState state = requireState(session);
         state.closed = true;
         clearAudioBuffer(state);
+        log.info("voice.session.ended sessionId={} turnCount={} reason=user_closed durationMs={}",
+                state.sessionId, state.turnCount, state.startedAt == null ? 0L : Duration.between(state.startedAt, Instant.now()).toMillis());
         sendEvent(session, Map.of(
                 "type", "session.closed",
                 "sessionId", state.sessionId,
@@ -379,6 +420,20 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
                 "type", "session.ended",
                 "sessionId", state.sessionId,
                 "turnCount", state.turnCount
+        ));
+    }
+
+    private void handleHeartbeat(WebSocketSession session) throws IOException {
+        SessionState state = requireState(session);
+        if (enforceSessionPolicies(session, state)) {
+            return;
+        }
+        state.touchHeartbeat();
+        log.info("voice.session.heartbeat sessionId={}", state.sessionId);
+        sendEvent(session, Map.of(
+                "type", "heartbeat",
+                "sessionId", state.sessionId,
+                "serverTime", Instant.now().toString()
         ));
     }
 
@@ -404,6 +459,79 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
                 "type", "error",
                 "message", message
         ));
+    }
+
+    private boolean enforceSessionPolicies(WebSocketSession session, SessionState state) throws IOException {
+        Instant now = Instant.now();
+        if (state.startedAt != null
+                && Duration.between(state.startedAt, now).compareTo(Duration.ofSeconds(properties.getLive().getMaxSessionDurationSeconds())) > 0) {
+            log.warn("voice.session.timeout sessionId={} reason=max_session_duration", state.sessionId);
+            state.closed = true;
+            clearAudioBuffer(state);
+            sendEvent(session, Map.of("type", "session.timeout", "reason", "max_session_duration"));
+            sendError(session, "Live voice session exceeded the supported duration.");
+            return true;
+        }
+        if (state.lastActivityAt != null
+                && Duration.between(state.lastActivityAt, now).compareTo(Duration.ofSeconds(properties.getLive().getMaxIdleSeconds())) > 0) {
+            log.warn("voice.session.timeout sessionId={} reason=idle_timeout", state.sessionId);
+            state.closed = true;
+            clearAudioBuffer(state);
+            sendEvent(session, Map.of("type", "session.timeout", "reason", "idle_timeout"));
+            sendError(session, "Live voice session timed out due to inactivity.");
+            return true;
+        }
+        return false;
+    }
+
+    private int maxTotalChunks() {
+        return 1000;
+    }
+
+    private VoiceTurnMetrics buildMetrics(List<VoiceDebugTraceEntry> debugTrace,
+                                          VoiceProviderTrace providerTrace,
+                                          String language,
+                                          long captureBytes,
+                                          long totalDurationMs) {
+        long sttDurationMs = duration(debugTrace, "FASTER_WHISPER_RESPONSE");
+        long llmDurationMs = duration(debugTrace, "LLM_RESULT");
+        long ttsDurationMs = duration(debugTrace, "TTS_RESULT");
+        String fallbackReason = reason(debugTrace, "STT_FALLBACK");
+        return new VoiceTurnMetrics(
+                0L,
+                sttDurationMs,
+                llmDurationMs,
+                ttsDurationMs,
+                totalDurationMs,
+                language,
+                providerTrace == null ? null : providerTrace.sttProvider(),
+                providerTrace == null ? null : providerTrace.llmProvider(),
+                providerTrace == null ? null : providerTrace.ttsProvider(),
+                fallbackReason,
+                captureBytes
+        );
+    }
+
+    private long duration(List<VoiceDebugTraceEntry> debugTrace, String stage) {
+        if (debugTrace == null) {
+            return 0L;
+        }
+        return debugTrace.stream()
+                .filter(entry -> stage.equals(entry.stage()) && entry.durationMs() != null)
+                .map(VoiceDebugTraceEntry::durationMs)
+                .findFirst()
+                .orElse(0L);
+    }
+
+    private String reason(List<VoiceDebugTraceEntry> debugTrace, String stage) {
+        if (debugTrace == null) {
+            return null;
+        }
+        return debugTrace.stream()
+                .filter(entry -> stage.equals(entry.stage()) && entry.reason() != null && !entry.reason().isBlank())
+                .map(VoiceDebugTraceEntry::reason)
+                .findFirst()
+                .orElse(null);
     }
 
     private void sendEvent(WebSocketSession session, Object payload) throws IOException {
@@ -445,7 +573,7 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         int totalChunks = (int) Math.ceil((double) audioBase64.length() / RESPONSE_CHUNK_BASE64_CHARS);
-        if (totalChunks > MAX_TOTAL_CHUNKS) {
+        if (totalChunks > maxTotalChunks()) {
             throw new IllegalStateException("Assistant audio exceeds the supported websocket size.");
         }
         for (int index = 0; index < totalChunks; index++) {
@@ -473,6 +601,22 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         String baseContext = state.context == null ? "" : state.context.trim();
         if (!baseContext.isEmpty()) {
             builder.append(baseContext);
+        }
+        if (state.workflowMode == VoiceWorkflowMode.APPOINTMENT_BOOKING && state.workflowSummary != null) {
+            if (!builder.isEmpty()) {
+                builder.append("\n\n");
+            }
+            builder.append("Workflow mode: appointment-booking.\n");
+            builder.append("Intent state: ").append(state.workflowSummary.intentState()).append("\n");
+            if (state.workflowSummary.missingFields() != null && !state.workflowSummary.missingFields().isEmpty()) {
+                builder.append("Missing fields: ").append(String.join(", ", state.workflowSummary.missingFields())).append("\n");
+            }
+            if (state.workflowSummary.suggestedSlot() != null) {
+                builder.append("Suggested slot: ")
+                        .append(state.workflowSummary.suggestedSlot().doctorName()).append(" on ")
+                        .append(state.workflowSummary.suggestedSlot().appointmentDate()).append(" at ")
+                        .append(state.workflowSummary.suggestedSlot().slotTime()).append("\n");
+            }
         }
         if (!state.history.isEmpty()) {
             if (!builder.isEmpty()) {
@@ -518,9 +662,13 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         private final Map<Integer, String> audioChunks = new LinkedHashMap<>();
         private String language = "auto";
         private String context = "General voice test harness conversation.";
+        private VoiceWorkflowMode workflowMode = VoiceWorkflowMode.GENERIC;
+        private VoiceWorkflowSummary workflowSummary;
         private String contentType;
         private String filename;
         private Instant startedAt;
+        private Instant lastActivityAt;
+        private Instant lastHeartbeatAt;
         private int expectedTotalChunks;
         private int chunkCount;
         private long base64CharsReceived;
@@ -532,8 +680,33 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         private SessionState(String sessionId) {
             this.sessionId = sessionId;
         }
+
+        private void touch() {
+            this.lastActivityAt = Instant.now();
+        }
+
+        private void touchHeartbeat() {
+            Instant now = Instant.now();
+            this.lastHeartbeatAt = now;
+            this.lastActivityAt = now;
+        }
     }
 
     private record TurnHistoryEntry(int turnIndex, String userTranscript, String assistantReply, OffsetDateTime timestamp) {
+    }
+
+    private record VoiceTurnMetrics(
+            long captureDurationMs,
+            long sttDurationMs,
+            long llmDurationMs,
+            long ttsDurationMs,
+            long totalDurationMs,
+            String language,
+            String sttProvider,
+            String llmProvider,
+            String ttsProvider,
+            String fallbackReason,
+            long audioBytes
+    ) {
     }
 }

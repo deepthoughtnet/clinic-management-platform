@@ -21,6 +21,7 @@ public final class Permissions {
     public static final String APPOINTMENT_CREATE = "appointment.create";
     public static final String APPOINTMENT_UPDATE = "appointment.update";
     public static final String APPOINTMENT_CANCEL = "appointment.cancel";
+    public static final String APPOINTMENT_CHECKIN_PAYMENT_BYPASS = "appointment.checkin.payment_bypass";
     public static final String QUEUE_READ = "queue.read";
     public static final String QUEUE_UPDATE = "queue.update";
     public static final String CONSULTATION_CREATE = "consultation.create";

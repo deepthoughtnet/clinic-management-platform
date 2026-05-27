@@ -37,6 +37,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class AppointmentServiceQueueAndTokenTest {
     private static final UUID TENANT_ID = UUID.randomUUID();
     private static final UUID DOCTOR_ID = UUID.randomUUID();
+    private static final UUID SECOND_DOCTOR_ID = UUID.randomUUID();
     private static final UUID ACTOR_ID = UUID.randomUUID();
     private static final UUID PATIENT_ONE_ID = UUID.randomUUID();
     private static final UUID PATIENT_TWO_ID = UUID.randomUUID();
@@ -86,7 +87,7 @@ class AppointmentServiceQueueAndTokenTest {
                     patient(PATIENT_TWO_ID, "PAT-002", "Priya", "Sharma", "9876543211")
             ).stream().filter(item -> item.getId().equals(id)).findFirst();
         });
-        lenient().when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctor()));
+        lenient().when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctor(), secondDoctor()));
     }
 
     @Test
@@ -143,6 +144,19 @@ class AppointmentServiceQueueAndTokenTest {
     }
 
     @Test
+    void listTodayRetainsEachAppointmentsActualDoctorName() {
+        AppointmentEntity firstDoctorAppointment = appointment(PATIENT_ONE_ID, DOCTOR_ID, 1, AppointmentStatus.WAITING, AppointmentPriority.NORMAL);
+        AppointmentEntity secondDoctorAppointment = appointment(PATIENT_TWO_ID, SECOND_DOCTOR_ID, 2, AppointmentStatus.BOOKED, AppointmentPriority.NORMAL);
+        when(appointmentRepository.findByTenantIdAndAppointmentDateOrderByAppointmentTimeAscCreatedAtAsc(TENANT_ID, LocalDate.now()))
+                .thenReturn(List.of(firstDoctorAppointment, secondDoctorAppointment));
+
+        var today = service.listToday(TENANT_ID);
+
+        assertThat(today).extracting("doctorUserId").containsExactly(DOCTOR_ID, SECOND_DOCTOR_ID);
+        assertThat(today).extracting("doctorName").containsExactly("Doctor One", "Doctor Two");
+    }
+
+    @Test
     void reorderQueueTodayAllowsOnlyReorderableItemsAndReassignsTokens() {
         AppointmentEntity first = appointment(PATIENT_ONE_ID, 1, AppointmentStatus.BOOKED, AppointmentPriority.NORMAL);
         AppointmentEntity second = appointment(PATIENT_TWO_ID, 2, AppointmentStatus.WAITING, AppointmentPriority.NORMAL);
@@ -161,7 +175,11 @@ class AppointmentServiceQueueAndTokenTest {
     }
 
     private AppointmentEntity appointment(UUID patientId, Integer token, AppointmentStatus status, AppointmentPriority priority) {
-        AppointmentEntity entity = AppointmentEntity.create(TENANT_ID, patientId, DOCTOR_ID);
+        return appointment(patientId, DOCTOR_ID, token, status, priority);
+    }
+
+    private AppointmentEntity appointment(UUID patientId, UUID doctorId, Integer token, AppointmentStatus status, AppointmentPriority priority) {
+        AppointmentEntity entity = AppointmentEntity.create(TENANT_ID, patientId, doctorId);
         entity.update(LocalDate.now(), null, token, "OPD visit", AppointmentType.SCHEDULED, status, priority);
         return entity;
     }
@@ -186,6 +204,22 @@ class AppointmentServiceQueueAndTokenTest {
                 "doctor-sub",
                 "doctor@clinic.local",
                 "Doctor One",
+                "ACTIVE",
+                "DOCTOR",
+                "ACTIVE",
+                OffsetDateTime.now(),
+                OffsetDateTime.now(),
+                "SYNCED"
+        );
+    }
+
+    private TenantUserRecord secondDoctor() {
+        return new TenantUserRecord(
+                SECOND_DOCTOR_ID,
+                TENANT_ID,
+                "doctor-two-sub",
+                "doctor.two@clinic.local",
+                "Doctor Two",
                 "ACTIVE",
                 "DOCTOR",
                 "ACTIVE",

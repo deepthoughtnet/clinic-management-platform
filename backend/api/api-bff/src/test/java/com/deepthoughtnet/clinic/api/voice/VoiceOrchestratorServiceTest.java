@@ -10,6 +10,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService;
+import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
+import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.api.voice.spi.SpeechToTextProvider;
 import com.deepthoughtnet.clinic.api.voice.spi.TextToSpeechProvider;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisRequest;
@@ -27,6 +30,9 @@ import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.DayOfWeek;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -483,6 +489,71 @@ class VoiceOrchestratorServiceTest {
         AiOrchestrationRequest request = requestCaptor.getValue();
         assertThat(String.valueOf(request.inputVariables().get("language"))).isEqualTo("hi");
         assertThat(String.valueOf(request.inputVariables().get("instruction"))).contains("Respond only in simple spoken Hindi written in Devanagari.");
+    }
+
+    @Test
+    void appointmentWorkflowModeAddsStructuredWorkflowStateToLlmInput() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        UUID doctorUserId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-voice-appointment"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        AiOrchestrationService ai = mock(AiOrchestrationService.class);
+        when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "GEMINI", "gemini", "{\"answer\":\"कल सुबह डॉक्टर एबीसी उपलब्ध हैं। क्या मैं इसे कन्फर्म कर दूँ?\",\"suggestedActions\":[]}",
+                null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+        ));
+        AppointmentService appointmentService = mock(AppointmentService.class);
+        when(appointmentService.listAvailabilities(tenantId)).thenReturn(List.of(
+                new DoctorAvailabilityRecord(
+                        UUID.randomUUID(),
+                        tenantId,
+                        doctorUserId,
+                        "Dr ABC",
+                        DayOfWeek.MONDAY,
+                        LocalTime.of(9, 0),
+                        LocalTime.of(12, 0),
+                        null,
+                        null,
+                        15,
+                        1,
+                        true,
+                        OffsetDateTime.now(),
+                        OffsetDateTime.now()
+                )
+        ));
+        PatientService patientService = mock(PatientService.class);
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(new MockVoiceTextToSpeechProvider()),
+                ai,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class),
+                new VoiceAppointmentWorkflowService(appointmentService, patientService)
+        );
+
+        service.processAudio(
+                new MockMultipartFile("audio", "sample.webm", "audio/webm", "voice".getBytes()),
+                "Clinic receptionist appointment test",
+                "hi",
+                "appointment-booking"
+        );
+
+        ArgumentCaptor<AiOrchestrationRequest> requestCaptor = ArgumentCaptor.forClass(AiOrchestrationRequest.class);
+        verify(ai).complete(requestCaptor.capture());
+        AiOrchestrationRequest request = requestCaptor.getValue();
+        assertThat(String.valueOf(request.inputVariables().get("workflowMode"))).isEqualTo("appointment-booking");
+        assertThat(String.valueOf(request.inputVariables().get("instruction"))).contains("appointment booking workflow mode");
+        assertThat(String.valueOf(request.inputVariables().get("instruction"))).contains("Respond only in simple spoken Hindi written in Devanagari.");
+        assertThat(request.inputVariables()).containsKey("workflowState");
     }
 
     @Test

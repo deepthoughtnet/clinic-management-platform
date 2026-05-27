@@ -508,6 +508,16 @@ function billHasConsultationLine(bill: Bill) {
   return bill.lines.some((line) => line.itemType === "CONSULTATION");
 }
 
+function consultationBillsByAppointment(bills: Bill[], appointmentId: string) {
+  return bills
+    .filter((bill) => bill.appointmentId === appointmentId && billHasConsultationLine(bill) && bill.status !== "CANCELLED")
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function consultationEffectiveBill(bills: Bill[]) {
+  return bills.find((bill) => bill.dueAmount > 0) || bills[0] || null;
+}
+
 type FeeStatus = "NOT_CONFIGURED" | "UNPAID" | "PARTIAL" | "PAID";
 
 function feeStatusColor(status: FeeStatus) {
@@ -535,6 +545,25 @@ function feeStatusLabel(status: FeeStatus, amount: number | null | undefined) {
     default:
       return "Not configured";
   }
+}
+
+function consultationFeeSummary(consultationFee: number | null, bills: Bill[]) {
+  const effectiveFee = consultationFee ?? (bills.length > 0 ? Math.max(...bills.map((bill) => bill.totalAmount)) : null);
+  const netPaid = bills.reduce((sum, bill) => sum + Math.max(0, bill.netPaidAmount ?? (bill.paidAmount - bill.refundedAmount)), 0);
+  const due = effectiveFee == null ? null : Math.max(0, effectiveFee - netPaid);
+  const feeStatus: FeeStatus = effectiveFee == null || effectiveFee <= 0
+    ? "NOT_CONFIGURED"
+    : (due ?? 0) <= 0
+      ? "PAID"
+      : netPaid > 0
+        ? "PARTIAL"
+        : "UNPAID";
+  return {
+    bill: consultationEffectiveBill(bills),
+    consultationFee: effectiveFee,
+    feeStatus,
+    dueAmount: due,
+  };
 }
 
 export default function DayBoardPage() {
@@ -621,40 +650,12 @@ export default function DayBoardPage() {
     return visibleDoctorPanels.find((panel) => panel.doctorUserId === selectedSlot.doctorUserId) || null;
   }, [selectedSlot, visibleDoctorPanels]);
 
-  const appointmentBillById = React.useMemo(() => {
-    const map = new Map<string, Bill>();
-    for (const bill of bills) {
-      if (!bill.appointmentId || !billHasConsultationLine(bill)) {
-        continue;
-      }
-      if (!map.has(bill.appointmentId)) {
-        map.set(bill.appointmentId, bill);
-      }
-    }
-    return map;
-  }, [bills]);
-
   const selectedAppointmentFee = React.useMemo(() => {
     if (!selectedAppointment) return null;
     const profile = doctorProfiles[selectedAppointment.doctorUserId];
-    const bill = appointmentBillById.get(selectedAppointment.id) || null;
-    const consultationFee = profile?.consultationFee ?? bill?.totalAmount ?? null;
-    let feeStatus: FeeStatus = "NOT_CONFIGURED";
-    let dueAmount: number | null = null;
-    if (bill) {
-      dueAmount = bill.dueAmount;
-      feeStatus = bill.dueAmount > 0 ? (bill.paidAmount > 0 ? "PARTIAL" : "UNPAID") : "PAID";
-    } else if (consultationFee != null && consultationFee > 0) {
-      dueAmount = consultationFee;
-      feeStatus = "UNPAID";
-    }
-    return {
-      consultationFee,
-      bill,
-      feeStatus,
-      dueAmount,
-    };
-  }, [appointmentBillById, doctorProfiles, selectedAppointment]);
+    const consultationBills = consultationBillsByAppointment(bills, selectedAppointment.id);
+    return consultationFeeSummary(profile?.consultationFee ?? null, consultationBills);
+  }, [bills, doctorProfiles, selectedAppointment]);
 
   const activeWaitlist = React.useMemo(() => {
     if (effectiveDoctorId) return waitlist;
@@ -979,9 +980,9 @@ export default function DayBoardPage() {
   };
 
   const checkInAppointment = async (appointment: Appointment) => {
-    const fee = appointmentBillById.get(appointment.id);
-    const consultationFee = doctorProfiles[appointment.doctorUserId]?.consultationFee ?? null;
-    if ((fee && fee.dueAmount > 0) || (consultationFee != null && consultationFee > 0 && !fee)) {
+    const consultationBills = consultationBillsByAppointment(bills, appointment.id);
+    const fee = consultationFeeSummary(doctorProfiles[appointment.doctorUserId]?.consultationFee ?? null, consultationBills);
+    if ((fee.dueAmount ?? 0) > 0) {
       setError("Consultation fee is pending. Collect fee before check-in.");
       if (canCollect) {
         setFeeDialog({ appointment, action: "collect-and-check-in" });

@@ -77,6 +77,7 @@ import {
   type PrescriptionTest,
   type Timing,
 } from "../../api/clinicApi";
+import { ApiClientError } from "../../api/restClient";
 import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocumentViewer";
 
 type ConsultationFormState = {
@@ -133,6 +134,19 @@ type PrescriptionFormState = {
 };
 
 type AutosaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed" | "readonly";
+const CONSULTATION_COMPLETION_BLOCKED_MESSAGE = "Please complete/finalize prescription before completing consultation.";
+const VALID_MEDICINE_TYPES: MedicineType[] = ["TABLET", "SYRUP", "INJECTION", "DROP", "OINTMENT", "CAPSULE", "OTHER"];
+const VALID_TIMINGS: Timing[] = ["BEFORE_FOOD", "AFTER_FOOD", "WITH_FOOD", "ANYTIME"];
+
+class PrescriptionPayloadValidationError extends Error {
+  invalidMedicineRowIds: string[];
+
+  constructor(message: string, invalidMedicineRowIds: string[] = []) {
+    super(message);
+    this.name = "PrescriptionPayloadValidationError";
+    this.invalidMedicineRowIds = invalidMedicineRowIds;
+  }
+}
 
 type RxTemplate = {
   key: string;
@@ -303,6 +317,131 @@ function newMedicineRow(index: number): MedicineRow {
   };
 }
 
+function normalizeStringValue(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") return String(value);
+  if (value && typeof value === "object") {
+    const candidate = value as Record<string, unknown>;
+    for (const key of ["medicineName", "label", "value", "title", "name"]) {
+      if (typeof candidate[key] === "string" && candidate[key]!.trim()) {
+        return candidate[key]!.trim();
+      }
+    }
+  }
+  return "";
+}
+
+function normalizeNullableStringValue(value: unknown): string | null {
+  const normalized = normalizeStringValue(value);
+  return normalized || null;
+}
+
+function normalizeEnumValue<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  if (typeof value === "string") {
+    const normalized = value.trim() as T;
+    return allowed.includes(normalized) ? normalized : null;
+  }
+  if (value && typeof value === "object" && "value" in (value as Record<string, unknown>)) {
+    return normalizeEnumValue((value as Record<string, unknown>).value, allowed);
+  }
+  return null;
+}
+
+function medicineRowHasAnyContent(row: MedicineRow): boolean {
+  return Boolean(
+    normalizeStringValue(row.medicineName)
+    || normalizeStringValue(row.strength)
+    || normalizeStringValue(row.dosage)
+    || normalizeStringValue(row.frequency)
+    || normalizeStringValue(row.duration)
+    || normalizeStringValue(row.instructions)
+    || normalizeEnumValue(row.medicineType, VALID_MEDICINE_TYPES)
+    || normalizeEnumValue(row.timing, VALID_TIMINGS)
+  );
+}
+
+function hasAtLeastOneValidMedicineRow(form: PrescriptionFormState): boolean {
+  return form.medicines.some((row) =>
+    normalizeStringValue(row.medicineName)
+    && normalizeStringValue(row.dosage)
+    && normalizeStringValue(row.frequency)
+    && normalizeStringValue(row.duration)
+  );
+}
+
+function buildPrescriptionInput(form: PrescriptionFormState, consultation: Consultation): PrescriptionInput {
+  const normalizedMedicines: PrescriptionMedicine[] = [];
+  const invalidMedicineRowIds: string[] = [];
+
+  for (const [index, row] of form.medicines.entries()) {
+    const medicineName = normalizeStringValue(row.medicineName);
+    const strength = normalizeNullableStringValue(row.strength);
+    const dosage = normalizeStringValue(row.dosage);
+    const frequency = normalizeStringValue(row.frequency);
+    const duration = normalizeStringValue(row.duration);
+    const instructions = normalizeNullableStringValue(row.instructions);
+    const medicineType = normalizeEnumValue(row.medicineType, VALID_MEDICINE_TYPES);
+    const timing = normalizeEnumValue(row.timing, VALID_TIMINGS);
+
+    if (!medicineRowHasAnyContent(row)) {
+      continue;
+    }
+    if (!medicineName) {
+      invalidMedicineRowIds.push(row.localId);
+      continue;
+    }
+    if (!dosage || !frequency || !duration) {
+      invalidMedicineRowIds.push(row.localId);
+      continue;
+    }
+
+    normalizedMedicines.push({
+      medicineName,
+      medicineType,
+      strength,
+      dosage,
+      frequency,
+      duration,
+      timing,
+      instructions,
+      sortOrder: row.sortOrder ?? index + 1,
+    });
+  }
+
+  if (invalidMedicineRowIds.length) {
+    throw new PrescriptionPayloadValidationError("Complete medicine name, dosage, frequency, and duration for highlighted rows.", invalidMedicineRowIds);
+  }
+  if (!normalizedMedicines.length) {
+    throw new PrescriptionPayloadValidationError("At least one valid medicine is required.");
+  }
+
+  const recommendedTests = form.recommendedTests
+    .map((row, index) => ({
+      testName: normalizeStringValue(row.testName),
+      instructions: normalizeNullableStringValue(row.instructions),
+      sortOrder: row.sortOrder ?? index + 1,
+    }))
+    .filter((row) => row.testName);
+
+  const body: PrescriptionInput = {
+    patientId: consultation.patientId,
+    doctorUserId: consultation.doctorUserId,
+    consultationId: consultation.id,
+    appointmentId: consultation.appointmentId,
+    diagnosisSnapshot: normalizeNullableStringValue(form.diagnosisSnapshot),
+    advice: normalizeNullableStringValue(form.advice),
+    followUpDate: normalizeStringValue(form.followUpDate) || null,
+    medicines: normalizedMedicines,
+    recommendedTests,
+  };
+
+  if (import.meta.env.DEV) {
+    console.debug("[consultation] normalized prescription payload", body);
+  }
+
+  return body;
+}
+
 function newTestRow(index: number): TestRow {
   return {
     localId: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
@@ -349,38 +488,6 @@ function toConsultationInput(form: ConsultationFormState, consultation: Consulta
   };
 }
 
-function toPrescriptionInput(form: PrescriptionFormState, consultation: Consultation): PrescriptionInput {
-  return {
-    patientId: consultation.patientId,
-    doctorUserId: consultation.doctorUserId,
-    consultationId: consultation.id,
-    appointmentId: consultation.appointmentId,
-    diagnosisSnapshot: form.diagnosisSnapshot.trim() || null,
-    advice: form.advice.trim() || null,
-    followUpDate: form.followUpDate || null,
-    medicines: form.medicines
-      .filter((row) => row.medicineName.trim())
-      .map((row, index) => ({
-        medicineName: row.medicineName.trim(),
-        medicineType: row.medicineType || null,
-        strength: (row.strength || "").trim() || null,
-        dosage: (row.dosage || "").trim(),
-        frequency: (row.frequency || "").trim(),
-        duration: (row.duration || "").trim(),
-        timing: row.timing || null,
-        instructions: (row.instructions || "").trim() || null,
-        sortOrder: row.sortOrder ?? index + 1,
-      })),
-    recommendedTests: form.recommendedTests
-      .filter((row) => row.testName.trim())
-      .map((row, index) => ({
-        testName: row.testName.trim(),
-        instructions: (row.instructions || "").trim() || null,
-        sortOrder: row.sortOrder ?? index + 1,
-      })),
-  };
-}
-
 function serializeConsultationForm(form: ConsultationFormState): string {
   return JSON.stringify(form);
 }
@@ -411,21 +518,16 @@ function serializePrescriptionForm(form: PrescriptionFormState): string {
 
 function hasPrescriptionContent(form: PrescriptionFormState): boolean {
   return Boolean(
-    form.diagnosisSnapshot.trim() ||
-      form.advice.trim() ||
-      form.followUpDate ||
-      form.medicines.some((row) => row.medicineName.trim()) ||
-      form.recommendedTests.some((row) => row.testName.trim())
+    normalizeStringValue(form.diagnosisSnapshot) ||
+      normalizeStringValue(form.advice) ||
+      normalizeStringValue(form.followUpDate) ||
+      form.medicines.some((row) => medicineRowHasAnyContent(row)) ||
+      form.recommendedTests.some((row) => normalizeStringValue(row.testName) || normalizeStringValue(row.instructions))
   );
 }
 
-function hasAtLeastOneCompleteMedicine(form: PrescriptionFormState): boolean {
-  return form.medicines.some((row) =>
-    row.medicineName.trim()
-    && row.dosage.trim()
-    && row.frequency.trim()
-    && row.duration.trim()
-  );
+function isPrescriptionReadyForConsultationCompletion(prescription: Prescription | null): boolean {
+  return prescription ? ["FINALIZED", "PRINTED", "SENT"].includes(prescription.status) : false;
 }
 
 function appendTokenLine(base: string, token: string): string {
@@ -759,6 +861,7 @@ export default function ConsultationWorkspacePage() {
   const [viewerDocument, setViewerDocument] = React.useState<ClinicalDocument | null>(null);
   const [viewerUrl, setViewerUrl] = React.useState<string | null>(null);
   const [selectedPrescriptionVersionId, setSelectedPrescriptionVersionId] = React.useState<string | null>(null);
+  const [invalidMedicineRowIds, setInvalidMedicineRowIds] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
 
@@ -771,6 +874,7 @@ export default function ConsultationWorkspacePage() {
   const autosaveTimerRef = React.useRef<number | null>(null);
   const autosaveRetryTimerRef = React.useRef<number | null>(null);
   const autosaveInFlightRef = React.useRef(false);
+  const autosavePromiseRef = React.useRef<Promise<Consultation | null> | null>(null);
   const hydratedConsultationIdRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
@@ -788,6 +892,17 @@ export default function ConsultationWorkspacePage() {
   React.useEffect(() => {
     prescriptionFormRef.current = prescriptionForm;
   }, [prescriptionForm]);
+
+  const clearAutosaveTimers = React.useCallback(() => {
+    if (autosaveTimerRef.current) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    if (autosaveRetryTimerRef.current) {
+      window.clearTimeout(autosaveRetryTimerRef.current);
+      autosaveRetryTimerRef.current = null;
+    }
+  }, []);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -869,6 +984,7 @@ export default function ConsultationWorkspacePage() {
           const rx = await getConsultationPrescription(auth.accessToken, auth.tenantId, consult.id);
           if (!cancelled) {
             setPrescription(rx);
+            setInvalidMedicineRowIds([]);
             const initialPrescriptionForm = emptyPrescriptionForm(rx, consult);
             setPrescriptionForm(initialPrescriptionForm);
             savedPrescriptionSnapshotRef.current = serializePrescriptionForm(initialPrescriptionForm);
@@ -881,6 +997,7 @@ export default function ConsultationWorkspacePage() {
         } catch {
           if (!cancelled) {
             setPrescription(null);
+            setInvalidMedicineRowIds([]);
             const initialPrescriptionForm = emptyPrescriptionForm(null, consult);
             setPrescriptionForm(initialPrescriptionForm);
             savedPrescriptionSnapshotRef.current = serializePrescriptionForm(initialPrescriptionForm);
@@ -980,6 +1097,7 @@ export default function ConsultationWorkspacePage() {
   const canRunAi = auth.hasPermission("ai_copilot.run") || auth.hasPermission("ai_copilot.clinic.run");
   const readOnly = consultation ? consultation.status !== "DRAFT" || !canEditConsultation : !canEditConsultation;
   const prescriptionReadOnly = readOnly || (prescription ? !["DRAFT", "PREVIEWED"].includes(prescription.status) : false);
+  const prescriptionReadyForCompletion = isPrescriptionReadyForConsultationCompletion(prescription);
   const patientRow = patient?.patient;
   const currentAppointment = appointment;
   const lastConsultation = patient?.previousConsultations?.find((row) => row.id !== consultation?.id);
@@ -1009,7 +1127,10 @@ export default function ConsultationWorkspacePage() {
       timing: medicine.defaultTiming || null,
       instructions: medicine.defaultInstructions || "",
     };
-    if (!prescriptionReadOnly) setPrescriptionForm((current) => ({ ...current, medicines: [...current.medicines.filter((item) => item.medicineName.trim()), row] }));
+    if (!prescriptionReadOnly) {
+      setInvalidMedicineRowIds([]);
+      setPrescriptionForm((current) => ({ ...current, medicines: [...current.medicines.filter((item) => item.medicineName.trim()), row] }));
+    }
   };
 
   const addMedicineFromAiSuggestion = (item: AiMedicineSuggestionItem) => {
@@ -1025,11 +1146,15 @@ export default function ConsultationWorkspacePage() {
       timing: null,
       instructions: [item.reason, item.safetyNote].filter(Boolean).join(" • "),
     };
+    setInvalidMedicineRowIds([]);
     setPrescriptionForm((current) => ({ ...current, medicines: [...current.medicines.filter((med) => med.medicineName.trim()), row] }));
   };
 
   const addManualMedicine = () => {
-    if (!prescriptionReadOnly) setPrescriptionForm((current) => ({ ...current, medicines: [...current.medicines, newMedicineRow(current.medicines.length)] }));
+    if (!prescriptionReadOnly) {
+      setInvalidMedicineRowIds([]);
+      setPrescriptionForm((current) => ({ ...current, medicines: [...current.medicines, newMedicineRow(current.medicines.length)] }));
+    }
   };
 
   const repeatPreviousPrescription = () => {
@@ -1043,14 +1168,18 @@ export default function ConsultationWorkspacePage() {
       medicines: previous.medicines.map((item, index) => ({ ...item, localId: `repeat-${Date.now()}-${index}`, sortOrder: index + 1 })),
       recommendedTests: previous.recommendedTests.map((item, index) => ({ ...item, localId: `repeat-test-${Date.now()}-${index}`, sortOrder: index + 1 })),
     }));
+    setInvalidMedicineRowIds([]);
     setInfo("Previous prescription repeated into draft");
   };
 
   const updateMedicine = (localId: string, patch: Partial<MedicineRow>) => {
-    if (!prescriptionReadOnly) setPrescriptionForm((current) => ({
-      ...current,
-      medicines: current.medicines.map((row) => (row.localId === localId ? { ...row, ...patch } : row)),
-    }));
+    if (!prescriptionReadOnly) {
+      setInvalidMedicineRowIds((current) => current.filter((id) => id !== localId));
+      setPrescriptionForm((current) => ({
+        ...current,
+        medicines: current.medicines.map((row) => (row.localId === localId ? { ...row, ...patch } : row)),
+      }));
+    }
   };
 
   const updateTest = (localId: string, patch: Partial<TestRow>) => {
@@ -1130,52 +1259,63 @@ export default function ConsultationWorkspacePage() {
   };
 
   const runAutosave = async (): Promise<Consultation | null> => {
-    const currentConsultation = consultationRef.current;
-    if (!currentConsultation || currentConsultation.status !== "DRAFT") {
-      setAutosaveStatus("readonly");
-      return currentConsultation;
-    }
-    if (autosaveInFlightRef.current) return currentConsultation;
+    if (autosavePromiseRef.current) return autosavePromiseRef.current;
 
-    const consultationDirty = serializeConsultationForm(consultationFormRef.current) !== savedConsultationSnapshotRef.current;
-    const prescriptionDirty = serializePrescriptionForm(prescriptionFormRef.current) !== savedPrescriptionSnapshotRef.current;
-    if (!consultationDirty && !prescriptionDirty) {
-      setAutosaveStatus("saved");
-      return currentConsultation;
-    }
+    const promise = (async () => {
+      const currentConsultation = consultationRef.current;
+      if (!currentConsultation || currentConsultation.status !== "DRAFT") {
+        setAutosaveStatus("readonly");
+        return currentConsultation;
+      }
+      if (autosaveInFlightRef.current) return currentConsultation;
 
-    autosaveInFlightRef.current = true;
-    setAutosaveStatus("saving");
-    try {
-      const savedConsultation = consultationDirty ? await saveConsultationDraft(false) : currentConsultation;
-      if (prescriptionDirty) await savePrescriptionDraft(false);
-      setAutosaveStatus("saved");
-      return savedConsultation;
-    } catch (err) {
-      console.error("Autosave failed", err);
-      setAutosaveStatus("failed");
-      if (autosaveRetryTimerRef.current) window.clearTimeout(autosaveRetryTimerRef.current);
-      autosaveRetryTimerRef.current = window.setTimeout(() => {
-        void runAutosave();
-      }, 5000);
-      return null;
-    } finally {
-      autosaveInFlightRef.current = false;
-    }
+      const consultationDirty = serializeConsultationForm(consultationFormRef.current) !== savedConsultationSnapshotRef.current;
+      const prescriptionDirty = serializePrescriptionForm(prescriptionFormRef.current) !== savedPrescriptionSnapshotRef.current;
+      if (!consultationDirty && !prescriptionDirty) {
+        setAutosaveStatus("saved");
+        return currentConsultation;
+      }
+
+      autosaveInFlightRef.current = true;
+      setAutosaveStatus("saving");
+      try {
+        const savedConsultation = consultationDirty ? await saveConsultationDraft(false) : currentConsultation;
+        if (prescriptionDirty) await savePrescriptionDraft(false);
+        setError(null);
+        setAutosaveStatus("saved");
+        return savedConsultation;
+      } catch (err) {
+        console.error("Autosave failed", err);
+        setAutosaveStatus("failed");
+        if (err instanceof PrescriptionPayloadValidationError) {
+          setInvalidMedicineRowIds(err.invalidMedicineRowIds);
+          setError(err.message);
+          return null;
+        }
+        if (err instanceof ApiClientError && err.status >= 400 && err.status < 500) {
+          setError(err.message);
+          return null;
+        }
+        if (autosaveRetryTimerRef.current) window.clearTimeout(autosaveRetryTimerRef.current);
+        autosaveRetryTimerRef.current = window.setTimeout(() => {
+          void runAutosave();
+        }, 5000);
+        return null;
+      } finally {
+        autosaveInFlightRef.current = false;
+        autosavePromiseRef.current = null;
+      }
+    })();
+
+    autosavePromiseRef.current = promise;
+    return promise;
   };
 
   const flushAutosave = async (): Promise<Consultation | null> => {
-    if (autosaveTimerRef.current) {
-      window.clearTimeout(autosaveTimerRef.current);
-      autosaveTimerRef.current = null;
-    }
-    if (autosaveRetryTimerRef.current) {
-      window.clearTimeout(autosaveRetryTimerRef.current);
-      autosaveRetryTimerRef.current = null;
-    }
+    clearAutosaveTimers();
     setSaving(true);
     try {
-      return await runAutosave();
+      return autosavePromiseRef.current ? await autosavePromiseRef.current : await runAutosave();
     } finally {
       setSaving(false);
     }
@@ -1203,8 +1343,8 @@ export default function ConsultationWorkspacePage() {
 
   const completeCurrentConsultation = async () => {
     if (!auth.accessToken || !auth.tenantId || !consultation) return;
-    if (hasPrescriptionContent(prescriptionForm) && (!prescription || prescription.status === "DRAFT")) {
-      setError("Preview prescription before completing consultation.");
+    if (!prescriptionReadyForCompletion) {
+      setError(CONSULTATION_COMPLETION_BLOCKED_MESSAGE);
       return;
     }
     const confirmComplete = window.confirm("Complete consultation now? Consultation notes become read-only after completion.");
@@ -1245,14 +1385,14 @@ export default function ConsultationWorkspacePage() {
     if (!auth.accessToken || !auth.tenantId || !currentConsultation || currentConsultation.status !== "DRAFT") return currentPrescription;
     if (currentPrescription && currentPrescription.status !== "DRAFT" && currentPrescription.status !== "PREVIEWED") return currentPrescription;
     if (!currentPrescription && !hasPrescriptionContent(currentForm)) return null;
-    if (!hasAtLeastOneCompleteMedicine(currentForm)) return currentPrescription;
-    const body = toPrescriptionInput(currentForm, currentConsultation);
+    const body = buildPrescriptionInput(currentForm, currentConsultation);
     const saved = currentPrescription
       ? await updatePrescription(auth.accessToken, auth.tenantId, currentPrescription.id, body)
       : await createPrescription(auth.accessToken, auth.tenantId, body);
     setPrescription(saved);
     prescriptionRef.current = saved;
     savedPrescriptionSnapshotRef.current = serializePrescriptionForm(currentForm);
+    setInvalidMedicineRowIds([]);
     const historyRows = await getPrescriptionHistory(auth.accessToken, auth.tenantId, saved.id).catch(() => [saved]);
     setPrescriptionHistory(historyRows);
     setSelectedPrescriptionVersionId(historyRows[historyRows.length - 1]?.id || saved.id);
@@ -1265,11 +1405,19 @@ export default function ConsultationWorkspacePage() {
     setError(null);
     setAutosaveStatus("saving");
     try {
+      clearAutosaveTimers();
+      if (autosavePromiseRef.current) {
+        await autosavePromiseRef.current;
+      }
       const saved = await savePrescriptionDraft(true);
+      setError(null);
       setAutosaveStatus("saved");
       return saved;
     } catch (err) {
       setAutosaveStatus("failed");
+      if (err instanceof PrescriptionPayloadValidationError) {
+        setInvalidMedicineRowIds(err.invalidMedicineRowIds);
+      }
       setError(err instanceof Error ? err.message : "Failed to save prescription");
       return null;
     } finally {
@@ -1279,8 +1427,8 @@ export default function ConsultationWorkspacePage() {
 
   const previewCurrentPrescription = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
-    if (!hasAtLeastOneCompleteMedicine(prescriptionForm) && !prescriptionForm.advice.trim()) {
-      setError("Add at least one medicine or advice before previewing.");
+    if (!hasAtLeastOneValidMedicineRow(prescriptionForm)) {
+      setError("At least one valid medicine is required before previewing.");
       return;
     }
     const popup = window.open("", "_blank", "noopener,noreferrer");
@@ -1335,17 +1483,23 @@ export default function ConsultationWorkspacePage() {
       const corrected = await createPrescriptionCorrection(auth.accessToken, auth.tenantId, prescription.id, {
         correctionReason: correctionReason.trim() || (flowType === "FOLLOW_UP" ? "Follow-up prescription" : "Same-day correction"),
         flowType,
-        prescription: toPrescriptionInput(prescriptionForm, consultation),
+        prescription: buildPrescriptionInput(prescriptionForm, consultation),
       });
       setPrescription(corrected);
       prescriptionRef.current = corrected;
       savedPrescriptionSnapshotRef.current = serializePrescriptionForm(prescriptionForm);
+      setInvalidMedicineRowIds([]);
       const historyRows = await getPrescriptionHistory(auth.accessToken, auth.tenantId, corrected.id).catch(() => [corrected]);
       setPrescriptionHistory(historyRows);
       setSelectedPrescriptionVersionId(historyRows[historyRows.length - 1]?.id || corrected.id);
       setInfo(flowType === "FOLLOW_UP" ? "Follow-up prescription draft created" : "Correction draft created");
     } catch (err) {
-      setError("Unable to create prescription correction. Please try again.");
+      if (err instanceof PrescriptionPayloadValidationError) {
+        setInvalidMedicineRowIds(err.invalidMedicineRowIds);
+        setError(err.message);
+      } else {
+        setError("Unable to create prescription correction. Please try again.");
+      }
       console.error("Prescription correction failed", err);
     } finally {
       setSaving(false);
@@ -1354,6 +1508,10 @@ export default function ConsultationWorkspacePage() {
 
   const finalizeCurrentPrescription = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
+    if (!hasAtLeastOneValidMedicineRow(prescriptionForm)) {
+      setError("At least one valid medicine is required before finalizing.");
+      return;
+    }
     const saved = await persistPrescription();
     if (!saved) return;
     setSaving(true);
@@ -1373,8 +1531,8 @@ export default function ConsultationWorkspacePage() {
 
   const printCurrentPrescription = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
-    if (!hasAtLeastOneCompleteMedicine(prescriptionForm) && !prescriptionForm.advice.trim()) {
-      setError("Add at least one medicine or advice before previewing.");
+    if (!hasAtLeastOneValidMedicineRow(prescriptionForm)) {
+      setError("At least one valid medicine is required before printing.");
       return;
     }
     const popup = window.open("", "_blank");
@@ -1410,8 +1568,8 @@ export default function ConsultationWorkspacePage() {
 
   const downloadCurrentPrescription = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
-    if (!hasAtLeastOneCompleteMedicine(prescriptionForm) && !prescriptionForm.advice.trim()) {
-      setError("Add at least one medicine or advice before previewing.");
+    if (!hasAtLeastOneValidMedicineRow(prescriptionForm)) {
+      setError("At least one valid medicine is required before downloading.");
       return;
     }
     const saved = await persistPrescription();
@@ -1818,7 +1976,7 @@ export default function ConsultationWorkspacePage() {
                   autosaveStatus === "dirty" ? "Unsaved changes" :
                   autosaveStatus === "saving" ? "Saving..." :
                   autosaveStatus === "saved" ? "Saved" :
-                  autosaveStatus === "failed" ? "Save failed - retrying" :
+                  autosaveStatus === "failed" ? "Save failed" :
                   autosaveStatus === "readonly" ? "Read-only" :
                   "Autosave ready"
                 }
@@ -1828,12 +1986,17 @@ export default function ConsultationWorkspacePage() {
           <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" justifyContent={{ xs: "flex-start", xl: "flex-end" }}>
             <Button type="button" size="small" variant="outlined" onClick={() => void backToQueue()}>Back to Queue</Button>
             {canEditConsultation && !readOnly ? <Button type="button" size="small" disabled={saving} onClick={() => void manualSaveDraft()}>Save Draft</Button> : null}
-            {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void previewCurrentPrescription()}>Preview Rx</Button> : null}
-            {canCompleteConsultation && !readOnly ? <Button type="button" size="small" color="secondary" disabled={saving} onClick={() => void completeCurrentConsultation()}>Complete</Button> : null}
-            {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void printCurrentPrescription()}>Print Rx</Button> : null}
-            {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
+            {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void previewCurrentPrescription()}>Preview Rx</Button> : null}
+            {canCompleteConsultation && !readOnly ? <Button type="button" size="small" color="secondary" disabled={saving || !prescriptionReadyForCompletion} onClick={() => void completeCurrentConsultation()}>Complete</Button> : null}
+            {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void printCurrentPrescription()}>Print Rx</Button> : null}
+            {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
           </Stack>
         </Stack>
+        {canCompleteConsultation && !readOnly && !prescriptionReadyForCompletion ? (
+          <Typography variant="caption" color="warning.main" sx={{ mt: 0.75, display: "block" }}>
+            {CONSULTATION_COMPLETION_BLOCKED_MESSAGE}
+          </Typography>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -2168,9 +2331,9 @@ export default function ConsultationWorkspacePage() {
                       <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
                         {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" startIcon={<AddRoundedIcon />} onClick={addManualMedicine}>Manual row</Button> : null}
                         {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void persistPrescription()}>Save Rx</Button> : null}
-                        {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void previewCurrentPrescription()}>Preview</Button> : null}
-                        {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
-                        {canFinalizePrescription ? <Button type="button" size="small" color="secondary" disabled={saving || prescriptionReadOnly || prescription?.status === "DRAFT"} onClick={() => void finalizeCurrentPrescription()}>Finalize</Button> : null}
+                        {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void previewCurrentPrescription()}>Preview</Button> : null}
+                        {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
+                        {canFinalizePrescription ? <Button type="button" size="small" color="secondary" disabled={saving || prescriptionReadOnly || prescription?.status === "DRAFT" || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void finalizeCurrentPrescription()}>Finalize</Button> : null}
                       </Stack>
                     </Box>
 
@@ -2273,16 +2436,16 @@ export default function ConsultationWorkspacePage() {
 
                     <Stack spacing={1}>
                       {prescriptionForm.medicines.map((row, index) => (
-                        <Card key={row.localId} variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                        <Card key={row.localId} variant="outlined" sx={{ boxShadow: "none", borderRadius: 2, borderColor: invalidMedicineRowIds.includes(row.localId) ? "error.main" : undefined }}>
                           <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
                             <Stack spacing={1}>
                               <Grid container spacing={1} alignItems="center">
-                                <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label={`Medicine ${index + 1}`} value={row.medicineName} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { medicineName: e.target.value })} /></Grid>
+                                <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} helperText={invalidMedicineRowIds.includes(row.localId) ? "Medicine name, dosage, frequency, and duration are required." : " "} label={`Medicine ${index + 1}`} value={row.medicineName} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { medicineName: e.target.value })} /></Grid>
                                 <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth label="Strength" value={row.strength || ""} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { strength: e.target.value })} /></Grid>
-                                <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth label="Dosage" value={row.dosage} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { dosage: e.target.value })} /></Grid>
-                                <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth label="Frequency" value={row.frequency} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { frequency: e.target.value })} /></Grid>
-                                <Grid size={{ xs: 6, md: 1.5 }}><TextField size="small" fullWidth label="Duration" value={row.duration} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { duration: e.target.value })} /></Grid>
-                                <Grid size={{ xs: 12, md: 0.5 }}><IconButton size="small" disabled={prescriptionReadOnly} onClick={() => setPrescriptionForm((c) => ({ ...c, medicines: c.medicines.filter((item) => item.localId !== row.localId) }))}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Grid>
+                                <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Dosage" value={row.dosage} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { dosage: e.target.value })} /></Grid>
+                                <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Frequency" value={row.frequency} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { frequency: e.target.value })} /></Grid>
+                                <Grid size={{ xs: 6, md: 1.5 }}><TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Duration" value={row.duration} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { duration: e.target.value })} /></Grid>
+                                <Grid size={{ xs: 12, md: 0.5 }}><IconButton size="small" disabled={prescriptionReadOnly} onClick={() => { setInvalidMedicineRowIds((current) => current.filter((id) => id !== row.localId)); setPrescriptionForm((c) => ({ ...c, medicines: c.medicines.filter((item) => item.localId !== row.localId) })); }}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Grid>
                               </Grid>
                               <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap">
                                 {FREQUENCIES.map((chip) => <Chip key={chip} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={chip} onClick={() => updateMedicine(row.localId, { frequency: chip })} />)}

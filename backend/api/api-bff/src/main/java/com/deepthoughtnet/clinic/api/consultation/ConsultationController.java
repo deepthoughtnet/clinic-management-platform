@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationRequest;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationAiSummaryRequest;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationAiSummaryResponse;
+import com.deepthoughtnet.clinic.api.consultation.service.ConsultationCompletionGuard;
 import com.deepthoughtnet.clinic.api.consultation.service.ConsultationAiSummaryService;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
@@ -32,13 +33,16 @@ import jakarta.validation.Valid;
 public class ConsultationController {
     private final ConsultationService consultationService;
     private final ConsultationAiSummaryService consultationAiSummaryService;
+    private final ConsultationCompletionGuard consultationCompletionGuard;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
     public ConsultationController(ConsultationService consultationService,
                                    ConsultationAiSummaryService consultationAiSummaryService,
+                                   ConsultationCompletionGuard consultationCompletionGuard,
                                    DoctorAssignmentSecurityService doctorAssignmentSecurityService) {
         this.consultationService = consultationService;
         this.consultationAiSummaryService = consultationAiSummaryService;
+        this.consultationCompletionGuard = consultationCompletionGuard;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
     }
 
@@ -86,6 +90,7 @@ public class ConsultationController {
     public ConsultationResponse complete(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requireDoctorCanCompleteConsultation(tenantId, id);
+        consultationCompletionGuard.ensurePrescriptionReady(tenantId, id);
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(consultationService.complete(tenantId, id, actorAppUserId));
     }

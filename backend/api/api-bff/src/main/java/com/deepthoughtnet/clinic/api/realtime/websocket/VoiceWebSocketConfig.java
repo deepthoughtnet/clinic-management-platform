@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.realtime.websocket;
 
 import com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService;
+import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestWebSocketHandler;
 import com.deepthoughtnet.clinic.realtime.voice.events.VoiceSessionEventBus;
 import com.deepthoughtnet.clinic.realtime.voice.metrics.RealtimeVoiceGatewayMetrics;
@@ -23,17 +24,20 @@ public class VoiceWebSocketConfig implements WebSocketConfigurer {
     private final VoiceWebSocketAuthInterceptor authInterceptor;
     private final RealtimeVoiceSessionService sessionService;
     private final VoiceOrchestratorService voiceOrchestratorService;
+    private final VoiceTestProperties voiceTestProperties;
 
     public VoiceWebSocketConfig(VoiceSessionEventBus eventBus, RealtimeVoiceGatewayMetrics metrics,
                                 ObjectMapper objectMapper, VoiceWebSocketAuthInterceptor authInterceptor,
                                 RealtimeVoiceSessionService sessionService,
-                                VoiceOrchestratorService voiceOrchestratorService) {
+                                VoiceOrchestratorService voiceOrchestratorService,
+                                VoiceTestProperties voiceTestProperties) {
         this.eventBus = eventBus;
         this.metrics = metrics;
         this.objectMapper = objectMapper;
         this.authInterceptor = authInterceptor;
         this.sessionService = sessionService;
         this.voiceOrchestratorService = voiceOrchestratorService;
+        this.voiceTestProperties = voiceTestProperties;
     }
 
     @Override
@@ -41,7 +45,7 @@ public class VoiceWebSocketConfig implements WebSocketConfigurer {
         registry.addHandler(new VoiceSessionWebSocketHandler(eventBus, metrics, objectMapper, sessionService), "/ws/voice/session/*")
                 .addInterceptors(authInterceptor)
                 .setAllowedOrigins("*");
-        registry.addHandler(new VoiceTestWebSocketHandler(objectMapper, voiceOrchestratorService), "/ws/voice/test")
+        registry.addHandler(new VoiceTestWebSocketHandler(objectMapper, voiceOrchestratorService, voiceTestProperties), "/ws/voice/test")
                 .addInterceptors(authInterceptor)
                 .setAllowedOrigins("*");
     }

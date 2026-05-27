@@ -29,6 +29,7 @@ import com.deepthoughtnet.clinic.prescription.db.PrescriptionTestEntity;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionTestRepository;
 import com.deepthoughtnet.clinic.prescription.service.model.MedicineType;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineCommand;
+import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTestCommand;
@@ -263,6 +264,50 @@ class PrescriptionServiceTest {
 
         assertThat(updated.status()).isEqualTo(PrescriptionStatus.PREVIEWED);
         assertThat(updated.diagnosisSnapshot()).isEqualTo("Updated Dx");
+    }
+
+    @Test
+    void createDraftAcceptsMixedManualAndCatalogStyleRows() {
+        PrescriptionUpsertCommand mixed = new PrescriptionUpsertCommand(
+                PATIENT_ID,
+                DOCTOR_ID,
+                CONSULTATION_ID,
+                APPOINTMENT_ID,
+                "Viral fever",
+                "Hydrate well",
+                LocalDate.now().plusDays(2),
+                List.of(
+                        new PrescriptionMedicineCommand("Dolo 650", MedicineType.TABLET, "650 mg", "1 tab", "1-1-1", "3 days", Timing.AFTER_FOOD, null, 1),
+                        new PrescriptionMedicineCommand("Custom tonic", null, null, "10 ml", "0-0-1", "5 days", null, "Bedtime", 2)
+                ),
+                List.of(new PrescriptionTestCommand("CBC", null, 1))
+        );
+
+        PrescriptionRecord created = service.createDraft(TENANT_ID, mixed, ACTOR_ID);
+
+        assertThat(created.medicines()).hasSize(2);
+        assertThat(created.medicines()).extracting(PrescriptionMedicineRecord::medicineName).containsExactly("Dolo 650", "Custom tonic");
+        assertThat(created.medicines()).extracting(PrescriptionMedicineRecord::medicineType).containsExactly(MedicineType.TABLET, null);
+        assertThat(created.medicines()).extracting(PrescriptionMedicineRecord::instructions).containsExactly(null, "Bedtime");
+    }
+
+    @Test
+    void createDraftRejectsMedicineWithoutName() {
+        PrescriptionUpsertCommand invalid = new PrescriptionUpsertCommand(
+                PATIENT_ID,
+                DOCTOR_ID,
+                CONSULTATION_ID,
+                APPOINTMENT_ID,
+                "Dx",
+                "Advice",
+                null,
+                List.of(new PrescriptionMedicineCommand(" ", MedicineType.TABLET, "500 mg", "1 tab", "1-0-1", "3 days", Timing.AFTER_FOOD, null, 1)),
+                List.of()
+        );
+
+        assertThatThrownBy(() -> service.createDraft(TENANT_ID, invalid, ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("medicineName is required");
     }
 
     @Test

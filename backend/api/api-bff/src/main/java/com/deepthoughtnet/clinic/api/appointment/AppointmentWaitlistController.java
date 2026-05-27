@@ -110,6 +110,10 @@ public class AppointmentWaitlistController {
                 record.type(),
                 record.priority(),
                 record.status(),
+                record.paymentBypassReason(),
+                record.paymentBypassNotes(),
+                record.paymentBypassedBy() == null ? null : record.paymentBypassedBy().toString(),
+                record.paymentBypassedAt(),
                 record.createdAt(),
                 record.updatedAt()
         );

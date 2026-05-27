@@ -24,6 +24,10 @@ public record AppointmentResponse(
         AppointmentType type,
         AppointmentPriority priority,
         AppointmentStatus status,
+        String paymentBypassReason,
+        String paymentBypassNotes,
+        String paymentBypassedBy,
+        OffsetDateTime paymentBypassedAt,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

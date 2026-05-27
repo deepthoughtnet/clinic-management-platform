@@ -113,7 +113,7 @@ public class BillingController {
     }
 
     @PatchMapping("/{id}/cancel")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.create')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.update')")
     public BillResponse cancel(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
@@ -307,7 +307,7 @@ public class BillingController {
 
     @PostMapping("/{billId}/refunds")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("@permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('payment.collect')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.update')")
     public RefundResponse addRefund(@PathVariable UUID billId, @Valid @RequestBody RefundRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();

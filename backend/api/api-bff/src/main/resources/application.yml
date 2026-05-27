@@ -219,6 +219,13 @@ voice:
     min-speech-ms: ${VOICE_VAD_MIN_SPEECH_MS:300}
     silence-timeout-ms: ${VOICE_VAD_SILENCE_TIMEOUT_MS:1500}
     max-utterance-ms: ${VOICE_VAD_MAX_UTTERANCE_MS:30000}
+  live:
+    heartbeat-interval-ms: ${VOICE_LIVE_HEARTBEAT_INTERVAL_MS:15000}
+    stale-after-ms: ${VOICE_LIVE_STALE_AFTER_MS:45000}
+    max-session-duration-seconds: ${VOICE_LIVE_MAX_SESSION_DURATION_SECONDS:900}
+    max-idle-seconds: ${VOICE_LIVE_MAX_IDLE_SECONDS:120}
+    max-turns-per-session: ${VOICE_LIVE_MAX_TURNS_PER_SESSION:20}
+    max-audio-bytes-per-turn: ${VOICE_LIVE_MAX_AUDIO_BYTES_PER_TURN:10485760}
   runtime:
     summary-endpoint: ${VOICE_RUNTIME_SUMMARY_ENDPOINT:http://127.0.0.1:8091/metrics/summary}
   debug:

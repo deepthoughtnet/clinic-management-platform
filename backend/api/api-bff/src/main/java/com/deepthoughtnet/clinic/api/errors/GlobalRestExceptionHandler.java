@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.platform.core.errors.BadRequestException;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.deepthoughtnet.clinic.identity.exception.TenantModuleDisabledException;
 import com.deepthoughtnet.clinic.platform.spring.context.CorrelationId;
 import jakarta.servlet.http.HttpServletRequest;
@@ -73,6 +74,15 @@ public class GlobalRestExceptionHandler {
     public ResponseEntity<?> handleBadJson(HttpMessageNotReadableException ex, HttpServletRequest req) {
         String message = "Malformed JSON request body";
         Throwable root = ex.getMostSpecificCause();
+        if (root instanceof JsonMappingException mappingException) {
+            String path = jsonPath(mappingException);
+            if (path != null && !path.isBlank()) {
+                message = "Invalid value for " + path;
+            } else {
+                message = "Invalid value in JSON request body";
+            }
+            return build(HttpStatus.BAD_REQUEST, "invalid_json", message, req);
+        }
         if (root != null && root.getMessage() != null) {
             String msg = root.getMessage().toLowerCase(Locale.ROOT);
             if (msg.contains("invalid")) {
@@ -185,6 +195,24 @@ public class GlobalRestExceptionHandler {
         return ResponseEntity.status(status)
                 .contentType(responseType)
                 .body(body);
+    }
+
+    private String jsonPath(JsonMappingException ex) {
+        if (ex == null || ex.getPath() == null || ex.getPath().isEmpty()) {
+            return null;
+        }
+        StringBuilder path = new StringBuilder();
+        for (JsonMappingException.Reference ref : ex.getPath()) {
+            if (ref.getFieldName() != null && !ref.getFieldName().isBlank()) {
+                if (path.length() > 0) {
+                    path.append('.');
+                }
+                path.append(ref.getFieldName());
+            } else if (ref.getIndex() >= 0) {
+                path.append('[').append(ref.getIndex()).append(']');
+            }
+        }
+        return path.length() == 0 ? null : path.toString();
     }
 
     private MediaType errorResponseMediaType(HttpServletRequest req) {

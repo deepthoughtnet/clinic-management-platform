@@ -7,9 +7,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
+import com.deepthoughtnet.clinic.prescription.service.model.Timing;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -93,6 +96,21 @@ class GlobalRestExceptionHandlerTest {
                 .andExpect(jsonPath("$.correlationId").value("corr-999"));
     }
 
+    @Test
+    void formatsJsonMappingErrorsWithFieldPath() throws Exception {
+        mockMvc.perform(post("/json-mapping")
+                        .header("X-Correlation-Id", "corr-json")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"medicines":[{"timing":{"value":"AFTER_FOOD"}}]}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.code").value("invalid_json"))
+                .andExpect(jsonPath("$.message").value("Invalid value for medicines[0].timing"))
+                .andExpect(jsonPath("$.correlationId").value("corr-json"));
+    }
+
     @RestController
     static class TestController {
         @PostMapping("/validation")
@@ -113,8 +131,18 @@ class GlobalRestExceptionHandlerTest {
         void availabilityConflict() {
             throw new DoctorAvailabilityConflictException("Availability already exists for this doctor, day, and time range.");
         }
+
+        @PostMapping("/json-mapping")
+        void jsonMapping(@RequestBody JsonMappingPayload payload) {
+        }
     }
 
     record Payload(@NotBlank String name) {
+    }
+
+    record JsonMappingPayload(@NotNull List<MedicinePayload> medicines) {
+    }
+
+    record MedicinePayload(@NotNull Timing timing) {
     }
 }

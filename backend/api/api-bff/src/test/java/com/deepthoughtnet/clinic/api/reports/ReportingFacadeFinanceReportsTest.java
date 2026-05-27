@@ -259,6 +259,7 @@ class ReportingFacadeFinanceReportsTest {
         PharmacyCashierShiftEntity shift = PharmacyCashierShiftEntity.open(
                 tenantId, cashierId, cashierId, new BigDecimal("1000.00"), "opening"
         );
+        setField(shift, "openedAt", OffsetDateTime.parse("2026-05-23T08:00:00Z"));
         shift.close(
                 cashierId,
                 new BigDecimal("100.00"),

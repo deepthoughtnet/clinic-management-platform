@@ -7,8 +7,20 @@ record VoiceTestResponse(
         String audioContentType,
         String audioBase64,
         VoiceProviderTrace providerTrace,
-        java.util.List<VoiceDebugTraceEntry> voiceDebugTrace
+        java.util.List<VoiceDebugTraceEntry> voiceDebugTrace,
+        VoiceWorkflowSummary workflowSummary
 ) {
+    VoiceTestResponse(
+            String requestId,
+            String transcript,
+            String assistantText,
+            String audioContentType,
+            String audioBase64,
+            VoiceProviderTrace providerTrace,
+            java.util.List<VoiceDebugTraceEntry> voiceDebugTrace
+    ) {
+        this(requestId, transcript, assistantText, audioContentType, audioBase64, providerTrace, voiceDebugTrace, null);
+    }
 }
 
 record VoiceSttDebugResponse(
@@ -45,7 +57,44 @@ record VoiceLiveStatusResponse(
         String authMode,
         String tenantMode,
         String vadMode,
-        String vadProvider
+        String vadProvider,
+        int heartbeatIntervalMs,
+        int staleAfterMs,
+        int maxSessionDurationSeconds,
+        int maxIdleSeconds,
+        int maxTurnsPerSession,
+        int maxAudioBytesPerTurn
+) {
+}
+
+record VoiceWorkflowSummary(
+        String mode,
+        String intentState,
+        String language,
+        String patientName,
+        String patientPhone,
+        String doctorUserId,
+        String doctorName,
+        String preferredDate,
+        String preferredTimeWindow,
+        String reason,
+        java.util.List<String> missingFields,
+        VoiceSuggestedSlot suggestedSlot,
+        boolean confirmationRequested,
+        boolean bookingConfirmed,
+        boolean handoffRequired,
+        String handoffReason,
+        String nextPrompt,
+        int unresolvedTurns
+) {
+}
+
+record VoiceSuggestedSlot(
+        String doctorUserId,
+        String doctorName,
+        String appointmentDate,
+        String slotTime,
+        String slotEndTime
 ) {
 }
 

@@ -12,6 +12,7 @@ public class VoiceTestProperties {
     private final Tts tts = new Tts();
     private final Llm llm = new Llm();
     private final Vad vad = new Vad();
+    private final Live live = new Live();
     private final Debug debug = new Debug();
 
     public boolean isEnabled() {
@@ -36,6 +37,10 @@ public class VoiceTestProperties {
 
     public Vad getVad() {
         return vad;
+    }
+
+    public Live getLive() {
+        return live;
     }
 
     public Debug getDebug() {
@@ -401,6 +406,63 @@ public class VoiceTestProperties {
 
         public void setAudioDir(String audioDir) {
             this.audioDir = audioDir;
+        }
+    }
+
+    public static class Live {
+        private int heartbeatIntervalMs = 15000;
+        private int staleAfterMs = 45000;
+        private int maxSessionDurationSeconds = 900;
+        private int maxIdleSeconds = 120;
+        private int maxTurnsPerSession = 20;
+        private int maxAudioBytesPerTurn = 10 * 1024 * 1024;
+
+        public int getHeartbeatIntervalMs() {
+            return heartbeatIntervalMs;
+        }
+
+        public void setHeartbeatIntervalMs(int heartbeatIntervalMs) {
+            this.heartbeatIntervalMs = heartbeatIntervalMs;
+        }
+
+        public int getStaleAfterMs() {
+            return staleAfterMs;
+        }
+
+        public void setStaleAfterMs(int staleAfterMs) {
+            this.staleAfterMs = staleAfterMs;
+        }
+
+        public int getMaxSessionDurationSeconds() {
+            return maxSessionDurationSeconds;
+        }
+
+        public void setMaxSessionDurationSeconds(int maxSessionDurationSeconds) {
+            this.maxSessionDurationSeconds = maxSessionDurationSeconds;
+        }
+
+        public int getMaxIdleSeconds() {
+            return maxIdleSeconds;
+        }
+
+        public void setMaxIdleSeconds(int maxIdleSeconds) {
+            this.maxIdleSeconds = maxIdleSeconds;
+        }
+
+        public int getMaxTurnsPerSession() {
+            return maxTurnsPerSession;
+        }
+
+        public void setMaxTurnsPerSession(int maxTurnsPerSession) {
+            this.maxTurnsPerSession = maxTurnsPerSession;
+        }
+
+        public int getMaxAudioBytesPerTurn() {
+            return maxAudioBytesPerTurn;
+        }
+
+        public void setMaxAudioBytesPerTurn(int maxAudioBytesPerTurn) {
+            this.maxAudioBytesPerTurn = maxAudioBytesPerTurn;
         }
     }
 }

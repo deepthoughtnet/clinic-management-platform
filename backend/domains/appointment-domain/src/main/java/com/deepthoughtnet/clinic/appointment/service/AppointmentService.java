@@ -37,6 +37,7 @@ import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -630,6 +631,8 @@ public class AppointmentService {
                 .orElseThrow(() -> new IllegalArgumentException("Appointment not found"));
         ensureTransitionAllowed(entity.getStatus(), command.status());
         String normalizedComment = normalizeNullable(command.comment());
+        String paymentBypassReason = normalizeNullable(command.paymentBypassReason());
+        String paymentBypassNotes = normalizeNullable(command.paymentBypassNotes());
         if (entity.getStatus() == AppointmentStatus.WAITING
                 && (command.status() == AppointmentStatus.CANCELLED || command.status() == AppointmentStatus.NO_SHOW)
                 && !StringUtils.hasText(normalizedComment)) {
@@ -644,16 +647,25 @@ public class AppointmentService {
                 command.status(),
                 entity.getPriority()
         );
+        if (command.status() == AppointmentStatus.WAITING && StringUtils.hasText(paymentBypassReason)) {
+            entity.setPaymentBypass(paymentBypassReason, paymentBypassNotes, actorAppUserId, OffsetDateTime.now());
+        }
         AppointmentEntity saved = appointmentRepository.save(entity);
+        String action = command.status() == AppointmentStatus.WAITING && StringUtils.hasText(paymentBypassReason)
+                ? "appointment.checkin.payment_bypassed"
+                : "appointment.status.updated";
+        String message = command.status() == AppointmentStatus.WAITING && StringUtils.hasText(paymentBypassReason)
+                ? "Checked in appointment with payment pending override"
+                : "Updated appointment status";
         auditEventPublisher.record(new AuditEventCommand(
                 tenantId,
                 APPOINTMENT_ENTITY,
                 saved.getId(),
-                "appointment.status.updated",
+                action,
                 actorAppUserId,
                 OffsetDateTime.now(),
-                "Updated appointment status",
-                detailsJson(saved)
+                message,
+                detailsJson(saved, command.paymentBypassDueAmount())
         ));
         return toRecord(saved, tenantUsersById(tenantId), patientsByIds(tenantId, List.of(saved.getPatientId())));
     }
@@ -921,6 +933,10 @@ public class AppointmentService {
                 entity.getType(),
                 entity.getPriority(),
                 entity.getStatus(),
+                entity.getPaymentBypassReason(),
+                entity.getPaymentBypassNotes(),
+                entity.getPaymentBypassedBy(),
+                entity.getPaymentBypassedAt(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
@@ -1409,6 +1425,10 @@ public class AppointmentService {
     }
 
     private String detailsJson(AppointmentEntity entity) {
+        return detailsJson(entity, null);
+    }
+
+    private String detailsJson(AppointmentEntity entity, BigDecimal paymentBypassDueAmount) {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("id", entity.getId());
         details.put("tenantId", entity.getTenantId());
@@ -1420,6 +1440,11 @@ public class AppointmentService {
         details.put("type", entity.getType());
         details.put("priority", entity.getPriority());
         details.put("status", entity.getStatus());
+        details.put("paymentBypassReason", entity.getPaymentBypassReason());
+        details.put("paymentBypassNotes", entity.getPaymentBypassNotes());
+        details.put("paymentBypassedBy", entity.getPaymentBypassedBy());
+        details.put("paymentBypassedAt", entity.getPaymentBypassedAt());
+        details.put("paymentBypassDueAmount", paymentBypassDueAmount);
         try {
             return objectMapper.writeValueAsString(details);
         } catch (JsonProcessingException ex) {

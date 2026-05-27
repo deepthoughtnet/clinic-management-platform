@@ -26,7 +26,7 @@ import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import AutorenewRoundedIcon from "@mui/icons-material/AutorenewRounded";
 import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import LinkOffRoundedIcon from "@mui/icons-material/LinkOffRounded";
-import { getVoiceLiveStatus, getVoiceTestStatus, runVoiceSttDebug, runVoiceTest, type VoiceDebugTraceEntry, type VoiceLiveStatusResponse, type VoiceProviderTrace, type VoiceStatusResponse, type VoiceSttDebugResponse, type VoiceTestResponse } from "../../api/clinicApi";
+import { getVoiceLiveStatus, getVoiceTestStatus, runVoiceSttDebug, runVoiceTest, type VoiceDebugTraceEntry, type VoiceLiveStatusResponse, type VoiceProviderTrace, type VoiceStatusResponse, type VoiceSttDebugResponse, type VoiceTestResponse, type VoiceWorkflowMode, type VoiceWorkflowSummary } from "../../api/clinicApi";
 import { ApiClientError } from "../../api/restClient";
 import { useAuth } from "../../auth/useAuth";
 
@@ -39,6 +39,8 @@ const LIVE_MIN_SPEECH_MS = 300;
 const LIVE_SILENCE_TIMEOUT_MS = 1500;
 const LIVE_MAX_UTTERANCE_MS = 30000;
 const LIVE_LISTEN_RESUME_DELAY_MS = 350;
+const LIVE_HEARTBEAT_INTERVAL_MS = 15000;
+const LIVE_STALE_AFTER_MS = 45000;
 
 type VoiceTab = "file" | "live";
 type LiveStatus =
@@ -59,6 +61,22 @@ type LiveConversationTurn = {
   assistantText: string;
   providerTrace: VoiceProviderTrace | null;
   requestId?: string | null;
+  metrics?: LiveTurnMetrics | null;
+  workflowSummary?: VoiceWorkflowSummary | null;
+};
+
+type LiveTurnMetrics = {
+  captureDurationMs: number;
+  sttDurationMs: number;
+  llmDurationMs: number;
+  ttsDurationMs: number;
+  totalDurationMs: number;
+  language: string | null;
+  sttProvider: string | null;
+  llmProvider: string | null;
+  ttsProvider: string | null;
+  fallbackReason: string | null;
+  audioBytes: number;
 };
 
 type CapturedAudioDebug = {
@@ -94,6 +112,21 @@ type AudioInputDevice = {
 function formatProvider(value: string | null | undefined) {
   if (!value) return "Not used";
   return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatWorkflowField(field: string) {
+  switch (field) {
+    case "patientIdentity":
+      return "Patient identity";
+    case "doctorName":
+      return "Preferred doctor";
+    case "preferredDate":
+      return "Preferred date";
+    case "preferredTimeWindow":
+      return "Preferred time";
+    default:
+      return field;
+  }
 }
 
 function ResultBlock({ label, value, empty }: { label: string; value: string | null | undefined; empty: string }) {
@@ -191,6 +224,54 @@ function ProviderTraceBlock({ trace, requestId }: { trace: VoiceProviderTrace | 
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
           Request ID: {requestId}
         </Typography>
+      ) : null}
+    </Paper>
+  );
+}
+
+function WorkflowSummaryBlock({ summary }: { summary: VoiceWorkflowSummary | null | undefined }) {
+  if (!summary || summary.mode !== "appointment-booking") {
+    return null;
+  }
+  const suggestedSlot = summary.suggestedSlot;
+  return (
+    <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
+      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+        Appointment workflow
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        State: {summary.intentState || "Collecting details"} • Language: {summary.language || "auto"}
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        Patient: {summary.patientName || summary.patientPhone || "Pending"} • Doctor: {summary.doctorName || "Pending"}
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        Date: {summary.preferredDate || "Pending"} • Time: {summary.preferredTimeWindow || "Pending"}
+      </Typography>
+      {summary.reason ? (
+        <Typography variant="body2" color="text.secondary">
+          Reason: {summary.reason}
+        </Typography>
+      ) : null}
+      {summary.missingFields && summary.missingFields.length > 0 ? (
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+          Missing: {summary.missingFields.map((field) => formatWorkflowField(field)).join(", ")}
+        </Typography>
+      ) : null}
+      {suggestedSlot ? (
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+          Suggested slot: {suggestedSlot.doctorName || "Doctor"} on {suggestedSlot.appointmentDate || "date"} at {suggestedSlot.slotTime || "time"}
+        </Typography>
+      ) : null}
+      {summary.confirmationRequested ? (
+        <Alert severity="info" sx={{ mt: 1 }}>
+          Confirmation is required before any appointment can be finalized.
+        </Alert>
+      ) : null}
+      {summary.handoffRequired ? (
+        <Alert severity="warning" sx={{ mt: 1 }}>
+          Human receptionist follow-up is recommended{summary.handoffReason ? `: ${summary.handoffReason}` : "."}
+        </Alert>
       ) : null}
     </Paper>
   );
@@ -337,6 +418,7 @@ export default function VoiceTestPage() {
   const [tab, setTab] = useState<VoiceTab>("file");
   const [language, setLanguage] = useState("en");
   const [context, setContext] = useState("");
+  const [workflowMode, setWorkflowMode] = useState<VoiceWorkflowMode>("generic");
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileResult, setFileResult] = useState<VoiceTestResponse | null>(null);
@@ -373,7 +455,9 @@ export default function VoiceTestPage() {
   const [liveSessionId, setLiveSessionId] = useState<string | null>(null);
   const [liveCapturedAudioDebug, setLiveCapturedAudioDebug] = useState<LiveCapturedAudioDebug | null>(null);
   const [liveConversation, setLiveConversation] = useState<LiveConversationTurn[]>([]);
+  const [liveWorkflowSummary, setLiveWorkflowSummary] = useState<VoiceWorkflowSummary | null>(null);
   const [livePlaybackError, setLivePlaybackError] = useState<string | null>(null);
+  const [liveTurnMetrics, setLiveTurnMetrics] = useState<LiveTurnMetrics | null>(null);
 
   const fileMediaRecorderRef = useRef<MediaRecorder | null>(null);
   const fileMediaStreamRef = useRef<MediaStream | null>(null);
@@ -417,6 +501,11 @@ export default function VoiceTestPage() {
   const livePendingAutoPlayRef = useRef(false);
   const liveStatusRef = useRef<LiveStatus>("idle");
   const liveEndedByUserRef = useRef(false);
+  const liveHeartbeatTimerRef = useRef<number | null>(null);
+  const liveStaleCheckTimerRef = useRef<number | null>(null);
+  const liveLastHeartbeatAtRef = useRef<number | null>(null);
+  const liveCaptureStartedAtRef = useRef<number | null>(null);
+  const liveCaptureDurationMsRef = useRef(0);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -432,12 +521,7 @@ export default function VoiceTestPage() {
       }
       stopAudioMonitoring();
       stopFileStream();
-      stopLiveStream();
-      if (liveResumeTimerRef.current != null) {
-        window.clearTimeout(liveResumeTimerRef.current);
-        liveResumeTimerRef.current = null;
-      }
-      liveAudioElementRef.current?.pause();
+      cleanupLiveSessionResources();
       closeLiveSession(false);
     };
   }, [capturedAudioUrl]);
@@ -519,6 +603,10 @@ export default function VoiceTestPage() {
     return "English";
   }
 
+  function selectedWorkflowLabel() {
+    return workflowMode === "appointment-booking" ? "Appointment Booking Assistant" : "Generic Assistant";
+  }
+
   function isHindiTtsVoiceConfigured() {
     return Boolean(voiceStatus?.ttsHindiConfigured);
   }
@@ -542,6 +630,30 @@ export default function VoiceTestPage() {
     }
   }
 
+  function clearLiveHeartbeatTimers() {
+    if (liveHeartbeatTimerRef.current != null) {
+      window.clearInterval(liveHeartbeatTimerRef.current);
+      liveHeartbeatTimerRef.current = null;
+    }
+    if (liveStaleCheckTimerRef.current != null) {
+      window.clearInterval(liveStaleCheckTimerRef.current);
+      liveStaleCheckTimerRef.current = null;
+    }
+  }
+
+  function cleanupLiveSessionResources() {
+    clearLiveResumeTimer();
+    clearLiveHeartbeatTimers();
+    liveAudioElementRef.current?.pause();
+    stopLiveStream();
+    liveStartingMicRef.current = false;
+    liveSendQueueRef.current = Promise.resolve();
+    liveAssistantAudioChunksRef.current.clear();
+    liveAssistantAudioExpectedChunksRef.current = 0;
+    liveChunkSequenceRef.current = 0;
+    liveChunksRef.current = [];
+  }
+
   function canAutoResumeListening() {
     if (!liveAutoResumeRef.current) return { ok: false, reason: "auto_resume_disabled" };
     if (liveEndedByUserRef.current) return { ok: false, reason: "session_ending" };
@@ -552,6 +664,45 @@ export default function VoiceTestPage() {
       return { ok: false, reason: `status_${liveStatusRef.current}` };
     }
     return { ok: true, reason: "ok" };
+  }
+
+  function heartbeatIntervalMs() {
+    return liveStatusInfo?.heartbeatIntervalMs || LIVE_HEARTBEAT_INTERVAL_MS;
+  }
+
+  function staleAfterMs() {
+    return liveStatusInfo?.staleAfterMs || LIVE_STALE_AFTER_MS;
+  }
+
+  function startLiveHeartbeatLoop() {
+    clearLiveHeartbeatTimers();
+    liveLastHeartbeatAtRef.current = Date.now();
+    liveHeartbeatTimerRef.current = window.setInterval(() => {
+      const socket = liveSocketRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN || liveEndedByUserRef.current) {
+        return;
+      }
+      try {
+        socket.send(JSON.stringify({ type: "heartbeat" }));
+      } catch {
+        // noop; stale check handles user-facing state
+      }
+    }, heartbeatIntervalMs());
+    liveStaleCheckTimerRef.current = window.setInterval(() => {
+      const socket = liveSocketRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN || liveEndedByUserRef.current) {
+        return;
+      }
+      const lastHeartbeatAt = liveLastHeartbeatAtRef.current;
+      if (lastHeartbeatAt && Date.now() - lastHeartbeatAt > staleAfterMs()) {
+        appendLiveEvent("heartbeat_stale");
+        setLiveError("WebSocket disconnected. The live voice session became stale.");
+        updateLiveStatus("error");
+        cleanupLiveSessionResources();
+        socket.close();
+        liveSocketRef.current = null;
+      }
+    }, Math.max(3000, Math.floor(heartbeatIntervalMs() / 2)));
   }
 
   function scheduleLiveListeningResume(reason: string, delayMs = LIVE_LISTEN_RESUME_DELAY_MS) {
@@ -590,6 +741,7 @@ export default function VoiceTestPage() {
     } catch {
       const warning = "Assistant audio autoplay was blocked by the browser. Use Play Response to continue.";
       setLivePlaybackError(warning);
+      setLiveInfo("Assistant audio is ready. Click Play Response if browser autoplay was blocked.");
       appendLiveEvent("response_play_blocked");
       if (autoTriggered) {
         scheduleLiveListeningResume("autoplay_blocked");
@@ -601,6 +753,7 @@ export default function VoiceTestPage() {
     appendLiveEvent("response_play_ended");
     if (liveAutoResumeRef.current) {
       updateLiveStatus("session_started");
+      setLiveInfo("Listening again…");
       scheduleLiveListeningResume("playback_ended");
     } else {
       updateLiveStatus("session_started");
@@ -897,7 +1050,7 @@ export default function VoiceTestPage() {
     setSttDebugResult(null);
     setProcessingStage("Processing STT/LLM/TTS...");
     try {
-      const response = await runVoiceTest(accessToken, tenantId, { audio: selectedFile, context, language });
+      const response = await runVoiceTest(accessToken, tenantId, { audio: selectedFile, context, language, workflowMode });
       setFileResult(response);
       setFileInfo(response.audioBase64 ? "Voice loop completed. Transcript, assistant response, and audio are ready." : "Voice loop completed. Text response is available, but no TTS audio was generated.");
       void refreshVoiceStatus(false);
@@ -981,6 +1134,7 @@ export default function VoiceTestPage() {
         type: "session.start",
         language,
         context: context.trim() || "clinic receptionist test",
+        workflowMode,
       }));
     };
     socket.onmessage = (event) => {
@@ -992,10 +1146,15 @@ export default function VoiceTestPage() {
           setLiveSessionId(sessionId || null);
           appendLiveEvent("session_started");
           updateLiveStatus("session_started");
-          setLiveInfo(`Session started for ${selectedLanguageLabel()}.`);
+          setLiveInfo(`Session started for ${selectedLanguageLabel()} in ${selectedWorkflowLabel()}.`);
+          startLiveHeartbeatLoop();
           if (liveAutoResumeRef.current) {
             scheduleLiveListeningResume("session_started", 0);
           }
+          return;
+        }
+        if (type === "heartbeat") {
+          liveLastHeartbeatAtRef.current = Date.now();
           return;
         }
         if (type === "session.connected") {
@@ -1030,6 +1189,7 @@ export default function VoiceTestPage() {
         }
         if (type === "stt.started") {
           updateLiveStatus("processing");
+          setLiveInfo("Processing…");
           appendLiveEvent("STT_STARTED");
           return;
         }
@@ -1063,13 +1223,16 @@ export default function VoiceTestPage() {
         if (type === "assistant.text") {
           const text = String(payload.text || "");
           const trace = (payload.providerTrace as VoiceProviderTrace | null) ?? null;
+          const workflowSummary = (payload.workflowSummary as VoiceWorkflowSummary | null) ?? null;
           const requestId = typeof payload.requestId === "string" ? payload.requestId : null;
           livePendingAssistantRef.current = text;
           livePendingProviderTraceRef.current = trace;
           livePendingRequestIdRef.current = requestId;
           setLiveAssistantText(text);
           setLiveProviderTrace(trace);
+          setLiveWorkflowSummary(workflowSummary);
           updateLiveStatus("processing");
+          setLiveInfo("Processing…");
           appendLiveEvent("Assistant text received.");
           return;
         }
@@ -1114,6 +1277,7 @@ export default function VoiceTestPage() {
           liveAssistantAudioChunksRef.current.clear();
           liveAssistantAudioExpectedChunksRef.current = 0;
           setLiveProviderTrace((payload.providerTrace as VoiceProviderTrace | null) ?? null);
+          setLiveInfo("Playing assistant response…");
           appendLiveEvent("response_audio_received");
           appendLiveEvent(`Assistant audio reconstructed from ${totalChunks} chunk${totalChunks === 1 ? "" : "s"}.`);
           return;
@@ -1139,12 +1303,25 @@ export default function VoiceTestPage() {
           appendLiveEvent("Session completed.");
           return;
         }
+        if (type === "session.timeout") {
+          updateLiveStatus("error");
+          const reason = String(payload.reason || "session_timeout");
+          setLiveError(reason === "idle_timeout" ? "Session timed out due to inactivity." : "Session timed out.");
+          appendLiveEvent(`session_timeout ${reason}`);
+          return;
+        }
         if (type === "turn.complete") {
           const turnIndex = Number(payload.turnIndex || liveCurrentTurnRef.current || 0);
           const trace = (payload.providerTrace as VoiceProviderTrace | null) ?? livePendingProviderTraceRef.current;
+          const workflowSummary = (payload.workflowSummary as VoiceWorkflowSummary | null) ?? liveWorkflowSummary;
           const requestId = typeof payload.requestId === "string"
             ? payload.requestId
             : livePendingRequestIdRef.current;
+          const metrics = (payload.metrics as LiveTurnMetrics | null) ?? null;
+          const mergedMetrics = metrics
+            ? { ...metrics, captureDurationMs: liveCaptureDurationMsRef.current || metrics.captureDurationMs || 0 }
+            : null;
+          setLiveTurnMetrics(mergedMetrics);
           if (turnIndex > 0) {
             setLiveConversation((current) => [
               ...current,
@@ -1154,14 +1331,21 @@ export default function VoiceTestPage() {
                 assistantText: livePendingAssistantRef.current,
                 providerTrace: trace,
                 requestId,
+                metrics: mergedMetrics,
+                workflowSummary,
               },
             ]);
           }
+          setLiveWorkflowSummary(workflowSummary);
           if (!liveTurnHasAudioRef.current) {
             updateLiveStatus("session_started");
+            setLiveInfo("Listening again…");
             if (liveAutoResumeRef.current) {
               scheduleLiveListeningResume("turn_complete_no_audio");
             }
+          }
+          if (mergedMetrics) {
+            appendLiveEvent(`turn_metrics total=${mergedMetrics.totalDurationMs}ms stt=${mergedMetrics.sttDurationMs}ms llm=${mergedMetrics.llmDurationMs}ms tts=${mergedMetrics.ttsDurationMs}ms`);
           }
           appendLiveEvent(`turn_complete ${turnIndex || "?"}`);
           return;
@@ -1178,7 +1362,19 @@ export default function VoiceTestPage() {
         }
         if (type === "error") {
           updateLiveStatus("error");
-          setLiveError(String(payload.message || "Live voice test failed."));
+          const rawMessage = String(payload.message || "Live voice test failed.");
+          const normalizedMessage = rawMessage.toLowerCase();
+          if (normalizedMessage.includes("audio") && normalizedMessage.includes("empty")) {
+            setLiveError("No speech was captured. Check the microphone and try again.");
+          } else if (normalizedMessage.includes("transcribed")) {
+            setLiveError("STT failed. Please try again.");
+          } else if (normalizedMessage.includes("synth")) {
+            setLiveError("TTS failed. Text response is still available.");
+          } else if (normalizedMessage.includes("timed out")) {
+            setLiveError("Session timed out.");
+          } else {
+            setLiveError(rawMessage);
+          }
           appendLiveEvent("Error received from websocket server.");
           return;
         }
@@ -1192,12 +1388,11 @@ export default function VoiceTestPage() {
       const details = liveStatusInfo
         ? `Expected path ${liveStatusInfo.websocketPath} with ${liveStatusInfo.authMode} and ${liveStatusInfo.tenantMode}.`
         : "Check tenant selection and authentication.";
-      setLiveError(`WebSocket connection failed. ${details}`);
+      setLiveError(`WebSocket disconnected. ${details}`);
       appendLiveEvent("CONNECT_FAILED");
     };
     socket.onclose = (event) => {
-      stopLiveStream();
-      clearLiveResumeTimer();
+      cleanupLiveSessionResources();
       liveSocketRef.current = null;
       liveAutoResumeRef.current = false;
       updateLiveStatus(liveEndedByUserRef.current ? "ended" : "idle");
@@ -1213,7 +1408,7 @@ export default function VoiceTestPage() {
         if (!liveEndedByUserRef.current) {
           updateLiveStatus("error");
         }
-        setLiveError(`WebSocket closed: ${event.reason}`);
+        setLiveError(`WebSocket disconnected. ${event.reason}`);
         appendLiveEvent(`DISCONNECTED • code=${event.code} reason=${event.reason}`);
       } else {
         appendLiveEvent(`DISCONNECTED • code=${event.code}`);
@@ -1249,6 +1444,8 @@ export default function VoiceTestPage() {
     setLiveCaptureInfo(null);
     setLiveCapturedAudioDebug(null);
     setLiveConversation([]);
+    setLiveWorkflowSummary(null);
+    setLiveTurnMetrics(null);
     liveChunkSequenceRef.current = 0;
     liveChunkFilenameRef.current = null;
     liveChunkContentTypeRef.current = "audio/webm";
@@ -1331,8 +1528,11 @@ export default function VoiceTestPage() {
       liveSpeechFrameActiveRef.current = false;
       liveAutoStopTriggeredRef.current = false;
       liveSessionStartedAtRef.current = Date.now();
+      liveCaptureStartedAtRef.current = Date.now();
+      liveCaptureDurationMsRef.current = 0;
       startAudioMonitoring(stream, "live");
       appendLiveEvent(options?.automatic ? "auto_listening_start" : "vad_listening");
+      setLiveInfo("Listening… speak now");
       setLiveCaptureInfo(`Recording ${recordingType} from ${selectedMicrophoneLabel()} • final upload will use ${filename}.`);
       recorder.ondataavailable = (event) => {
         if (!event.data || event.data.size === 0) return;
@@ -1351,6 +1551,7 @@ export default function VoiceTestPage() {
         const finalType = liveChunkContentTypeRef.current || recorder.mimeType || recordingType || "audio/webm";
         const blob = new Blob(liveChunksRef.current, { type: finalType });
         const chunkSizes = liveChunksRef.current.map((chunk) => chunk.size);
+        liveCaptureDurationMsRef.current = liveCaptureStartedAtRef.current ? Math.max(0, Date.now() - liveCaptureStartedAtRef.current) : 0;
         setLiveCapturedAudioDebug({
           recorderMimeType: recorder.mimeType || finalType,
           chunkCount: liveChunksRef.current.length,
@@ -1388,6 +1589,7 @@ export default function VoiceTestPage() {
           return;
         }
         updateLiveStatus("finalizing_audio");
+        setLiveInfo("Processing…");
         setLiveCaptureInfo(`Captured ${blob.type || finalType} • Uploading finalized ${blob.type || finalType} as ${filename} (${formatSize(blob.size)}).`);
         appendLiveEvent("audio_finalizing");
         appendLiveEvent(`audio_blob_finalized mime=${blob.type || finalType} size=${formatSize(blob.size)} chunks=${liveChunksRef.current.length}`);
@@ -1421,7 +1623,7 @@ export default function VoiceTestPage() {
           });
         }).catch(() => {
           updateLiveStatus("error");
-          setLiveError("Live microphone audio could not be prepared for upload.");
+          setLiveError("STT preparation failed. Live microphone audio could not be prepared for upload.");
           if (liveAutoResumeRef.current) {
             scheduleLiveListeningResume("turn_send_failed");
           }
@@ -1435,7 +1637,7 @@ export default function VoiceTestPage() {
     } catch {
       stopLiveStream();
       updateLiveStatus("error");
-      setLiveError("Microphone access was denied. You can still use the file-based voice test.");
+      setLiveError("Microphone permission was denied. You can still use the file-based voice test.");
     } finally {
       liveStartingMicRef.current = false;
     }
@@ -1456,10 +1658,8 @@ export default function VoiceTestPage() {
   function closeLiveSession(resetState = true) {
     liveAutoResumeRef.current = false;
     liveEndedByUserRef.current = true;
-    clearLiveResumeTimer();
-    liveAudioElementRef.current?.pause();
     updateLiveStatus("ending");
-    stopLiveStream();
+    cleanupLiveSessionResources();
     if (liveSocketRef.current && liveSocketRef.current.readyState === WebSocket.OPEN) {
       liveSocketRef.current.send(JSON.stringify({ type: "session.close" }));
       liveSocketRef.current.close();
@@ -1470,6 +1670,7 @@ export default function VoiceTestPage() {
       setLiveInfo(null);
       setLiveCaptureInfo(null);
       setLivePlaybackError(null);
+      setLiveWorkflowSummary(null);
       appendLiveEvent("session_ended");
       appendLiveEvent("Live voice session closed by user.");
     }
@@ -1496,6 +1697,7 @@ export default function VoiceTestPage() {
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap">
           <Chip size="small" color="primary" label="AI Copilot" />
+          <Chip size="small" variant="outlined" label={`Mode: ${selectedWorkflowLabel()}`} />
           <Chip size="small" variant="outlined" label={`STT: ${formatProvider(voiceStatus?.providerTrace?.sttProvider || "faster-whisper")} / Mock`} />
           <Chip size="small" variant="outlined" label={`LLM: ${formatProvider(voiceStatus?.providerTrace?.llmProvider || "gemini")} / Groq / Mock`} />
           <Chip size="small" variant="outlined" label={`TTS: ${formatProvider(voiceStatus?.providerTrace?.ttsProvider || "piper")} / Mock`} />
@@ -1582,19 +1784,33 @@ export default function VoiceTestPage() {
                       placeholder="Add short context for the assistant, such as booking intent, clinic FAQ, or follow-up scenario."
                     />
 
-                    <TextField
-                      select
-                      size="small"
-                      label="Language"
-                      value={language}
-                      onChange={(event) => setLanguage(event.target.value)}
-                      helperText="Simple language hint passed to STT/TTS where supported."
-                      sx={{ maxWidth: 220 }}
-                    >
-                      <MenuItem value="en">English</MenuItem>
-                      <MenuItem value="hi">Hindi</MenuItem>
-                      <MenuItem value="auto">Auto Detect</MenuItem>
-                    </TextField>
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+                      <TextField
+                        select
+                        size="small"
+                        label="Language"
+                        value={language}
+                        onChange={(event) => setLanguage(event.target.value)}
+                        helperText="Simple language hint passed to STT/TTS where supported."
+                        sx={{ maxWidth: 220 }}
+                      >
+                        <MenuItem value="en">English</MenuItem>
+                        <MenuItem value="hi">Hindi</MenuItem>
+                        <MenuItem value="auto">Auto Detect</MenuItem>
+                      </TextField>
+                      <TextField
+                        select
+                        size="small"
+                        label="Workflow mode"
+                        value={workflowMode}
+                        onChange={(event) => setWorkflowMode(event.target.value as VoiceWorkflowMode)}
+                        helperText="Generic keeps the current assistant flow. Appointment mode collects booking details safely."
+                        sx={{ minWidth: 260 }}
+                      >
+                        <MenuItem value="generic">Generic Assistant</MenuItem>
+                        <MenuItem value="appointment-booking">Appointment Booking Assistant</MenuItem>
+                      </TextField>
+                    </Stack>
 
                     {language === "hi" ? (
                       <Alert severity={isHindiTtsVoiceConfigured() ? "info" : "warning"}>
@@ -1735,6 +1951,7 @@ export default function VoiceTestPage() {
                     </Paper>
 
                     <ProviderTraceBlock trace={fileResult?.providerTrace} requestId={fileResult?.requestId ?? null} />
+                    <WorkflowSummaryBlock summary={fileResult?.workflowSummary} />
                     <DebugTracePanel trace={fileResult?.voiceDebugTrace ?? sttDebugResult?.voiceDebugTrace} />
                     {sttDebugResult ? (
                       <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
@@ -1759,7 +1976,7 @@ export default function VoiceTestPage() {
               {liveCaptureInfo ? <Alert severity="info">{liveCaptureInfo}</Alert> : null}
               {liveStatusInfo ? (
                 <Alert severity="info">
-                  Live websocket path: <strong>{liveStatusInfo.websocketPath}</strong> • auth: <strong>{liveStatusInfo.authMode}</strong> • tenant: <strong>{liveStatusInfo.tenantMode}</strong> • VAD: <strong>{liveStatusInfo.vadMode}</strong> ({liveStatusInfo.vadProvider})
+                  Live websocket path: <strong>{liveStatusInfo.websocketPath}</strong> • auth: <strong>{liveStatusInfo.authMode}</strong> • tenant: <strong>{liveStatusInfo.tenantMode}</strong> • VAD: <strong>{liveStatusInfo.vadMode}</strong> ({liveStatusInfo.vadProvider}) • heartbeat: <strong>{liveStatusInfo.heartbeatIntervalMs} ms</strong> • idle timeout: <strong>{liveStatusInfo.maxIdleSeconds}s</strong>
                 </Alert>
               ) : null}
 
@@ -1788,6 +2005,18 @@ export default function VoiceTestPage() {
                       <MenuItem value="en">English</MenuItem>
                       <MenuItem value="hi">Hindi</MenuItem>
                       <MenuItem value="auto">Auto Detect</MenuItem>
+                    </TextField>
+                    <TextField
+                      select
+                      size="small"
+                      label="Workflow mode"
+                      value={workflowMode}
+                      onChange={(event) => setWorkflowMode(event.target.value as VoiceWorkflowMode)}
+                      helperText="Appointment mode keeps collecting booking details across turns."
+                      sx={{ maxWidth: 280 }}
+                    >
+                      <MenuItem value="generic">Generic Assistant</MenuItem>
+                      <MenuItem value="appointment-booking">Appointment Booking Assistant</MenuItem>
                     </TextField>
                     <TextField
                       select
@@ -1882,7 +2111,28 @@ export default function VoiceTestPage() {
                       <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: "block" }}>
                         RMS {formatLevel(micLevel)} • Peak {formatLevel(micPeak)} • start {formatLevel(LIVE_SPEECH_START_THRESHOLD)} • end {formatLevel(LIVE_SPEECH_END_THRESHOLD)}
                       </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                        min speech {LIVE_MIN_SPEECH_MS} ms • silence end {LIVE_SILENCE_TIMEOUT_MS} ms • max turn {LIVE_MAX_UTTERANCE_MS} ms
+                      </Typography>
                     </Paper>
+                    {liveTurnMetrics ? (
+                      <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                          Latest turn metrics
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Capture {formatDuration(liveTurnMetrics.captureDurationMs)} • STT {formatDuration(liveTurnMetrics.sttDurationMs)} • LLM {formatDuration(liveTurnMetrics.llmDurationMs)} • TTS {formatDuration(liveTurnMetrics.ttsDurationMs)} • Total {formatDuration(liveTurnMetrics.totalDurationMs)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                          Language {liveTurnMetrics.language || selectedLanguageLabel()} • STT {formatProvider(liveTurnMetrics.sttProvider)} • LLM {formatProvider(liveTurnMetrics.llmProvider)} • TTS {formatProvider(liveTurnMetrics.ttsProvider)} • Audio {formatSize(liveTurnMetrics.audioBytes)}
+                        </Typography>
+                        {liveTurnMetrics.fallbackReason ? (
+                          <Typography variant="caption" color="warning.main" sx={{ mt: 0.5, display: "block" }}>
+                            Fallback: {liveTurnMetrics.fallbackReason}
+                          </Typography>
+                        ) : null}
+                      </Paper>
+                    ) : null}
                     {liveCapturedAudioDebug ? (
                       <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
                         <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
@@ -1899,6 +2149,9 @@ export default function VoiceTestPage() {
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
                           Upload file: {liveCapturedAudioDebug.uploadFilename} • {liveCapturedAudioDebug.uploadMimeType || "unknown"}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Selected language: {selectedLanguageLabel()}
                         </Typography>
                       </Paper>
                     ) : null}
@@ -1936,6 +2189,11 @@ export default function VoiceTestPage() {
                               <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
                                 Providers: STT {formatProvider(turn.providerTrace?.sttProvider)} • LLM {formatProvider(turn.providerTrace?.llmProvider)} • TTS {formatProvider(turn.providerTrace?.ttsProvider)}
                               </Typography>
+                              {turn.workflowSummary?.mode === "appointment-booking" ? (
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                                  Workflow: {turn.workflowSummary.intentState || "Collecting"} • Missing {turn.workflowSummary.missingFields?.map((field) => formatWorkflowField(field)).join(", ") || "none"}
+                                </Typography>
+                              ) : null}
                             </Paper>
                           ))}
                         </Stack>
@@ -1964,6 +2222,7 @@ export default function VoiceTestPage() {
                       )}
                     </Paper>
                     <ProviderTraceBlock trace={liveProviderTrace} />
+                    <WorkflowSummaryBlock summary={liveWorkflowSummary} />
                   </Stack>
                 </Paper>
               </Stack>

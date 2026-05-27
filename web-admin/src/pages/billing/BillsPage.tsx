@@ -312,6 +312,110 @@ function formatAppointmentSummary(appointment: Appointment | null) {
   return `${dateLabel} • ${timeLabel} • ${doctorLabel}`;
 }
 
+function billHasConsultationLine(bill: Bill) {
+  return bill.lines.some((line) => line.itemType === "CONSULTATION");
+}
+
+function isConsultationDraftLine(line: BillLineForm) {
+  return line.itemType === "CONSULTATION"
+    && (
+      normalizeDraftText(line.itemName).includes("consultation fee")
+      || normalizeDraftText(line.scanCode).startsWith("consultation:")
+    );
+}
+
+function createConsultationDraftLine(doctorName: string, doctorUserId: string, consultationFee: number): BillLineForm {
+  return {
+    itemType: "CONSULTATION",
+    itemName: `Consultation Fee - ${doctorName}`,
+    quantity: "1",
+    unitPrice: consultationFee.toFixed(2),
+    lineDiscountAmount: "",
+    taxAmount: "",
+    referenceId: doctorUserId,
+    scanCode: `CONSULTATION:${doctorUserId}`,
+    sortOrder: "1",
+  };
+}
+
+function consultationAppointmentBills(bills: Bill[], appointmentId: string) {
+  return bills
+    .filter((bill) => bill.appointmentId === appointmentId && billHasConsultationLine(bill) && bill.status !== "CANCELLED")
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function consultationEffectiveBill(bills: Bill[]) {
+  return bills.find((bill) => bill.dueAmount > 0) || bills[0] || null;
+}
+
+function consultationFeeState(consultationFee: number | null, bills: Bill[]) {
+  const effectiveFee = consultationFee ?? (bills.length > 0 ? Math.max(...bills.map((bill) => bill.totalAmount)) : null);
+  const netPaid = bills.reduce((sum, bill) => sum + billNetPaidAmount(bill), 0);
+  const due = effectiveFee == null ? null : Math.max(0, effectiveFee - netPaid);
+  return {
+    effectiveFee,
+    netPaid,
+    due,
+    paid: effectiveFee != null && due != null && due <= 0,
+    effectiveBill: consultationEffectiveBill(bills),
+  };
+}
+
+function billNetPaidAmount(bill: Bill) {
+  return Math.max(0, bill.netPaidAmount ?? (bill.paidAmount - bill.refundedAmount));
+}
+
+function billEffectiveDueAmount(bill: Bill) {
+  if (bill.status === "CANCELLED") {
+    return 0;
+  }
+  return Math.max(0, bill.dueAmount ?? (bill.totalAmount - billNetPaidAmount(bill)));
+}
+
+function billRefundedAmount(bill: Bill) {
+  return Math.max(0, bill.refundedAmount);
+}
+
+function billHasCollectableDue(bill: Bill) {
+  return bill.status !== "CANCELLED" && billEffectiveDueAmount(bill) > 0;
+}
+
+function billCountsAsSettled(bill: Bill) {
+  return bill.status !== "CANCELLED"
+    && bill.status !== "REFUNDED"
+    && billNetPaidAmount(bill) > 0
+    && billEffectiveDueAmount(bill) <= 0;
+}
+
+function latestReceiptForBill(receipts: Receipt[], billId: string) {
+  return receipts
+    .filter((receipt) => receipt.billId === billId)
+    .slice()
+    .sort((left, right) => `${right.receiptDate}|${right.createdAt}`.localeCompare(`${left.receiptDate}|${left.createdAt}`))[0] || null;
+}
+
+function paymentForReceipt(payments: Payment[], receipt: Receipt | null) {
+  if (!receipt) {
+    return null;
+  }
+  return payments.find((payment) => payment.id === receipt.paymentId) || null;
+}
+
+function preferredPatientCollectBill(bills: Bill[]) {
+  return bills.find((bill) => billHasCollectableDue(bill)) || null;
+}
+
+function preferredPatientReceiptBill(bills: Bill[]) {
+  return bills.find((bill) => billCountsAsSettled(bill)) || null;
+}
+
+function preferredPatientBill(bills: Bill[]) {
+  return bills.find((bill) => billHasCollectableDue(bill))
+    || bills.find((bill) => bill.status !== "CANCELLED")
+    || bills[0]
+    || null;
+}
+
 type InvoicePreviewState = InvoicePrintData | null;
 type ReceiptPreviewState = ReceiptPrintData | null;
 
@@ -383,9 +487,10 @@ export default function BillsPage() {
 
   const canCreateBill = auth.hasPermission("billing.create");
   const canUpdateBill = auth.hasPermission("billing.update") || auth.hasPermission("billing.create");
+  const canCancelBill = auth.hasPermission("billing.update");
   const canCollectPayment = auth.hasPermission("payment.collect");
   const canSendReceipt = canCollectPayment || auth.hasPermission("notification.send");
-  const canRefund = canCreateBill || canCollectPayment;
+  const canRefund = auth.hasPermission("billing.update");
   const canSendInvoice = canCreateBill || canCollectPayment || auth.hasPermission("notification.send");
   const denseTextFieldProps = { size: "small" as const, fullWidth: true };
   const denseSelectProps = { size: "small" as const, fullWidth: true };
@@ -406,6 +511,18 @@ export default function BillsPage() {
   const consultationDoctorUserProfileId = consultationAppointment?.doctorUserId || consultationDoctorUserId || "";
   const consultationDoctorLabel = consultationDoctorProfile?.doctorName || consultationAppointment?.doctorName || null;
   const consultationAppointmentLabel = formatAppointmentSummary(consultationAppointment);
+  const consultationBills = React.useMemo(
+    () => consultationAppointmentId ? consultationAppointmentBills(bills, consultationAppointmentId) : [],
+    [bills, consultationAppointmentId],
+  );
+  const consultationPaymentState = React.useMemo(
+    () => consultationFeeState(resolvedConsultationFee, consultationBills),
+    [consultationBills, resolvedConsultationFee],
+  );
+  const consultationExistingBill = React.useMemo(
+    () => consultationPaymentState.effectiveBill,
+    [consultationPaymentState.effectiveBill],
+  );
   const doctorOptions = React.useMemo(
     () => clinicUsers
       .filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR")
@@ -426,6 +543,10 @@ export default function BillsPage() {
     [consultationDoctorUserIdForDraft, doctorOptions],
   );
   const consultationFeeQuickAmount = consultationFeeAmount ?? selectedConsultationDoctor?.consultationFee ?? consultationDoctorProfile?.consultationFee ?? null;
+  const consultationDraftHasLine = React.useMemo(
+    () => form.lines.some((line) => isConsultationDraftLine(line)),
+    [form.lines],
+  );
   const selectedPatient = React.useMemo(
     () => patients.find((patient) => patient.id === form.patientId) || null,
     [patients, form.patientId],
@@ -433,6 +554,18 @@ export default function BillsPage() {
   const patientBills = React.useMemo(
     () => bills.filter((bill) => bill.patientId === form.patientId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [bills, form.patientId],
+  );
+  const preferredPatientCollectPaymentBill = React.useMemo(
+    () => preferredPatientCollectBill(patientBills),
+    [patientBills],
+  );
+  const preferredPatientReceiptViewBill = React.useMemo(
+    () => preferredPatientReceiptBill(patientBills),
+    [patientBills],
+  );
+  const preferredPatientPaymentBill = React.useMemo(
+    () => preferredPatientBill(patientBills),
+    [patientBills],
   );
   const recentPatientPayments = React.useMemo(
     () => paymentLedger.filter((payment) => payment.patientId === form.patientId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -472,19 +605,32 @@ export default function BillsPage() {
       .slice(0, 6);
   }, [itemCatalog, scanQuery]);
   const currentDraftTotals = React.useMemo(() => draftBillTotals(form), [form]);
+  const consultationDraftReady = React.useMemo(
+    () => consultationDraftHasLine && currentDraftTotals.total > 0
+      && form.appointmentId === consultationAppointmentId
+      && Boolean(form.patientId),
+    [consultationDraftHasLine, currentDraftTotals.total, form.appointmentId, form.patientId, consultationAppointmentId],
+  );
   const selectedPatientTotalDue = React.useMemo(
-    () => patientBills.reduce((sum, bill) => sum + bill.dueAmount, 0),
+    () => patientBills.reduce((sum, bill) => sum + billEffectiveDueAmount(bill), 0),
     [patientBills],
   );
   const ledgerSummary = React.useMemo(() => {
     const visibleBills = bills;
     return {
       visible: visibleBills.length,
-      paid: visibleBills.filter((bill) => bill.status === "PAID").length,
-      pending: visibleBills.filter((bill) => bill.dueAmount > 0 && bill.status !== "CANCELLED").length,
-      dueTotal: visibleBills.reduce((sum, bill) => sum + bill.dueAmount, 0),
+      paid: visibleBills.filter((bill) => billCountsAsSettled(bill)).length,
+      pending: visibleBills.filter((bill) => billHasCollectableDue(bill)).length,
+      dueTotal: visibleBills.reduce((sum, bill) => sum + billEffectiveDueAmount(bill), 0),
     };
   }, [bills]);
+  const consultationDraftSeededRef = React.useRef<string | null>(null);
+  const activePatientCollectBill = selectedBill && billHasCollectableDue(selectedBill)
+    ? selectedBill
+    : preferredPatientCollectPaymentBill;
+  const activePatientReceiptBill = selectedBill && billCountsAsSettled(selectedBill)
+    ? selectedBill
+    : preferredPatientReceiptViewBill;
 
   const loadBills = React.useCallback(async (override?: {
     patientId?: string;
@@ -598,9 +744,7 @@ export default function BillsPage() {
     if (consultationContextLoading) {
       return;
     }
-    if (resolvedConsultationFee != null) {
-      setConsultationFeeOpen(true);
-    } else {
+    if (resolvedConsultationFee == null) {
       setError(consultationContextError || "Doctor consultation fee is not configured.");
     }
   }, [consultationFeeRequested, consultationContextLoading, resolvedConsultationFee, consultationContextError]);
@@ -660,6 +804,119 @@ export default function BillsPage() {
       setConsultationDoctorUserIdForDraft(initialDoctor);
     }
   }, [consultationAppointment?.doctorUserId, consultationDoctorUserId, doctorOptions, consultationDoctorUserIdForDraft]);
+
+  React.useEffect(() => {
+    if (!consultationAppointmentId) {
+      consultationDraftSeededRef.current = null;
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      patientId: current.patientId || consultationAppointment?.patientId || consultationPatientId,
+      appointmentId: consultationAppointmentId,
+      consultationId: current.consultationId || consultationAppointment?.consultationId || "",
+    }));
+  }, [
+    consultationAppointment?.consultationId,
+    consultationAppointment?.patientId,
+    consultationAppointmentId,
+    consultationPatientId,
+  ]);
+
+  const prepareConsultationDraft = React.useCallback(() => {
+    if (consultationExistingBill) {
+      void selectBill(consultationExistingBill);
+      if ((consultationPaymentState.due ?? 0) > 0) {
+        setSuccess("Consultation fee is already billed. Collect the pending payment from the existing bill.");
+      } else {
+        setSuccess("Consultation fee is already paid for this appointment.");
+      }
+      return false;
+    }
+    if (!consultationDoctorUserIdForDraft) {
+      setError("Select the consultant before adding the consultation fee.");
+      return false;
+    }
+    if (consultationFeeQuickAmount == null || consultationFeeQuickAmount <= 0) {
+      setError("Doctor consultation fee is not configured.");
+      return false;
+    }
+    const doctorName = selectedConsultationDoctor?.displayName || consultationDoctorLabel || "Doctor";
+    const patientId = consultationAppointment?.patientId || consultationPatientId || form.patientId;
+    let added = false;
+    let alreadyPresent = false;
+    setForm((current) => {
+      const nextLine = createConsultationDraftLine(doctorName, consultationDoctorUserIdForDraft, consultationFeeQuickAmount);
+      const nextLines = current.lines.slice();
+      const existingIndex = nextLines.findIndex((line) => isConsultationDraftLine(line));
+      if (existingIndex >= 0) {
+        alreadyPresent = true;
+        nextLines[existingIndex] = {
+          ...nextLines[existingIndex],
+          ...nextLine,
+          sortOrder: nextLines[existingIndex].sortOrder || String(existingIndex + 1),
+        };
+      } else if (nextLines.length === 1 && !nextLines[0].itemName.trim()) {
+        added = true;
+        nextLines[0] = { ...nextLine, sortOrder: nextLines[0].sortOrder || "1" };
+      } else {
+        added = true;
+        nextLines.push({ ...nextLine, sortOrder: String(nextLines.length + 1) });
+      }
+      return {
+        ...current,
+        patientId: patientId || current.patientId,
+        appointmentId: consultationAppointmentId || current.appointmentId,
+        consultationId: current.consultationId || consultationAppointment?.consultationId || "",
+        lines: nextLines,
+      };
+    });
+    consultationDraftSeededRef.current = consultationAppointmentId || consultationDraftSeededRef.current;
+    setSuccess(alreadyPresent ? "Consultation fee draft is already ready." : "Consultation fee draft ready.");
+    return added || alreadyPresent;
+  }, [
+    consultationAppointment?.consultationId,
+    consultationAppointment?.patientId,
+    consultationAppointmentId,
+    consultationDoctorLabel,
+    consultationDoctorUserIdForDraft,
+    consultationExistingBill,
+    consultationFeeQuickAmount,
+    consultationPatientId,
+    form.patientId,
+    selectedConsultationDoctor?.displayName,
+  ]);
+
+  React.useEffect(() => {
+    if (!consultationFeeRequested || consultationContextLoading || consultationExistingBill) {
+      return;
+    }
+    if (consultationDraftSeededRef.current === consultationAppointmentId) {
+      return;
+    }
+    if (resolvedConsultationFee == null || resolvedConsultationFee <= 0 || !consultationDoctorUserIdForDraft) {
+      return;
+    }
+    prepareConsultationDraft();
+  }, [
+    consultationAppointmentId,
+    consultationContextLoading,
+    consultationDoctorUserIdForDraft,
+    consultationExistingBill,
+    consultationFeeRequested,
+    prepareConsultationDraft,
+    resolvedConsultationFee,
+  ]);
+
+  React.useEffect(() => {
+    if (!consultationExistingBill) {
+      return;
+    }
+    if (selectedBill?.id === consultationExistingBill.id) {
+      return;
+    }
+    void selectBill(consultationExistingBill);
+  }, [consultationExistingBill, selectedBill?.id]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -802,6 +1059,53 @@ export default function BillsPage() {
     }
   };
 
+  const resolveBillReceipt = React.useCallback(async (bill: Bill) => {
+    if (!auth.accessToken || !auth.tenantId) {
+      return null;
+    }
+    const [billPayments, billReceipts] = bill.id === selectedBill?.id
+      ? [payments, receipts]
+      : await Promise.all([
+        listBillPayments(auth.accessToken, auth.tenantId, bill.id),
+        listBillReceipts(auth.accessToken, auth.tenantId, bill.id),
+      ]);
+    const receipt = latestReceiptForBill(billReceipts, bill.id);
+    if (!receipt) {
+      return null;
+    }
+    return {
+      receipt,
+      payment: paymentForReceipt(billPayments, receipt),
+    };
+  }, [auth.accessToken, auth.tenantId, payments, receipts, selectedBill?.id]);
+
+  const openBillReceiptPreview = React.useCallback(async (bill: Bill, autoPrint = false) => {
+    const resolved = await resolveBillReceipt(bill);
+    if (!resolved) {
+      setError("Receipt is not available for this bill yet.");
+      return;
+    }
+    await openReceiptPreviewAction(resolved.receipt, resolved.payment, autoPrint);
+  }, [resolveBillReceipt]);
+
+  const openBillReceiptPdf = React.useCallback(async (bill: Bill) => {
+    const resolved = await resolveBillReceipt(bill);
+    if (!resolved) {
+      setError("Receipt is not available for this bill yet.");
+      return;
+    }
+    await openReceiptPdf(resolved.receipt);
+  }, [resolveBillReceipt]);
+
+  const sendBillReceiptEmail = React.useCallback(async (bill: Bill) => {
+    const resolved = await resolveBillReceipt(bill);
+    if (!resolved) {
+      setError("Receipt is not available for this bill yet.");
+      return;
+    }
+    await sendReceiptAction(resolved.receipt, "email");
+  }, [resolveBillReceipt]);
+
   const refundableAmount = selectedBill ? Math.max(0, selectedBill.paidAmount - selectedBill.refundedAmount) : 0;
 
   const submitRefund = async () => {
@@ -843,7 +1147,8 @@ export default function BillsPage() {
 
   const openPaymentDialog = (bill: Bill) => {
     setSelectedBill(bill);
-    setPaymentForm({ ...emptyPaymentForm(), amount: bill.dueAmount > 0 ? bill.dueAmount.toFixed(2) : bill.totalAmount.toFixed(2) });
+    const dueAmount = billEffectiveDueAmount(bill);
+    setPaymentForm({ ...emptyPaymentForm(), amount: dueAmount > 0 ? dueAmount.toFixed(2) : bill.totalAmount.toFixed(2) });
     setPaymentOpen(true);
   };
 
@@ -877,13 +1182,14 @@ export default function BillsPage() {
     setError(null);
     setSuccess(null);
     try {
-      await collectConsultationFee(auth.accessToken, auth.tenantId, {
+      const payment = await collectConsultationFee(auth.accessToken, auth.tenantId, {
         appointmentId: consultationAppointmentId,
         paymentMode: value.paymentMode,
         referenceNumber: value.referenceNumber || null,
         notes: value.notes || null,
       });
       await loadBills();
+      await refreshSelectedBill(payment.billId);
       setConsultationFeeOpen(false);
       setSuccess("Payment collected successfully.");
     } catch (err) {
@@ -1079,16 +1385,24 @@ export default function BillsPage() {
     setLedgerActionAnchorEl(null);
   };
 
+  const ledgerBillIsSettled = ledgerActionBill ? billCountsAsSettled(ledgerActionBill) : false;
   const ledgerMenuItems = ledgerActionBill ? [
     <MenuItem key="view" onClick={() => { void selectBill(ledgerActionBill); closeLedgerActions(); }}>View Bill</MenuItem>,
-    <MenuItem key="invoice" onClick={() => { void openInvoicePreviewAction(ledgerActionBill); closeLedgerActions(); }}>View Invoice</MenuItem>,
-    <MenuItem key="print" onClick={() => { void openInvoicePreviewAction(ledgerActionBill, true); closeLedgerActions(); }}>Print Invoice</MenuItem>,
-    <MenuItem key="pdf" onClick={() => { void openInvoicePdf(ledgerActionBill); closeLedgerActions(); }}>Download PDF</MenuItem>,
-    canCollectPayment ? <MenuItem key="pay" disabled={ledgerActionBill.status === "PAID" || ledgerActionBill.status === "CANCELLED" || ledgerActionBill.dueAmount <= 0} onClick={() => { openPaymentDialog(ledgerActionBill); closeLedgerActions(); }}>Add payment</MenuItem> : null,
-    canRefund ? <MenuItem key="refund" disabled={ledgerActionBill.status === "CANCELLED" || (ledgerActionBill.paidAmount - ledgerActionBill.refundedAmount) <= 0} onClick={() => { setSelectedBill(ledgerActionBill); setRefundOpen(true); closeLedgerActions(); }}>Refund</MenuItem> : null,
-    canSendInvoice ? <MenuItem key="send" disabled={workingId === ledgerActionBill.id || !ledgerActionBill.patientId} onClick={() => { void sendInvoiceAction(ledgerActionBill); closeLedgerActions(); }}>Send invoice email</MenuItem> : null,
+    ledgerBillIsSettled
+      ? <MenuItem key="receipt" onClick={() => { void openBillReceiptPreview(ledgerActionBill); closeLedgerActions(); }}>View Receipt</MenuItem>
+      : <MenuItem key="invoice" onClick={() => { void openInvoicePreviewAction(ledgerActionBill); closeLedgerActions(); }}>View Invoice</MenuItem>,
+    ledgerBillIsSettled
+      ? <MenuItem key="print-receipt" onClick={() => { void openBillReceiptPreview(ledgerActionBill, true); closeLedgerActions(); }}>Print Receipt</MenuItem>
+      : <MenuItem key="print" onClick={() => { void openInvoicePreviewAction(ledgerActionBill, true); closeLedgerActions(); }}>Print Invoice</MenuItem>,
+    ledgerBillIsSettled
+      ? <MenuItem key="receipt-pdf" onClick={() => { void openBillReceiptPdf(ledgerActionBill); closeLedgerActions(); }}>Download Receipt PDF</MenuItem>
+      : <MenuItem key="pdf" onClick={() => { void openInvoicePdf(ledgerActionBill); closeLedgerActions(); }}>Download PDF</MenuItem>,
+    canCollectPayment ? <MenuItem key="pay" disabled={!billHasCollectableDue(ledgerActionBill)} onClick={() => { openPaymentDialog(ledgerActionBill); closeLedgerActions(); }}>Add payment</MenuItem> : null,
+    canRefund ? <MenuItem key="refund" disabled={ledgerActionBill.status === "CANCELLED" || billNetPaidAmount(ledgerActionBill) <= 0} onClick={() => { setSelectedBill(ledgerActionBill); setRefundOpen(true); closeLedgerActions(); }}>Refund</MenuItem> : null,
+    canSendInvoice && !ledgerBillIsSettled ? <MenuItem key="send" disabled={workingId === ledgerActionBill.id || !ledgerActionBill.patientId} onClick={() => { void sendInvoiceAction(ledgerActionBill); closeLedgerActions(); }}>Send invoice email</MenuItem> : null,
+    canSendReceipt && ledgerBillIsSettled ? <MenuItem key="send-receipt" onClick={() => { void sendBillReceiptEmail(ledgerActionBill); closeLedgerActions(); }}>Send receipt email</MenuItem> : null,
     canUpdateBill ? <MenuItem key="issue" disabled={workingId === ledgerActionBill.id || ledgerActionBill.status !== "DRAFT"} onClick={() => { void issueCurrentBill(ledgerActionBill); closeLedgerActions(); }}>Issue</MenuItem> : null,
-    canUpdateBill ? <MenuItem key="cancel" disabled={workingId === ledgerActionBill.id || ledgerActionBill.status === "PAID"} onClick={() => { void cancelCurrentBill(ledgerActionBill); closeLedgerActions(); }}>Cancel</MenuItem> : null,
+    canCancelBill ? <MenuItem key="cancel" disabled={workingId === ledgerActionBill.id || ledgerActionBill.status === "PAID"} onClick={() => { void cancelCurrentBill(ledgerActionBill); closeLedgerActions(); }}>Cancel</MenuItem> : null,
   ].filter(Boolean) : null;
   const consultationAppointmentDisplay = consultationAppointmentLabel ? `Appointment: ${consultationAppointmentLabel}` : "Appointment: —";
   const consultationDoctorDisplay = consultationDoctorLabel ? `Doctor: ${consultationDoctorLabel}` : "Doctor: —";
@@ -1153,10 +1467,52 @@ export default function BillsPage() {
                       : <Chip size="small" label="Consultation fee missing" color="default" variant="outlined" />}
                 </Stack>
                 {consultationContextError ? <Alert severity="warning">{consultationContextError}</Alert> : null}
+                {consultationExistingBill ? (
+                  <Alert severity={(consultationPaymentState.due ?? 0) > 0 ? "warning" : "success"}>
+                    {(consultationPaymentState.due ?? 0) > 0
+                      ? `Already billed. Pending due ${formatAmount(consultationPaymentState.due)}.`
+                      : "Consultation fee already paid for this appointment."}
+                  </Alert>
+                ) : null}
                 {consultationContextLoading ? (
                   <Alert severity="info">Loading appointment billing context…</Alert>
                 ) : resolvedConsultationFee != null ? (
-                  <Button variant="contained" onClick={() => setConsultationFeeOpen(true)}>Collect consultation fee</Button>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    <Button variant="contained" onClick={() => {
+                      if (consultationPaymentState.paid) {
+                        if (consultationExistingBill) {
+                          void selectBill(consultationExistingBill);
+                          void openBillReceiptPreview(consultationExistingBill);
+                        }
+                        return;
+                      }
+                      if (consultationExistingBill) {
+                        openPaymentDialog(consultationExistingBill);
+                        return;
+                      }
+                      setConsultationFeeOpen(true);
+                    }}>
+                      {consultationExistingBill
+                        ? consultationPaymentState.paid ? "View receipt" : "Collect remaining payment"
+                        : "Collect consultation fee"}
+                    </Button>
+                    {!consultationExistingBill ? (
+                      <Button variant="outlined" onClick={() => { prepareConsultationDraft(); }}>
+                        {consultationDraftReady ? "Open draft" : "Prepare draft"}
+                      </Button>
+                    ) : null}
+                    {!consultationExistingBill && consultationDraftReady ? <Chip size="small" label="Draft ready" color="success" variant="outlined" /> : null}
+                    {consultationExistingBill ? (
+                      <Chip
+                        size="small"
+                        label={consultationPaymentState.paid ? "Already paid" : "Already billed"}
+                        color={consultationPaymentState.paid ? "success" : "warning"}
+                        variant="outlined"
+                      />
+                    ) : (
+                      <Chip size="small" label="Fee pending" color="warning" variant="outlined" />
+                    )}
+                  </Stack>
                 ) : (
                   <Alert severity="warning">Doctor consultation fee is not configured. Open the doctor profile to configure the fee before collecting payment.</Alert>
                 )}
@@ -1308,20 +1664,11 @@ export default function BillsPage() {
                         variant="contained"
                         sx={{ height: "100%" }}
                         onClick={() => {
-                          if (!consultationDoctorUserIdForDraft) return;
-                          const consultationDoctor = doctorOptions.find((doctor) => doctor.appUserId === consultationDoctorUserIdForDraft) || null;
-                          addBillLine({
-                            itemType: "CONSULTATION",
-                            itemName: `Consultation Fee - ${consultationDoctor?.displayName || "Doctor"}`,
-                            unitPrice: consultationFeeQuickAmount != null ? String(consultationFeeQuickAmount) : "",
-                            referenceId: consultationDoctorUserIdForDraft,
-                            scanCode: `CONSULTATION:${consultationDoctorUserIdForDraft}`,
-                          });
-                          setSuccess("Consultation fee added");
+                          prepareConsultationDraft();
                         }}
-                        disabled={!consultationDoctorUserIdForDraft}
+                        disabled={!consultationDoctorUserIdForDraft || consultationExistingBill != null}
                       >
-                        Add Consultation Fee
+                        {consultationExistingBill ? "Already billed" : "Add Consultation Fee"}
                       </Button>
                     </Grid>
                   </Grid>
@@ -1523,11 +1870,11 @@ export default function BillsPage() {
                     </Stack>
                     <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
                       <Button variant="outlined" size="small" onClick={() => { setForm(emptyBillForm()); setScanQuery(""); setManualScanPrompt(null); }} disabled={saving}>Reset draft</Button>
-                      <Button variant="contained" size="small" onClick={() => void createBillFromDraft(false)} disabled={saving || !canCreateBill}>
+                      <Button variant="contained" size="small" onClick={() => void createBillFromDraft(false)} disabled={saving || !canCreateBill || currentDraftTotals.total <= 0}>
                         {saving ? "Saving..." : "Create Bill"}
                       </Button>
                       {canCollectPayment ? (
-                        <Button variant="outlined" size="small" onClick={() => void createBillFromDraft(true)} disabled={saving || !canCreateBill}>
+                        <Button variant="outlined" size="small" onClick={() => void createBillFromDraft(true)} disabled={saving || !canCreateBill || currentDraftTotals.total <= 0}>
                           Create &amp; Collect Payment
                         </Button>
                       ) : null}
@@ -1559,18 +1906,49 @@ export default function BillsPage() {
                         <Chip size="small" label={`Due: ${formatAmount(selectedPatientTotalDue)}`} color="warning" variant="outlined" sx={compactChipSx} />
                         <Chip size="small" label={`Bills: ${patientBills.length}`} variant="outlined" sx={compactChipSx} />
                       </Stack>
-                      {patientBills[0] ? (
+                      {preferredPatientPaymentBill ? (
                         <Box sx={{ display: "grid", gap: 0.5 }}>
-                          <Typography variant="body2"><strong>Last bill:</strong> {patientBills[0].billNumber}</Typography>
-                          <Typography variant="body2" color="text.secondary">{patientBills[0].billDate} • Due {formatAmount(patientBills[0].dueAmount)}</Typography>
+                          <Typography variant="body2"><strong>Current bill:</strong> {preferredPatientPaymentBill.billNumber}</Typography>
+                          <Typography variant="body2" color="text.secondary">{preferredPatientPaymentBill.billDate} • Due {formatAmount(billEffectiveDueAmount(preferredPatientPaymentBill))}</Typography>
                         </Box>
                       ) : (
                         <Typography variant="body2" color="text.secondary">No previous bills found for this patient.</Typography>
                       )}
                       <Stack direction="row" spacing={1} flexWrap="wrap">
                         <Button size="small" variant="outlined" onClick={() => { if (form.patientId) { setBillFilterPatient(form.patientId); void loadBills({ patientId: form.patientId }); } }}>View bills</Button>
-                        <Button size="small" variant="outlined" onClick={() => { const bill = selectedBill || patientBills[0]; if (bill) openPaymentDialog(bill); }} disabled={!selectedBill && patientBills.length === 0}>Collect payment</Button>
-                        <Button size="small" variant="outlined" onClick={() => { const bill = selectedBill || patientBills[0]; if (bill) void openInvoicePreviewAction(bill, true); }} disabled={!selectedBill && patientBills.length === 0}>Print last invoice</Button>
+                        {activePatientCollectBill ? (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => openPaymentDialog(activePatientCollectBill)}
+                          >
+                            Collect payment
+                          </Button>
+                        ) : activePatientReceiptBill ? (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => { void openBillReceiptPreview(activePatientReceiptBill); }}
+                          >
+                            View receipt
+                          </Button>
+                        ) : null}
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => {
+                            if (activePatientCollectBill) {
+                              void openInvoicePreviewAction(activePatientCollectBill, true);
+                              return;
+                            }
+                            if (activePatientReceiptBill) {
+                              void openBillReceiptPreview(activePatientReceiptBill, true);
+                            }
+                          }}
+                          disabled={!(activePatientCollectBill || activePatientReceiptBill)}
+                        >
+                          {activePatientCollectBill ? "Print last invoice" : "Print receipt"}
+                        </Button>
                       </Stack>
                       {patientBills.length > 0 ? (
                         <Box>
@@ -1579,7 +1957,7 @@ export default function BillsPage() {
                             {patientBills.slice(0, 4).map((bill) => (
                               <ListItemButton key={bill.id} onClick={() => void selectBill(bill)} sx={{ borderRadius: 1 }}>
                                 <ListItemText
-                                  primary={`${bill.billNumber} • ${formatAmount(bill.dueAmount)}`}
+                                  primary={`${bill.billNumber} • ${formatAmount(billEffectiveDueAmount(bill))}`}
                                   secondary={`${bill.billDate} • ${bill.status}`}
                                 />
                               </ListItemButton>
@@ -1645,8 +2023,9 @@ export default function BillsPage() {
                         <Chip label={selectedBill.status} color={statusColor(selectedBill.status)} sx={compactChipSx} />
                       </Box>
                       <Stack direction="row" spacing={0.75} flexWrap="wrap">
-                        <Chip size="small" label={`Due: ${formatAmount(selectedBill.dueAmount)}`} color="warning" variant="outlined" sx={compactChipSx} />
-                        <Chip size="small" label={`Paid: ${formatAmount(selectedBill.paidAmount)}`} variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`Due: ${formatAmount(billEffectiveDueAmount(selectedBill))}`} color="warning" variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`Net paid: ${formatAmount(billNetPaidAmount(selectedBill))}`} variant="outlined" sx={compactChipSx} />
+                        {billRefundedAmount(selectedBill) > 0 ? <Chip size="small" label={`Gross paid: ${formatAmount(selectedBill.paidAmount)}`} variant="outlined" sx={compactChipSx} /> : null}
                         <Chip size="small" label={`Refunded: ${formatAmount(selectedBill.refundedAmount)}`} variant="outlined" sx={compactChipSx} />
                       </Stack>
                       <Grid container spacing={1}>
@@ -1656,14 +2035,24 @@ export default function BillsPage() {
                         <Grid size={{ xs: 6 }}><Typography variant="body2">Total: {formatAmount(selectedBill.totalAmount)}</Typography></Grid>
                       </Grid>
                       <Stack direction="row" spacing={1} flexWrap="wrap">
-                        <Button size="small" variant="outlined" onClick={() => void openInvoicePreviewAction(selectedBill)}>View Invoice</Button>
-                        <Button size="small" variant="outlined" onClick={() => void openInvoicePreviewAction(selectedBill, true)}>Print Invoice</Button>
-                        <Button size="small" variant="outlined" onClick={() => void openInvoicePdf(selectedBill)}>Download PDF</Button>
-                        {canCollectPayment ? <Button size="small" variant="outlined" onClick={() => openPaymentDialog(selectedBill)} disabled={selectedBill.status === "PAID" || selectedBill.status === "CANCELLED" || selectedBill.dueAmount <= 0}>Add payment</Button> : null}
-                        {canRefund ? <Button size="small" variant="outlined" onClick={() => { setRefundOpen(true); }} disabled={selectedBill.status === "CANCELLED" || (selectedBill.paidAmount - selectedBill.refundedAmount) <= 0}>Refund</Button> : null}
-                        {canSendInvoice ? <Button size="small" variant="outlined" onClick={() => void sendInvoiceAction(selectedBill)} disabled={workingId === selectedBill.id || !selectedBill.patientId}>Send invoice email</Button> : null}
+                        {billCountsAsSettled(selectedBill) ? (
+                          <>
+                            <Button size="small" variant="outlined" onClick={() => void openBillReceiptPreview(selectedBill)}>View Receipt</Button>
+                            <Button size="small" variant="outlined" onClick={() => void openBillReceiptPreview(selectedBill, true)}>Print Receipt</Button>
+                            <Button size="small" variant="outlined" onClick={() => void openBillReceiptPdf(selectedBill)}>Download Receipt PDF</Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button size="small" variant="outlined" onClick={() => void openInvoicePreviewAction(selectedBill)}>View Invoice</Button>
+                            <Button size="small" variant="outlined" onClick={() => void openInvoicePreviewAction(selectedBill, true)}>Print Invoice</Button>
+                            <Button size="small" variant="outlined" onClick={() => void openInvoicePdf(selectedBill)}>Download PDF</Button>
+                          </>
+                        )}
+                        {canCollectPayment ? <Button size="small" variant="outlined" onClick={() => openPaymentDialog(selectedBill)} disabled={!billHasCollectableDue(selectedBill)}>Add payment</Button> : null}
+                        {canRefund ? <Button size="small" variant="outlined" onClick={() => { setRefundOpen(true); }} disabled={selectedBill.status === "CANCELLED" || billNetPaidAmount(selectedBill) <= 0}>Refund</Button> : null}
+                        {canSendInvoice && !billCountsAsSettled(selectedBill) ? <Button size="small" variant="outlined" onClick={() => void sendInvoiceAction(selectedBill)} disabled={workingId === selectedBill.id || !selectedBill.patientId}>Send invoice email</Button> : null}
                         {canUpdateBill ? <Button size="small" variant="outlined" onClick={() => void issueCurrentBill(selectedBill)} disabled={workingId === selectedBill.id || selectedBill.status !== "DRAFT"}>Issue</Button> : null}
-                        {canUpdateBill ? <Button size="small" variant="outlined" onClick={() => void cancelCurrentBill(selectedBill)} disabled={workingId === selectedBill.id || selectedBill.status === "PAID"}>Cancel</Button> : null}
+                        {canCancelBill ? <Button size="small" variant="outlined" onClick={() => void cancelCurrentBill(selectedBill)} disabled={workingId === selectedBill.id || selectedBill.status === "PAID"}>Cancel</Button> : null}
                       </Stack>
                     </Stack>
                   </CardContent>
@@ -1686,7 +2075,7 @@ export default function BillsPage() {
                     <Chip size="small" label={`Pending ${ledgerSummary.pending}`} color="warning" variant="outlined" sx={compactChipSx} />
                     <Chip size="small" label={`Due ${formatAmount(ledgerSummary.dueTotal)}`} color="warning" variant="outlined" sx={compactChipSx} />
                   </Stack>
-                  <Typography variant="body2" color="text.secondary">Compact bill list with actions for invoice, PDF, refund, and receipt delivery.</Typography>
+                  <Typography variant="body2" color="text.secondary">Compact bill and receipt ledger with payment, refund, invoice, and receipt actions.</Typography>
                 </Box>
                 <Stack direction="row" spacing={1} flexWrap="wrap">
                   <Button size="small" variant="outlined" onClick={() => setLedgerCollapsed((current) => !current)}>
@@ -1745,7 +2134,12 @@ export default function BillsPage() {
                             <TableCell>
                               <Stack spacing={0.25}>
                                 <Typography variant="body2" sx={{ fontWeight: 800 }}>{bill.billNumber}</Typography>
-                                <Typography variant="caption" color="text.secondary">{bill.consultationId ? "Consultation bill" : "Bill"}{bill.appointmentId ? ` • Appointment ${bill.appointmentId}` : ""}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {billCountsAsSettled(bill)
+                                    ? (bill.consultationId ? "Consultation receipt ready" : "Receipt ready")
+                                    : (bill.consultationId ? "Consultation bill" : "Bill")}
+                                  {bill.appointmentId ? ` • Appointment ${bill.appointmentId}` : ""}
+                                </Typography>
                               </Stack>
                             </TableCell>
                             <TableCell>
@@ -1755,8 +2149,13 @@ export default function BillsPage() {
                             <TableCell>
                               <Chip size="small" label={bill.status} color={statusColor(bill.status)} variant="outlined" sx={compactChipSx} />
                             </TableCell>
-                            <TableCell align="right"><Typography variant="body2" sx={{ fontWeight: 700 }}>{formatAmount(bill.dueAmount)}</Typography></TableCell>
-                            <TableCell align="right">{formatAmount(bill.paidAmount)}</TableCell>
+                            <TableCell align="right"><Typography variant="body2" sx={{ fontWeight: 700 }}>{formatAmount(billEffectiveDueAmount(bill))}</Typography></TableCell>
+                            <TableCell align="right">
+                              <Stack spacing={0.25} alignItems="flex-end">
+                                <Typography variant="body2">{formatAmount(billNetPaidAmount(bill))}</Typography>
+                                {billRefundedAmount(bill) > 0 ? <Typography variant="caption" color="text.secondary">Refunded {formatAmount(billRefundedAmount(bill))}</Typography> : null}
+                              </Stack>
+                            </TableCell>
                             <TableCell align="right">{bill.billDate}</TableCell>
                             <TableCell align="right">
                               <Stack direction="row" spacing={0.5} justifyContent="flex-end" flexWrap="wrap">

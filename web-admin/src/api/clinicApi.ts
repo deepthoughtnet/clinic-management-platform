@@ -253,6 +253,37 @@ export type VoiceProviderTrace = {
   ttsProvider: string | null;
 };
 
+export type VoiceWorkflowMode = "generic" | "appointment-booking";
+
+export type VoiceSuggestedSlot = {
+  doctorUserId: string | null;
+  doctorName: string | null;
+  appointmentDate: string | null;
+  slotTime: string | null;
+  slotEndTime: string | null;
+};
+
+export type VoiceWorkflowSummary = {
+  mode: string;
+  intentState: string | null;
+  language: string | null;
+  patientName: string | null;
+  patientPhone: string | null;
+  doctorUserId: string | null;
+  doctorName: string | null;
+  preferredDate: string | null;
+  preferredTimeWindow: string | null;
+  reason: string | null;
+  missingFields: string[] | null;
+  suggestedSlot: VoiceSuggestedSlot | null;
+  confirmationRequested: boolean;
+  bookingConfirmed: boolean;
+  handoffRequired: boolean;
+  handoffReason: string | null;
+  nextPrompt: string | null;
+  unresolvedTurns: number;
+};
+
 export type VoiceDebugTraceEntry = {
   stage: string;
   ok: boolean;
@@ -280,6 +311,7 @@ export type VoiceTestResponse = {
   audioBase64: string | null;
   providerTrace: VoiceProviderTrace | null;
   voiceDebugTrace: VoiceDebugTraceEntry[] | null;
+  workflowSummary: VoiceWorkflowSummary | null;
 };
 
 export type VoiceSttDebugResponse = {
@@ -315,6 +347,12 @@ export type VoiceLiveStatusResponse = {
   tenantMode: string;
   vadMode: string;
   vadProvider: string;
+  heartbeatIntervalMs: number;
+  staleAfterMs: number;
+  maxSessionDurationSeconds: number;
+  maxIdleSeconds: number;
+  maxTurnsPerSession: number;
+  maxAudioBytesPerTurn: number;
 };
 
 export type ReportRow = Record<string, string | number | boolean | null>;
@@ -475,6 +513,10 @@ export type Appointment = {
   type: AppointmentType;
   priority: AppointmentPriority;
   status: AppointmentStatus;
+  paymentBypassReason: string | null;
+  paymentBypassNotes: string | null;
+  paymentBypassedBy: string | null;
+  paymentBypassedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -1758,8 +1800,27 @@ export async function createWalkInAppointment(token: string, tenantId: string, b
   return httpPost<Appointment>("/api/appointments/walk-in", body, { token, tenantId });
 }
 
-export async function updateAppointmentStatus(token: string, tenantId: string, id: string, status: AppointmentStatus, comment?: string | null) {
-  return httpPatch<Appointment>(`/api/appointments/${id}/status`, { status, comment: comment || null }, { token, tenantId });
+export async function updateAppointmentStatus(
+  token: string,
+  tenantId: string,
+  id: string,
+  status: AppointmentStatus,
+  comment?: string | null,
+  options?: {
+    paymentBypassReason?: string | null;
+    paymentBypassNotes?: string | null;
+  },
+) {
+  return httpPatch<Appointment>(
+    `/api/appointments/${id}/status`,
+    {
+      status,
+      comment: comment || null,
+      paymentBypassReason: options?.paymentBypassReason || null,
+      paymentBypassNotes: options?.paymentBypassNotes || null,
+    },
+    { token, tenantId },
+  );
 }
 
 export async function updateAppointmentPriority(token: string, tenantId: string, id: string, priority: AppointmentPriority) {
@@ -2290,12 +2351,14 @@ export async function runVoiceTest(
     audio: File;
     context?: string;
     language?: string;
+    workflowMode?: VoiceWorkflowMode;
   },
 ) {
   const formData = new FormData();
   formData.append("audio", input.audio, normalizeVoiceUploadFilename(input.audio));
   if (input.context?.trim()) formData.append("context", input.context.trim());
   if (input.language?.trim()) formData.append("language", input.language.trim());
+  if (input.workflowMode?.trim()) formData.append("workflowMode", input.workflowMode.trim());
   return httpPostForm<VoiceTestResponse>("/api/voice/test", formData, { token, tenantId });
 }
 

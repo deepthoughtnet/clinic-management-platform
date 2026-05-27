@@ -157,7 +157,8 @@ async function parseResponse<T>(res: Response): Promise<T> {
   }
 
   const text = await res.text();
-  return (text ? JSON.parse(text) : undefined) as T;
+  const payload = text.trim();
+  return (payload ? JSON.parse(payload) : undefined) as T;
 }
 
 function looksLikeMarkup(text: string): boolean {

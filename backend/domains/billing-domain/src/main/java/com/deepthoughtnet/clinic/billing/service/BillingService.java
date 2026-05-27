@@ -283,7 +283,8 @@ public class BillingService {
             throw new IllegalArgumentException("Doctor consultation fee is not configured.");
         }
 
-        BillEntity consultationBill = findConsultationFeeBill(tenantId, command.appointmentId()).orElse(null);
+        ConsultationFeeAssessment assessment = assessConsultationFee(tenantId, command.appointmentId(), consultationFee);
+        BillEntity consultationBill = assessment.reusableBill();
         if (consultationBill == null) {
             BillUpsertCommand billCommand = new BillUpsertCommand(
                     appointment.patientId(),
@@ -301,7 +302,7 @@ public class BillingService {
                     BillItemType.CONSULTATION,
                             StringUtils.hasText(appointment.doctorName()) ? "Consultation fee - " + appointment.doctorName() : "Consultation fee",
                             1,
-                            consultationFee,
+                            assessment.remainingDue(),
                             command.appointmentId(),
                             1,
                             ZERO,
@@ -311,15 +312,13 @@ public class BillingService {
             );
             BillRecord createdBill = createDraft(tenantId, billCommand, actorAppUserId);
             consultationBill = findBill(tenantId, createdBill.id());
-        } else {
-            refreshFinancials(consultationBill);
         }
 
-        if (consultationBill.getDueAmount().compareTo(ZERO) <= 0) {
+        if (assessment.remainingDue().compareTo(ZERO) <= 0) {
             throw new IllegalArgumentException("Consultation fee is already paid.");
         }
 
-        BigDecimal paymentAmount = consultationBill.getDueAmount();
+        BigDecimal paymentAmount = assessment.remainingDue();
         PaymentRecord payment = recordPayment(
                 tenantId,
                 consultationBill.getId(),
@@ -346,13 +345,26 @@ public class BillingService {
         if (doctorProfile == null || doctorProfile.consultationFee() == null || doctorProfile.consultationFee().compareTo(ZERO) <= 0) {
             return;
         }
-        BillEntity bill = findConsultationFeeBill(tenantId, appointmentId).orElse(null);
-        if (bill == null) {
+        ConsultationFeeAssessment assessment = assessConsultationFee(tenantId, appointmentId, normalizeMoney(doctorProfile.consultationFee()));
+        if (assessment.reusableBill() == null && assessment.remainingDue().compareTo(ZERO) > 0) {
             throw new IllegalArgumentException("Consultation fee must be collected before check-in.");
         }
-        if (bill.getDueAmount().compareTo(ZERO) > 0) {
+        if (assessment.remainingDue().compareTo(ZERO) > 0) {
             throw new IllegalArgumentException("Consultation fee must be collected before check-in.");
         }
+    }
+
+    @Transactional(readOnly = true)
+    public BigDecimal consultationFeeDueAmount(UUID tenantId, UUID appointmentId) {
+        requireTenant(tenantId);
+        requireId(appointmentId, "appointmentId");
+        var appointment = appointmentService.findById(tenantId, appointmentId);
+        DoctorProfileRecord doctorProfile = doctorProfileService.findByDoctorUserId(tenantId, appointment.doctorUserId()).orElse(null);
+        if (doctorProfile == null || doctorProfile.consultationFee() == null || doctorProfile.consultationFee().compareTo(ZERO) <= 0) {
+            return ZERO;
+        }
+        ConsultationFeeAssessment assessment = assessConsultationFee(tenantId, appointmentId, normalizeMoney(doctorProfile.consultationFee()));
+        return assessment.remainingDue();
     }
 
     @Transactional
@@ -607,16 +619,54 @@ public class BillingService {
     }
 
     private Optional<BillEntity> findConsultationFeeBill(UUID tenantId, UUID appointmentId) {
+        return consultationFeeBills(tenantId, appointmentId).stream().findFirst();
+    }
+
+    private ConsultationFeeAssessment assessConsultationFee(UUID tenantId, UUID appointmentId, BigDecimal consultationFee) {
+        BigDecimal configuredFee = normalizeMoney(consultationFee);
+        List<BillEntity> consultationBills = consultationFeeBills(tenantId, appointmentId);
+        BigDecimal aggregateNetPaid = consultationBills.stream()
+                .map(BillEntity::getNetPaidAmount)
+                .map(this::normalizeMoney)
+                .reduce(ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal remainingDue = configuredFee.subtract(aggregateNetPaid).setScale(2, RoundingMode.HALF_UP);
+        if (remainingDue.compareTo(ZERO) < 0) {
+            remainingDue = ZERO;
+        }
+
+        BillEntity reusableBill = consultationBills.stream()
+                .filter(bill -> normalizeMoney(bill.getDueAmount()).compareTo(ZERO) > 0)
+                .sorted((left, right) -> normalizeMoney(left.getDueAmount()).compareTo(normalizeMoney(right.getDueAmount())))
+                .findFirst()
+                .orElse(consultationBills.stream().findFirst().orElse(null));
+        return new ConsultationFeeAssessment(configuredFee, aggregateNetPaid, remainingDue, reusableBill);
+    }
+
+    private List<BillEntity> consultationFeeBills(UUID tenantId, UUID appointmentId) {
         List<BillEntity> bills = billRepository.findByTenantIdAndAppointmentIdOrderByCreatedAtDesc(tenantId, appointmentId);
+        List<BillEntity> consultationBills = new ArrayList<>();
         for (BillEntity bill : bills) {
             if (bill.getStatus() == BillStatus.CANCELLED) {
                 continue;
             }
-            if (billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, bill.getId()).stream().anyMatch(line -> line.getItemType() == BillItemType.CONSULTATION)) {
-                return Optional.of(bill);
+            boolean consultationLine = billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, bill.getId()).stream()
+                    .anyMatch(line -> line.getItemType() == BillItemType.CONSULTATION);
+            if (!consultationLine) {
+                continue;
             }
+            refreshFinancials(bill);
+            consultationBills.add(bill);
         }
-        return Optional.empty();
+        return consultationBills;
+    }
+
+    private record ConsultationFeeAssessment(
+            BigDecimal configuredFee,
+            BigDecimal aggregateNetPaid,
+            BigDecimal remainingDue,
+            BillEntity reusableBill
+    ) {
     }
 
     private void validate(RefundCommand command) {

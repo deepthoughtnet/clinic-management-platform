@@ -70,6 +70,18 @@ public class AppointmentEntity {
     @Column(nullable = false, length = 24)
     private AppointmentStatus status;
 
+    @Column(name = "payment_bypass_reason", length = 64)
+    private String paymentBypassReason;
+
+    @Column(name = "payment_bypass_notes")
+    private String paymentBypassNotes;
+
+    @Column(name = "payment_bypassed_by")
+    private UUID paymentBypassedBy;
+
+    @Column(name = "payment_bypassed_at")
+    private OffsetDateTime paymentBypassedAt;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
@@ -118,6 +130,14 @@ public class AppointmentEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    public void setPaymentBypass(String reason, String notes, UUID bypassedBy, OffsetDateTime bypassedAt) {
+        this.paymentBypassReason = reason;
+        this.paymentBypassNotes = notes;
+        this.paymentBypassedBy = bypassedBy;
+        this.paymentBypassedAt = bypassedAt;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public UUID getId() {
         return id;
     }
@@ -160,6 +180,22 @@ public class AppointmentEntity {
 
     public AppointmentStatus getStatus() {
         return status;
+    }
+
+    public String getPaymentBypassReason() {
+        return paymentBypassReason;
+    }
+
+    public String getPaymentBypassNotes() {
+        return paymentBypassNotes;
+    }
+
+    public UUID getPaymentBypassedBy() {
+        return paymentBypassedBy;
+    }
+
+    public OffsetDateTime getPaymentBypassedAt() {
+        return paymentBypassedAt;
     }
 
     public OffsetDateTime getCreatedAt() {

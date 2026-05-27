@@ -8,6 +8,10 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   Grid,
   InputLabel,
@@ -169,6 +173,35 @@ function billHasConsultationLine(bill: Bill) {
   return bill.lines.some((line) => line.itemType === "CONSULTATION");
 }
 
+function consultationBillsByAppointment(bills: Bill[], appointmentId: string) {
+  return bills
+    .filter((bill) => bill.appointmentId === appointmentId && billHasConsultationLine(bill) && bill.status !== "CANCELLED")
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function consultationEffectiveBill(bills: Bill[]) {
+  return bills.find((bill) => bill.dueAmount > 0) || bills[0] || null;
+}
+
+function consultationFeeSummary(consultationFee: number | null, bills: Bill[]) {
+  const effectiveFee = consultationFee ?? (bills.length > 0 ? Math.max(...bills.map((bill) => bill.totalAmount)) : null);
+  const netPaid = bills.reduce((sum, bill) => sum + Math.max(0, bill.netPaidAmount ?? (bill.paidAmount - bill.refundedAmount)), 0);
+  const due = effectiveFee == null ? null : Math.max(0, effectiveFee - netPaid);
+  const feeStatus: FeeStatus = effectiveFee == null || effectiveFee <= 0
+    ? "NOT_CONFIGURED"
+    : (due ?? 0) <= 0
+      ? "PAID"
+      : netPaid > 0
+        ? "PARTIAL"
+        : "UNPAID";
+  return {
+    consultationBill: consultationEffectiveBill(bills),
+    feeStatus,
+    feeDueAmount: due,
+    feePaidAmount: effectiveFee == null ? null : Math.min(effectiveFee, netPaid),
+  };
+}
+
 type FeeStatus = "NOT_CONFIGURED" | "UNPAID" | "PARTIAL" | "PAID";
 
 type QueueViewRow = Appointment & {
@@ -183,6 +216,27 @@ type FeeDialogState = {
   appointment: QueueViewRow;
   action: "collect" | "collect-and-check-in";
 };
+
+type CheckInBypassReason =
+  | "EMERGENCY"
+  | "DOCTOR_APPROVED"
+  | "PATIENT_WILL_PAY_AFTER_CONSULTATION"
+  | "BILLING_COUNTER_UNAVAILABLE"
+  | "OTHER";
+
+type CheckInBypassDialogState = {
+  appointment: QueueViewRow;
+  reason: CheckInBypassReason;
+  notes: string;
+};
+
+const CHECK_IN_BYPASS_REASON_OPTIONS: Array<{ value: CheckInBypassReason; label: string }> = [
+  { value: "EMERGENCY", label: "Emergency" },
+  { value: "DOCTOR_APPROVED", label: "Doctor approved" },
+  { value: "PATIENT_WILL_PAY_AFTER_CONSULTATION", label: "Patient will pay after consultation" },
+  { value: "BILLING_COUNTER_UNAVAILABLE", label: "Billing counter unavailable" },
+  { value: "OTHER", label: "Other" },
+];
 
 export default function QueuePage() {
   const auth = useAuth();
@@ -201,6 +255,7 @@ export default function QueuePage() {
   const [savingId, setSavingId] = React.useState<string | null>(null);
   const [draggingId, setDraggingId] = React.useState<string | null>(null);
   const [feeDialog, setFeeDialog] = React.useState<FeeDialogState | null>(null);
+  const [bypassDialog, setBypassDialog] = React.useState<CheckInBypassDialogState | null>(null);
 
   const today = React.useMemo(() => localDateKey(), []);
   const tenantRole = (auth.tenantRole || "").toUpperCase();
@@ -208,6 +263,7 @@ export default function QueuePage() {
   const isClinicAdmin = tenantRole === "CLINIC_ADMIN";
   const isReceptionist = tenantRole === "RECEPTIONIST";
   const canCollectFee = auth.hasPermission("billing.create") || auth.hasPermission("payment.collect");
+  const canBypassPaymentCheckIn = auth.hasPermission("appointment.checkin.payment_bypass");
   const canStartConsultation = isDoctor && auth.hasPermission("consultation.create");
   const canManageDeskStatus = (isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage");
   const canReorderQueue = (isDoctor || isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage") && Boolean(doctorUserId || isDoctor);
@@ -249,48 +305,22 @@ export default function QueuePage() {
     });
   }, [appointments, effectiveDoctorId, users]);
 
-  const queueBillingByAppointmentId = React.useMemo(() => {
-    const map = new Map<string, Bill>();
-    for (const bill of bills) {
-      if (!bill.appointmentId || !billHasConsultationLine(bill)) {
-        continue;
-      }
-      if (!map.has(bill.appointmentId)) {
-        map.set(bill.appointmentId, bill);
-      }
-    }
-    return map;
-  }, [bills]);
-
   const queueRowsWithFee = React.useMemo<QueueViewRow[]>(() => {
     return queueRows.map((appointment) => {
       const doctorProfile = doctorProfiles[appointment.doctorUserId];
-      const consultationBill = appointment.id ? queueBillingByAppointmentId.get(appointment.id) || null : null;
-      const consultationFeeAmount = doctorProfile?.consultationFee ?? consultationBill?.totalAmount ?? null;
-      let feeStatus: FeeStatus = "NOT_CONFIGURED";
-      let feeDueAmount: number | null = null;
-      let feePaidAmount: number | null = null;
-      if (consultationBill) {
-        feeDueAmount = consultationBill.dueAmount;
-        feePaidAmount = consultationBill.paidAmount;
-        feeStatus = consultationBill.dueAmount > 0
-          ? consultationBill.paidAmount > 0 ? "PARTIAL" : "UNPAID"
-          : "PAID";
-      } else if (consultationFeeAmount != null && consultationFeeAmount > 0) {
-        feeStatus = "UNPAID";
-        feeDueAmount = consultationFeeAmount;
-        feePaidAmount = 0;
-      }
+      const consultationBills = appointment.id ? consultationBillsByAppointment(bills, appointment.id) : [];
+      const consultationFeeAmount = doctorProfile?.consultationFee ?? (consultationBills.length > 0 ? Math.max(...consultationBills.map((bill) => bill.totalAmount)) : null);
+      const feeSummary = consultationFeeSummary(consultationFeeAmount, consultationBills);
       return {
         ...appointment,
         consultationFeeAmount,
-        consultationBill,
-        feeStatus,
-        feeDueAmount,
-        feePaidAmount,
+        consultationBill: feeSummary.consultationBill,
+        feeStatus: feeSummary.feeStatus,
+        feeDueAmount: feeSummary.feeDueAmount,
+        feePaidAmount: feeSummary.feePaidAmount,
       };
     });
-  }, [doctorProfiles, queueBillingByAppointmentId, queueRows]);
+  }, [bills, doctorProfiles, queueRows]);
 
   const visibleRows = React.useMemo(() => {
     const term = queueSearch.trim().toLowerCase();
@@ -337,11 +367,10 @@ export default function QueuePage() {
         const rows = await getClinicUsers(auth.accessToken, auth.tenantId);
         if (cancelled) return;
         setUsers(rows);
-        const firstDoctor = rows.find((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
         if (isDoctor && auth.appUserId) {
           setDoctorUserId(auth.appUserId);
         } else {
-          setDoctorUserId((current) => current || firstDoctor?.appUserId || "");
+          setDoctorUserId((current) => current || doctorUserIdFromQuery || "");
         }
       } catch (err) {
         if (!cancelled) {
@@ -358,7 +387,7 @@ export default function QueuePage() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken, auth.appUserId, auth.tenantId, isDoctor, tenantReady]);
+  }, [auth.accessToken, auth.appUserId, auth.tenantId, doctorUserIdFromQuery, isDoctor, tenantReady]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -584,6 +613,41 @@ export default function QueuePage() {
     }
   };
 
+  const openBypassDialog = (appointment: QueueViewRow) => {
+    setError(null);
+    setBypassDialog({
+      appointment,
+      reason: "EMERGENCY",
+      notes: "",
+    });
+  };
+
+  const submitBypassDialog = async () => {
+    if (!bypassDialog || !auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    const { appointment, reason, notes } = bypassDialog;
+    if (reason === "OTHER" && !notes.trim()) {
+      setError("Please add notes when selecting Other for payment bypass.");
+      return;
+    }
+    setSavingId(appointment.id);
+    setError(null);
+    try {
+      await updateAppointmentStatus(auth.accessToken, auth.tenantId, appointment.id, "WAITING", null, {
+        paymentBypassReason: reason,
+        paymentBypassNotes: notes.trim() || null,
+      });
+      setBypassDialog(null);
+      await refreshQueue();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to check in with payment pending.");
+      console.error("Queue payment bypass failed", err);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   const openConsultationBilling = (appointmentId: string) => {
     const row = queueRowsWithFee.find((item) => item.id === appointmentId);
     if (!row) {
@@ -609,17 +673,31 @@ export default function QueuePage() {
   };
 
   const renderFeeStatus = (row: QueueViewRow) => {
-    switch (row.feeStatus) {
-      case "PAID":
-        return <Chip size="small" label={`Paid${row.consultationFeeAmount != null ? ` • ${formatMoney(row.consultationFeeAmount)}` : ""}`} color="success" variant="outlined" />;
-      case "PARTIAL":
-        return <Chip size="small" label={`Partial${row.feeDueAmount != null ? ` • Due ${formatMoney(row.feeDueAmount)}` : ""}`} color="warning" variant="outlined" />;
-      case "UNPAID":
-        return <Chip size="small" label={`Unpaid${row.consultationFeeAmount != null ? ` • ${formatMoney(row.consultationFeeAmount)}` : ""}`} color="warning" />;
-      case "NOT_CONFIGURED":
-      default:
-        return <Chip size="small" label="Doctor fee missing" color="default" variant="outlined" />;
+    const paymentChip = (() => {
+      switch (row.feeStatus) {
+        case "PAID":
+          return <Chip size="small" label={`Paid${row.consultationFeeAmount != null ? ` • ${formatMoney(row.consultationFeeAmount)}` : ""}`} color="success" variant="outlined" />;
+        case "PARTIAL":
+          return <Chip size="small" label={`Partial${row.feeDueAmount != null ? ` • Due ${formatMoney(row.feeDueAmount)}` : ""}`} color="warning" variant="outlined" />;
+        case "UNPAID":
+          return <Chip size="small" label={`Unpaid${row.consultationFeeAmount != null ? ` • ${formatMoney(row.consultationFeeAmount)}` : ""}`} color="warning" />;
+        case "NOT_CONFIGURED":
+        default:
+          return <Chip size="small" label="Doctor fee missing" color="default" variant="outlined" />;
+      }
+    })();
+    if (!row.paymentBypassedAt) {
+      return paymentChip;
     }
+    const bypassDueLabel = row.feeDueAmount != null && row.feeDueAmount > 0
+      ? `Pay later • Due ${formatMoney(row.feeDueAmount)}`
+      : "Payment bypassed";
+    return (
+      <Stack spacing={0.35} alignItems="flex-start">
+        {paymentChip}
+        <Chip size="small" label={bypassDueLabel} color="secondary" variant="outlined" />
+      </Stack>
+    );
   };
 
   const queueTitle = effectiveDoctorId ? displayDoctorName(users, effectiveDoctorId) : "All Doctors";
@@ -798,7 +876,9 @@ export default function QueuePage() {
                               {appointment.feeStatus === "NOT_CONFIGURED" ? (
                                 <Typography variant="caption" color="text.secondary">Doctor consultation fee is not configured.</Typography>
                               ) : checkInBlocked ? (
-                                <Typography variant="caption" color="text.secondary">Consultation fee pending. Collect fee before check-in.</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {appointment.paymentBypassedAt ? "Checked in with payment pending override." : "Consultation fee pending. Collect fee before check-in."}
+                                </Typography>
                               ) : null}
                             </Stack>
                           </TableCell>
@@ -815,6 +895,11 @@ export default function QueuePage() {
                               {appointment.consultationBill ? (
                                 <Button size="small" variant="outlined" onClick={() => openBillHistory(appointment.id)}>
                                   View Billing
+                                </Button>
+                              ) : null}
+                              {canManageDeskStatus && canBypassPaymentCheckIn && appointment.status === "BOOKED" && appointment.feeStatus !== "PAID" && appointment.feeStatus !== "NOT_CONFIGURED" ? (
+                                <Button size="small" variant="outlined" color="secondary" disabled={savingId === appointment.id} onClick={() => openBypassDialog(appointment)}>
+                                  Pay after consultation
                                 </Button>
                               ) : null}
                               {canStartConsultation && appointment.status === "WAITING" ? (
@@ -857,7 +942,7 @@ export default function QueuePage() {
       </Card>
 
       {feeDialog ? (
-          <ConsultationFeeDialog
+        <ConsultationFeeDialog
           open
           title={feeDialog.action === "collect-and-check-in" ? "Collect consultation fee and check in" : "Collect consultation fee"}
           appointmentLabel={`${feeDialog.appointment.appointmentDate} ${toFive(feeDialog.appointment.appointmentTime)}`}
@@ -868,6 +953,60 @@ export default function QueuePage() {
           onClose={() => setFeeDialog(null)}
           onSubmit={submitFeeDialog}
         />
+      ) : null}
+
+      {bypassDialog ? (
+        <Dialog open onClose={() => setBypassDialog(null)} fullWidth maxWidth="sm">
+          <DialogTitle>Check-in with payment pending</DialogTitle>
+          <DialogContent>
+            <Stack spacing={1.5} sx={{ pt: 0.5 }}>
+              <Typography variant="body2" color="text.secondary">
+                Consultation fee will remain due and auditable. Select a reason before allowing check-in.
+              </Typography>
+              <Typography variant="body2">
+                Patient: <strong>{bypassDialog.appointment.patientName || bypassDialog.appointment.patientNumber || bypassDialog.appointment.patientId}</strong>
+              </Typography>
+              <Typography variant="body2">
+                Due: <strong>{formatMoney(bypassDialog.appointment.feeDueAmount ?? bypassDialog.appointment.consultationFeeAmount)}</strong>
+              </Typography>
+              <FormControl fullWidth size="small">
+                <InputLabel id="payment-bypass-reason-label">Reason</InputLabel>
+                <Select
+                  labelId="payment-bypass-reason-label"
+                  label="Reason"
+                  value={bypassDialog.reason}
+                  onChange={(event) => setBypassDialog((current) => current ? {
+                    ...current,
+                    reason: event.target.value as CheckInBypassReason,
+                  } : current)}
+                >
+                  {CHECK_IN_BYPASS_REASON_OPTIONS.map((option) => (
+                    <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <TextField
+                label="Notes"
+                size="small"
+                multiline
+                minRows={2}
+                value={bypassDialog.notes}
+                onChange={(event) => setBypassDialog((current) => current ? {
+                  ...current,
+                  notes: event.target.value,
+                } : current)}
+                required={bypassDialog.reason === "OTHER"}
+                helperText={bypassDialog.reason === "OTHER" ? "Notes are required when selecting Other." : "Optional operational notes for audit."}
+              />
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setBypassDialog(null)}>Cancel</Button>
+            <Button variant="contained" color="secondary" disabled={savingId === bypassDialog.appointment.id} onClick={() => void submitBypassDialog()}>
+              Confirm check-in
+            </Button>
+          </DialogActions>
+        </Dialog>
       ) : null}
     </Stack>
   );

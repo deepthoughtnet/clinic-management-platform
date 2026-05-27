@@ -10,6 +10,7 @@ import com.deepthoughtnet.clinic.api.appointment.dto.WalkInAppointmentRequest;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
+import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria;
@@ -21,13 +22,17 @@ import com.deepthoughtnet.clinic.appointment.service.model.WalkInAppointmentComm
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import com.deepthoughtnet.clinic.platform.security.Permissions;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -46,21 +51,32 @@ import jakarta.validation.Valid;
 @Validated
 @RequestMapping("/api/appointments")
 public class AppointmentController {
+    private static final Set<String> PAYMENT_BYPASS_REASONS = Set.of(
+            "EMERGENCY",
+            "DOCTOR_APPROVED",
+            "PATIENT_WILL_PAY_AFTER_CONSULTATION",
+            "BILLING_COUNTER_UNAVAILABLE",
+            "OTHER"
+    );
+
     private final AppointmentService appointmentService;
     private final ConsultationService consultationService;
     private final BillingService billingService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
+    private final PermissionChecker permissionChecker;
 
     public AppointmentController(
             AppointmentService appointmentService,
             ConsultationService consultationService,
             BillingService billingService,
-            DoctorAssignmentSecurityService doctorAssignmentSecurityService
+            DoctorAssignmentSecurityService doctorAssignmentSecurityService,
+            PermissionChecker permissionChecker
     ) {
         this.appointmentService = appointmentService;
         this.consultationService = consultationService;
         this.billingService = billingService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
+        this.permissionChecker = permissionChecker;
     }
 
     @GetMapping
@@ -136,10 +152,32 @@ public class AppointmentController {
         doctorAssignmentSecurityService.requireNonDoctorQueueStatusUpdate();
         requireReceptionQueueTarget(request.status());
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        BigDecimal paymentBypassDueAmount = null;
         if (request.status() == AppointmentStatus.WAITING) {
-            billingService.ensureConsultationFeePaid(tenantId, id);
+            String paymentBypassReason = normalizeBypassReason(request.paymentBypassReason());
+            if (paymentBypassReason == null) {
+                billingService.ensureConsultationFeePaid(tenantId, id);
+            } else {
+                requirePaymentBypassPermission();
+                validatePaymentBypassRequest(paymentBypassReason, request.paymentBypassNotes());
+                paymentBypassDueAmount = billingService.consultationFeeDueAmount(tenantId, id);
+                if (paymentBypassDueAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalArgumentException("Consultation fee bypass is available only when payment is still due.");
+                }
+            }
         }
-        return toResponse(appointmentService.updateStatus(tenantId, id, new AppointmentStatusUpdateCommand(request.status(), request.comment()), actorAppUserId));
+        return toResponse(appointmentService.updateStatus(
+                tenantId,
+                id,
+                new AppointmentStatusUpdateCommand(
+                        request.status(),
+                        request.comment(),
+                        normalizeBypassReason(request.paymentBypassReason()),
+                        normalizeNullable(request.paymentBypassNotes()),
+                        paymentBypassDueAmount
+                ),
+                actorAppUserId
+        ));
     }
 
     @PatchMapping("/{id}/priority")
@@ -244,9 +282,46 @@ public class AppointmentController {
                 record.type(),
                 record.priority(),
                 record.status(),
+                record.paymentBypassReason(),
+                record.paymentBypassNotes(),
+                record.paymentBypassedBy() == null ? null : record.paymentBypassedBy().toString(),
+                record.paymentBypassedAt(),
                 record.createdAt(),
                 record.updatedAt()
         );
+    }
+
+    private void requirePaymentBypassPermission() {
+        if (!permissionChecker.hasPermission(Permissions.APPOINTMENT_CHECKIN_PAYMENT_BYPASS)) {
+            throw new AccessDeniedException("You do not have permission to allow check-in with payment pending.");
+        }
+    }
+
+    private void validatePaymentBypassRequest(String paymentBypassReason, String paymentBypassNotes) {
+        if (!PAYMENT_BYPASS_REASONS.contains(paymentBypassReason)) {
+            throw new IllegalArgumentException("A valid payment bypass reason is required.");
+        }
+        if ("OTHER".equals(paymentBypassReason) && !hasText(paymentBypassNotes)) {
+            throw new IllegalArgumentException("Notes are required when selecting Other for payment bypass.");
+        }
+    }
+
+    private String normalizeBypassReason(String reason) {
+        if (!hasText(reason)) {
+            return null;
+        }
+        return reason.trim().toUpperCase();
+    }
+
+    private String normalizeNullable(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+        return value.trim();
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 
     private AppointmentResponse toResponse(AppointmentRecord record) {

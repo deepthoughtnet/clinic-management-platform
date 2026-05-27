@@ -34,9 +34,10 @@ public class VoiceTestController {
     public VoiceTestResponse test(
             @RequestParam("audio") MultipartFile audio,
             @RequestParam(value = "context", required = false) String context,
-            @RequestParam(value = "language", required = false) String language
+            @RequestParam(value = "language", required = false) String language,
+            @RequestParam(value = "workflowMode", required = false) String workflowMode
     ) {
-        return voiceOrchestratorService.processAudio(audio, context, language);
+        return voiceOrchestratorService.processAudio(audio, context, language, workflowMode);
     }
 
     @PostMapping("/debug/stt")

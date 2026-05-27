@@ -18,16 +18,20 @@ class RolePermissionMappingsTest {
                 Permissions.PATIENT_CREATE,
                 Permissions.PATIENT_UPDATE,
                 Permissions.APPOINTMENT_MANAGE,
+                Permissions.APPOINTMENT_CHECKIN_PAYMENT_BYPASS,
                 Permissions.QUEUE_READ,
                 Permissions.QUEUE_UPDATE,
-                Permissions.NOTIFICATION_READ
+                Permissions.NOTIFICATION_READ,
+                Permissions.PAYMENT_COLLECT
         );
         assertThat(permissions).doesNotContain(
+                Permissions.BILLING_UPDATE,
                 Permissions.CONSULTATION_CREATE,
                 Permissions.CONSULTATION_UPDATE,
                 Permissions.CONSULTATION_COMPLETE,
                 Permissions.PRESCRIPTION_CREATE,
-                Permissions.PRESCRIPTION_FINALIZE
+                Permissions.PRESCRIPTION_FINALIZE,
+                Permissions.BILLING_UPDATE
         );
     }
 
@@ -74,7 +78,7 @@ class RolePermissionMappingsTest {
 
         assertThat(doctor).doesNotContain(Permissions.BILLING_CREATE, Permissions.PAYMENT_COLLECT);
         assertThat(auditor).doesNotContain(Permissions.BILLING_CREATE, Permissions.PAYMENT_COLLECT);
-        assertThat(receptionist).contains(Permissions.BILLING_CREATE);
+        assertThat(receptionist).contains(Permissions.BILLING_CREATE, Permissions.PAYMENT_COLLECT);
         assertThat(billingUser).contains(Permissions.BILLING_CREATE, Permissions.PAYMENT_COLLECT);
     }
 
@@ -144,6 +148,21 @@ class RolePermissionMappingsTest {
         assertThat(auditor).contains(Permissions.CAREPILOT_LEAD_READ);
         assertThat(doctor).doesNotContain(Permissions.CAREPILOT_LEAD_READ, Permissions.CAREPILOT_LEAD_CREATE, Permissions.CAREPILOT_LEAD_UPDATE, Permissions.CAREPILOT_LEAD_CONVERT);
         assertThat(billing).doesNotContain(Permissions.CAREPILOT_LEAD_READ, Permissions.CAREPILOT_LEAD_CREATE, Permissions.CAREPILOT_LEAD_UPDATE, Permissions.CAREPILOT_LEAD_CONVERT);
+    }
+
+    @Test
+    void checkInPaymentBypassIsLimitedToDeskLeadershipRoles() {
+        Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
+        Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);
+        Set<String> auditor = RolePermissionMappings.permissionsForRole(Roles.AUDITOR);
+        Set<String> doctor = RolePermissionMappings.permissionsForRole(Roles.DOCTOR);
+        Set<String> billing = RolePermissionMappings.permissionsForRole(Roles.BILLING_USER);
+
+        assertThat(clinicAdmin).contains(Permissions.APPOINTMENT_CHECKIN_PAYMENT_BYPASS);
+        assertThat(receptionist).contains(Permissions.APPOINTMENT_CHECKIN_PAYMENT_BYPASS);
+        assertThat(auditor).doesNotContain(Permissions.APPOINTMENT_CHECKIN_PAYMENT_BYPASS);
+        assertThat(doctor).doesNotContain(Permissions.APPOINTMENT_CHECKIN_PAYMENT_BYPASS);
+        assertThat(billing).doesNotContain(Permissions.APPOINTMENT_CHECKIN_PAYMENT_BYPASS);
     }
 
     @Test
