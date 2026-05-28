@@ -8,6 +8,7 @@ import com.deepthoughtnet.clinic.api.realtime.websocket.VoiceWebSocketAuthInterc
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.http.server.ServletServerHttpResponse;
@@ -41,7 +42,41 @@ class VoiceWebSocketAuthInterceptorTest {
                 Jwt.withTokenValue("token-1")
                         .header("alg", "none")
                         .claim("sub", "user-sub")
-                        .claim("realm_access", Map.of("roles", List.of("clinic_admin", "receptionist")))
+                        .claim("preferred_username", "receptionist@example.com")
+                        .claim("realm_access", Map.of("roles", List.of("clinic:RECEPTIONIST")))
+                        .claim("resource_access", Map.of(
+                                "clinic-web", Map.of("roles", List.of("ROLE_TENANT_ADMIN"))
+                        ))
+                        .build()
+        );
+        VoiceWebSocketAuthInterceptor interceptor = new VoiceWebSocketAuthInterceptor(decoder);
+        MockHttpServletRequest servletRequest = new MockHttpServletRequest("GET", "/ws/voice/test");
+        servletRequest.setParameter("token", "token-1");
+        servletRequest.setParameter("tenantId", "11111111-1111-1111-1111-111111111111");
+        Map<String, Object> attributes = new HashMap<>();
+
+        boolean accepted = interceptor.beforeHandshake(
+                new ServletServerHttpRequest(servletRequest),
+                new ServletServerHttpResponse(new MockHttpServletResponse()),
+                null,
+                attributes
+        );
+
+        assertThat(accepted).isTrue();
+        assertThat(attributes).containsEntry("tenantId", "11111111-1111-1111-1111-111111111111");
+        assertThat(attributes).containsEntry("sub", "user-sub");
+        assertThat(attributes).containsEntry("userIdentifier", "receptionist@example.com");
+        assertThat((Set<String>) attributes.get("roles")).contains("RECEPTIONIST", "TENANT_ADMIN");
+    }
+
+    @Test
+    void invalidTenantIsRejected() {
+        JwtDecoder decoder = mock(JwtDecoder.class);
+        when(decoder.decode("token-1")).thenReturn(
+                Jwt.withTokenValue("token-1")
+                        .header("alg", "none")
+                        .claim("sub", "user-sub")
+                        .claim("realm_access", Map.of("roles", List.of("ROLE_CLINIC_ADMIN")))
                         .build()
         );
         VoiceWebSocketAuthInterceptor interceptor = new VoiceWebSocketAuthInterceptor(decoder);
@@ -57,9 +92,6 @@ class VoiceWebSocketAuthInterceptorTest {
                 attributes
         );
 
-        assertThat(accepted).isTrue();
-        assertThat(attributes).containsEntry("tenantId", "tenant-a");
-        assertThat(attributes).containsEntry("sub", "user-sub");
-        assertThat((java.util.Set<String>) attributes.get("roles")).contains("CLINIC_ADMIN", "RECEPTIONIST");
+        assertThat(accepted).isFalse();
     }
 }

@@ -2,6 +2,9 @@ package com.deepthoughtnet.clinic.api.voice;
 
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
+import com.deepthoughtnet.clinic.platform.security.PermissionEvaluator;
+import com.deepthoughtnet.clinic.platform.security.Permissions;
+import com.deepthoughtnet.clinic.platform.security.RolePermissionEvaluator;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,7 +31,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
     private static final Logger log = LoggerFactory.getLogger(VoiceTestWebSocketHandler.class);
-    private static final Set<String> ALLOWED_ROLES = Set.of("PLATFORM_ADMIN", "TENANT_ADMIN", "CLINIC_ADMIN", "RECEPTIONIST");
+    private static final String REQUIRED_PERMISSION = Permissions.AI_VOICE_TEST;
     private static final int MAX_CHUNK_BASE64_CHARS = 32 * 1024;
     private static final int RESPONSE_CHUNK_BASE64_CHARS = 24 * 1024;
     private static final int MAX_HISTORY_TURNS = 4;
@@ -37,12 +40,19 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
     private final ObjectMapper objectMapper;
     private final VoiceOrchestratorService voiceOrchestratorService;
     private final VoiceTestProperties properties;
+    private final PermissionEvaluator permissionEvaluator;
     private final Map<String, SessionState> sessionStates = new ConcurrentHashMap<>();
 
     public VoiceTestWebSocketHandler(ObjectMapper objectMapper, VoiceOrchestratorService voiceOrchestratorService, VoiceTestProperties properties) {
+        this(objectMapper, voiceOrchestratorService, properties, new RolePermissionEvaluator());
+    }
+
+    public VoiceTestWebSocketHandler(ObjectMapper objectMapper, VoiceOrchestratorService voiceOrchestratorService,
+                                     VoiceTestProperties properties, PermissionEvaluator permissionEvaluator) {
         this.objectMapper = objectMapper;
         this.voiceOrchestratorService = voiceOrchestratorService;
         this.properties = properties;
+        this.permissionEvaluator = permissionEvaluator;
     }
 
     @Override
@@ -50,15 +60,19 @@ public class VoiceTestWebSocketHandler extends TextWebSocketHandler {
         @SuppressWarnings("unchecked")
         Set<String> roles = (Set<String>) session.getAttributes().getOrDefault("roles", Set.of());
         String tenantId = String.valueOf(session.getAttributes().get("tenantId"));
-        log.info("voice.websocket.connect.attempt sessionId={} tenantId={} roles={}", session.getId(), tenantId, roles);
-        if (roles.stream().noneMatch(ALLOWED_ROLES::contains)) {
-            log.warn("voice.websocket.auth.failed sessionId={} tenantId={} reason=unauthorized-role roles={}",
-                    session.getId(), tenantId, roles);
+        String subject = String.valueOf(session.getAttributes().getOrDefault("sub", "unknown"));
+        String userIdentifier = String.valueOf(session.getAttributes().getOrDefault("userIdentifier", "unknown"));
+        log.info("voice.websocket.connect.attempt sessionId={} tenantId={} subject={} userIdentifier={} roles={}",
+                session.getId(), tenantId, subject, userIdentifier, roles);
+        if (!permissionEvaluator.hasPermission(roles, REQUIRED_PERMISSION)) {
+            log.warn("voice.websocket.auth.failed sessionId={} tenantId={} subject={} userIdentifier={} reason=unauthorized-role roles={} requiredPermission={}",
+                    session.getId(), tenantId, subject, userIdentifier, roles, REQUIRED_PERMISSION);
             session.close(CloseStatus.NOT_ACCEPTABLE.withReason("Unauthorized role"));
             return;
         }
         if (tenantId == null || tenantId.isBlank() || "null".equalsIgnoreCase(tenantId)) {
-            log.warn("voice.websocket.auth.failed sessionId={} reason=missing-tenant", session.getId());
+            log.warn("voice.websocket.auth.failed sessionId={} subject={} userIdentifier={} tenantId={} reason=missing-tenant roles={} requiredPermission={}",
+                    session.getId(), subject, userIdentifier, tenantId, roles, REQUIRED_PERMISSION);
             session.close(CloseStatus.NOT_ACCEPTABLE.withReason("Missing tenant context"));
             return;
         }

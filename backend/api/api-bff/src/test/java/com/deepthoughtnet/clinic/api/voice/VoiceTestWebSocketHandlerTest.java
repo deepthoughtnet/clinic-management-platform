@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -330,11 +331,33 @@ class VoiceTestWebSocketHandlerTest {
     @Test
     void unauthorizedRoleIsClosedOnConnect() throws Exception {
         VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), mock(VoiceOrchestratorService.class), new VoiceTestProperties());
-        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("DOCTOR"), "session-2");
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("VIEWER"), "session-2");
 
         handler.afterConnectionEstablished(fixture.session);
 
         verify(fixture.session).close(any(CloseStatus.class));
+    }
+
+    @Test
+    void receptionistIsAuthorizedOnConnect() throws Exception {
+        VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), mock(VoiceOrchestratorService.class), new VoiceTestProperties());
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("RECEPTIONIST"), "session-receptionist");
+
+        handler.afterConnectionEstablished(fixture.session);
+
+        verify(fixture.session, never()).close(any(CloseStatus.class));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"session.connected\""));
+    }
+
+    @Test
+    void tenantAdminIsAuthorizedOnConnect() throws Exception {
+        VoiceTestWebSocketHandler handler = new VoiceTestWebSocketHandler(new ObjectMapper(), mock(VoiceOrchestratorService.class), new VoiceTestProperties());
+        SessionFixture fixture = new SessionFixture(TENANT_ID, Set.of("TENANT_ADMIN"), "session-tenant-admin");
+
+        handler.afterConnectionEstablished(fixture.session);
+
+        verify(fixture.session, never()).close(any(CloseStatus.class));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"session.connected\""));
     }
 
     @Test
