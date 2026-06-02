@@ -16,6 +16,7 @@ logs/
 
 # Local runtime data
 local/data/
+backups/postgres/*.dump
 
 # Env
 .env

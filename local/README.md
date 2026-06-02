@@ -18,6 +18,37 @@ cd /home/iadmin/code/clinic-management-platform/local
 
 The local Postgres container now auto-creates the `keycloak` database on first initialization through `local/init-sql/001_create_keycloak_db.sql`, so no manual `psql` step is needed after a reset.
 
+## Postgres Backup And Restore
+
+Create a local backup:
+
+```bash
+cd /home/iadmin/code/clinic-management-platform
+./local/scripts/backup-postgres.sh
+```
+
+List available backups:
+
+```bash
+cd /home/iadmin/code/clinic-management-platform
+./local/scripts/list-backups.sh
+```
+
+Restore a backup:
+
+```bash
+cd /home/iadmin/code/clinic-management-platform
+./local/scripts/restore-postgres.sh backups/postgres/clinic_management_YYYYMMDD_HHMMSS.dump
+```
+
+The restore script requires an explicit `RESTORE` confirmation and must only be run manually.
+
+Dangerous commands to avoid:
+
+- Do not run `docker compose down -v` if you need to keep local data.
+- Do not remove the Postgres Docker volume.
+- Do not delete `local/data/postgres` unless you intentionally want to reset local DB state.
+
 ## Notes
 
 - `clinic_management` remains the primary application database.
