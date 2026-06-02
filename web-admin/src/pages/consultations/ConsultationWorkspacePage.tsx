@@ -750,6 +750,12 @@ function prescriptionVersionTitle(row: Prescription) {
   return parts.filter(Boolean).join(" • ");
 }
 
+function compactText(value: string | null | undefined, max = 120) {
+  const normalized = (value || "").trim();
+  if (!normalized) return "";
+  return normalized.length > max ? `${normalized.slice(0, max - 1)}…` : normalized;
+}
+
 function SectionCard({
   id,
   title,
@@ -838,6 +844,7 @@ export default function ConsultationWorkspacePage() {
     advice: false,
     followup: true,
     history: true,
+    "patient-history-summary": false,
   });
 
   const [loading, setLoading] = React.useState(true);
@@ -862,6 +869,7 @@ export default function ConsultationWorkspacePage() {
   const [viewerUrl, setViewerUrl] = React.useState<string | null>(null);
   const [selectedPrescriptionVersionId, setSelectedPrescriptionVersionId] = React.useState<string | null>(null);
   const [invalidMedicineRowIds, setInvalidMedicineRowIds] = React.useState<string[]>([]);
+  const [selectedRxTemplateKey, setSelectedRxTemplateKey] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
 
@@ -1112,6 +1120,47 @@ export default function ConsultationWorkspacePage() {
     .filter((medicine) => medicine.active !== false)
     .filter((medicine) => !medicineSearch.trim() || `${medicine.medicineName} ${medicine.strength || ""}`.toLowerCase().includes(medicineSearch.trim().toLowerCase()))
     .slice(0, 24);
+  const historySummaryItems = React.useMemo(() => {
+    const items: Array<{ label: string; value: string; tone?: "default" | "warning" | "error" | "info" | "success" | "secondary" }> = [];
+    if (patient?.previousConsultations?.length) {
+      items.push({ label: "Previous consultations", value: String(patient.previousConsultations.filter((row) => row.id !== consultation?.id).length || patient.previousConsultations.length), tone: "info" });
+    }
+    if (lastConsultation?.diagnosis) {
+      items.push({ label: "Previous diagnosis", value: compactText(lastConsultation.diagnosis, 90), tone: "warning" });
+    }
+    if (previousPrescriptions.length) {
+      items.push({ label: "Previous prescriptions", value: String(previousPrescriptions.length), tone: "secondary" });
+    }
+    if (patientRow?.allergies) {
+      items.push({ label: "Allergies", value: compactText(patientRow.allergies, 90), tone: "error" });
+    }
+    if (patientRow?.existingConditions) {
+      items.push({ label: "Chronic conditions", value: compactText(patientRow.existingConditions, 90), tone: "warning" });
+    }
+    if (patientRow?.longTermMedications) {
+      items.push({ label: "Long-term medicines", value: compactText(patientRow.longTermMedications, 90), tone: "info" });
+    }
+    if (lastConsultation?.createdAt) {
+      items.push({ label: "Last visit", value: compactDate(lastConsultation.createdAt), tone: "default" });
+    }
+    return items;
+  }, [consultation?.id, lastConsultation?.createdAt, lastConsultation?.diagnosis, patient?.previousConsultations, patientRow?.allergies, patientRow?.existingConditions, patientRow?.longTermMedications, previousPrescriptions.length]);
+  const hasHistorySummary = historySummaryItems.length > 0;
+  const workflowNextAction = React.useMemo(() => {
+    if (readOnly) {
+      return { title: "Consultation is read-only", detail: "Use version history or create a correction draft if changes are needed." };
+    }
+    if (!consultationForm.chiefComplaints.trim() || !consultationForm.diagnosis.trim()) {
+      return { title: "Fill consultation details", detail: "Capture the complaint and diagnosis, then save the draft." };
+    }
+    if (!prescription || !hasAtLeastOneValidMedicineRow(prescriptionForm)) {
+      return { title: "Build the prescription", detail: "Add medicines manually or from a fast pack, then preview or save the Rx draft." };
+    }
+    if (!prescriptionReadyForCompletion) {
+      return { title: "Finalize the prescription", detail: "Preview or finalize the prescription before completing the consultation." };
+    }
+    return { title: "Complete consultation", detail: "Prescription is finalized. Review once, then complete the consultation." };
+  }, [consultationForm.chiefComplaints, consultationForm.diagnosis, prescription, prescriptionForm, prescriptionReadyForCompletion, readOnly]);
 
   const toggleSection = (id: string) => setExpanded((current) => ({ ...current, [id]: !current[id] }));
 
@@ -1160,6 +1209,9 @@ export default function ConsultationWorkspacePage() {
   const repeatPreviousPrescription = () => {
     const previous = previousPrescriptions[0];
     if (!previous || prescriptionReadOnly) return;
+    if (hasPrescriptionContent(prescriptionForm) && !window.confirm("Replace the current prescription draft with the previous prescription?")) {
+      return;
+    }
     setPrescriptionForm((current) => ({
       ...current,
       diagnosisSnapshot: previous.diagnosisSnapshot || current.diagnosisSnapshot,
@@ -1169,6 +1221,7 @@ export default function ConsultationWorkspacePage() {
       recommendedTests: previous.recommendedTests.map((item, index) => ({ ...item, localId: `repeat-test-${Date.now()}-${index}`, sortOrder: index + 1 })),
     }));
     setInvalidMedicineRowIds([]);
+    setSelectedRxTemplateKey("repeat-previous");
     setInfo("Previous prescription repeated into draft");
   };
 
@@ -1196,6 +1249,10 @@ export default function ConsultationWorkspacePage() {
   };
 
   const applyRxTemplate = (template: RxTemplate) => {
+    if (prescriptionReadOnly) return;
+    if (hasPrescriptionContent(prescriptionForm) && !window.confirm(`Replace the current prescription draft with ${template.label}?`)) {
+      return;
+    }
     const rows = templateToRows(template);
     setPrescriptionForm((current) => ({
       ...current,
@@ -1211,6 +1268,8 @@ export default function ConsultationWorkspacePage() {
       advice: appendTokenLine(current.advice, template.advice),
       followUpDate: followUpChipToDate(template.followUp),
     }));
+    setInvalidMedicineRowIds([]);
+    setSelectedRxTemplateKey(template.key);
     setInfo(`${template.label} applied`);
   };
 
@@ -1340,6 +1399,28 @@ export default function ConsultationWorkspacePage() {
     const saved = await flushAutosave();
     if (saved) setInfo("Draft saved");
   };
+
+  React.useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && canEditConsultation && !readOnly) {
+        event.preventDefault();
+        void manualSaveDraft();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p" && canEditConsultation && !prescriptionReadOnly && hasAtLeastOneValidMedicineRow(prescriptionForm)) {
+        event.preventDefault();
+        void previewCurrentPrescription();
+        return;
+      }
+      if (event.key === "Escape" && viewerDocument) {
+        event.preventDefault();
+        setViewerDocument(null);
+        setViewerUrl(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [canEditConsultation, manualSaveDraft, prescriptionForm, prescriptionReadOnly, readOnly, viewerDocument]);
 
   const completeCurrentConsultation = async () => {
     if (!auth.accessToken || !auth.tenantId || !consultation) return;
@@ -1971,9 +2052,9 @@ export default function ConsultationWorkspacePage() {
               <Chip
                 size="small"
                 variant={autosaveStatus === "saved" ? "filled" : "outlined"}
-                color={autosaveStatus === "failed" ? "error" : autosaveStatus === "saving" ? "info" : autosaveStatus === "dirty" ? "warning" : "default"}
+                color={autosaveStatus === "failed" ? "error" : autosaveStatus === "saving" ? "info" : autosaveStatus === "saved" ? "success" : "default"}
                 label={
-                  autosaveStatus === "dirty" ? "Unsaved changes" :
+                  autosaveStatus === "dirty" ? "Autosave ready" :
                   autosaveStatus === "saving" ? "Saving..." :
                   autosaveStatus === "saved" ? "Saved" :
                   autosaveStatus === "failed" ? "Save failed" :
@@ -1992,6 +2073,14 @@ export default function ConsultationWorkspacePage() {
             {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
           </Stack>
         </Stack>
+        <Stack direction={{ xs: "column", lg: "row" }} spacing={1} justifyContent="space-between" alignItems={{ xs: "flex-start", lg: "center" }} sx={{ mt: 1 }}>
+          <Alert severity={readOnly ? "info" : prescriptionReadyForCompletion ? "success" : "warning"} sx={{ py: 0, width: "100%" }}>
+            <strong>{workflowNextAction.title}</strong> {workflowNextAction.detail}
+          </Alert>
+          <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: { lg: "nowrap" } }}>
+            Shortcuts: Ctrl/Cmd+S save draft, Ctrl/Cmd+P preview Rx, Esc closes document viewer.
+          </Typography>
+        </Stack>
         {canCompleteConsultation && !readOnly && !prescriptionReadyForCompletion ? (
           <Typography variant="caption" color="warning.main" sx={{ mt: 0.75, display: "block" }}>
             {CONSULTATION_COMPLETION_BLOCKED_MESSAGE}
@@ -2004,6 +2093,28 @@ export default function ConsultationWorkspacePage() {
   return (
     <Stack spacing={1.5} sx={{ pb: 4 }}>
       {header}
+      {hasHistorySummary ? (
+        <SectionCard
+          id="patient-history-summary"
+          title="Patient history summary"
+          subtitle="Compact context from existing patient history"
+          expanded={Boolean(expanded["patient-history-summary"])}
+          onToggle={toggleSection}
+        >
+          <Stack spacing={1}>
+            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+              {historySummaryItems.map((item) => (
+                <Chip key={item.label} size="small" color={item.tone === "warning" || item.tone === "error" || item.tone === "info" || item.tone === "success" ? item.tone : "default"} variant={item.tone === "error" ? "filled" : "outlined"} label={`${item.label}: ${item.value}`} />
+              ))}
+            </Stack>
+            {lastConsultation?.clinicalNotes ? (
+              <Typography variant="body2" color="text.secondary">
+                Last notes: {compactText(lastConsultation.clinicalNotes, 180)}
+              </Typography>
+            ) : null}
+          </Stack>
+        </SectionCard>
+      ) : null}
       {error ? <Alert severity="error" onClose={() => setError(null)}>{error}</Alert> : null}
       {info ? <Alert severity="success" onClose={() => setInfo(null)}>{info}</Alert> : null}
 
@@ -2301,9 +2412,12 @@ export default function ConsultationWorkspacePage() {
                 <CardContent sx={{ p: 1.5 }}>
                   <Stack spacing={1.25}>
                     <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Fast Packs</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Fast packs replace the current prescription draft after confirmation. Existing manual rows are not overwritten silently.
+                    </Typography>
                     <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                      <Chip size="small" clickable={!prescriptionReadOnly} color="secondary" label="Repeat previous prescription" disabled={!previousPrescriptions.length || prescriptionReadOnly} onClick={repeatPreviousPrescription} />
-                      {RX_TEMPLATES.map((template) => <Chip key={template.key} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} color="primary" variant="outlined" label={template.label} onClick={() => applyRxTemplate(template)} />)}
+                      <Chip size="small" clickable={!prescriptionReadOnly} color="secondary" variant={selectedRxTemplateKey === "repeat-previous" ? "filled" : "outlined"} label="Repeat previous prescription" disabled={!previousPrescriptions.length || prescriptionReadOnly} onClick={repeatPreviousPrescription} />
+                      {RX_TEMPLATES.map((template) => <Chip key={template.key} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} color="primary" variant={selectedRxTemplateKey === template.key ? "filled" : "outlined"} label={template.label} onClick={() => applyRxTemplate(template)} />)}
                     </Stack>
                     <Divider />
                     <Typography variant="caption" color="text.secondary">Recent medicines</Typography>
@@ -2336,6 +2450,16 @@ export default function ConsultationWorkspacePage() {
                         {canFinalizePrescription ? <Button type="button" size="small" color="secondary" disabled={saving || prescriptionReadOnly || prescription?.status === "DRAFT" || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void finalizeCurrentPrescription()}>Finalize</Button> : null}
                       </Stack>
                     </Box>
+                    {selectedRxTemplateKey ? (
+                      <Alert severity="info" sx={{ py: 0.5 }}>
+                        {selectedRxTemplateKey === "repeat-previous" ? "Previous prescription loaded into the active draft." : `${RX_TEMPLATES.find((template) => template.key === selectedRxTemplateKey)?.label || "Template"} loaded into the active draft.`}
+                      </Alert>
+                    ) : null}
+                    {!prescriptionReadyForCompletion && !prescriptionReadOnly ? (
+                      <Typography variant="caption" color="text.secondary">
+                        Next: save or preview the prescription, then finalize it before completing the consultation.
+                      </Typography>
+                    ) : null}
 
                     {aiPrescriptionSuggestion || aiPrescriptionItems.length ? (
                       <Card variant="outlined" sx={{ boxShadow: "none" }}>
@@ -2445,7 +2569,7 @@ export default function ConsultationWorkspacePage() {
                                 <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Dosage" value={row.dosage} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { dosage: e.target.value })} /></Grid>
                                 <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Frequency" value={row.frequency} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { frequency: e.target.value })} /></Grid>
                                 <Grid size={{ xs: 6, md: 1.5 }}><TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Duration" value={row.duration} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { duration: e.target.value })} /></Grid>
-                                <Grid size={{ xs: 12, md: 0.5 }}><IconButton size="small" disabled={prescriptionReadOnly} onClick={() => { setInvalidMedicineRowIds((current) => current.filter((id) => id !== row.localId)); setPrescriptionForm((c) => ({ ...c, medicines: c.medicines.filter((item) => item.localId !== row.localId) })); }}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Grid>
+                                <Grid size={{ xs: 12, md: 0.5 }} sx={{ display: "flex", justifyContent: { xs: "flex-end", md: "center" } }}><IconButton size="small" disabled={prescriptionReadOnly} onClick={() => { setInvalidMedicineRowIds((current) => current.filter((id) => id !== row.localId)); setPrescriptionForm((c) => ({ ...c, medicines: c.medicines.filter((item) => item.localId !== row.localId) })); }}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Grid>
                               </Grid>
                               <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap">
                                 {FREQUENCIES.map((chip) => <Chip key={chip} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={chip} onClick={() => updateMedicine(row.localId, { frequency: chip })} />)}

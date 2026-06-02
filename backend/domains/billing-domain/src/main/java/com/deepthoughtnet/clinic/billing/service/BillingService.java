@@ -141,6 +141,13 @@ public class BillingService {
         return billRepository.findByTenantIdAndId(tenantId, id).map(entity -> toRecord(entity, tenantData(tenantId, List.of(entity.getPatientId()))));
     }
 
+    @Transactional(readOnly = true)
+    public List<BillRecord> listByPatient(UUID tenantId, UUID patientId) {
+        requireTenant(tenantId);
+        requireId(patientId, "patientId");
+        return mapBills(tenantId, billRepository.findByTenantIdAndPatientIdOrderByBillDateDescCreatedAtDesc(tenantId, patientId));
+    }
+
     @Transactional
     public BillRecord createDraft(UUID tenantId, BillUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);

@@ -55,7 +55,7 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
         try {
             String sub = safe(auth.keycloakSub());
             if (sub == null) {
-                // Unauthenticated; let Spring Security handle it (401 etc).
+                // Unauthenticated; let Spring Security handle it (401 etc) unless the route is public.
                 chain.doFilter(request, response);
                 return;
             }
@@ -105,6 +105,11 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
                     return;
                 }
 
+                if (isPublicRequest(request)) {
+                    chain.doFilter(request, response);
+                    return;
+                }
+
                 // ✅ Do NOT throw -> return clean 401
                 writeError(response, request, HttpServletResponse.SC_UNAUTHORIZED, "unauthorized", "Tenant not resolved. Select a clinic tenant first.");
                 return;
@@ -148,6 +153,11 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
 
     private boolean isTenantlessMeRequest(HttpServletRequest request) {
         return "GET".equalsIgnoreCase(request.getMethod()) && "/api/me".equals(request.getRequestURI());
+    }
+
+    private boolean isPublicRequest(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        return uri != null && ("/api/public".equals(uri) || uri.startsWith("/api/public/"));
     }
 
     private void writeError(HttpServletResponse response, HttpServletRequest request, int status, String code, String message) throws IOException {

@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
+import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.api.voice.spi.SpeechToTextProvider;
 import com.deepthoughtnet.clinic.api.voice.spi.TextToSpeechProvider;
@@ -537,7 +538,7 @@ class VoiceOrchestratorServiceTest {
                 new ObjectMapper(),
                 mock(FasterWhisperSpeechToTextProvider.class),
                 mock(PiperTextToSpeechProvider.class),
-                new VoiceAppointmentWorkflowService(appointmentService, patientService)
+                new VoiceAppointmentWorkflowService(appointmentService, patientService, mock(TenantUserManagementService.class))
         );
 
         service.processAudio(
@@ -554,6 +555,48 @@ class VoiceOrchestratorServiceTest {
         assertThat(String.valueOf(request.inputVariables().get("instruction"))).contains("appointment booking workflow mode");
         assertThat(String.valueOf(request.inputVariables().get("instruction"))).contains("Respond only in simple spoken Hindi written in Devanagari.");
         assertThat(request.inputVariables()).containsKey("workflowState");
+    }
+
+    @Test
+    void genericModeRemainsUnchangedAndDoesNotInjectAppointmentWorkflowState() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-generic"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        AiOrchestrationService ai = mock(AiOrchestrationService.class);
+        when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "GEMINI", "gemini", "Generic assistant answer.", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
+        ));
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(new MockVoiceTextToSpeechProvider()),
+                ai,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class),
+                new VoiceAppointmentWorkflowService(mock(AppointmentService.class), mock(PatientService.class), mock(TenantUserManagementService.class))
+        );
+
+        VoiceTestResponse response = service.processAudio(
+                new MockMultipartFile("audio", "sample.webm", "audio/webm", "voice".getBytes()),
+                "General clinic question",
+                "en",
+                "generic"
+        );
+
+        ArgumentCaptor<AiOrchestrationRequest> requestCaptor = ArgumentCaptor.forClass(AiOrchestrationRequest.class);
+        verify(ai).complete(requestCaptor.capture());
+        AiOrchestrationRequest request = requestCaptor.getValue();
+        assertThat(request.inputVariables().get("workflowMode")).isNull();
+        assertThat(request.inputVariables()).doesNotContainKey("workflowState");
+        assertThat(response.workflowSummary()).isNull();
     }
 
     @Test

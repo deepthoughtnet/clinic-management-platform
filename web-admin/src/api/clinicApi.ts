@@ -266,22 +266,33 @@ export type VoiceSuggestedSlot = {
 export type VoiceWorkflowSummary = {
   mode: string;
   intentState: string | null;
+  bookingWorkflowState: string | null;
   language: string | null;
+  contactChannel: string | null;
+  patientId: string | null;
   patientName: string | null;
   patientPhone: string | null;
+  patientNumber: string | null;
+  patientMatchStatus: string | null;
   doctorUserId: string | null;
   doctorName: string | null;
+  doctorMatchStatus: string | null;
   preferredDate: string | null;
   preferredTimeWindow: string | null;
   reason: string | null;
   missingFields: string[] | null;
   suggestedSlot: VoiceSuggestedSlot | null;
+  slotSuggestions: VoiceSuggestedSlot[] | null;
   confirmationRequested: boolean;
   bookingConfirmed: boolean;
+  booked: boolean;
+  bookedAppointmentId: string | null;
   handoffRequired: boolean;
   handoffReason: string | null;
   nextPrompt: string | null;
   unresolvedTurns: number;
+  patientOptions: string[] | null;
+  doctorOptions: string[] | null;
 };
 
 export type VoiceDebugTraceEntry = {

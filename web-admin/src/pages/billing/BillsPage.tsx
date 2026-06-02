@@ -39,7 +39,7 @@ import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
-import { CompactEmptyState, compactChipSx } from "../../components/compact/CompactUi";
+import { CompactEmptyState, CompactTableFrame, compactChipSx } from "../../components/compact/CompactUi";
 import {
   InvoicePrintDialog,
   ReceiptPrintDialog,
@@ -631,6 +631,21 @@ export default function BillsPage() {
   const activePatientReceiptBill = selectedBill && billCountsAsSettled(selectedBill)
     ? selectedBill
     : preferredPatientReceiptViewBill;
+  const patientPrimaryAction = React.useMemo(() => {
+    if (selectedBill && billCountsAsSettled(selectedBill)) {
+      return { kind: "receipt" as const, bill: selectedBill };
+    }
+    if (selectedBill && billHasCollectableDue(selectedBill)) {
+      return { kind: "collect" as const, bill: selectedBill };
+    }
+    if (preferredPatientCollectPaymentBill) {
+      return { kind: "collect" as const, bill: preferredPatientCollectPaymentBill };
+    }
+    if (preferredPatientReceiptViewBill) {
+      return { kind: "receipt" as const, bill: preferredPatientReceiptViewBill };
+    }
+    return null;
+  }, [preferredPatientCollectPaymentBill, preferredPatientReceiptViewBill, selectedBill]);
 
   const loadBills = React.useCallback(async (override?: {
     patientId?: string;
@@ -1804,58 +1819,60 @@ export default function BillsPage() {
                     <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Line items</Typography>
                     <Button size="small" startIcon={<AddRoundedIcon />} onClick={() => addBillLine()}>Add line</Button>
                   </Box>
-                  <Table size="small" sx={{ width: "100%", tableLayout: "fixed", "& .MuiTableCell-root": { py: 0.75, px: 0.75, verticalAlign: "top" } }}>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ width: "28%" }}>Item</TableCell>
-                        <TableCell sx={{ width: "13%" }}>Type</TableCell>
-                        <TableCell sx={{ width: "8%" }} align="right">Qty</TableCell>
-                        <TableCell sx={{ width: "12%" }} align="right">Unit</TableCell>
-                        <TableCell sx={{ width: "12%" }} align="right">Discount</TableCell>
-                        <TableCell sx={{ width: "10%" }} align="right">Tax</TableCell>
-                        <TableCell sx={{ width: "11%" }} align="right">Total</TableCell>
-                        <TableCell sx={{ width: "6%" }} align="right">Remove</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {form.lines.map((row, index) => (
-                        <TableRow key={`${index}-${row.sortOrder}`} hover>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              <TextField size="small" value={row.itemName} onChange={(e) => patchBillLine(index, { itemName: e.target.value })} fullWidth />
-                            </Stack>
-                          </TableCell>
-                          <TableCell>
-                            <FormControl fullWidth size="small">
-                              <Select value={row.itemType} onChange={(e) => patchBillLine(index, { itemType: String(e.target.value) as BillItemCategory })}>
-                                {BILL_ITEM_CATEGORIES.map((option) => <MenuItem key={option} value={option}>{billItemCategoryLabel(option)}</MenuItem>)}
-                              </Select>
-                            </FormControl>
-                          </TableCell>
-                          <TableCell align="right">
-                            <TextField size="small" fullWidth type="number" value={row.quantity} onChange={(e) => patchBillLine(index, { quantity: e.target.value })} />
-                          </TableCell>
-                          <TableCell align="right">
-                            <TextField size="small" fullWidth type="number" value={row.unitPrice} onChange={(e) => patchBillLine(index, { unitPrice: e.target.value })} />
-                          </TableCell>
-                          <TableCell align="right">
-                            <TextField size="small" fullWidth type="number" value={row.lineDiscountAmount} onChange={(e) => patchBillLine(index, { lineDiscountAmount: e.target.value })} />
-                          </TableCell>
-                          <TableCell align="right">
-                            <TextField size="small" fullWidth type="number" value={row.taxAmount} onChange={(e) => patchBillLine(index, { taxAmount: e.target.value })} />
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="body2" sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>{lineTotal(row)}</Typography>
-                          </TableCell>
-                          <TableCell align="right">
-                            <IconButton size="small" onClick={() => removeBillLine(index)} disabled={form.lines.length === 1}>
-                              <DeleteOutlineRoundedIcon fontSize="small" />
-                            </IconButton>
-                          </TableCell>
+                  <CompactTableFrame maxHeight={420}>
+                    <Table size="small" stickyHeader sx={{ width: "100%", minWidth: 860, tableLayout: "fixed", "& .MuiTableCell-root": { py: 0.75, px: 0.75, verticalAlign: "top" } }}>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={{ width: "28%" }}>Item</TableCell>
+                          <TableCell sx={{ width: "13%" }}>Type</TableCell>
+                          <TableCell sx={{ width: "8%" }} align="right">Qty</TableCell>
+                          <TableCell sx={{ width: "12%" }} align="right">Unit</TableCell>
+                          <TableCell sx={{ width: "12%" }} align="right">Discount</TableCell>
+                          <TableCell sx={{ width: "10%" }} align="right">Tax</TableCell>
+                          <TableCell sx={{ width: "11%" }} align="right">Total</TableCell>
+                          <TableCell sx={{ width: "6%" }} align="right">Remove</TableCell>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHead>
+                      <TableBody>
+                        {form.lines.map((row, index) => (
+                          <TableRow key={`${index}-${row.sortOrder}`} hover>
+                            <TableCell>
+                              <Stack spacing={0.25}>
+                                <TextField size="small" value={row.itemName} onChange={(e) => patchBillLine(index, { itemName: e.target.value })} fullWidth />
+                              </Stack>
+                            </TableCell>
+                            <TableCell>
+                              <FormControl fullWidth size="small">
+                                <Select value={row.itemType} onChange={(e) => patchBillLine(index, { itemType: String(e.target.value) as BillItemCategory })}>
+                                  {BILL_ITEM_CATEGORIES.map((option) => <MenuItem key={option} value={option}>{billItemCategoryLabel(option)}</MenuItem>)}
+                                </Select>
+                              </FormControl>
+                            </TableCell>
+                            <TableCell align="right">
+                              <TextField size="small" fullWidth type="number" value={row.quantity} onChange={(e) => patchBillLine(index, { quantity: e.target.value })} />
+                            </TableCell>
+                            <TableCell align="right">
+                              <TextField size="small" fullWidth type="number" value={row.unitPrice} onChange={(e) => patchBillLine(index, { unitPrice: e.target.value })} />
+                            </TableCell>
+                            <TableCell align="right">
+                              <TextField size="small" fullWidth type="number" value={row.lineDiscountAmount} onChange={(e) => patchBillLine(index, { lineDiscountAmount: e.target.value })} />
+                            </TableCell>
+                            <TableCell align="right">
+                              <TextField size="small" fullWidth type="number" value={row.taxAmount} onChange={(e) => patchBillLine(index, { taxAmount: e.target.value })} />
+                            </TableCell>
+                            <TableCell align="right">
+                              <Typography variant="body2" sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>{lineTotal(row)}</Typography>
+                            </TableCell>
+                            <TableCell align="right">
+                              <IconButton size="small" onClick={() => removeBillLine(index)} disabled={form.lines.length === 1}>
+                                <DeleteOutlineRoundedIcon fontSize="small" />
+                              </IconButton>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CompactTableFrame>
                 </Box>
 
                 <Box sx={{ position: "sticky", bottom: 0, zIndex: 1, mt: 0.5, pt: 1, bgcolor: "background.paper", borderTop: "1px solid", borderColor: "divider" }}>
@@ -1916,19 +1933,19 @@ export default function BillsPage() {
                       )}
                       <Stack direction="row" spacing={1} flexWrap="wrap">
                         <Button size="small" variant="outlined" onClick={() => { if (form.patientId) { setBillFilterPatient(form.patientId); void loadBills({ patientId: form.patientId }); } }}>View bills</Button>
-                        {activePatientCollectBill ? (
+                        {patientPrimaryAction?.kind === "collect" ? (
                           <Button
                             size="small"
                             variant="outlined"
-                            onClick={() => openPaymentDialog(activePatientCollectBill)}
+                            onClick={() => openPaymentDialog(patientPrimaryAction.bill)}
                           >
                             Collect payment
                           </Button>
-                        ) : activePatientReceiptBill ? (
+                        ) : patientPrimaryAction?.kind === "receipt" ? (
                           <Button
                             size="small"
                             variant="outlined"
-                            onClick={() => { void openBillReceiptPreview(activePatientReceiptBill); }}
+                            onClick={() => { void openBillReceiptPreview(patientPrimaryAction.bill); }}
                           >
                             View receipt
                           </Button>
@@ -1937,17 +1954,17 @@ export default function BillsPage() {
                           size="small"
                           variant="outlined"
                           onClick={() => {
-                            if (activePatientCollectBill) {
-                              void openInvoicePreviewAction(activePatientCollectBill, true);
+                            if (patientPrimaryAction?.kind === "collect") {
+                              void openInvoicePreviewAction(patientPrimaryAction.bill, true);
                               return;
                             }
-                            if (activePatientReceiptBill) {
-                              void openBillReceiptPreview(activePatientReceiptBill, true);
+                            if (patientPrimaryAction?.kind === "receipt") {
+                              void openBillReceiptPreview(patientPrimaryAction.bill, true);
                             }
                           }}
-                          disabled={!(activePatientCollectBill || activePatientReceiptBill)}
+                          disabled={!patientPrimaryAction}
                         >
-                          {activePatientCollectBill ? "Print last invoice" : "Print receipt"}
+                          {patientPrimaryAction?.kind === "collect" ? "Print last invoice" : "Print receipt"}
                         </Button>
                       </Stack>
                       {patientBills.length > 0 ? (
@@ -2115,8 +2132,8 @@ export default function BillsPage() {
                       </Stack>
                     </Grid>
                   </Grid>
-                  <Box sx={{ overflowX: "hidden" }}>
-                    <Table size="small" sx={{ width: "100%", tableLayout: "fixed", "& .MuiTableCell-root": { py: 0.75, px: 0.75 } }}>
+                  <CompactTableFrame maxHeight={560}>
+                    <Table size="small" stickyHeader sx={{ width: "100%", minWidth: 900, tableLayout: "fixed", "& .MuiTableCell-root": { py: 0.75, px: 0.75 } }}>
                       <TableHead>
                         <TableRow>
                           <TableCell sx={{ width: "20%" }}>Bill</TableCell>
@@ -2169,7 +2186,7 @@ export default function BillsPage() {
                         ))}
                       </TableBody>
                     </Table>
-                  </Box>
+                  </CompactTableFrame>
                 </Stack>
               </Collapse>
             </Stack>

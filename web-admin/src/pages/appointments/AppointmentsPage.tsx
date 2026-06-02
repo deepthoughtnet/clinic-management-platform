@@ -66,7 +66,7 @@ import {
   findSlotForTime,
   isSlotExpired,
 } from "./bookingValidation";
-import { CompactEmptyState, CompactStatCard, compactChipSx } from "../../components/compact/CompactUi";
+import { CompactEmptyState, CompactStatCard, CompactTableFrame, compactChipSx } from "../../components/compact/CompactUi";
 
 type AppointmentTab = "today" | "upcoming" | "waitlist" | "completed" | "archive";
 
@@ -1177,8 +1177,8 @@ export default function AppointmentsPage() {
               filteredWaitlist.length === 0 ? (
                 <Alert severity="info">No waitlist entries were found for the selected doctor/date.</Alert>
               ) : (
-                <Box sx={{ overflowX: "auto" }}>
-                  <Table size="small" sx={{ minWidth: 980 }}>
+                <CompactTableFrame maxHeight={520}>
+                  <Table size="small" stickyHeader sx={{ minWidth: 980 }}>
                     <TableHead>
                       <TableRow>
                         <TableCell>Patient</TableCell>
@@ -1205,20 +1205,20 @@ export default function AppointmentsPage() {
                           </TableCell>
                           <TableCell sx={{ maxWidth: 260, wordBreak: "break-word" }}>{entry.reason || "-"}</TableCell>
                           <TableCell><Chip size="small" label={waitlistStatusLabel(entry.status)} variant="outlined" sx={compactChipSx} /></TableCell>
-                          <TableCell align="right">
-                            <Button size="small" variant="outlined" onClick={() => void bookFromWaitlist(entry)} disabled={!appointmentTime}>Book</Button>
+                          <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
+                            <Button size="small" variant="outlined" sx={{ whiteSpace: "nowrap" }} onClick={() => void bookFromWaitlist(entry)} disabled={!appointmentTime}>Book</Button>
                           </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
-                </Box>
+                </CompactTableFrame>
               )
             ) : filteredVisibleAppointments.length === 0 ? (
               <Alert severity="info">No appointments were found for the selected tab.</Alert>
             ) : (
-              <Box sx={{ overflowX: "auto" }}>
-                <Table size="small" sx={{ minWidth: 920 }}>
+              <CompactTableFrame maxHeight={540}>
+                <Table size="small" stickyHeader sx={{ minWidth: 920 }}>
                   <TableHead>
                     <TableRow>
                       <TableCell>Patient</TableCell>
@@ -1251,8 +1251,8 @@ export default function AppointmentsPage() {
                         <TableCell><Chip size="small" label={appointment.priority || "NORMAL"} color={priorityColor(appointment.priority)} variant="outlined" sx={compactChipSx} /></TableCell>
                         <TableCell>{arrivalLabel(appointment)}</TableCell>
                         <TableCell><Chip size="small" label={appointment.status} color={statusColor(appointment.status)} sx={compactChipSx} /></TableCell>
-                        <TableCell align="right">
-                          <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap">
+                        <TableCell align="right" sx={{ minWidth: 180 }}>
+                          <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
                             <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)}>Patient</Button>
                             <Button size="small" onClick={() => openReschedule(appointment)}>Reschedule</Button>
                           </Stack>
@@ -1261,7 +1261,7 @@ export default function AppointmentsPage() {
                     ))}
                   </TableBody>
                 </Table>
-              </Box>
+              </CompactTableFrame>
             )}
           </Stack>
         </CardContent>

@@ -31,7 +31,7 @@ import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 
 import { useAuth } from "../../auth/useAuth";
-import { CompactEmptyState, compactChipSx } from "../../components/compact/CompactUi";
+import { CompactEmptyState, CompactTableFrame, compactChipSx } from "../../components/compact/CompactUi";
 import {
   createVaccine,
   deactivateVaccine,
@@ -465,9 +465,10 @@ export default function VaccinationsPage() {
                       <CircularProgress />
                     </Box>
                   ) : dueRows.length === 0 ? (
-                    <CompactEmptyState title="No due vaccinations found." />
+                    <CompactEmptyState title="No due vaccinations found." subtitle="Patients with upcoming vaccine follow-up will appear here." />
                   ) : (
-                    <Table size="small">
+                    <CompactTableFrame maxHeight={360}>
+                      <Table size="small" stickyHeader sx={{ minWidth: 620 }}>
                       <TableHead>
                         <TableRow>
                           <TableCell sx={{ py: 0.7 }}>Patient</TableCell>
@@ -488,7 +489,8 @@ export default function VaccinationsPage() {
                           </TableRow>
                         ))}
                       </TableBody>
-                    </Table>
+                      </Table>
+                    </CompactTableFrame>
                   )}
                 </Stack>
               </CardContent>
@@ -505,9 +507,10 @@ export default function VaccinationsPage() {
                       <CircularProgress />
                     </Box>
                   ) : overdueRows.length === 0 ? (
-                    <CompactEmptyState title="No overdue vaccinations found." />
+                    <CompactEmptyState title="No overdue vaccinations found." subtitle="Overdue follow-up entries will appear here when patients miss a due date." />
                   ) : (
-                    <Table size="small">
+                    <CompactTableFrame maxHeight={360}>
+                      <Table size="small" stickyHeader sx={{ minWidth: 620 }}>
                       <TableHead>
                         <TableRow>
                           <TableCell sx={{ py: 0.7 }}>Patient</TableCell>
@@ -528,7 +531,8 @@ export default function VaccinationsPage() {
                           </TableRow>
                         ))}
                       </TableBody>
-                    </Table>
+                      </Table>
+                    </CompactTableFrame>
                   )}
                 </Stack>
               </CardContent>
@@ -541,9 +545,10 @@ export default function VaccinationsPage() {
                     Vaccine list
                   </Typography>
                   {vaccines.length === 0 ? (
-                    <CompactEmptyState title="No vaccines were found." />
+                    <CompactEmptyState title="No vaccines were found." subtitle="Create a vaccine in the master list to start recording doses." />
                   ) : (
-                    <Table size="small">
+                    <CompactTableFrame maxHeight={420}>
+                      <Table size="small" stickyHeader sx={{ minWidth: 760 }}>
                       <TableHead>
                         <TableRow>
                           <TableCell sx={{ py: 0.7 }}>Name</TableCell>
@@ -573,8 +578,8 @@ export default function VaccinationsPage() {
                             <TableCell>
                               <Chip size="small" label={vaccine.active ? "Active" : "Inactive"} color={vaccine.active ? "success" : "default"} />
                             </TableCell>
-                            <TableCell align="right">
-                              <Button size="small" onClick={() => setVaccineForm({
+                            <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
+                              <Button size="small" sx={{ whiteSpace: "nowrap" }} onClick={() => setVaccineForm({
                                 vaccineName: vaccine.vaccineName,
                                 description: vaccine.description || "",
                                 ageGroup: vaccine.ageGroup || "",
@@ -584,14 +589,15 @@ export default function VaccinationsPage() {
                               })}>
                                 Edit
                               </Button>
-                              <Button size="small" onClick={() => void deactivate(vaccine.id)} disabled={!vaccine.active || saving}>
+                              <Button size="small" sx={{ whiteSpace: "nowrap" }} onClick={() => void deactivate(vaccine.id)} disabled={!vaccine.active || saving}>
                                 Deactivate
                               </Button>
                             </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
-                    </Table>
+                      </Table>
+                    </CompactTableFrame>
                   )}
                 </Stack>
               </CardContent>

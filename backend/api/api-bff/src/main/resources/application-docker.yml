@@ -21,6 +21,9 @@ spring:
           jwk-set-uri: ${CLINIC_JWT_JWK_SET_URI:http://keycloak:8080/realms/clinic-management/protocol/openid-connect/certs}
 
 clinic:
+  patient-portal:
+    auth:
+      expose-dev-otp: true
   keycloak:
     admin:
       serverUrl: ${CLINIC_KEYCLOAK_SERVER_URL:http://keycloak:8080}

@@ -23,13 +23,16 @@ class CorsConfigTest {
         assertThat(configuration.getAllowedOrigins()).containsExactlyInAnyOrder(
                 "http://localhost:5173",
                 "http://localhost:5174",
+                "http://localhost:5175",
                 "http://127.0.0.1:5173",
-                "http://127.0.0.1:5174"
+                "http://127.0.0.1:5174",
+                "http://127.0.0.1:5175"
         );
         assertThat(configuration.getAllowedHeaders()).contains(
                 "Authorization",
                 "Content-Type",
                 "X-Tenant-Id",
+                "X-Patient-Session",
                 "X-Platform-Op"
         );
         assertThat(configuration.getAllowedMethods()).contains("OPTIONS", "POST");
@@ -44,8 +47,10 @@ class CorsConfigTest {
         assertThat(configuration.getAllowedOrigins()).allMatch(origin -> List.of(
                 "http://localhost:5173",
                 "http://localhost:5174",
+                "http://localhost:5175",
                 "http://127.0.0.1:5173",
-                "http://127.0.0.1:5174"
+                "http://127.0.0.1:5174",
+                "http://127.0.0.1:5175"
         ).contains(origin));
     }
 }

@@ -36,6 +36,9 @@ public class AppUserEntity {
     @Column(name = "driver_id")
     private UUID driverId;
 
+    @Column(name = "patient_id")
+    private UUID patientId;
+
     @Column(nullable = false, length = 32)
     private String status = "ACTIVE";
 
@@ -67,12 +70,18 @@ public class AppUserEntity {
     public String getDisplayName() { return displayName; }
 
     public UUID getDriverId() { return driverId; }
+    public UUID getPatientId() { return patientId; }
     public String getStatus() { return status; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 
     public void setDriverId(UUID driverId) {
         this.driverId = driverId;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void setPatientId(UUID patientId) {
+        this.patientId = patientId;
         this.updatedAt = OffsetDateTime.now();
     }
 

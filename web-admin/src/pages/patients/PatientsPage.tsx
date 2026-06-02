@@ -24,6 +24,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
+import { CompactTableFrame } from "../../components/compact/CompactUi";
 import { searchPatients, type Patient } from "../../api/clinicApi";
 
 const activeOptions = [
@@ -147,7 +148,8 @@ export default function PatientsPage() {
           ) : patients.length === 0 ? (
             <Alert severity="info">No patients found for the selected filters.</Alert>
           ) : (
-            <Table size="small">
+            <CompactTableFrame maxHeight={560}>
+              <Table size="small" stickyHeader sx={{ minWidth: 760 }}>
               <TableHead>
                 <TableRow>
                   <TableCell>Patient</TableCell>
@@ -177,18 +179,19 @@ export default function PatientsPage() {
                       <Chip size="small" label={patient.active ? "Active" : "Inactive"} color={patient.active ? "success" : "default"} />
                     </TableCell>
                     <TableCell>{new Date(patient.createdAt).toLocaleString()}</TableCell>
-                    <TableCell align="right">
-                      <Button size="small" onClick={() => navigate(`/patients/${patient.id}`)}>
+                    <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
+                      <Button size="small" sx={{ whiteSpace: "nowrap" }} onClick={() => navigate(`/patients/${patient.id}`)}>
                         View
                       </Button>
-                      <Button size="small" onClick={() => navigate(`/patients/${patient.id}/edit`)}>
+                      <Button size="small" sx={{ whiteSpace: "nowrap" }} onClick={() => navigate(`/patients/${patient.id}/edit`)}>
                         Edit
                       </Button>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+              </Table>
+            </CompactTableFrame>
           )}
         </CardContent>
       </Card>

@@ -6,4 +6,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface DoctorProfileRepository extends JpaRepository<DoctorProfileEntity, UUID> {
     Optional<DoctorProfileEntity> findByTenantIdAndDoctorUserId(UUID tenantId, UUID doctorUserId);
+    java.util.List<DoctorProfileEntity> findByTenantIdAndActiveTrue(UUID tenantId);
 }

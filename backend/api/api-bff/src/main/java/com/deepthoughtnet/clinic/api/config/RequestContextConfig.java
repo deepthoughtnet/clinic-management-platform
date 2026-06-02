@@ -2,11 +2,11 @@ package com.deepthoughtnet.clinic.api.config;
 
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.db.TenantRepository;
+import com.deepthoughtnet.clinic.api.patientportal.auth.PatientPortalAuthContextExtractor;
 import com.deepthoughtnet.clinic.identity.service.AppUserProvisionerImpl;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import com.deepthoughtnet.clinic.platform.core.security.AuthContextExtractor;
 import com.deepthoughtnet.clinic.platform.core.security.TenantRoleResolver;
-import com.deepthoughtnet.clinic.platform.security.kc.KeycloakAuthContextExtractor;
 import com.deepthoughtnet.clinic.platform.spring.security.TenantRoleAuthorityFilter;
 import com.deepthoughtnet.clinic.platform.spring.web.RequestContextFilter;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -18,7 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 public class RequestContextConfig {
     @Bean
     public AuthContextExtractor authContextExtractor(TenantRepository tenantRepository) {
-        return new KeycloakAuthContextExtractor(code -> tenantRepository.findByCode(code).map(tenant -> tenant.getId()));
+        return new PatientPortalAuthContextExtractor(code -> tenantRepository.findByCode(code).map(tenant -> tenant.getId()));
     }
 
     @Bean

@@ -285,22 +285,33 @@ class VoiceTestWebSocketHandlerTest {
         VoiceWorkflowSummary summary = new VoiceWorkflowSummary(
                 "appointment-booking",
                 "COLLECTING_DETAILS",
+                "COLLECTING_DETAILS",
                 "en",
+                "VOICE_TEST",
                 null,
                 null,
                 null,
                 null,
+                "PENDING",
+                null,
+                null,
+                "PENDING",
                 null,
                 null,
                 null,
                 List.of("doctorName", "preferredDate", "preferredTimeWindow"),
                 null,
+                List.of(),
                 false,
                 false,
                 false,
                 null,
+                false,
+                null,
                 "Which doctor would you like to see?",
-                0
+                0,
+                List.of(),
+                List.of()
         );
         when(orchestrator.processBufferedAudio(any(), any(), any(), any(), any(), any(), any())).thenReturn(
                 new VoiceTestResponse(

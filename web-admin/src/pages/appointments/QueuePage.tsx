@@ -28,7 +28,7 @@ import {
 } from "@mui/material";
 
 import ConsultationFeeDialog, { type ConsultationFeeDialogValue } from "../../components/ConsultationFeeDialog";
-import { CompactEmptyState, CompactStatCard, compactChipSx } from "../../components/compact/CompactUi";
+import { CompactEmptyState, CompactStatCard, CompactTableFrame, compactChipSx } from "../../components/compact/CompactUi";
 import { useAuth } from "../../auth/useAuth";
 import {
   collectConsultationFee,
@@ -783,8 +783,8 @@ export default function QueuePage() {
             ) : visibleRows.length === 0 ? (
               <CompactEmptyState title="No queue items found" subtitle="Try a different doctor or clear the search box." />
             ) : (
-              <Box sx={{ overflowX: "auto" }}>
-                <Table size="small" sx={{ minWidth: 1180 }}>
+              <CompactTableFrame maxHeight={620}>
+                <Table size="small" stickyHeader sx={{ minWidth: 1180 }}>
                   <TableHead>
                     <TableRow>
                       {!effectiveDoctorId ? <TableCell>Doctor</TableCell> : null}
@@ -862,8 +862,8 @@ export default function QueuePage() {
                           </TableCell>
                           <TableCell><Chip size="small" label={friendlyStatusLabel(appointment.status)} color={statusColor(appointment.status)} sx={compactChipSx} /></TableCell>
                           <TableCell>{formatMoney(appointment.consultationFeeAmount)}</TableCell>
-                          <TableCell>{renderFeeStatus(appointment)}</TableCell>
-                          <TableCell>
+                          <TableCell sx={{ minWidth: 150 }}>{renderFeeStatus(appointment)}</TableCell>
+                          <TableCell sx={{ minWidth: 180 }}>
                             <Stack spacing={0.35}>
                               <Button
                                 size="small"
@@ -882,8 +882,8 @@ export default function QueuePage() {
                               ) : null}
                             </Stack>
                           </TableCell>
-                          <TableCell align="right">
-                            <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap">
+                          <TableCell align="right" sx={{ minWidth: 300 }}>
+                            <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
                               {appointment.feeStatus !== "PAID" ? (
                                 <Button size="small" variant="outlined" disabled={savingId === appointment.id} onClick={() => openConsultationBilling(appointment.id)}>
                                   {appointment.feeStatus === "NOT_CONFIGURED" ? "Open Billing" : "Collect Fee"}
@@ -935,7 +935,7 @@ export default function QueuePage() {
                     })}
                   </TableBody>
                 </Table>
-              </Box>
+              </CompactTableFrame>
             )}
           </Stack>
         </CardContent>

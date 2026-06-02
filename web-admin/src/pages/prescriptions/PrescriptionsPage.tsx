@@ -18,6 +18,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
+import { CompactTableFrame } from "../../components/compact/CompactUi";
 import { getPrescriptionPdf, getPrescriptions, printPrescription, sendPrescription, type Prescription } from "../../api/clinicApi";
 
 function statusColor(status: Prescription["status"]) {
@@ -142,7 +143,8 @@ export default function PrescriptionsPage() {
           ) : rows.length === 0 ? (
             <Alert severity="info">No prescriptions were found.</Alert>
           ) : (
-            <Table size="small">
+            <CompactTableFrame maxHeight={560}>
+              <Table size="small" stickyHeader sx={{ minWidth: 860 }}>
               <TableHead>
                 <TableRow>
                   <TableCell>Number</TableCell>
@@ -161,8 +163,8 @@ export default function PrescriptionsPage() {
                     <TableCell>{row.doctorName || "Doctor"}</TableCell>
                     <TableCell><Chip size="small" label={row.status} color={statusColor(row.status)} /></TableCell>
                     <TableCell>{row.consultationId ? "Linked" : "-"}</TableCell>
-                    <TableCell align="right">
-                      <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
+                    <TableCell align="right" sx={{ minWidth: 240 }}>
+                      <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
                         {isPharmacyRole ? (
                           <>
                             <Button size="small" disabled={workingId === row.id} onClick={() => void openPdf(row)}>View / Print</Button>
@@ -181,7 +183,8 @@ export default function PrescriptionsPage() {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
+              </Table>
+            </CompactTableFrame>
           )}
         </CardContent>
       </Card>

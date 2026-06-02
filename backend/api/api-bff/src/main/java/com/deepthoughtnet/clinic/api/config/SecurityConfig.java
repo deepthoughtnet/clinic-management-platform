@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.config;
 
 import com.deepthoughtnet.clinic.api.errors.ApiError;
+import com.deepthoughtnet.clinic.api.patientportal.auth.PatientPortalSessionAuthenticationFilter;
 import com.deepthoughtnet.clinic.platform.spring.context.CorrelationId;
 import com.deepthoughtnet.clinic.platform.spring.security.TenantRoleAuthorityFilter;
 import com.deepthoughtnet.clinic.platform.spring.web.RequestContextFilter;
@@ -52,6 +53,7 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
+            PatientPortalSessionAuthenticationFilter patientPortalSessionAuthenticationFilter,
             RequestContextFilter clinicRequestContextFilter,
             TenantRoleAuthorityFilter clinicTenantRoleAuthorityFilter,
             ObjectMapper objectMapper
@@ -68,6 +70,8 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/**").permitAll()
                 .requestMatchers("/graphiql", "/graphiql/**").permitAll()
                 .requestMatchers("/favicon.ico").permitAll()
+                .requestMatchers("/api/public/**").permitAll()
+                .requestMatchers("/api/patient-portal/auth/**").permitAll()
                 .requestMatchers("/api/carepilot/webhooks/**").permitAll()
                 .requestMatchers("/ws/voice/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/graphql").authenticated()
@@ -79,6 +83,10 @@ public class SecurityConfig {
         );
         http.httpBasic(Customizer.withDefaults());
 
+        http.addFilterBefore(
+                patientPortalSessionAuthenticationFilter,
+                org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class
+        );
         http.addFilterAfter(
                 clinicRequestContextFilter,
                 org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class

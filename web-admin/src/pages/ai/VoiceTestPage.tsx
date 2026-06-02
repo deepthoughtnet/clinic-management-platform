@@ -234,20 +234,41 @@ function WorkflowSummaryBlock({ summary }: { summary: VoiceWorkflowSummary | nul
     return null;
   }
   const suggestedSlot = summary.suggestedSlot;
+  const slotSuggestions = summary.slotSuggestions || [];
+  const patientReady = summary.patientMatchStatus === "IDENTIFIED" && Boolean(summary.patientId);
+  const doctorReady = summary.doctorMatchStatus === "IDENTIFIED" && Boolean(summary.doctorUserId);
   return (
     <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "background.default" }}>
       <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
         Appointment workflow
       </Typography>
+      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ mb: 1 }}>
+        <Chip size="small" color={patientReady ? "success" : "default"} label={`Patient ${patientReady ? "identified" : "pending"}`} />
+        <Chip size="small" color={doctorReady ? "success" : "default"} label={`Doctor ${doctorReady ? "identified" : "pending"}`} />
+        <Chip size="small" color={summary.preferredDate && summary.preferredTimeWindow ? "success" : "default"} label={`Date/time ${summary.preferredDate && summary.preferredTimeWindow ? "ready" : "pending"}`} />
+        <Chip size="small" color={suggestedSlot ? "info" : "default"} label={`Slot ${suggestedSlot ? "suggested" : "pending"}`} />
+        <Chip size="small" color={summary.confirmationRequested ? "warning" : summary.booked ? "success" : "default"} label={summary.booked ? "Booked" : summary.confirmationRequested ? "Confirmation pending" : "Awaiting details"} />
+        <Chip size="small" color={summary.handoffRequired ? "warning" : "default"} label={summary.handoffRequired ? "Handoff" : "No handoff"} />
+      </Stack>
       <Typography variant="body2" color="text.secondary">
-        State: {summary.intentState || "Collecting details"} • Language: {summary.language || "auto"}
+        State: {summary.intentState || "Collecting details"} • Workflow: {summary.bookingWorkflowState || summary.intentState || "Collecting details"} • Language: {summary.language || "auto"}
       </Typography>
       <Typography variant="body2" color="text.secondary">
-        Patient: {summary.patientName || summary.patientPhone || "Pending"} • Doctor: {summary.doctorName || "Pending"}
+        Patient: {summary.patientName || summary.patientNumber || summary.patientPhone || "Pending"} • Doctor: {summary.doctorName || "Pending"}
       </Typography>
       <Typography variant="body2" color="text.secondary">
         Date: {summary.preferredDate || "Pending"} • Time: {summary.preferredTimeWindow || "Pending"}
       </Typography>
+      {summary.patientMatchStatus ? (
+        <Typography variant="body2" color="text.secondary">
+          Patient match: {summary.patientMatchStatus}{summary.patientNumber ? ` • ${summary.patientNumber}` : ""}
+        </Typography>
+      ) : null}
+      {summary.doctorMatchStatus ? (
+        <Typography variant="body2" color="text.secondary">
+          Doctor match: {summary.doctorMatchStatus}
+        </Typography>
+      ) : null}
       {summary.reason ? (
         <Typography variant="body2" color="text.secondary">
           Reason: {summary.reason}
@@ -262,6 +283,26 @@ function WorkflowSummaryBlock({ summary }: { summary: VoiceWorkflowSummary | nul
         <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
           Suggested slot: {suggestedSlot.doctorName || "Doctor"} on {suggestedSlot.appointmentDate || "date"} at {suggestedSlot.slotTime || "time"}
         </Typography>
+      ) : null}
+      {slotSuggestions.length > 1 ? (
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+          Alternate slots: {slotSuggestions.slice(1).map((slot) => `${slot.appointmentDate || "date"} ${slot.slotTime || "time"}`).join(", ")}
+        </Typography>
+      ) : null}
+      {summary.patientOptions && summary.patientOptions.length > 0 ? (
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+          Patient options: {summary.patientOptions.join(" | ")}
+        </Typography>
+      ) : null}
+      {summary.doctorOptions && summary.doctorOptions.length > 0 ? (
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+          Doctor options: {summary.doctorOptions.join(" | ")}
+        </Typography>
+      ) : null}
+      {summary.booked && summary.bookedAppointmentId ? (
+        <Alert severity="success" sx={{ mt: 1 }}>
+          Appointment booked. ID: {summary.bookedAppointmentId}
+        </Alert>
       ) : null}
       {summary.confirmationRequested ? (
         <Alert severity="info" sx={{ mt: 1 }}>

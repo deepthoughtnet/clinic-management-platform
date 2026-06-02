@@ -575,7 +575,7 @@ public class VoiceOrchestratorService {
                 "instruction",
                 "Return ONLY compact valid JSON. No markdown. No newlines. No extra keys. "
                         + "Use exactly {\"answer\":\"short spoken response\",\"suggestedActions\":[]}. "
-                        + "Keep answer under " + properties.getLlm().getMaxAnswerWords()
+                        + "Keep answer under " + (workflowMode == VoiceWorkflowMode.APPOINTMENT_BOOKING ? 35 : properties.getLlm().getMaxAnswerWords())
                         + " words. Speak like a helpful clinic receptionist. "
                         + workflowInstruction(workflowMode, workflowSummary)
                         + " "
@@ -603,11 +603,13 @@ public class VoiceOrchestratorService {
         if (workflowSummary.confirmationRequested()) {
             instruction.append("Ask only for explicit confirmation and do not claim the appointment is booked. ");
         }
-        if (workflowSummary.bookingConfirmed()) {
-            instruction.append("Acknowledge the confirmation, but do not claim the appointment is booked yet. Explain that a receptionist will finalize it. ");
+        if (workflowSummary.booked()) {
+            instruction.append("The appointment is already booked. Confirm it briefly using the booked details. ");
+        } else if (workflowSummary.bookingConfirmed()) {
+            instruction.append("Acknowledge the confirmation, but do not claim the appointment is booked unless workflow state says booked. ");
         }
         if (workflowSummary.handoffRequired()) {
-            instruction.append("Politely hand the conversation off to a human receptionist. ");
+            instruction.append("Politely hand the conversation off to a human receptionist using the workflow guidance exactly. ");
         }
         if (StringUtils.hasText(workflowSummary.nextPrompt())) {
             instruction.append("Follow this workflow guidance exactly: ").append(workflowSummary.nextPrompt()).append(" ");

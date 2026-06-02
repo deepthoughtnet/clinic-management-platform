@@ -279,6 +279,27 @@ services:
       clinic-management-api:
         condition: service_healthy
 
+  web-public:
+    profiles: ["frontend"]
+    build:
+      context: ../web-public
+      dockerfile: Dockerfile
+      args:
+        VITE_PUBLIC_API_BASE_URL: ${VITE_PUBLIC_API_BASE_URL:-}
+    container_name: clinic-web-public
+    restart: unless-stopped
+    ports:
+      - "5175:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    depends_on:
+      clinic-management-api:
+        condition: service_healthy
+
   # Future optional split services (placeholder only; not enabled in v1):
   # stt-service:
   # tts-service:

@@ -70,22 +70,33 @@ record VoiceLiveStatusResponse(
 record VoiceWorkflowSummary(
         String mode,
         String intentState,
+        String bookingWorkflowState,
         String language,
+        String contactChannel,
+        String patientId,
         String patientName,
         String patientPhone,
+        String patientNumber,
+        String patientMatchStatus,
         String doctorUserId,
         String doctorName,
+        String doctorMatchStatus,
         String preferredDate,
         String preferredTimeWindow,
         String reason,
         java.util.List<String> missingFields,
         VoiceSuggestedSlot suggestedSlot,
+        java.util.List<VoiceSuggestedSlot> slotSuggestions,
         boolean confirmationRequested,
         boolean bookingConfirmed,
+        boolean booked,
+        String bookedAppointmentId,
         boolean handoffRequired,
         String handoffReason,
         String nextPrompt,
-        int unresolvedTurns
+        int unresolvedTurns,
+        java.util.List<String> patientOptions,
+        java.util.List<String> doctorOptions
 ) {
 }
 

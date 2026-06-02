@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Box, Card, CardContent, Chip, Stack, Typography } from "@mui/material";
+import { Box, Card, CardContent, Chip, Stack, TableContainer, Typography } from "@mui/material";
 import type { ChipProps } from "@mui/material";
 
 export const compactChipSx = {
@@ -111,6 +111,37 @@ export function CompactEmptyState({ title, subtitle, action }: CompactEmptyState
         ) : null}
         {action}
       </Stack>
+    </Box>
+  );
+}
+
+type CompactTableFrameProps = {
+  children: React.ReactNode;
+  maxHeight?: number | string;
+};
+
+export function CompactTableFrame({ children, maxHeight = 560 }: CompactTableFrameProps) {
+  return (
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 2,
+        overflow: "hidden",
+        bgcolor: "background.paper",
+      }}
+    >
+      <TableContainer
+        sx={{
+          maxHeight,
+          overflowX: "auto",
+          "& .MuiTableCell-stickyHeader": {
+            bgcolor: "background.paper",
+          },
+        }}
+      >
+        {children}
+      </TableContainer>
     </Box>
   );
 }

@@ -170,6 +170,15 @@ clinic:
     provider:
       fail-fast: ${CLINIC_CAREPILOT_PROVIDER_FAIL_FAST:false}
 
+  patient-portal:
+    auth:
+      otp-ttl: ${CLINIC_PATIENT_PORTAL_OTP_TTL:PT5M}
+      resend-cooldown: ${CLINIC_PATIENT_PORTAL_RESEND_COOLDOWN:PT60S}
+      max-attempts: ${CLINIC_PATIENT_PORTAL_MAX_ATTEMPTS:5}
+      expose-dev-otp: ${CLINIC_PATIENT_PORTAL_EXPOSE_DEV_OTP:false}
+      session-secret: ${CLINIC_PATIENT_PORTAL_SESSION_SECRET:local-patient-portal-session-secret}
+      session-ttl: ${CLINIC_PATIENT_PORTAL_SESSION_TTL:PT12H}
+
 logging:
   level:
     root: INFO

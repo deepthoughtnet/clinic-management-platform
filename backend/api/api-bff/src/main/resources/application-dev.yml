@@ -1,0 +1,4 @@
+clinic:
+  patient-portal:
+    auth:
+      expose-dev-otp: true
