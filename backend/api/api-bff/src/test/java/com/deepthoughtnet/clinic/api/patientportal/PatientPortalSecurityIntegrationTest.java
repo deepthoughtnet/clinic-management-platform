@@ -2,9 +2,11 @@ package com.deepthoughtnet.clinic.api.patientportal;
 
 import static org.mockito.Mockito.mock;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiService;
 import com.deepthoughtnet.clinic.api.errors.GlobalRestExceptionHandler;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -25,7 +27,10 @@ class PatientPortalSecurityIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        PatientPortalController controller = new PatientPortalController(mock(PatientPortalService.class));
+        PatientPortalController controller = new PatientPortalController(
+                mock(PatientPortalService.class),
+                mock(PatientPortalCareAiService.class)
+        );
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalRestExceptionHandler())
                 .addFilters(new RejectAnonymousFilter())
@@ -37,6 +42,41 @@ class PatientPortalSecurityIntegrationTest {
         SecurityContextHolder.clearContext();
 
         mockMvc.perform(get("/api/patient-portal/me"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("unauthorized"));
+
+        mockMvc.perform(get("/api/patient-portal/doctors"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("unauthorized"));
+
+        mockMvc.perform(get("/api/patient-portal/doctors/123e4567-e89b-12d3-a456-426614174000/slots")
+                        .param("date", "2026-06-10"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("unauthorized"));
+
+        mockMvc.perform(post("/api/patient-portal/appointments")
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "publicDoctorId": "123e4567-e89b-12d3-a456-426614174000",
+                                  "appointmentDate": "2026-06-10",
+                                  "appointmentTime": "10:30:00"
+                                }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("unauthorized"));
+
+        mockMvc.perform(post("/api/patient-portal/careai/message")
+                        .contentType("application/json")
+                        .content("""
+                                {
+                                  "message": "Book Dr Suresh tomorrow morning"
+                                }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("unauthorized"));
+
+        mockMvc.perform(post("/api/patient-portal/careai/reset"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("unauthorized"));
     }

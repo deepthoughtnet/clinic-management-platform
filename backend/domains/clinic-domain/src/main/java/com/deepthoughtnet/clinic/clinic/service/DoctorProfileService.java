@@ -62,6 +62,8 @@ public class DoctorProfileService {
                 entity.getYearsOfExperience(),
                 entity.getAge(),
                 entity.isActive(),
+                entity.isPublicListingEnabled(),
+                entity.getSlug(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );

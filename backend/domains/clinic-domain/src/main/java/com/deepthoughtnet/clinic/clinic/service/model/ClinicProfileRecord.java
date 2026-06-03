@@ -20,6 +20,8 @@ public record ClinicProfileRecord(
         String gstNumber,
         UUID logoDocumentId,
         boolean active,
+        boolean publicListingEnabled,
+        String slug,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

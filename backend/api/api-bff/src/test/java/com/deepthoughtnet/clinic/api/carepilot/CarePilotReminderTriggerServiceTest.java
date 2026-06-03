@@ -126,6 +126,7 @@ class CarePilotReminderTriggerServiceTest {
                 "Tenant 1",
                 null,
                 "ACTIVE",
+                false,
                 null,
                 OffsetDateTime.now(),
                 OffsetDateTime.now()

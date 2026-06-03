@@ -1,0 +1,892 @@
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  type PublicClinicDetailResponse,
+  type PublicClinicSummaryResponse,
+  type PublicDoctorDetailResponse,
+  type PublicDoctorSummaryResponse,
+  type PublicPageResponse,
+  type PublicSearchResponse,
+  type PublicSpecialityDetailResponse,
+  type PublicSpecialitySummaryResponse,
+  fetchPublicJson,
+  patientBookingPath,
+} from "../../api/publicCatalog";
+import type { PatientPortalSession } from "../../api/patientPortal";
+
+type FetchState<T> = {
+  data: T;
+  loading: boolean;
+  error: string | null;
+};
+
+const emptyDoctorsPage: PublicPageResponse<PublicDoctorSummaryResponse> = {
+  items: [],
+  page: 0,
+  size: 12,
+  totalItems: 0,
+  totalPages: 0,
+};
+
+const emptyClinicsPage: PublicPageResponse<PublicClinicSummaryResponse> = {
+  items: [],
+  page: 0,
+  size: 12,
+  totalItems: 0,
+  totalPages: 0,
+};
+
+const emptySearchResponse: PublicSearchResponse = {
+  doctors: { ...emptyDoctorsPage, size: 6 },
+  clinics: { ...emptyClinicsPage, size: 6 },
+  specialities: [],
+};
+
+function usePublicResource<T>(path: string, params: Record<string, string | number | undefined | null>, initialValue: T): FetchState<T> {
+  const [state, setState] = useState<FetchState<T>>({
+    data: initialValue,
+    loading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    const abortController = new AbortController();
+    setState((current) => ({
+      data: current.data,
+      loading: true,
+      error: null,
+    }));
+
+    fetchPublicJson<T>(path, params, abortController.signal)
+      .then((result) => {
+        setState({
+          data: result,
+          loading: false,
+          error: null,
+        });
+      })
+      .catch((error: unknown) => {
+        if (abortController.signal.aborted) {
+          return;
+        }
+        setState({
+          data: initialValue,
+          loading: false,
+          error: error instanceof Error ? error.message : "Unable to load public directory data.",
+        });
+      });
+
+    return () => abortController.abort();
+  }, [path, JSON.stringify(params)]);
+
+  return state;
+}
+
+function formatExperience(value: number | null | undefined) {
+  if (value == null) {
+    return "Experience shared after clinic review";
+  }
+  return `${value}+ years experience`;
+}
+
+function initials(label: string) {
+  return label
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("");
+}
+
+function QueryToolbar({
+  actionLabel,
+  query,
+  setQuery,
+  city,
+  setCity,
+  area,
+  setArea,
+  onSubmit,
+}: {
+  actionLabel: string;
+  query: string;
+  setQuery: (value: string) => void;
+  city: string;
+  setCity: (value: string) => void;
+  area: string;
+  setArea: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form className="toolbar-card public-toolbar-card" onSubmit={onSubmit}>
+      <label className="toolbar-field">
+        <span>Search</span>
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Doctor name, speciality, clinic, or area"
+        />
+      </label>
+      <label className="toolbar-field">
+        <span>City</span>
+        <input value={city} onChange={(event) => setCity(event.target.value)} placeholder="Search by city" />
+      </label>
+      <label className="toolbar-field">
+        <span>Area</span>
+        <input value={area} onChange={(event) => setArea(event.target.value)} placeholder="Search by area" />
+      </label>
+      <button className="primary-button" type="submit">
+        {actionLabel}
+      </button>
+    </form>
+  );
+}
+
+function DirectoryState({
+  loading,
+  error,
+  empty,
+  emptyMessage,
+  children,
+}: {
+  loading: boolean;
+  error: string | null;
+  empty: boolean;
+  emptyMessage: string;
+  children: ReactNode;
+}) {
+  if (loading) {
+    return <div className="state-card">Loading public discovery results...</div>;
+  }
+  if (error) {
+    return <div className="state-card">Unable to load public discovery data: {error}</div>;
+  }
+  if (empty) {
+    return <div className="state-card">{emptyMessage}</div>;
+  }
+  return <>{children}</>;
+}
+
+function PaginationBar({
+  page,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalPages <= 1) {
+    return null;
+  }
+  return (
+    <div className="pagination-row" aria-label="Pagination">
+      <button className="ghost-button" type="button" onClick={() => onPageChange(page - 1)} disabled={page <= 0}>
+        Previous
+      </button>
+      <span className="pagination-label">
+        Page {page + 1} of {totalPages}
+      </span>
+      <button className="ghost-button" type="button" onClick={() => onPageChange(page + 1)} disabled={page + 1 >= totalPages}>
+        Next
+      </button>
+    </div>
+  );
+}
+
+function DoctorCard({ doctor, session }: { doctor: PublicDoctorSummaryResponse; session: PatientPortalSession | null }) {
+  return (
+    <article className="public-directory-card doctor-directory-card">
+      <div className="directory-card-top">
+        <div className="directory-avatar" aria-hidden="true">
+          {doctor.photoUrl ? <img src={doctor.photoUrl} alt="" /> : <span>{initials(doctor.doctorDisplayName)}</span>}
+        </div>
+        <div className="directory-card-heading">
+          <strong>{doctor.doctorDisplayName}</strong>
+          <span>{doctor.speciality ?? "General consultation"}</span>
+        </div>
+      </div>
+      <div className="directory-meta-list">
+        <span>{formatExperience(doctor.yearsOfExperience)}</span>
+        <span>
+          {doctor.clinicDisplayName}
+          {doctor.area ? ` · ${doctor.area}` : ""}
+          {doctor.city ? ` · ${doctor.city}` : ""}
+        </span>
+        {doctor.languages.length ? <span>Languages: {doctor.languages.join(", ")}</span> : null}
+      </div>
+      <div className="directory-badge-row">
+        {doctor.availableToday ? <span className="status-pill">Available today</span> : <span className="chip">Check next slot</span>}
+        <span className="chip">{doctor.nextAvailableSlotSummary ?? "Clinic shares next slot after review"}</span>
+      </div>
+      <div className="directory-action-row">
+        <Link className="secondary-button" to={`/doctors/${doctor.doctorSlug}`}>
+          View profile
+        </Link>
+        <Link className="ghost-button" to={patientBookingPath(session)}>
+          Book appointment
+        </Link>
+      </div>
+    </article>
+  );
+}
+
+function ClinicCard({ clinic, session }: { clinic: PublicClinicSummaryResponse; session: PatientPortalSession | null }) {
+  return (
+    <article className="public-directory-card clinic-directory-card">
+      <div className="directory-card-top">
+        <div className="directory-avatar" aria-hidden="true">
+          {clinic.logoUrl ? <img src={clinic.logoUrl} alt="" /> : <span>{initials(clinic.clinicDisplayName)}</span>}
+        </div>
+        <div className="directory-card-heading">
+          <strong>{clinic.clinicDisplayName}</strong>
+          <span>{clinic.area ?? clinic.city ?? "Clinic profile"}</span>
+        </div>
+      </div>
+      <div className="directory-meta-list">
+        <span>{clinic.address ?? "Address shared after clinic onboarding"}</span>
+        <span>{clinic.doctorsCount} doctor{clinic.doctorsCount === 1 ? "" : "s"}</span>
+      </div>
+      <div className="directory-badge-row">
+        {clinic.availableToday ? <span className="status-pill">Available today</span> : <span className="chip">Appointments via patient portal</span>}
+        {clinic.specialities.slice(0, 2).map((item) => (
+          <Link key={item} className="chip" to={`/specialities/${slugify(item)}`}>
+            {item}
+          </Link>
+        ))}
+      </div>
+      <div className="directory-action-row">
+        <Link className="secondary-button" to={`/clinics/${clinic.clinicSlug}`}>
+          View clinic
+        </Link>
+        <Link className="ghost-button" to={patientBookingPath(session)}>
+          Book appointment
+        </Link>
+      </div>
+    </article>
+  );
+}
+
+function slugify(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+}
+
+function useDirectoryFilters(defaultSize = 12) {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  const [city, setCity] = useState(searchParams.get("city") ?? "");
+  const [area, setArea] = useState(searchParams.get("area") ?? "");
+  const page = Number(searchParams.get("page") ?? "0") || 0;
+  const size = Number(searchParams.get("size") ?? `${defaultSize}`) || defaultSize;
+
+  useEffect(() => {
+    setQuery(searchParams.get("q") ?? "");
+    setCity(searchParams.get("city") ?? "");
+    setArea(searchParams.get("area") ?? "");
+  }, [searchParams]);
+
+  function submit(basePath: string, extra?: Record<string, string | undefined>) {
+    const params = new URLSearchParams();
+    if (query.trim()) {
+      params.set("q", query.trim());
+    }
+    if (city.trim()) {
+      params.set("city", city.trim());
+    }
+    if (area.trim()) {
+      params.set("area", area.trim());
+    }
+    Object.entries(extra ?? {}).forEach(([key, value]) => {
+      if (value?.trim()) {
+        params.set(key, value.trim());
+      }
+    });
+    params.set("page", "0");
+    params.set("size", `${defaultSize}`);
+    navigate(`${basePath}?${params.toString()}`);
+  }
+
+  function changePage(basePath: string, nextPage: number, extra?: Record<string, string | undefined>) {
+    const params = new URLSearchParams();
+    if (searchParams.get("q")) {
+      params.set("q", searchParams.get("q") ?? "");
+    }
+    if (searchParams.get("city")) {
+      params.set("city", searchParams.get("city") ?? "");
+    }
+    if (searchParams.get("area")) {
+      params.set("area", searchParams.get("area") ?? "");
+    }
+    Object.entries(extra ?? {}).forEach(([key, value]) => {
+      if (value?.trim()) {
+        params.set(key, value.trim());
+      }
+    });
+    params.set("page", `${Math.max(nextPage, 0)}`);
+    params.set("size", `${size}`);
+    navigate(`${basePath}?${params.toString()}`);
+  }
+
+  return { searchParams, query, setQuery, city, setCity, area, setArea, page, size, submit, changePage };
+}
+
+export function PublicHomePage({ session }: { session: PatientPortalSession | null }) {
+  const filters = useDirectoryFilters(6);
+  const hasQuery = Boolean(
+    filters.searchParams.get("q") || filters.searchParams.get("city") || filters.searchParams.get("area"),
+  );
+  const search = usePublicResource<PublicSearchResponse>(
+    "/api/public/search",
+    {
+      q: filters.searchParams.get("q"),
+      city: filters.searchParams.get("city"),
+      area: filters.searchParams.get("area"),
+      page: filters.page,
+      size: filters.size,
+    },
+    emptySearchResponse,
+  );
+
+  return (
+    <>
+      <section className="hero">
+        <div className="hero-copy">
+          <span className="eyebrow">Public doctor discovery</span>
+          <h1>Discover doctors, clinics, and specialities before you sign in.</h1>
+          <p>
+            Search by doctor name, speciality, clinic, area, or city. When you are ready to book, continue into the patient OTP flow.
+          </p>
+          <div className="cta-row">
+            <Link className="primary-button" to="/doctors">
+              Browse doctors
+            </Link>
+            <Link className="secondary-button" to="/clinics">
+              Browse clinics
+            </Link>
+            <Link className="ghost-button" to="/careai">
+              Ask CareAI
+            </Link>
+          </div>
+        </div>
+        <div className="hero-search-card">
+          <h2>Search care near you</h2>
+          <QueryToolbar
+            actionLabel="Search discovery"
+            query={filters.query}
+            setQuery={filters.setQuery}
+            city={filters.city}
+            setCity={filters.setCity}
+            area={filters.area}
+            setArea={filters.setArea}
+            onSubmit={(event) => {
+              event.preventDefault();
+              filters.submit("/");
+            }}
+          />
+        </div>
+      </section>
+
+      <section className="content-section">
+        <div className="section-heading">
+          <span className="eyebrow">{hasQuery ? "Search results" : "Featured discovery"}</span>
+          <h2>{hasQuery ? "Matching doctors, clinics, and specialities" : "Explore public doctor discovery"}</h2>
+          <p>
+            Public search only shows onboarded clinics and doctors marked safe for listing. Internal schedules, contact details, and staff-only data stay hidden.
+          </p>
+        </div>
+        <DirectoryState
+          loading={search.loading}
+          error={search.error}
+          empty={search.data.doctors.items.length === 0 && search.data.clinics.items.length === 0 && search.data.specialities.length === 0}
+          emptyMessage="No public matches were found yet for this search."
+        >
+          <div className="public-preview-grid">
+            <article className="patient-panel">
+              <div className="patient-panel-heading">
+                <h2>Doctors</h2>
+                <Link to={`/doctors?${filters.searchParams.toString()}`}>View all</Link>
+              </div>
+              <div className="public-card-stack">
+                {search.data.doctors.items.slice(0, 3).map((doctor) => (
+                  <DoctorCard key={doctor.doctorSlug} doctor={doctor} session={session} />
+                ))}
+              </div>
+            </article>
+
+            <article className="patient-panel">
+              <div className="patient-panel-heading">
+                <h2>Clinics</h2>
+                <Link to={`/clinics?${filters.searchParams.toString()}`}>View all</Link>
+              </div>
+              <div className="public-card-stack">
+                {search.data.clinics.items.slice(0, 3).map((clinic) => (
+                  <ClinicCard key={clinic.clinicSlug} clinic={clinic} session={session} />
+                ))}
+              </div>
+            </article>
+          </div>
+
+          <article className="patient-panel">
+            <div className="patient-panel-heading">
+              <h2>Specialities</h2>
+              <Link to="/specialities">Browse all</Link>
+            </div>
+            <div className="chip-row">
+              {search.data.specialities.slice(0, 10).map((speciality) => (
+                <Link key={speciality.specialitySlug} className="chip" to={`/specialities/${speciality.specialitySlug}`}>
+                  {speciality.speciality}
+                </Link>
+              ))}
+            </div>
+          </article>
+        </DirectoryState>
+      </section>
+    </>
+  );
+}
+
+export function PublicDoctorsPage({ session }: { session: PatientPortalSession | null }) {
+  const filters = useDirectoryFilters();
+  const speciality = filters.searchParams.get("speciality");
+  const clinic = filters.searchParams.get("clinic");
+  const doctors = usePublicResource<PublicPageResponse<PublicDoctorSummaryResponse>>(
+    "/api/public/doctors",
+    {
+      q: filters.searchParams.get("q"),
+      city: filters.searchParams.get("city"),
+      area: filters.searchParams.get("area"),
+      speciality,
+      clinic,
+      page: filters.page,
+      size: filters.size,
+    },
+    emptyDoctorsPage,
+  );
+
+  return (
+    <section className="page-section">
+      <div className="section-heading">
+        <span className="eyebrow">Doctor directory</span>
+        <h1>Browse public doctor profiles</h1>
+        <p>Doctor cards stay public-safe: speciality, experience, clinic context, and a next-slot summary when available.</p>
+      </div>
+      <QueryToolbar
+        actionLabel="Search doctors"
+        query={filters.query}
+        setQuery={filters.setQuery}
+        city={filters.city}
+        setCity={filters.setCity}
+        area={filters.area}
+        setArea={filters.setArea}
+        onSubmit={(event) => {
+          event.preventDefault();
+          filters.submit("/doctors", {
+            speciality: speciality ?? undefined,
+            clinic: clinic ?? undefined,
+          });
+        }}
+      />
+      <DirectoryState
+        loading={doctors.loading}
+        error={doctors.error}
+        empty={doctors.data.items.length === 0}
+        emptyMessage="No public doctor profiles matched this search."
+      >
+        <div className="public-directory-grid">
+          {doctors.data.items.map((doctor) => (
+            <DoctorCard key={doctor.doctorSlug} doctor={doctor} session={session} />
+          ))}
+        </div>
+        <PaginationBar
+          page={doctors.data.page}
+          totalPages={doctors.data.totalPages}
+          onPageChange={(nextPage) =>
+            filters.changePage("/doctors", nextPage, {
+              speciality: speciality ?? undefined,
+              clinic: clinic ?? undefined,
+            })
+          }
+        />
+      </DirectoryState>
+    </section>
+  );
+}
+
+export function PublicDoctorDetailPage({ session }: { session: PatientPortalSession | null }) {
+  const { doctorSlug = "" } = useParams();
+  const detail = usePublicResource<PublicDoctorDetailResponse | null>(`/api/public/doctors/${doctorSlug}`, {}, null);
+
+  return (
+    <section className="page-section">
+      <DirectoryState
+        loading={detail.loading}
+        error={detail.error}
+        empty={!detail.data}
+        emptyMessage="This doctor profile is not available for public discovery."
+      >
+        {detail.data ? (
+          <div className="public-detail-shell">
+            <article className="patient-panel public-detail-hero">
+              <div className="directory-card-top">
+                <div className="directory-avatar directory-avatar-large" aria-hidden="true">
+                  {detail.data.photoUrl ? <img src={detail.data.photoUrl} alt="" /> : <span>{initials(detail.data.doctorDisplayName)}</span>}
+                </div>
+                <div className="directory-card-heading">
+                  <strong>{detail.data.doctorDisplayName}</strong>
+                  <span>{detail.data.specialities.join(", ") || "General consultation"}</span>
+                  <p>{detail.data.qualification ?? "Qualification shared by clinic onboarding"} · {formatExperience(detail.data.yearsOfExperience)}</p>
+                </div>
+              </div>
+              <div className="directory-badge-row">
+                {detail.data.availableToday ? <span className="status-pill">Available today</span> : null}
+                {detail.data.languages.length ? <span className="chip">Languages: {detail.data.languages.join(", ")}</span> : null}
+              </div>
+              <div className="directory-action-row">
+                <Link className="primary-button" to={patientBookingPath(session)}>
+                  Book appointment
+                </Link>
+                <Link className="ghost-button" to="/careai">
+                  Ask CareAI
+                </Link>
+              </div>
+            </article>
+
+            <div className="public-detail-grid">
+              <article className="patient-panel">
+                <div className="patient-panel-heading">
+                  <h2>Clinic</h2>
+                </div>
+                <div className="patient-subcard-list">
+                  {detail.data.clinics.map((clinic) => (
+                    <Link key={clinic.clinicSlug} className="patient-subcard" to={`/clinics/${clinic.clinicSlug}`}>
+                      <strong>{clinic.clinicDisplayName}</strong>
+                      <span>
+                        {clinic.area ?? clinic.city ?? "Clinic profile"}
+                        {clinic.area && clinic.city ? ` · ${clinic.city}` : ""}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              </article>
+
+              <article className="patient-panel">
+                <div className="patient-panel-heading">
+                  <h2>Availability</h2>
+                </div>
+                <div className="patient-detail-list">
+                  <div>
+                    <strong>Available days</strong>
+                    <span>{detail.data.availableDays.join(", ") || "Clinic shares availability after review"}</span>
+                  </div>
+                </div>
+                <div className="patient-subcard-list">
+                  {detail.data.nextAvailableSlots.length ? (
+                    detail.data.nextAvailableSlots.map((slot) => (
+                      <div key={slot} className="patient-subcard">
+                        <strong>Next slot</strong>
+                        <span>{slot}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="patient-inline-empty">Next available slots will appear when the clinic publishes patient-safe availability.</div>
+                  )}
+                </div>
+              </article>
+            </div>
+          </div>
+        ) : null}
+      </DirectoryState>
+    </section>
+  );
+}
+
+export function PublicClinicsPage({ session }: { session: PatientPortalSession | null }) {
+  const filters = useDirectoryFilters();
+  const speciality = filters.searchParams.get("speciality");
+  const clinics = usePublicResource<PublicPageResponse<PublicClinicSummaryResponse>>(
+    "/api/public/clinics",
+    {
+      q: filters.searchParams.get("q"),
+      city: filters.searchParams.get("city"),
+      area: filters.searchParams.get("area"),
+      speciality,
+      page: filters.page,
+      size: filters.size,
+    },
+    emptyClinicsPage,
+  );
+
+  return (
+    <section className="page-section">
+      <div className="section-heading">
+        <span className="eyebrow">Clinic directory</span>
+        <h1>Browse public clinic profiles</h1>
+        <p>Public clinic cards show location, doctor count, visible specialities, and whether any listed doctor has availability today.</p>
+      </div>
+      <QueryToolbar
+        actionLabel="Search clinics"
+        query={filters.query}
+        setQuery={filters.setQuery}
+        city={filters.city}
+        setCity={filters.setCity}
+        area={filters.area}
+        setArea={filters.setArea}
+        onSubmit={(event) => {
+          event.preventDefault();
+          filters.submit("/clinics", { speciality: speciality ?? undefined });
+        }}
+      />
+      <DirectoryState
+        loading={clinics.loading}
+        error={clinics.error}
+        empty={clinics.data.items.length === 0}
+        emptyMessage="No public clinic profiles matched this search."
+      >
+        <div className="public-directory-grid">
+          {clinics.data.items.map((clinic) => (
+            <ClinicCard key={clinic.clinicSlug} clinic={clinic} session={session} />
+          ))}
+        </div>
+        <PaginationBar
+          page={clinics.data.page}
+          totalPages={clinics.data.totalPages}
+          onPageChange={(nextPage) => filters.changePage("/clinics", nextPage, { speciality: speciality ?? undefined })}
+        />
+      </DirectoryState>
+    </section>
+  );
+}
+
+export function PublicClinicDetailPage({ session }: { session: PatientPortalSession | null }) {
+  const { clinicSlug = "" } = useParams();
+  const detail = usePublicResource<PublicClinicDetailResponse | null>(`/api/public/clinics/${clinicSlug}`, {}, null);
+
+  return (
+    <section className="page-section">
+      <DirectoryState
+        loading={detail.loading}
+        error={detail.error}
+        empty={!detail.data}
+        emptyMessage="This clinic profile is not available for public discovery."
+      >
+        {detail.data ? (
+          <div className="public-detail-shell">
+            <article className="patient-panel public-detail-hero">
+              <div className="directory-card-top">
+                <div className="directory-avatar directory-avatar-large" aria-hidden="true">
+                  {detail.data.logoUrl ? <img src={detail.data.logoUrl} alt="" /> : <span>{initials(detail.data.clinicDisplayName)}</span>}
+                </div>
+                <div className="directory-card-heading">
+                  <strong>{detail.data.clinicDisplayName}</strong>
+                  <span>{detail.data.area ?? detail.data.city ?? "Clinic profile"}</span>
+                  <p>{detail.data.address ?? "Clinic address shared after onboarding"}</p>
+                </div>
+              </div>
+              <div className="directory-badge-row">
+                {detail.data.availableToday ? <span className="status-pill">Available today</span> : null}
+                {detail.data.specialities.slice(0, 4).map((speciality) => (
+                  <Link key={speciality} className="chip" to={`/specialities/${slugify(speciality)}`}>
+                    {speciality}
+                  </Link>
+                ))}
+              </div>
+              <div className="directory-action-row">
+                <Link className="primary-button" to={patientBookingPath(session)}>
+                  Book appointment
+                </Link>
+                <Link className="ghost-button" to="/careai">
+                  Ask CareAI
+                </Link>
+              </div>
+            </article>
+
+            <div className="public-detail-grid">
+              <article className="patient-panel">
+                <div className="patient-panel-heading">
+                  <h2>Timings</h2>
+                </div>
+                <div className="patient-subcard-list">
+                  {detail.data.timings.length ? (
+                    detail.data.timings.map((timing) => (
+                      <div key={timing} className="patient-subcard">
+                        <strong>{timing}</strong>
+                        <span>Published from visible doctor schedules only.</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="patient-inline-empty">Clinic timings will appear when visible doctor schedules are published.</div>
+                  )}
+                </div>
+              </article>
+
+              <article className="patient-panel">
+                <div className="patient-panel-heading">
+                  <h2>Doctors</h2>
+                </div>
+                <div className="public-card-stack">
+                  {detail.data.doctors.map((doctor) => (
+                    <DoctorCard key={doctor.doctorSlug} doctor={doctor} session={session} />
+                  ))}
+                </div>
+              </article>
+            </div>
+          </div>
+        ) : null}
+      </DirectoryState>
+    </section>
+  );
+}
+
+export function PublicSpecialitiesPage() {
+  const filters = useDirectoryFilters(24);
+  const specialities = usePublicResource<PublicSpecialitySummaryResponse[]>(
+    "/api/public/specialities",
+    {
+      q: filters.searchParams.get("q"),
+      city: filters.searchParams.get("city"),
+    },
+    [],
+  );
+
+  return (
+    <section className="page-section">
+      <div className="section-heading">
+        <span className="eyebrow">Specialities</span>
+        <h1>Explore specialities across public clinics</h1>
+        <p>Use speciality pages to narrow down which visible doctors and clinics match the care you need.</p>
+      </div>
+      <form
+        className="toolbar-card public-toolbar-card"
+        onSubmit={(event) => {
+          event.preventDefault();
+          filters.submit("/specialities");
+        }}
+      >
+        <label className="toolbar-field">
+          <span>Speciality</span>
+          <input value={filters.query} onChange={(event) => filters.setQuery(event.target.value)} placeholder="Dermatology, pediatrics, cardiology" />
+        </label>
+        <label className="toolbar-field">
+          <span>City</span>
+          <input value={filters.city} onChange={(event) => filters.setCity(event.target.value)} placeholder="Filter by city" />
+        </label>
+        <button className="primary-button" type="submit">
+          Search specialities
+        </button>
+      </form>
+      <DirectoryState
+        loading={specialities.loading}
+        error={specialities.error}
+        empty={specialities.data.length === 0}
+        emptyMessage="No public specialities matched this search."
+      >
+        <div className="public-directory-grid speciality-directory-grid">
+          {specialities.data.map((speciality) => (
+            <Link key={speciality.specialitySlug} className="public-directory-card feature-card" to={`/specialities/${speciality.specialitySlug}`}>
+              <strong>{speciality.speciality}</strong>
+              <p>
+                {speciality.doctorsCount} doctor{speciality.doctorsCount === 1 ? "" : "s"} across {speciality.clinicsCount} clinic{speciality.clinicsCount === 1 ? "" : "s"}.
+              </p>
+            </Link>
+          ))}
+        </div>
+      </DirectoryState>
+    </section>
+  );
+}
+
+export function PublicSpecialityDetailPage({ session }: { session: PatientPortalSession | null }) {
+  const { specialitySlug = "" } = useParams();
+  const filters = useDirectoryFilters();
+  const detail = usePublicResource<PublicSpecialityDetailResponse | null>(
+    `/api/public/specialities/${specialitySlug}`,
+    {
+      q: filters.searchParams.get("q"),
+      city: filters.searchParams.get("city"),
+      area: filters.searchParams.get("area"),
+      clinic: filters.searchParams.get("clinic"),
+      page: filters.page,
+      size: filters.size,
+    },
+    null,
+  );
+
+  return (
+    <section className="page-section">
+      <div className="section-heading">
+        <span className="eyebrow">Speciality detail</span>
+        <h1>{detail.data?.speciality ?? "Speciality"}</h1>
+        <p>Browse public doctor profiles for this speciality, then continue to patient OTP when you are ready to book.</p>
+      </div>
+      <QueryToolbar
+        actionLabel="Filter doctors"
+        query={filters.query}
+        setQuery={filters.setQuery}
+        city={filters.city}
+        setCity={filters.setCity}
+        area={filters.area}
+        setArea={filters.setArea}
+        onSubmit={(event) => {
+          event.preventDefault();
+          filters.submit(`/specialities/${specialitySlug}`);
+        }}
+      />
+      <DirectoryState
+        loading={detail.loading}
+        error={detail.error}
+        empty={!detail.data || detail.data.doctors.items.length === 0}
+        emptyMessage="No public doctors matched this speciality filter."
+      >
+        {detail.data ? (
+          <>
+            <div className="public-directory-grid">
+              {detail.data.doctors.items.map((doctor) => (
+                <DoctorCard key={doctor.doctorSlug} doctor={doctor} session={session} />
+              ))}
+            </div>
+            <PaginationBar
+              page={detail.data.doctors.page}
+              totalPages={detail.data.doctors.totalPages}
+              onPageChange={(nextPage) => filters.changePage(`/specialities/${specialitySlug}`, nextPage)}
+            />
+          </>
+        ) : null}
+      </DirectoryState>
+    </section>
+  );
+}
+
+export function PublicCareAiPage({ session }: { session: PatientPortalSession | null }) {
+  return (
+    <section className="page-section">
+      <div className="section-heading">
+        <span className="eyebrow">Public CareAI</span>
+        <h1>Ask CareAI to narrow down the right in-clinic path.</h1>
+        <p>CareAI can guide you toward a speciality, doctor, clinic, or next availability. It does not diagnose, prescribe, or expose patient/private data.</p>
+      </div>
+      <div className="careai-panel public-careai-panel">
+        <article className="info-card accent-card">
+          <strong>Try asking</strong>
+          <ul className="plain-list">
+            <li>I need a skin doctor in Pune.</li>
+            <li>Show me cardiologists near Baner.</li>
+            <li>Which clinic has a pediatrician available today?</li>
+          </ul>
+        </article>
+        <article className="info-card">
+          <strong>Next step</strong>
+          <p>Use the public directories to compare options, then continue into the patient portal when you are ready to book.</p>
+          <div className="directory-action-row">
+            <Link className="primary-button" to="/doctors">
+              Browse doctors
+            </Link>
+            <Link className="ghost-button" to={patientBookingPath(session)}>
+              Book through patient portal
+            </Link>
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}

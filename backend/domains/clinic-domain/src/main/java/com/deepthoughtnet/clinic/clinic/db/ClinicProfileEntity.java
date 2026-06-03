@@ -70,6 +70,12 @@ public class ClinicProfileEntity {
     @Column(nullable = false)
     private boolean active = true;
 
+    @Column(name = "public_listing_enabled", nullable = false)
+    private boolean publicListingEnabled = false;
+
+    @Column(name = "slug", length = 192)
+    private String slug;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
@@ -183,6 +189,14 @@ public class ClinicProfileEntity {
 
     public boolean isActive() {
         return active;
+    }
+
+    public boolean isPublicListingEnabled() {
+        return publicListingEnabled;
+    }
+
+    public String getSlug() {
+        return slug;
     }
 
     public OffsetDateTime getCreatedAt() {

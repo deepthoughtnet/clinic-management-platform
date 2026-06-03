@@ -84,6 +84,7 @@ public class PlatformTenantManagementService {
                 tenant.getName(),
                 tenant.getPlanId(),
                 tenant.getStatus(),
+                tenant.isPublicListingEnabled(),
                 new TenantModulesRecord(
                         tenant.isClinicAutomationEnabled(),
                         tenant.isClinicGenerationEnabled(),

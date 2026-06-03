@@ -1,21 +1,18 @@
 package com.deepthoughtnet.clinic.api.patientportal.dto;
 
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
 import java.util.List;
 
 public record PatientPortalPrescriptionResponse(
-        String prescriptionId,
         String prescriptionNumber,
-        Integer versionNumber,
+        LocalDate prescriptionDate,
         String doctorName,
-        String diagnosisSnapshot,
-        String advice,
+        String clinicName,
+        String diagnosisSummary,
+        String adviceSummary,
         LocalDate followUpDate,
         String status,
-        OffsetDateTime finalizedAt,
-        OffsetDateTime createdAt,
-        OffsetDateTime updatedAt,
+        boolean pdfAvailable,
         List<PatientPortalPrescriptionMedicineResponse> medicines,
         List<PatientPortalPrescriptionTestResponse> recommendedTests
 ) {

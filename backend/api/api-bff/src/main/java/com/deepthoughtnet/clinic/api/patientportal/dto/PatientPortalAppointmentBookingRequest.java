@@ -3,13 +3,10 @@ package com.deepthoughtnet.clinic.api.patientportal.dto;
 import java.time.LocalDate;
 import java.time.LocalTime;
 
-public record PatientPortalAppointmentResponse(
+public record PatientPortalAppointmentBookingRequest(
+        String publicDoctorId,
         LocalDate appointmentDate,
         LocalTime appointmentTime,
-        String doctorName,
-        String clinicName,
-        String source,
-        String reason,
-        String status
+        String reason
 ) {
 }

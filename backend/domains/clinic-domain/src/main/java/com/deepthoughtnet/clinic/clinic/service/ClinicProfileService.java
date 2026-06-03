@@ -101,6 +101,8 @@ public class ClinicProfileService {
                 entity.getGstNumber(),
                 entity.getLogoDocumentId(),
                 entity.isActive(),
+                entity.isPublicListingEnabled(),
+                entity.getSlug(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );

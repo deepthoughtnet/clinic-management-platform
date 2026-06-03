@@ -1,15 +1,19 @@
 package com.deepthoughtnet.clinic.api.publicsite.dto;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 public record PublicDoctorSummaryResponse(
+        String doctorSlug,
         String doctorDisplayName,
-        String clinicDisplayName,
-        String city,
+        String photoUrl,
         String speciality,
-        BigDecimal consultationFee,
+        Integer yearsOfExperience,
         List<String> languages,
+        String clinicDisplayName,
+        String clinicSlug,
+        String area,
+        String city,
+        boolean availableToday,
         String nextAvailableSlotSummary
 ) {
 }

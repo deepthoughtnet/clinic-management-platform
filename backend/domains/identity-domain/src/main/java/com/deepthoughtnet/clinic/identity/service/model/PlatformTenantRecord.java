@@ -9,6 +9,7 @@ public record PlatformTenantRecord(
         String name,
         String planId,
         String status,
+        boolean publicListingEnabled,
         TenantModulesRecord modules,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt

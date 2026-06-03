@@ -17,6 +17,8 @@ public record DoctorProfileRecord(
         Integer yearsOfExperience,
         Integer age,
         boolean active,
+        boolean publicListingEnabled,
+        String slug,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

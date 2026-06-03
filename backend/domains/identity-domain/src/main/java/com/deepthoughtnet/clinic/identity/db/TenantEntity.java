@@ -63,6 +63,9 @@ public class TenantEntity {
     @Column(name = "module_carepilot", nullable = false)
     private boolean carePilotEnabled = false;
 
+    @Column(name = "public_listing_enabled", nullable = false)
+    private boolean publicListingEnabled = false;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
@@ -99,6 +102,7 @@ public class TenantEntity {
     public boolean isDoctorIntelligenceEnabled() { return doctorIntelligenceEnabled; }
     public boolean isTeleCallingEnabled() { return teleCallingEnabled; }
     public boolean isCarePilotEnabled() { return carePilotEnabled; }
+    public boolean isPublicListingEnabled() { return publicListingEnabled; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 

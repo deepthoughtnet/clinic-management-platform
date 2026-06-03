@@ -3,11 +3,9 @@ package com.deepthoughtnet.clinic.api.patientportal.dto;
 import java.time.LocalDate;
 
 public record PatientPortalMeResponse(
-        String patientId,
         String patientNumber,
-        String firstName,
-        String lastName,
         String fullName,
+        String clinicName,
         String gender,
         LocalDate dateOfBirth,
         Integer ageYears,
@@ -15,8 +13,7 @@ public record PatientPortalMeResponse(
         String email,
         String bloodGroup,
         String allergies,
-        String existingConditions,
-        String longTermMedications,
-        String surgicalHistory
+        String chronicConditions,
+        String longTermMedications
 ) {
 }

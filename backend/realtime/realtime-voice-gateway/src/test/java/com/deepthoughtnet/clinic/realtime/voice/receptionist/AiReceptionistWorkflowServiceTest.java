@@ -79,7 +79,7 @@ class AiReceptionistWorkflowServiceTest {
         VoiceSessionEntity session = newSession("{\"receptionist\":{\"state\":\"IDENTIFY_INTENT\"}}", tenantId);
         when(clinicProfileService.findByTenantId(tenantId)).thenReturn(Optional.of(new ClinicProfileRecord(
                 UUID.randomUUID(), tenantId, "Clinic One", "Clinic One", "+1-222-333-4444", "contact@clinic.test",
-                "12 Main St", null, "Metropolis", "CA", "US", "90001", null, null, null, true, null, null
+                "12 Main St", null, "Metropolis", "CA", "US", "90001", null, null, null, true, false, null, null, null
         )));
 
         ReceptionistWorkflowResult result = service.evaluate(session, UUID.randomUUID(), "what is your address", "corr-2");
