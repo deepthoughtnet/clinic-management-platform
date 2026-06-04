@@ -10,11 +10,16 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDashboardRes
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalMeResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalProfileUpdateRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionMedicineResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionTestResponse;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRescheduleCommand;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatusUpdateCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
@@ -34,6 +39,8 @@ import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
+import com.deepthoughtnet.clinic.patient.service.PatientService;
+import com.deepthoughtnet.clinic.patient.service.model.PatientUpsertCommand;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -51,6 +58,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiAppointmentOption;
 
 @Service
 @Transactional(readOnly = true)
@@ -60,6 +68,7 @@ public class PatientPortalService {
     private final ClinicProfileService clinicProfileService;
     private final TenantUserManagementService tenantUserManagementService;
     private final DoctorProfileService doctorProfileService;
+    private final PatientService patientService;
     private final AppointmentService appointmentService;
     private final PrescriptionService prescriptionService;
     private final BillingService billingService;
@@ -70,6 +79,7 @@ public class PatientPortalService {
             ClinicProfileService clinicProfileService,
             TenantUserManagementService tenantUserManagementService,
             DoctorProfileService doctorProfileService,
+            PatientService patientService,
             AppointmentService appointmentService,
             PrescriptionService prescriptionService,
             BillingService billingService
@@ -79,6 +89,7 @@ public class PatientPortalService {
         this.clinicProfileService = clinicProfileService;
         this.tenantUserManagementService = tenantUserManagementService;
         this.doctorProfileService = doctorProfileService;
+        this.patientService = patientService;
         this.appointmentService = appointmentService;
         this.prescriptionService = prescriptionService;
         this.billingService = billingService;
@@ -106,16 +117,87 @@ public class PatientPortalService {
 
     public PatientPortalMeResponse me() {
         PatientAccess access = requireCurrentPatientAccess();
+        return toMeResponse(access.tenantId(), access.patient());
+    }
+
+    @Transactional
+    public PatientPortalMeResponse updateProfile(PatientPortalProfileUpdateRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Profile request is required");
+        }
+        PatientAccess access = requireCurrentPatientAccess();
         PatientEntity patient = access.patient();
+        var updated = patientService.update(
+                access.tenantId(),
+                patient.getId(),
+                new PatientUpsertCommand(
+                        request.firstName(),
+                        request.lastName(),
+                        request.gender(),
+                        request.dateOfBirth() != null ? request.dateOfBirth() : patient.getDateOfBirth(),
+                        request.ageYears() != null ? request.ageYears() : patient.getAgeYears(),
+                        patient.getMobile(),
+                        request.email(),
+                        request.addressLine1(),
+                        request.addressLine2(),
+                        request.city(),
+                        request.state(),
+                        request.country(),
+                        request.postalCode(),
+                        request.emergencyContactName(),
+                        request.emergencyContactMobile(),
+                        patient.getBloodGroup(),
+                        patient.getAllergies(),
+                        patient.getExistingConditions(),
+                        patient.getLongTermMedications(),
+                        patient.getSurgicalHistory(),
+                        patient.getNotes(),
+                        patient.isActive()
+                ),
+                requireActorAppUserId()
+        );
+        return new PatientPortalMeResponse(
+                updated.patientNumber(),
+                fullName(updated.firstName(), updated.lastName()),
+                clinicName(access.tenantId()),
+                updated.gender() == null ? null : updated.gender().name(),
+                updated.dateOfBirth(),
+                updated.ageYears(),
+                updated.mobile(),
+                updated.email(),
+                updated.addressLine1(),
+                updated.addressLine2(),
+                updated.city(),
+                updated.state(),
+                updated.country(),
+                updated.postalCode(),
+                updated.emergencyContactName(),
+                updated.emergencyContactMobile(),
+                updated.bloodGroup(),
+                updated.allergies(),
+                updated.existingConditions(),
+                updated.longTermMedications()
+        );
+    }
+
+    private PatientPortalMeResponse toMeResponse(UUID tenantId, PatientEntity patient) {
         return new PatientPortalMeResponse(
                 patient.getPatientNumber(),
                 fullName(patient.getFirstName(), patient.getLastName()),
-                clinicName(access.tenantId()),
+                clinicName(tenantId),
                 patient.getGender() == null ? null : patient.getGender().name(),
                 patient.getDateOfBirth(),
                 patient.getAgeYears(),
                 patient.getMobile(),
                 patient.getEmail(),
+                patient.getAddressLine1(),
+                patient.getAddressLine2(),
+                patient.getCity(),
+                patient.getState(),
+                patient.getCountry(),
+                patient.getPostalCode(),
+                patient.getEmergencyContactName(),
+                patient.getEmergencyContactMobile(),
                 patient.getBloodGroup(),
                 patient.getAllergies(),
                 patient.getExistingConditions(),
@@ -126,6 +208,27 @@ public class PatientPortalService {
     public List<PatientPortalAppointmentResponse> appointments() {
         PatientAccess access = requireCurrentPatientAccess();
         return appointmentResponses(access, clinicName(access.tenantId()));
+    }
+
+    public List<PatientPortalCareAiAppointmentOption> careAiUpcomingAppointments() {
+        PatientAccess access = requireCurrentPatientAccess();
+        String clinicName = clinicName(access.tenantId());
+        return appointmentService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+                .filter(this::isUpcomingAppointmentRecord)
+                .sorted(Comparator
+                        .comparing(AppointmentRecord::appointmentDate, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(AppointmentRecord::appointmentTime, Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(record -> new PatientPortalCareAiAppointmentOption(
+                        record.id(),
+                        record.doctorUserId(),
+                        record.doctorName(),
+                        clinicName,
+                        record.appointmentDate(),
+                        record.appointmentTime(),
+                        record.status() == null ? null : record.status().name(),
+                        summarize(record.reason())
+                ))
+                .toList();
     }
 
     public List<PatientPortalDoctorResponse> doctors() {
@@ -195,6 +298,72 @@ public class PatientPortalService {
                 booked.status() == null ? null : booked.status().name(),
                 summarize(booked.reason()),
                 "Appointment booked successfully."
+        );
+    }
+
+    @Transactional
+    public PatientPortalAppointmentConfirmationResponse rescheduleAppointment(
+            UUID appointmentId,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String reason
+    ) {
+        PatientAccess access = requireCurrentPatientAccess();
+        requireAppointmentDate(appointmentDate);
+        if (appointmentTime == null) {
+            throw new IllegalArgumentException("Appointment time is required");
+        }
+        AppointmentRecord current = requireAccessibleUpcomingAppointment(access, appointmentId);
+        var updated = appointmentService.reschedule(
+                access.tenantId(),
+                current.id(),
+                new AppointmentRescheduleCommand(
+                        current.doctorUserId(),
+                        appointmentDate,
+                        appointmentTime,
+                        normalizeBookingReason(reason == null ? current.reason() : reason)
+                ),
+                requireActorAppUserId(),
+                false
+        );
+        return new PatientPortalAppointmentConfirmationResponse(
+                updated.appointmentDate(),
+                updated.appointmentTime(),
+                updated.doctorName(),
+                clinicName(access.tenantId()),
+                appointmentSource(updated),
+                updated.status() == null ? null : updated.status().name(),
+                summarize(updated.reason()),
+                "Appointment rescheduled successfully."
+        );
+    }
+
+    @Transactional
+    public PatientPortalAppointmentConfirmationResponse cancelAppointment(UUID appointmentId, String reason) {
+        PatientAccess access = requireCurrentPatientAccess();
+        AppointmentRecord current = requireAccessibleUpcomingAppointment(access, appointmentId);
+        String cancelReason = StringUtils.hasText(reason) ? reason.trim() : "Cancelled by patient";
+        var updated = appointmentService.updateStatus(
+                access.tenantId(),
+                current.id(),
+                new AppointmentStatusUpdateCommand(
+                        AppointmentStatus.CANCELLED,
+                        cancelReason,
+                        null,
+                        null,
+                        null
+                ),
+                requireActorAppUserId()
+        );
+        return new PatientPortalAppointmentConfirmationResponse(
+                updated.appointmentDate(),
+                updated.appointmentTime(),
+                updated.doctorName(),
+                clinicName(access.tenantId()),
+                appointmentSource(updated),
+                updated.status() == null ? null : updated.status().name(),
+                summarize(updated.reason()),
+                "Appointment cancelled successfully."
         );
     }
 
@@ -379,6 +548,33 @@ public class PatientPortalService {
                 || (!"CANCELLED".equalsIgnoreCase(status)
                 && !"NO_SHOW".equalsIgnoreCase(status)
                 && !"COMPLETED".equalsIgnoreCase(status));
+    }
+
+    private boolean isUpcomingAppointmentRecord(AppointmentRecord appointment) {
+        if (appointment == null || appointment.appointmentDate() == null) {
+            return false;
+        }
+        if (appointment.status() == AppointmentStatus.CANCELLED
+                || appointment.status() == AppointmentStatus.NO_SHOW
+                || appointment.status() == AppointmentStatus.COMPLETED) {
+            return false;
+        }
+        LocalDate today = LocalDate.now();
+        LocalTime now = LocalTime.now();
+        return appointment.appointmentDate().isAfter(today)
+                || (appointment.appointmentDate().isEqual(today)
+                && (appointment.appointmentTime() == null || !appointment.appointmentTime().isBefore(now)));
+    }
+
+    private AppointmentRecord requireAccessibleUpcomingAppointment(PatientAccess access, UUID appointmentId) {
+        if (appointmentId == null) {
+            throw new IllegalArgumentException("Appointment is required");
+        }
+        return appointmentService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+                .filter(record -> appointmentId.equals(record.id()))
+                .filter(this::isUpcomingAppointmentRecord)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Upcoming appointment not found"));
     }
 
     private PrescriptionRecord findAccessiblePrescription(PatientAccess access, String prescriptionNumber) {

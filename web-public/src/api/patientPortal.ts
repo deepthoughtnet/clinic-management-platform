@@ -1,12 +1,23 @@
-export type PatientPortalSession = {
+type PatientPortalSessionBase = {
   mode: "otp";
   tenantCode: string;
   tenantId: string;
   phone: string;
-  patientLabel: string;
   createdAt: string;
   patientSessionToken: string;
 };
+
+export type PatientPortalPatientSession = PatientPortalSessionBase & {
+  sessionRole: "patient";
+  patientLabel: string;
+};
+
+export type PatientPortalRegistrationSession = PatientPortalSessionBase & {
+  sessionRole: "registration";
+  patientLabel: string;
+};
+
+export type PatientPortalSession = PatientPortalPatientSession | PatientPortalRegistrationSession;
 
 export type PatientPortalOtpRequestResponse = {
   accepted: boolean;
@@ -18,10 +29,13 @@ export type PatientPortalOtpRequestResponse = {
 
 export type PatientPortalOtpVerifyResponse = {
   verified: boolean;
+  patientExists: boolean;
+  registrationRequired: boolean;
   message: string;
   tenantId: string | null;
   patientDisplayName: string | null;
   patientSessionToken: string | null;
+  registrationSessionToken: string | null;
 };
 
 export type PatientPortalMeResponse = {
@@ -33,10 +47,61 @@ export type PatientPortalMeResponse = {
   ageYears: number | null;
   mobile: string | null;
   email: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  postalCode: string | null;
+  emergencyContactName: string | null;
+  emergencyContactMobile: string | null;
   bloodGroup: string | null;
   allergies: string | null;
   chronicConditions: string | null;
   longTermMedications: string | null;
+};
+
+export type PatientPortalRegistrationRequest = {
+  firstName: string;
+  lastName: string;
+  gender: string;
+  dateOfBirth: string | null;
+  ageYears: number | null;
+  email: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string;
+  state: string | null;
+  country: string | null;
+  postalCode: string | null;
+  emergencyContactName: string | null;
+  emergencyContactMobile: string | null;
+};
+
+export type PatientPortalRegistrationResponse = {
+  created: boolean;
+  linkedExistingPatient: boolean;
+  message: string;
+  tenantId: string;
+  patientDisplayName: string;
+  patientSessionToken: string;
+};
+
+export type PatientPortalProfileUpdateRequest = {
+  firstName: string;
+  lastName: string;
+  gender: string;
+  dateOfBirth: string | null;
+  ageYears: number | null;
+  email: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  postalCode: string | null;
+  emergencyContactName: string | null;
+  emergencyContactMobile: string | null;
 };
 
 export type PatientPortalAppointmentResponse = {
@@ -149,19 +214,24 @@ export type PatientPortalCareAiMessageRequest = {
 
 export type PatientPortalCareAiStateResponse = {
   language: string;
+  currentIntent: string | null;
   doctorName: string | null;
   speciality: string | null;
+  selectedAppointment: string | null;
   preferredDate: string | null;
   preferredTimeWindow: string | null;
   suggestedSlot: string | null;
   confirmationPending: boolean;
   booked: boolean;
+  actionCompleted: boolean;
+  lastAction: string | null;
   bookedAppointmentDate: string | null;
   bookedAppointmentTime: string | null;
   bookingStatus: string | null;
   handoffRequired: boolean;
   handoffReason: string | null;
   doctorOptions: string[];
+  appointmentOptions: string[];
   slotOptions: string[];
 };
 
@@ -191,6 +261,26 @@ function buildHeaders(session?: PatientPortalSession | null, extra?: HeadersInit
     headers.set("X-Tenant-Id", session.tenantId);
   }
   return headers;
+}
+
+export function isPatientPortalPatientSession(session: PatientPortalSession | null | undefined): session is PatientPortalPatientSession {
+  return Boolean(session && session.sessionRole === "patient" && session.patientSessionToken);
+}
+
+export function isPatientPortalRegistrationSession(
+  session: PatientPortalSession | null | undefined,
+): session is PatientPortalRegistrationSession {
+  return Boolean(session && session.sessionRole === "registration" && session.patientSessionToken);
+}
+
+export function patientPortalHomePath(session: PatientPortalSession | null | undefined) {
+  if (isPatientPortalPatientSession(session)) {
+    return "/patient/dashboard";
+  }
+  if (isPatientPortalRegistrationSession(session)) {
+    return "/patient/register";
+  }
+  return "/patient/login";
 }
 
 async function parseError(response: Response) {
@@ -227,7 +317,24 @@ export async function postPatientPortalSessionJson<T>(
     headers: buildHeaders(session, {
       "Content-Type": "application/json",
     }),
-    credentials: "include",
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return response.json() as Promise<T>;
+}
+
+export async function putPatientPortalSessionJson<T>(
+  path: string,
+  body: unknown,
+  session: PatientPortalSession,
+): Promise<T> {
+  const response = await fetch(buildUrl(path), {
+    method: "POST",
+    headers: buildHeaders(session, {
+      "Content-Type": "application/json",
+    }),
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -239,7 +346,6 @@ export async function postPatientPortalSessionJson<T>(
 export async function fetchPatientPortalJson<T>(path: string, session: PatientPortalSession, signal?: AbortSignal): Promise<T> {
   const response = await fetch(buildUrl(path), {
     headers: buildHeaders(session),
-    credentials: "include",
     signal,
   });
   if (!response.ok) {
@@ -253,7 +359,6 @@ export async function openPatientPortalPdf(path: string, session: PatientPortalS
     headers: buildHeaders(session, {
       Accept: "application/pdf",
     }),
-    credentials: "include",
   });
   if (!response.ok) {
     throw new Error(await parseError(response));

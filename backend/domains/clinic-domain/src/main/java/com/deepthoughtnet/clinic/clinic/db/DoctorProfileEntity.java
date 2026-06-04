@@ -97,7 +97,9 @@ public class DoctorProfileEntity {
             BigDecimal consultationFee,
             Integer yearsOfExperience,
             Integer age,
-            Boolean active
+            Boolean active,
+            Boolean publicListingEnabled,
+            String slug
     ) {
         this.mobile = mobile;
         this.specialization = specialization;
@@ -110,6 +112,10 @@ public class DoctorProfileEntity {
         if (active != null) {
             this.active = active;
         }
+        if (publicListingEnabled != null) {
+            this.publicListingEnabled = publicListingEnabled;
+        }
+        this.slug = slug;
         this.updatedAt = OffsetDateTime.now();
     }
 

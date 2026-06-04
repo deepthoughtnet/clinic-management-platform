@@ -12,9 +12,11 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDashboardRes
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalMeResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalProfileUpdateRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionResponse;
 import java.time.LocalDate;
 import java.util.List;
+import jakarta.validation.Valid;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -51,6 +53,11 @@ public class PatientPortalController {
     @GetMapping("/me")
     public PatientPortalMeResponse me() {
         return patientPortalService.me();
+    }
+
+    @PostMapping("/me")
+    public PatientPortalMeResponse updateMe(@Valid @RequestBody PatientPortalProfileUpdateRequest request) {
+        return patientPortalService.updateProfile(request);
     }
 
     @GetMapping("/appointments")

@@ -79,7 +79,9 @@ public class ClinicSettingsController {
                         request.registrationNumber(),
                         request.gstNumber(),
                         request.logoDocumentId(),
-                        request.active()
+                        request.active(),
+                        request.publicListingEnabled(),
+                        request.slug()
                 ),
                 actorAppUserId
         );
@@ -126,6 +128,8 @@ public class ClinicSettingsController {
                 record.gstNumber(),
                 record.logoDocumentId() == null ? null : record.logoDocumentId().toString(),
                 record.active(),
+                record.publicListingEnabled(),
+                record.slug(),
                 record.createdAt(),
                 record.updatedAt()
         );

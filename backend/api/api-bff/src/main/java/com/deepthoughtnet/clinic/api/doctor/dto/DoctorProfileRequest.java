@@ -16,6 +16,8 @@ public record DoctorProfileRequest(
         @PositiveOrZero BigDecimal consultationFee,
         @PositiveOrZero Integer yearsOfExperience,
         @PositiveOrZero @Max(120) Integer age,
-        Boolean active
+        Boolean active,
+        Boolean publicListingEnabled,
+        @Size(max = 192) String slug
 ) {
 }

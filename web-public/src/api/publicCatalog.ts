@@ -1,4 +1,8 @@
-import type { PatientPortalSession } from "./patientPortal";
+import {
+  type PatientPortalSession,
+  isPatientPortalPatientSession,
+  isPatientPortalRegistrationSession,
+} from "./patientPortal";
 
 export type PublicPageResponse<T> = {
   items: T[];
@@ -128,8 +132,11 @@ export async function fetchPublicJson<T>(
 }
 
 export function patientBookingPath(session: PatientPortalSession | null, nextPath = "/patient/book-appointment") {
-  if (session) {
+  if (isPatientPortalPatientSession(session)) {
     return nextPath;
+  }
+  if (isPatientPortalRegistrationSession(session)) {
+    return `/patient/register?next=${encodeURIComponent(nextPath)}`;
   }
   return `/patient/login?next=${encodeURIComponent(nextPath)}`;
 }

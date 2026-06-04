@@ -42,6 +42,8 @@ type ClinicProfileFormState = {
   gstNumber: string;
   logoDocumentId: string;
   active: boolean;
+  publicListingEnabled: boolean;
+  slug: string;
 };
 
 type TemplateFormState = {
@@ -114,6 +116,8 @@ function emptyForm(): ClinicProfileFormState {
     gstNumber: "",
     logoDocumentId: "",
     active: true,
+    publicListingEnabled: false,
+    slug: "",
   };
 }
 
@@ -133,6 +137,8 @@ function toFormState(profile: ClinicProfileInput): ClinicProfileFormState {
     gstNumber: profile.gstNumber || "",
     logoDocumentId: profile.logoDocumentId || "",
     active: profile.active,
+    publicListingEnabled: profile.publicListingEnabled,
+    slug: profile.slug || "",
   };
 }
 
@@ -152,6 +158,8 @@ function toInput(form: ClinicProfileFormState): ClinicProfileInput {
     gstNumber: form.gstNumber.trim() || null,
     logoDocumentId: form.logoDocumentId.trim() || null,
     active: form.active,
+    publicListingEnabled: form.publicListingEnabled,
+    slug: form.slug.trim() || null,
   };
 }
 
@@ -220,6 +228,10 @@ export default function ClinicProfilePage() {
 
   const updateActive = (event: React.ChangeEvent<HTMLInputElement>) => {
     setForm((current) => ({ ...current, active: event.target.checked }));
+  };
+
+  const updatePublicListingEnabled = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setForm((current) => ({ ...current, publicListingEnabled: event.target.checked }));
   };
 
   const updateTemplateField =
@@ -356,6 +368,34 @@ export default function ClinicProfilePage() {
                     label={form.active ? "Active" : "Inactive"}
                     sx={{ mt: 1 }}
                   />
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={form.publicListingEnabled}
+                        onChange={updatePublicListingEnabled}
+                        disabled={!canEdit || saving}
+                      />
+                    }
+                    label={form.publicListingEnabled ? "Public listing enabled" : "Public listing disabled"}
+                    sx={{ mt: 1 }}
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    label="Public slug"
+                    value={form.slug}
+                    onChange={updateTextField("slug")}
+                    disabled={!canEdit || saving}
+                    helperText="Optional. Leave blank to auto-generate from clinic display name."
+                  />
+                </Grid>
+                <Grid size={12}>
+                  <Alert severity="info">
+                    Public Profile settings control whether this clinic appears in public discovery. Only public-safe details are exposed.
+                  </Alert>
                 </Grid>
               </Grid>
 

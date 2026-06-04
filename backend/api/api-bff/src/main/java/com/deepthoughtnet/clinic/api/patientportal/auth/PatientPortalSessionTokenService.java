@@ -27,16 +27,36 @@ public class PatientPortalSessionTokenService {
         this.objectMapper = objectMapper;
     }
 
-    public String issueToken(String subject, UUID tenantId, UUID patientId, String displayName) {
+    public String issuePatientToken(String subject, UUID tenantId, UUID patientId, String displayName) {
+        return issueToken(subject, tenantId, patientId, null, displayName, Set.of("PATIENT"));
+    }
+
+    public String issueRegistrationToken(String subject, UUID tenantId, String phone, String displayName) {
+        return issueToken(subject, tenantId, null, phone, displayName, Set.of("PATIENT_REGISTRATION"));
+    }
+
+    private String issueToken(
+            String subject,
+            UUID tenantId,
+            UUID patientId,
+            String phone,
+            String displayName,
+            Set<String> roles
+    ) {
         try {
             OffsetDateTime issuedAt = OffsetDateTime.now();
             OffsetDateTime expiresAt = issuedAt.plus(properties.getSessionTtl());
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("sub", subject);
             payload.put("tenantId", tenantId.toString());
-            payload.put("patientId", patientId.toString());
+            if (patientId != null) {
+                payload.put("patientId", patientId.toString());
+            }
+            if (phone != null && !phone.isBlank()) {
+                payload.put("phone", phone);
+            }
             payload.put("displayName", displayName);
-            payload.put("roles", Set.of("PATIENT"));
+            payload.put("roles", roles);
             payload.put("iat", issuedAt.toString());
             payload.put("exp", expiresAt.toString());
 
@@ -73,11 +93,13 @@ public class PatientPortalSessionTokenService {
             Set<String> roles = payload.get("roles") instanceof Collection<?> collection
                     ? collection.stream().map(String::valueOf).collect(java.util.stream.Collectors.toSet())
                     : Set.of("PATIENT");
+            Object patientIdValue = payload.get("patientId");
 
             return new PatientPortalSessionPrincipal(
                     String.valueOf(payload.get("sub")),
                     UUID.fromString(String.valueOf(payload.get("tenantId"))),
-                    UUID.fromString(String.valueOf(payload.get("patientId"))),
+                    patientIdValue == null ? null : UUID.fromString(String.valueOf(patientIdValue)),
+                    payload.get("phone") == null ? null : String.valueOf(payload.get("phone")),
                     String.valueOf(payload.get("displayName")),
                     roles
             );

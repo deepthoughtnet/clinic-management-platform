@@ -42,6 +42,9 @@ const emptySearchResponse: PublicSearchResponse = {
   specialities: [],
 };
 
+const noPublicProfilesMessage =
+  "No public profiles are enabled yet. Clinic admin can enable public listing from Public Profile settings.";
+
 function usePublicResource<T>(path: string, params: Record<string, string | number | undefined | null>, initialValue: T): FetchState<T> {
   const [state, setState] = useState<FetchState<T>>({
     data: initialValue,
@@ -399,7 +402,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
           loading={search.loading}
           error={search.error}
           empty={search.data.doctors.items.length === 0 && search.data.clinics.items.length === 0 && search.data.specialities.length === 0}
-          emptyMessage="No public matches were found yet for this search."
+          emptyMessage={noPublicProfilesMessage}
         >
           <div className="public-preview-grid">
             <article className="patient-panel">
@@ -491,7 +494,7 @@ export function PublicDoctorsPage({ session }: { session: PatientPortalSession |
         loading={doctors.loading}
         error={doctors.error}
         empty={doctors.data.items.length === 0}
-        emptyMessage="No public doctor profiles matched this search."
+        emptyMessage={noPublicProfilesMessage}
       >
         <div className="public-directory-grid">
           {doctors.data.items.map((doctor) => (
@@ -641,7 +644,7 @@ export function PublicClinicsPage({ session }: { session: PatientPortalSession |
         loading={clinics.loading}
         error={clinics.error}
         empty={clinics.data.items.length === 0}
-        emptyMessage="No public clinic profiles matched this search."
+        emptyMessage={noPublicProfilesMessage}
       >
         <div className="public-directory-grid">
           {clinics.data.items.map((clinic) => (
@@ -779,7 +782,7 @@ export function PublicSpecialitiesPage() {
         loading={specialities.loading}
         error={specialities.error}
         empty={specialities.data.length === 0}
-        emptyMessage="No public specialities matched this search."
+        emptyMessage={noPublicProfilesMessage}
       >
         <div className="public-directory-grid speciality-directory-grid">
           {specialities.data.map((speciality) => (

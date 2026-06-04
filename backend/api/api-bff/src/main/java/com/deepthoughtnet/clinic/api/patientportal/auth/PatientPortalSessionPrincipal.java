@@ -7,6 +7,7 @@ public record PatientPortalSessionPrincipal(
         String subject,
         UUID tenantId,
         UUID patientId,
+        String phone,
         String displayName,
         Set<String> roles
 ) {

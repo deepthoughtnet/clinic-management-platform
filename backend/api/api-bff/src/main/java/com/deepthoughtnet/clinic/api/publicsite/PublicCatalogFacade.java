@@ -250,7 +250,7 @@ public class PublicCatalogFacade {
     private List<TenantSnapshot> loadTenantSnapshots(String tenantCode) {
         String normalizedTenantCode = normalize(tenantCode);
         return platformTenantManagementService.list().stream()
-                .filter(this::isPublicTenant)
+                .filter(this::isActiveTenant)
                 .filter(tenant -> !StringUtils.hasText(normalizedTenantCode) || containsIgnoreCase(tenant.code(), normalizedTenantCode))
                 .map(this::toSnapshot)
                 .flatMap(Optional::stream)
@@ -282,10 +282,9 @@ public class PublicCatalogFacade {
         return Optional.of(new TenantSnapshot(tenant, clinicProfile.get(), doctors));
     }
 
-    private boolean isPublicTenant(PlatformTenantRecord tenant) {
+    private boolean isActiveTenant(PlatformTenantRecord tenant) {
         return tenant != null
-                && "ACTIVE".equalsIgnoreCase(tenant.status())
-                && tenant.publicListingEnabled();
+                && "ACTIVE".equalsIgnoreCase(tenant.status());
     }
 
     private boolean isActiveDoctorUser(TenantUserRecord user) {

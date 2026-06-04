@@ -413,6 +413,8 @@ export type ClinicProfile = {
   gstNumber: string | null;
   logoDocumentId: string | null;
   active: boolean;
+  publicListingEnabled: boolean;
+  slug: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -447,6 +449,8 @@ export type DoctorProfile = {
   yearsOfExperience: number | null;
   age: number | null;
   active: boolean;
+  publicListingEnabled: boolean;
+  slug: string | null;
   updatedAt: string | null;
 };
 
@@ -460,6 +464,8 @@ export type DoctorProfileInput = {
   yearsOfExperience: number | null;
   age: number | null;
   active: boolean | null;
+  publicListingEnabled?: boolean | null;
+  slug?: string | null;
 };
 
 export type ClinicRole = {

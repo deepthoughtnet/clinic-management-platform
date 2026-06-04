@@ -58,7 +58,9 @@ a {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -459,6 +461,20 @@ input {
   color: var(--muted);
 }
 
+.portal-step-list {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+.patient-form-grid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+.patient-form-span-2 {
+  grid-column: span 1;
+}
+
 .portal-banner,
 .portal-preview-banner {
   padding: 1rem 1.1rem;
@@ -782,19 +798,29 @@ input {
 
 .patient-booking-form textarea,
 .patient-form-field input,
-.patient-form-field textarea {
+.patient-form-field textarea,
+.patient-login-form input,
+.patient-login-form textarea,
+.patient-login-form select {
   width: 100%;
 }
 
-.patient-form-field textarea {
-  min-height: 7.5rem;
+.patient-form-field textarea,
+.patient-login-form input,
+.patient-login-form textarea,
+.patient-login-form select {
+  min-height: 3rem;
   padding: 0.95rem 1rem;
   border: 1px solid rgba(21, 48, 54, 0.14);
   border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.92);
   color: var(--text);
+}
+
+.patient-form-field textarea,
+.patient-login-form textarea {
+  min-height: 7.5rem;
   resize: vertical;
-  font: inherit;
 }
 
 .patient-careai-chat,
@@ -1062,6 +1088,14 @@ input {
   .portal-feature-list,
   .patient-summary-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .patient-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .patient-form-span-2 {
+    grid-column: span 2;
   }
 
   .public-preview-grid,

@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
 class PublicCatalogFacadeTest {
 
     @Test
-    void hiddenDoctorAndHiddenTenantAreNotVisibleWhileActivePublicDoctorIsVisible() {
+    void hiddenDoctorAndInactiveTenantAreNotVisibleWhileActivePublicDoctorIsVisible() {
         PlatformTenantManagementService tenantService = mock(PlatformTenantManagementService.class);
         ClinicProfileService clinicProfileService = mock(ClinicProfileService.class);
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
@@ -47,23 +47,23 @@ class PublicCatalogFacadeTest {
         );
 
         UUID publicTenantId = UUID.randomUUID();
-        UUID hiddenTenantId = UUID.randomUUID();
+        UUID inactiveTenantId = UUID.randomUUID();
         UUID visibleDoctorId = UUID.randomUUID();
         UUID hiddenDoctorId = UUID.randomUUID();
 
         when(tenantService.list()).thenReturn(List.of(
                 tenant(publicTenantId, "sunrise", "ACTIVE", true),
-                tenant(hiddenTenantId, "hidden", "ACTIVE", false)
+                tenant(inactiveTenantId, "hidden", "SUSPENDED", true)
         ));
         when(clinicProfileService.findByTenantId(publicTenantId)).thenReturn(Optional.of(clinic(publicTenantId, "Sunrise Clinic", true, true, "sunrise-clinic", "Pune", "Baner")));
-        when(clinicProfileService.findByTenantId(hiddenTenantId)).thenReturn(Optional.of(clinic(hiddenTenantId, "Hidden Clinic", true, true, "hidden-clinic", "Mumbai", "Bandra")));
+        when(clinicProfileService.findByTenantId(inactiveTenantId)).thenReturn(Optional.of(clinic(inactiveTenantId, "Hidden Clinic", true, true, "hidden-clinic", "Mumbai", "Bandra")));
 
         when(tenantUserManagementService.list(publicTenantId)).thenReturn(List.of(
                 doctorUser(visibleDoctorId, publicTenantId, "Dr. Asha Menon", "ACTIVE", "ACTIVE"),
                 doctorUser(hiddenDoctorId, publicTenantId, "Dr. Hidden", "ACTIVE", "ACTIVE")
         ));
-        when(tenantUserManagementService.list(hiddenTenantId)).thenReturn(List.of(
-                doctorUser(UUID.randomUUID(), hiddenTenantId, "Dr. Tenant Hidden", "ACTIVE", "ACTIVE")
+        when(tenantUserManagementService.list(inactiveTenantId)).thenReturn(List.of(
+                doctorUser(UUID.randomUUID(), inactiveTenantId, "Dr. Tenant Hidden", "ACTIVE", "ACTIVE")
         ));
 
         when(doctorProfileService.findByDoctorUserId(publicTenantId, visibleDoctorId)).thenReturn(Optional.of(

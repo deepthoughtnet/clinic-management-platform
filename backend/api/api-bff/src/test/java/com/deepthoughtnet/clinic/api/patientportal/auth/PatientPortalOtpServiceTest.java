@@ -146,8 +146,11 @@ class PatientPortalOtpServiceTest {
 
         var response = service.verifyOtp("tenant-a", "9876543210", "123456");
 
-        assertThat(response.verified()).isFalse();
-        assertThat(response.message()).contains("Unable to verify patient access");
+        assertThat(response.verified()).isTrue();
+        assertThat(response.patientExists()).isFalse();
+        assertThat(response.registrationRequired()).isTrue();
+        assertThat(response.registrationSessionToken()).isNotBlank();
+        assertThat(response.message()).contains("Complete your quick registration");
     }
 
     @Test
@@ -171,9 +174,12 @@ class PatientPortalOtpServiceTest {
         var response = service.verifyOtp("tenant-a", "9876543210", "123456");
 
         assertThat(response.verified()).isTrue();
+        assertThat(response.patientExists()).isTrue();
+        assertThat(response.registrationRequired()).isFalse();
         assertThat(response.tenantId()).isEqualTo(TENANT_A_ID.toString());
         assertThat(response.patientDisplayName()).isEqualTo("Riya Sharma");
         assertThat(response.patientSessionToken()).isNotBlank();
+        assertThat(response.registrationSessionToken()).isNull();
         assertThat(appUser.getPatientId()).isEqualTo(PATIENT_ID);
     }
 

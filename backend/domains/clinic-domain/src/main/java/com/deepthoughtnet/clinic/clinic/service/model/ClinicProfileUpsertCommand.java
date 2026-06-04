@@ -16,6 +16,8 @@ public record ClinicProfileUpsertCommand(
         String registrationNumber,
         String gstNumber,
         UUID logoDocumentId,
-        boolean active
+        boolean active,
+        Boolean publicListingEnabled,
+        String slug
 ) {
 }

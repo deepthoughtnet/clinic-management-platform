@@ -43,7 +43,9 @@ public class DoctorProfileService {
                 command.consultationFee(),
                 command.yearsOfExperience(),
                 command.age(),
-                command.active()
+                command.active(),
+                command.publicListingEnabled(),
+                normalizeNullable(command.slug())
         );
         return toRecord(doctorProfileRepository.save(entity));
     }

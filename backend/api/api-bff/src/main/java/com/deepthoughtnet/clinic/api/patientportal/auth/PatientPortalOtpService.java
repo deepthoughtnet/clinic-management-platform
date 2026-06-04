@@ -109,27 +109,27 @@ public class PatientPortalOtpService {
 
         var latestChallenge = challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(tenant.getId(), normalizedPhone);
         if (latestChallenge.isEmpty()) {
-            return new PatientPortalOtpVerifyResponse(false, SAFE_VERIFY_FAILURE_MESSAGE, null, null, null);
+            return new PatientPortalOtpVerifyResponse(false, false, false, SAFE_VERIFY_FAILURE_MESSAGE, null, null, null, null);
         }
 
         PatientPortalOtpChallengeEntity challenge = latestChallenge.get();
         OffsetDateTime now = OffsetDateTime.now();
         if (challenge.isVerified()) {
-            return new PatientPortalOtpVerifyResponse(false, "A new OTP request is required.", null, null, null);
+            return new PatientPortalOtpVerifyResponse(false, false, false, "A new OTP request is required.", null, null, null, null);
         }
         if (challenge.getExpiresAt().isBefore(now)) {
-            return new PatientPortalOtpVerifyResponse(false, "OTP expired. Request a new code.", null, null, null);
+            return new PatientPortalOtpVerifyResponse(false, false, false, "OTP expired. Request a new code.", null, null, null, null);
         }
         if (challenge.getAttempts() >= properties.getMaxAttempts()) {
-            return new PatientPortalOtpVerifyResponse(false, "OTP attempts exceeded. Request a new code.", null, null, null);
+            return new PatientPortalOtpVerifyResponse(false, false, false, "OTP attempts exceeded. Request a new code.", null, null, null, null);
         }
         if (!passwordEncoder.matches(normalizedOtp, challenge.getOtpHash())) {
             challenge.incrementAttempts();
             challengeRepository.save(challenge);
             if (challenge.getAttempts() >= properties.getMaxAttempts()) {
-                return new PatientPortalOtpVerifyResponse(false, "OTP attempts exceeded. Request a new code.", null, null, null);
+                return new PatientPortalOtpVerifyResponse(false, false, false, "OTP attempts exceeded. Request a new code.", null, null, null, null);
             }
-            return new PatientPortalOtpVerifyResponse(false, "Invalid OTP. Please try again.", null, null, null);
+            return new PatientPortalOtpVerifyResponse(false, false, false, "Invalid OTP. Please try again.", null, null, null, null);
         }
 
         challenge.markVerified();
@@ -137,7 +137,23 @@ public class PatientPortalOtpService {
 
         var patient = patientRepository.findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenant.getId(), normalizedPhone);
         if (patient.isEmpty()) {
-            return new PatientPortalOtpVerifyResponse(false, SAFE_VERIFY_FAILURE_MESSAGE, null, null, null);
+            String registrationSubject = registrationSubject(tenant.getId(), normalizedPhone);
+            String registrationToken = sessionTokenService.issueRegistrationToken(
+                    registrationSubject,
+                    tenant.getId(),
+                    normalizedPhone,
+                    "New patient"
+            );
+            return new PatientPortalOtpVerifyResponse(
+                    true,
+                    false,
+                    true,
+                    "OTP verified. Complete your quick registration to open the patient portal.",
+                    tenant.getId().toString(),
+                    null,
+                    null,
+                    registrationToken
+            );
         }
 
         PatientEntity matchedPatient = patient.get();
@@ -151,7 +167,7 @@ public class PatientPortalOtpService {
         appUserRepository.findByTenantIdAndId(tenant.getId(), appUserId)
                 .ifPresent(appUser -> appUser.setPatientId(matchedPatient.getId()));
 
-        String sessionToken = sessionTokenService.issueToken(
+        String sessionToken = sessionTokenService.issuePatientToken(
                 subject,
                 tenant.getId(),
                 matchedPatient.getId(),
@@ -160,10 +176,13 @@ public class PatientPortalOtpService {
 
         return new PatientPortalOtpVerifyResponse(
                 true,
+                true,
+                false,
                 "Patient portal session verified.",
                 tenant.getId().toString(),
                 matchedPatient.getFirstName() + " " + matchedPatient.getLastName(),
-                sessionToken
+                sessionToken,
+                null
         );
     }
 
@@ -201,5 +220,9 @@ public class PatientPortalOtpService {
 
     private String patientSubject(UUID tenantId, UUID patientId) {
         return "patientportal:" + tenantId + ":" + patientId;
+    }
+
+    private String registrationSubject(UUID tenantId, String phone) {
+        return "patientportal-registration:" + tenantId + ":" + phone;
     }
 }

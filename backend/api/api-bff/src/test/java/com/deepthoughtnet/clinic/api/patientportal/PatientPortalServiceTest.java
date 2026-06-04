@@ -13,7 +13,9 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRescheduleCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatusUpdateCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
@@ -33,6 +35,7 @@ import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
+import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
@@ -51,6 +54,7 @@ import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import static org.mockito.ArgumentMatchers.argThat;
 
 class PatientPortalServiceTest {
     private static final UUID TENANT_ID = UUID.randomUUID();
@@ -63,6 +67,7 @@ class PatientPortalServiceTest {
     private ClinicProfileService clinicProfileService;
     private TenantUserManagementService tenantUserManagementService;
     private DoctorProfileService doctorProfileService;
+    private PatientService patientService;
     private AppointmentService appointmentService;
     private PrescriptionService prescriptionService;
     private BillingService billingService;
@@ -75,6 +80,7 @@ class PatientPortalServiceTest {
         clinicProfileService = mock(ClinicProfileService.class);
         tenantUserManagementService = mock(TenantUserManagementService.class);
         doctorProfileService = mock(DoctorProfileService.class);
+        patientService = mock(PatientService.class);
         appointmentService = mock(AppointmentService.class);
         prescriptionService = mock(PrescriptionService.class);
         billingService = mock(BillingService.class);
@@ -84,6 +90,7 @@ class PatientPortalServiceTest {
                 clinicProfileService,
                 tenantUserManagementService,
                 doctorProfileService,
+                patientService,
                 appointmentService,
                 prescriptionService,
                 billingService
@@ -262,6 +269,157 @@ class PatientPortalServiceTest {
         )))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("current or future appointment date");
+    }
+
+    @Test
+    void patientCanRescheduleOnlyOwnedUpcomingAppointment() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
+        UUID doctorUserId = UUID.randomUUID();
+        UUID appointmentId = UUID.randomUUID();
+        LocalDate currentDate = LocalDate.now().plusDays(2);
+        LocalDate newDate = LocalDate.now().plusDays(5);
+        AppointmentRecord current = new AppointmentRecord(
+                appointmentId,
+                TENANT_ID,
+                PATIENT_ID,
+                "PAT-001",
+                "Riya Sharma",
+                "9999999999",
+                doctorUserId,
+                "Dr. Mehta",
+                null,
+                currentDate,
+                java.time.LocalTime.of(10, 0),
+                17,
+                "Review visit",
+                AppointmentType.SCHEDULED,
+                AppointmentPriority.NORMAL,
+                AppointmentStatus.BOOKED,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        );
+        AppointmentRecord rescheduled = new AppointmentRecord(
+                appointmentId,
+                TENANT_ID,
+                PATIENT_ID,
+                "PAT-001",
+                "Riya Sharma",
+                "9999999999",
+                doctorUserId,
+                "Dr. Mehta",
+                null,
+                newDate,
+                java.time.LocalTime.of(11, 30),
+                17,
+                "Review visit",
+                AppointmentType.SCHEDULED,
+                AppointmentPriority.NORMAL,
+                AppointmentStatus.BOOKED,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        );
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile()));
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(current));
+        when(appointmentService.reschedule(eq(TENANT_ID), eq(appointmentId), any(AppointmentRescheduleCommand.class), eq(APP_USER_ID), eq(false)))
+                .thenReturn(rescheduled);
+
+        var confirmation = service.rescheduleAppointment(appointmentId, newDate, java.time.LocalTime.of(11, 30), "Review visit");
+
+        verify(appointmentService).reschedule(
+                eq(TENANT_ID),
+                eq(appointmentId),
+                argThat(command -> command.doctorUserId().equals(doctorUserId)
+                        && command.appointmentDate().equals(newDate)
+                        && command.appointmentTime().equals(java.time.LocalTime.of(11, 30))),
+                eq(APP_USER_ID),
+                eq(false)
+        );
+        assertThat(confirmation.message()).contains("rescheduled successfully");
+    }
+
+    @Test
+    void patientCannotRescheduleAnotherPatientsAppointment() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.rescheduleAppointment(UUID.randomUUID(), LocalDate.now().plusDays(1), java.time.LocalTime.of(10, 0), "Review"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Upcoming appointment not found");
+
+        verify(appointmentService, never()).reschedule(eq(TENANT_ID), any(), any(), eq(APP_USER_ID), eq(false));
+    }
+
+    @Test
+    void patientCanCancelOwnedUpcomingAppointment() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
+        UUID appointmentId = UUID.randomUUID();
+        AppointmentRecord current = new AppointmentRecord(
+                appointmentId,
+                TENANT_ID,
+                PATIENT_ID,
+                "PAT-001",
+                "Riya Sharma",
+                "9999999999",
+                UUID.randomUUID(),
+                "Dr. Mehta",
+                null,
+                LocalDate.now().plusDays(1),
+                java.time.LocalTime.of(9, 0),
+                17,
+                "Review visit",
+                AppointmentType.SCHEDULED,
+                AppointmentPriority.NORMAL,
+                AppointmentStatus.BOOKED,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        );
+        AppointmentRecord cancelled = new AppointmentRecord(
+                appointmentId,
+                TENANT_ID,
+                PATIENT_ID,
+                "PAT-001",
+                "Riya Sharma",
+                "9999999999",
+                current.doctorUserId(),
+                "Dr. Mehta",
+                null,
+                current.appointmentDate(),
+                current.appointmentTime(),
+                17,
+                "Cancelled by patient",
+                AppointmentType.SCHEDULED,
+                AppointmentPriority.NORMAL,
+                AppointmentStatus.CANCELLED,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        );
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile()));
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(current));
+        when(appointmentService.updateStatus(eq(TENANT_ID), eq(appointmentId), any(AppointmentStatusUpdateCommand.class), eq(APP_USER_ID)))
+                .thenReturn(cancelled);
+
+        var confirmation = service.cancelAppointment(appointmentId, "Cancelled by patient");
+
+        verify(appointmentService).updateStatus(
+                eq(TENANT_ID),
+                eq(appointmentId),
+                argThat(command -> command.status() == AppointmentStatus.CANCELLED),
+                eq(APP_USER_ID)
+        );
+        assertThat(confirmation.status()).isEqualTo("CANCELLED");
     }
 
     private PatientEntity patientEntity(UUID tenantId, UUID patientId, String patientNumber) {

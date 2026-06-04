@@ -18,9 +18,13 @@ import {
   PatientDashboardPage,
   PatientLoginPage,
   PatientProfilePage,
+  PatientRegistrationPage,
   PatientPrescriptionsPage,
 } from "./pages/patient/PatientPortalPages";
-import type { PatientPortalSession } from "./api/patientPortal";
+import {
+  type PatientPortalSession,
+  patientPortalHomePath,
+} from "./api/patientPortal";
 
 const clinicLoginUrl = "http://localhost:5174";
 const patientSessionStorageKey = "clinic-web-public-patient-session";
@@ -43,7 +47,13 @@ function readStoredPatientSession() {
   }
   try {
     const parsed = JSON.parse(raw) as PatientPortalSession;
-    if (parsed?.mode === "otp" && parsed.patientSessionToken && parsed.tenantId && parsed.tenantCode) {
+    if (
+      parsed?.mode === "otp"
+      && parsed.patientSessionToken
+      && parsed.tenantId
+      && parsed.tenantCode
+      && (parsed.sessionRole === "patient" || parsed.sessionRole === "registration")
+    ) {
       return parsed;
     }
   } catch {
@@ -96,8 +106,8 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
           <a className="ghost-button" href={clinicLoginUrl}>
             Clinic Login
           </a>
-          <Link className="primary-button" to={session ? "/patient/dashboard" : "/patient/login"}>
-            {session ? "Open patient portal" : "Patient Login"}
+          <Link className="primary-button" to={patientPortalHomePath(session)}>
+            {session?.sessionRole === "registration" ? "Continue registration" : session ? "Open patient portal" : "Patient Login"}
           </Link>
         </div>
       </header>
@@ -109,7 +119,9 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
         </div>
         <div>
           <p>Patient portal, booking, and CareAI remain separate from web-admin and staff workflows.</p>
-          <Link to={session ? "/patient/dashboard" : "/patient/login"}>{session ? "Open patient portal" : "Open patient login"}</Link>
+          <Link to={patientPortalHomePath(session)}>
+            {session?.sessionRole === "registration" ? "Continue registration" : session ? "Open patient portal" : "Open patient login"}
+          </Link>
         </div>
       </footer>
     </div>
@@ -138,6 +150,16 @@ export function App() {
               onSaveSession={saveSession}
               onClearSession={clearSession}
               clinicLoginUrl={clinicLoginUrl}
+            />
+          }
+        />
+        <Route
+          path="/patient/register"
+          element={
+            <PatientRegistrationPage
+              session={session}
+              onSaveSession={saveSession}
+              onClearSession={clearSession}
             />
           }
         />

@@ -14,13 +14,22 @@ import {
   type PatientPortalDoctorSlotResponse,
   type PatientPortalMeResponse,
   type PatientPortalOtpRequestResponse,
+  type PatientPortalPatientSession,
+  type PatientPortalProfileUpdateRequest,
+  type PatientPortalRegistrationRequest,
+  type PatientPortalRegistrationResponse,
+  type PatientPortalRegistrationSession,
   type PatientPortalOtpVerifyResponse,
   type PatientPortalPrescriptionResponse,
   type PatientPortalSession,
   fetchPatientPortalJson,
+  isPatientPortalPatientSession,
+  isPatientPortalRegistrationSession,
   openPatientPortalPdf,
+  patientPortalHomePath,
   postPatientPortalJson,
   postPatientPortalSessionJson,
+  putPatientPortalSessionJson,
 } from "../../api/patientPortal";
 
 type FetchState<T> = {
@@ -154,7 +163,7 @@ function PatientPortalShell({
   children,
   onSignOut,
 }: {
-  session: PatientPortalSession;
+  session: PatientPortalPatientSession;
   title: string;
   subtitle: string;
   children: ReactNode;
@@ -233,6 +242,32 @@ function PatientPortalShell({
   );
 }
 
+function RegistrationRequiredCard({
+  onClearSession,
+  nextPath,
+}: {
+  onClearSession: () => void;
+  nextPath?: string;
+}) {
+  return (
+    <section className="page-section narrow-page">
+      <div className="login-placeholder patient-guard-card">
+        <span className="eyebrow">Registration required</span>
+        <h1>Finish quick registration to open the patient portal.</h1>
+        <p>Your OTP is verified for this clinic, but the portal only unlocks after your tenant-scoped patient profile is linked.</p>
+        <div className="cta-row">
+          <Link className="primary-button" to={nextPath ? `/patient/register?next=${encodeURIComponent(nextPath)}` : "/patient/register"}>
+            Continue registration
+          </Link>
+          <button className="ghost-button" type="button" onClick={onClearSession}>
+            Clear patient session
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function PatientAccessBoundary({
   session,
   onSignOut,
@@ -264,6 +299,10 @@ function PatientAccessBoundary({
         </div>
       </section>
     );
+  }
+
+  if (!isPatientPortalPatientSession(session)) {
+    return <RegistrationRequiredCard onClearSession={onSignOut} />;
   }
 
   return (
@@ -395,6 +434,7 @@ export function PatientLoginPage({
       if (response.verified && response.patientSessionToken && response.tenantId && response.patientDisplayName) {
         onSaveSession({
           mode: "otp",
+          sessionRole: "patient",
           tenantCode: tenantCode.trim(),
           tenantId: response.tenantId,
           phone: phone.trim(),
@@ -404,6 +444,21 @@ export function PatientLoginPage({
         });
         const nextPath = searchParams.get("next");
         navigate(nextPath?.startsWith("/patient/") ? nextPath : "/patient/dashboard");
+        return;
+      }
+      if (response.verified && response.registrationRequired && response.registrationSessionToken && response.tenantId) {
+        onSaveSession({
+          mode: "otp",
+          sessionRole: "registration",
+          tenantCode: tenantCode.trim(),
+          tenantId: response.tenantId,
+          phone: phone.trim(),
+          patientLabel: "New patient",
+          createdAt: new Date().toISOString(),
+          patientSessionToken: response.registrationSessionToken,
+        });
+        const nextPath = searchParams.get("next");
+        navigate(nextPath?.startsWith("/patient/") ? `/patient/register?next=${encodeURIComponent(nextPath)}` : "/patient/register");
       }
     } catch (error) {
       setVerifyMessage(error instanceof Error ? error.message : "Unable to verify OTP.");
@@ -492,7 +547,7 @@ export function PatientLoginPage({
             />
           </label>
           <button className="secondary-button wide-button" type="submit" disabled={verifyPending}>
-            {verifyPending ? "Verifying..." : "Verify and open portal"}
+            {verifyPending ? "Verifying..." : "Verify and continue"}
           </button>
         </form>
 
@@ -509,8 +564,8 @@ export function PatientLoginPage({
           </a>
           {session ? (
             <>
-              <button className="secondary-button" type="button" onClick={() => navigate("/patient/dashboard")}>
-                Open current session
+              <button className="secondary-button" type="button" onClick={() => navigate(patientPortalHomePath(session))}>
+                {isPatientPortalRegistrationSession(session) ? "Continue registration" : "Open current session"}
               </button>
               <button className="ghost-button" type="button" onClick={onClearSession}>
                 Clear patient session
@@ -523,8 +578,237 @@ export function PatientLoginPage({
   );
 }
 
+export function PatientRegistrationPage({
+  session,
+  onSaveSession,
+  onClearSession,
+}: {
+  session: PatientPortalSession | null;
+  onSaveSession: (session: PatientPortalSession) => void;
+  onClearSession: () => void;
+}) {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [gender, setGender] = useState("UNKNOWN");
+  const [dateOfBirth, setDateOfBirth] = useState("");
+  const [ageYears, setAgeYears] = useState("");
+  const [city, setCity] = useState("");
+  const [email, setEmail] = useState("");
+  const [addressLine1, setAddressLine1] = useState("");
+  const [addressLine2, setAddressLine2] = useState("");
+  const [state, setState] = useState("");
+  const [country, setCountry] = useState("India");
+  const [postalCode, setPostalCode] = useState("");
+  const [emergencyContactName, setEmergencyContactName] = useState("");
+  const [emergencyContactMobile, setEmergencyContactMobile] = useState("");
+  const [submitPending, setSubmitPending] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isPatientPortalPatientSession(session)) {
+      return;
+    }
+    const nextPath = searchParams.get("next");
+    navigate(nextPath?.startsWith("/patient/") ? nextPath : "/patient/dashboard");
+  }, [navigate, searchParams, session]);
+
+  if (!session) {
+    return (
+      <section className="page-section narrow-page">
+        <div className="login-placeholder patient-guard-card">
+          <span className="eyebrow">Patient login required</span>
+          <h1>Verify your mobile number first.</h1>
+          <p>Quick registration only opens after OTP verification for the selected clinic code.</p>
+          <div className="cta-row">
+            <Link className="primary-button" to="/patient/login">
+              Go to patient login
+            </Link>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (!isPatientPortalRegistrationSession(session)) {
+    return null;
+  }
+  const registrationSession = session;
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!dateOfBirth && !ageYears.trim()) {
+      setError("Date of birth or age is required.");
+      return;
+    }
+
+    setSubmitPending(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const payload: PatientPortalRegistrationRequest = {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        gender,
+        dateOfBirth: dateOfBirth || null,
+        ageYears: ageYears.trim() ? Number(ageYears.trim()) : null,
+        email: email.trim() || null,
+        addressLine1: addressLine1.trim() || null,
+        addressLine2: addressLine2.trim() || null,
+        city: city.trim(),
+        state: state.trim() || null,
+        country: country.trim() || null,
+        postalCode: postalCode.trim() || null,
+        emergencyContactName: emergencyContactName.trim() || null,
+        emergencyContactMobile: emergencyContactMobile.trim() || null,
+      };
+      const response = await postPatientPortalSessionJson<PatientPortalRegistrationResponse>(
+        "/api/patient-portal/registration/complete",
+        payload,
+        registrationSession,
+      );
+      onSaveSession({
+        mode: "otp",
+        sessionRole: "patient",
+        tenantCode: registrationSession.tenantCode,
+        tenantId: response.tenantId,
+        phone: registrationSession.phone,
+        patientLabel: response.patientDisplayName,
+        createdAt: new Date().toISOString(),
+        patientSessionToken: response.patientSessionToken,
+      });
+      setMessage(response.message);
+      const nextPath = searchParams.get("next");
+      navigate(nextPath?.startsWith("/patient/") ? nextPath : "/patient/dashboard");
+    } catch (submitError: unknown) {
+      setError(submitError instanceof Error ? submitError.message : "Unable to complete patient registration.");
+    } finally {
+      setSubmitPending(false);
+    }
+  }
+
+  return (
+    <section className="page-section narrow-page">
+      <div className="section-heading">
+        <span className="eyebrow">Quick registration</span>
+        <h1>Finish your first-time patient onboarding.</h1>
+        <p>Step 1 is already complete. Add only the patient-safe details needed to create or link your clinic record and continue booking.</p>
+      </div>
+      <div className="login-placeholder portal-login-card">
+        <div className="portal-feature-list portal-step-list">
+          <article className="feature-card">
+            <strong>Step 1</strong>
+            <p>Clinic code and OTP verified for {session.tenantCode}.</p>
+          </article>
+          <article className="feature-card">
+            <strong>Step 2</strong>
+            <p>Complete quick registration or link an existing patient record in the same tenant.</p>
+          </article>
+          <article className="feature-card">
+            <strong>Step 3</strong>
+            <p>Open the portal or continue straight into appointment booking without signing in again.</p>
+          </article>
+        </div>
+
+        <form className="patient-login-form patient-registration-form" onSubmit={handleSubmit}>
+          <div className="patient-form-grid">
+            <label>
+              <span>First name</span>
+              <input value={firstName} onChange={(event) => setFirstName(event.target.value)} required autoComplete="given-name" />
+            </label>
+            <label>
+              <span>Last name</span>
+              <input value={lastName} onChange={(event) => setLastName(event.target.value)} required autoComplete="family-name" />
+            </label>
+            <label>
+              <span>Gender</span>
+              <select value={gender} onChange={(event) => setGender(event.target.value)}>
+                <option value="UNKNOWN">Prefer not to say</option>
+                <option value="MALE">Male</option>
+                <option value="FEMALE">Female</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </label>
+            <label>
+              <span>Date of birth</span>
+              <input type="date" value={dateOfBirth} onChange={(event) => setDateOfBirth(event.target.value)} max={new Date().toISOString().slice(0, 10)} />
+            </label>
+            <label>
+              <span>Age</span>
+              <input value={ageYears} onChange={(event) => setAgeYears(event.target.value)} inputMode="numeric" placeholder="If DOB is not available" />
+            </label>
+            <label>
+              <span>Mobile number</span>
+              <input value={session.phone} readOnly />
+            </label>
+            <label>
+              <span>City</span>
+              <input value={city} onChange={(event) => setCity(event.target.value)} required autoComplete="address-level2" />
+            </label>
+            <label>
+              <span>Email</span>
+              <input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" />
+            </label>
+            <label className="patient-form-span-2">
+              <span>Address line 1</span>
+              <input value={addressLine1} onChange={(event) => setAddressLine1(event.target.value)} autoComplete="address-line1" />
+            </label>
+            <label className="patient-form-span-2">
+              <span>Address line 2</span>
+              <input value={addressLine2} onChange={(event) => setAddressLine2(event.target.value)} autoComplete="address-line2" />
+            </label>
+            <label>
+              <span>State</span>
+              <input value={state} onChange={(event) => setState(event.target.value)} autoComplete="address-level1" />
+            </label>
+            <label>
+              <span>Country</span>
+              <input value={country} onChange={(event) => setCountry(event.target.value)} autoComplete="country-name" />
+            </label>
+            <label>
+              <span>Postal code</span>
+              <input value={postalCode} onChange={(event) => setPostalCode(event.target.value)} autoComplete="postal-code" />
+            </label>
+            <label>
+              <span>Emergency contact</span>
+              <input value={emergencyContactName} onChange={(event) => setEmergencyContactName(event.target.value)} />
+            </label>
+            <label>
+              <span>Emergency mobile</span>
+              <input value={emergencyContactMobile} onChange={(event) => setEmergencyContactMobile(event.target.value)} inputMode="tel" />
+            </label>
+          </div>
+          {message ? (
+            <div className="patient-success-card">
+              <strong>Registration complete</strong>
+              <p>{message}</p>
+            </div>
+          ) : null}
+          {error ? (
+            <div className="patient-inline-empty">
+              <strong>Registration unavailable</strong>
+              <p>{error}</p>
+            </div>
+          ) : null}
+          <div className="patient-action-row">
+            <button className="primary-button" type="submit" disabled={submitPending}>
+              {submitPending ? "Completing..." : "Complete registration"}
+            </button>
+            <button className="ghost-button" type="button" onClick={onClearSession}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
+  );
+}
+
 export function PatientDashboardPage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
-  const dashboard = usePatientPortalResource<PatientPortalDashboardResponse | null>(session, "/api/patient-portal/dashboard", null);
+  const portalSession = isPatientPortalPatientSession(session) ? session : null;
+  const dashboard = usePatientPortalResource<PatientPortalDashboardResponse | null>(portalSession, "/api/patient-portal/dashboard", null);
 
   return (
     <PatientAccessBoundary
@@ -646,7 +930,8 @@ export function PatientDashboardPage({ session, onSignOut }: { session: PatientP
 }
 
 export function PatientAppointmentsPage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
-  const appointments = usePatientPortalResource<PatientPortalAppointmentResponse[]>(session, "/api/patient-portal/appointments", []);
+  const portalSession = isPatientPortalPatientSession(session) ? session : null;
+  const appointments = usePatientPortalResource<PatientPortalAppointmentResponse[]>(portalSession, "/api/patient-portal/appointments", []);
 
   return (
     <PatientAccessBoundary
@@ -698,7 +983,8 @@ export function PatientBookAppointmentPage({
   session: PatientPortalSession | null;
   onSignOut: () => void;
 }) {
-  const doctorsState = usePatientPortalResource<PatientPortalDoctorResponse[]>(session, "/api/patient-portal/doctors", []);
+  const portalSession = isPatientPortalPatientSession(session) ? session : null;
+  const doctorsState = usePatientPortalResource<PatientPortalDoctorResponse[]>(portalSession, "/api/patient-portal/doctors", []);
   const [selectedSpeciality, setSelectedSpeciality] = useState("All");
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -739,7 +1025,7 @@ export function PatientBookAppointmentPage({
     setConfirmation(null);
     setSubmitError(null);
 
-    if (!session || !selectedDoctorId || !selectedDate) {
+    if (!portalSession || !selectedDoctorId || !selectedDate) {
       setSlots([]);
       setSlotsLoading(false);
       setSlotsError(null);
@@ -752,7 +1038,7 @@ export function PatientBookAppointmentPage({
 
     fetchPatientPortalJson<PatientPortalDoctorSlotResponse[]>(
       `/api/patient-portal/doctors/${selectedDoctorId}/slots?date=${selectedDate}`,
-      session,
+      portalSession,
       abortController.signal,
     )
       .then((result) => {
@@ -769,11 +1055,11 @@ export function PatientBookAppointmentPage({
       });
 
     return () => abortController.abort();
-  }, [selectedDate, selectedDoctorId, session]);
+  }, [selectedDate, selectedDoctorId, portalSession]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!session || !selectedDoctorId || !selectedDate || !selectedSlotTime) {
+    if (!portalSession || !selectedDoctorId || !selectedDate || !selectedSlotTime) {
       setSubmitError("Choose a doctor, date, and available time slot before confirming.");
       return;
     }
@@ -791,7 +1077,7 @@ export function PatientBookAppointmentPage({
       const response = await postPatientPortalSessionJson<PatientPortalAppointmentConfirmationResponse>(
         "/api/patient-portal/appointments",
         payload,
-        session,
+        portalSession,
       );
       setConfirmation(response);
       setReason("");
@@ -964,7 +1250,8 @@ export function PatientBookAppointmentPage({
 }
 
 export function PatientPrescriptionsPage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
-  const prescriptions = usePatientPortalResource<PatientPortalPrescriptionResponse[]>(session, "/api/patient-portal/prescriptions", []);
+  const portalSession = isPatientPortalPatientSession(session) ? session : null;
+  const prescriptions = usePatientPortalResource<PatientPortalPrescriptionResponse[]>(portalSession, "/api/patient-portal/prescriptions", []);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState<string | null>(null);
 
@@ -1058,7 +1345,7 @@ export function PatientPrescriptionsPage({ session, onSignOut }: { session: Pati
                     disabled={busyKey === prescription.prescriptionNumber}
                     onClick={() =>
                       openPortalDocument(
-                        session,
+                        portalSession,
                         `/api/patient-portal/prescriptions/${encodeURIComponent(prescription.prescriptionNumber)}/pdf`,
                         setBusyKey,
                         prescription.prescriptionNumber,
@@ -1079,7 +1366,8 @@ export function PatientPrescriptionsPage({ session, onSignOut }: { session: Pati
 }
 
 export function PatientBillsPage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
-  const bills = usePatientPortalResource<PatientPortalBillResponse[]>(session, "/api/patient-portal/bills", []);
+  const portalSession = isPatientPortalPatientSession(session) ? session : null;
+  const bills = usePatientPortalResource<PatientPortalBillResponse[]>(portalSession, "/api/patient-portal/bills", []);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState<string | null>(null);
 
@@ -1174,7 +1462,7 @@ export function PatientBillsPage({ session, onSignOut }: { session: PatientPorta
                     disabled={busyKey === `${bill.billNumber}-receipt`}
                     onClick={() =>
                       openPortalDocument(
-                        session,
+                        portalSession,
                         `/api/patient-portal/bills/${encodeURIComponent(bill.billNumber)}/receipt.pdf`,
                         setBusyKey,
                         `${bill.billNumber}-receipt`,
@@ -1195,11 +1483,12 @@ export function PatientBillsPage({ session, onSignOut }: { session: PatientPorta
 }
 
 export function PatientCareAiPage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
+  const portalSession = isPatientPortalPatientSession(session) ? session : null;
   const [messages, setMessages] = useState<PatientCareAiChatEntry[]>([
     {
       id: "assistant-intro",
       role: "assistant",
-      text: "Tell me the doctor or speciality, date, and time window you want. I will only book after you explicitly confirm.",
+      text: "I can help book, reschedule, cancel, or check appointments. I only complete changes after you explicitly confirm.",
     },
   ]);
   const [draft, setDraft] = useState("");
@@ -1208,14 +1497,6 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
-  const bookingProgress = [
-    { label: "Doctor", complete: Boolean(state?.doctorName) },
-    { label: "Date", complete: Boolean(state?.preferredDate) },
-    { label: "Slot", complete: Boolean(state?.suggestedSlot) },
-    { label: "Confirm", complete: Boolean(state?.confirmationPending || state?.booked) },
-    { label: "Booked", complete: Boolean(state?.booked) },
-  ];
-
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
@@ -1225,7 +1506,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       {
         id: "assistant-intro",
         role: "assistant",
-        text: "Tell me the doctor or speciality, date, and time window you want. I will only book after you explicitly confirm.",
+        text: "I can help book, reschedule, cancel, or check appointments. I only complete changes after you explicitly confirm.",
       },
     ]);
     setDraft("");
@@ -1233,11 +1514,11 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setError(null);
     setSubmitting(false);
     setResetting(false);
-  }, [session?.patientSessionToken]);
+  }, [portalSession?.patientSessionToken]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!session || !draft.trim() || submitting) {
+    if (!portalSession || !draft.trim() || submitting) {
       return;
     }
 
@@ -1260,7 +1541,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       const response = await postPatientPortalSessionJson<PatientPortalCareAiMessageResponse>(
         "/api/patient-portal/careai/message",
         request,
-        session,
+        portalSession,
       );
       setState(response.state);
       setMessages((current) => [
@@ -1279,7 +1560,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   }
 
   async function handleReset() {
-    if (!session || resetting) {
+    if (!portalSession || resetting) {
       return;
     }
     setResetting(true);
@@ -1288,7 +1569,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       const response = await postPatientPortalSessionJson<PatientPortalCareAiResetResponse>(
         "/api/patient-portal/careai/reset",
         {},
-        session,
+        portalSession,
       );
       setMessages([
         {
@@ -1322,7 +1603,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         <article className="patient-panel patient-panel-wide">
           <div className="patient-panel-heading">
             <h2>CareAI booking chat</h2>
-            <button className="ghost-button" type="button" disabled={!session || resetting} onClick={handleReset}>
+            <button className="ghost-button" type="button" disabled={!portalSession || resetting} onClick={handleReset}>
               {resetting ? "Resetting..." : "Reset"}
             </button>
           </div>
@@ -1351,16 +1632,16 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                 <textarea
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
-                  placeholder="Example: Book appointment with Dr Suresh tomorrow morning for fever."
+                  placeholder="Example: Reschedule my appointment, Book with Dr Neha tomorrow, Cancel next appointment."
                   rows={4}
-                  disabled={!session || submitting}
+                  disabled={!portalSession || submitting}
                 />
               </label>
               <div className="patient-action-row">
-                <button className="primary-button" type="submit" disabled={!session || submitting || !draft.trim()}>
+                <button className="primary-button" type="submit" disabled={!portalSession || submitting || !draft.trim()}>
                   {submitting ? "Sending..." : "Send to CareAI"}
                 </button>
-                <span className="patient-inline-note">CareAI never books until you explicitly confirm.</span>
+                <span className="patient-inline-note">CareAI never books, reschedules, or cancels until you explicitly confirm.</span>
               </div>
               {error ? <div className="patient-inline-empty patient-inline-error">{error}</div> : null}
             </form>
@@ -1369,47 +1650,36 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
 
         <article className="patient-panel">
           <div className="patient-panel-heading">
-            <h2>Booking state</h2>
+            <h2>Conversation state</h2>
           </div>
           {state ? (
             <div className="patient-careai-state">
-              <div className="patient-careai-progress" aria-label="CareAI booking progress">
-                {bookingProgress.map((step) => (
-                  <div
-                    key={step.label}
-                    className={`patient-careai-progress-step${step.complete ? " is-complete" : ""}`}
-                  >
-                    <strong>{step.label}</strong>
-                    <span>{step.complete ? "Ready" : "Waiting"}</span>
-                  </div>
-                ))}
-              </div>
               <div className="patient-detail-list">
                 <div>
-                  <strong>Doctor</strong>
-                  <span>{state.doctorName ?? "Waiting for doctor or speciality"}</span>
+                  <strong>Current intent</strong>
+                  <span>{state.currentIntent ? formatStatusLabel(state.currentIntent.replaceAll("_", " ")) : "Waiting for request"}</span>
                 </div>
                 <div>
-                  <strong>Speciality</strong>
-                  <span>{state.speciality ?? "Not selected yet"}</span>
+                  <strong>Selected doctor</strong>
+                  <span>{state.doctorName ?? "Not selected yet"}</span>
                 </div>
                 <div>
-                  <strong>Date</strong>
+                  <strong>Selected appointment</strong>
+                  <span>{state.selectedAppointment ?? "Not selected yet"}</span>
+                </div>
+                <div>
+                  <strong>Selected date</strong>
                   <span>{state.preferredDate ? formatDate(state.preferredDate) : "Not selected yet"}</span>
                 </div>
                 <div>
-                  <strong>Time window</strong>
-                  <span>{state.preferredTimeWindow ?? "Not selected yet"}</span>
-                </div>
-                <div>
-                  <strong>Suggested slot</strong>
+                  <strong>Selected slot</strong>
                   <span>{state.suggestedSlot ? formatTime(state.suggestedSlot) : "No slot suggested yet"}</span>
                 </div>
                 <div>
                   <strong>Status</strong>
                   <span>
-                    {state.booked
-                      ? `Booked${state.bookingStatus ? ` · ${formatStatusLabel(state.bookingStatus)}` : ""}`
+                    {state.actionCompleted
+                      ? `${state.lastAction ? formatStatusLabel(state.lastAction.replaceAll("_", " ")) : "Completed"}${state.bookingStatus ? ` · ${formatStatusLabel(state.bookingStatus)}` : ""}`
                       : state.confirmationPending
                         ? "Confirmation pending"
                         : state.handoffRequired
@@ -1421,9 +1691,20 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
 
               {state.doctorOptions.length ? (
                 <div className="patient-subcard-list">
-                  {state.doctorOptions.map((option) => (
+                  {state.doctorOptions.map((option, index) => (
                     <div key={option} className="patient-subcard">
-                      <strong>Doctor option</strong>
+                      <strong>Doctor option {index + 1}</strong>
+                      <span>{option}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {state.appointmentOptions.length ? (
+                <div className="patient-subcard-list">
+                  {state.appointmentOptions.map((option, index) => (
+                    <div key={option} className="patient-subcard">
+                      <strong>Appointment {index + 1}</strong>
                       <span>{option}</span>
                     </div>
                   ))}
@@ -1432,9 +1713,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
 
               {state.slotOptions.length ? (
                 <div className="patient-subcard-list">
-                  {state.slotOptions.map((option) => (
+                  {state.slotOptions.map((option, index) => (
                     <div key={option} className="patient-subcard">
-                      <strong>Available slot</strong>
+                      <strong>Slot {index + 1}</strong>
                       <span>{formatTime(option)}</span>
                     </div>
                   ))}
@@ -1452,7 +1733,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
           ) : (
             <div className="patient-empty-card">
               <strong>CareAI is ready</strong>
-              <p>Start with a doctor or speciality, preferred date, and time window. You can reply in English or Hindi.</p>
+              <p>Ask to book, reschedule, cancel, or check an appointment. You can reply in English or Hindi.</p>
             </div>
           )}
         </article>
@@ -1463,12 +1744,12 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
           </div>
           <div className="patient-subcard-list">
             <div className="patient-subcard">
-              <strong>Guide clinic appointment booking</strong>
-              <span>CareAI can help collect speciality, doctor, date, time window, and a final confirmation for your visit.</span>
+              <strong>Book and confirm appointments</strong>
+              <span>CareAI can collect doctor, date, slot, and explicit confirmation before creating the appointment.</span>
             </div>
             <div className="patient-subcard">
-              <strong>No booking before confirmation</strong>
-              <span>A slot is only created after you explicitly confirm the suggested time.</span>
+              <strong>Reschedule and cancel safely</strong>
+              <span>CareAI can list your upcoming appointments, ask you to choose one, and only change it after confirmation.</span>
             </div>
             <div className="patient-subcard">
               <strong>Confirmed patient session only</strong>
@@ -1486,14 +1767,70 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
 }
 
 export function PatientProfilePage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
-  const profile = usePatientPortalResource<PatientPortalMeResponse | null>(session, "/api/patient-portal/me", null);
+  const portalSession = isPatientPortalPatientSession(session) ? session : null;
+  const profile = usePatientPortalResource<PatientPortalMeResponse | null>(portalSession, "/api/patient-portal/me", null);
+  const [profileView, setProfileView] = useState<PatientPortalMeResponse | null>(null);
+  const profileData = profileView ?? profile.data;
   const ageGender = useMemo(() => {
-    if (!profile.data) {
+    if (!profileData) {
       return "Not available yet";
     }
-    const values = [profile.data.gender ? formatStatusLabel(profile.data.gender) : null, profile.data.ageYears != null ? `${profile.data.ageYears} years` : null].filter(Boolean);
+    const values = [profileData.gender ? formatStatusLabel(profileData.gender) : null, profileData.ageYears != null ? `${profileData.ageYears} years` : null].filter(Boolean);
     return values.length ? values.join(" · ") : "Not available yet";
+  }, [profileData]);
+  const [formState, setFormState] = useState<PatientPortalProfileUpdateRequest | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!profile.data) {
+      setFormState(null);
+      setProfileView(null);
+      return;
+    }
+    setProfileView(profile.data);
+    const [firstName, ...lastNameParts] = profile.data.fullName.split(" ");
+    setFormState({
+      firstName: firstName ?? "",
+      lastName: lastNameParts.join(" "),
+      gender: profile.data.gender ?? "UNKNOWN",
+      dateOfBirth: profile.data.dateOfBirth,
+      ageYears: profile.data.ageYears,
+      email: profile.data.email,
+      addressLine1: profile.data.addressLine1,
+      addressLine2: profile.data.addressLine2,
+      city: profile.data.city,
+      state: profile.data.state,
+      country: profile.data.country,
+      postalCode: profile.data.postalCode,
+      emergencyContactName: profile.data.emergencyContactName,
+      emergencyContactMobile: profile.data.emergencyContactMobile,
+    });
   }, [profile.data]);
+
+  async function handleProfileSave(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!portalSession || !formState) {
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    setSaveMessage(null);
+    try {
+      const response = await putPatientPortalSessionJson<PatientPortalMeResponse>(
+        "/api/patient-portal/me",
+        formState,
+        portalSession,
+      );
+      setProfileView(response);
+      setSaveMessage("Profile updated.");
+    } catch (updateError: unknown) {
+      setSaveError(updateError instanceof Error ? updateError.message : "Unable to save your profile.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <PatientAccessBoundary
@@ -1505,7 +1842,7 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
       <PatientPortalApiState
         loading={profile.loading}
         error={profile.error}
-        empty={!profile.data}
+        empty={!profileData}
         emptyTitle="Your profile is not available yet"
         emptyMessage="The portal will show your patient-safe demographic and history summary once the clinic has linked it."
       >
@@ -1516,12 +1853,12 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
             </div>
             <div className="patient-detail-list">
               <div>
-                <strong>{profile.data?.fullName ?? "Patient"}</strong>
-                <span>Patient number {profile.data?.patientNumber ?? "Not available"}</span>
+                <strong>{profileData?.fullName ?? "Patient"}</strong>
+                <span>Patient number {profileData?.patientNumber ?? "Not available"}</span>
               </div>
               <div>
                 <strong>Clinic</strong>
-                <span>{profile.data?.clinicName ?? "Not available yet"}</span>
+                <span>{profileData?.clinicName ?? "Not available yet"}</span>
               </div>
               <div>
                 <strong>Gender / age</strong>
@@ -1529,11 +1866,17 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
               </div>
               <div>
                 <strong>Mobile</strong>
-                <span>{profile.data?.mobile ?? "Not available yet"}</span>
+                <span>{profileData?.mobile ?? "Not available yet"}</span>
               </div>
               <div>
                 <strong>Email</strong>
-                <span>{profile.data?.email ?? "Not available yet"}</span>
+                <span>{profileData?.email ?? "Not available yet"}</span>
+              </div>
+              <div>
+                <strong>Address</strong>
+                <span>
+                  {[profileData?.addressLine1, profileData?.addressLine2, profileData?.city].filter(Boolean).join(", ") || "Not available yet"}
+                </span>
               </div>
             </div>
           </article>
@@ -1545,23 +1888,125 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
             <div className="patient-detail-list">
               <div>
                 <strong>Allergies</strong>
-                <span>{profile.data?.allergies ?? "No allergy summary available."}</span>
+                <span>{profileData?.allergies ?? "No allergy summary available."}</span>
               </div>
               <div>
                 <strong>Chronic conditions</strong>
-                <span>{profile.data?.chronicConditions ?? "No chronic condition summary available."}</span>
+                <span>{profileData?.chronicConditions ?? "No chronic condition summary available."}</span>
               </div>
               <div>
                 <strong>Long-term medications</strong>
-                <span>{profile.data?.longTermMedications ?? "No long-term medication summary available."}</span>
+                <span>{profileData?.longTermMedications ?? "No long-term medication summary available."}</span>
               </div>
               <div>
                 <strong>Blood group</strong>
-                <span>{profile.data?.bloodGroup ?? "Not available yet"}</span>
+                <span>{profileData?.bloodGroup ?? "Not available yet"}</span>
               </div>
             </div>
           </article>
         </div>
+
+        {formState ? (
+          <article className="patient-panel">
+            <div className="patient-panel-heading">
+              <h2>Edit safe profile fields</h2>
+              <span className="panel-caption">Patient number, tenant, and mobile remain locked</span>
+            </div>
+            <form className="patient-login-form patient-registration-form" onSubmit={handleProfileSave}>
+              <div className="patient-form-grid">
+                <label>
+                  <span>First name</span>
+                  <input value={formState.firstName} onChange={(event) => setFormState((current) => current ? { ...current, firstName: event.target.value } : current)} required />
+                </label>
+                <label>
+                  <span>Last name</span>
+                  <input value={formState.lastName} onChange={(event) => setFormState((current) => current ? { ...current, lastName: event.target.value } : current)} required />
+                </label>
+                <label>
+                  <span>Gender</span>
+                  <select value={formState.gender} onChange={(event) => setFormState((current) => current ? { ...current, gender: event.target.value } : current)}>
+                    <option value="UNKNOWN">Prefer not to say</option>
+                    <option value="MALE">Male</option>
+                    <option value="FEMALE">Female</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Date of birth</span>
+                  <input
+                    type="date"
+                    max={new Date().toISOString().slice(0, 10)}
+                    value={formState.dateOfBirth ?? ""}
+                    onChange={(event) => setFormState((current) => current ? { ...current, dateOfBirth: event.target.value || null } : current)}
+                  />
+                </label>
+                <label>
+                  <span>Age</span>
+                  <input
+                    value={formState.ageYears ?? ""}
+                    onChange={(event) => setFormState((current) => current ? { ...current, ageYears: event.target.value ? Number(event.target.value) : null } : current)}
+                  />
+                </label>
+                <label>
+                  <span>Mobile</span>
+                  <input value={profileData?.mobile ?? ""} readOnly />
+                </label>
+                <label>
+                  <span>Email</span>
+                  <input value={formState.email ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, email: event.target.value || null } : current)} />
+                </label>
+                <label className="patient-form-span-2">
+                  <span>Address line 1</span>
+                  <input value={formState.addressLine1 ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, addressLine1: event.target.value || null } : current)} />
+                </label>
+                <label className="patient-form-span-2">
+                  <span>Address line 2</span>
+                  <input value={formState.addressLine2 ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, addressLine2: event.target.value || null } : current)} />
+                </label>
+                <label>
+                  <span>City</span>
+                  <input value={formState.city ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, city: event.target.value || null } : current)} />
+                </label>
+                <label>
+                  <span>State</span>
+                  <input value={formState.state ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, state: event.target.value || null } : current)} />
+                </label>
+                <label>
+                  <span>Country</span>
+                  <input value={formState.country ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, country: event.target.value || null } : current)} />
+                </label>
+                <label>
+                  <span>Postal code</span>
+                  <input value={formState.postalCode ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, postalCode: event.target.value || null } : current)} />
+                </label>
+                <label>
+                  <span>Emergency contact</span>
+                  <input value={formState.emergencyContactName ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, emergencyContactName: event.target.value || null } : current)} />
+                </label>
+                <label>
+                  <span>Emergency mobile</span>
+                  <input value={formState.emergencyContactMobile ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, emergencyContactMobile: event.target.value || null } : current)} />
+                </label>
+              </div>
+              {saveMessage ? (
+                <div className="patient-success-card">
+                  <strong>{saveMessage}</strong>
+                </div>
+              ) : null}
+              {saveError ? (
+                <div className="patient-inline-empty">
+                  <strong>Profile update unavailable</strong>
+                  <p>{saveError}</p>
+                </div>
+              ) : null}
+              <div className="patient-action-row">
+                <button className="primary-button" type="submit" disabled={saving}>
+                  {saving ? "Saving..." : "Save profile"}
+                </button>
+              </div>
+            </form>
+          </article>
+        ) : null}
       </PatientPortalApiState>
     </PatientAccessBoundary>
   );

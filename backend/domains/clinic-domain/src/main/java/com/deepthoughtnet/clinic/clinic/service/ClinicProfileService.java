@@ -64,7 +64,9 @@ public class ClinicProfileService {
                 normalizeNullable(command.registrationNumber()),
                 normalizeNullable(command.gstNumber()),
                 command.logoDocumentId(),
-                command.active()
+                command.active(),
+                command.publicListingEnabled(),
+                normalizeNullable(command.slug())
         );
 
         ClinicProfileEntity saved = repository.save(entity);
@@ -161,6 +163,8 @@ public class ClinicProfileService {
         details.put("gstNumber", entity.getGstNumber());
         details.put("logoDocumentId", entity.getLogoDocumentId());
         details.put("active", entity.isActive());
+        details.put("publicListingEnabled", entity.isPublicListingEnabled());
+        details.put("slug", entity.getSlug());
 
         try {
             return objectMapper.writeValueAsString(details);

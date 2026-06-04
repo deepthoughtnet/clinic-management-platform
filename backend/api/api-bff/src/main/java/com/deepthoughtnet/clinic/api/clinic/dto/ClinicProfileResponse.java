@@ -19,6 +19,8 @@ public record ClinicProfileResponse(
         String gstNumber,
         String logoDocumentId,
         boolean active,
+        boolean publicListingEnabled,
+        String slug,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

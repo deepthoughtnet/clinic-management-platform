@@ -64,7 +64,9 @@ public class DoctorProfileController {
                     request.consultationFee(),
                     request.yearsOfExperience(),
                     request.age(),
-                    request.active()
+                    request.active(),
+                    request.publicListingEnabled(),
+                    request.slug()
             );
             case "RECEPTIONIST" -> new DoctorProfileUpsertCommand(
                     request.mobile(),
@@ -75,7 +77,9 @@ public class DoctorProfileController {
                     request.consultationFee(),
                     request.yearsOfExperience(),
                     request.age(),
-                    request.active()
+                    request.active(),
+                    null,
+                    null
             );
             case "DOCTOR" -> {
                 if (!doctorUserId.equals(actorId)) {
@@ -90,7 +94,9 @@ public class DoctorProfileController {
                         request.consultationFee(),
                         request.yearsOfExperience(),
                         request.age(),
-                        null
+                        null,
+                        request.publicListingEnabled(),
+                        request.slug()
                 );
             }
             default -> throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not allowed to update doctor profile");
@@ -130,6 +136,8 @@ public class DoctorProfileController {
                 profile == null ? null : profile.yearsOfExperience(),
                 profile == null ? null : profile.age(),
                 profile == null || profile.active(),
+                profile != null && profile.publicListingEnabled(),
+                profile == null ? null : profile.slug(),
                 profile == null ? null : profile.updatedAt()
         );
     }

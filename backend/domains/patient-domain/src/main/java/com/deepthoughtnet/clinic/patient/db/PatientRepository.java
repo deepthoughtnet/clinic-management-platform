@@ -12,6 +12,8 @@ public interface PatientRepository extends JpaRepository<PatientEntity, UUID>, J
 
     Optional<PatientEntity> findByTenantIdAndPatientNumber(UUID tenantId, String patientNumber);
 
+    Optional<PatientEntity> findFirstByTenantIdAndMobileIgnoreCase(UUID tenantId, String mobile);
+
     Optional<PatientEntity> findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(UUID tenantId, String mobile);
 
     Optional<PatientEntity> findFirstByTenantIdAndEmailIgnoreCaseAndActiveTrue(UUID tenantId, String email);

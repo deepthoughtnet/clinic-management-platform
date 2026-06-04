@@ -154,7 +154,9 @@ public class PlatformTenantService {
                         null,
                         null,
                         null,
-                        true
+                        true,
+                        false,
+                        null
                 ),
                 currentActorAppUserId()
         );

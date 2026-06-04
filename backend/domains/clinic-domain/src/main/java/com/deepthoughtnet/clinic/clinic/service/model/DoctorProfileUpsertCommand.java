@@ -11,6 +11,8 @@ public record DoctorProfileUpsertCommand(
         BigDecimal consultationFee,
         Integer yearsOfExperience,
         Integer age,
-        Boolean active
+        Boolean active,
+        Boolean publicListingEnabled,
+        String slug
 ) {
 }

@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Grid, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Card, CardContent, Chip, CircularProgress, FormControlLabel, Grid, Stack, Switch, TextField, Typography } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
 import { getDoctorProfile, updateDoctorProfile, type DoctorProfile } from "../../api/clinicApi";
@@ -15,6 +15,8 @@ type FormState = {
   yearsOfExperience: string;
   age: string;
   active: boolean;
+  publicListingEnabled: boolean;
+  slug: string;
 };
 
 function toForm(profile: DoctorProfile): FormState {
@@ -28,6 +30,8 @@ function toForm(profile: DoctorProfile): FormState {
     yearsOfExperience: profile.yearsOfExperience == null ? "" : String(profile.yearsOfExperience),
     age: profile.age == null ? "" : String(profile.age),
     active: profile.active,
+    publicListingEnabled: profile.publicListingEnabled,
+    slug: profile.slug || "",
   };
 }
 
@@ -114,6 +118,8 @@ export default function DoctorDetailPage() {
         yearsOfExperience,
         age,
         active: form.active,
+        publicListingEnabled: form.publicListingEnabled,
+        slug: form.slug.trim() || null,
       });
       setProfile(saved);
       setForm(toForm(saved));
@@ -159,6 +165,31 @@ export default function DoctorDetailPage() {
                 <TextField fullWidth label="Availability/Calendar" value="Open in Appointments" disabled />
                 <Button variant="outlined" onClick={() => navigate(`/appointments?doctorUserId=${profile.doctorUserId}`)}>Open</Button>
               </Stack>
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={form.publicListingEnabled}
+                    disabled={formReadOnly || receptionistReadOnlyFields}
+                    onChange={(e) => setForm((c) => c ? { ...c, publicListingEnabled: e.target.checked } : c)}
+                  />
+                }
+                label={form.publicListingEnabled ? "Public listing enabled" : "Public listing disabled"}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                fullWidth
+                label="Public slug"
+                value={form.slug}
+                disabled={formReadOnly || receptionistReadOnlyFields}
+                onChange={(e) => setForm((c) => c ? { ...c, slug: e.target.value } : c)}
+                helperText="Optional. Leave blank to auto-generate from doctor name."
+              />
+            </Grid>
+            <Grid size={{ xs: 12 }}>
+              <Alert severity="info">Public Profile settings control whether this doctor appears in public discovery.</Alert>
             </Grid>
             <Grid size={{ xs: 12 }}>
               <Chip label={form.active ? "Active" : "Inactive"} color={form.active ? "success" : "default"} />

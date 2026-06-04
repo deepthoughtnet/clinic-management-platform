@@ -108,7 +108,9 @@ public class ClinicProfileEntity {
             String registrationNumber,
             String gstNumber,
             UUID logoDocumentId,
-            boolean active
+            boolean active,
+            Boolean publicListingEnabled,
+            String slug
     ) {
         this.clinicName = clinicName;
         this.displayName = displayName;
@@ -124,6 +126,10 @@ public class ClinicProfileEntity {
         this.gstNumber = gstNumber;
         this.logoDocumentId = logoDocumentId;
         this.active = active;
+        if (publicListingEnabled != null) {
+            this.publicListingEnabled = publicListingEnabled;
+        }
+        this.slug = slug;
         this.updatedAt = OffsetDateTime.now();
     }
 
