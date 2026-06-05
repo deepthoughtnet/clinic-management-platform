@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="980" viewBox="0 0 700 980">
+  <style>.b{rx:12;ry:12;stroke-width:2}.t{font-family:Arial,sans-serif;font-size:22px;fill:#1f2937}.a{stroke:#4b5563;stroke-width:2.5;fill:none;marker-end:url(#m)}</style>
+  <defs><marker id="m" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#4b5563"/></marker></defs>
+  <rect x="140" y="40" width="260" height="60" class="b" fill="#dae8fc" stroke="#6c8ebf"/><text x="270" y="78" text-anchor="middle" class="t">Intent identified</text>
+  <rect x="140" y="140" width="260" height="60" class="b" fill="#d5e8d4" stroke="#82b366"/><text x="270" y="178" text-anchor="middle" class="t">Doctor or specialty</text>
+  <rect x="140" y="240" width="260" height="60" class="b" fill="#d5e8d4" stroke="#82b366"/><text x="270" y="278" text-anchor="middle" class="t">Date selection</text>
+  <rect x="140" y="340" width="260" height="60" class="b" fill="#d5e8d4" stroke="#82b366"/><text x="270" y="378" text-anchor="middle" class="t">Time or window</text>
+  <rect x="140" y="440" width="260" height="60" class="b" fill="#f5f5f5" stroke="#666666"/><text x="270" y="478" text-anchor="middle" class="t">Deterministic slot lookup</text>
+  <rect x="140" y="540" width="260" height="60" class="b" fill="#fff2cc" stroke="#d6b656"/><text x="270" y="578" text-anchor="middle" class="t">Offer exact or nearest slots</text>
+  <rect x="140" y="640" width="260" height="60" class="b" fill="#f8cecc" stroke="#b85450"/><text x="270" y="678" text-anchor="middle" class="t">Explicit confirmation</text>
+  <rect x="140" y="740" width="260" height="60" class="b" fill="#e1d5e7" stroke="#9673a6"/><text x="270" y="778" text-anchor="middle" class="t">Deterministic action</text>
+  <rect x="140" y="840" width="260" height="80" class="b" fill="#dae8fc" stroke="#6c8ebf"/><text x="270" y="878" text-anchor="middle" class="t">Visible in patient and clinic flows</text>
+  <path d="M270 100 V140" class="a"/><path d="M270 200 V240" class="a"/><path d="M270 300 V340" class="a"/><path d="M270 400 V440" class="a"/><path d="M270 500 V540" class="a"/><path d="M270 600 V640" class="a"/><path d="M270 700 V740" class="a"/><path d="M270 800 V840" class="a"/>
+</svg>

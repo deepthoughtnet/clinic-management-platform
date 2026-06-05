@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>.b{rx:12;ry:12;stroke-width:2}.t{font-family:Arial,sans-serif;font-size:20px;fill:#1f2937}.a{stroke:#4b5563;stroke-width:2.5;fill:none;marker-end:url(#m)}</style>
+  <defs><marker id="m" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#4b5563"/></marker></defs>
+  <rect x="40" y="240" width="170" height="60" class="b" fill="#dae8fc" stroke="#6c8ebf"/><text x="125" y="276" text-anchor="middle" class="t">Planner / app request</text>
+  <rect x="280" y="220" width="210" height="100" class="b" fill="#e1d5e7" stroke="#9673a6"/><text x="385" y="258" text-anchor="middle" class="t">AiOrchestrationServiceImpl</text>
+  <rect x="580" y="100" width="220" height="70" class="b" fill="#d5e8d4" stroke="#82b366"/><text x="690" y="142" text-anchor="middle" class="t">Prompt template catalog / registry</text>
+  <rect x="580" y="200" width="220" height="70" class="b" fill="#f8cecc" stroke="#b85450"/><text x="690" y="242" text-anchor="middle" class="t">Guardrails + validation</text>
+  <rect x="580" y="300" width="220" height="70" class="b" fill="#fff2cc" stroke="#d6b656"/><text x="690" y="342" text-anchor="middle" class="t">AiProviderRouterImpl</text>
+  <rect x="900" y="120" width="140" height="50" class="b" fill="#f5f5f5" stroke="#666666"/><text x="970" y="152" text-anchor="middle" class="t">Gemini</text>
+  <rect x="900" y="220" width="140" height="50" class="b" fill="#f5f5f5" stroke="#666666"/><text x="970" y="252" text-anchor="middle" class="t">Groq</text>
+  <rect x="900" y="320" width="140" height="50" class="b" fill="#f5f5f5" stroke="#666666"/><text x="970" y="352" text-anchor="middle" class="t">Mock</text>
+  <rect x="580" y="420" width="220" height="80" class="b" fill="#d5e8d4" stroke="#82b366"/><text x="690" y="458" text-anchor="middle" class="t">Output normalization</text><text x="690" y="484" text-anchor="middle" class="t">JSON / fenced / truncated fallback</text>
+  <rect x="580" y="540" width="220" height="70" class="b" fill="#dae8fc" stroke="#6c8ebf"/><text x="690" y="582" text-anchor="middle" class="t">Audit / invocation log / usage</text>
+  <path d="M210 270 H280" class="a"/><path d="M490 250 H580" class="a"/><path d="M490 270 H580" class="a"/><path d="M490 290 H580" class="a"/><path d="M800 335 H900" class="a"/><path d="M800 335 C860 335,860 145,900 145" class="a"/><path d="M800 335 C860 335,860 245,900 245" class="a"/><path d="M490 320 L580 420" class="a"/><path d="M690 500 V540" class="a"/>
+</svg>

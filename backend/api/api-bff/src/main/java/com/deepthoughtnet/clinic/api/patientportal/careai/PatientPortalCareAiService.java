@@ -5,15 +5,7 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentC
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
-import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
-import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService;
-import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest;
-import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationResponse;
-import com.deepthoughtnet.clinic.platform.contracts.ai.AiProductCode;
-import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -33,16 +25,12 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 public class PatientPortalCareAiService {
-    private static final Logger log = LoggerFactory.getLogger(PatientPortalCareAiService.class);
     private static final Pattern ENGLISH_DOCTOR_PATTERN = Pattern.compile("(?i)\\b(?:dr\\.?|doctor)\\s+([A-Za-z][A-Za-z .'-]{1,60})");
     private static final Pattern HINDI_DOCTOR_PATTERN = Pattern.compile("(?:डॉक्टर|डॉ\\.?)([^,.!?]+)");
     private static final Pattern ISO_DATE_PATTERN = Pattern.compile("\\b(\\d{4}-\\d{2}-\\d{2})\\b");
@@ -62,6 +50,8 @@ public class PatientPortalCareAiService {
     private static final List<String> RESCHEDULE_INTENT_KEYWORDS = List.of("reschedule", "change my appointment", "move my appointment", "change appointment");
     private static final List<String> CANCEL_INTENT_KEYWORDS = List.of("cancel appointment", "cancel my appointment", "remove booking", "cancel booking");
     private static final List<String> STATUS_INTENT_KEYWORDS = List.of("when is my appointment", "when is my next appointment", "show appointments", "appointment status", "next appointment");
+    private static final List<String> TOPIC_SWITCH_KEYWORDS = List.of("switch topic", "cancel this", "start over", "forget booking", "talk about something else");
+    private static final List<String> TOPIC_SWITCH_KEYWORDS_HI = List.of("विषय बदलें", "बुकिंग भूल जाओ", "शुरू से", "कुछ और बात");
     private static final List<String> NEW_PATIENT_KEYWORDS = List.of("new patient", "first time patient", "first-time patient");
     private static final List<String> NEW_PATIENT_KEYWORDS_HI = List.of("नया मरीज", "पहली बार", "पहली दफ़ा");
     private static final List<String> EMERGENCY_KEYWORDS = List.of("chest pain", "difficulty breathing", "severe bleeding", "unconscious", "stroke", "suicidal");
@@ -69,31 +59,17 @@ public class PatientPortalCareAiService {
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd MMM uuuu", Locale.ENGLISH);
     private static final Map<String, Month> MONTH_NAME_MAP = monthNameMap();
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
-    private static final String AI_EXTRACTION_TEMPLATE_CODE = "generic.extraction.v1";
-    private static final String AI_EXTRACTION_USE_CASE = "patient-portal-careai-extraction";
-    private static final double AI_EXTRACTION_TEMPERATURE = 0.2d;
-
     private final PatientPortalService patientPortalService;
-    private final AiOrchestrationService aiOrchestrationService;
-    private final ObjectMapper objectMapper;
-    private final VoiceTestProperties voiceTestProperties;
-    private final boolean aiExtractionEnabled;
+    private final PatientPortalCareAiPlanner planner;
     private final Map<SessionKey, CareAiState> sessions = new ConcurrentHashMap<>();
 
     @Autowired
     public PatientPortalCareAiService(
             PatientPortalService patientPortalService,
-            AiOrchestrationService aiOrchestrationService,
-            ObjectMapper objectMapper,
-            VoiceTestProperties voiceTestProperties,
-            @Value("${clinic.ai.enabled:false}") boolean aiExtractionEnabled
+            PatientPortalCareAiPlanner planner
     ) {
         this.patientPortalService = patientPortalService;
-        this.aiOrchestrationService = aiOrchestrationService;
-        this.objectMapper = objectMapper;
-        this.voiceTestProperties = voiceTestProperties;
-        this.aiExtractionEnabled = aiExtractionEnabled;
+        this.planner = planner;
     }
 
     public PatientPortalCareAiMessageResponse message(PatientPortalCareAiMessageRequest request) {
@@ -118,8 +94,19 @@ public class PatientPortalCareAiService {
         if (isNewPatientIntent(message, state.language)) {
             return response(state, newPatientPrompt(state.language));
         }
+        PatientPortalCareAiPlannerDecision plannerDecision = shouldUsePlanner(state, message)
+                ? planner.plan(buildPlanningContext(state, message))
+                : null;
+        if (wantsTopicSwitch(message, state.language)) {
+            clearCurrentConversation(state);
+            return response(state, topicSwitchPrompt(state.language));
+        }
+        if (plannerDecision != null && plannerDecision.topicSwitch()) {
+            clearCurrentConversation(state);
+            return response(state, topicSwitchPrompt(state.language));
+        }
 
-        boolean progressed = applyIntent(state, message);
+        boolean progressed = applyIntent(state, message, plannerDecision);
         if (state.confirmationPending && isPositiveConfirmation(message)) {
             return executeConfirmedAction(state);
         }
@@ -127,11 +114,12 @@ public class PatientPortalCareAiService {
             progressed = clearPendingAction(state, true);
         }
         if (state.confirmationPending && !isSelectionOnlyMessage(message)) {
-            AiInterpretation interpretation = interpretWithAi(state, message);
-            if (interpretation != null && interpretation.confirmationDecision() == ConfirmationDecision.CONFIRM) {
+            if (plannerDecision != null
+                    && plannerDecision.confirmationDecision() == PatientPortalCareAiPlannerConfirmationDecision.CONFIRM) {
                 return executeConfirmedAction(state);
             }
-            if (interpretation != null && interpretation.confirmationDecision() == ConfirmationDecision.REJECT) {
+            if (plannerDecision != null
+                    && plannerDecision.confirmationDecision() == PatientPortalCareAiPlannerConfirmationDecision.REJECT) {
                 progressed = clearPendingAction(state, true);
             }
         }
@@ -169,13 +157,10 @@ public class PatientPortalCareAiService {
         };
     }
 
-    private boolean applyIntent(CareAiState state, String message) {
+    private boolean applyIntent(CareAiState state, String message, PatientPortalCareAiPlannerDecision plannerDecision) {
         PatientPortalCareAiIntent detectedIntent = detectIntent(message);
-        AiInterpretation interpretation = shouldUseAiInterpretation(state, message)
-                ? interpretWithAi(state, message)
-                : null;
-        if (detectedIntent == null && interpretation != null) {
-            detectedIntent = interpretation.intent();
+        if (detectedIntent == null && plannerDecision != null) {
+            detectedIntent = plannerDecision.intent();
         }
         boolean changed = false;
         if (detectedIntent != null && detectedIntent != state.currentIntent) {
@@ -184,10 +169,10 @@ public class PatientPortalCareAiService {
         }
         if (state.currentIntent == PatientPortalCareAiIntent.BOOK_APPOINTMENT) {
             changed = applyBookingFacts(state, message) || changed;
-            changed = applyAiBookingFacts(state, interpretation) || changed;
+            changed = applyPlannerBookingFacts(state, plannerDecision) || changed;
         } else if (state.currentIntent == PatientPortalCareAiIntent.RESCHEDULE_APPOINTMENT) {
             changed = applyRescheduleFacts(state, message) || changed;
-            changed = applyAiRescheduleFacts(state, interpretation) || changed;
+            changed = applyPlannerRescheduleFacts(state, plannerDecision) || changed;
         } else if (state.currentIntent == PatientPortalCareAiIntent.CANCEL_APPOINTMENT) {
             changed = applyAppointmentSelectionFacts(state, message) || changed;
         }
@@ -234,6 +219,7 @@ public class PatientPortalCareAiService {
             String preferredTimeWindow = findPreferredTimeWindow(message, state.language);
             if (StringUtils.hasText(preferredTimeWindow) && !preferredTimeWindow.equalsIgnoreCase(state.preferredTimeWindow)) {
                 state.preferredTimeWindow = preferredTimeWindow;
+                state.timePromptCount = 0;
                 clearSlotSelection(state);
                 changed = true;
             }
@@ -268,6 +254,7 @@ public class PatientPortalCareAiService {
             String preferredTimeWindow = findPreferredTimeWindow(message, state.language);
             if (StringUtils.hasText(preferredTimeWindow) && !preferredTimeWindow.equalsIgnoreCase(state.preferredTimeWindow)) {
                 state.preferredTimeWindow = preferredTimeWindow;
+                state.timePromptCount = 0;
                 clearSlotSelection(state);
                 changed = true;
             }
@@ -286,25 +273,25 @@ public class PatientPortalCareAiService {
         return false;
     }
 
-    private boolean applyAiBookingFacts(CareAiState state, AiInterpretation interpretation) {
-        if (interpretation == null) {
+    private boolean applyPlannerBookingFacts(CareAiState state, PatientPortalCareAiPlannerDecision plannerDecision) {
+        if (plannerDecision == null) {
             return false;
         }
         boolean changed = false;
-        if (!StringUtils.hasText(state.requestedDoctorName) && StringUtils.hasText(interpretation.doctorName())) {
-            state.requestedDoctorName = interpretation.doctorName();
+        if (!StringUtils.hasText(state.requestedDoctorName) && StringUtils.hasText(plannerDecision.doctorName())) {
+            state.requestedDoctorName = plannerDecision.doctorName();
             clearDoctorSelection(state);
             changed = true;
         }
-        if (!StringUtils.hasText(state.requestedSpeciality) && StringUtils.hasText(interpretation.speciality())) {
-            state.requestedSpeciality = interpretation.speciality();
+        if (!StringUtils.hasText(state.requestedSpeciality) && StringUtils.hasText(plannerDecision.speciality())) {
+            state.requestedSpeciality = plannerDecision.speciality();
             if (!StringUtils.hasText(state.requestedDoctorName)) {
                 clearDoctorSelection(state);
             }
             changed = true;
         }
         if (!StringUtils.hasText(state.preferredDate) && !StringUtils.hasText(state.dateResolutionIssue)) {
-            DateResolution resolution = resolveAiPreferredDate(interpretation.preferredDate());
+            DateResolution resolution = resolveAiPreferredDate(plannerDecision.preferredDate());
             if (resolution.issue() != null) {
                 state.dateResolutionIssue = resolution.issue();
                 state.preferredDate = null;
@@ -317,25 +304,26 @@ public class PatientPortalCareAiService {
                 changed = true;
             }
         }
-        if (!StringUtils.hasText(state.preferredTimeWindow) && StringUtils.hasText(interpretation.preferredTimeWindow())) {
-            state.preferredTimeWindow = interpretation.preferredTimeWindow();
+        if (!StringUtils.hasText(state.preferredTimeWindow) && StringUtils.hasText(plannerDecision.preferredTimeWindow())) {
+            state.preferredTimeWindow = normalizePlannerTimeWindow(plannerDecision.preferredTimeWindow());
+            state.timePromptCount = 0;
             clearSlotSelection(state);
             changed = true;
         }
-        if (!StringUtils.hasText(state.reason) && StringUtils.hasText(interpretation.reason())) {
-            state.reason = interpretation.reason();
+        if (!StringUtils.hasText(state.reason) && StringUtils.hasText(plannerDecision.reason())) {
+            state.reason = plannerDecision.reason();
             changed = true;
         }
         return changed;
     }
 
-    private boolean applyAiRescheduleFacts(CareAiState state, AiInterpretation interpretation) {
-        if (interpretation == null) {
+    private boolean applyPlannerRescheduleFacts(CareAiState state, PatientPortalCareAiPlannerDecision plannerDecision) {
+        if (plannerDecision == null) {
             return false;
         }
         boolean changed = false;
         if (!StringUtils.hasText(state.preferredDate) && !StringUtils.hasText(state.dateResolutionIssue)) {
-            DateResolution resolution = resolveAiPreferredDate(interpretation.preferredDate());
+            DateResolution resolution = resolveAiPreferredDate(plannerDecision.preferredDate());
             if (resolution.issue() != null) {
                 state.dateResolutionIssue = resolution.issue();
                 state.preferredDate = null;
@@ -348,8 +336,9 @@ public class PatientPortalCareAiService {
                 changed = true;
             }
         }
-        if (!StringUtils.hasText(state.preferredTimeWindow) && StringUtils.hasText(interpretation.preferredTimeWindow())) {
-            state.preferredTimeWindow = interpretation.preferredTimeWindow();
+        if (!StringUtils.hasText(state.preferredTimeWindow) && StringUtils.hasText(plannerDecision.preferredTimeWindow())) {
+            state.preferredTimeWindow = normalizePlannerTimeWindow(plannerDecision.preferredTimeWindow());
+            state.timePromptCount = 0;
             clearSlotSelection(state);
             changed = true;
         }
@@ -379,7 +368,7 @@ public class PatientPortalCareAiService {
             return bookingConfirmationPrompt(state);
         }
         if (state.slotOptions.isEmpty()) {
-            return askTimePrompt(state.language);
+            return nextTimePrompt(state);
         }
         return slotChoicePrompt(state);
     }
@@ -408,7 +397,7 @@ public class PatientPortalCareAiService {
             return rescheduleConfirmationPrompt(state);
         }
         if (state.slotOptions.isEmpty()) {
-            return askTimePrompt(state.language);
+            return nextTimePrompt(state);
         }
         return slotChoicePrompt(state);
     }
@@ -531,12 +520,18 @@ public class PatientPortalCareAiService {
                     .findFirst()
                     .orElse(null);
             if (exact != null) {
+                state.slotPromptLead = null;
                 state.slotChoices = List.of(new SlotChoice(exact.appointmentDate(), exact.slotTime()));
                 state.slotOptions = List.of(exact.slotTime().format(TIME_FORMATTER));
                 state.selectedSlot = exact.slotTime().format(TIME_FORMATTER);
                 state.confirmationPending = true;
                 state.pendingAction = state.currentIntent;
                 return true;
+            }
+            List<PatientPortalDoctorSlotResponse> nearest = nearestSlots(candidates, state.preferredTimeWindow);
+            if (!nearest.isEmpty()) {
+                candidates = nearest;
+                state.slotPromptLead = exactTimeUnavailablePrompt(state.language, state.preferredTimeWindow);
             }
         }
 
@@ -660,6 +655,8 @@ public class PatientPortalCareAiService {
         state.dateResolutionIssue = null;
         state.preferredTimeWindow = null;
         state.reason = null;
+        state.slotPromptLead = null;
+        state.timePromptCount = 0;
         state.doctorChoices = List.of();
         state.doctorOptions = List.of();
         clearAppointmentSelection(state);
@@ -701,6 +698,7 @@ public class PatientPortalCareAiService {
 
     private void clearSlotSelection(CareAiState state) {
         state.selectedSlot = null;
+        state.slotPromptLead = null;
         state.slotChoices = List.of();
         state.slotOptions = List.of();
         state.confirmationPending = false;
@@ -785,6 +783,7 @@ public class PatientPortalCareAiService {
         state.selectedDoctorId = selected.publicDoctorId();
         state.selectedDoctorName = selected.doctorName();
         state.selectedSpeciality = selected.speciality();
+        state.timePromptCount = 0;
         state.doctorChoices = List.of();
         state.doctorOptions = List.of();
         clearSlotSelection(state);
@@ -798,6 +797,7 @@ public class PatientPortalCareAiService {
         state.selectedDoctorName = selected.doctorName();
         state.selectedSpeciality = null;
         state.dateResolutionIssue = null;
+        state.timePromptCount = 0;
         clearSlotSelection(state);
     }
 
@@ -903,6 +903,17 @@ public class PatientPortalCareAiService {
         return slots;
     }
 
+    private List<PatientPortalDoctorSlotResponse> nearestSlots(List<PatientPortalDoctorSlotResponse> slots, String preferredTimeWindow) {
+        if (!isExactTime(preferredTimeWindow)) {
+            return slots;
+        }
+        LocalTime requested = LocalTime.parse(preferredTimeWindow, TIME_FORMATTER);
+        return slots.stream()
+                .sorted(Comparator.comparingLong(slot -> Math.abs(java.time.Duration.between(requested, slot.slotTime()).toMinutes())))
+                .limit(3)
+                .toList();
+    }
+
     private boolean isExactTime(String preferredTimeWindow) {
         if (!StringUtils.hasText(preferredTimeWindow)) {
             return false;
@@ -932,8 +943,8 @@ public class PatientPortalCareAiService {
         return null;
     }
 
-    private boolean shouldUseAiInterpretation(CareAiState state, String message) {
-        if (!aiExtractionEnabled || aiOrchestrationService == null || !StringUtils.hasText(message)) {
+    private boolean shouldUsePlanner(CareAiState state, String message) {
+        if (planner == null || !StringUtils.hasText(message)) {
             return false;
         }
         if (isSelectionOnlyMessage(message) && !state.confirmationPending) {
@@ -941,102 +952,113 @@ public class PatientPortalCareAiService {
         }
         return state.currentIntent == null
                 || state.confirmationPending
+                || state.unresolvedTurns > 0
+                || StringUtils.hasText(state.preferredDate) && !StringUtils.hasText(state.preferredTimeWindow)
+                || StringUtils.hasText(state.selectedDoctorId) && !StringUtils.hasText(state.preferredDate)
                 || containsMonthNameWithoutYear(message)
                 || (!StringUtils.hasText(state.preferredDate) && !looksLikeDateAbsent(message))
                 || (!StringUtils.hasText(state.preferredTimeWindow) && mayContainTimePreference(message))
                 || (!StringUtils.hasText(state.requestedDoctorName) && !StringUtils.hasText(state.selectedDoctorId));
     }
 
-    private AiInterpretation interpretWithAi(CareAiState state, String message) {
-        try {
-            var context = RequestContextHolder.require();
-            AiOrchestrationResponse response = aiOrchestrationService.complete(new AiOrchestrationRequest(
-                    AiProductCode.GENERIC,
-                    RequestContextHolder.requireTenantId(),
-                    context.appUserId(),
-                    AiTaskType.GENERIC_EXTRACTION,
-                    AI_EXTRACTION_TEMPLATE_CODE,
-                    Map.of(
-                            "message", message,
-                            "language", state.language,
-                            "currentIntent", state.currentIntent == null ? "" : state.currentIntent.name(),
-                            "confirmationPending", state.confirmationPending,
-                            "today", LocalDate.now().toString(),
-                            "instructions", """
-                                    Extract only scheduling intent and entities for a patient portal appointment assistant.
-                                    Return strict JSON with keys:
-                                    intent, doctorName, speciality, preferredDate, preferredTimeWindow, confirmation, reason.
-                                    intent must be one of BOOK_APPOINTMENT, RESCHEDULE_APPOINTMENT, CANCEL_APPOINTMENT, APPOINTMENT_STATUS, or null.
-                                    preferredDate must be normalized to yyyy-MM-dd when confidently known, otherwise null.
-                                    preferredTimeWindow must be one of morning, afternoon, evening, night, HH:mm, or null.
-                                    confirmation must be one of confirm, reject, or null.
-                                    Do not return medical advice, diagnosis, or irreversible actions.
-                                    """,
-                            "knownDoctorOptions", patientPortalService.doctors().stream()
-                                    .limit(8)
-                                    .map(PatientPortalDoctorResponse::doctorName)
-                                    .toList()
-                    ),
-                    List.of(),
-                    aiExtractionMaxTokens(),
-                    AI_EXTRACTION_TEMPERATURE,
-                    context.correlationId(),
-                    AI_EXTRACTION_USE_CASE
-            ));
-            return parseAiInterpretation(response);
-        } catch (RuntimeException ex) {
-            log.debug("patient.portal.careai.ai_extraction_failed messageHash={} reason={}",
-                    Integer.toHexString(message.hashCode()), ex.toString());
-            return null;
-        }
+    private PatientPortalCareAiPlanningContext buildPlanningContext(CareAiState state, String message) {
+        return new PatientPortalCareAiPlanningContext(
+                state.language,
+                message,
+                state.currentIntent == null ? null : state.currentIntent.name(),
+                state.confirmationPending,
+                state.pendingAction == null ? null : state.pendingAction.name(),
+                state.requestedDoctorName,
+                state.selectedDoctorName,
+                state.requestedSpeciality,
+                state.selectedAppointmentLabel,
+                state.preferredDate,
+                state.preferredTimeWindow,
+                state.selectedSlot,
+                missingPlannerFields(state),
+                availablePlannerActions(state),
+                state.doctorOptions,
+                state.appointmentOptions.stream().map(AppointmentChoice::label).limit(5).toList(),
+                state.slotOptions,
+                patientPortalService.doctors().stream()
+                        .limit(8)
+                        .map(PatientPortalDoctorResponse::doctorName)
+                        .filter(StringUtils::hasText)
+                        .toList()
+        );
     }
 
-    private AiInterpretation parseAiInterpretation(AiOrchestrationResponse response) {
-        if (response == null) {
-            return null;
-        }
-        try {
-            Map<String, Object> structured = aiInterpretationPayload(response);
-            if (structured == null || structured.isEmpty()) {
-                return null;
+    private List<String> missingPlannerFields(CareAiState state) {
+        List<String> missing = new ArrayList<>();
+        if (state.currentIntent == PatientPortalCareAiIntent.BOOK_APPOINTMENT) {
+            if (!StringUtils.hasText(state.selectedDoctorId)) {
+                missing.add("doctor");
             }
-            return new AiInterpretation(
-                    parseIntent(stringValue(structured, "intent")),
-                    cleanName(stringValue(structured, "doctorName")),
-                    trimToLength(stringValue(structured, "speciality"), 80),
-                    stringValue(structured, "preferredDate"),
-                    normalizeAiTimeWindow(stringValue(structured, "preferredTimeWindow")),
-                    parseConfirmationDecision(stringValue(structured, "confirmation")),
-                    trimToLength(stringValue(structured, "reason"), 160)
-            );
-        } catch (Exception ex) {
-            log.debug("patient.portal.careai.ai_extraction_parse_failed requestId={} reason={}",
-                    response.requestId(), ex.toString());
-            return null;
+            if (!StringUtils.hasText(state.preferredDate)) {
+                missing.add("date");
+            }
+            if (StringUtils.hasText(state.preferredDate) && !StringUtils.hasText(state.preferredTimeWindow) && state.slotOptions.isEmpty()) {
+                missing.add("time");
+            }
+            if (!state.confirmationPending && StringUtils.hasText(state.preferredDate) && !StringUtils.hasText(state.selectedSlot)) {
+                missing.add("slot");
+            }
+        } else if (state.currentIntent == PatientPortalCareAiIntent.RESCHEDULE_APPOINTMENT) {
+            if (!StringUtils.hasText(state.selectedAppointmentId)) {
+                missing.add("appointment");
+            }
+            if (!StringUtils.hasText(state.preferredDate)) {
+                missing.add("date");
+            }
+            if (StringUtils.hasText(state.preferredDate) && !StringUtils.hasText(state.preferredTimeWindow) && state.slotOptions.isEmpty()) {
+                missing.add("time");
+            }
+            if (!state.confirmationPending && StringUtils.hasText(state.preferredDate) && !StringUtils.hasText(state.selectedSlot)) {
+                missing.add("slot");
+            }
+        } else if (state.currentIntent == PatientPortalCareAiIntent.CANCEL_APPOINTMENT) {
+            if (!StringUtils.hasText(state.selectedAppointmentId)) {
+                missing.add("appointment");
+            }
         }
+        if (state.confirmationPending) {
+            missing.add("confirmation");
+        }
+        return missing;
     }
 
-    private Map<String, Object> aiInterpretationPayload(AiOrchestrationResponse response) throws Exception {
-        if (StringUtils.hasText(response.structuredJson())) {
-            return objectMapper.readValue(response.structuredJson(), MAP_TYPE);
+    private List<String> availablePlannerActions(CareAiState state) {
+        List<String> actions = new ArrayList<>(List.of("SWITCH_TOPIC", "ASK_CLARIFYING_QUESTION"));
+        if (state.currentIntent == null) {
+            actions.addAll(List.of("SET_INTENT", "EXTRACT_DOCTOR", "EXTRACT_SPECIALITY", "EXTRACT_DATE", "EXTRACT_TIME"));
+            return actions;
         }
-        if (looksLikeJsonObject(response.outputText())) {
-            return objectMapper.readValue(response.outputText(), MAP_TYPE);
+        switch (state.currentIntent) {
+            case BOOK_APPOINTMENT -> actions.addAll(List.of(
+                    "SET_INTENT",
+                    "EXTRACT_DOCTOR",
+                    "EXTRACT_SPECIALITY",
+                    "EXTRACT_DATE",
+                    "EXTRACT_TIME",
+                    "CHOOSE_SLOT",
+                    "CONFIRM_OR_REJECT"
+            ));
+            case RESCHEDULE_APPOINTMENT -> actions.addAll(List.of(
+                    "SET_INTENT",
+                    "CHOOSE_APPOINTMENT",
+                    "EXTRACT_DATE",
+                    "EXTRACT_TIME",
+                    "CHOOSE_SLOT",
+                    "CONFIRM_OR_REJECT"
+            ));
+            case CANCEL_APPOINTMENT -> actions.addAll(List.of(
+                    "SET_INTENT",
+                    "CHOOSE_APPOINTMENT",
+                    "CONFIRM_OR_REJECT"
+            ));
+            case APPOINTMENT_STATUS -> actions.addAll(List.of("SET_INTENT", "CHOOSE_APPOINTMENT"));
         }
-        return null;
-    }
-
-    private boolean looksLikeJsonObject(String value) {
-        if (!StringUtils.hasText(value)) {
-            return false;
-        }
-        String trimmed = value.trim();
-        return trimmed.startsWith("{") && trimmed.endsWith("}");
-    }
-
-    private int aiExtractionMaxTokens() {
-        int configured = voiceTestProperties == null ? 0 : voiceTestProperties.getLlm().getMaxOutputTokens();
-        return configured > 0 ? configured : 1024;
+        return actions;
     }
 
     private DateResolution resolveAiPreferredDate(String value) {
@@ -1050,7 +1072,7 @@ public class PatientPortalCareAiService {
         return resolveAbsoluteDate(parseIsoDate(value));
     }
 
-    private String normalizeAiTimeWindow(String value) {
+    private String normalizePlannerTimeWindow(String value) {
         if (!StringUtils.hasText(value)) {
             return null;
         }
@@ -1064,43 +1086,6 @@ public class PatientPortalCareAiService {
             case "after_lunch", "after-lunch" -> "afternoon";
             default -> trimToLength(value.trim(), 16);
         };
-    }
-
-    private ConfirmationDecision parseConfirmationDecision(String value) {
-        if (!StringUtils.hasText(value)) {
-            return ConfirmationDecision.NONE;
-        }
-        String normalized = value.trim().toLowerCase(Locale.ROOT);
-        if (List.of("confirm", "confirmed", "yes", "approve").contains(normalized)) {
-            return ConfirmationDecision.CONFIRM;
-        }
-        if (List.of("reject", "decline", "no", "change").contains(normalized)) {
-            return ConfirmationDecision.REJECT;
-        }
-        return ConfirmationDecision.NONE;
-    }
-
-    private PatientPortalCareAiIntent parseIntent(String value) {
-        if (!StringUtils.hasText(value)) {
-            return null;
-        }
-        try {
-            return PatientPortalCareAiIntent.valueOf(value.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException ex) {
-            return null;
-        }
-    }
-
-    private String stringValue(Map<String, Object> structured, String key) {
-        Object value = structured.get(key);
-        if (value == null) {
-            return null;
-        }
-        String text = String.valueOf(value).trim();
-        if (!StringUtils.hasText(text) || "null".equalsIgnoreCase(text)) {
-            return null;
-        }
-        return text;
     }
 
     private boolean mayContainTimePreference(String message) {
@@ -1277,7 +1262,8 @@ public class PatientPortalCareAiService {
     }
 
     private String findPreferredTimeWindow(String transcript, String language) {
-        String lower = transcript.toLowerCase(Locale.ROOT);
+        String normalizedTranscript = normalizeTimeTranscript(transcript);
+        String lower = normalizedTranscript.toLowerCase(Locale.ROOT);
         if (lower.contains("before lunch")) {
             return isHindi(language) ? "सुबह" : "morning";
         }
@@ -1296,6 +1282,9 @@ public class PatientPortalCareAiService {
         if (lower.contains("night") || transcript.contains("रात")) {
             return isHindi(language) ? "रात" : "night";
         }
+        if (lower.contains("right now") || lower.contains("now")) {
+            return LocalTime.now().withSecond(0).withNano(0).format(TIME_FORMATTER);
+        }
         String sanitized = ISO_DATE_PATTERN.matcher(lower).replaceAll(" ");
         Matcher matcher = EXPLICIT_TIME_PATTERN.matcher(sanitized);
         while (matcher.find()) {
@@ -1305,6 +1294,9 @@ public class PatientPortalCareAiService {
             int hour = Integer.parseInt(matcher.group(1));
             int minute = matcher.group(2) == null ? 0 : Integer.parseInt(matcher.group(2));
             String meridiem = matcher.group(3);
+            if (meridiem != null) {
+                meridiem = meridiem.replace(".", "").trim();
+            }
             if ("pm".equalsIgnoreCase(meridiem) && hour < 12) {
                 hour += 12;
             } else if ("am".equalsIgnoreCase(meridiem) && hour == 12) {
@@ -1315,6 +1307,12 @@ public class PatientPortalCareAiService {
             }
         }
         return null;
+    }
+
+    private String normalizeTimeTranscript(String transcript) {
+        return transcript
+                .replaceAll("(?i)\\ba\\.?\\s*m\\.?\\b", "am")
+                .replaceAll("(?i)\\bp\\.?\\s*m\\.?\\b", "pm");
     }
 
     private String findReason(String transcript, String language) {
@@ -1360,6 +1358,14 @@ public class PatientPortalCareAiService {
             return true;
         }
         return isHindi(language) && NEW_PATIENT_KEYWORDS_HI.stream().anyMatch(transcript::contains);
+    }
+
+    private boolean wantsTopicSwitch(String transcript, String language) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        if (TOPIC_SWITCH_KEYWORDS.stream().anyMatch(lower::contains)) {
+            return true;
+        }
+        return isHindi(language) && TOPIC_SWITCH_KEYWORDS_HI.stream().anyMatch(transcript::contains);
     }
 
     private boolean asksForAllAppointments(String transcript) {
@@ -1485,12 +1491,13 @@ public class PatientPortalCareAiService {
     }
 
     private String slotChoicePrompt(CareAiState state) {
-        return numberedChoicePrompt(
-                state.language,
-                "Please choose a slot by number or time:",
-                "कृपया नंबर या समय से स्लॉट चुनिए:",
-                state.slotOptions
-        );
+        String englishLead = StringUtils.hasText(state.slotPromptLead)
+                ? state.slotPromptLead
+                : "Please choose a slot by number or time:";
+        String hindiLead = StringUtils.hasText(state.slotPromptLead)
+                ? state.slotPromptLead
+                : "कृपया नंबर या समय से स्लॉट चुनिए:";
+        return numberedChoicePrompt(state.language, englishLead, hindiLead, state.slotOptions);
     }
 
     private String numberedChoicePrompt(String language, String englishLead, String hindiLead, List<String> options) {
@@ -1519,6 +1526,28 @@ public class PatientPortalCareAiService {
         return isHindi(language)
                 ? "कृपया समय बताइए, जैसे सुबह, दोपहर, शाम, रात, लंच से पहले, लंच के बाद, या कोई विशेष समय।"
                 : "What time works best, such as morning, afternoon, evening, night, before lunch, after lunch, or a specific time?";
+    }
+
+    private String nextTimePrompt(CareAiState state) {
+        state.timePromptCount += 1;
+        if (state.timePromptCount >= 3) {
+            return isHindi(state.language)
+                    ? "मैं अब भी समय नहीं समझ पाया। आप इनमें से एक कह सकते हैं: सुबह, दोपहर, शाम, रात, लंच से पहले, लंच के बाद, या 19:00 जैसे समय।"
+                    : "I still need a time preference. You can say morning, afternoon, evening, night, before lunch, after lunch, or a time like 19:00.";
+        }
+        return askTimePrompt(state.language);
+    }
+
+    private String topicSwitchPrompt(String language) {
+        return isHindi(language)
+                ? "ठीक है, मैंने मौजूदा बुकिंग बातचीत साफ़ कर दी है। मैं और किस चीज़ में मदद कर सकता हूँ?"
+                : "Okay, I cleared the current booking flow. How else can I help?";
+    }
+
+    private String exactTimeUnavailablePrompt(String language, String preferredTimeWindow) {
+        return isHindi(language)
+                ? preferredTimeWindow + " पर सटीक स्लॉट उपलब्ध नहीं है। कृपया नज़दीकी विकल्पों में से चुनिए:"
+                : "No exact slot is available at " + preferredTimeWindow + ". Please choose from the nearest available options:";
     }
 
     private String bookingConfirmationPrompt(CareAiState state) {
@@ -1609,6 +1638,36 @@ public class PatientPortalCareAiService {
         return StringUtils.hasText(value) ? value : "the clinic";
     }
 
+    private void clearCurrentConversation(CareAiState state) {
+        PatientPortalCareAiIntent previousIntent = state.currentIntent;
+        resetWorkflowState(state, previousIntent == null ? PatientPortalCareAiIntent.BOOK_APPOINTMENT : previousIntent);
+        state.currentIntent = null;
+        state.requestedDoctorName = null;
+        state.requestedSpeciality = null;
+        state.selectedDoctorId = null;
+        state.selectedDoctorName = null;
+        state.selectedSpeciality = null;
+        state.preferredDate = null;
+        state.dateResolutionIssue = null;
+        state.preferredTimeWindow = null;
+        state.reason = null;
+        state.slotPromptLead = null;
+        state.timePromptCount = 0;
+        clearAppointmentSelection(state);
+        clearSlotSelection(state);
+        state.confirmationPending = false;
+        state.pendingAction = null;
+        state.booked = false;
+        state.actionCompleted = false;
+        state.lastAction = null;
+        state.bookingStatus = null;
+        state.bookedAppointmentDate = null;
+        state.bookedAppointmentTime = null;
+        state.handoffRequired = false;
+        state.handoffReason = null;
+        state.unresolvedTurns = 0;
+    }
+
     private String nullToBlank(String value) {
         return value == null ? "" : value;
     }
@@ -1685,6 +1744,7 @@ public class PatientPortalCareAiService {
         private String preferredTimeWindow;
         private String reason;
         private String selectedSlot;
+        private String slotPromptLead;
         private List<DoctorChoice> doctorChoices = List.of();
         private List<String> doctorOptions = List.of();
         private List<AppointmentChoice> appointmentOptions = List.of();
@@ -1701,6 +1761,7 @@ public class PatientPortalCareAiService {
         private boolean handoffRequired;
         private String handoffReason;
         private int unresolvedTurns;
+        private int timePromptCount;
     }
 
     private record SessionKey(UUID tenantId, UUID appUserId) {
@@ -1723,23 +1784,6 @@ public class PatientPortalCareAiService {
     }
 
     private record SlotChoice(LocalDate appointmentDate, LocalTime slotTime) {
-    }
-
-    private record AiInterpretation(
-            PatientPortalCareAiIntent intent,
-            String doctorName,
-            String speciality,
-            String preferredDate,
-            String preferredTimeWindow,
-            ConfirmationDecision confirmationDecision,
-            String reason
-    ) {
-    }
-
-    private enum ConfirmationDecision {
-        NONE,
-        CONFIRM,
-        REJECT
     }
 
     private record DateResolution(String date, String issue) {

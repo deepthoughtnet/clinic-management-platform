@@ -27,6 +27,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -49,12 +50,15 @@ class PatientPortalCareAiServiceTest {
         aiOrchestrationService = mock(AiOrchestrationService.class);
         voiceTestProperties = new VoiceTestProperties();
         voiceTestProperties.getLlm().setMaxOutputTokens(1024);
-        service = new PatientPortalCareAiService(
-                patientPortalService,
+        PatientPortalCareAiPlanner planner = new LlmBackedPatientPortalCareAiPlanner(
                 aiOrchestrationService,
                 new ObjectMapper(),
                 voiceTestProperties,
                 true
+        );
+        service = new PatientPortalCareAiService(
+                patientPortalService,
+                planner
         );
         setPatientContext(TENANT_A, APP_USER_A);
     }
@@ -390,6 +394,86 @@ class PatientPortalCareAiServiceTest {
     }
 
     @Test
+    void waitingForTimeAndBookAtSevenPmProgressesToNearestSlots() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
+                slot(tomorrow, LocalTime.of(18, 30), true),
+                slot(tomorrow, LocalTime.of(19, 15), true),
+                slot(tomorrow, LocalTime.of(20, 0), true)
+        ));
+
+        service.message(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta tomorrow",
+                "en"
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest("book at 7 p.m.", "en"));
+
+        assertThat(response.state().preferredTimeWindow()).isEqualTo("19:00");
+        assertThat(response.state().slotOptions()).containsExactly("19:15", "18:30", "20:00");
+        assertThat(response.assistantMessage()).contains("No exact slot is available at 19:00");
+    }
+
+    @Test
+    void waitingForTimeAndCheckSlotInEveningProgresses() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
+                slot(tomorrow, LocalTime.of(17, 0), true),
+                slot(tomorrow, LocalTime.of(18, 0), true)
+        ));
+
+        service.message(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta tomorrow",
+                "en"
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest("Check the slot in evening", "en"));
+
+        assertThat(response.state().preferredTimeWindow()).isEqualTo("evening");
+        assertThat(response.state().slotOptions()).containsExactly("17:00", "18:00");
+        assertThat(response.assistantMessage()).contains("Please choose a slot");
+    }
+
+    @Test
+    void waitingForTimeAndSwitchTopicClearsBookingFlow() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+
+        service.message(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta tomorrow",
+                "en"
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest("Can we switch topic and talk about something else?", "en"));
+
+        assertThat(response.state().currentIntent()).isNull();
+        assertThat(response.state().doctorName()).isNull();
+        assertThat(response.state().preferredDate()).isNull();
+        assertThat(response.assistantMessage()).contains("cleared the current booking flow");
+    }
+
+    @Test
+    void doesNotRepeatSameTimePromptThirdTime() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of());
+
+        service.message(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta tomorrow",
+                "en"
+        ));
+        var first = service.message(new PatientPortalCareAiMessageRequest("some time", "en"));
+        var second = service.message(new PatientPortalCareAiMessageRequest("later", "en"));
+        var third = service.message(new PatientPortalCareAiMessageRequest("whenever", "en"));
+
+        assertThat(first.assistantMessage()).isEqualTo("What time works best, such as morning, afternoon, evening, night, before lunch, after lunch, or a specific time?");
+        assertThat(second.assistantMessage()).contains("I still need a time preference");
+        assertThat(third.assistantMessage()).contains("I still need a time preference");
+    }
+
+    @Test
     void resetClearsConversationState() {
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-1", "Dr Ashish Shri", "Cardiology")));
 
@@ -455,6 +539,72 @@ class PatientPortalCareAiServiceTest {
     }
 
     @Test
+    void plannerReceivesConversationStateAndAvailableActions() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(aiOrchestrationService.complete(any()))
+                .thenReturn(aiResponse("""
+                        {
+                          "intent": "BOOK_APPOINTMENT"
+                        }
+                        """))
+                .thenReturn(aiResponse("""
+                        {
+                          "preferredTimeWindow": "19:00"
+                        }
+                        """));
+        when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
+                slot(tomorrow, LocalTime.of(18, 30), true),
+                slot(tomorrow, LocalTime.of(19, 30), true)
+        ));
+
+        service.message(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta tomorrow",
+                "en"
+        ));
+        service.message(new PatientPortalCareAiMessageRequest("around 7 pm", "en"));
+
+        verify(aiOrchestrationService).complete(argThat(request -> {
+            Map<String, Object> inputs = request.inputVariables();
+            return request.taskType() == AiTaskType.GENERIC_EXTRACTION
+                    && "BOOK_APPOINTMENT".equals(inputs.get("currentIntent"))
+                    && ((List<?>) inputs.get("missingFields")).contains("slot")
+                    && ((List<?>) inputs.get("slotOptions")).contains("18:30")
+                    && ((List<?>) inputs.get("availableActions")).contains("EXTRACT_TIME");
+        }));
+    }
+
+    @Test
+    void plannerCanClearBookingFlowOnSemanticTopicSwitch() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(aiOrchestrationService.complete(any()))
+                .thenReturn(aiResponse("""
+                        {
+                          "intent": "BOOK_APPOINTMENT"
+                        }
+                        """))
+                .thenReturn(aiResponse("""
+                        {
+                          "topicSwitch": true
+                        }
+                        """));
+
+        service.message(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta tomorrow",
+                "en"
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest(
+                "Let's discuss something else instead",
+                "en"
+        ));
+
+        assertThat(response.state().currentIntent()).isNull();
+        assertThat(response.assistantMessage()).contains("cleared the current booking flow");
+    }
+
+    @Test
     void deterministicParserStillWorksWhenAiOrchestrationFails() {
         LocalDate tomorrow = LocalDate.now().plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
@@ -496,6 +646,69 @@ class PatientPortalCareAiServiceTest {
                 false,
                 null
         ));
+        when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
+                slot(tomorrow, LocalTime.of(9, 0), true),
+                slot(tomorrow, LocalTime.of(10, 30), true)
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta tomorrow morning",
+                "en"
+        ));
+
+        assertThat(response.state().doctorName()).isEqualTo("Dr Neha Mehta");
+        assertThat(response.state().preferredDate()).isEqualTo(tomorrow.toString());
+        assertThat(response.state().preferredTimeWindow()).isEqualTo("morning");
+        assertThat(response.state().slotOptions()).containsExactly("09:00", "10:30");
+    }
+
+    @Test
+    void invalidAiExtractionDoesNotEraseDeterministicTimeFields() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(aiOrchestrationService.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiProductCode.GENERIC,
+                AiTaskType.GENERIC_EXTRACTION,
+                "gemini",
+                "gemini-2.5-flash",
+                "{\"answer\":\"Sorry\"",
+                null,
+                BigDecimal.valueOf(0.22),
+                List.of(),
+                List.of(),
+                List.of("partial"),
+                null,
+                8L,
+                false,
+                null
+        ));
+        when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
+                slot(tomorrow, LocalTime.of(18, 0), true),
+                slot(tomorrow, LocalTime.of(19, 0), true)
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta tomorrow evening",
+                "en"
+        ));
+
+        assertThat(response.state().doctorName()).isEqualTo("Dr Neha Mehta");
+        assertThat(response.state().preferredDate()).isEqualTo(tomorrow.toString());
+        assertThat(response.state().preferredTimeWindow()).isEqualTo("evening");
+        assertThat(response.state().slotOptions()).containsExactly("18:00", "19:00");
+    }
+
+    @Test
+    void nonActionableAiPayloadDoesNotOverrideDeterministicParser() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(aiOrchestrationService.complete(any())).thenReturn(aiResponse("""
+                {
+                  "answer": "No external model was called."
+                }
+                """));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(9, 0), true),
                 slot(tomorrow, LocalTime.of(10, 30), true)

@@ -36,6 +36,7 @@ public class GroqAiProviderAdapter implements AiProvider {
                 || taskType == AiTaskType.RECONCILIATION_MATCH_EXPLANATION
                 || taskType == AiTaskType.SUMMARY
                 || taskType == AiTaskType.GENERIC_COPILOT
+                || taskType == AiTaskType.GENERIC_EXTRACTION
                 || taskType == AiTaskType.CLINIC_RISK_EXPLANATION
                 || taskType == AiTaskType.DUPLICATE_EXPLANATION
                 || taskType == AiTaskType.DOCTOR_RESUBMISSION_SUGGESTION

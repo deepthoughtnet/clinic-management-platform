@@ -58,6 +58,7 @@ class GroqAiProviderAdapterTest {
     void supportsOnlyTextCopilotTasks() {
         GroqAiProviderAdapter adapter = new GroqAiProviderAdapter(mock(ObjectProvider.class));
         assertEquals(true, adapter.supports(AiTaskType.SUMMARY));
+        assertEquals(true, adapter.supports(AiTaskType.GENERIC_EXTRACTION));
         assertEquals(false, adapter.supports(AiTaskType.CLINIC_EXTRACTION));
     }
 }

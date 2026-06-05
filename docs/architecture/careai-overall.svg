@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>
+    .box { rx: 12; ry: 12; stroke-width: 2; }
+    .t { font-family: Arial, sans-serif; font-size: 22px; fill: #1f2937; }
+    .s { font-family: Arial, sans-serif; font-size: 18px; fill: #1f2937; }
+    .a { stroke: #4b5563; stroke-width: 2.5; fill: none; marker-end: url(#m); }
+  </style>
+  <defs><marker id="m" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#4b5563"/></marker></defs>
+  <rect x="40" y="280" width="140" height="60" class="box" fill="#dae8fc" stroke="#6c8ebf"/><text x="110" y="317" text-anchor="middle" class="t">Patient</text>
+  <rect x="240" y="260" width="180" height="100" class="box" fill="#d5e8d4" stroke="#82b366"/><text x="330" y="305" text-anchor="middle" class="t">web-public</text><text x="330" y="333" text-anchor="middle" class="s">Chat + Voice UI</text>
+  <rect x="500" y="210" width="170" height="70" class="box" fill="#fff2cc" stroke="#d6b656"/><text x="585" y="248" text-anchor="middle" class="s">REST /api/patient-portal/*</text>
+  <rect x="500" y="320" width="170" height="70" class="box" fill="#fff2cc" stroke="#d6b656"/><text x="585" y="358" text-anchor="middle" class="s">WS /ws/patient-portal/careai</text>
+  <rect x="740" y="210" width="170" height="70" class="box" fill="#f8cecc" stroke="#b85450"/><text x="825" y="248" text-anchor="middle" class="s">PatientPortalController</text>
+  <rect x="740" y="320" width="170" height="70" class="box" fill="#f8cecc" stroke="#b85450"/><text x="825" y="348" text-anchor="middle" class="s">Patient Voice</text><text x="825" y="372" text-anchor="middle" class="s">WebSocket Handler</text>
+  <rect x="980" y="250" width="220" height="100" class="box" fill="#e1d5e7" stroke="#9673a6"/><text x="1090" y="295" text-anchor="middle" class="t">PatientPortalCareAiService</text><text x="1090" y="325" text-anchor="middle" class="s">Shared chat + voice business engine</text>
+  <rect x="1270" y="160" width="220" height="80" class="box" fill="#e1d5e7" stroke="#9673a6"/><text x="1380" y="205" text-anchor="middle" class="s">LLM Planner</text>
+  <rect x="1270" y="280" width="220" height="80" class="box" fill="#e1d5e7" stroke="#9673a6"/><text x="1380" y="315" text-anchor="middle" class="s">AI Orchestration</text><text x="1380" y="340" text-anchor="middle" class="s">Gemini -> Groq -> Mock</text>
+  <rect x="1270" y="400" width="220" height="80" class="box" fill="#f5f5f5" stroke="#666666"/><text x="1380" y="435" text-anchor="middle" class="s">PatientPortalService</text><text x="1380" y="460" text-anchor="middle" class="s">Deterministic execution</text>
+  <rect x="980" y="400" width="220" height="80" class="box" fill="#f5f5f5" stroke="#666666"/><text x="1090" y="435" text-anchor="middle" class="s">VoiceOrchestratorService</text><text x="1090" y="460" text-anchor="middle" class="s">STT + TTS</text>
+  <rect x="1270" y="520" width="220" height="70" class="box" fill="#d5e8d4" stroke="#82b366"/><text x="1380" y="560" text-anchor="middle" class="s">Appointment / Doctor / Slot Domain</text>
+  <rect x="980" y="520" width="220" height="90" class="box" fill="#dae8fc" stroke="#6c8ebf"/><text x="1090" y="555" text-anchor="middle" class="s">Patient Portal</text><text x="1090" y="580" text-anchor="middle" class="s">Reception | Doctor Queue</text>
+  <path d="M180 310 H240" class="a"/><path d="M420 280 H500" class="a"/><path d="M420 340 H500" class="a"/><path d="M670 245 H740" class="a"/><path d="M670 355 H740" class="a"/><path d="M910 245 H980" class="a"/><path d="M910 355 H980" class="a"/><path d="M1200 280 H1270" class="a"/><path d="M1380 240 V280" class="a"/><path d="M1200 320 L1270 400" class="a"/><path d="M910 390 L980 435" class="a"/><path d="M1380 480 V520" class="a"/><path d="M1270 555 H1200" class="a"/>
+</svg>

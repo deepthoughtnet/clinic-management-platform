@@ -64,7 +64,13 @@ class PatientPortalVoiceWebSocketHandlerTest {
                         Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8)),
                         "faster-whisper",
                         "PATIENT_PORTAL_CAREAI",
-                        "piper"
+                        "piper",
+                        120L,
+                        35L,
+                        90L,
+                        260L,
+                        5L,
+                        null
                 )
         );
         PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
@@ -85,6 +91,8 @@ class PatientPortalVoiceWebSocketHandlerTest {
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"assistant.text\"") && payload.contains("confirm the 10:30 slot"));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"assistant.audio.end\"") && payload.contains("\"contentType\":\"audio/wav\""));
         assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"turn.complete\"") && payload.contains("\"currentIntent\":\"BOOK_APPOINTMENT\""));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"session.started\"") && payload.contains("\"voiceConfig\""));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"turn.complete\"") && payload.contains("\"totalDurationMs\":260"));
         verify(assistantService).processAudioTurn(any(), any(), any(), any());
     }
 

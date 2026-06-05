@@ -172,6 +172,50 @@ class AiOrchestrationServiceImplTest {
     }
 
     @Test
+    void fallsBackFromGeminiToGroqOnQuotaExceededForGenericExtraction() {
+        AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
+        AiProviderRouter router = mock(AiProviderRouter.class);
+        AiRequestAuditService auditService = mock(AiRequestAuditService.class);
+        AiOrchestrationServiceImpl service = newService(registry, router, auditService);
+
+        AiOrchestrationRequest request = new AiOrchestrationRequest(
+                AiProductCode.GENERIC,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                AiTaskType.GENERIC_EXTRACTION,
+                "generic.extraction.v1",
+                Map.of("message", "Book appointment with Neha Mehta tomorrow morning"),
+                List.of(),
+                1024,
+                0.2d,
+                "corr-123",
+                "patient-portal-careai-extraction"
+        );
+        AiPromptTemplateDefinition template = new AiPromptTemplateDefinition(
+                "generic.extraction.v1",
+                "v1",
+                AiProductCode.GENERIC,
+                AiTaskType.GENERIC_EXTRACTION,
+                "system prompt",
+                "{\"intent\":\"BOOK_APPOINTMENT\"}",
+                com.deepthoughtnet.clinic.platform.contracts.ai.AiPromptTemplateStatus.ACTIVE,
+                "fallback summary",
+                List.of("Verify booking details"),
+                List.of("Advisory only")
+        );
+        when(registry.resolve(request)).thenReturn(template);
+        AiProvider gemini = failingProvider("GEMINI", "Gemini quota exceeded.", 429);
+        AiProvider groq = provider("GROQ", "{\"answer\":\"Groq handled extraction fallback\",\"intent\":\"BOOK_APPOINTMENT\"}", AiProviderStatus.AVAILABLE);
+        when(router.resolveCandidates(AiTaskType.GENERIC_EXTRACTION)).thenReturn(List.of(gemini, groq));
+
+        AiOrchestrationResponse response = service.complete(request);
+
+        assertEquals("GROQ", response.provider());
+        assertTrue(response.fallbackUsed());
+        assertTrue(response.outputText().contains("Groq handled extraction fallback"));
+    }
+
+    @Test
     void fallsBackFromGeminiToGroqOnTimeout() {
         AiPromptTemplateRegistryService registry = mock(AiPromptTemplateRegistryService.class);
         AiProviderRouter router = mock(AiProviderRouter.class);

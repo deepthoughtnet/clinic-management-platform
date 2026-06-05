@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>.b{rx:12;ry:12;stroke-width:2}.t{font-family:Arial,sans-serif;font-size:20px;fill:#1f2937}.a{stroke:#4b5563;stroke-width:2.5;fill:none;marker-end:url(#m)}</style>
+  <defs><marker id="m" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#4b5563"/></marker></defs>
+  <rect x="40" y="240" width="220" height="80" class="b" fill="#dae8fc" stroke="#6c8ebf"/><text x="150" y="278" text-anchor="middle" class="t">Employee asks</text><text x="150" y="304" text-anchor="middle" class="t">What is the leave policy?</text>
+  <rect x="320" y="240" width="220" height="80" class="b" fill="#e1d5e7" stroke="#9673a6"/><text x="430" y="286" text-anchor="middle" class="t">Runtime + identity + access scope</text>
+  <rect x="620" y="120" width="240" height="80" class="b" fill="#d5e8d4" stroke="#82b366"/><text x="740" y="158" text-anchor="middle" class="t">Document ingest</text><text x="740" y="184" text-anchor="middle" class="t">Chunking + embeddings + metadata</text>
+  <rect x="620" y="240" width="240" height="80" class="b" fill="#fff2cc" stroke="#d6b656"/><text x="740" y="278" text-anchor="middle" class="t">Vector retrieval</text><text x="740" y="304" text-anchor="middle" class="t">Access-aware search</text>
+  <rect x="620" y="360" width="240" height="80" class="b" fill="#fff2cc" stroke="#d6b656"/><text x="740" y="398" text-anchor="middle" class="t">Context builder + citations</text>
+  <rect x="940" y="240" width="220" height="80" class="b" fill="#f5f5f5" stroke="#666666"/><text x="1050" y="286" text-anchor="middle" class="t">LLM answer generation</text>
+  <rect x="1240" y="240" width="180" height="80" class="b" fill="#dae8fc" stroke="#6c8ebf"/><text x="1330" y="278" text-anchor="middle" class="t">Chat / voice answer</text><text x="1330" y="304" text-anchor="middle" class="t">with citations</text>
+  <path d="M260 280 H320" class="a"/><path d="M540 280 H620" class="a"/><path d="M740 200 V240" class="a"/><path d="M740 320 V360" class="a"/><path d="M860 280 H940" class="a"/><path d="M1160 280 H1240" class="a"/>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>.b{rx:12;ry:12;stroke-width:2}.t{font-family:Arial,sans-serif;font-size:20px;fill:#1f2937}.a{stroke:#4b5563;stroke-width:2.5;fill:none;marker-end:url(#m)}</style>
+  <defs><marker id="m" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#4b5563"/></marker></defs>
+  <rect x="50" y="230" width="150" height="60" class="b" fill="#dae8fc" stroke="#6c8ebf"/><text x="125" y="266" text-anchor="middle" class="t">Patient types message</text>
+  <rect x="250" y="220" width="220" height="80" class="b" fill="#fff2cc" stroke="#d6b656"/><text x="360" y="266" text-anchor="middle" class="t">POST /api/patient-portal/careai/message</text>
+  <rect x="520" y="220" width="220" height="80" class="b" fill="#f8cecc" stroke="#b85450"/><text x="630" y="255" text-anchor="middle" class="t">Patient session auth</text><text x="630" y="280" text-anchor="middle" class="t">Tenant + patient resolved server-side</text>
+  <rect x="800" y="210" width="240" height="100" class="b" fill="#e1d5e7" stroke="#9673a6"/><text x="920" y="250" text-anchor="middle" class="t">PatientPortalCareAiService</text><text x="920" y="278" text-anchor="middle" class="t">State + deterministic parse + planner</text>
+  <rect x="1100" y="220" width="220" height="80" class="b" fill="#f5f5f5" stroke="#666666"/><text x="1210" y="256" text-anchor="middle" class="t">PatientPortalService</text><text x="1210" y="282" text-anchor="middle" class="t">Doctors / slots / appointments</text>
+  <rect x="800" y="360" width="240" height="80" class="b" fill="#d5e8d4" stroke="#82b366"/><text x="920" y="396" text-anchor="middle" class="t">Assistant reply + updated state</text>
+  <path d="M200 260 H250" class="a"/><path d="M470 260 H520" class="a"/><path d="M740 260 H800" class="a"/><path d="M1040 260 H1100" class="a"/><path d="M1210 300 C1210 350,1000 380,1040 400" class="a"/><path d="M800 400 C650 470,300 470,125 290" class="a"/>
+</svg>

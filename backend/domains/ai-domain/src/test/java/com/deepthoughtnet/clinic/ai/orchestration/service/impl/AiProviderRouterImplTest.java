@@ -34,6 +34,19 @@ class AiProviderRouterImplTest {
         assertThrows(IllegalStateException.class, () -> router.resolve(AiTaskType.SUMMARY));
     }
 
+    @Test
+    void genericExtractionKeepsGroqAheadOfMock() {
+        AiProvider mock = new StubProvider("MOCK");
+        AiProvider groq = new StubProvider("GROQ");
+        AiProvider gemini = new StubProvider("GEMINI", AiProviderStatus.UNAVAILABLE);
+        AiProviderRouterImpl router = new AiProviderRouterImpl(List.of(mock, groq, gemini), "GEMINI,GROQ,MOCK");
+
+        List<AiProvider> candidates = router.resolveCandidates(AiTaskType.GENERIC_EXTRACTION);
+
+        assertEquals("GROQ", candidates.get(0).providerName());
+        assertEquals("MOCK", candidates.get(1).providerName());
+    }
+
     private static final class StubProvider implements AiProvider {
         private final String name;
         private final AiProviderStatus status;

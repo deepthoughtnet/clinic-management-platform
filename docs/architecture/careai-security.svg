@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>.b{rx:12;ry:12;stroke-width:2}.t{font-family:Arial,sans-serif;font-size:20px;fill:#1f2937}.a{stroke:#4b5563;stroke-width:2.5;fill:none;marker-end:url(#m)}</style>
+  <defs><marker id="m" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#4b5563"/></marker></defs>
+  <rect x="50" y="240" width="200" height="70" class="b" fill="#dae8fc" stroke="#6c8ebf"/><text x="150" y="282" text-anchor="middle" class="t">Patient OTP / session token</text>
+  <rect x="330" y="160" width="200" height="70" class="b" fill="#fff2cc" stroke="#d6b656"/><text x="430" y="200" text-anchor="middle" class="t">REST filter</text><text x="430" y="222" text-anchor="middle" class="t">X-Patient-Session</text>
+  <rect x="330" y="320" width="200" height="70" class="b" fill="#fff2cc" stroke="#d6b656"/><text x="430" y="360" text-anchor="middle" class="t">WS interceptor</text><text x="430" y="382" text-anchor="middle" class="t">sessionToken query param</text>
+  <rect x="620" y="230" width="220" height="90" class="b" fill="#f8cecc" stroke="#b85450"/><text x="730" y="270" text-anchor="middle" class="t">PatientPortalSessionPrincipal</text><text x="730" y="296" text-anchor="middle" class="t">tenantId + patientId + roles</text>
+  <rect x="620" y="110" width="220" height="70" class="b" fill="#f5f5f5" stroke="#666666"/><text x="730" y="152" text-anchor="middle" class="t">SecurityConfig permit path</text>
+  <rect x="930" y="230" width="240" height="90" class="b" fill="#e1d5e7" stroke="#9673a6"/><text x="1050" y="270" text-anchor="middle" class="t">PatientPortalService</text><text x="1050" y="296" text-anchor="middle" class="t">Patient- and tenant-scoped auth</text>
+  <rect x="1260" y="230" width="220" height="90" class="b" fill="#d5e8d4" stroke="#82b366"/><text x="1370" y="270" text-anchor="middle" class="t">Doctor / slot / appointment data</text><text x="1370" y="296" text-anchor="middle" class="t">No frontend patientId trust</text>
+  <path d="M250 250 L330 195" class="a"/><path d="M250 300 L330 355" class="a"/><path d="M530 195 H620" class="a"/><path d="M530 355 H620" class="a"/><path d="M730 180 V230" class="a"/><path d="M840 275 H930" class="a"/><path d="M1170 275 H1260" class="a"/>
+</svg>

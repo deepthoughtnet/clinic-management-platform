@@ -416,6 +416,7 @@ public class VoiceTestProperties {
         private int maxIdleSeconds = 120;
         private int maxTurnsPerSession = 20;
         private int maxAudioBytesPerTurn = 10 * 1024 * 1024;
+        private int frontendAutoResumeDelayMs = 500;
 
         public int getHeartbeatIntervalMs() {
             return heartbeatIntervalMs;
@@ -463,6 +464,14 @@ public class VoiceTestProperties {
 
         public void setMaxAudioBytesPerTurn(int maxAudioBytesPerTurn) {
             this.maxAudioBytesPerTurn = maxAudioBytesPerTurn;
+        }
+
+        public int getFrontendAutoResumeDelayMs() {
+            return frontendAutoResumeDelayMs;
+        }
+
+        public void setFrontendAutoResumeDelayMs(int frontendAutoResumeDelayMs) {
+            this.frontendAutoResumeDelayMs = frontendAutoResumeDelayMs;
         }
     }
 }

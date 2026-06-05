@@ -67,6 +67,12 @@ class PatientPortalVoiceAssistantServiceTest {
         assertThat(response.audioContentType()).isEqualTo("audio/wav");
         assertThat(response.audioBase64()).isEqualTo(Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8)));
         assertThat(response.llmProvider()).isEqualTo("PATIENT_PORTAL_CAREAI");
+        assertThat(response.sttDurationMs()).isGreaterThanOrEqualTo(0L);
+        assertThat(response.careAiDurationMs()).isGreaterThanOrEqualTo(0L);
+        assertThat(response.ttsDurationMs()).isGreaterThanOrEqualTo(0L);
+        assertThat(response.totalDurationMs()).isGreaterThanOrEqualTo(0L);
+        assertThat(response.captureBytes()).isEqualTo(5L);
+        assertThat(response.ttsFallbackReason()).isNull();
     }
 
     @Test
@@ -80,5 +86,48 @@ class PatientPortalVoiceAssistantServiceTest {
         assertThatThrownBy(() -> service.processAudioTurn("audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "voice.webm", "auto"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("No speech was captured");
+    }
+
+    @Test
+    void ttsFailureFallsBackToTextOnlyResponse() {
+        VoiceOrchestratorService orchestratorService = mock(VoiceOrchestratorService.class);
+        PatientPortalCareAiService careAiService = mock(PatientPortalCareAiService.class);
+        PatientPortalVoiceAssistantService service = new PatientPortalVoiceAssistantService(orchestratorService, careAiService);
+        PatientPortalCareAiStateResponse state = new PatientPortalCareAiStateResponse(
+                "en",
+                "APPOINTMENT_STATUS",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                List.of(),
+                List.of(),
+                List.of()
+        );
+        when(orchestratorService.transcribeBufferedAudio(any(), any(), any(), any()))
+                .thenReturn(new VoiceTranscriptionResult("What is my appointment status?", "faster-whisper", "ok"));
+        when(careAiService.message(any(PatientPortalCareAiMessageRequest.class)))
+                .thenReturn(new PatientPortalCareAiMessageResponse("Your next appointment is tomorrow at 10 AM.", state));
+        when(orchestratorService.synthesizeAssistantText("Your next appointment is tomorrow at 10 AM.", "en"))
+                .thenThrow(new IllegalStateException("tts timeout"));
+
+        var response = service.processAudioTurn("audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "voice.webm", "auto");
+
+        assertThat(response.assistantText()).isEqualTo("Your next appointment is tomorrow at 10 AM.");
+        assertThat(response.audioContentType()).isNull();
+        assertThat(response.audioBase64()).isNull();
+        assertThat(response.ttsProvider()).isNull();
+        assertThat(response.ttsFallbackReason()).contains("tts timeout");
     }
 }

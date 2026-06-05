@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>.b{rx:12;ry:12;stroke-width:2}.t{font-family:Arial,sans-serif;font-size:20px;fill:#1f2937}.a{stroke:#4b5563;stroke-width:2.5;fill:none;marker-end:url(#m)}</style>
+  <defs><marker id="m" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#4b5563"/></marker></defs>
+  <rect x="40" y="240" width="220" height="80" class="b" fill="#dae8fc" stroke="#6c8ebf"/><text x="150" y="278" text-anchor="middle" class="t">Client query</text><text x="150" y="304" text-anchor="middle" class="t">How is my portfolio performing?</text>
+  <rect x="340" y="240" width="200" height="80" class="b" fill="#e1d5e7" stroke="#9673a6"/><text x="440" y="286" text-anchor="middle" class="t">Agent Runtime + Planner</text>
+  <rect x="620" y="120" width="220" height="70" class="b" fill="#d5e8d4" stroke="#82b366"/><text x="730" y="162" text-anchor="middle" class="t">Portfolio / holdings / transactions</text>
+  <rect x="620" y="220" width="220" height="70" class="b" fill="#d5e8d4" stroke="#82b366"/><text x="730" y="262" text-anchor="middle" class="t">Risk profile / suitability</text>
+  <rect x="620" y="320" width="220" height="70" class="b" fill="#fff2cc" stroke="#d6b656"/><text x="730" y="362" text-anchor="middle" class="t">Research + RAG</text>
+  <rect x="920" y="220" width="220" height="70" class="b" fill="#f8cecc" stroke="#b85450"/><text x="1030" y="262" text-anchor="middle" class="t">Compliance validator</text>
+  <rect x="920" y="320" width="220" height="70" class="b" fill="#f5f5f5" stroke="#666666"/><text x="1030" y="362" text-anchor="middle" class="t">LLM response generation</text>
+  <rect x="1220" y="260" width="180" height="70" class="b" fill="#dae8fc" stroke="#6c8ebf"/><text x="1310" y="302" text-anchor="middle" class="t">Voice / chat answer</text>
+  <path d="M260 280 H340" class="a"/><path d="M540 280 H620" class="a"/><path d="M540 280 C580 280,580 155,620 155" class="a"/><path d="M540 280 C580 280,580 355,620 355" class="a"/><path d="M840 155 C900 155,900 355,920 355" class="a"/><path d="M840 255 H920" class="a"/><path d="M840 355 H920" class="a"/><path d="M1140 355 C1190 355,1190 295,1220 295" class="a"/>
+</svg>

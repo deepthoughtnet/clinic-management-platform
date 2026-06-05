@@ -235,6 +235,7 @@ voice:
     max-idle-seconds: ${VOICE_LIVE_MAX_IDLE_SECONDS:120}
     max-turns-per-session: ${VOICE_LIVE_MAX_TURNS_PER_SESSION:20}
     max-audio-bytes-per-turn: ${VOICE_LIVE_MAX_AUDIO_BYTES_PER_TURN:10485760}
+    frontend-auto-resume-delay-ms: ${VOICE_LIVE_FRONTEND_AUTO_RESUME_DELAY_MS:500}
   runtime:
     summary-endpoint: ${VOICE_RUNTIME_SUMMARY_ENDPOINT:http://127.0.0.1:8091/metrics/summary}
   debug:

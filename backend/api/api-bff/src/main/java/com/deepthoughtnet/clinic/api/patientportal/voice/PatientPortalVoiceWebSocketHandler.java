@@ -103,7 +103,16 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         sendEvent(session, Map.of(
                 "type", "session.started",
                 "sessionId", state.sessionId,
-                "language", state.language
+                "language", state.language,
+                "voiceConfig", Map.of(
+                        "heartbeatIntervalMs", properties.getLive().getHeartbeatIntervalMs(),
+                        "speechStartThreshold", properties.getVad().getSpeechStartThreshold(),
+                        "speechEndThreshold", properties.getVad().getSpeechEndThreshold(),
+                        "minSpeechMs", properties.getVad().getMinSpeechMs(),
+                        "silenceTimeoutMs", properties.getVad().getSilenceTimeoutMs(),
+                        "maxUtteranceMs", properties.getVad().getMaxUtteranceMs(),
+                        "autoResumeDelayMs", properties.getLive().getFrontendAutoResumeDelayMs()
+                )
         ));
     }
 
@@ -165,8 +174,19 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         }
         state.contentType = root.path("contentType").asText("audio/webm");
         state.filename = root.path("filename").asText("patient-careai-voice.webm");
+        Instant now = Instant.now();
+        if (state.firstUploadAt == null) {
+            state.firstUploadAt = now;
+        }
+        state.lastUploadActivityAt = now;
         sendEvent(session, Map.of(
                 "type", "audio.chunk.received",
+                "sequence", sequence,
+                "totalChunks", state.expectedTotalChunks > 0 ? state.expectedTotalChunks : state.chunkCount
+        ));
+        sendEvent(session, Map.of(
+                "type", "turn.audio.received",
+                "sessionId", state.sessionId,
                 "sequence", sequence,
                 "totalChunks", state.expectedTotalChunks > 0 ? state.expectedTotalChunks : state.chunkCount
         ));
@@ -226,6 +246,11 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         Set<String> roles = (Set<String>) session.getAttributes().getOrDefault("roles", Set.of("PATIENT"));
         int turnIndex = state.turnCount + 1;
         state.turnInProgress = true;
+        state.turnStartedAt = Instant.now();
+        long uploadDurationMs = state.firstUploadAt == null ? 0L : Duration.between(state.firstUploadAt, Instant.now()).toMillis();
+        long uploadToProcessGapMs = state.lastUploadActivityAt == null ? 0L : Duration.between(state.lastUploadActivityAt, Instant.now()).toMillis();
+        log.info("patient.voice.turn.audio.ready sessionId={} turnIndex={} chunks={} bytes={} uploadDurationMs={} uploadToProcessGapMs={}",
+                state.sessionId, turnIndex, totalChunks, audioBytes.length, uploadDurationMs, uploadToProcessGapMs);
 
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), appUserId, subject, roles, "PATIENT", state.sessionId));
         try {
@@ -247,6 +272,19 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
                     "text", response.transcript(),
                     "turnIndex", turnIndex
             ));
+            sendEvent(session, Map.of(
+                    "type", "stt.complete",
+                    "provider", response.sttProvider(),
+                    "turnIndex", turnIndex,
+                    "durationMs", response.sttDurationMs()
+            ));
+            sendEvent(session, Map.of(
+                    "type", "turn.stt.complete",
+                    "sessionId", state.sessionId,
+                    "turnIndex", turnIndex,
+                    "provider", response.sttProvider(),
+                    "durationMs", response.sttDurationMs()
+            ));
             Map<String, Object> assistantTextEvent = new LinkedHashMap<>();
             assistantTextEvent.put("type", "assistant.text");
             assistantTextEvent.put("text", response.assistantText());
@@ -259,8 +297,22 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             providerTrace.put("ttsProvider", response.ttsProvider());
             assistantTextEvent.put("providerTrace", providerTrace);
             sendEvent(session, assistantTextEvent);
+            sendEvent(session, Map.of(
+                    "type", "turn.careai.complete",
+                    "sessionId", state.sessionId,
+                    "turnIndex", turnIndex,
+                    "provider", response.llmProvider(),
+                    "durationMs", response.careAiDurationMs()
+            ));
             if (response.audioBase64() != null && response.audioContentType() != null) {
                 sendAssistantAudioChunks(session, response, turnIndex);
+                sendEvent(session, Map.of(
+                        "type", "turn.tts.complete",
+                        "sessionId", state.sessionId,
+                        "turnIndex", turnIndex,
+                        "provider", response.ttsProvider(),
+                        "durationMs", response.ttsDurationMs()
+                ));
             }
             Map<String, Object> completedEvent = new LinkedHashMap<>();
             completedEvent.put("type", "turn.complete");
@@ -268,7 +320,33 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
             completedEvent.put("turnIndex", turnIndex);
             completedEvent.put("requestId", response.requestId());
             completedEvent.put("state", response.state());
+            Map<String, Object> metrics = new LinkedHashMap<>();
+            metrics.put("uploadDurationMs", uploadDurationMs);
+            metrics.put("uploadToProcessGapMs", uploadToProcessGapMs);
+            metrics.put("sttDurationMs", response.sttDurationMs());
+            metrics.put("careAiDurationMs", response.careAiDurationMs());
+            metrics.put("ttsDurationMs", response.ttsDurationMs());
+            metrics.put("totalDurationMs", response.totalDurationMs());
+            metrics.put("captureBytes", response.captureBytes());
+            metrics.put("sttProvider", response.sttProvider() == null ? "" : response.sttProvider());
+            metrics.put("llmProvider", response.llmProvider() == null ? "" : response.llmProvider());
+            metrics.put("ttsProvider", response.ttsProvider() == null ? "" : response.ttsProvider());
+            metrics.put("ttsFallbackReason", response.ttsFallbackReason() == null ? "" : response.ttsFallbackReason());
+            completedEvent.put("metrics", metrics);
             sendEvent(session, completedEvent);
+            log.info("patient.voice.turn.completed sessionId={} turnIndex={} requestId={} uploadDurationMs={} sttDurationMs={} careAiDurationMs={} ttsDurationMs={} totalDurationMs={} sttProvider={} llmProvider={} ttsProvider={} ttsFallback={}",
+                    state.sessionId,
+                    turnIndex,
+                    response.requestId(),
+                    uploadDurationMs,
+                    response.sttDurationMs(),
+                    response.careAiDurationMs(),
+                    response.ttsDurationMs(),
+                    response.totalDurationMs(),
+                    response.sttProvider(),
+                    response.llmProvider(),
+                    response.ttsProvider(),
+                    response.ttsFallbackReason());
         } catch (Exception ex) {
             sendError(session, ex.getMessage() == null ? "Patient CareAI voice processing failed." : ex.getMessage());
         } finally {
@@ -316,6 +394,9 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         state.base64CharsReceived = 0;
         state.filename = null;
         state.contentType = null;
+        state.firstUploadAt = null;
+        state.lastUploadActivityAt = null;
+        state.turnStartedAt = null;
     }
 
     private void sendError(WebSocketSession session, String message) throws IOException {
@@ -402,7 +483,9 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
                 "type", "assistant.audio.end",
                 "contentType", response.audioContentType(),
                 "turnIndex", turnIndex,
-                "requestId", response.requestId()
+                "requestId", response.requestId(),
+                "totalChunks", totalChunks,
+                "durationMs", response.ttsDurationMs()
         ));
     }
 
@@ -421,6 +504,9 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         private Instant startedAt;
         private Instant lastActivityAt;
         private Instant lastHeartbeatAt;
+        private Instant firstUploadAt;
+        private Instant lastUploadActivityAt;
+        private Instant turnStartedAt;
 
         private SessionState(String sessionId) {
             this.sessionId = sessionId;

@@ -64,14 +64,42 @@ type PatientCareAiVoiceProviderTrace = {
   ttsProvider: string | null;
 };
 
+type PatientCareAiVoiceConfig = {
+  heartbeatIntervalMs: number;
+  speechStartThreshold: number;
+  speechEndThreshold: number;
+  minSpeechMs: number;
+  silenceTimeoutMs: number;
+  maxUtteranceMs: number;
+  autoResumeDelayMs: number;
+};
+
+type PatientCareAiVoiceTurnMetrics = {
+  uploadDurationMs: number;
+  uploadToProcessGapMs: number;
+  sttDurationMs: number;
+  careAiDurationMs: number;
+  ttsDurationMs: number;
+  totalDurationMs: number;
+  captureBytes: number;
+  sttProvider: string;
+  llmProvider: string;
+  ttsProvider: string;
+  ttsFallbackReason: string;
+};
+
 const PATIENT_VOICE_AUDIO_BASE64_CHUNK_SIZE = 24 * 1024;
-const PATIENT_VOICE_HEARTBEAT_INTERVAL_MS = 15000;
-const PATIENT_VOICE_RESUME_DELAY_MS = 500;
-const PATIENT_VOICE_SPEECH_START_THRESHOLD = 0.055;
-const PATIENT_VOICE_SPEECH_END_THRESHOLD = 0.035;
-const PATIENT_VOICE_MIN_SPEECH_MS = 350;
-const PATIENT_VOICE_SILENCE_TIMEOUT_MS = 1000;
-const PATIENT_VOICE_MAX_UTTERANCE_MS = 12000;
+const PATIENT_VOICE_AUDIO_UNLOCK_SRC =
+  "data:audio/wav;base64,UklGRlQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YTAAAAA=";
+const DEFAULT_PATIENT_VOICE_CONFIG: PatientCareAiVoiceConfig = {
+  heartbeatIntervalMs: 15000,
+  speechStartThreshold: 0.03,
+  speechEndThreshold: 0.015,
+  minSpeechMs: 300,
+  silenceTimeoutMs: 1500,
+  maxUtteranceMs: 30000,
+  autoResumeDelayMs: 500,
+};
 
 function selectPatientVoiceMimeType() {
   const candidates = [
@@ -141,6 +169,43 @@ function patientVoiceStatusLabel(status: PatientCareAiVoiceStatus) {
     default:
       return status;
   }
+}
+
+function asNumber(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function parsePatientVoiceConfig(value: unknown): PatientCareAiVoiceConfig {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    heartbeatIntervalMs: asNumber(source.heartbeatIntervalMs, DEFAULT_PATIENT_VOICE_CONFIG.heartbeatIntervalMs),
+    speechStartThreshold: asNumber(source.speechStartThreshold, DEFAULT_PATIENT_VOICE_CONFIG.speechStartThreshold),
+    speechEndThreshold: asNumber(source.speechEndThreshold, DEFAULT_PATIENT_VOICE_CONFIG.speechEndThreshold),
+    minSpeechMs: asNumber(source.minSpeechMs, DEFAULT_PATIENT_VOICE_CONFIG.minSpeechMs),
+    silenceTimeoutMs: asNumber(source.silenceTimeoutMs, DEFAULT_PATIENT_VOICE_CONFIG.silenceTimeoutMs),
+    maxUtteranceMs: asNumber(source.maxUtteranceMs, DEFAULT_PATIENT_VOICE_CONFIG.maxUtteranceMs),
+    autoResumeDelayMs: asNumber(source.autoResumeDelayMs, DEFAULT_PATIENT_VOICE_CONFIG.autoResumeDelayMs),
+  };
+}
+
+function parsePatientVoiceTurnMetrics(value: unknown): PatientCareAiVoiceTurnMetrics | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const source = value as Record<string, unknown>;
+  return {
+    uploadDurationMs: asNumber(source.uploadDurationMs, 0),
+    uploadToProcessGapMs: asNumber(source.uploadToProcessGapMs, 0),
+    sttDurationMs: asNumber(source.sttDurationMs, 0),
+    careAiDurationMs: asNumber(source.careAiDurationMs, 0),
+    ttsDurationMs: asNumber(source.ttsDurationMs, 0),
+    totalDurationMs: asNumber(source.totalDurationMs, 0),
+    captureBytes: asNumber(source.captureBytes, 0),
+    sttProvider: typeof source.sttProvider === "string" ? source.sttProvider : "",
+    llmProvider: typeof source.llmProvider === "string" ? source.llmProvider : "",
+    ttsProvider: typeof source.ttsProvider === "string" ? source.ttsProvider : "",
+    ttsFallbackReason: typeof source.ttsFallbackReason === "string" ? source.ttsFallbackReason : "",
+  };
 }
 
 const patientNavItems = [
@@ -1605,6 +1670,8 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const [voiceReplyReadyToPlay, setVoiceReplyReadyToPlay] = useState(false);
   const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [voiceProviderTrace, setVoiceProviderTrace] = useState<PatientCareAiVoiceProviderTrace | null>(null);
+  const [voiceConfig, setVoiceConfig] = useState<PatientCareAiVoiceConfig>(DEFAULT_PATIENT_VOICE_CONFIG);
+  const [voiceTurnMetrics, setVoiceTurnMetrics] = useState<PatientCareAiVoiceTurnMetrics | null>(null);
   const [voiceEvents, setVoiceEvents] = useState<string[]>([]);
   const [voiceMicLevel, setVoiceMicLevel] = useState(0);
   const [voiceMicPeak, setVoiceMicPeak] = useState(0);
@@ -1623,6 +1690,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const voiceHeartbeatTimerRef = useRef<number | null>(null);
   const voiceResumeTimerRef = useRef<number | null>(null);
   const voiceStatusRef = useRef<PatientCareAiVoiceStatus>("idle");
+  const voiceConfigRef = useRef<PatientCareAiVoiceConfig>(DEFAULT_PATIENT_VOICE_CONFIG);
   const voiceEndedByUserRef = useRef(false);
   const voiceStartMicPendingRef = useRef(false);
   const voiceDiscardRecordingRef = useRef(false);
@@ -1640,6 +1708,14 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const voiceSourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const voiceLevelDataRef = useRef<Uint8Array | null>(null);
   const voiceMonitoringIntervalRef = useRef<number | null>(null);
+  const voiceTurnUploadStartedAtRef = useRef<number | null>(null);
+  const voiceTurnSubmittedAtRef = useRef<number | null>(null);
+  const voicePlaybackStartedAtRef = useRef<number | null>(null);
+  const voiceAutoplayUnlockAttemptedRef = useRef(false);
+  const voiceAssistantAudioPendingRef = useRef(false);
+  const voiceAssistantAudioReadyRef = useRef(false);
+  const voiceAssistantAudioPlayingRef = useRef(false);
+  const voicePendingAutoPlayRef = useRef(false);
 
   function updateVoiceStatus(nextStatus: PatientCareAiVoiceStatus) {
     voiceStatusRef.current = nextStatus;
@@ -1719,9 +1795,10 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       const rms = Math.sqrt(sumSquares / voiceLevelDataRef.current.length);
       setVoiceMicLevel(rms);
       setVoiceMicPeak(peak);
+      const currentVoiceConfig = voiceConfigRef.current;
 
       const now = Date.now();
-      const isSpeechFrame = rms >= PATIENT_VOICE_SPEECH_START_THRESHOLD;
+      const isSpeechFrame = rms >= currentVoiceConfig.speechStartThreshold;
       if (isSpeechFrame) {
         if (!voiceSpeechFrameActiveRef.current && voiceSpeechDetectedRef.current) {
           appendVoiceEvent("VAD_SPEECH_RESUMED");
@@ -1755,9 +1832,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         const speechDuration = now - voiceSpeechStartedAtRef.current;
         const silenceDuration = now - voiceLastSpeechAtRef.current;
         if (
-          rms <= PATIENT_VOICE_SPEECH_END_THRESHOLD
-          && speechDuration >= PATIENT_VOICE_MIN_SPEECH_MS
-          && silenceDuration >= PATIENT_VOICE_SILENCE_TIMEOUT_MS
+          rms <= currentVoiceConfig.speechEndThreshold
+          && speechDuration >= currentVoiceConfig.minSpeechMs
+          && silenceDuration >= currentVoiceConfig.silenceTimeoutMs
           && !voiceAutoStopTriggeredRef.current
         ) {
           voiceAutoStopTriggeredRef.current = true;
@@ -1769,7 +1846,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
 
       if (
         voiceSessionStartedAtRef.current
-        && now - voiceSessionStartedAtRef.current >= PATIENT_VOICE_MAX_UTTERANCE_MS
+        && now - voiceSessionStartedAtRef.current >= currentVoiceConfig.maxUtteranceMs
         && !voiceAutoStopTriggeredRef.current
       ) {
         voiceAutoStopTriggeredRef.current = true;
@@ -1779,7 +1856,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     }, 100);
   }
 
-  function scheduleVoiceListeningResume(reason: string, delayMs = PATIENT_VOICE_RESUME_DELAY_MS) {
+  function scheduleVoiceListeningResume(reason: string, delayMs = voiceConfigRef.current.autoResumeDelayMs) {
     clearVoiceResumeTimer();
     if (
       !voiceAutoResumeRef.current
@@ -1824,6 +1901,12 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     voiceExpectedAudioChunksRef.current = 0;
   }
 
+  function clearAssistantAudioFlags() {
+    voiceAssistantAudioPendingRef.current = false;
+    voiceAssistantAudioReadyRef.current = false;
+    voiceAssistantAudioPlayingRef.current = false;
+  }
+
   function cleanupVoiceSessionResources() {
     clearVoiceHeartbeat();
     clearVoiceResumeTimer();
@@ -1835,8 +1918,13 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     voiceSpeechStartedAtRef.current = null;
     voiceLastSpeechAtRef.current = null;
     voiceSessionStartedAtRef.current = null;
+    voiceTurnUploadStartedAtRef.current = null;
+    voiceTurnSubmittedAtRef.current = null;
+    voicePlaybackStartedAtRef.current = null;
+    voicePendingAutoPlayRef.current = false;
     stopVoiceStream();
     resetPendingVoiceAudio();
+    clearAssistantAudioFlags();
     voiceChunksRef.current = [];
   }
 
@@ -1881,6 +1969,8 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setVoiceReplyReadyToPlay(false);
     setVoiceSessionId(null);
     setVoiceProviderTrace(null);
+    setVoiceConfig(DEFAULT_PATIENT_VOICE_CONFIG);
+    setVoiceTurnMetrics(null);
     setVoiceEvents([]);
     setVoiceMicLevel(0);
     setVoiceMicPeak(0);
@@ -1895,6 +1985,11 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     voiceEndedByUserRef.current = false;
     voiceAutoResumeRef.current = false;
     voiceLastTranscriptOrResponseAtRef.current = null;
+    voiceTurnUploadStartedAtRef.current = null;
+    voiceTurnSubmittedAtRef.current = null;
+    voicePlaybackStartedAtRef.current = null;
+    voiceAutoplayUnlockAttemptedRef.current = false;
+    clearAssistantAudioFlags();
     closeVoiceSocket();
   }, [portalSession?.patientSessionToken]);
 
@@ -1907,10 +2002,64 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   }, [voiceStatus]);
 
   useEffect(() => {
+    voiceConfigRef.current = voiceConfig;
+  }, [voiceConfig]);
+
+  useEffect(() => {
     if (voiceAudioElementRef.current) {
       voiceAudioElementRef.current.muted = voiceMuted;
     }
   }, [voiceMuted, voiceAudioUrl]);
+
+  useEffect(() => {
+    if (!voiceAudioUrl || !voicePendingAutoPlayRef.current) {
+      return;
+    }
+    voicePendingAutoPlayRef.current = false;
+    void handleVoiceReplyPlayback(voiceAudioUrl, true);
+  }, [voiceAudioUrl]);
+
+  function replaceVoiceAudioUrl(nextUrl: string | null) {
+    setVoiceAudioUrl((current) => {
+      if (current && current !== nextUrl) {
+        URL.revokeObjectURL(current);
+      }
+      return nextUrl;
+    });
+  }
+
+  async function unlockVoicePlaybackElement() {
+    const audioElement = voiceAudioElementRef.current;
+    if (!audioElement || voiceAutoplayUnlockAttemptedRef.current) {
+      return;
+    }
+    voiceAutoplayUnlockAttemptedRef.current = true;
+    const previousMuted = audioElement.muted;
+    const previousSrc = audioElement.src;
+    try {
+      audioElement.muted = true;
+      audioElement.src = PATIENT_VOICE_AUDIO_UNLOCK_SRC;
+      audioElement.load();
+      await audioElement.play();
+      audioElement.pause();
+      audioElement.currentTime = 0;
+      appendVoiceEvent("AUDIO_UNLOCK_READY");
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "unknown";
+      appendVoiceEvent(`AUDIO_UNLOCK_FAILED ${reason}`);
+    } finally {
+      audioElement.pause();
+      audioElement.currentTime = 0;
+      audioElement.src = previousSrc;
+      if (previousSrc) {
+        audioElement.load();
+      } else {
+        audioElement.removeAttribute("src");
+        audioElement.load();
+      }
+      audioElement.muted = previousMuted || voiceMuted;
+    }
+  }
 
   useEffect(() => {
     if (voiceStatus === "idle" || voiceStatus === "ended" || voiceStatus === "error") {
@@ -1937,7 +2086,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         return;
       }
       socket.send(JSON.stringify({ type: "heartbeat" }));
-    }, PATIENT_VOICE_HEARTBEAT_INTERVAL_MS);
+    }, voiceConfigRef.current.heartbeatIntervalMs);
   }
 
   function appendVoicePatientMessage(text: string) {
@@ -1962,21 +2111,46 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     ]);
   }
 
-  async function handleVoiceReplyPlayback() {
-    if (!voiceAudioElementRef.current || !voiceAudioUrl) {
+  async function handleVoiceReplyPlayback(nextAudioUrl?: string, autoTriggered = false) {
+    const audioUrl = nextAudioUrl || voiceAudioUrl;
+    if (!voiceAudioElementRef.current || !audioUrl) {
       return;
     }
     try {
+      appendVoiceEvent(`AUDIO_PLAY_ATTEMPT ${autoTriggered ? "auto" : "manual"}`);
+      if (voiceStatusRef.current === "listening" || voiceStatusRef.current === "speech_detected") {
+        stopVoiceStream();
+      }
+      if (voiceAudioElementRef.current.src !== audioUrl) {
+        voiceAudioElementRef.current.src = audioUrl;
+      }
+      voiceAudioElementRef.current.load();
+      voiceAudioElementRef.current.currentTime = 0;
       updateVoiceStatus("playing_response");
       setVoiceReplyReadyToPlay(false);
       setVoiceError(null);
       setVoiceInfo("Playing CareAI response…");
       await voiceAudioElementRef.current.play();
-      appendVoiceEvent("ASSISTANT_AUDIO_PLAYING");
-    } catch {
+      voiceAssistantAudioPendingRef.current = false;
+      voiceAssistantAudioReadyRef.current = false;
+      voiceAssistantAudioPlayingRef.current = true;
+      voicePlaybackStartedAtRef.current = performance.now();
+      const playbackStartLatencyMs = voiceTurnSubmittedAtRef.current == null
+        ? 0
+        : Math.round(voicePlaybackStartedAtRef.current - voiceTurnSubmittedAtRef.current);
+      appendVoiceEvent(`AUDIO_PLAY_SUCCESS ${autoTriggered ? "auto" : "manual"}`);
+      appendVoiceEvent(`ASSISTANT_AUDIO_PLAYING ${playbackStartLatencyMs}ms`);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Autoplay blocked";
+      voiceAssistantAudioPendingRef.current = false;
+      voiceAssistantAudioReadyRef.current = true;
+      voiceAssistantAudioPlayingRef.current = false;
+      voicePendingAutoPlayRef.current = false;
       updateVoiceStatus("session_started");
       setVoiceReplyReadyToPlay(true);
       setVoiceInfo("CareAI reply is ready. Tap play to hear it.");
+      appendVoiceEvent(`AUDIO_PLAY_FAILED ${reason}`);
+      appendVoiceEvent(`ASSISTANT_AUDIO_PLAY_BLOCKED ${reason}`);
     }
   }
 
@@ -2005,6 +2179,10 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     }
     if (type === "session.started") {
       setVoiceSessionId(String(payload.sessionId || ""));
+      const nextVoiceConfig = parsePatientVoiceConfig(payload.voiceConfig);
+      voiceConfigRef.current = nextVoiceConfig;
+      setVoiceConfig(nextVoiceConfig);
+      startVoiceHeartbeat(socket);
       updateVoiceStatus("session_started");
       setVoiceInfo("Listening… speak now.");
       appendVoiceEvent("SESSION_STARTED");
@@ -2029,6 +2207,12 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       appendVoiceEvent(`AUDIO_CHUNK_RECEIVED ${sequence}/${totalChunks || "?"}`);
       return;
     }
+    if (type === "turn.audio.received") {
+      const sequence = Number(payload.sequence || 0);
+      const totalChunks = Number(payload.totalChunks || 0);
+      appendVoiceEvent(`TURN_AUDIO_RECEIVED ${sequence}/${totalChunks || "?"}`);
+      return;
+    }
     if (type === "transcript.final") {
       const transcript = String(payload.text || "").trim();
       voiceLastTranscriptOrResponseAtRef.current = Date.now();
@@ -2039,6 +2223,12 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       }
       setVoiceInfo("Transcript captured.");
       appendVoiceEvent("TRANSCRIPT_FINAL");
+      return;
+    }
+    if (type === "stt.complete" || type === "turn.stt.complete") {
+      const durationMs = Number(payload.durationMs || 0);
+      const provider = String(payload.provider || "");
+      appendVoiceEvent(`STT_COMPLETE ${durationMs}ms${provider ? ` ${provider}` : ""}`);
       return;
     }
     if (type === "assistant.text") {
@@ -2057,6 +2247,12 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       setVoiceProviderTrace(trace);
       setVoiceInfo("CareAI responded.");
       appendVoiceEvent("ASSISTANT_TEXT");
+      return;
+    }
+    if (type === "turn.careai.complete") {
+      const durationMs = Number(payload.durationMs || 0);
+      const provider = String(payload.provider || "");
+      appendVoiceEvent(`CAREAI_COMPLETE ${durationMs}ms${provider ? ` ${provider}` : ""}`);
       return;
     }
     if (type === "assistant.audio.chunk") {
@@ -2088,29 +2284,46 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       const binary = atob(chunks.join(""));
       const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
+      voiceAssistantAudioPendingRef.current = true;
+      voiceAssistantAudioReadyRef.current = false;
+      voiceAssistantAudioPlayingRef.current = false;
+      voicePendingAutoPlayRef.current = true;
       updateVoiceStatus("playing_response");
       setVoiceReplyReadyToPlay(false);
-      setVoiceAudioUrl((current) => {
-        if (current) {
-          URL.revokeObjectURL(current);
-        }
-        return url;
-      });
+      replaceVoiceAudioUrl(url);
       setVoiceInfo("Playing CareAI response…");
-      window.setTimeout(() => {
-        void handleVoiceReplyPlayback();
-      }, 0);
+      appendVoiceEvent(`ASSISTANT_AUDIO_READY ${Number(payload.durationMs || 0)}ms`);
+      return;
+    }
+    if (type === "turn.tts.complete") {
+      const durationMs = Number(payload.durationMs || 0);
+      const provider = String(payload.provider || "");
+      appendVoiceEvent(`TTS_COMPLETE ${durationMs}ms${provider ? ` ${provider}` : ""}`);
       return;
     }
     if (type === "turn.complete") {
-      if (!voiceExpectedAudioChunksRef.current) {
+      const metrics = parsePatientVoiceTurnMetrics(payload.metrics);
+      setVoiceTurnMetrics(metrics);
+      if (metrics) {
+        appendVoiceEvent(
+          `TURN_COMPLETE total=${metrics.totalDurationMs}ms stt=${metrics.sttDurationMs}ms careai=${metrics.careAiDurationMs}ms tts=${metrics.ttsDurationMs}ms`,
+        );
+      } else {
+        appendVoiceEvent("TURN_COMPLETE");
+      }
+      if (
+        voiceAssistantAudioPendingRef.current
+        || voiceAssistantAudioReadyRef.current
+        || voiceAssistantAudioPlayingRef.current
+      ) {
+        appendVoiceEvent("AUTO_RESUME_SKIPPED assistant_audio_pending");
+      } else if (!voiceExpectedAudioChunksRef.current) {
         updateVoiceStatus("session_started");
         if (voiceAutoResumeRef.current) {
           scheduleVoiceListeningResume("turn_complete_no_audio");
         }
       }
       setVoiceInfo("Turn completed.");
-      appendVoiceEvent("TURN_COMPLETE");
       return;
     }
     if (type === "session.closed") {
@@ -2222,7 +2435,10 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       voiceStatusRef.current === "processing" ||
       voiceStatusRef.current === "finalizing_audio" ||
       voiceStatusRef.current === "playing_response" ||
-      voiceStatusRef.current === "ending"
+      voiceStatusRef.current === "ending" ||
+      voiceAssistantAudioPendingRef.current ||
+      voiceAssistantAudioReadyRef.current ||
+      voiceAssistantAudioPlayingRef.current
     ) {
       return;
     }
@@ -2234,6 +2450,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setVoiceError(null);
     setVoiceTranscript("");
     setVoiceAssistant("");
+    setVoiceTurnMetrics(null);
     voiceDiscardRecordingRef.current = false;
     try {
       voiceStartingMicRef.current = true;
@@ -2285,6 +2502,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         }
         updateVoiceStatus("finalizing_audio");
         setVoiceInfo("Finalizing microphone audio…");
+        voiceTurnUploadStartedAtRef.current = performance.now();
         const audioBase64 = await blobToBase64(blob);
         const chunks = splitVoiceBase64Chunks(audioBase64);
         updateVoiceStatus("processing");
@@ -2305,6 +2523,11 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
           contentType,
           filename,
         }));
+        voiceTurnSubmittedAtRef.current = performance.now();
+        const uploadPrepMs = voiceTurnUploadStartedAtRef.current == null
+          ? 0
+          : Math.round(voiceTurnSubmittedAtRef.current - voiceTurnUploadStartedAtRef.current);
+        appendVoiceEvent(`TURN_UPLOAD_SENT ${chunks.length} chunks ${uploadPrepMs}ms`);
         appendVoiceEvent(`TURN_SENT ${chunks.length} chunks`);
       };
       voiceStreamRef.current = stream;
@@ -2327,17 +2550,15 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     if (!portalSession) {
       return;
     }
+    await unlockVoicePlaybackElement();
     voiceEndedByUserRef.current = false;
     voiceAutoResumeRef.current = true;
     voiceLastTranscriptOrResponseAtRef.current = Date.now();
     setVoiceInactivityWarning(null);
     setVoiceReplyReadyToPlay(false);
-    setVoiceAudioUrl((current) => {
-      if (current) {
-        URL.revokeObjectURL(current);
-      }
-      return null;
-    });
+    replaceVoiceAudioUrl(null);
+    voicePendingAutoPlayRef.current = false;
+    clearAssistantAudioFlags();
     setVoiceProviderTrace(null);
     setVoiceEvents([]);
     setVoiceError(null);
@@ -2396,6 +2617,8 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       voiceAudioElementRef.current.pause();
       voiceAudioElementRef.current.currentTime = 0;
     }
+    voicePendingAutoPlayRef.current = false;
+    clearAssistantAudioFlags();
     closeVoiceSocket();
     updateVoiceStatus("idle");
     setVoiceError(null);
@@ -2550,28 +2773,28 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
               </button>
             </div>
             {voiceInactivityWarning ? <div className="patient-inline-empty patient-careai-voice-warning">{voiceInactivityWarning}</div> : null}
-            {voiceAudioUrl ? (
-              <>
-                <audio
-                  ref={voiceAudioElementRef}
-                  className="patient-careai-audio"
-                  src={voiceAudioUrl}
-                  muted={voiceMuted}
-                  onEnded={() => {
-                    updateVoiceStatus("session_started");
-                    setVoiceInfo("Listening again…");
-                    setVoiceReplyReadyToPlay(false);
-                    if (voiceAutoResumeRef.current) {
-                      scheduleVoiceListeningResume("playback_ended");
-                    }
-                  }}
-                />
-                {voiceReplyReadyToPlay ? (
-                  <button className="ghost-button patient-careai-reply-play" type="button" onClick={() => void handleVoiceReplyPlayback()}>
-                    Play CareAI reply
-                  </button>
-                ) : null}
-              </>
+            <audio
+              ref={voiceAudioElementRef}
+              className="patient-careai-audio"
+              muted={voiceMuted}
+              onEnded={() => {
+                clearAssistantAudioFlags();
+                voicePendingAutoPlayRef.current = false;
+                const playbackDurationMs = voicePlaybackStartedAtRef.current == null ? 0 : Math.round(performance.now() - voicePlaybackStartedAtRef.current);
+                appendVoiceEvent(`ASSISTANT_AUDIO_ENDED ${playbackDurationMs}ms`);
+                voicePlaybackStartedAtRef.current = null;
+                updateVoiceStatus("session_started");
+                setVoiceInfo("Listening again…");
+                setVoiceReplyReadyToPlay(false);
+                if (voiceAutoResumeRef.current) {
+                  scheduleVoiceListeningResume("playback_ended");
+                }
+              }}
+            />
+            {voiceReplyReadyToPlay ? (
+              <button className="ghost-button patient-careai-reply-play" type="button" onClick={() => void handleVoiceReplyPlayback()}>
+                Play CareAI reply
+              </button>
             ) : null}
             {voiceError ? <div className="patient-inline-empty patient-inline-error">{voiceError}</div> : null}
             {showVoiceTechnicalDetails ? (
@@ -2619,9 +2842,17 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                       RMS {voiceMicLevel.toFixed(3)} · Peak {voiceMicPeak.toFixed(3)} · {voiceSpeechDetected ? "Speech detected" : voiceSilenceDetected ? "Silence detected" : "Waiting"}
                     </span>
                   </div>
+                  <div className="patient-subcard">
+                    <strong>Turn timings</strong>
+                    <span>
+                      {voiceTurnMetrics
+                        ? `STT ${voiceTurnMetrics.sttDurationMs}ms · CareAI ${voiceTurnMetrics.careAiDurationMs}ms · TTS ${voiceTurnMetrics.ttsDurationMs}ms · Total ${voiceTurnMetrics.totalDurationMs}ms`
+                        : `VAD start ${voiceConfig.speechStartThreshold.toFixed(3)} · silence ${voiceConfig.silenceTimeoutMs}ms · auto resume ${voiceConfig.autoResumeDelayMs}ms`}
+                    </span>
+                  </div>
                 </div>
                 {voiceAudioUrl ? (
-                  <audio className="patient-careai-audio patient-careai-audio-technical" controls src={voiceAudioUrl} muted={voiceMuted} />
+                  <audio className="patient-careai-audio-technical" controls src={voiceAudioUrl} muted={voiceMuted} />
                 ) : null}
                 {voiceEvents.length > 0 ? (
                   <div className="patient-careai-voice-events">
