@@ -283,6 +283,15 @@ export function patientPortalHomePath(session: PatientPortalSession | null | und
   return "/patient/login";
 }
 
+export function buildPatientPortalVoiceWebSocketUrl(session: PatientPortalPatientSession) {
+  const url = new URL(window.location.origin);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = "/ws/patient-portal/careai";
+  url.hash = "";
+  url.searchParams.set("sessionToken", session.patientSessionToken);
+  return url.toString();
+}
+
 async function parseError(response: Response) {
   const fallback = `Request failed with status ${response.status}`;
   try {

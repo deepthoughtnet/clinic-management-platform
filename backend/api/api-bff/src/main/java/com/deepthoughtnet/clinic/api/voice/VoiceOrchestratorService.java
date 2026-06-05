@@ -343,6 +343,40 @@ public class VoiceOrchestratorService {
         }
     }
 
+    public VoiceTranscriptionResult transcribeBufferedAudio(byte[] audioBytes,
+                                                            String contentType,
+                                                            String originalFilename,
+                                                            String language) {
+        if (!properties.isEnabled()) {
+            throw new IllegalArgumentException("Voice test is disabled.");
+        }
+        if (audioBytes == null || audioBytes.length == 0) {
+            throw new IllegalArgumentException("Audio file is required.");
+        }
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        String normalizedLanguage = normalizeLanguageHint(language);
+        validateAudio(originalFilename, contentType);
+        return transcribe(
+                new VoiceTranscriptionRequest(
+                        tenantId,
+                        audioBytes,
+                        contentType,
+                        originalFilename,
+                        normalizedLanguage
+                ),
+                null
+        );
+    }
+
+    public VoiceSynthesisResult synthesizeAssistantText(String assistantText, String language) {
+        if (!properties.isEnabled()) {
+            throw new IllegalArgumentException("Voice test is disabled.");
+        }
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        String normalizedLanguage = normalizeLanguageHint(language);
+        return synthesize(new VoiceSynthesisRequest(tenantId, sanitizeVoiceAssistantText(assistantText), normalizedLanguage));
+    }
+
     public VoiceStatusResponse status(boolean warmup) {
         VoiceServiceStatus sttStatus = fasterWhisperSpeechToTextProvider.status(warmup);
         VoiceServiceStatus ttsStatus = piperTextToSpeechProvider.status(warmup);

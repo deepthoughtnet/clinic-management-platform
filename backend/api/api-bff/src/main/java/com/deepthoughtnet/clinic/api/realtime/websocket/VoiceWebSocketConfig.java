@@ -3,6 +3,9 @@ package com.deepthoughtnet.clinic.api.realtime.websocket;
 import com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestWebSocketHandler;
+import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService;
+import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceWebSocketAuthInterceptor;
+import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceWebSocketHandler;
 import com.deepthoughtnet.clinic.realtime.voice.events.VoiceSessionEventBus;
 import com.deepthoughtnet.clinic.realtime.voice.metrics.RealtimeVoiceGatewayMetrics;
 import com.deepthoughtnet.clinic.realtime.voice.session.RealtimeVoiceSessionService;
@@ -25,12 +28,16 @@ public class VoiceWebSocketConfig implements WebSocketConfigurer {
     private final RealtimeVoiceSessionService sessionService;
     private final VoiceOrchestratorService voiceOrchestratorService;
     private final VoiceTestProperties voiceTestProperties;
+    private final PatientPortalVoiceWebSocketAuthInterceptor patientPortalVoiceAuthInterceptor;
+    private final PatientPortalVoiceAssistantService patientPortalVoiceAssistantService;
 
     public VoiceWebSocketConfig(VoiceSessionEventBus eventBus, RealtimeVoiceGatewayMetrics metrics,
                                 ObjectMapper objectMapper, VoiceWebSocketAuthInterceptor authInterceptor,
                                 RealtimeVoiceSessionService sessionService,
                                 VoiceOrchestratorService voiceOrchestratorService,
-                                VoiceTestProperties voiceTestProperties) {
+                                VoiceTestProperties voiceTestProperties,
+                                PatientPortalVoiceWebSocketAuthInterceptor patientPortalVoiceAuthInterceptor,
+                                PatientPortalVoiceAssistantService patientPortalVoiceAssistantService) {
         this.eventBus = eventBus;
         this.metrics = metrics;
         this.objectMapper = objectMapper;
@@ -38,6 +45,8 @@ public class VoiceWebSocketConfig implements WebSocketConfigurer {
         this.sessionService = sessionService;
         this.voiceOrchestratorService = voiceOrchestratorService;
         this.voiceTestProperties = voiceTestProperties;
+        this.patientPortalVoiceAuthInterceptor = patientPortalVoiceAuthInterceptor;
+        this.patientPortalVoiceAssistantService = patientPortalVoiceAssistantService;
     }
 
     @Override
@@ -47,6 +56,9 @@ public class VoiceWebSocketConfig implements WebSocketConfigurer {
                 .setAllowedOrigins("*");
         registry.addHandler(new VoiceTestWebSocketHandler(objectMapper, voiceOrchestratorService, voiceTestProperties), "/ws/voice/test")
                 .addInterceptors(authInterceptor)
+                .setAllowedOrigins("*");
+        registry.addHandler(new PatientPortalVoiceWebSocketHandler(objectMapper, patientPortalVoiceAssistantService, voiceTestProperties), "/ws/patient-portal/careai")
+                .addInterceptors(patientPortalVoiceAuthInterceptor)
                 .setAllowedOrigins("*");
     }
 

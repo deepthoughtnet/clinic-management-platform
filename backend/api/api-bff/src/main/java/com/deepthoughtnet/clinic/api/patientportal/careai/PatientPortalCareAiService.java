@@ -5,15 +5,26 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentC
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
+import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
+import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationResponse;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiProductCode;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.Month;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -22,16 +33,25 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 public class PatientPortalCareAiService {
+    private static final Logger log = LoggerFactory.getLogger(PatientPortalCareAiService.class);
     private static final Pattern ENGLISH_DOCTOR_PATTERN = Pattern.compile("(?i)\\b(?:dr\\.?|doctor)\\s+([A-Za-z][A-Za-z .'-]{1,60})");
     private static final Pattern HINDI_DOCTOR_PATTERN = Pattern.compile("(?:डॉक्टर|डॉ\\.?)([^,.!?]+)");
     private static final Pattern ISO_DATE_PATTERN = Pattern.compile("\\b(\\d{4}-\\d{2}-\\d{2})\\b");
+    private static final Pattern DMY_DATE_PATTERN = Pattern.compile("\\b(\\d{1,2})\\s+([A-Za-z]{3,9})\\s+(\\d{4})\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MDY_DATE_PATTERN = Pattern.compile("\\b([A-Za-z]{3,9})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,)?\\s+(\\d{4})\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SLASH_DATE_PATTERN = Pattern.compile("\\b(\\d{1,2})/(\\d{1,2})/(\\d{4})\\b");
     private static final Pattern EXPLICIT_TIME_PATTERN = Pattern.compile("\\b(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern DIGIT_PATTERN = Pattern.compile("\\b(\\d{1,2})\\b");
+    private static final DateTimeFormatter STRICT_ISO_DATE = DateTimeFormatter.ISO_LOCAL_DATE.withResolverStyle(ResolverStyle.STRICT);
 
     private static final List<String> POSITIVE_CONFIRMATIONS = List.of("yes", "confirm", "book it", "go ahead", "that's fine", "okay", "ok", "yes please");
     private static final List<String> POSITIVE_CONFIRMATIONS_HI = List.of("हाँ", "हां", "ठीक है", "बुक कर दीजिए", "कन्फर्म", "सही है");
@@ -48,12 +68,32 @@ public class PatientPortalCareAiService {
     private static final List<String> EMERGENCY_KEYWORDS_HI = List.of("सीने में दर्द", "सांस लेने में दिक्कत", "ज़्यादा खून", "बेहोश", "स्ट्रोक", "आत्महत्या");
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd MMM uuuu", Locale.ENGLISH);
+    private static final Map<String, Month> MONTH_NAME_MAP = monthNameMap();
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+    private static final String AI_EXTRACTION_TEMPLATE_CODE = "generic.extraction.v1";
+    private static final String AI_EXTRACTION_USE_CASE = "patient-portal-careai-extraction";
+    private static final double AI_EXTRACTION_TEMPERATURE = 0.2d;
 
     private final PatientPortalService patientPortalService;
+    private final AiOrchestrationService aiOrchestrationService;
+    private final ObjectMapper objectMapper;
+    private final VoiceTestProperties voiceTestProperties;
+    private final boolean aiExtractionEnabled;
     private final Map<SessionKey, CareAiState> sessions = new ConcurrentHashMap<>();
 
-    public PatientPortalCareAiService(PatientPortalService patientPortalService) {
+    @Autowired
+    public PatientPortalCareAiService(
+            PatientPortalService patientPortalService,
+            AiOrchestrationService aiOrchestrationService,
+            ObjectMapper objectMapper,
+            VoiceTestProperties voiceTestProperties,
+            @Value("${clinic.ai.enabled:false}") boolean aiExtractionEnabled
+    ) {
         this.patientPortalService = patientPortalService;
+        this.aiOrchestrationService = aiOrchestrationService;
+        this.objectMapper = objectMapper;
+        this.voiceTestProperties = voiceTestProperties;
+        this.aiExtractionEnabled = aiExtractionEnabled;
     }
 
     public PatientPortalCareAiMessageResponse message(PatientPortalCareAiMessageRequest request) {
@@ -85,6 +125,15 @@ public class PatientPortalCareAiService {
         }
         if (state.confirmationPending && isNegativeConfirmation(message)) {
             progressed = clearPendingAction(state, true);
+        }
+        if (state.confirmationPending && !isSelectionOnlyMessage(message)) {
+            AiInterpretation interpretation = interpretWithAi(state, message);
+            if (interpretation != null && interpretation.confirmationDecision() == ConfirmationDecision.CONFIRM) {
+                return executeConfirmedAction(state);
+            }
+            if (interpretation != null && interpretation.confirmationDecision() == ConfirmationDecision.REJECT) {
+                progressed = clearPendingAction(state, true);
+            }
         }
 
         String reply = routeConversation(state, message);
@@ -122,6 +171,12 @@ public class PatientPortalCareAiService {
 
     private boolean applyIntent(CareAiState state, String message) {
         PatientPortalCareAiIntent detectedIntent = detectIntent(message);
+        AiInterpretation interpretation = shouldUseAiInterpretation(state, message)
+                ? interpretWithAi(state, message)
+                : null;
+        if (detectedIntent == null && interpretation != null) {
+            detectedIntent = interpretation.intent();
+        }
         boolean changed = false;
         if (detectedIntent != null && detectedIntent != state.currentIntent) {
             resetWorkflowState(state, detectedIntent);
@@ -129,8 +184,10 @@ public class PatientPortalCareAiService {
         }
         if (state.currentIntent == PatientPortalCareAiIntent.BOOK_APPOINTMENT) {
             changed = applyBookingFacts(state, message) || changed;
+            changed = applyAiBookingFacts(state, interpretation) || changed;
         } else if (state.currentIntent == PatientPortalCareAiIntent.RESCHEDULE_APPOINTMENT) {
             changed = applyRescheduleFacts(state, message) || changed;
+            changed = applyAiRescheduleFacts(state, interpretation) || changed;
         } else if (state.currentIntent == PatientPortalCareAiIntent.CANCEL_APPOINTMENT) {
             changed = applyAppointmentSelectionFacts(state, message) || changed;
         }
@@ -161,9 +218,15 @@ public class PatientPortalCareAiService {
         }
 
         if (!selectionOnlyMessage) {
-            String preferredDate = findPreferredDate(message, state.language);
-            if (StringUtils.hasText(preferredDate) && !preferredDate.equals(state.preferredDate)) {
-                state.preferredDate = preferredDate;
+            DateResolution preferredDate = findPreferredDate(message, state.language);
+            if (preferredDate.issue() != null) {
+                state.dateResolutionIssue = preferredDate.issue();
+                state.preferredDate = null;
+                clearSlotSelection(state);
+                changed = true;
+            } else if (StringUtils.hasText(preferredDate.date()) && !preferredDate.date().equals(state.preferredDate)) {
+                state.dateResolutionIssue = null;
+                state.preferredDate = preferredDate.date();
                 clearSlotSelection(state);
                 changed = true;
             }
@@ -189,9 +252,15 @@ public class PatientPortalCareAiService {
         boolean selectionOnlyMessage = isSelectionOnlyMessage(message);
 
         if (!selectionOnlyMessage) {
-            String preferredDate = findPreferredDate(message, state.language);
-            if (StringUtils.hasText(preferredDate) && !preferredDate.equals(state.preferredDate)) {
-                state.preferredDate = preferredDate;
+            DateResolution preferredDate = findPreferredDate(message, state.language);
+            if (preferredDate.issue() != null) {
+                state.dateResolutionIssue = preferredDate.issue();
+                state.preferredDate = null;
+                clearSlotSelection(state);
+                changed = true;
+            } else if (StringUtils.hasText(preferredDate.date()) && !preferredDate.date().equals(state.preferredDate)) {
+                state.dateResolutionIssue = null;
+                state.preferredDate = preferredDate.date();
                 clearSlotSelection(state);
                 changed = true;
             }
@@ -217,14 +286,90 @@ public class PatientPortalCareAiService {
         return false;
     }
 
+    private boolean applyAiBookingFacts(CareAiState state, AiInterpretation interpretation) {
+        if (interpretation == null) {
+            return false;
+        }
+        boolean changed = false;
+        if (!StringUtils.hasText(state.requestedDoctorName) && StringUtils.hasText(interpretation.doctorName())) {
+            state.requestedDoctorName = interpretation.doctorName();
+            clearDoctorSelection(state);
+            changed = true;
+        }
+        if (!StringUtils.hasText(state.requestedSpeciality) && StringUtils.hasText(interpretation.speciality())) {
+            state.requestedSpeciality = interpretation.speciality();
+            if (!StringUtils.hasText(state.requestedDoctorName)) {
+                clearDoctorSelection(state);
+            }
+            changed = true;
+        }
+        if (!StringUtils.hasText(state.preferredDate) && !StringUtils.hasText(state.dateResolutionIssue)) {
+            DateResolution resolution = resolveAiPreferredDate(interpretation.preferredDate());
+            if (resolution.issue() != null) {
+                state.dateResolutionIssue = resolution.issue();
+                state.preferredDate = null;
+                clearSlotSelection(state);
+                changed = true;
+            } else if (StringUtils.hasText(resolution.date()) && !resolution.date().equals(state.preferredDate)) {
+                state.dateResolutionIssue = null;
+                state.preferredDate = resolution.date();
+                clearSlotSelection(state);
+                changed = true;
+            }
+        }
+        if (!StringUtils.hasText(state.preferredTimeWindow) && StringUtils.hasText(interpretation.preferredTimeWindow())) {
+            state.preferredTimeWindow = interpretation.preferredTimeWindow();
+            clearSlotSelection(state);
+            changed = true;
+        }
+        if (!StringUtils.hasText(state.reason) && StringUtils.hasText(interpretation.reason())) {
+            state.reason = interpretation.reason();
+            changed = true;
+        }
+        return changed;
+    }
+
+    private boolean applyAiRescheduleFacts(CareAiState state, AiInterpretation interpretation) {
+        if (interpretation == null) {
+            return false;
+        }
+        boolean changed = false;
+        if (!StringUtils.hasText(state.preferredDate) && !StringUtils.hasText(state.dateResolutionIssue)) {
+            DateResolution resolution = resolveAiPreferredDate(interpretation.preferredDate());
+            if (resolution.issue() != null) {
+                state.dateResolutionIssue = resolution.issue();
+                state.preferredDate = null;
+                clearSlotSelection(state);
+                changed = true;
+            } else if (StringUtils.hasText(resolution.date()) && !resolution.date().equals(state.preferredDate)) {
+                state.dateResolutionIssue = null;
+                state.preferredDate = resolution.date();
+                clearSlotSelection(state);
+                changed = true;
+            }
+        }
+        if (!StringUtils.hasText(state.preferredTimeWindow) && StringUtils.hasText(interpretation.preferredTimeWindow())) {
+            state.preferredTimeWindow = interpretation.preferredTimeWindow();
+            clearSlotSelection(state);
+            changed = true;
+        }
+        return changed;
+    }
+
     private String handleBooking(CareAiState state, String message) {
         if (tryResolveDoctorSelection(state, message)) {
+            if (StringUtils.hasText(state.dateResolutionIssue)) {
+                return invalidDatePrompt(state.language, state.dateResolutionIssue);
+            }
             if (!StringUtils.hasText(state.preferredDate)) {
                 return askDatePrompt(state.language);
             }
         }
         if (!StringUtils.hasText(state.selectedDoctorId)) {
             return promptForDoctorSelection(state, message);
+        }
+        if (StringUtils.hasText(state.dateResolutionIssue)) {
+            return invalidDatePrompt(state.language, state.dateResolutionIssue);
         }
         if (!StringUtils.hasText(state.preferredDate)) {
             return askDatePrompt(state.language);
@@ -252,6 +397,9 @@ public class PatientPortalCareAiService {
             } else {
                 return appointmentChoicePrompt(state, "reschedule");
             }
+        }
+        if (StringUtils.hasText(state.dateResolutionIssue)) {
+            return invalidDatePrompt(state.language, state.dateResolutionIssue);
         }
         if (!StringUtils.hasText(state.preferredDate)) {
             return askRescheduleDatePrompt(state);
@@ -509,6 +657,7 @@ public class PatientPortalCareAiService {
         state.selectedDoctorName = null;
         state.selectedSpeciality = null;
         state.preferredDate = null;
+        state.dateResolutionIssue = null;
         state.preferredTimeWindow = null;
         state.reason = null;
         state.doctorChoices = List.of();
@@ -648,6 +797,7 @@ public class PatientPortalCareAiService {
         state.selectedDoctorId = selected.doctorUserId() == null ? null : selected.doctorUserId().toString();
         state.selectedDoctorName = selected.doctorName();
         state.selectedSpeciality = null;
+        state.dateResolutionIssue = null;
         clearSlotSelection(state);
     }
 
@@ -742,6 +892,9 @@ public class PatientPortalCareAiService {
         if (normalized.startsWith("evening") || normalized.startsWith("शाम")) {
             return slots.stream().filter(slot -> !slot.slotTime().isBefore(LocalTime.of(16, 0))).toList();
         }
+        if (normalized.startsWith("night") || normalized.startsWith("रात")) {
+            return slots.stream().filter(slot -> !slot.slotTime().isBefore(LocalTime.of(19, 0))).toList();
+        }
         if (isExactTime(preferredTimeWindow)) {
             return slots.stream()
                     .filter(slot -> slot.slotTime().format(TIME_FORMATTER).equalsIgnoreCase(preferredTimeWindow))
@@ -777,6 +930,205 @@ public class PatientPortalCareAiService {
             return PatientPortalCareAiIntent.BOOK_APPOINTMENT;
         }
         return null;
+    }
+
+    private boolean shouldUseAiInterpretation(CareAiState state, String message) {
+        if (!aiExtractionEnabled || aiOrchestrationService == null || !StringUtils.hasText(message)) {
+            return false;
+        }
+        if (isSelectionOnlyMessage(message) && !state.confirmationPending) {
+            return false;
+        }
+        return state.currentIntent == null
+                || state.confirmationPending
+                || containsMonthNameWithoutYear(message)
+                || (!StringUtils.hasText(state.preferredDate) && !looksLikeDateAbsent(message))
+                || (!StringUtils.hasText(state.preferredTimeWindow) && mayContainTimePreference(message))
+                || (!StringUtils.hasText(state.requestedDoctorName) && !StringUtils.hasText(state.selectedDoctorId));
+    }
+
+    private AiInterpretation interpretWithAi(CareAiState state, String message) {
+        try {
+            var context = RequestContextHolder.require();
+            AiOrchestrationResponse response = aiOrchestrationService.complete(new AiOrchestrationRequest(
+                    AiProductCode.GENERIC,
+                    RequestContextHolder.requireTenantId(),
+                    context.appUserId(),
+                    AiTaskType.GENERIC_EXTRACTION,
+                    AI_EXTRACTION_TEMPLATE_CODE,
+                    Map.of(
+                            "message", message,
+                            "language", state.language,
+                            "currentIntent", state.currentIntent == null ? "" : state.currentIntent.name(),
+                            "confirmationPending", state.confirmationPending,
+                            "today", LocalDate.now().toString(),
+                            "instructions", """
+                                    Extract only scheduling intent and entities for a patient portal appointment assistant.
+                                    Return strict JSON with keys:
+                                    intent, doctorName, speciality, preferredDate, preferredTimeWindow, confirmation, reason.
+                                    intent must be one of BOOK_APPOINTMENT, RESCHEDULE_APPOINTMENT, CANCEL_APPOINTMENT, APPOINTMENT_STATUS, or null.
+                                    preferredDate must be normalized to yyyy-MM-dd when confidently known, otherwise null.
+                                    preferredTimeWindow must be one of morning, afternoon, evening, night, HH:mm, or null.
+                                    confirmation must be one of confirm, reject, or null.
+                                    Do not return medical advice, diagnosis, or irreversible actions.
+                                    """,
+                            "knownDoctorOptions", patientPortalService.doctors().stream()
+                                    .limit(8)
+                                    .map(PatientPortalDoctorResponse::doctorName)
+                                    .toList()
+                    ),
+                    List.of(),
+                    aiExtractionMaxTokens(),
+                    AI_EXTRACTION_TEMPERATURE,
+                    context.correlationId(),
+                    AI_EXTRACTION_USE_CASE
+            ));
+            return parseAiInterpretation(response);
+        } catch (RuntimeException ex) {
+            log.debug("patient.portal.careai.ai_extraction_failed messageHash={} reason={}",
+                    Integer.toHexString(message.hashCode()), ex.toString());
+            return null;
+        }
+    }
+
+    private AiInterpretation parseAiInterpretation(AiOrchestrationResponse response) {
+        if (response == null) {
+            return null;
+        }
+        try {
+            Map<String, Object> structured = aiInterpretationPayload(response);
+            if (structured == null || structured.isEmpty()) {
+                return null;
+            }
+            return new AiInterpretation(
+                    parseIntent(stringValue(structured, "intent")),
+                    cleanName(stringValue(structured, "doctorName")),
+                    trimToLength(stringValue(structured, "speciality"), 80),
+                    stringValue(structured, "preferredDate"),
+                    normalizeAiTimeWindow(stringValue(structured, "preferredTimeWindow")),
+                    parseConfirmationDecision(stringValue(structured, "confirmation")),
+                    trimToLength(stringValue(structured, "reason"), 160)
+            );
+        } catch (Exception ex) {
+            log.debug("patient.portal.careai.ai_extraction_parse_failed requestId={} reason={}",
+                    response.requestId(), ex.toString());
+            return null;
+        }
+    }
+
+    private Map<String, Object> aiInterpretationPayload(AiOrchestrationResponse response) throws Exception {
+        if (StringUtils.hasText(response.structuredJson())) {
+            return objectMapper.readValue(response.structuredJson(), MAP_TYPE);
+        }
+        if (looksLikeJsonObject(response.outputText())) {
+            return objectMapper.readValue(response.outputText(), MAP_TYPE);
+        }
+        return null;
+    }
+
+    private boolean looksLikeJsonObject(String value) {
+        if (!StringUtils.hasText(value)) {
+            return false;
+        }
+        String trimmed = value.trim();
+        return trimmed.startsWith("{") && trimmed.endsWith("}");
+    }
+
+    private int aiExtractionMaxTokens() {
+        int configured = voiceTestProperties == null ? 0 : voiceTestProperties.getLlm().getMaxOutputTokens();
+        return configured > 0 ? configured : 1024;
+    }
+
+    private DateResolution resolveAiPreferredDate(String value) {
+        if (!StringUtils.hasText(value)) {
+            return DateResolution.none();
+        }
+        DateResolution parsed = findPreferredDate(value, "en");
+        if (parsed.date() != null || parsed.issue() != null) {
+            return parsed;
+        }
+        return resolveAbsoluteDate(parseIsoDate(value));
+    }
+
+    private String normalizeAiTimeWindow(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String normalized = findPreferredTimeWindow(value, "en");
+        if (StringUtils.hasText(normalized)) {
+            return normalized;
+        }
+        String lower = value.trim().toLowerCase(Locale.ROOT);
+        return switch (lower) {
+            case "before_lunch", "before-lunch" -> "morning";
+            case "after_lunch", "after-lunch" -> "afternoon";
+            default -> trimToLength(value.trim(), 16);
+        };
+    }
+
+    private ConfirmationDecision parseConfirmationDecision(String value) {
+        if (!StringUtils.hasText(value)) {
+            return ConfirmationDecision.NONE;
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        if (List.of("confirm", "confirmed", "yes", "approve").contains(normalized)) {
+            return ConfirmationDecision.CONFIRM;
+        }
+        if (List.of("reject", "decline", "no", "change").contains(normalized)) {
+            return ConfirmationDecision.REJECT;
+        }
+        return ConfirmationDecision.NONE;
+    }
+
+    private PatientPortalCareAiIntent parseIntent(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return PatientPortalCareAiIntent.valueOf(value.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private String stringValue(Map<String, Object> structured, String key) {
+        Object value = structured.get(key);
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        if (!StringUtils.hasText(text) || "null".equalsIgnoreCase(text)) {
+            return null;
+        }
+        return text;
+    }
+
+    private boolean mayContainTimePreference(String message) {
+        String lower = message.toLowerCase(Locale.ROOT);
+        return lower.contains("morning")
+                || lower.contains("afternoon")
+                || lower.contains("evening")
+                || lower.contains("night")
+                || lower.contains("lunch")
+                || EXPLICIT_TIME_PATTERN.matcher(message).find();
+    }
+
+    private boolean looksLikeDateAbsent(String message) {
+        String lower = message.toLowerCase(Locale.ROOT);
+        return !(ISO_DATE_PATTERN.matcher(message).find()
+                || DMY_DATE_PATTERN.matcher(message).find()
+                || MDY_DATE_PATTERN.matcher(message).find()
+                || SLASH_DATE_PATTERN.matcher(message).find()
+                || lower.contains("today")
+                || lower.contains("tomorrow")
+                || lower.contains("next ")
+                || lower.contains("this ")
+                || lower.contains("weekend"));
+    }
+
+    private boolean containsMonthNameWithoutYear(String message) {
+        String lower = message.toLowerCase(Locale.ROOT);
+        return MONTH_NAME_MAP.keySet().stream().anyMatch(lower::contains) && !DMY_DATE_PATTERN.matcher(message).find() && !MDY_DATE_PATTERN.matcher(message).find();
     }
 
     private SessionKey currentSessionKey() {
@@ -843,28 +1195,73 @@ public class PatientPortalCareAiService {
                 .orElse(null);
     }
 
-    private String findPreferredDate(String transcript, String language) {
+    private DateResolution findPreferredDate(String transcript, String language) {
         Matcher iso = ISO_DATE_PATTERN.matcher(transcript);
         if (iso.find()) {
-            return iso.group(1);
+            return resolveAbsoluteDate(parseIsoDate(iso.group(1)));
         }
         String lower = transcript.toLowerCase(Locale.ROOT);
         LocalDate today = LocalDate.now();
         if (lower.contains("day after tomorrow") || transcript.contains("परसों")) {
-            return today.plusDays(2).toString();
+            return DateResolution.valid(today.plusDays(2).toString());
         }
         if (lower.contains("tomorrow") || transcript.contains("कल")) {
-            return today.plusDays(1).toString();
+            return DateResolution.valid(today.plusDays(1).toString());
         }
         if (lower.contains("today") || transcript.contains("आज")) {
-            return today.toString();
+            return DateResolution.valid(today.toString());
+        }
+        if (lower.contains("next week")) {
+            return DateResolution.valid(today.plusWeeks(1).toString());
+        }
+        if (lower.contains("this weekend")) {
+            return DateResolution.valid(resolveThisWeekday(today, DayOfWeek.SATURDAY).toString());
+        }
+        if (lower.contains("this saturday")) {
+            return DateResolution.valid(resolveThisWeekday(today, DayOfWeek.SATURDAY).toString());
+        }
+        if (lower.contains("this sunday")) {
+            return DateResolution.valid(resolveThisWeekday(today, DayOfWeek.SUNDAY).toString());
+        }
+        if (lower.contains("next monday")) {
+            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.MONDAY)).toString());
+        }
+        if (lower.contains("next tuesday")) {
+            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.TUESDAY)).toString());
+        }
+        if (lower.contains("next wednesday")) {
+            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.WEDNESDAY)).toString());
+        }
+        if (lower.contains("next thursday")) {
+            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.THURSDAY)).toString());
+        }
+        if (lower.contains("next friday")) {
+            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.FRIDAY)).toString());
+        }
+        if (lower.contains("next saturday")) {
+            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.SATURDAY)).toString());
+        }
+        if (lower.contains("next sunday")) {
+            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.SUNDAY)).toString());
+        }
+        Matcher dmy = DMY_DATE_PATTERN.matcher(transcript);
+        if (dmy.find()) {
+            return resolveAbsoluteDate(parseMonthNameDate(dmy.group(1), dmy.group(2), dmy.group(3)));
+        }
+        Matcher mdy = MDY_DATE_PATTERN.matcher(transcript);
+        if (mdy.find()) {
+            return resolveAbsoluteDate(parseMonthNameDate(mdy.group(2), mdy.group(1), mdy.group(3)));
+        }
+        Matcher slash = SLASH_DATE_PATTERN.matcher(transcript);
+        if (slash.find()) {
+            return resolveAbsoluteDate(parseSlashDate(slash.group(1), slash.group(2), slash.group(3)));
         }
         for (DayOfWeek dayOfWeek : DayOfWeek.values()) {
             if (matchesWeekday(transcript, lower, dayOfWeek)) {
-                return today.with(TemporalAdjusters.nextOrSame(dayOfWeek)).toString();
+                return DateResolution.valid(today.with(TemporalAdjusters.nextOrSame(dayOfWeek)).toString());
             }
         }
-        return null;
+        return DateResolution.none();
     }
 
     private boolean matchesWeekday(String transcript, String lower, DayOfWeek dayOfWeek) {
@@ -881,6 +1278,12 @@ public class PatientPortalCareAiService {
 
     private String findPreferredTimeWindow(String transcript, String language) {
         String lower = transcript.toLowerCase(Locale.ROOT);
+        if (lower.contains("before lunch")) {
+            return isHindi(language) ? "सुबह" : "morning";
+        }
+        if (lower.contains("after lunch")) {
+            return isHindi(language) ? "दोपहर" : "afternoon";
+        }
         if (lower.contains("morning") || transcript.contains("सुबह")) {
             return isHindi(language) ? "सुबह" : "morning";
         }
@@ -890,9 +1293,15 @@ public class PatientPortalCareAiService {
         if (lower.contains("evening") || transcript.contains("शाम")) {
             return isHindi(language) ? "शाम" : "evening";
         }
+        if (lower.contains("night") || transcript.contains("रात")) {
+            return isHindi(language) ? "रात" : "night";
+        }
         String sanitized = ISO_DATE_PATTERN.matcher(lower).replaceAll(" ");
         Matcher matcher = EXPLICIT_TIME_PATTERN.matcher(sanitized);
-        if (matcher.find()) {
+        while (matcher.find()) {
+            if (matcher.group(2) == null && matcher.group(3) == null) {
+                continue;
+            }
             int hour = Integer.parseInt(matcher.group(1));
             int minute = matcher.group(2) == null ? 0 : Integer.parseInt(matcher.group(2));
             String meridiem = matcher.group(3);
@@ -1108,8 +1517,8 @@ public class PatientPortalCareAiService {
 
     private String askTimePrompt(String language) {
         return isHindi(language)
-                ? "कृपया समय बताइए, जैसे सुबह, दोपहर, शाम या कोई विशेष समय।"
-                : "What time works best, such as morning, afternoon, evening, or a specific time?";
+                ? "कृपया समय बताइए, जैसे सुबह, दोपहर, शाम, रात, लंच से पहले, लंच के बाद, या कोई विशेष समय।"
+                : "What time works best, such as morning, afternoon, evening, night, before lunch, after lunch, or a specific time?";
     }
 
     private String bookingConfirmationPrompt(CareAiState state) {
@@ -1167,6 +1576,17 @@ public class PatientPortalCareAiService {
                 : "I could not complete that request. Please choose another option or contact the clinic.";
     }
 
+    private String invalidDatePrompt(String language, String issue) {
+        if ("past".equals(issue)) {
+            return isHindi(language)
+                    ? "कृपया आज या आने वाली तारीख चुनें। पिछली तारीख पर अपॉइंटमेंट नहीं किया जा सकता।"
+                    : "Please choose today or a future date. I cannot use a past date for this request.";
+        }
+        return isHindi(language)
+                ? "मैं वह तारीख समझ नहीं सका। कृपया 4 जून 2026, अगले शुक्रवार, या 04/06/2026 जैसे प्रारूप में बताइए।"
+                : "I could not understand that date. Please try a format like 4 June 2026, next Friday, or 04/06/2026.";
+    }
+
     private String receptionHandoffPrompt(String language) {
         return isHindi(language)
                 ? "मैं क्लिनिक टीम से इस अनुरोध में मदद करने के लिए कहूँगा।"
@@ -1193,6 +1613,62 @@ public class PatientPortalCareAiService {
         return value == null ? "" : value;
     }
 
+    private DateResolution resolveAbsoluteDate(LocalDate date) {
+        if (date == null) {
+            return DateResolution.invalid("invalid");
+        }
+        if (date.isBefore(LocalDate.now())) {
+            return DateResolution.invalid("past");
+        }
+        return DateResolution.valid(date.toString());
+    }
+
+    private LocalDate parseIsoDate(String value) {
+        try {
+            return LocalDate.parse(value, STRICT_ISO_DATE);
+        } catch (DateTimeParseException ex) {
+            return null;
+        }
+    }
+
+    private LocalDate parseMonthNameDate(String dayValue, String monthValue, String yearValue) {
+        Month month = MONTH_NAME_MAP.get(monthValue.toLowerCase(Locale.ROOT));
+        if (month == null) {
+            return null;
+        }
+        try {
+            return LocalDate.of(Integer.parseInt(yearValue), month, Integer.parseInt(dayValue));
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private LocalDate parseSlashDate(String dayValue, String monthValue, String yearValue) {
+        try {
+            return LocalDate.of(Integer.parseInt(yearValue), Integer.parseInt(monthValue), Integer.parseInt(dayValue));
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private LocalDate resolveThisWeekday(LocalDate today, DayOfWeek dayOfWeek) {
+        LocalDate candidate = today.with(TemporalAdjusters.nextOrSame(dayOfWeek));
+        if (candidate.getDayOfWeek() == dayOfWeek) {
+            return candidate;
+        }
+        return today.with(TemporalAdjusters.next(dayOfWeek));
+    }
+
+    private static Map<String, Month> monthNameMap() {
+        Map<String, Month> map = new HashMap<>();
+        for (Month month : Month.values()) {
+            map.put(month.getDisplayName(java.time.format.TextStyle.FULL, Locale.ENGLISH).toLowerCase(Locale.ROOT), month);
+            map.put(month.getDisplayName(java.time.format.TextStyle.SHORT, Locale.ENGLISH).toLowerCase(Locale.ROOT), month);
+        }
+        map.put("sept", Month.SEPTEMBER);
+        return Map.copyOf(map);
+    }
+
     private static final class CareAiState {
         private String language = "en";
         private PatientPortalCareAiIntent currentIntent;
@@ -1205,6 +1681,7 @@ public class PatientPortalCareAiService {
         private String selectedAppointmentLabel;
         private String selectedAppointmentReason;
         private String preferredDate;
+        private String dateResolutionIssue;
         private String preferredTimeWindow;
         private String reason;
         private String selectedSlot;
@@ -1246,5 +1723,36 @@ public class PatientPortalCareAiService {
     }
 
     private record SlotChoice(LocalDate appointmentDate, LocalTime slotTime) {
+    }
+
+    private record AiInterpretation(
+            PatientPortalCareAiIntent intent,
+            String doctorName,
+            String speciality,
+            String preferredDate,
+            String preferredTimeWindow,
+            ConfirmationDecision confirmationDecision,
+            String reason
+    ) {
+    }
+
+    private enum ConfirmationDecision {
+        NONE,
+        CONFIRM,
+        REJECT
+    }
+
+    private record DateResolution(String date, String issue) {
+        private static DateResolution valid(String date) {
+            return new DateResolution(date, null);
+        }
+
+        private static DateResolution invalid(String issue) {
+            return new DateResolution(null, issue);
+        }
+
+        private static DateResolution none() {
+            return new DateResolution(null, null);
+        }
     }
 }

@@ -22,6 +22,7 @@ import {
   type PatientPortalOtpVerifyResponse,
   type PatientPortalPrescriptionResponse,
   type PatientPortalSession,
+  buildPatientPortalVoiceWebSocketUrl,
   fetchPatientPortalJson,
   isPatientPortalPatientSession,
   isPatientPortalRegistrationSession,
@@ -43,6 +44,104 @@ type PatientCareAiChatEntry = {
   role: "patient" | "assistant";
   text: string;
 };
+
+type PatientCareAiVoiceStatus =
+  | "idle"
+  | "connecting"
+  | "session_started"
+  | "listening"
+  | "speech_detected"
+  | "finalizing_audio"
+  | "processing"
+  | "playing_response"
+  | "ending"
+  | "ended"
+  | "error";
+
+type PatientCareAiVoiceProviderTrace = {
+  sttProvider: string | null;
+  llmProvider: string | null;
+  ttsProvider: string | null;
+};
+
+const PATIENT_VOICE_AUDIO_BASE64_CHUNK_SIZE = 24 * 1024;
+const PATIENT_VOICE_HEARTBEAT_INTERVAL_MS = 15000;
+const PATIENT_VOICE_RESUME_DELAY_MS = 500;
+const PATIENT_VOICE_SPEECH_START_THRESHOLD = 0.055;
+const PATIENT_VOICE_SPEECH_END_THRESHOLD = 0.035;
+const PATIENT_VOICE_MIN_SPEECH_MS = 350;
+const PATIENT_VOICE_SILENCE_TIMEOUT_MS = 1000;
+const PATIENT_VOICE_MAX_UTTERANCE_MS = 12000;
+
+function selectPatientVoiceMimeType() {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/ogg",
+  ];
+  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || "";
+}
+
+function resolvePatientVoiceAudioExtension(type: string) {
+  const normalized = type.toLowerCase();
+  if (normalized.includes("ogg")) {
+    return "ogg";
+  }
+  return "webm";
+}
+
+async function blobToBase64(blob: Blob) {
+  const buffer = await blob.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function splitVoiceBase64Chunks(base64: string, chunkSize = PATIENT_VOICE_AUDIO_BASE64_CHUNK_SIZE) {
+  const chunks: string[] = [];
+  for (let index = 0; index < base64.length; index += chunkSize) {
+    chunks.push(base64.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function formatPatientVoiceProvider(value: string | null | undefined) {
+  if (!value) return "Not used";
+  return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function patientVoiceStatusLabel(status: PatientCareAiVoiceStatus) {
+  switch (status) {
+    case "idle":
+      return "Idle";
+    case "connecting":
+      return "Connecting";
+    case "session_started":
+      return "Ready";
+    case "listening":
+      return "Listening";
+    case "speech_detected":
+      return "Listening";
+    case "finalizing_audio":
+    case "processing":
+      return "Processing";
+    case "playing_response":
+      return "Speaking";
+    case "ending":
+      return "Stopping";
+    case "ended":
+      return "Stopped";
+    case "error":
+      return "Error";
+    default:
+      return status;
+  }
+}
 
 const patientNavItems = [
   { to: "/patient/dashboard", label: "Dashboard", shortLabel: "Home" },
@@ -1496,7 +1595,267 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const [submitting, setSubmitting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<PatientCareAiVoiceStatus>("idle");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceInfo, setVoiceInfo] = useState<string | null>(null);
+  const [voiceTranscript, setVoiceTranscript] = useState<string>("");
+  const [voiceAssistant, setVoiceAssistant] = useState<string>("");
+  const [voiceMuted, setVoiceMuted] = useState(false);
+  const [voiceAudioUrl, setVoiceAudioUrl] = useState<string | null>(null);
+  const [voiceReplyReadyToPlay, setVoiceReplyReadyToPlay] = useState(false);
+  const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
+  const [voiceProviderTrace, setVoiceProviderTrace] = useState<PatientCareAiVoiceProviderTrace | null>(null);
+  const [voiceEvents, setVoiceEvents] = useState<string[]>([]);
+  const [voiceMicLevel, setVoiceMicLevel] = useState(0);
+  const [voiceMicPeak, setVoiceMicPeak] = useState(0);
+  const [voiceSpeechDetected, setVoiceSpeechDetected] = useState(false);
+  const [voiceSilenceDetected, setVoiceSilenceDetected] = useState(false);
+  const [showVoiceTechnicalDetails, setShowVoiceTechnicalDetails] = useState(false);
+  const [voiceInactivityWarning, setVoiceInactivityWarning] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const voiceSocketRef = useRef<WebSocket | null>(null);
+  const voiceRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
+  const voicePendingAudioRef = useRef<Map<number, string>>(new Map());
+  const voiceExpectedAudioChunksRef = useRef(0);
+  const voiceAudioElementRef = useRef<HTMLAudioElement | null>(null);
+  const voiceHeartbeatTimerRef = useRef<number | null>(null);
+  const voiceResumeTimerRef = useRef<number | null>(null);
+  const voiceStatusRef = useRef<PatientCareAiVoiceStatus>("idle");
+  const voiceEndedByUserRef = useRef(false);
+  const voiceStartMicPendingRef = useRef(false);
+  const voiceDiscardRecordingRef = useRef(false);
+  const voiceStartingMicRef = useRef(false);
+  const voiceAutoResumeRef = useRef(false);
+  const voiceAutoStopTriggeredRef = useRef(false);
+  const voiceSpeechDetectedRef = useRef(false);
+  const voiceSpeechFrameActiveRef = useRef(false);
+  const voiceSpeechStartedAtRef = useRef<number | null>(null);
+  const voiceLastSpeechAtRef = useRef<number | null>(null);
+  const voiceSessionStartedAtRef = useRef<number | null>(null);
+  const voiceLastTranscriptOrResponseAtRef = useRef<number | null>(null);
+  const voiceAudioContextRef = useRef<AudioContext | null>(null);
+  const voiceAnalyserRef = useRef<AnalyserNode | null>(null);
+  const voiceSourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const voiceLevelDataRef = useRef<Uint8Array | null>(null);
+  const voiceMonitoringIntervalRef = useRef<number | null>(null);
+
+  function updateVoiceStatus(nextStatus: PatientCareAiVoiceStatus) {
+    voiceStatusRef.current = nextStatus;
+    setVoiceStatus(nextStatus);
+  }
+
+  function appendVoiceEvent(message: string) {
+    setVoiceEvents((current) => [...current.slice(-11), `${new Date().toLocaleTimeString()} • ${message}`]);
+  }
+
+  function clearVoiceHeartbeat() {
+    if (voiceHeartbeatTimerRef.current != null) {
+      window.clearInterval(voiceHeartbeatTimerRef.current);
+      voiceHeartbeatTimerRef.current = null;
+    }
+  }
+
+  function clearVoiceResumeTimer() {
+    if (voiceResumeTimerRef.current != null) {
+      window.clearTimeout(voiceResumeTimerRef.current);
+      voiceResumeTimerRef.current = null;
+    }
+  }
+
+  function stopVoiceAudioMonitoring() {
+    if (voiceMonitoringIntervalRef.current != null) {
+      window.clearInterval(voiceMonitoringIntervalRef.current);
+      voiceMonitoringIntervalRef.current = null;
+    }
+    voiceSourceNodeRef.current?.disconnect();
+    voiceAnalyserRef.current?.disconnect();
+    voiceSourceNodeRef.current = null;
+    voiceAnalyserRef.current = null;
+    voiceLevelDataRef.current = null;
+    if (voiceAudioContextRef.current) {
+      void voiceAudioContextRef.current.close().catch(() => undefined);
+      voiceAudioContextRef.current = null;
+    }
+    setVoiceMicLevel(0);
+    setVoiceMicPeak(0);
+    setVoiceSpeechDetected(false);
+    setVoiceSilenceDetected(false);
+  }
+
+  function startVoiceAudioMonitoring(stream: MediaStream) {
+    stopVoiceAudioMonitoring();
+    const AudioContextCtor = window.AudioContext
+      || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextCtor) {
+      return;
+    }
+    const contextInstance = new AudioContextCtor();
+    const source = contextInstance.createMediaStreamSource(stream);
+    const analyser = contextInstance.createAnalyser();
+    analyser.fftSize = 2048;
+    const data = new Uint8Array(analyser.fftSize);
+    source.connect(analyser);
+    voiceAudioContextRef.current = contextInstance;
+    voiceSourceNodeRef.current = source;
+    voiceAnalyserRef.current = analyser;
+    voiceLevelDataRef.current = data;
+    voiceMonitoringIntervalRef.current = window.setInterval(() => {
+      if (!voiceAnalyserRef.current || !voiceLevelDataRef.current) {
+        return;
+      }
+      voiceAnalyserRef.current.getByteTimeDomainData(voiceLevelDataRef.current as Uint8Array<ArrayBuffer>);
+      let sumSquares = 0;
+      let peak = 0;
+      for (const sample of voiceLevelDataRef.current) {
+        const normalized = (sample - 128) / 128;
+        const absolute = Math.abs(normalized);
+        sumSquares += normalized * normalized;
+        if (absolute > peak) {
+          peak = absolute;
+        }
+      }
+      const rms = Math.sqrt(sumSquares / voiceLevelDataRef.current.length);
+      setVoiceMicLevel(rms);
+      setVoiceMicPeak(peak);
+
+      const now = Date.now();
+      const isSpeechFrame = rms >= PATIENT_VOICE_SPEECH_START_THRESHOLD;
+      if (isSpeechFrame) {
+        if (!voiceSpeechFrameActiveRef.current && voiceSpeechDetectedRef.current) {
+          appendVoiceEvent("VAD_SPEECH_RESUMED");
+        }
+        voiceSpeechFrameActiveRef.current = true;
+        if (!voiceSpeechDetectedRef.current) {
+          voiceSpeechDetectedRef.current = true;
+          voiceSpeechStartedAtRef.current = now;
+          appendVoiceEvent("VAD_SPEECH_STARTED");
+        }
+        voiceLastSpeechAtRef.current = now;
+        voiceAutoStopTriggeredRef.current = false;
+        setVoiceSpeechDetected(true);
+        setVoiceSilenceDetected(false);
+        if (voiceStatusRef.current === "listening" || voiceStatusRef.current === "session_started") {
+          updateVoiceStatus("speech_detected");
+        }
+      } else {
+        if (voiceSpeechFrameActiveRef.current && voiceSpeechDetectedRef.current) {
+          appendVoiceEvent("VAD_SPEECH_ENDED");
+        }
+        voiceSpeechFrameActiveRef.current = false;
+        setVoiceSpeechDetected(false);
+        setVoiceSilenceDetected(true);
+        if (voiceStatusRef.current === "speech_detected") {
+          updateVoiceStatus("listening");
+        }
+      }
+
+      if (voiceSpeechDetectedRef.current && voiceLastSpeechAtRef.current && voiceSpeechStartedAtRef.current) {
+        const speechDuration = now - voiceSpeechStartedAtRef.current;
+        const silenceDuration = now - voiceLastSpeechAtRef.current;
+        if (
+          rms <= PATIENT_VOICE_SPEECH_END_THRESHOLD
+          && speechDuration >= PATIENT_VOICE_MIN_SPEECH_MS
+          && silenceDuration >= PATIENT_VOICE_SILENCE_TIMEOUT_MS
+          && !voiceAutoStopTriggeredRef.current
+        ) {
+          voiceAutoStopTriggeredRef.current = true;
+          appendVoiceEvent("SILENCE_TIMEOUT");
+          handleVoiceStopTurn();
+          return;
+        }
+      }
+
+      if (
+        voiceSessionStartedAtRef.current
+        && now - voiceSessionStartedAtRef.current >= PATIENT_VOICE_MAX_UTTERANCE_MS
+        && !voiceAutoStopTriggeredRef.current
+      ) {
+        voiceAutoStopTriggeredRef.current = true;
+        appendVoiceEvent("MAX_UTTERANCE_REACHED");
+        handleVoiceStopTurn();
+      }
+    }, 100);
+  }
+
+  function scheduleVoiceListeningResume(reason: string, delayMs = PATIENT_VOICE_RESUME_DELAY_MS) {
+    clearVoiceResumeTimer();
+    if (
+      !voiceAutoResumeRef.current
+      || voiceEndedByUserRef.current
+      || !voiceSocketRef.current
+      || voiceSocketRef.current.readyState !== WebSocket.OPEN
+    ) {
+      appendVoiceEvent(`AUTO_RESUME_SKIPPED ${reason}`);
+      return;
+    }
+    voiceResumeTimerRef.current = window.setTimeout(() => {
+      voiceResumeTimerRef.current = null;
+      if (
+        !voiceAutoResumeRef.current
+        || voiceEndedByUserRef.current
+        || !voiceSocketRef.current
+        || voiceSocketRef.current.readyState !== WebSocket.OPEN
+      ) {
+        appendVoiceEvent(`AUTO_RESUME_SKIPPED ${reason}`);
+        return;
+      }
+      if (voiceStatusRef.current !== "session_started" && voiceStatusRef.current !== "idle" && voiceStatusRef.current !== "ended") {
+        appendVoiceEvent(`AUTO_RESUME_SKIPPED status=${voiceStatusRef.current}`);
+        return;
+      }
+      appendVoiceEvent(`AUTO_RESUME ${reason}`);
+      void startVoiceMic({ automatic: true, reason });
+    }, delayMs);
+  }
+
+  function stopVoiceStream() {
+    voiceRecorderRef.current = null;
+    if (voiceStreamRef.current) {
+      voiceStreamRef.current.getTracks().forEach((track) => track.stop());
+      voiceStreamRef.current = null;
+    }
+    stopVoiceAudioMonitoring();
+  }
+
+  function resetPendingVoiceAudio() {
+    voicePendingAudioRef.current.clear();
+    voiceExpectedAudioChunksRef.current = 0;
+  }
+
+  function cleanupVoiceSessionResources() {
+    clearVoiceHeartbeat();
+    clearVoiceResumeTimer();
+    voiceStartMicPendingRef.current = false;
+    voiceStartingMicRef.current = false;
+    voiceAutoStopTriggeredRef.current = false;
+    voiceSpeechDetectedRef.current = false;
+    voiceSpeechFrameActiveRef.current = false;
+    voiceSpeechStartedAtRef.current = null;
+    voiceLastSpeechAtRef.current = null;
+    voiceSessionStartedAtRef.current = null;
+    stopVoiceStream();
+    resetPendingVoiceAudio();
+    voiceChunksRef.current = [];
+  }
+
+  function closeVoiceSocket() {
+    cleanupVoiceSessionResources();
+    if (voiceSocketRef.current) {
+      const socket = voiceSocketRef.current;
+      voiceSocketRef.current = null;
+      if (socket.readyState === WebSocket.OPEN) {
+        try {
+          socket.send(JSON.stringify({ type: "session.close" }));
+        } catch {
+          // noop
+        }
+      }
+      socket.close();
+    }
+  }
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
@@ -1514,7 +1873,537 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setError(null);
     setSubmitting(false);
     setResetting(false);
+    updateVoiceStatus("idle");
+    setVoiceError(null);
+    setVoiceInfo(null);
+    setVoiceTranscript("");
+    setVoiceAssistant("");
+    setVoiceReplyReadyToPlay(false);
+    setVoiceSessionId(null);
+    setVoiceProviderTrace(null);
+    setVoiceEvents([]);
+    setVoiceMicLevel(0);
+    setVoiceMicPeak(0);
+    setVoiceSpeechDetected(false);
+    setVoiceSilenceDetected(false);
+    setShowVoiceTechnicalDetails(false);
+    setVoiceInactivityWarning(null);
+    if (voiceAudioUrl) {
+      URL.revokeObjectURL(voiceAudioUrl);
+      setVoiceAudioUrl(null);
+    }
+    voiceEndedByUserRef.current = false;
+    voiceAutoResumeRef.current = false;
+    voiceLastTranscriptOrResponseAtRef.current = null;
+    closeVoiceSocket();
   }, [portalSession?.patientSessionToken]);
+
+  useEffect(() => () => {
+    closeVoiceSocket();
+  }, []);
+
+  useEffect(() => {
+    voiceStatusRef.current = voiceStatus;
+  }, [voiceStatus]);
+
+  useEffect(() => {
+    if (voiceAudioElementRef.current) {
+      voiceAudioElementRef.current.muted = voiceMuted;
+    }
+  }, [voiceMuted, voiceAudioUrl]);
+
+  useEffect(() => {
+    if (voiceStatus === "idle" || voiceStatus === "ended" || voiceStatus === "error") {
+      setVoiceInactivityWarning(null);
+      return;
+    }
+    const warningTimer = window.setInterval(() => {
+      const lastActivityAt = voiceLastTranscriptOrResponseAtRef.current ?? voiceSessionStartedAtRef.current;
+      if (lastActivityAt && Date.now() - lastActivityAt >= 120000) {
+        // TODO: replace this lightweight warning with an explicit idle-timeout policy later.
+        setVoiceInactivityWarning("No voice activity detected. This call may end soon.");
+      } else {
+        setVoiceInactivityWarning(null);
+      }
+    }, 5000);
+    return () => window.clearInterval(warningTimer);
+  }, [voiceStatus]);
+
+  function startVoiceHeartbeat(socket: WebSocket) {
+    clearVoiceHeartbeat();
+    voiceHeartbeatTimerRef.current = window.setInterval(() => {
+      if (socket.readyState !== WebSocket.OPEN) {
+        clearVoiceHeartbeat();
+        return;
+      }
+      socket.send(JSON.stringify({ type: "heartbeat" }));
+    }, PATIENT_VOICE_HEARTBEAT_INTERVAL_MS);
+  }
+
+  function appendVoicePatientMessage(text: string) {
+    setMessages((current) => [
+      ...current,
+      {
+        id: `patient-voice-${Date.now()}`,
+        role: "patient",
+        text,
+      },
+    ]);
+  }
+
+  function appendVoiceAssistantMessage(text: string) {
+    setMessages((current) => [
+      ...current,
+      {
+        id: `assistant-voice-${Date.now()}`,
+        role: "assistant",
+        text,
+      },
+    ]);
+  }
+
+  async function handleVoiceReplyPlayback() {
+    if (!voiceAudioElementRef.current || !voiceAudioUrl) {
+      return;
+    }
+    try {
+      updateVoiceStatus("playing_response");
+      setVoiceReplyReadyToPlay(false);
+      setVoiceError(null);
+      setVoiceInfo("Playing CareAI response…");
+      await voiceAudioElementRef.current.play();
+      appendVoiceEvent("ASSISTANT_AUDIO_PLAYING");
+    } catch {
+      updateVoiceStatus("session_started");
+      setVoiceReplyReadyToPlay(true);
+      setVoiceInfo("CareAI reply is ready. Tap play to hear it.");
+    }
+  }
+
+  function bindVoiceSocket(socket: WebSocket) {
+    socket.onopen = () => {
+      updateVoiceStatus("connecting");
+      setVoiceInfo("Connecting to CareAI voice…");
+      appendVoiceEvent("CONNECTED");
+      socket.send(JSON.stringify({ type: "session.start", language: "auto" }));
+    };
+    socket.onmessage = (rawMessage) => {
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(rawMessage.data) as Record<string, unknown>;
+    } catch {
+      updateVoiceStatus("error");
+      setVoiceError("Voice response could not be read.");
+      setVoiceInfo(null);
+      return;
+    }
+
+    const type = String(payload.type || "");
+    if (type === "session.connected") {
+      appendVoiceEvent("SESSION_CONNECTED");
+      return;
+    }
+    if (type === "session.started") {
+      setVoiceSessionId(String(payload.sessionId || ""));
+      updateVoiceStatus("session_started");
+      setVoiceInfo("Listening… speak now.");
+      appendVoiceEvent("SESSION_STARTED");
+      if (voiceAutoResumeRef.current) {
+        scheduleVoiceListeningResume("session_started", 0);
+      }
+      return;
+    }
+    if (type === "stt.started" || type === "turn.started") {
+      updateVoiceStatus("processing");
+      setVoiceError(null);
+      setVoiceInfo("Processing your request…");
+      appendVoiceEvent(type === "stt.started" ? "STT_STARTED" : "TURN_STARTED");
+      return;
+    }
+    if (type === "heartbeat") {
+      return;
+    }
+    if (type === "audio.chunk.received") {
+      const sequence = Number(payload.sequence || 0);
+      const totalChunks = Number(payload.totalChunks || 0);
+      appendVoiceEvent(`AUDIO_CHUNK_RECEIVED ${sequence}/${totalChunks || "?"}`);
+      return;
+    }
+    if (type === "transcript.final") {
+      const transcript = String(payload.text || "").trim();
+      voiceLastTranscriptOrResponseAtRef.current = Date.now();
+      setVoiceInactivityWarning(null);
+      setVoiceTranscript(transcript);
+      if (transcript) {
+        appendVoicePatientMessage(transcript);
+      }
+      setVoiceInfo("Transcript captured.");
+      appendVoiceEvent("TRANSCRIPT_FINAL");
+      return;
+    }
+    if (type === "assistant.text") {
+      const assistantText = String(payload.text || "").trim();
+      const nextState = payload.state as PatientPortalCareAiStateResponse | null;
+      const trace = (payload.providerTrace as PatientCareAiVoiceProviderTrace | null) ?? null;
+      voiceLastTranscriptOrResponseAtRef.current = Date.now();
+      setVoiceInactivityWarning(null);
+      setVoiceAssistant(assistantText);
+      if (assistantText) {
+        appendVoiceAssistantMessage(assistantText);
+      }
+      if (nextState) {
+        setState(nextState);
+      }
+      setVoiceProviderTrace(trace);
+      setVoiceInfo("CareAI responded.");
+      appendVoiceEvent("ASSISTANT_TEXT");
+      return;
+    }
+    if (type === "assistant.audio.chunk") {
+      const sequence = Number(payload.sequence || 0);
+      const totalChunks = Number(payload.totalChunks || 0);
+      const chunk = String(payload.audioBase64Chunk || "");
+      if (sequence > 0 && chunk) {
+        voicePendingAudioRef.current.set(sequence, chunk);
+        voiceExpectedAudioChunksRef.current = totalChunks;
+        appendVoiceEvent(`ASSISTANT_AUDIO_CHUNK ${sequence}/${totalChunks || "?"}`);
+      }
+      return;
+    }
+    if (type === "assistant.audio.end") {
+      const contentType = String(payload.contentType || "audio/wav");
+      const totalChunks = voiceExpectedAudioChunksRef.current;
+      const chunks: string[] = [];
+      for (let index = 1; index <= totalChunks; index += 1) {
+        const chunk = voicePendingAudioRef.current.get(index);
+        if (!chunk) {
+          updateVoiceStatus("error");
+          setVoiceError("Voice playback data was incomplete.");
+          resetPendingVoiceAudio();
+          return;
+        }
+        chunks.push(chunk);
+      }
+      resetPendingVoiceAudio();
+      const binary = atob(chunks.join(""));
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
+      updateVoiceStatus("playing_response");
+      setVoiceReplyReadyToPlay(false);
+      setVoiceAudioUrl((current) => {
+        if (current) {
+          URL.revokeObjectURL(current);
+        }
+        return url;
+      });
+      setVoiceInfo("Playing CareAI response…");
+      window.setTimeout(() => {
+        void handleVoiceReplyPlayback();
+      }, 0);
+      return;
+    }
+    if (type === "turn.complete") {
+      if (!voiceExpectedAudioChunksRef.current) {
+        updateVoiceStatus("session_started");
+        if (voiceAutoResumeRef.current) {
+          scheduleVoiceListeningResume("turn_complete_no_audio");
+        }
+      }
+      setVoiceInfo("Turn completed.");
+      appendVoiceEvent("TURN_COMPLETE");
+      return;
+    }
+    if (type === "session.closed") {
+      updateVoiceStatus("ended");
+      setVoiceInfo("Voice session closed.");
+      appendVoiceEvent("SESSION_CLOSED");
+      return;
+    }
+    if (type === "session.timeout") {
+      updateVoiceStatus("error");
+      setVoiceError("Voice connection timed out. Please retry.");
+      setVoiceInfo(null);
+      appendVoiceEvent(`SESSION_TIMEOUT ${String(payload.reason || "timeout")}`);
+      return;
+    }
+    if (type === "error") {
+      updateVoiceStatus("error");
+      setVoiceError(String(payload.message || "CareAI voice could not process that request."));
+      setVoiceInfo(null);
+      appendVoiceEvent("SERVER_ERROR");
+    }
+    };
+    socket.onerror = () => {
+      updateVoiceStatus("error");
+      setVoiceError("Voice connection failed. Please retry.");
+      setVoiceInfo(null);
+      appendVoiceEvent("CONNECT_FAILED");
+    };
+    socket.onclose = (event) => {
+      const closedByUser = voiceEndedByUserRef.current;
+      cleanupVoiceSessionResources();
+      if (voiceSocketRef.current === socket) {
+        voiceSocketRef.current = null;
+      }
+      if (closedByUser) {
+        updateVoiceStatus("idle");
+        setVoiceInfo(null);
+        appendVoiceEvent("DISCONNECTED");
+        return;
+      }
+      if (voiceStatusRef.current !== "error") {
+        updateVoiceStatus("idle");
+      }
+      if (event.code !== 1000) {
+        setVoiceError("Voice connection failed. Please retry.");
+      }
+      setVoiceInfo(null);
+      appendVoiceEvent(`DISCONNECTED ${event.code}`);
+    };
+  }
+
+  async function ensureVoiceSocket() {
+    if (!portalSession) {
+      throw new Error("Patient session is required for CareAI voice.");
+    }
+    if (voiceSocketRef.current && voiceSocketRef.current.readyState === WebSocket.OPEN) {
+      return voiceSocketRef.current;
+    }
+    if (voiceSocketRef.current) {
+      closeVoiceSocket();
+    }
+    updateVoiceStatus("connecting");
+    setVoiceError(null);
+    setVoiceInfo("Connecting to CareAI voice…");
+    const socketUrl = buildPatientPortalVoiceWebSocketUrl(portalSession);
+    appendVoiceEvent("CONNECTING");
+    const socket = new WebSocket(socketUrl);
+    voiceSocketRef.current = socket;
+    bindVoiceSocket(socket);
+
+    await new Promise<WebSocket>((resolve, reject) => {
+      let settled = false;
+      const previousOnOpen = socket.onopen;
+      const previousOnError = socket.onerror;
+      const previousOnClose = socket.onclose;
+      socket.onopen = (event) => {
+        previousOnOpen?.call(socket, event);
+        if (!settled) {
+          settled = true;
+          startVoiceHeartbeat(socket);
+          resolve(socket);
+        }
+      };
+      socket.onerror = (event) => {
+        previousOnError?.call(socket, event);
+        if (!settled) {
+          settled = true;
+          reject(new Error("Voice connection failed. Please retry."));
+        }
+      };
+      socket.onclose = (event) => {
+        previousOnClose?.call(socket, event);
+        if (!settled) {
+          settled = true;
+          reject(new Error("Voice connection failed. Please retry."));
+        }
+      };
+    });
+
+    return socket;
+  }
+
+  async function startVoiceMic(options?: { automatic?: boolean; reason?: string }) {
+    if (
+      !portalSession ||
+      voiceStartingMicRef.current ||
+      voiceStatusRef.current === "listening" ||
+      voiceStatusRef.current === "speech_detected" ||
+      voiceStatusRef.current === "processing" ||
+      voiceStatusRef.current === "finalizing_audio" ||
+      voiceStatusRef.current === "playing_response" ||
+      voiceStatusRef.current === "ending"
+    ) {
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      updateVoiceStatus("error");
+      setVoiceError("Microphone access is not available in this browser. You can keep using chat.");
+      return;
+    }
+    setVoiceError(null);
+    setVoiceTranscript("");
+    setVoiceAssistant("");
+    voiceDiscardRecordingRef.current = false;
+    try {
+      voiceStartingMicRef.current = true;
+      clearVoiceResumeTimer();
+      const socket = await ensureVoiceSocket();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = selectPatientVoiceMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recordingType = recorder.mimeType || mimeType || "audio/webm";
+      const filename = `patient-careai-${Date.now()}.${resolvePatientVoiceAudioExtension(recordingType)}`;
+      voiceChunksRef.current = [];
+      voiceSpeechDetectedRef.current = false;
+      voiceSpeechFrameActiveRef.current = false;
+      voiceSpeechStartedAtRef.current = null;
+      voiceLastSpeechAtRef.current = null;
+      voiceAutoStopTriggeredRef.current = false;
+      voiceSessionStartedAtRef.current = Date.now();
+      startVoiceAudioMonitoring(stream);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+      recorder.onstop = async () => {
+        stopVoiceStream();
+        if (voiceDiscardRecordingRef.current || socket.readyState !== WebSocket.OPEN) {
+          voiceDiscardRecordingRef.current = false;
+          return;
+        }
+        const contentType = recorder.mimeType || recordingType || "audio/webm";
+        const blob = new Blob(voiceChunksRef.current, { type: contentType });
+        if (blob.size === 0) {
+          updateVoiceStatus("session_started");
+          setVoiceInfo("No recorded audio was captured. Please speak and try again.");
+          appendVoiceEvent("NO_SPEECH_DETECTED");
+          if (voiceAutoResumeRef.current) {
+            scheduleVoiceListeningResume("empty_turn");
+          }
+          return;
+        }
+        if (!voiceSpeechDetectedRef.current) {
+          updateVoiceStatus("session_started");
+          setVoiceInfo("No speech detected. Please speak more clearly and try again.");
+          appendVoiceEvent("NO_SPEECH_DETECTED");
+          if (voiceAutoResumeRef.current) {
+            scheduleVoiceListeningResume("silent_turn");
+          }
+          return;
+        }
+        updateVoiceStatus("finalizing_audio");
+        setVoiceInfo("Finalizing microphone audio…");
+        const audioBase64 = await blobToBase64(blob);
+        const chunks = splitVoiceBase64Chunks(audioBase64);
+        updateVoiceStatus("processing");
+        setVoiceInfo("Uploading audio to CareAI…");
+        chunks.forEach((audioBase64Chunk, index) => {
+          socket.send(JSON.stringify({
+            type: "audio.chunk",
+            sequence: index + 1,
+            totalChunks: chunks.length,
+            contentType,
+            filename,
+            audioBase64Chunk,
+          }));
+        });
+        socket.send(JSON.stringify({
+          type: "audio.end",
+          totalChunks: chunks.length,
+          contentType,
+          filename,
+        }));
+        appendVoiceEvent(`TURN_SENT ${chunks.length} chunks`);
+      };
+      voiceStreamRef.current = stream;
+      voiceRecorderRef.current = recorder;
+      recorder.start();
+      updateVoiceStatus("listening");
+      setVoiceInfo("Listening… speak now.");
+      appendVoiceEvent(`RECORDER_STARTED ${options?.reason || (options?.automatic ? "automatic" : "manual")}`);
+    } catch (voiceStartError: unknown) {
+      stopVoiceStream();
+      updateVoiceStatus("error");
+      setVoiceError("Voice connection failed. Please retry.");
+      setVoiceInfo(null);
+    } finally {
+      voiceStartingMicRef.current = false;
+    }
+  }
+
+  async function handleVoiceStart() {
+    if (!portalSession) {
+      return;
+    }
+    voiceEndedByUserRef.current = false;
+    voiceAutoResumeRef.current = true;
+    voiceLastTranscriptOrResponseAtRef.current = Date.now();
+    setVoiceInactivityWarning(null);
+    setVoiceReplyReadyToPlay(false);
+    setVoiceAudioUrl((current) => {
+      if (current) {
+        URL.revokeObjectURL(current);
+      }
+      return null;
+    });
+    setVoiceProviderTrace(null);
+    setVoiceEvents([]);
+    setVoiceError(null);
+    setVoiceInfo("Connecting to CareAI voice…");
+    setVoiceTranscript("");
+    setVoiceAssistant("");
+    setVoiceSessionId(null);
+    try {
+      const socket = await ensureVoiceSocket();
+      if (socket.readyState === WebSocket.OPEN) {
+        appendVoiceEvent("SOCKET_OPEN");
+      }
+    } catch {
+      updateVoiceStatus("error");
+      setVoiceError("Voice connection failed. Please retry.");
+      setVoiceInfo(null);
+    }
+  }
+
+  async function handleVoiceStartTurn() {
+    if (!portalSession) {
+      return;
+    }
+    voiceEndedByUserRef.current = false;
+    try {
+      await startVoiceMic();
+    } catch {
+      updateVoiceStatus("error");
+      setVoiceError("Voice connection failed. Please retry.");
+      setVoiceInfo(null);
+    }
+  }
+
+  function handleVoiceStopTurn() {
+    if (voiceRecorderRef.current && voiceRecorderRef.current.state !== "inactive") {
+      appendVoiceEvent("RECORDER_STOPPING");
+      updateVoiceStatus("finalizing_audio");
+      setVoiceInfo("Finalizing this turn…");
+      voiceRecorderRef.current.stop();
+      return;
+    }
+    stopVoiceStream();
+    updateVoiceStatus("session_started");
+    setVoiceInfo("Session is ready. Start a turn when you want to speak.");
+  }
+
+  function handleVoiceEndSession() {
+    voiceEndedByUserRef.current = true;
+    voiceAutoResumeRef.current = false;
+    voiceStartMicPendingRef.current = false;
+    voiceDiscardRecordingRef.current = true;
+    if (voiceRecorderRef.current && voiceRecorderRef.current.state !== "inactive") {
+      voiceRecorderRef.current.stop();
+    }
+    if (voiceAudioElementRef.current) {
+      voiceAudioElementRef.current.pause();
+      voiceAudioElementRef.current.currentTime = 0;
+    }
+    closeVoiceSocket();
+    updateVoiceStatus("idle");
+    setVoiceError(null);
+    setVoiceInfo(null);
+    setVoiceInactivityWarning(null);
+    setVoiceReplyReadyToPlay(false);
+    appendVoiceEvent("SESSION_ENDED_BY_USER");
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1566,6 +2455,15 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setResetting(true);
     setError(null);
     try {
+      if (voiceAudioUrl) {
+        URL.revokeObjectURL(voiceAudioUrl);
+        setVoiceAudioUrl(null);
+      }
+      setVoiceTranscript("");
+      setVoiceAssistant("");
+      setVoiceReplyReadyToPlay(false);
+      setVoiceError(null);
+      resetPendingVoiceAudio();
       const response = await postPatientPortalSessionJson<PatientPortalCareAiResetResponse>(
         "/api/patient-portal/careai/reset",
         {},
@@ -1606,6 +2504,137 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
             <button className="ghost-button" type="button" disabled={!portalSession || resetting} onClick={handleReset}>
               {resetting ? "Resetting..." : "Reset"}
             </button>
+          </div>
+          <div className="patient-careai-voice-panel">
+            <div className="patient-careai-voice-actions">
+              <button
+                className="primary-button"
+                type="button"
+                disabled={!portalSession || submitting || (voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error")}
+                onClick={handleVoiceStart}
+              >
+                Talk to CareAI
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={voiceStatus === "idle" || voiceStatus === "ended"}
+                onClick={handleVoiceEndSession}
+              >
+                End Call
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                disabled={voiceStatus === "idle" || voiceStatus === "ended"}
+                onClick={() => setVoiceMuted((current) => !current)}
+              >
+                {voiceMuted ? "Unmute" : "Mute"}
+              </button>
+              <span className={`patient-voice-status patient-voice-status-${voiceStatus}`}>
+                {voiceMuted && voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error"
+                  ? "Muted"
+                  : patientVoiceStatusLabel(voiceStatus)}
+              </span>
+            </div>
+            <div className="patient-careai-voice-toolbar">
+              <span className="patient-inline-note">
+                {voiceInfo || "Start a voice session and CareAI will listen automatically after it connects."}
+              </span>
+              <button
+                className="ghost-button patient-technical-toggle"
+                type="button"
+                onClick={() => setShowVoiceTechnicalDetails((current) => !current)}
+              >
+                {showVoiceTechnicalDetails ? "Hide technical details" : "Show technical details"}
+              </button>
+            </div>
+            {voiceInactivityWarning ? <div className="patient-inline-empty patient-careai-voice-warning">{voiceInactivityWarning}</div> : null}
+            {voiceAudioUrl ? (
+              <>
+                <audio
+                  ref={voiceAudioElementRef}
+                  className="patient-careai-audio"
+                  src={voiceAudioUrl}
+                  muted={voiceMuted}
+                  onEnded={() => {
+                    updateVoiceStatus("session_started");
+                    setVoiceInfo("Listening again…");
+                    setVoiceReplyReadyToPlay(false);
+                    if (voiceAutoResumeRef.current) {
+                      scheduleVoiceListeningResume("playback_ended");
+                    }
+                  }}
+                />
+                {voiceReplyReadyToPlay ? (
+                  <button className="ghost-button patient-careai-reply-play" type="button" onClick={() => void handleVoiceReplyPlayback()}>
+                    Play CareAI reply
+                  </button>
+                ) : null}
+              </>
+            ) : null}
+            {voiceError ? <div className="patient-inline-empty patient-inline-error">{voiceError}</div> : null}
+            {showVoiceTechnicalDetails ? (
+              <div className="patient-careai-technical-panel">
+                <div className="patient-careai-voice-actions patient-careai-voice-debug-actions">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={!portalSession || voiceStatus !== "session_started"}
+                    onClick={() => void handleVoiceStartTurn()}
+                  >
+                    Start Turn
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={voiceStatus !== "listening" && voiceStatus !== "speech_detected"}
+                    onClick={handleVoiceStopTurn}
+                  >
+                    Stop Turn / Send
+                  </button>
+                </div>
+                <div className="patient-careai-voice-meta">
+                  <div className="patient-subcard">
+                    <strong>Transcript</strong>
+                    <span>{voiceTranscript || "No transcript yet."}</span>
+                  </div>
+                  <div className="patient-subcard">
+                    <strong>Voice reply</strong>
+                    <span>{voiceAssistant || "No assistant reply yet."}</span>
+                  </div>
+                  <div className="patient-subcard">
+                    <strong>Session</strong>
+                    <span>{voiceSessionId || "Starts after websocket handshake."}</span>
+                  </div>
+                  <div className="patient-subcard">
+                    <strong>Providers</strong>
+                    <span>
+                      STT {formatPatientVoiceProvider(voiceProviderTrace?.sttProvider)} · LLM {formatPatientVoiceProvider(voiceProviderTrace?.llmProvider)} · TTS {formatPatientVoiceProvider(voiceProviderTrace?.ttsProvider)}
+                    </span>
+                  </div>
+                  <div className="patient-subcard">
+                    <strong>Voice activity</strong>
+                    <span>
+                      RMS {voiceMicLevel.toFixed(3)} · Peak {voiceMicPeak.toFixed(3)} · {voiceSpeechDetected ? "Speech detected" : voiceSilenceDetected ? "Silence detected" : "Waiting"}
+                    </span>
+                  </div>
+                </div>
+                {voiceAudioUrl ? (
+                  <audio className="patient-careai-audio patient-careai-audio-technical" controls src={voiceAudioUrl} muted={voiceMuted} />
+                ) : null}
+                {voiceEvents.length > 0 ? (
+                  <div className="patient-careai-voice-events">
+                    <strong>Live events</strong>
+                    <div className="patient-careai-voice-event-list">
+                      {voiceEvents.map((item, index) => (
+                        <span key={`${item}-${index}`}>{item}</span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <div className="patient-careai-chat">
             <div className="patient-chat-stream" aria-live="polite">

@@ -74,6 +74,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/patient-portal/auth/**").permitAll()
                 .requestMatchers("/api/carepilot/webhooks/**").permitAll()
                 .requestMatchers("/ws/voice/**").permitAll()
+                .requestMatchers("/ws/patient-portal/careai").permitAll()
                 .requestMatchers(HttpMethod.POST, "/graphql").authenticated()
                 .anyRequest().authenticated()
         );
