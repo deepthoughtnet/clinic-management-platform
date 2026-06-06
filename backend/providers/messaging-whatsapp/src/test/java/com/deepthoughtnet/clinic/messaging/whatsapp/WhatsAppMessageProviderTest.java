@@ -85,6 +85,22 @@ class WhatsAppMessageProviderTest {
         assertThat(result.errorCode()).isEqualTo("PROVIDER_ERROR");
     }
 
+    @Test
+    void mockProviderReturnsSentWithoutMetaConfig() {
+        CarePilotWhatsAppMessagingProperties properties = new CarePilotWhatsAppMessagingProperties();
+        properties.setEnabled(true);
+        properties.setProvider("mock");
+        properties.setFromNumber("CLINIC");
+        MetaWhatsAppMessageProvider provider = new MetaWhatsAppMessageProvider(properties, okClient());
+
+        var result = provider.send(request());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.status()).isEqualTo(MessageDeliveryStatus.SENT);
+        assertThat(result.providerName()).isEqualTo("mock");
+        assertThat(result.providerMessageId()).startsWith("mock-whatsapp-");
+    }
+
     private CarePilotWhatsAppMessagingProperties baseProperties() {
         CarePilotWhatsAppMessagingProperties properties = new CarePilotWhatsAppMessagingProperties();
         properties.setEnabled(true);
@@ -116,4 +132,3 @@ class WhatsAppMessageProviderTest {
         return (req, props) -> new MetaWhatsAppHttpResponse(200, "{}", req.executionId().toString());
     }
 }
-

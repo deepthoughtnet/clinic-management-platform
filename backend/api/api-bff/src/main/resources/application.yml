@@ -146,6 +146,7 @@ clinic:
     messaging:
       email:
         enabled: ${CLINIC_CAREPILOT_MESSAGING_EMAIL_ENABLED:false}
+        provider: ${CLINIC_CAREPILOT_MESSAGING_EMAIL_PROVIDER:disabled}
         from-address: ${CLINIC_CAREPILOT_MESSAGING_EMAIL_FROM_ADDRESS:}
       sms:
         enabled: ${CLINIC_CAREPILOT_MESSAGING_SMS_ENABLED:false}

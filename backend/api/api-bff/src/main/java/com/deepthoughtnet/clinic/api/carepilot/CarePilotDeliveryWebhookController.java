@@ -44,9 +44,9 @@ public class CarePilotDeliveryWebhookController {
     public CarePilotDeliveryWebhookController(
             CampaignDeliveryWebhookService webhookService,
             ObjectMapper objectMapper,
-            @Value("${carepilot.messaging.whatsapp.webhook-verify-token:}") String whatsappVerifyToken,
-            @Value("${carepilot.messaging.whatsapp.app-secret:}") String whatsappAppSecret,
-            @Value("${carepilot.messaging.sms.webhook-secret:}") String smsWebhookSecret
+            @Value("${clinic.carepilot.messaging.whatsapp.webhook-verify-token:${carepilot.messaging.whatsapp.webhook-verify-token:}}") String whatsappVerifyToken,
+            @Value("${clinic.carepilot.messaging.whatsapp.app-secret:${carepilot.messaging.whatsapp.app-secret:}}") String whatsappAppSecret,
+            @Value("${clinic.carepilot.messaging.sms.webhook-secret:${carepilot.messaging.sms.webhook-secret:}}") String smsWebhookSecret
     ) {
         this.webhookService = webhookService;
         this.objectMapper = objectMapper;

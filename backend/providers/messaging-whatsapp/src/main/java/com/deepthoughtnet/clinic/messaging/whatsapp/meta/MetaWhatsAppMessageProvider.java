@@ -37,11 +37,14 @@ public class MetaWhatsAppMessageProvider implements MessageProvider {
     @Override
     public MessageResult send(MessageRequest request) {
         if (!properties.isEnabled()) {
-            return MessageResult.notConfigured(providerName(), "carepilot.messaging.whatsapp.enabled=false");
+            return MessageResult.notConfigured(providerName(), "clinic.carepilot.messaging.whatsapp.enabled=false");
         }
         String provider = normalizedProvider();
         if (!"meta-cloud-api".equalsIgnoreCase(provider)) {
-            return MessageResult.notConfigured(providerName(), "carepilot.messaging.whatsapp.provider is disabled or unsupported");
+            if (isMockProvider(provider)) {
+                return sendMock(request);
+            }
+            return MessageResult.notConfigured(providerName(), "clinic.carepilot.messaging.whatsapp.provider is disabled or unsupported");
         }
         String configError = validateConfig();
         if (configError != null) {
@@ -96,23 +99,48 @@ public class MetaWhatsAppMessageProvider implements MessageProvider {
         if (!StringUtils.hasText(provider) || "disabled".equalsIgnoreCase(provider)) {
             return "WHATSAPP_NOT_CONFIGURED";
         }
-        return "carepilot-whatsapp-" + provider.toLowerCase();
+        return isMockProvider(provider) ? provider.toLowerCase() : "carepilot-whatsapp-" + provider.toLowerCase();
+    }
+
+    private MessageResult sendMock(MessageRequest request) {
+        if (!StringUtils.hasText(properties.getFromNumber())) {
+            return MessageResult.notConfigured(providerName(), "clinic.carepilot.messaging.whatsapp.from-number is required");
+        }
+        if (!StringUtils.hasText(request.recipient().address())) {
+            return new MessageResult(false, MessageDeliveryStatus.FAILED, providerName(), null, "RECIPIENT_MISSING", "Recipient phone number is required", null);
+        }
+        if (!StringUtils.hasText(request.body())) {
+            return new MessageResult(false, MessageDeliveryStatus.FAILED, providerName(), null, "BODY_MISSING", "WhatsApp message body is required", null);
+        }
+        return new MessageResult(
+                true,
+                MessageDeliveryStatus.SENT,
+                providerName(),
+                "mock-whatsapp-" + UUID.randomUUID(),
+                null,
+                null,
+                OffsetDateTime.now()
+        );
     }
 
     private String validateConfig() {
         if (!StringUtils.hasText(properties.getApiUrl())) {
-            return "carepilot.messaging.whatsapp.api-url is required for meta-cloud-api provider";
+            return "clinic.carepilot.messaging.whatsapp.api-url is required for meta-cloud-api provider";
         }
         if (!StringUtils.hasText(properties.getAccessToken())) {
-            return "carepilot.messaging.whatsapp.access-token is required for meta-cloud-api provider";
+            return "clinic.carepilot.messaging.whatsapp.access-token is required for meta-cloud-api provider";
         }
         if (!StringUtils.hasText(properties.getPhoneNumberId())) {
-            return "carepilot.messaging.whatsapp.phone-number-id is required for meta-cloud-api provider";
+            return "clinic.carepilot.messaging.whatsapp.phone-number-id is required for meta-cloud-api provider";
         }
         return null;
     }
 
     private String normalizedProvider() {
         return properties.getProvider() == null ? "" : properties.getProvider().trim();
+    }
+
+    private boolean isMockProvider(String provider) {
+        return "mock".equalsIgnoreCase(provider) || "local-mock".equalsIgnoreCase(provider);
     }
 }

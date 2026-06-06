@@ -27,6 +27,7 @@ class CarePilotMessagingStatusServiceTest {
 
         CarePilotEmailMessagingProperties email = new CarePilotEmailMessagingProperties();
         email.setEnabled(true);
+        email.setProvider("smtp");
         email.setFromAddress("carepilot@example.com");
 
         CarePilotSmsMessagingProperties sms = new CarePilotSmsMessagingProperties();
@@ -77,8 +78,8 @@ class CarePilotMessagingStatusServiceTest {
 
         assertThat(smsStatus.status()).isEqualTo(ProviderReadinessStatus.NOT_CONFIGURED);
         assertThat(smsStatus.missingConfigurationKeys()).contains(
-                "carepilot.messaging.sms.provider",
-                "carepilot.messaging.sms.from-number or carepilot.messaging.sms.sender-id"
+                "clinic.carepilot.messaging.sms.provider",
+                "clinic.carepilot.messaging.sms.from-number or clinic.carepilot.messaging.sms.sender-id"
         );
         assertThat(smsStatus.message()).contains("incomplete");
     }
@@ -110,9 +111,10 @@ class CarePilotMessagingStatusServiceTest {
 
         assertThat(whatsAppStatus.status()).isEqualTo(ProviderReadinessStatus.NOT_CONFIGURED);
         assertThat(whatsAppStatus.missingConfigurationKeys()).contains(
-                "carepilot.messaging.whatsapp.api-url",
-                "carepilot.messaging.whatsapp.access-token",
-                "carepilot.messaging.whatsapp.phone-number-id"
+                "clinic.carepilot.messaging.whatsapp.api-url",
+                "clinic.carepilot.messaging.whatsapp.access-token",
+                "clinic.carepilot.messaging.whatsapp.phone-number-id",
+                "clinic.carepilot.messaging.whatsapp.from-number"
         );
         assertThat(whatsAppStatus.message()).contains("incomplete");
     }
@@ -184,6 +186,7 @@ class CarePilotMessagingStatusServiceTest {
         whatsApp.setApiUrl("https://graph.facebook.com/v18.0/123/messages");
         whatsApp.setAccessToken("secret");
         whatsApp.setPhoneNumberId("123");
+        whatsApp.setFromNumber("CLINIC");
         whatsApp.setBusinessAccountId("biz-1");
 
         CarePilotMessagingStatusService service = new CarePilotMessagingStatusService(
@@ -197,6 +200,81 @@ class CarePilotMessagingStatusServiceTest {
 
         assertThat(whatsAppStatus.status()).isEqualTo(ProviderReadinessStatus.READY);
         assertThat(whatsAppStatus.message()).contains("ready");
+    }
+
+    @Test
+    void emailMockConfiguredReturnsReady() {
+        MessagingProviderRegistry registry = mock(MessagingProviderRegistry.class);
+        when(registry.resolve(MessageChannel.EMAIL)).thenReturn(provider("mock", MessageChannel.EMAIL));
+        when(registry.resolve(MessageChannel.SMS)).thenReturn(provider("SMS_NOT_CONFIGURED", MessageChannel.SMS));
+        when(registry.resolve(MessageChannel.WHATSAPP)).thenReturn(provider("WHATSAPP_NOT_CONFIGURED", MessageChannel.WHATSAPP));
+
+        CarePilotEmailMessagingProperties email = new CarePilotEmailMessagingProperties();
+        email.setEnabled(true);
+        email.setProvider("mock");
+        email.setFromAddress("carepilot@example.com");
+
+        CarePilotMessagingStatusService service = new CarePilotMessagingStatusService(
+                registry, email, new CarePilotSmsMessagingProperties(), new CarePilotWhatsAppMessagingProperties(), "logging", false, ""
+        );
+
+        var emailStatus = service.providerStatuses().stream()
+                .filter(s -> s.channel() == MessageChannel.EMAIL)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(emailStatus.status()).isEqualTo(ProviderReadinessStatus.READY);
+        assertThat(emailStatus.message()).contains("Mock provider ready");
+    }
+
+    @Test
+    void smsMockConfiguredReturnsReady() {
+        MessagingProviderRegistry registry = mock(MessagingProviderRegistry.class);
+        when(registry.resolve(MessageChannel.EMAIL)).thenReturn(provider("carepilot-email", MessageChannel.EMAIL));
+        when(registry.resolve(MessageChannel.SMS)).thenReturn(provider("mock", MessageChannel.SMS));
+        when(registry.resolve(MessageChannel.WHATSAPP)).thenReturn(provider("WHATSAPP_NOT_CONFIGURED", MessageChannel.WHATSAPP));
+
+        CarePilotSmsMessagingProperties sms = new CarePilotSmsMessagingProperties();
+        sms.setEnabled(true);
+        sms.setProvider("mock");
+        sms.setFromNumber("CLINIC");
+
+        CarePilotMessagingStatusService service = new CarePilotMessagingStatusService(
+                registry, new CarePilotEmailMessagingProperties(), sms, new CarePilotWhatsAppMessagingProperties(), "logging", false, ""
+        );
+
+        var smsStatus = service.providerStatuses().stream()
+                .filter(s -> s.channel() == MessageChannel.SMS)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(smsStatus.status()).isEqualTo(ProviderReadinessStatus.READY);
+        assertThat(smsStatus.message()).contains("Mock provider ready");
+    }
+
+    @Test
+    void whatsAppMockConfiguredReturnsReady() {
+        MessagingProviderRegistry registry = mock(MessagingProviderRegistry.class);
+        when(registry.resolve(MessageChannel.EMAIL)).thenReturn(provider("carepilot-email", MessageChannel.EMAIL));
+        when(registry.resolve(MessageChannel.SMS)).thenReturn(provider("carepilot-sms-generic-http", MessageChannel.SMS));
+        when(registry.resolve(MessageChannel.WHATSAPP)).thenReturn(provider("mock", MessageChannel.WHATSAPP));
+
+        CarePilotWhatsAppMessagingProperties whatsApp = new CarePilotWhatsAppMessagingProperties();
+        whatsApp.setEnabled(true);
+        whatsApp.setProvider("mock");
+        whatsApp.setFromNumber("CLINIC");
+
+        CarePilotMessagingStatusService service = new CarePilotMessagingStatusService(
+                registry, new CarePilotEmailMessagingProperties(), new CarePilotSmsMessagingProperties(), whatsApp, "logging", false, ""
+        );
+
+        var whatsAppStatus = service.providerStatuses().stream()
+                .filter(s -> s.channel() == MessageChannel.WHATSAPP)
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(whatsAppStatus.status()).isEqualTo(ProviderReadinessStatus.READY);
+        assertThat(whatsAppStatus.message()).contains("Mock provider ready");
     }
 
     private MessageProvider provider(String providerName, MessageChannel channel) {

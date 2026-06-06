@@ -47,12 +47,19 @@ public class EmailMessageProvider implements MessageProvider {
     @Override
     public MessageResult send(MessageRequest request) {
         if (!properties.isEnabled()) {
-            return MessageResult.notConfigured(providerName(), "carepilot.messaging.email.enabled=false");
+            return MessageResult.notConfigured(providerName(), "clinic.carepilot.messaging.email.enabled=false");
+        }
+        String provider = normalizedProvider();
+        if (!StringUtils.hasText(provider) || "disabled".equalsIgnoreCase(provider)) {
+            return MessageResult.notConfigured(providerName(), "clinic.carepilot.messaging.email.provider is disabled");
         }
         if (!StringUtils.hasText(properties.getFromAddress())) {
-            return MessageResult.notConfigured(providerName(), "carepilot.messaging.email.from-address is required");
+            return MessageResult.notConfigured(providerName(), "clinic.carepilot.messaging.email.from-address is required");
         }
-        if (!isSmtpConfigured()) {
+        if (isMockProvider(provider)) {
+            return sendMock(request);
+        }
+        if (!isSmtpConfigured(provider)) {
             return MessageResult.notConfigured(providerName(), "SMTP host/provider is not configured");
         }
         if (mailSender == null) {
@@ -138,13 +145,82 @@ public class EmailMessageProvider implements MessageProvider {
 
     @Override
     public String providerName() {
-        return "carepilot-email-smtp";
+        String provider = normalizedProvider();
+        if (!StringUtils.hasText(provider) || "disabled".equalsIgnoreCase(provider)) {
+            return "EMAIL_NOT_CONFIGURED";
+        }
+        return isMockProvider(provider) ? provider.toLowerCase() : "carepilot-email-" + provider.toLowerCase();
     }
 
-    private boolean isSmtpConfigured() {
+    private MessageResult sendMock(MessageRequest request) {
+        if (request.recipient() == null || !StringUtils.hasText(request.recipient().address())) {
+            return new MessageResult(
+                    false,
+                    MessageDeliveryStatus.FAILED,
+                    providerName(),
+                    null,
+                    "RECIPIENT_MISSING",
+                    "Recipient email is required for CarePilot email delivery",
+                    null
+            );
+        }
+        if (!isValidEmail(request.recipient().address())) {
+            return new MessageResult(
+                    false,
+                    MessageDeliveryStatus.FAILED,
+                    providerName(),
+                    null,
+                    "RECIPIENT_INVALID",
+                    "Recipient email address is invalid",
+                    null
+            );
+        }
+        if (!StringUtils.hasText(request.subject())) {
+            return new MessageResult(
+                    false,
+                    MessageDeliveryStatus.FAILED,
+                    providerName(),
+                    null,
+                    "SUBJECT_MISSING",
+                    "Email subject is required",
+                    null
+            );
+        }
+        if (!StringUtils.hasText(request.body())) {
+            return new MessageResult(
+                    false,
+                    MessageDeliveryStatus.FAILED,
+                    providerName(),
+                    null,
+                    "BODY_MISSING",
+                    "Email body is required",
+                    null
+            );
+        }
+        return new MessageResult(
+                true,
+                MessageDeliveryStatus.SENT,
+                providerName(),
+                "mock-email-" + UUID.randomUUID(),
+                null,
+                null,
+                OffsetDateTime.now()
+        );
+    }
+
+    private boolean isSmtpConfigured(String provider) {
         return mailEnabled
+                && "smtp".equalsIgnoreCase(provider)
                 && "smtp".equalsIgnoreCase(mailProvider)
                 && StringUtils.hasText(smtpHost);
+    }
+
+    private String normalizedProvider() {
+        return properties.getProvider() == null ? "" : properties.getProvider().trim();
+    }
+
+    private boolean isMockProvider(String provider) {
+        return "mock".equalsIgnoreCase(provider) || "local-mock".equalsIgnoreCase(provider);
     }
 
     private boolean isValidEmail(String value) {

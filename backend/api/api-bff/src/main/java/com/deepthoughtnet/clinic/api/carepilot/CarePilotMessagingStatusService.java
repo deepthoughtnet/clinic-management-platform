@@ -62,20 +62,27 @@ public class CarePilotMessagingStatusService {
         MessageProvider provider = providerRegistry.resolve(MessageChannel.EMAIL);
         boolean available = isConcreteProvider(provider);
         boolean enabled = emailProperties.isEnabled();
+        String emailProvider = normalized(emailProperties.getProvider());
+        boolean mockProvider = isMockProvider(emailProvider);
         boolean smtpHostConfigured = StringUtils.hasText(smtpHost);
-        boolean providerConfigured = mailEnabled && "smtp".equalsIgnoreCase(mailProvider);
+        boolean providerConfigured = mockProvider
+                || ("smtp".equalsIgnoreCase(emailProvider) && mailEnabled && "smtp".equalsIgnoreCase(mailProvider));
         boolean fromAddressConfigured = StringUtils.hasText(emailProperties.getFromAddress());
-        boolean configured = providerConfigured && fromAddressConfigured && smtpHostConfigured;
+        boolean configured = providerConfigured && fromAddressConfigured && (mockProvider || smtpHostConfigured);
 
         List<String> missing = new ArrayList<>();
         if (!providerConfigured) {
-            missing.add("clinic.mail.provider=smtp + clinic.mail.enabled=true");
+            if (!StringUtils.hasText(emailProvider) || "disabled".equalsIgnoreCase(emailProvider)) {
+                missing.add("clinic.carepilot.messaging.email.provider");
+            } else {
+                missing.add("clinic.mail.provider=smtp + clinic.mail.enabled=true");
+            }
         }
-        if (!smtpHostConfigured) {
+        if (!mockProvider && !smtpHostConfigured) {
             missing.add("clinic.mail.host or spring.mail.host");
         }
         if (!fromAddressConfigured) {
-            missing.add("carepilot.messaging.email.from-address");
+            missing.add("clinic.carepilot.messaging.email.from-address");
         }
 
         ProviderReadinessStatus status;
@@ -86,6 +93,9 @@ public class CarePilotMessagingStatusService {
         } else if (!available) {
             status = ProviderReadinessStatus.ERROR;
             message = "No concrete email provider is available in registry.";
+        } else if (mockProvider && configured) {
+            status = ProviderReadinessStatus.READY;
+            message = "Mock provider ready for local UAT.";
         } else if (!configured) {
             status = ProviderReadinessStatus.NOT_CONFIGURED;
             message = "Email is enabled but SMTP host/from address is not configured.";
@@ -116,7 +126,8 @@ public class CarePilotMessagingStatusService {
         MessageProvider provider = providerRegistry.resolve(MessageChannel.SMS);
         boolean available = isConcreteProvider(provider);
         boolean enabled = smsProperties.isEnabled();
-        String smsProvider = smsProperties.getProvider() == null ? "" : smsProperties.getProvider().trim();
+        String smsProvider = normalized(smsProperties.getProvider());
+        boolean mockProvider = isMockProvider(smsProvider);
         boolean providerConfigured = StringUtils.hasText(smsProvider)
                 && !"disabled".equalsIgnoreCase(smsProvider);
         boolean fromNumberConfigured = StringUtils.hasText(smsProperties.getFromNumber())
@@ -124,22 +135,23 @@ public class CarePilotMessagingStatusService {
         boolean apiUrlConfigured = StringUtils.hasText(smsProperties.getApiUrl());
         boolean apiKeyConfigured = StringUtils.hasText(smsProperties.getApiKey());
         boolean configured = providerConfigured && fromNumberConfigured
-                && (!"generic-http".equalsIgnoreCase(smsProvider)
+                && (mockProvider
+                || !"generic-http".equalsIgnoreCase(smsProvider)
                 || (apiUrlConfigured && apiKeyConfigured));
 
         List<String> missing = new ArrayList<>();
         if (!providerConfigured) {
-            missing.add("carepilot.messaging.sms.provider");
+            missing.add("clinic.carepilot.messaging.sms.provider");
         }
         if (!fromNumberConfigured) {
-            missing.add("carepilot.messaging.sms.from-number or carepilot.messaging.sms.sender-id");
+            missing.add("clinic.carepilot.messaging.sms.from-number or clinic.carepilot.messaging.sms.sender-id");
         }
-        if ("generic-http".equalsIgnoreCase(smsProvider)) {
+        if (!mockProvider && "generic-http".equalsIgnoreCase(smsProvider)) {
             if (!apiUrlConfigured) {
-                missing.add("carepilot.messaging.sms.api-url");
+                missing.add("clinic.carepilot.messaging.sms.api-url");
             }
             if (!apiKeyConfigured) {
-                missing.add("carepilot.messaging.sms.api-key");
+                missing.add("clinic.carepilot.messaging.sms.api-key");
             }
         }
 
@@ -151,6 +163,9 @@ public class CarePilotMessagingStatusService {
         } else if (!available) {
             status = ProviderReadinessStatus.ERROR;
             message = "No concrete SMS provider is available in registry.";
+        } else if (mockProvider && configured) {
+            status = ProviderReadinessStatus.READY;
+            message = "Mock provider ready for local UAT.";
         } else if (!configured) {
             status = ProviderReadinessStatus.NOT_CONFIGURED;
             message = "SMS adapter foundation is available, but provider configuration is incomplete.";
@@ -181,27 +196,33 @@ public class CarePilotMessagingStatusService {
         MessageProvider provider = providerRegistry.resolve(MessageChannel.WHATSAPP);
         boolean available = isConcreteProvider(provider);
         boolean enabled = whatsAppProperties.isEnabled();
-        String waProvider = whatsAppProperties.getProvider() == null ? "" : whatsAppProperties.getProvider().trim();
-        boolean providerConfigured = "meta-cloud-api".equalsIgnoreCase(waProvider);
+        String waProvider = normalized(whatsAppProperties.getProvider());
+        boolean mockProvider = isMockProvider(waProvider);
+        boolean providerConfigured = "meta-cloud-api".equalsIgnoreCase(waProvider) || mockProvider;
         boolean apiUrlConfigured = StringUtils.hasText(whatsAppProperties.getApiUrl());
         boolean accessTokenConfigured = StringUtils.hasText(whatsAppProperties.getAccessToken());
         boolean phoneNumberIdConfigured = StringUtils.hasText(whatsAppProperties.getPhoneNumberId());
         boolean fromNumberConfigured = StringUtils.hasText(whatsAppProperties.getFromNumber());
         boolean businessIdConfigured = StringUtils.hasText(whatsAppProperties.getBusinessAccountId());
-        boolean configured = providerConfigured && apiUrlConfigured && accessTokenConfigured && phoneNumberIdConfigured;
+        boolean configured = providerConfigured
+                && fromNumberConfigured
+                && (mockProvider || (apiUrlConfigured && accessTokenConfigured && phoneNumberIdConfigured));
 
         List<String> missing = new ArrayList<>();
         if (!providerConfigured) {
-            missing.add("carepilot.messaging.whatsapp.provider=meta-cloud-api");
+            missing.add("clinic.carepilot.messaging.whatsapp.provider=meta-cloud-api");
         }
-        if (!apiUrlConfigured) {
-            missing.add("carepilot.messaging.whatsapp.api-url");
+        if (!mockProvider && !apiUrlConfigured) {
+            missing.add("clinic.carepilot.messaging.whatsapp.api-url");
         }
-        if (!accessTokenConfigured) {
-            missing.add("carepilot.messaging.whatsapp.access-token");
+        if (!mockProvider && !accessTokenConfigured) {
+            missing.add("clinic.carepilot.messaging.whatsapp.access-token");
         }
-        if (!phoneNumberIdConfigured) {
-            missing.add("carepilot.messaging.whatsapp.phone-number-id");
+        if (!mockProvider && !phoneNumberIdConfigured) {
+            missing.add("clinic.carepilot.messaging.whatsapp.phone-number-id");
+        }
+        if (!fromNumberConfigured) {
+            missing.add("clinic.carepilot.messaging.whatsapp.from-number");
         }
 
         ProviderReadinessStatus status;
@@ -212,6 +233,9 @@ public class CarePilotMessagingStatusService {
         } else if (!available) {
             status = ProviderReadinessStatus.ERROR;
             message = "No concrete WhatsApp provider is available in registry.";
+        } else if (mockProvider && configured) {
+            status = ProviderReadinessStatus.READY;
+            message = "Mock provider ready for local UAT.";
         } else if (!configured) {
             status = ProviderReadinessStatus.NOT_CONFIGURED;
             message = "WhatsApp adapter foundation is available, but provider configuration is incomplete.";
@@ -240,5 +264,13 @@ public class CarePilotMessagingStatusService {
 
     private boolean isConcreteProvider(MessageProvider provider) {
         return provider != null && !"carepilot-noop".equals(provider.providerName());
+    }
+
+    private String normalized(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private boolean isMockProvider(String provider) {
+        return "mock".equalsIgnoreCase(provider) || "local-mock".equalsIgnoreCase(provider);
     }
 }

@@ -36,6 +36,7 @@ class EmailMessageProviderTest {
         JavaMailSender mailSender = mock(JavaMailSender.class);
         CarePilotEmailMessagingProperties properties = new CarePilotEmailMessagingProperties();
         properties.setEnabled(true);
+        properties.setProvider("smtp");
         properties.setFromAddress(" ");
         EmailMessageProvider provider = new EmailMessageProvider(properties, mailSender, "smtp", true, "smtp.example.com");
 
@@ -51,6 +52,7 @@ class EmailMessageProviderTest {
         JavaMailSender mailSender = mock(JavaMailSender.class);
         CarePilotEmailMessagingProperties properties = new CarePilotEmailMessagingProperties();
         properties.setEnabled(true);
+        properties.setProvider("smtp");
         properties.setFromAddress("carepilot@example.com");
         EmailMessageProvider provider = new EmailMessageProvider(properties, mailSender, "smtp", true, "");
 
@@ -68,6 +70,7 @@ class EmailMessageProviderTest {
         doThrow(new MailSendException("down")).when(mailSender).send(org.mockito.ArgumentMatchers.any(MimeMessage.class));
         CarePilotEmailMessagingProperties properties = new CarePilotEmailMessagingProperties();
         properties.setEnabled(true);
+        properties.setProvider("smtp");
         properties.setFromAddress("carepilot@example.com");
         EmailMessageProvider provider = new EmailMessageProvider(properties, mailSender, "smtp", true, "smtp.example.com");
 
@@ -85,6 +88,7 @@ class EmailMessageProviderTest {
         org.mockito.Mockito.when(mailSender.createMimeMessage()).thenReturn(mimeMessage);
         CarePilotEmailMessagingProperties properties = new CarePilotEmailMessagingProperties();
         properties.setEnabled(true);
+        properties.setProvider("smtp");
         properties.setFromAddress("carepilot@example.com");
         EmailMessageProvider provider = new EmailMessageProvider(properties, mailSender, "smtp", true, "smtp.example.com");
 
@@ -94,6 +98,23 @@ class EmailMessageProviderTest {
         assertThat(result.success()).isTrue();
         assertThat(result.status()).isEqualTo(MessageDeliveryStatus.SENT);
         assertThat(result.providerMessageId()).isNotBlank();
+    }
+
+    @Test
+    void mockProviderReturnsSentWithoutSmtpHost() {
+        JavaMailSender mailSender = mock(JavaMailSender.class);
+        CarePilotEmailMessagingProperties properties = new CarePilotEmailMessagingProperties();
+        properties.setEnabled(true);
+        properties.setProvider("mock");
+        properties.setFromAddress("carepilot@example.com");
+        EmailMessageProvider provider = new EmailMessageProvider(properties, mailSender, "logging", false, "");
+
+        var result = provider.send(request("p@example.com", "Subject", "Body"));
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.status()).isEqualTo(MessageDeliveryStatus.SENT);
+        assertThat(result.providerName()).isEqualTo("mock");
+        assertThat(result.providerMessageId()).startsWith("mock-email-");
     }
 
     private MessageRequest request(String recipient, String subject, String body) {

@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * Controls CarePilot SMS provider activation and baseline provider settings.
  */
-@ConfigurationProperties(prefix = "carepilot.messaging.sms")
+@ConfigurationProperties(prefix = "clinic.carepilot.messaging.sms")
 public class CarePilotSmsMessagingProperties {
     /**
      * Explicit enablement flag for SMS channel dispatch.

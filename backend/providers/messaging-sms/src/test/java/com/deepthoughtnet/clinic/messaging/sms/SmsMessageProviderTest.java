@@ -98,6 +98,22 @@ class SmsMessageProviderTest {
         assertThat(result.errorCode()).isEqualTo("PROVIDER_ERROR");
     }
 
+    @Test
+    void mockProviderReturnsSentWithoutApiUrlOrApiKey() {
+        CarePilotSmsMessagingProperties properties = new CarePilotSmsMessagingProperties();
+        properties.setEnabled(true);
+        properties.setProvider("mock");
+        properties.setFromNumber("CLINIC");
+        SmsMessageProvider provider = new SmsMessageProvider(properties, okClient());
+
+        var result = provider.send(request());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.status()).isEqualTo(MessageDeliveryStatus.SENT);
+        assertThat(result.providerName()).isEqualTo("mock");
+        assertThat(result.providerMessageId()).startsWith("mock-sms-");
+    }
+
     private CarePilotSmsMessagingProperties baseProperties() {
         CarePilotSmsMessagingProperties properties = new CarePilotSmsMessagingProperties();
         properties.setEnabled(true);
@@ -128,4 +144,3 @@ class SmsMessageProviderTest {
         return (req, cfg) -> new GenericHttpSmsResponse(200, "{}", req.executionId().toString());
     }
 }
-

@@ -33,11 +33,11 @@ public class SmsMessageProvider implements MessageProvider {
     @Override
     public MessageResult send(MessageRequest request) {
         if (!properties.isEnabled()) {
-            return MessageResult.notConfigured(providerName(), "carepilot.messaging.sms.enabled=false");
+            return MessageResult.notConfigured(providerName(), "clinic.carepilot.messaging.sms.enabled=false");
         }
         String provider = normalizedProvider();
         if (!StringUtils.hasText(provider) || "disabled".equalsIgnoreCase(provider)) {
-            return MessageResult.notConfigured(providerName(), "carepilot.messaging.sms.provider is disabled");
+            return MessageResult.notConfigured(providerName(), "clinic.carepilot.messaging.sms.provider is disabled");
         }
         if (!StringUtils.hasText(request.recipient().address())) {
             return new MessageResult(
@@ -62,6 +62,9 @@ public class SmsMessageProvider implements MessageProvider {
             );
         }
 
+        if (isMockProvider(provider)) {
+            return sendMock(request);
+        }
         if ("generic-http".equalsIgnoreCase(provider)) {
             return sendGenericHttp(request);
         }
@@ -74,7 +77,22 @@ public class SmsMessageProvider implements MessageProvider {
         if (!StringUtils.hasText(provider) || "disabled".equalsIgnoreCase(provider)) {
             return "SMS_NOT_CONFIGURED";
         }
-        return "carepilot-sms-" + provider.toLowerCase();
+        return isMockProvider(provider) ? provider.toLowerCase() : "carepilot-sms-" + provider.toLowerCase();
+    }
+
+    private MessageResult sendMock(MessageRequest request) {
+        if (!StringUtils.hasText(properties.getFromNumber()) && !StringUtils.hasText(properties.getSenderId())) {
+            return MessageResult.notConfigured(providerName(), "clinic.carepilot.messaging.sms.from-number or clinic.carepilot.messaging.sms.sender-id is required");
+        }
+        return new MessageResult(
+                true,
+                MessageDeliveryStatus.SENT,
+                providerName(),
+                "mock-sms-" + UUID.randomUUID(),
+                null,
+                null,
+                OffsetDateTime.now()
+        );
     }
 
     private MessageResult sendGenericHttp(MessageRequest request) {
@@ -120,18 +138,22 @@ public class SmsMessageProvider implements MessageProvider {
 
     private String validateGenericHttpConfig() {
         if (!StringUtils.hasText(properties.getApiUrl())) {
-            return "carepilot.messaging.sms.api-url is required for generic-http provider";
+            return "clinic.carepilot.messaging.sms.api-url is required for generic-http provider";
         }
         if (!StringUtils.hasText(properties.getApiKey())) {
-            return "carepilot.messaging.sms.api-key is required for generic-http provider";
+            return "clinic.carepilot.messaging.sms.api-key is required for generic-http provider";
         }
         if (!StringUtils.hasText(properties.getFromNumber()) && !StringUtils.hasText(properties.getSenderId())) {
-            return "carepilot.messaging.sms.from-number or carepilot.messaging.sms.sender-id is required";
+            return "clinic.carepilot.messaging.sms.from-number or clinic.carepilot.messaging.sms.sender-id is required";
         }
         return null;
     }
 
     private String normalizedProvider() {
         return properties.getProvider() == null ? "" : properties.getProvider().trim();
+    }
+
+    private boolean isMockProvider(String provider) {
+        return "mock".equalsIgnoreCase(provider) || "local-mock".equalsIgnoreCase(provider);
     }
 }

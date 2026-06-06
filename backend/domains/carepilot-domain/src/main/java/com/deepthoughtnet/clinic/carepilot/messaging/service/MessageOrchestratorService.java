@@ -19,7 +19,7 @@ public class MessageOrchestratorService {
 
     public MessageOrchestratorService(
             MessagingProviderRegistry providerRegistry,
-            @Value("${carepilot.provider.fail-fast:false}") boolean failFast
+            @Value("${clinic.carepilot.provider.fail-fast:${carepilot.provider.fail-fast:false}}") boolean failFast
     ) {
         this.providerRegistry = providerRegistry;
         this.failFast = failFast;

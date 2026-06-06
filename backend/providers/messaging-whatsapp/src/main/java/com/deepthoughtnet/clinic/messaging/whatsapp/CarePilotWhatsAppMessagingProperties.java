@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * Controls CarePilot WhatsApp provider activation and baseline provider settings.
  */
-@ConfigurationProperties(prefix = "carepilot.messaging.whatsapp")
+@ConfigurationProperties(prefix = "clinic.carepilot.messaging.whatsapp")
 public class CarePilotWhatsAppMessagingProperties {
     /**
      * Explicit enablement flag for WhatsApp channel dispatch.
