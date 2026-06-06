@@ -5,6 +5,7 @@ export type ApiOpts = {
   signal?: AbortSignal;
   requireTenant?: boolean;
   platformOperation?: boolean;
+  accept?: string;
 };
 
 export type ApiErrorResponse = {
@@ -114,7 +115,7 @@ function buildHeaders(path: string, opts?: ApiOpts, withContentType = true): Hea
     ...(platformOp ? { "X-Platform-Op": "true" } : {}),
     ...(headerTenantId ? { "X-Tenant-Id": headerTenantId } : {}),
     ...(withContentType ? { "Content-Type": "application/json" } : {}),
-    Accept: "application/json",
+    Accept: opts?.accept || "application/json",
   };
 }
 

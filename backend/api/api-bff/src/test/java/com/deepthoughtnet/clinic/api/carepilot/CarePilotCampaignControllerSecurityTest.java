@@ -17,4 +17,14 @@ class CarePilotCampaignControllerSecurityTest {
         assertThat(guard).contains("AUDITOR");
         assertThat(guard).contains("PLATFORM_ADMIN");
     }
+
+    @Test
+    void triggerAllowsClinicAdminAndTenantSupportButNotAuditor() throws Exception {
+        Method trigger = CarePilotCampaignController.class.getMethod("trigger", java.util.UUID.class);
+        String guard = trigger.getAnnotation(PreAuthorize.class).value();
+
+        assertThat(guard).contains("CLINIC_ADMIN");
+        assertThat(guard).contains("PLATFORM_TENANT_SUPPORT");
+        assertThat(guard).doesNotContain("AUDITOR");
+    }
 }

@@ -111,6 +111,15 @@ public final class LeadDtos {
 
     public record LeadConversionResponse(UUID leadId, UUID patientId, boolean newlyCreated, UUID appointmentId, String appointmentError) {}
 
+    public record LeadCsvImportRowError(int rowNumber, String message) {}
+
+    public record LeadCsvImportResponse(
+            int importedCount,
+            int skippedDuplicateCount,
+            int failedCount,
+            List<LeadCsvImportRowError> rowErrors
+    ) {}
+
     public record LeadAnalyticsResponse(
             long totalLeads,
             long newLeads,

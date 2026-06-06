@@ -61,6 +61,17 @@ public class LeadConversionService {
         if (lead.getStatus() == LeadStatus.SPAM) {
             throw new IllegalArgumentException("Spam lead cannot be converted");
         }
+        if (appointmentBooking != null) {
+            appointmentService.validateScheduledBookingRequest(
+                    tenantId,
+                    appointmentBooking.doctorUserId(),
+                    appointmentBooking.appointmentDate(),
+                    appointmentBooking.appointmentTime(),
+                    StringUtils.hasText(appointmentBooking.notes()) ? appointmentBooking.notes() : appointmentBooking.reason(),
+                    appointmentBooking.priority(),
+                    allowOverbooking
+            );
+        }
 
         Optional<PatientEntity> existingByPhone = patientRepository.findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, lead.getPhone());
         Optional<PatientEntity> existingByEmail = StringUtils.hasText(lead.getEmail())
@@ -103,6 +114,26 @@ public class LeadConversionService {
             created = true;
         }
 
+        UUID appointmentId = null;
+        if (appointmentBooking != null) {
+            AppointmentRecord record = appointmentService.createScheduled(
+                    tenantId,
+                    new AppointmentUpsertCommand(
+                            patientId,
+                            appointmentBooking.doctorUserId(),
+                            appointmentBooking.appointmentDate(),
+                            appointmentBooking.appointmentTime(),
+                            StringUtils.hasText(appointmentBooking.notes()) ? appointmentBooking.notes() : appointmentBooking.reason(),
+                            AppointmentType.SCHEDULED,
+                            AppointmentStatus.BOOKED,
+                            appointmentBooking.priority()
+                    ),
+                    actorId,
+                    allowOverbooking
+            );
+            appointmentId = record.id();
+        }
+
         lead.setConverted(patientId, actorId);
         leadRepository.save(lead);
         leadActivityService.record(
@@ -117,33 +148,10 @@ public class LeadConversionService {
                 patientId,
                 actorId
         );
-
-        UUID appointmentId = null;
-        String appointmentError = null;
-        if (appointmentBooking != null) {
-            try {
-                AppointmentRecord record = appointmentService.createScheduled(
-                        tenantId,
-                        new AppointmentUpsertCommand(
-                                patientId,
-                                appointmentBooking.doctorUserId(),
-                                appointmentBooking.appointmentDate(),
-                                appointmentBooking.appointmentTime(),
-                                StringUtils.hasText(appointmentBooking.notes()) ? appointmentBooking.notes() : appointmentBooking.reason(),
-                                AppointmentType.SCHEDULED,
-                                AppointmentStatus.BOOKED,
-                                appointmentBooking.priority()
-                        ),
-                        actorId,
-                        allowOverbooking
-                );
-                appointmentId = record.id();
-                leadService.linkAppointment(tenantId, lead.getId(), appointmentId, actorId);
-            } catch (RuntimeException ex) {
-                appointmentError = ex.getMessage();
-            }
+        if (appointmentId != null) {
+            leadService.linkAppointment(tenantId, lead.getId(), appointmentId, actorId);
         }
 
-        return new LeadConversionResult(lead.getId(), patientId, created, appointmentId, appointmentError);
+        return new LeadConversionResult(lead.getId(), patientId, created, appointmentId, null);
     }
 }

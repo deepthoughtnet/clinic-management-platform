@@ -18,7 +18,8 @@ import java.util.UUID;
 @Table(name = "carepilot_webinars", indexes = {
         @Index(name = "ix_cp_webinars_tenant_status", columnList = "tenant_id,status"),
         @Index(name = "ix_cp_webinars_tenant_type", columnList = "tenant_id,webinar_type"),
-        @Index(name = "ix_cp_webinars_tenant_start", columnList = "tenant_id,scheduled_start_at")
+        @Index(name = "ix_cp_webinars_tenant_start", columnList = "tenant_id,scheduled_start_at"),
+        @Index(name = "ix_cp_webinars_tenant_campaign", columnList = "tenant_id,campaign_id")
 })
 public class WebinarEntity {
     @Id
@@ -41,6 +42,9 @@ public class WebinarEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 24)
     private WebinarStatus status;
+
+    @Column(name = "campaign_id")
+    private UUID campaignId;
 
     @Column(name = "webinar_url", length = 1024)
     private String webinarUrl;
@@ -125,6 +129,8 @@ public class WebinarEntity {
     public void setWebinarType(WebinarType webinarType) { this.webinarType = webinarType; }
     public WebinarStatus getStatus() { return status; }
     public void setStatus(WebinarStatus status) { this.status = status; }
+    public UUID getCampaignId() { return campaignId; }
+    public void setCampaignId(UUID campaignId) { this.campaignId = campaignId; }
     public String getWebinarUrl() { return webinarUrl; }
     public void setWebinarUrl(String webinarUrl) { this.webinarUrl = webinarUrl; }
     public String getOrganizerName() { return organizerName; }

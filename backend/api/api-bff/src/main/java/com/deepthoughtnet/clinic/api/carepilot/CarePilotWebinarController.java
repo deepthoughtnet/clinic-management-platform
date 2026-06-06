@@ -106,7 +106,7 @@ public class CarePilotWebinarController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var rows = registrationService.list(tenantId, id, page, size);
         return new WebinarRegistrationListResponse(rows.getNumber(), rows.getSize(), rows.getTotalElements(), rows.getContent().stream().map(r -> new WebinarRegistrationResponse(
-                r.id(), r.tenantId(), r.webinarId(), r.patientId(), r.leadId(), r.attendeeName(), r.attendeeEmail(), r.attendeePhone(),
+                r.id(), r.tenantId(), r.webinarId(), r.patientId(), r.leadId(), r.leadName(), r.campaignId(), r.campaignName(), r.attendeeName(), r.attendeeEmail(), r.attendeePhone(),
                 r.registrationStatus(), r.attended(), r.attendedAt(), r.source(), r.notes(), r.createdAt(), r.updatedAt()
         )).toList());
     }
@@ -116,6 +116,7 @@ public class CarePilotWebinarController {
     @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
     public WebinarRegistrationResponse register(@PathVariable UUID id, @RequestBody WebinarRegistrationRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorId = RequestContextHolder.require().appUserId();
         var row = registrationService.register(tenantId, id, new WebinarRegistrationCommand(
                 request == null ? null : request.patientId(),
                 request == null ? null : request.leadId(),
@@ -124,9 +125,9 @@ public class CarePilotWebinarController {
                 request == null ? null : request.attendeePhone(),
                 request == null ? null : request.source(),
                 request == null ? null : request.notes()
-        ));
+        ), actorId);
         return new WebinarRegistrationResponse(
-                row.id(), row.tenantId(), row.webinarId(), row.patientId(), row.leadId(), row.attendeeName(), row.attendeeEmail(), row.attendeePhone(),
+                row.id(), row.tenantId(), row.webinarId(), row.patientId(), row.leadId(), row.leadName(), row.campaignId(), row.campaignName(), row.attendeeName(), row.attendeeEmail(), row.attendeePhone(),
                 row.registrationStatus(), row.attended(), row.attendedAt(), row.source(), row.notes(), row.createdAt(), row.updatedAt()
         );
     }
@@ -140,7 +141,7 @@ public class CarePilotWebinarController {
         }
         var row = registrationService.markAttendance(tenantId, id, request.registrationId(), new WebinarAttendanceCommand(request.registrationStatus(), request.notes()));
         return new WebinarRegistrationResponse(
-                row.id(), row.tenantId(), row.webinarId(), row.patientId(), row.leadId(), row.attendeeName(), row.attendeeEmail(), row.attendeePhone(),
+                row.id(), row.tenantId(), row.webinarId(), row.patientId(), row.leadId(), row.leadName(), row.campaignId(), row.campaignName(), row.attendeeName(), row.attendeeEmail(), row.attendeePhone(),
                 row.registrationStatus(), row.attended(), row.attendedAt(), row.source(), row.notes(), row.createdAt(), row.updatedAt()
         );
     }
@@ -161,7 +162,7 @@ public class CarePilotWebinarController {
             return null;
         }
         return new WebinarUpsertCommand(
-                request.title(), request.description(), request.webinarType(), request.status(), request.webinarUrl(), request.organizerName(), request.organizerEmail(),
+                request.title(), request.description(), request.webinarType(), request.status(), request.campaignId(), request.webinarUrl(), request.organizerName(), request.organizerEmail(),
                 request.scheduledStartAt(), request.scheduledEndAt(), request.timezone(), request.capacity(), request.registrationEnabled(), request.reminderEnabled(),
                 request.followupEnabled(), request.tags()
         );
@@ -169,7 +170,7 @@ public class CarePilotWebinarController {
 
     private WebinarResponse toResponse(WebinarRecord row) {
         return new WebinarResponse(
-                row.id(), row.tenantId(), row.title(), row.description(), row.webinarType(), row.status(), row.webinarUrl(), row.organizerName(), row.organizerEmail(),
+                row.id(), row.tenantId(), row.title(), row.description(), row.webinarType(), row.status(), row.campaignId(), row.campaignName(), row.webinarUrl(), row.organizerName(), row.organizerEmail(),
                 row.scheduledStartAt(), row.scheduledEndAt(), row.timezone(), row.capacity(), row.registrationEnabled(), row.reminderEnabled(), row.followupEnabled(),
                 row.tags(), row.createdBy(), row.updatedBy(), row.createdAt(), row.updatedAt()
         );

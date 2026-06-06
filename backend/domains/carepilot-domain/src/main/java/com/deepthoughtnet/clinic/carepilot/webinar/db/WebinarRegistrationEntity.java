@@ -19,7 +19,8 @@ import java.util.UUID;
 @Table(name = "carepilot_webinar_registrations", indexes = {
         @Index(name = "ix_cp_webreg_tenant_webinar", columnList = "tenant_id,webinar_id"),
         @Index(name = "ix_cp_webreg_tenant_status", columnList = "tenant_id,registration_status"),
-        @Index(name = "ix_cp_webreg_tenant_created", columnList = "tenant_id,created_at")
+        @Index(name = "ix_cp_webreg_tenant_created", columnList = "tenant_id,created_at"),
+        @Index(name = "ix_cp_webreg_tenant_lead", columnList = "tenant_id,lead_id")
 }, uniqueConstraints = {
         @UniqueConstraint(name = "ux_cp_webreg_tenant_webinar_email", columnNames = {"tenant_id", "webinar_id", "attendee_email"})
 })

@@ -27,16 +27,19 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../auth/useAuth";
 import {
   createCarePilotWebinar,
   getCarePilotWebinarAnalyticsSummary,
+  listCarePilotCampaigns,
   listCarePilotWebinarRegistrations,
   listCarePilotWebinars,
   markCarePilotWebinarAttendance,
   registerCarePilotWebinarAttendee,
   updateCarePilotWebinar,
   updateCarePilotWebinarStatus,
+  type CarePilotCampaign,
   type CarePilotWebinar,
   type CarePilotWebinarAnalyticsSummary,
   type CarePilotWebinarRegistration,
@@ -57,6 +60,7 @@ function statusColor(status: CarePilotWebinarStatus) {
 
 export default function WebinarsPage() {
   const auth = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -66,6 +70,7 @@ export default function WebinarsPage() {
   const [typeFilter, setTypeFilter] = React.useState<CarePilotWebinarType | "">("");
 
   const [rows, setRows] = React.useState<CarePilotWebinar[]>([]);
+  const [campaigns, setCampaigns] = React.useState<CarePilotCampaign[]>([]);
   const [analytics, setAnalytics] = React.useState<CarePilotWebinarAnalyticsSummary | null>(null);
 
   const [editorOpen, setEditorOpen] = React.useState(false);
@@ -74,6 +79,7 @@ export default function WebinarsPage() {
     title: "",
     description: "",
     webinarType: "HEALTH_AWARENESS" as CarePilotWebinarType,
+    campaignId: "",
     webinarUrl: "",
     organizerName: "",
     organizerEmail: "",
@@ -91,6 +97,9 @@ export default function WebinarsPage() {
   const [regWebinar, setRegWebinar] = React.useState<CarePilotWebinar | null>(null);
   const [registrations, setRegistrations] = React.useState<CarePilotWebinarRegistration[]>([]);
   const [regForm, setRegForm] = React.useState({ attendeeName: "", attendeeEmail: "", attendeePhone: "", patientId: "", leadId: "" });
+  const [regLoading, setRegLoading] = React.useState(false);
+  const [regSaving, setRegSaving] = React.useState(false);
+  const [regError, setRegError] = React.useState<string | null>(null);
 
   const canView = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("RECEPTIONIST") || auth.rolesUpper.includes("AUDITOR") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
   const canMutate = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("RECEPTIONIST") || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
@@ -103,7 +112,7 @@ export default function WebinarsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [webinars, summary] = await Promise.all([
+      const [webinars, summary, campaignRows] = await Promise.all([
         listCarePilotWebinars(auth.accessToken, auth.tenantId, {
           status: statusFilter || undefined,
           webinarType: typeFilter || undefined,
@@ -112,6 +121,7 @@ export default function WebinarsPage() {
           size: 100,
         }),
         getCarePilotWebinarAnalyticsSummary(auth.accessToken, auth.tenantId),
+        listCarePilotCampaigns(auth.accessToken, auth.tenantId),
       ]);
       let filtered = webinars.rows;
       if (tab === "LIVE") filtered = filtered.filter((r) => r.status === "LIVE");
@@ -119,6 +129,7 @@ export default function WebinarsPage() {
       if (tab === "COMPLETED") filtered = filtered.filter((r) => r.status === "COMPLETED");
       setRows(filtered);
       setAnalytics(summary);
+      setCampaigns(campaignRows);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load webinars");
     } finally {
@@ -135,6 +146,7 @@ export default function WebinarsPage() {
         title: row.title,
         description: row.description || "",
         webinarType: row.webinarType,
+        campaignId: row.campaignId || "",
         webinarUrl: row.webinarUrl || "",
         organizerName: row.organizerName || "",
         organizerEmail: row.organizerEmail || "",
@@ -153,6 +165,7 @@ export default function WebinarsPage() {
         title: "",
         description: "",
         webinarType: "HEALTH_AWARENESS",
+        campaignId: "",
         webinarUrl: "",
         organizerName: "",
         organizerEmail: "",
@@ -177,6 +190,7 @@ export default function WebinarsPage() {
         title: form.title,
         description: form.description || null,
         webinarType: form.webinarType,
+        campaignId: form.campaignId || null,
         webinarUrl: form.webinarUrl || null,
         organizerName: form.organizerName || null,
         organizerEmail: form.organizerEmail || null,
@@ -205,35 +219,72 @@ export default function WebinarsPage() {
     if (!auth.accessToken || !auth.tenantId) return;
     setRegWebinar(row);
     setRegOpen(true);
-    const list = await listCarePilotWebinarRegistrations(auth.accessToken, auth.tenantId, row.id, 0, 100);
-    setRegistrations(list.rows);
+    setRegistrations([]);
+    setRegError(null);
+    setRegLoading(true);
+    try {
+      const list = await listCarePilotWebinarRegistrations(auth.accessToken, auth.tenantId, row.id, 0, 100);
+      setRegistrations(list.rows);
+    } catch (err) {
+      setRegError(err instanceof Error ? err.message : "Failed to load registrations");
+    } finally {
+      setRegLoading(false);
+    }
   };
 
   const addRegistration = async () => {
     if (!auth.accessToken || !auth.tenantId || !regWebinar || !canMutate) return;
-    await registerCarePilotWebinarAttendee(auth.accessToken, auth.tenantId, regWebinar.id, {
-      attendeeName: regForm.attendeeName,
-      attendeeEmail: regForm.attendeeEmail || null,
-      attendeePhone: regForm.attendeePhone || null,
-      patientId: regForm.patientId || null,
-      leadId: regForm.leadId || null,
-    });
-    const list = await listCarePilotWebinarRegistrations(auth.accessToken, auth.tenantId, regWebinar.id, 0, 100);
-    setRegistrations(list.rows);
-    setRegForm({ attendeeName: "", attendeeEmail: "", attendeePhone: "", patientId: "", leadId: "" });
+    setRegError(null);
+    setRegSaving(true);
+    try {
+      await registerCarePilotWebinarAttendee(auth.accessToken, auth.tenantId, regWebinar.id, {
+        attendeeName: regForm.attendeeName,
+        attendeeEmail: regForm.attendeeEmail || null,
+        attendeePhone: regForm.attendeePhone || null,
+        patientId: regForm.patientId || null,
+        leadId: regForm.leadId || null,
+      });
+      const [list] = await Promise.all([
+        listCarePilotWebinarRegistrations(auth.accessToken, auth.tenantId, regWebinar.id, 0, 100),
+        load(),
+      ]);
+      setRegistrations(list.rows);
+      setRegForm({ attendeeName: "", attendeeEmail: "", attendeePhone: "", patientId: "", leadId: "" });
+    } catch (err) {
+      setRegError(err instanceof Error ? err.message : "Failed to register attendee");
+    } finally {
+      setRegSaving(false);
+    }
   };
 
   const markAttendance = async (registrationId: string, status: CarePilotWebinarRegistrationStatus) => {
     if (!auth.accessToken || !auth.tenantId || !regWebinar || !canMutate) return;
-    await markCarePilotWebinarAttendance(auth.accessToken, auth.tenantId, regWebinar.id, { registrationId, registrationStatus: status });
-    const list = await listCarePilotWebinarRegistrations(auth.accessToken, auth.tenantId, regWebinar.id, 0, 100);
-    setRegistrations(list.rows);
+    setRegError(null);
+    setRegSaving(true);
+    try {
+      await markCarePilotWebinarAttendance(auth.accessToken, auth.tenantId, regWebinar.id, { registrationId, registrationStatus: status });
+      const [list] = await Promise.all([
+        listCarePilotWebinarRegistrations(auth.accessToken, auth.tenantId, regWebinar.id, 0, 100),
+        load(),
+      ]);
+      setRegistrations(list.rows);
+    } catch (err) {
+      setRegError(err instanceof Error ? err.message : "Failed to update attendance");
+    } finally {
+      setRegSaving(false);
+    }
   };
 
   const quickStatus = async (row: CarePilotWebinar, status: CarePilotWebinarStatus) => {
     if (!auth.accessToken || !auth.tenantId || !canMutate) return;
     await updateCarePilotWebinarStatus(auth.accessToken, auth.tenantId, row.id, status);
     await load();
+  };
+
+  const openLead = (row: CarePilotWebinarRegistration) => {
+    const searchValue = row.attendeePhone || row.attendeeEmail || row.leadName || row.leadId;
+    if (!searchValue) return;
+    navigate(`/carepilot/leads?search=${encodeURIComponent(searchValue)}`);
   };
 
   if (!auth.tenantId) return <Alert severity="info">Select a tenant to use Webinar Automation.</Alert>;
@@ -277,7 +328,7 @@ export default function WebinarsPage() {
         <Card><CardContent>
           {rows.length === 0 ? <Alert severity="info">No webinars found for selected filters.</Alert> : (
             <Table size="small"><TableHead><TableRow><TableCell>Webinar</TableCell><TableCell>Type</TableCell><TableCell>Start</TableCell><TableCell>Status</TableCell><TableCell>Reminder</TableCell><TableCell>URL</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
-              {rows.map((row) => <TableRow key={row.id}><TableCell><Stack spacing={0.25}><Typography variant="body2" sx={{ fontWeight: 700 }}>{row.title}</Typography><Typography variant="caption" color="text.secondary">{row.organizerName || "-"}</Typography></Stack></TableCell><TableCell>{row.webinarType}</TableCell><TableCell>{new Date(row.scheduledStartAt).toLocaleString()}</TableCell><TableCell><Chip size="small" label={row.status} color={statusColor(row.status)} /></TableCell><TableCell>{row.reminderEnabled ? <Chip size="small" variant="outlined" label="Enabled" /> : <Chip size="small" label="Off" />}</TableCell><TableCell>{row.webinarUrl ? <Button size="small" href={row.webinarUrl} target="_blank" rel="noreferrer">Open</Button> : "-"}</TableCell><TableCell align="right"><Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void openRegistrations(row)}>Registrations</Button>{canMutate ? <Button size="small" onClick={() => openEditor(row)}>Edit</Button> : null}{canMutate && row.status !== "LIVE" ? <Button size="small" onClick={() => void quickStatus(row, "LIVE")}>Mark Live</Button> : null}{canMutate && row.status !== "COMPLETED" ? <Button size="small" onClick={() => void quickStatus(row, "COMPLETED")}>Complete</Button> : null}{canMutate && row.status !== "CANCELLED" ? <Button size="small" color="error" onClick={() => void quickStatus(row, "CANCELLED")}>Cancel</Button> : null}</Stack></TableCell></TableRow>)}
+              {rows.map((row) => <TableRow key={row.id}><TableCell><Stack spacing={0.25}><Typography variant="body2" sx={{ fontWeight: 700 }}>{row.title}</Typography><Typography variant="caption" color="text.secondary">{row.organizerName || "-"}</Typography><Typography variant="caption" color="text.secondary">{row.campaignName ? `Campaign: ${row.campaignName}` : "Campaign: None"}</Typography></Stack></TableCell><TableCell>{row.webinarType}</TableCell><TableCell>{new Date(row.scheduledStartAt).toLocaleString()}</TableCell><TableCell><Chip size="small" label={row.status} color={statusColor(row.status)} /></TableCell><TableCell>{row.reminderEnabled ? <Chip size="small" variant="outlined" label="Enabled" /> : <Chip size="small" label="Off" />}</TableCell><TableCell>{row.webinarUrl ? <Button size="small" href={row.webinarUrl} target="_blank" rel="noreferrer">Open</Button> : "-"}</TableCell><TableCell align="right"><Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void openRegistrations(row)}>Registrations</Button>{canMutate ? <Button size="small" onClick={() => openEditor(row)}>Edit</Button> : null}{canMutate && row.status !== "LIVE" ? <Button size="small" onClick={() => void quickStatus(row, "LIVE")}>Mark Live</Button> : null}{canMutate && row.status !== "COMPLETED" ? <Button size="small" onClick={() => void quickStatus(row, "COMPLETED")}>Complete</Button> : null}{canMutate && row.status !== "CANCELLED" ? <Button size="small" color="error" onClick={() => void quickStatus(row, "CANCELLED")}>Cancel</Button> : null}</Stack></TableCell></TableRow>)}
             </TableBody></Table>
           )}
         </CardContent></Card>
@@ -289,6 +340,7 @@ export default function WebinarsPage() {
           <Grid container spacing={2} sx={{ mt: 0.5 }}>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Title" value={form.title} onChange={(e) => setForm((v) => ({ ...v, title: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><FormControl fullWidth><InputLabel>Type</InputLabel><Select value={form.webinarType} label="Type" onChange={(e) => setForm((v) => ({ ...v, webinarType: e.target.value as CarePilotWebinarType }))}>{WEBINAR_TYPES.map((t) => <MenuItem key={t} value={t}>{t}</MenuItem>)}</Select></FormControl></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><FormControl fullWidth><InputLabel>Campaign</InputLabel><Select value={form.campaignId} label="Campaign" onChange={(e) => setForm((v) => ({ ...v, campaignId: e.target.value }))}><MenuItem value="">None</MenuItem>{campaigns.map((campaign) => <MenuItem key={campaign.id} value={campaign.id}>{campaign.name}</MenuItem>)}</Select></FormControl></Grid>
             <Grid size={{ xs: 12 }}><TextField fullWidth multiline minRows={2} label="Description" value={form.description} onChange={(e) => setForm((v) => ({ ...v, description: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth type="datetime-local" label="Start" value={form.scheduledStartAt} onChange={(e) => setForm((v) => ({ ...v, scheduledStartAt: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth type="datetime-local" label="End" value={form.scheduledEndAt} onChange={(e) => setForm((v) => ({ ...v, scheduledEndAt: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
@@ -306,6 +358,7 @@ export default function WebinarsPage() {
       <Dialog open={regOpen} onClose={() => setRegOpen(false)} fullWidth maxWidth="lg">
         <DialogTitle>Registrations{regWebinar ? ` · ${regWebinar.title}` : ""}</DialogTitle>
         <DialogContent>
+          {regError ? <Alert severity="error" sx={{ mb: 2 }}>{regError}</Alert> : null}
           {canMutate ? (
             <Grid container spacing={1.5} sx={{ mb: 2, mt: 0.5 }}>
               <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Attendee" value={regForm.attendeeName} onChange={(e) => setRegForm((v) => ({ ...v, attendeeName: e.target.value }))} /></Grid>
@@ -313,14 +366,16 @@ export default function WebinarsPage() {
               <Grid size={{ xs: 12, md: 2.5 }}><TextField fullWidth size="small" label="Phone" value={regForm.attendeePhone} onChange={(e) => setRegForm((v) => ({ ...v, attendeePhone: e.target.value }))} /></Grid>
               <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Patient Id" value={regForm.patientId} onChange={(e) => setRegForm((v) => ({ ...v, patientId: e.target.value }))} /></Grid>
               <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Lead Id" value={regForm.leadId} onChange={(e) => setRegForm((v) => ({ ...v, leadId: e.target.value }))} /></Grid>
-              <Grid size={{ xs: 12, md: 12 }}><Button variant="contained" onClick={() => void addRegistration()}>Register Attendee</Button></Grid>
+              <Grid size={{ xs: 12, md: 12 }}><Button variant="contained" onClick={() => void addRegistration()} disabled={regSaving}>{regSaving ? "Registering..." : "Register Attendee"}</Button></Grid>
             </Grid>
           ) : null}
-          {registrations.length === 0 ? <Alert severity="info">No registrations yet.</Alert> : (
-            <Table size="small"><TableHead><TableRow><TableCell>Attendee</TableCell><TableCell>Email</TableCell><TableCell>Phone</TableCell><TableCell>Status</TableCell><TableCell>Patient</TableCell><TableCell>Lead</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
-              {registrations.map((row) => <TableRow key={row.id}><TableCell>{row.attendeeName}</TableCell><TableCell>{row.attendeeEmail || "-"}</TableCell><TableCell>{row.attendeePhone || "-"}</TableCell><TableCell><Chip size="small" label={row.registrationStatus} /></TableCell><TableCell>{row.patientId || "-"}</TableCell><TableCell>{row.leadId || "-"}</TableCell><TableCell align="right">{canMutate ? <Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void markAttendance(row.id, "ATTENDED")}>Attended</Button><Button size="small" onClick={() => void markAttendance(row.id, "NO_SHOW")}>No-show</Button><Button size="small" color="error" onClick={() => void markAttendance(row.id, "CANCELLED")}>Cancel</Button></Stack> : "-"}</TableCell></TableRow>)}
+          {regLoading ? <Box sx={{ minHeight: 160, display: "grid", placeItems: "center" }}><CircularProgress size={28} /></Box> : null}
+          {!regLoading && registrations.length === 0 ? <Alert severity="info">No registrations yet.</Alert> : null}
+          {!regLoading && registrations.length > 0 ? (
+            <Table size="small"><TableHead><TableRow><TableCell>Attendee</TableCell><TableCell>Email</TableCell><TableCell>Phone</TableCell><TableCell>Status</TableCell><TableCell>Patient</TableCell><TableCell>Lead</TableCell><TableCell>Campaign</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead><TableBody>
+              {registrations.map((row) => <TableRow key={row.id}><TableCell>{row.attendeeName}</TableCell><TableCell>{row.attendeeEmail || "-"}</TableCell><TableCell>{row.attendeePhone || "-"}</TableCell><TableCell><Chip size="small" label={row.registrationStatus} /></TableCell><TableCell>{row.patientId || "-"}</TableCell><TableCell>{row.leadId ? <Stack direction="row" spacing={1} alignItems="center"><Typography variant="body2">{row.leadName || row.leadId}</Typography><Button size="small" onClick={() => openLead(row)}>Open Lead</Button></Stack> : "-"}</TableCell><TableCell>{row.campaignName || "-"}</TableCell><TableCell align="right">{canMutate ? <Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void markAttendance(row.id, "ATTENDED")} disabled={regSaving}>Attended</Button><Button size="small" onClick={() => void markAttendance(row.id, "NO_SHOW")} disabled={regSaving}>No-show</Button><Button size="small" color="error" onClick={() => void markAttendance(row.id, "CANCELLED")} disabled={regSaving}>Cancel</Button></Stack> : "-"}</TableCell></TableRow>)}
             </TableBody></Table>
-          )}
+          ) : null}
         </DialogContent>
       </Dialog>
     </Stack>

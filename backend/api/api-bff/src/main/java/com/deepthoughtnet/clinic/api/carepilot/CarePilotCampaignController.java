@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.carepilot;
 
 import com.deepthoughtnet.clinic.api.carepilot.dto.CampaignDtos.CampaignResponse;
+import com.deepthoughtnet.clinic.api.carepilot.dto.CampaignDtos.CampaignTriggerResponse;
 import com.deepthoughtnet.clinic.api.carepilot.dto.CampaignDtos.CampaignRuntimeExecutionResponse;
 import com.deepthoughtnet.clinic.api.carepilot.dto.CampaignDtos.CampaignRuntimeResponse;
 import com.deepthoughtnet.clinic.api.carepilot.dto.CampaignDtos.CampaignRuntimeSummaryResponse;
@@ -30,10 +31,16 @@ import org.springframework.web.bind.annotation.RestController;
 public class CarePilotCampaignController {
     private final CampaignService campaignService;
     private final CarePilotCampaignRuntimeService runtimeService;
+    private final CarePilotCampaignTriggerService triggerService;
 
-    public CarePilotCampaignController(CampaignService campaignService, CarePilotCampaignRuntimeService runtimeService) {
+    public CarePilotCampaignController(
+            CampaignService campaignService,
+            CarePilotCampaignRuntimeService runtimeService,
+            CarePilotCampaignTriggerService triggerService
+    ) {
         this.campaignService = campaignService;
         this.runtimeService = runtimeService;
+        this.triggerService = triggerService;
     }
 
     @GetMapping
@@ -123,6 +130,26 @@ public class CarePilotCampaignController {
     @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
     public CampaignResponse deactivate(@PathVariable UUID campaignId) {
         return toResponse(campaignService.deactivate(RequestContextHolder.requireTenantId(), campaignId));
+    }
+
+    @PostMapping("/{campaignId}/trigger")
+    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    public CampaignTriggerResponse trigger(@PathVariable UUID campaignId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        var result = triggerService.trigger(tenantId, campaignId);
+        return new CampaignTriggerResponse(
+                result.campaignId(),
+                result.campaignName(),
+                result.audienceType(),
+                result.templateId(),
+                result.channelType().name(),
+                result.queued(),
+                result.eligibleRecipients(),
+                result.queuedExecutions(),
+                result.skippedRecipients(),
+                result.message(),
+                result.queuedAt()
+        );
     }
 
     private CampaignResponse toResponse(CampaignRecord record) {

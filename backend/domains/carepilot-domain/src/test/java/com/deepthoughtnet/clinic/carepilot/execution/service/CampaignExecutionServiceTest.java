@@ -97,12 +97,13 @@ class CampaignExecutionServiceTest {
 
     @Test
     void notConfiguredSmsResultIsRetryableAndDoesNotCrash() {
+        UUID patientId = UUID.randomUUID();
         CampaignExecutionEntity due = CampaignExecutionEntity.create(
                 tenantId,
                 UUID.randomUUID(),
                 null,
                 ChannelType.SMS,
-                UUID.randomUUID(),
+                patientId,
                 OffsetDateTime.now().minusMinutes(1),
                 null,
                 null,
@@ -119,6 +120,9 @@ class CampaignExecutionServiceTest {
                 "SMS provider disabled",
                 null
         ));
+        PatientEntity patient = PatientEntity.create(tenantId, "PAT-SMS");
+        patient.update("John", "Doe", null, null, null, "+15550100", "john@example.com", null, null, null, null, null, null, null, null, null, null, null, null, null, null, true);
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(Optional.of(patient));
 
         int processed = service.processDueExecutions(10);
 
@@ -129,12 +133,13 @@ class CampaignExecutionServiceTest {
 
     @Test
     void notConfiguredWhatsAppResultIsRetryableAndDoesNotCrash() {
+        UUID patientId = UUID.randomUUID();
         CampaignExecutionEntity due = CampaignExecutionEntity.create(
                 tenantId,
                 UUID.randomUUID(),
                 null,
                 ChannelType.WHATSAPP,
-                UUID.randomUUID(),
+                patientId,
                 OffsetDateTime.now().minusMinutes(1),
                 null,
                 null,
@@ -151,6 +156,9 @@ class CampaignExecutionServiceTest {
                 "WhatsApp provider disabled",
                 null
         ));
+        PatientEntity patient = PatientEntity.create(tenantId, "PAT-WA");
+        patient.update("Jane", "Doe", null, null, null, "+15550101", "jane@example.com", null, null, null, null, null, null, null, null, null, null, null, null, null, null, true);
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(Optional.of(patient));
 
         int processed = service.processDueExecutions(10);
 
@@ -161,11 +169,15 @@ class CampaignExecutionServiceTest {
 
     @Test
     void nonRetryableFailureMarksExecutionFailed() {
-        CampaignExecutionEntity due = CampaignExecutionEntity.create(tenantId, UUID.randomUUID(), null, ChannelType.SMS, UUID.randomUUID(), OffsetDateTime.now().minusMinutes(1), null, null, null, null);
+        UUID patientId = UUID.randomUUID();
+        CampaignExecutionEntity due = CampaignExecutionEntity.create(tenantId, UUID.randomUUID(), null, ChannelType.SMS, patientId, OffsetDateTime.now().minusMinutes(1), null, null, null, null);
         when(repository.findTop100ByStatusInAndScheduledAtLessThanEqualOrderByScheduledAtAsc(any(), any())).thenReturn(List.of(due));
         when(messageOrchestratorService.send(any())).thenReturn(new MessageResult(
                 false, MessageDeliveryStatus.SKIPPED, "carepilot-noop", null, "SKIPPED", "unsupported", null
         ));
+        PatientEntity patient = PatientEntity.create(tenantId, "PAT-SKIP");
+        patient.update("Alex", "Doe", null, null, null, "+15550102", "alex@example.com", null, null, null, null, null, null, null, null, null, null, null, null, null, null, true);
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(Optional.of(patient));
 
         service.processDueExecutions(50);
 
@@ -274,6 +286,27 @@ class CampaignExecutionServiceTest {
         assertThat(sent.executionId()).isEqualTo(due.getId());
         assertThat(sent.recipient().address()).isEqualTo("john@example.com");
         assertThat(sent.metadata()).containsEntry("campaignId", campaignId.toString());
+    }
+
+    @Test
+    void processDueExecutionsUsesPatientMobileForSms() {
+        UUID patientId = UUID.randomUUID();
+        CampaignExecutionEntity due = CampaignExecutionEntity.create(
+                tenantId, UUID.randomUUID(), null, ChannelType.SMS, patientId, OffsetDateTime.now().minusMinutes(1), null, null, null, null
+        );
+        when(repository.findTop100ByStatusInAndScheduledAtLessThanEqualOrderByScheduledAtAsc(any(), any())).thenReturn(List.of(due));
+        when(messageOrchestratorService.send(any())).thenReturn(new MessageResult(
+                true, MessageDeliveryStatus.SENT, "sms-provider", "sms-1", null, null, OffsetDateTime.now()
+        ));
+        PatientEntity patient = PatientEntity.create(tenantId, "PAT-3");
+        patient.update("John", "Doe", null, null, null, "+15550100", "john@example.com", null, null, null, null, null, null, null, null, null, null, null, null, null, null, true);
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(Optional.of(patient));
+
+        service.processDueExecutions(10);
+
+        ArgumentCaptor<MessageRequest> captor = ArgumentCaptor.forClass(MessageRequest.class);
+        verify(messageOrchestratorService).send(captor.capture());
+        assertThat(captor.getValue().recipient().address()).isEqualTo("+15550100");
     }
 
     @Test

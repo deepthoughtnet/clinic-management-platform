@@ -12,6 +12,10 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 public interface LeadRepository extends JpaRepository<LeadEntity, UUID>, JpaSpecificationExecutor<LeadEntity> {
     Optional<LeadEntity> findByTenantIdAndId(UUID tenantId, UUID id);
 
+    Optional<LeadEntity> findFirstByTenantIdAndPhoneIgnoreCase(UUID tenantId, String phone);
+
+    Optional<LeadEntity> findFirstByTenantIdAndEmailIgnoreCase(UUID tenantId, String email);
+
     long countByTenantId(UUID tenantId);
 
     long countByTenantIdAndStatus(UUID tenantId, LeadStatus status);

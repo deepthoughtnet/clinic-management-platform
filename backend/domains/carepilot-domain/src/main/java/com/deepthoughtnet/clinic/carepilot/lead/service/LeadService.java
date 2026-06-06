@@ -66,6 +66,17 @@ public class LeadService {
         return repository.findByTenantIdAndId(tenantId, id).map(row -> toRecord(row, latest.get(row.getId())));
     }
 
+    @Transactional(readOnly = true)
+    public List<LeadRecord> searchAll(UUID tenantId, LeadSearchCriteria criteria) {
+        CarePilotValidators.requireTenant(tenantId);
+        LeadSearchCriteria safe = criteria == null
+                ? new LeadSearchCriteria(null, null, null, null, null, false, null, null)
+                : criteria;
+        List<LeadEntity> rows = repository.findAll(spec(tenantId, safe), Sort.by(Sort.Direction.DESC, "createdAt"));
+        Map<UUID, OffsetDateTime> latestActivity = leadActivityService.latestByLeadIds(tenantId, rows.stream().map(LeadEntity::getId).toList());
+        return rows.stream().map(row -> toRecord(row, latestActivity.get(row.getId()))).toList();
+    }
+
     @Transactional
     public LeadRecord create(UUID tenantId, LeadUpsertCommand command, UUID actorId) {
         CarePilotValidators.requireTenant(tenantId);

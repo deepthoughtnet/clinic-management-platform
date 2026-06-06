@@ -38,6 +38,21 @@ public final class CampaignDtos {
             OffsetDateTime updatedAt
     ) {}
 
+    /** Manual trigger result for campaign queueing actions. */
+    public record CampaignTriggerResponse(
+            UUID campaignId,
+            String campaignName,
+            AudienceType audienceType,
+            UUID templateId,
+            String channelType,
+            boolean queued,
+            int eligibleRecipients,
+            int queuedExecutions,
+            int skippedRecipients,
+            String message,
+            OffsetDateTime queuedAt
+    ) {}
+
     /** Campaign runtime counters shown in campaign activity views. */
     public record CampaignRuntimeSummaryResponse(
             long totalExecutions,

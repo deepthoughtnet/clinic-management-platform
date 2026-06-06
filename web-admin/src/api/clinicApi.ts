@@ -3139,6 +3139,20 @@ export type CarePilotCampaign = {
   updatedAt: string;
 };
 
+export type CarePilotCampaignTriggerResult = {
+  campaignId: string;
+  campaignName: string;
+  audienceType: CarePilotAudienceType;
+  templateId: string | null;
+  channelType: CarePilotChannelType;
+  queued: boolean;
+  eligibleRecipients: number;
+  queuedExecutions: number;
+  skippedRecipients: number;
+  message: string;
+  queuedAt: string;
+};
+
 export type CarePilotTemplate = {
   id: string;
   tenantId: string;
@@ -3463,7 +3477,7 @@ export type CarePilotLeadStatus =
   | "LOST"
   | "SPAM";
 export type CarePilotLeadPriority = "LOW" | "MEDIUM" | "HIGH";
-export type CarePilotLeadSource = "WEBSITE" | "WALK_IN" | "PHONE_CALL" | "WHATSAPP" | "FACEBOOK" | "GOOGLE_ADS" | "REFERRAL" | "CAMPAIGN" | "MANUAL" | "OTHER";
+export type CarePilotLeadSource = "WEBSITE" | "WEBINAR" | "WALK_IN" | "PHONE_CALL" | "WHATSAPP" | "FACEBOOK" | "GOOGLE_ADS" | "REFERRAL" | "CAMPAIGN" | "MANUAL" | "AI_RECEPTIONIST" | "OTHER";
 
 export type CarePilotLead = {
   id: string;
@@ -3553,6 +3567,18 @@ export type CarePilotLeadActivityListResponse = {
   rows: CarePilotLeadActivity[];
 };
 
+export type CarePilotLeadCsvImportRowError = {
+  rowNumber: number;
+  message: string;
+};
+
+export type CarePilotLeadCsvImportResult = {
+  importedCount: number;
+  skippedDuplicateCount: number;
+  failedCount: number;
+  rowErrors: CarePilotLeadCsvImportRowError[];
+};
+
 export type CarePilotWebinarStatus = "DRAFT" | "SCHEDULED" | "LIVE" | "COMPLETED" | "CANCELLED";
 export type CarePilotWebinarType = "HEALTH_AWARENESS" | "WELLNESS" | "CLINIC_EVENT" | "MARKETING" | "EDUCATIONAL" | "OTHER";
 export type CarePilotWebinarRegistrationStatus = "REGISTERED" | "CONFIRMED" | "CANCELLED" | "NO_SHOW" | "ATTENDED";
@@ -3565,6 +3591,8 @@ export type CarePilotWebinar = {
   description: string | null;
   webinarType: CarePilotWebinarType;
   status: CarePilotWebinarStatus;
+  campaignId: string | null;
+  campaignName: string | null;
   webinarUrl: string | null;
   organizerName: string | null;
   organizerEmail: string | null;
@@ -3595,6 +3623,9 @@ export type CarePilotWebinarRegistration = {
   webinarId: string;
   patientId: string | null;
   leadId: string | null;
+  leadName: string | null;
+  campaignId: string | null;
+  campaignName: string | null;
   attendeeName: string;
   attendeeEmail: string | null;
   attendeePhone: string | null;
@@ -3925,6 +3956,37 @@ export async function getCarePilotCampaignRuntime(token: string, tenantId: strin
   return httpGet<CarePilotCampaignRuntime>(`/api/carepilot/campaigns/${campaignId}/runtime`, { token, tenantId });
 }
 
+export async function getCarePilotLeadImportTemplate(token: string, tenantId: string) {
+  return httpGetText("/api/carepilot/leads/import-template", { token, tenantId, accept: "text/csv, */*" });
+}
+
+export async function importCarePilotLeadsCsv(token: string, tenantId: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return httpPostForm<CarePilotLeadCsvImportResult>("/api/carepilot/leads/import-csv", formData, { token, tenantId });
+}
+
+export async function exportCarePilotLeadsCsv(
+  token: string,
+  tenantId: string,
+  filters: {
+    status?: CarePilotLeadStatus;
+    source?: CarePilotLeadSource;
+    priority?: CarePilotLeadPriority;
+    search?: string;
+    followUpDue?: boolean;
+  } = {},
+) {
+  const query = new URLSearchParams();
+  if (filters.status) query.set("status", filters.status);
+  if (filters.source) query.set("source", filters.source);
+  if (filters.priority) query.set("priority", filters.priority);
+  if (filters.search) query.set("search", filters.search);
+  if (filters.followUpDue) query.set("followUpDue", "true");
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGetText(`/api/carepilot/leads/export${suffix}`, { token, tenantId, accept: "text/csv, */*" });
+}
+
 export async function createCarePilotCampaign(token: string, tenantId: string, body: CreateCarePilotCampaignInput) {
   return httpPost<CarePilotCampaign>("/api/carepilot/campaigns", body, { token, tenantId });
 }
@@ -3935,6 +3997,10 @@ export async function activateCarePilotCampaign(token: string, tenantId: string,
 
 export async function deactivateCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
   return httpPatch<CarePilotCampaign>(`/api/carepilot/campaigns/${campaignId}/deactivate`, undefined, { token, tenantId });
+}
+
+export async function triggerCarePilotCampaign(token: string, tenantId: string, campaignId: string) {
+  return httpPost<CarePilotCampaignTriggerResult>(`/api/carepilot/campaigns/${campaignId}/trigger`, {}, { token, tenantId });
 }
 
 export async function listCarePilotTemplates(token: string, tenantId: string) {

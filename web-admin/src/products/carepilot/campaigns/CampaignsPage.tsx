@@ -46,6 +46,7 @@ import {
   patchCarePilotTemplate,
   resendCarePilotExecution,
   retryCarePilotExecution,
+  triggerCarePilotCampaign,
   type CarePilotAudienceType,
   type CarePilotCampaign,
   type CarePilotCampaignStatus,
@@ -263,11 +264,12 @@ export default function CampaignsPage() {
 
   const isClinicAdmin = auth.rolesUpper.includes("CLINIC_ADMIN");
   const isAuditor = auth.rolesUpper.includes("AUDITOR");
+  const isPlatformTenantSupport = auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT");
   const isPlatformAdminWithTenant = auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId);
   // Platform admins can operate CarePilot only in an explicit tenant context.
   // This keeps platform-global mode isolated from tenant-scoped campaign data.
-  const canView = isClinicAdmin || isAuditor || isPlatformAdminWithTenant;
-  const canManage = isClinicAdmin || isPlatformAdminWithTenant;
+  const canView = isClinicAdmin || isAuditor || isPlatformAdminWithTenant || (isPlatformTenantSupport && Boolean(auth.tenantId));
+  const canManage = isClinicAdmin || isPlatformAdminWithTenant || (isPlatformTenantSupport && Boolean(auth.tenantId));
 
   const templateById = React.useMemo(() => {
     const map = new Map<string, CarePilotTemplate>();
@@ -289,6 +291,19 @@ export default function CampaignsPage() {
     () => templates.find((t) => t.id === campaignForm.templateId) || null,
     [templates, campaignForm.templateId],
   );
+
+  const loadRuntimeForCampaign = React.useCallback(async (campaignId: string) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setRuntimeLoading(true);
+    try {
+      const runtime = await getCarePilotCampaignRuntime(auth.accessToken, auth.tenantId, campaignId);
+      setCampaignRuntime(runtime);
+    } catch {
+      setCampaignRuntime(null);
+    } finally {
+      setRuntimeLoading(false);
+    }
+  }, [auth.accessToken, auth.tenantId]);
 
   const loadAll = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !canView) {
@@ -331,24 +346,12 @@ export default function CampaignsPage() {
   }, [loadAll]);
 
   React.useEffect(() => {
-    async function loadRuntime(campaignId: string) {
-      if (!auth.accessToken || !auth.tenantId) return;
-      setRuntimeLoading(true);
-      try {
-        const runtime = await getCarePilotCampaignRuntime(auth.accessToken, auth.tenantId, campaignId);
-        setCampaignRuntime(runtime);
-      } catch {
-        setCampaignRuntime(null);
-      } finally {
-        setRuntimeLoading(false);
-      }
-    }
     if (selectedCampaign?.id) {
-      void loadRuntime(selectedCampaign.id);
+      void loadRuntimeForCampaign(selectedCampaign.id);
     } else {
       setCampaignRuntime(null);
     }
-  }, [auth.accessToken, auth.tenantId, selectedCampaign?.id]);
+  }, [loadRuntimeForCampaign, selectedCampaign?.id]);
 
   const filteredCampaigns = React.useMemo(() => {
     const q = campaignSearch.trim().toLowerCase();
@@ -523,6 +526,26 @@ export default function CampaignsPage() {
       await loadAll();
     } catch (err) {
       setToast({ type: "error", text: err instanceof Error ? err.message : "Campaign status update failed" });
+    } finally {
+      setWorkingId(null);
+    }
+  };
+
+  const onTriggerCampaign = async (campaign: CarePilotCampaign) => {
+    if (!auth.accessToken || !auth.tenantId || !canManage || !campaign.active) return;
+    const confirmed = window.confirm("This will queue campaign executions for the eligible audience. Continue?");
+    if (!confirmed) return;
+    setWorkingId(`trigger-${campaign.id}`);
+    try {
+      const result = await triggerCarePilotCampaign(auth.accessToken, auth.tenantId, campaign.id);
+      await loadAll();
+      await loadRuntimeForCampaign(campaign.id);
+      setToast({
+        type: result.queuedExecutions > 0 ? "success" : "error",
+        text: result.queuedExecutions > 0 ? "Campaign execution queued." : result.message,
+      });
+    } catch (err) {
+      setToast({ type: "error", text: err instanceof Error ? err.message : "Campaign trigger failed" });
     } finally {
       setWorkingId(null);
     }
@@ -761,16 +784,30 @@ export default function CampaignsPage() {
                               </TableCell>
                               <TableCell align="right">
                                 {canManage ? (
-                                  <Button
-                                    size="small"
-                                    disabled={workingId === campaign.id}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      void onToggleCampaignStatus(campaign, !campaign.active);
-                                    }}
-                                  >
-                                    {campaign.active ? "Deactivate" : "Activate"}
-                                  </Button>
+                                  <Stack direction="row" spacing={1} justifyContent="flex-end">
+                                    {campaign.active ? (
+                                      <Button
+                                        size="small"
+                                        disabled={workingId === `trigger-${campaign.id}`}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void onTriggerCampaign(campaign);
+                                        }}
+                                      >
+                                        Trigger
+                                      </Button>
+                                    ) : null}
+                                    <Button
+                                      size="small"
+                                      disabled={workingId === campaign.id}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void onToggleCampaignStatus(campaign, !campaign.active);
+                                      }}
+                                    >
+                                      {campaign.active ? "Deactivate" : "Activate"}
+                                    </Button>
+                                  </Stack>
                                 ) : null}
                               </TableCell>
                             </TableRow>
@@ -797,6 +834,16 @@ export default function CampaignsPage() {
                     <Typography variant="body2"><b>Default Channel:</b> {selectedCampaign.templateId ? (templateById.get(selectedCampaign.templateId)?.channelType || "-") : "-"}</Typography>
                     <Typography variant="body2"><b>Status:</b> {selectedCampaign.status}</Typography>
                     <Typography variant="body2"><b>Active:</b> {selectedCampaign.active ? "Yes" : "No"}</Typography>
+                    {canManage && selectedCampaign.active ? (
+                      <Button
+                        size="small"
+                        sx={{ alignSelf: "flex-start" }}
+                        disabled={workingId === `trigger-${selectedCampaign.id}`}
+                        onClick={() => void onTriggerCampaign(selectedCampaign)}
+                      >
+                        Trigger
+                      </Button>
+                    ) : null}
                     <Typography variant="caption" color="text.secondary">Updated {new Date(selectedCampaign.updatedAt).toLocaleString()}</Typography>
                     <Box sx={{ pt: 1 }}>
                       <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>Runtime / Activity</Typography>
@@ -1223,9 +1270,6 @@ export default function CampaignsPage() {
           ) : null}
           {presetStep === 2 && selectedPreset && presetForm ? (
             <Stack spacing={1.5} sx={{ mt: 0.5 }}>
-              {selectedPreset.implementationStatus === "FOUNDATION_ONLY" ? (
-                <Alert severity="warning">Trigger support is partially implemented. Executions may not generate until backend trigger support is completed.</Alert>
-              ) : null}
               <TextField label="Campaign Name" value={presetForm.name} onChange={(e) => setPresetForm((c) => c ? ({ ...c, name: e.target.value }) : c)} />
               <TextField label="Description" multiline minRows={2} value={presetForm.notes} onChange={(e) => setPresetForm((c) => c ? ({ ...c, notes: e.target.value }) : c)} />
               <TextField label="Trigger" value={selectedPreset.triggerLabel} disabled />

@@ -7,6 +7,7 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Divider,
   Dialog,
   DialogActions,
   DialogContent,
@@ -34,8 +35,11 @@ import {
   addCarePilotLeadNote,
   convertCarePilotLead,
   createCarePilotLead,
+  exportCarePilotLeadsCsv,
   getCarePilotLeadAnalyticsSummary,
+  getCarePilotLeadImportTemplate,
   getClinicUsers,
+  importCarePilotLeadsCsv,
   listCarePilotCampaigns,
   listCarePilotLeadActivities,
   listCarePilotLeads,
@@ -46,6 +50,7 @@ import {
   type CarePilotLead,
   type CarePilotLeadActivity,
   type CarePilotLeadAnalyticsSummary,
+  type CarePilotLeadCsvImportResult,
   type CarePilotLeadPriority,
   type CarePilotLeadSource,
   type CarePilotLeadStatus,
@@ -53,8 +58,9 @@ import {
 } from "../../../api/clinicApi";
 
 const STATUSES: CarePilotLeadStatus[] = ["NEW", "CONTACTED", "QUALIFIED", "FOLLOW_UP_REQUIRED", "APPOINTMENT_BOOKED", "CONVERTED", "LOST", "SPAM"];
-const SOURCES: CarePilotLeadSource[] = ["WEBSITE", "WALK_IN", "PHONE_CALL", "WHATSAPP", "FACEBOOK", "GOOGLE_ADS", "REFERRAL", "CAMPAIGN", "MANUAL", "OTHER"];
+const SOURCES: CarePilotLeadSource[] = ["WEBSITE", "WEBINAR", "WALK_IN", "PHONE_CALL", "WHATSAPP", "FACEBOOK", "GOOGLE_ADS", "REFERRAL", "CAMPAIGN", "MANUAL", "AI_RECEPTIONIST", "OTHER"];
 const PRIORITIES: CarePilotLeadPriority[] = ["LOW", "MEDIUM", "HIGH"];
+const KANBAN_COLUMNS: CarePilotLeadStatus[] = ["NEW", "CONTACTED", "QUALIFIED", "FOLLOW_UP_REQUIRED", "APPOINTMENT_BOOKED", "CONVERTED", "LOST", "SPAM"];
 
 type LeadDraft = {
   firstName: string;
@@ -69,6 +75,7 @@ type LeadDraft = {
   tags: string;
   nextFollowUpAt: string;
   campaignId: string;
+  assignedToAppUserId: string;
 };
 
 type ConvertDraft = {
@@ -81,14 +88,40 @@ type ConvertDraft = {
   priority: AppointmentPriority;
 };
 
-const emptyDraft = (): LeadDraft => ({ firstName: "", lastName: "", phone: "", email: "", source: "MANUAL", sourceDetails: "", status: "NEW", priority: "MEDIUM", notes: "", tags: "", nextFollowUpAt: "", campaignId: "" });
+type FollowUpDraft = {
+  date: string;
+  time: string;
+};
+
+const emptyDraft = (): LeadDraft => ({ firstName: "", lastName: "", phone: "", email: "", source: "MANUAL", sourceDetails: "", status: "NEW", priority: "MEDIUM", notes: "", tags: "", nextFollowUpAt: "", campaignId: "", assignedToAppUserId: "" });
 const emptyConvertDraft = (): ConvertDraft => ({ bookAppointment: false, doctorUserId: "", appointmentDate: "", appointmentTime: "", reason: "", notes: "", priority: "NORMAL" });
+const emptyFollowUpDraft = (): FollowUpDraft => ({ date: "", time: "" });
+
+function toDateTimeInputParts(value?: string | null): FollowUpDraft {
+  if (!value) return emptyFollowUpDraft();
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return emptyFollowUpDraft();
+  const local = new Date(parsed.getTime() - (parsed.getTimezoneOffset() * 60 * 1000)).toISOString();
+  return { date: local.slice(0, 10), time: local.slice(11, 16) };
+}
 
 function activityColor(type: string) {
   if (type.includes("CONVERTED") || type.includes("BOOKED")) return "success" as const;
   if (type.includes("LOST") || type.includes("SPAM")) return "default" as const;
   if (type.includes("FOLLOW_UP")) return "warning" as const;
   return "info" as const;
+}
+
+function downloadCsv(filename: string, csv: string) {
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export default function LeadsPage() {
@@ -104,6 +137,7 @@ export default function LeadsPage() {
   const [campaigns, setCampaigns] = React.useState<CarePilotCampaign[]>([]);
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [analytics, setAnalytics] = React.useState<CarePilotLeadAnalyticsSummary | null>(null);
+  const [viewMode, setViewMode] = React.useState<"TABLE" | "KANBAN">("TABLE");
 
   const [tab, setTab] = React.useState<"PIPELINE" | "FOLLOW_UPS" | "CONVERTED" | "LOST">("PIPELINE");
   const [search, setSearch] = React.useState("");
@@ -121,6 +155,12 @@ export default function LeadsPage() {
   const [activities, setActivities] = React.useState<CarePilotLeadActivity[]>([]);
   const [activityLoading, setActivityLoading] = React.useState(false);
   const [note, setNote] = React.useState("");
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [importResult, setImportResult] = React.useState<CarePilotLeadCsvImportResult | null>(null);
+  const [importResultOpen, setImportResultOpen] = React.useState(false);
+  const [followUpOpen, setFollowUpOpen] = React.useState(false);
+  const [followUpLead, setFollowUpLead] = React.useState<CarePilotLead | null>(null);
+  const [followUpDraft, setFollowUpDraft] = React.useState<FollowUpDraft>(emptyFollowUpDraft());
 
   const [convertOpen, setConvertOpen] = React.useState(false);
   const [convertLead, setConvertLead] = React.useState<CarePilotLead | null>(null);
@@ -132,8 +172,10 @@ export default function LeadsPage() {
     try {
       const forcedStatus = tab === "CONVERTED" ? "CONVERTED" : tab === "LOST" ? "LOST" : statusFilter || undefined;
       const followUpDue = tab === "FOLLOW_UPS";
+      const requestPage = viewMode === "KANBAN" ? 0 : page;
+      const requestSize = viewMode === "KANBAN" ? 200 : size;
       const [leadList, summary, campaignRows, userRows] = await Promise.all([
-        listCarePilotLeads(auth.accessToken, auth.tenantId, { status: forcedStatus, source: sourceFilter || undefined, priority: priorityFilter || undefined, search: search || undefined, followUpDue, page, size }),
+        listCarePilotLeads(auth.accessToken, auth.tenantId, { status: forcedStatus, source: sourceFilter || undefined, priority: priorityFilter || undefined, search: search || undefined, followUpDue, page: requestPage, size: requestSize }),
         getCarePilotLeadAnalyticsSummary(auth.accessToken, auth.tenantId),
         listCarePilotCampaigns(auth.accessToken, auth.tenantId),
         getClinicUsers(auth.accessToken, auth.tenantId),
@@ -144,27 +186,61 @@ export default function LeadsPage() {
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, auth.tenantId, canView, tab, statusFilter, sourceFilter, priorityFilter, search, page, size]);
+  }, [auth.accessToken, auth.tenantId, canView, tab, statusFilter, sourceFilter, priorityFilter, search, page, size, viewMode]);
 
   React.useEffect(() => { void load(); }, [load]);
+
+  const loadActivitiesForLead = React.useCallback(async (leadId: string) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setActivityLoading(true);
+    try {
+      const response = await listCarePilotLeadActivities(auth.accessToken, auth.tenantId, leadId);
+      setActivities(response.rows);
+    } finally {
+      setActivityLoading(false);
+    }
+  }, [auth.accessToken, auth.tenantId]);
 
   const openCreate = () => { setEditorLead(null); setDraft(emptyDraft()); setActivities([]); setEditorOpen(true); };
 
   const openEdit = async (lead: CarePilotLead) => {
     setEditorLead(lead);
-    setDraft({ firstName: lead.firstName, lastName: lead.lastName || "", phone: lead.phone, email: lead.email || "", source: lead.source, sourceDetails: lead.sourceDetails || "", status: lead.status, priority: lead.priority, notes: lead.notes || "", tags: lead.tags || "", nextFollowUpAt: lead.nextFollowUpAt ? lead.nextFollowUpAt.slice(0, 16) : "", campaignId: lead.campaignId || "" });
+    setDraft({
+      firstName: lead.firstName,
+      lastName: lead.lastName || "",
+      phone: lead.phone,
+      email: lead.email || "",
+      source: lead.source,
+      sourceDetails: lead.sourceDetails || "",
+      status: lead.status,
+      priority: lead.priority,
+      notes: lead.notes || "",
+      tags: lead.tags || "",
+      nextFollowUpAt: lead.nextFollowUpAt ? lead.nextFollowUpAt.slice(0, 16) : "",
+      campaignId: lead.campaignId || "",
+      assignedToAppUserId: lead.assignedToAppUserId || "",
+    });
     setEditorOpen(true);
-    if (!auth.accessToken || !auth.tenantId) return;
-    setActivityLoading(true);
-    try {
-      const response = await listCarePilotLeadActivities(auth.accessToken, auth.tenantId, lead.id);
-      setActivities(response.rows);
-    } finally { setActivityLoading(false); }
+    await loadActivitiesForLead(lead.id);
   };
 
   const save = async () => {
     if (!auth.accessToken || !auth.tenantId || !canMutate) return;
-    const payload = { firstName: draft.firstName, lastName: draft.lastName || null, phone: draft.phone, email: draft.email || null, source: draft.source, sourceDetails: draft.sourceDetails || null, status: draft.status, priority: draft.priority, notes: draft.notes || null, tags: draft.tags || null, campaignId: draft.campaignId || null, nextFollowUpAt: draft.nextFollowUpAt ? new Date(draft.nextFollowUpAt).toISOString() : null };
+    const payload = {
+      firstName: draft.firstName,
+      lastName: draft.lastName || null,
+      phone: draft.phone,
+      email: draft.email || null,
+      source: draft.source,
+      sourceDetails: draft.sourceDetails || null,
+      status: draft.status,
+      priority: draft.priority,
+      notes: draft.notes || null,
+      tags: draft.tags || null,
+      campaignId: draft.campaignId || null,
+      assignedToAppUserId: draft.assignedToAppUserId || null,
+      nextFollowUpAt: draft.nextFollowUpAt ? new Date(draft.nextFollowUpAt).toISOString() : null,
+    };
     try {
       if (editorLead) await updateCarePilotLead(auth.accessToken, auth.tenantId, editorLead.id, payload); else await createCarePilotLead(auth.accessToken, auth.tenantId, payload);
       setToast(editorLead ? "Lead updated" : "Lead created");
@@ -183,20 +259,93 @@ export default function LeadsPage() {
     } catch (err) { setToast(err instanceof Error ? err.message : "Failed to add note"); }
   };
 
-  const scheduleFollowUp = async (lead: CarePilotLead) => {
-    if (!auth.accessToken || !auth.tenantId || !canMutate) return;
-    const when = window.prompt("Next follow-up datetime (YYYY-MM-DDTHH:mm)");
-    if (!when) return;
-    await updateCarePilotLeadStatus(auth.accessToken, auth.tenantId, lead.id, { status: "FOLLOW_UP_REQUIRED", nextFollowUpAt: new Date(when).toISOString(), comment: "Follow-up scheduled" });
-    setToast("Follow-up scheduled");
-    await load();
+  const openFollowUpDialog = (lead: CarePilotLead) => {
+    setFollowUpLead(lead);
+    setFollowUpDraft(toDateTimeInputParts(lead.nextFollowUpAt));
+    setFollowUpOpen(true);
+  };
+
+  const scheduleFollowUp = async () => {
+    if (!followUpLead || !auth.accessToken || !auth.tenantId || !canMutate) return;
+    if (!followUpDraft.date || !followUpDraft.time) {
+      setToast("Date and time are required");
+      return;
+    }
+    try {
+      const nextFollowUpAt = new Date(`${followUpDraft.date}T${followUpDraft.time}`).toISOString();
+      await updateCarePilotLeadStatus(auth.accessToken, auth.tenantId, followUpLead.id, {
+        status: "FOLLOW_UP_REQUIRED",
+        nextFollowUpAt,
+        comment: "Follow-up scheduled",
+      });
+      if (editorLead?.id === followUpLead.id) {
+        setDraft((current) => ({ ...current, nextFollowUpAt: `${followUpDraft.date}T${followUpDraft.time}` }));
+        await loadActivitiesForLead(followUpLead.id);
+      }
+      setFollowUpOpen(false);
+      setFollowUpLead(null);
+      setToast("Follow-up scheduled");
+      await load();
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Failed to schedule follow-up");
+    }
   };
 
   const markFollowUpCompleted = async (lead: CarePilotLead) => {
     if (!auth.accessToken || !auth.tenantId || !canMutate) return;
     await updateCarePilotLeadStatus(auth.accessToken, auth.tenantId, lead.id, { status: "CONTACTED", nextFollowUpAt: null, comment: "Follow-up completed" });
+    if (editorLead?.id === lead.id) {
+      setDraft((current) => ({ ...current, nextFollowUpAt: "" }));
+      await loadActivitiesForLead(lead.id);
+    }
     setToast("Follow-up completed");
     await load();
+  };
+
+  const downloadTemplate = async () => {
+    if (!auth.accessToken || !auth.tenantId || !canMutate) return;
+    try {
+      const csv = await getCarePilotLeadImportTemplate(auth.accessToken, auth.tenantId);
+      downloadCsv("carepilot-leads-import-template.csv", csv);
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Failed to download template");
+    }
+  };
+
+  const exportCsv = async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    try {
+      const forcedStatus = tab === "CONVERTED" ? "CONVERTED" : tab === "LOST" ? "LOST" : statusFilter || undefined;
+      const followUpDue = tab === "FOLLOW_UPS";
+      const csv = await exportCarePilotLeadsCsv(auth.accessToken, auth.tenantId, {
+        status: forcedStatus,
+        source: sourceFilter || undefined,
+        priority: priorityFilter || undefined,
+        search: search || undefined,
+        followUpDue,
+      });
+      downloadCsv("carepilot-leads-export.csv", csv);
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Failed to export leads");
+    }
+  };
+
+  const openImportFilePicker = () => fileInputRef.current?.click();
+
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !auth.accessToken || !auth.tenantId || !canMutate) return;
+    try {
+      const result = await importCarePilotLeadsCsv(auth.accessToken, auth.tenantId, file);
+      setImportResult(result);
+      setImportResultOpen(true);
+      setToast("Lead CSV import completed");
+      await load();
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : "Failed to import leads");
+    } finally {
+      event.target.value = "";
+    }
   };
 
   const openConvert = (lead: CarePilotLead) => {
@@ -229,13 +378,31 @@ export default function LeadsPage() {
   if (!canView) return <Alert severity="error">You do not have access to CarePilot leads.</Alert>;
 
   const userName = (id?: string | null) => users.find((u) => u.appUserId === id)?.displayName || id || "-";
+  const campaignName = (id?: string | null) => campaigns.find((c) => c.id === id)?.name || "-";
+  const groupedKanbanRows = KANBAN_COLUMNS.map((status) => ({ status, rows: rows.filter((lead) => lead.status === status) }));
+
+  const renderLeadActions = (lead: CarePilotLead, compact = false) => (
+    <Stack direction={compact ? "column" : "row"} spacing={1} justifyContent={compact ? "flex-start" : "flex-end"} alignItems={compact ? "stretch" : "center"}>
+      <Button size="small" onClick={() => void openEdit(lead)}>View/Edit</Button>
+      {canMutate && lead.status !== "CONVERTED" ? <Button size="small" onClick={() => openFollowUpDialog(lead)}>Follow-up</Button> : null}
+      {canMutate && lead.status === "FOLLOW_UP_REQUIRED" ? <Button size="small" onClick={() => void markFollowUpCompleted(lead)}>Mark Done</Button> : null}
+      {canMutate && lead.status !== "CONVERTED" ? <Button size="small" onClick={() => openConvert(lead)}>Convert</Button> : null}
+    </Stack>
+  );
 
   return (
     <Stack spacing={2}>
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}>
         <Box><Typography variant="h4" sx={{ fontWeight: 900 }}>CarePilot Leads</Typography><Typography variant="body2" color="text.secondary">Lead intake, timeline, follow-up, and conversion workflow.</Typography></Box>
-        <Stack direction="row" spacing={1}><Button variant="outlined" onClick={() => void load()}>Refresh</Button>{canMutate ? <Button variant="contained" onClick={openCreate}>New Lead</Button> : null}</Stack>
+        <Stack direction="row" spacing={1} flexWrap="wrap">
+          <Button variant="outlined" onClick={() => void load()}>Refresh</Button>
+          <Button variant="outlined" onClick={() => void exportCsv()}>Export CSV</Button>
+          {canMutate ? <Button variant="outlined" onClick={() => void downloadTemplate()}>Download Template</Button> : null}
+          {canMutate ? <Button variant="outlined" onClick={openImportFilePicker}>Import CSV</Button> : null}
+          {canMutate ? <Button variant="contained" onClick={openCreate}>New Lead</Button> : null}
+        </Stack>
       </Box>
+      <input ref={fileInputRef} type="file" accept=".csv,text/csv" hidden onChange={handleImportFile} />
 
       {!canMutate ? <Alert severity="info">Read-only mode for your role.</Alert> : null}
 
@@ -254,7 +421,12 @@ export default function LeadsPage() {
           <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={statusFilter} label="Status" onChange={(e) => setStatusFilter(String(e.target.value) as CarePilotLeadStatus | "")}><MenuItem value="">All</MenuItem>{STATUSES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
           <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Source</InputLabel><Select value={sourceFilter} label="Source" onChange={(e) => setSourceFilter(String(e.target.value) as CarePilotLeadSource | "")}><MenuItem value="">All</MenuItem>{SOURCES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
           <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Priority</InputLabel><Select value={priorityFilter} label="Priority" onChange={(e) => setPriorityFilter(String(e.target.value) as CarePilotLeadPriority | "")}><MenuItem value="">All</MenuItem>{PRIORITIES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
-          <Grid size={{ xs: 6, md: 3 }} sx={{ display: "flex", gap: 1 }}><Button variant="contained" onClick={() => { setPage(0); void load(); }}>Apply</Button><Button variant="text" onClick={() => { setSearch(""); setStatusFilter(""); setSourceFilter(""); setPriorityFilter(""); setPage(0); }}>Reset</Button></Grid>
+          <Grid size={{ xs: 6, md: 3 }} sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            <Button variant="contained" onClick={() => { setPage(0); void load(); }}>Apply</Button>
+            <Button variant="text" onClick={() => { setSearch(""); setStatusFilter(""); setSourceFilter(""); setPriorityFilter(""); setPage(0); }}>Reset</Button>
+            <Button variant={viewMode === "TABLE" ? "contained" : "outlined"} onClick={() => setViewMode("TABLE")}>Table View</Button>
+            <Button variant={viewMode === "KANBAN" ? "contained" : "outlined"} onClick={() => setViewMode("KANBAN")}>Kanban View</Button>
+          </Grid>
         </Grid>
       </CardContent></Card>
 
@@ -263,7 +435,7 @@ export default function LeadsPage() {
       {error ? <Alert severity="error">{error}</Alert> : null}
       {loading ? <Box sx={{ minHeight: 160, display: "grid", placeItems: "center" }}><CircularProgress /></Box> : null}
 
-      {!loading ? (
+      {!loading && viewMode === "TABLE" ? (
         <Card><CardContent>
           {rows.length === 0 ? <Alert severity="info">No leads found for current filters.</Alert> : (
             <Table size="small"><TableHead><TableRow><TableCell>Name</TableCell><TableCell>Phone</TableCell><TableCell>Source</TableCell><TableCell>Status</TableCell><TableCell>Priority</TableCell><TableCell>Assigned To</TableCell><TableCell>Next Follow-up</TableCell><TableCell>Last Activity</TableCell><TableCell>Campaign</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
@@ -279,8 +451,15 @@ export default function LeadsPage() {
                     <TableCell>{userName(lead.assignedToAppUserId)}</TableCell>
                     <TableCell>{lead.nextFollowUpAt ? <Stack direction="row" spacing={1} alignItems="center"><span>{new Date(lead.nextFollowUpAt).toLocaleString()}</span>{overdue ? <Chip size="small" color="error" label="Overdue" /> : null}</Stack> : "-"}</TableCell>
                     <TableCell>{lead.lastActivityAt ? new Date(lead.lastActivityAt).toLocaleString() : "-"}</TableCell>
-                    <TableCell>{campaigns.find((c) => c.id === lead.campaignId)?.name || "-"}</TableCell>
-                    <TableCell align="right"><Stack direction="row" spacing={1} justifyContent="flex-end"><Button size="small" onClick={() => void openEdit(lead)}>View/Edit</Button>{canMutate && lead.status !== "CONVERTED" ? <Button size="small" onClick={() => void scheduleFollowUp(lead)}>Schedule Follow-up</Button> : null}{canMutate && lead.status === "FOLLOW_UP_REQUIRED" ? <Button size="small" onClick={() => void markFollowUpCompleted(lead)}>Mark Done</Button> : null}{canMutate && lead.status !== "CONVERTED" ? <Button size="small" onClick={() => openConvert(lead)}>Convert</Button> : null}{lead.convertedPatientId ? <Button size="small" onClick={() => navigate(`/patients/${lead.convertedPatientId}`)}>Open Patient</Button> : null}{lead.bookedAppointmentId ? <Button size="small" onClick={() => navigate(`/appointments`)}>Open Appointment</Button> : null}{lead.campaignId ? <Button size="small" onClick={() => navigate(`/carepilot/campaigns?campaignId=${lead.campaignId}`)}>Open Campaign</Button> : null}</Stack></TableCell>
+                    <TableCell>{campaignName(lead.campaignId)}</TableCell>
+                    <TableCell align="right">
+                      <Stack direction="row" spacing={1} justifyContent="flex-end">
+                        {renderLeadActions(lead)}
+                        {lead.convertedPatientId ? <Button size="small" onClick={() => navigate(`/patients/${lead.convertedPatientId}`)}>Open Patient</Button> : null}
+                        {lead.bookedAppointmentId ? <Button size="small" onClick={() => navigate(`/appointments`)}>Open Appointment</Button> : null}
+                        {lead.campaignId ? <Button size="small" onClick={() => navigate(`/carepilot/campaigns?campaignId=${lead.campaignId}`)}>Open Campaign</Button> : null}
+                      </Stack>
+                    </TableCell>
                   </TableRow>
                 );
               })}</TableBody>
@@ -288,6 +467,50 @@ export default function LeadsPage() {
           )}
           <Box sx={{ display: "flex", justifyContent: "space-between", mt: 1 }}><Typography variant="body2" color="text.secondary">Total: {total}</Typography><Stack direction="row" spacing={1}><Button size="small" disabled={page <= 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>Previous</Button><Typography variant="body2" sx={{ mt: 0.7 }}>Page {page + 1}</Typography><Button size="small" disabled={(page + 1) * size >= total} onClick={() => setPage((p) => p + 1)}>Next</Button></Stack></Box>
         </CardContent></Card>
+      ) : null}
+
+      {!loading && viewMode === "KANBAN" ? (
+        rows.length === 0 ? <Alert severity="info">No leads found for current filters.</Alert> : (
+          <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", alignItems: "start" }}>
+            {groupedKanbanRows.map((column) => (
+              <Card key={column.status} variant="outlined">
+                <CardContent>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{column.status}</Typography>
+                    <Chip size="small" label={column.rows.length} />
+                  </Stack>
+                  <Divider sx={{ mb: 1.5 }} />
+                  <Stack spacing={1.25}>
+                    {column.rows.length === 0 ? <Typography variant="body2" color="text.secondary">No leads</Typography> : column.rows.map((lead) => {
+                      const overdue = !!lead.nextFollowUpAt && new Date(lead.nextFollowUpAt).getTime() < Date.now() && !["CONVERTED", "LOST", "SPAM"].includes(lead.status);
+                      return (
+                        <Card key={lead.id} variant="outlined">
+                          <CardContent sx={{ display: "grid", gap: 1.1 }}>
+                            <Stack direction="row" justifyContent="space-between" spacing={1}>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{lead.fullName || `${lead.firstName} ${lead.lastName || ""}`.trim()}</Typography>
+                              <Chip size="small" label={lead.priority} color={lead.priority === "HIGH" ? "error" : lead.priority === "MEDIUM" ? "warning" : "default"} />
+                            </Stack>
+                            <Typography variant="body2">{lead.phone}</Typography>
+                            <Typography variant="caption" color="text.secondary">Source: {lead.source}</Typography>
+                            <Typography variant="caption" color="text.secondary">Campaign: {campaignName(lead.campaignId)}</Typography>
+                            <Typography variant="caption" color="text.secondary">Assigned: {userName(lead.assignedToAppUserId)}</Typography>
+                            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                              <Typography variant="caption" color="text.secondary">
+                                Next follow-up: {lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt).toLocaleString() : "-"}
+                              </Typography>
+                              {overdue ? <Chip size="small" color="error" label="Overdue" /> : null}
+                            </Stack>
+                            {renderLeadActions(lead, true)}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </Stack>
+                </CardContent>
+              </Card>
+            ))}
+          </Box>
+        )
       ) : null}
 
       <Dialog open={editorOpen} onClose={() => setEditorOpen(false)} fullWidth maxWidth="lg">
@@ -302,6 +525,7 @@ export default function LeadsPage() {
             <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={draft.status} label="Status" onChange={(e) => setDraft((d) => ({ ...d, status: String(e.target.value) as CarePilotLeadStatus }))}>{STATUSES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
             <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Priority</InputLabel><Select value={draft.priority} label="Priority" onChange={(e) => setDraft((d) => ({ ...d, priority: String(e.target.value) as CarePilotLeadPriority }))}>{PRIORITIES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
             <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Campaign</InputLabel><Select value={draft.campaignId} label="Campaign" onChange={(e) => setDraft((d) => ({ ...d, campaignId: String(e.target.value) }))}><MenuItem value="">None</MenuItem>{campaigns.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</Select></FormControl></Grid>
+            <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Assigned To</InputLabel><Select value={draft.assignedToAppUserId} label="Assigned To" onChange={(e) => setDraft((d) => ({ ...d, assignedToAppUserId: String(e.target.value) }))}><MenuItem value="">Unassigned</MenuItem>{users.map((u) => <MenuItem key={u.appUserId} value={u.appUserId}>{u.displayName || u.appUserId}</MenuItem>)}</Select></FormControl></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Source details" value={draft.sourceDetails} onChange={(e) => setDraft((d) => ({ ...d, sourceDetails: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth type="datetime-local" label="Next follow-up" value={draft.nextFollowUpAt} onChange={(e) => setDraft((d) => ({ ...d, nextFollowUpAt: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Tags" value={draft.tags} onChange={(e) => setDraft((d) => ({ ...d, tags: e.target.value }))} /></Grid>
@@ -339,6 +563,68 @@ export default function LeadsPage() {
           </Stack>
         </DialogContent>
         <DialogActions><Button onClick={() => setConvertOpen(false)}>Cancel</Button><Button variant="contained" onClick={() => void runConvert()}>Convert</Button></DialogActions>
+      </Dialog>
+
+      <Dialog open={followUpOpen} onClose={() => setFollowUpOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Schedule Follow-up</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ pt: 1 }}>
+            <Alert severity="info">This will set the lead to follow-up required and schedule the next contact time.</Alert>
+            <Grid container spacing={1.5}>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  fullWidth
+                  type="date"
+                  label="Follow-up date"
+                  value={followUpDraft.date}
+                  onChange={(e) => setFollowUpDraft((current) => ({ ...current, date: e.target.value }))}
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  fullWidth
+                  type="time"
+                  label="Follow-up time"
+                  value={followUpDraft.time}
+                  onChange={(e) => setFollowUpDraft((current) => ({ ...current, time: e.target.value }))}
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+            </Grid>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setFollowUpOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={() => void scheduleFollowUp()}>Schedule</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={importResultOpen} onClose={() => setImportResultOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>Lead CSV Import Summary</DialogTitle>
+        <DialogContent>
+          {importResult ? (
+            <Stack spacing={1.5} sx={{ pt: 1 }}>
+              <Alert severity={importResult.failedCount > 0 ? "warning" : "success"}>
+                Imported: {importResult.importedCount} | Skipped duplicates: {importResult.skippedDuplicateCount} | Failed: {importResult.failedCount}
+              </Alert>
+              {importResult.rowErrors.length > 0 ? (
+                <Stack spacing={1}>
+                  {importResult.rowErrors.map((rowError) => (
+                    <Alert key={`${rowError.rowNumber}-${rowError.message}`} severity="error">
+                      Row {rowError.rowNumber}: {rowError.message}
+                    </Alert>
+                  ))}
+                </Stack>
+              ) : (
+                <Typography variant="body2" color="text.secondary">All uploaded rows were processed successfully.</Typography>
+              )}
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setImportResultOpen(false)}>Close</Button>
+        </DialogActions>
       </Dialog>
 
       <Snackbar open={Boolean(toast)} autoHideDuration={3500} onClose={() => setToast(null)} message={toast || ""} />

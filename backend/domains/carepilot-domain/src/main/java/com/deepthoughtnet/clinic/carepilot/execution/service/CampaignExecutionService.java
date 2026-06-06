@@ -470,14 +470,21 @@ public class CampaignExecutionService {
             PatientEntity patient,
             MessageChannel channel
     ) {
-        if (channel == MessageChannel.EMAIL) {
-            if (patient != null && StringUtils.hasText(patient.getEmail())) {
+        if (patient != null) {
+            if (channel == MessageChannel.EMAIL && StringUtils.hasText(patient.getEmail())) {
                 return patient.getEmail().trim();
             }
-            // Delivery should be recorded as a failed attempt instead of crashing scheduler execution.
+            if ((channel == MessageChannel.SMS || channel == MessageChannel.WHATSAPP) && StringUtils.hasText(patient.getMobile())) {
+                return patient.getMobile().trim();
+            }
+        }
+        // Delivery should be recorded as a failed attempt instead of crashing scheduler execution.
+        if (channel == MessageChannel.EMAIL) {
             throw new MessageDispatchException("RECIPIENT_EMAIL_MISSING");
         }
-
+        if (channel == MessageChannel.SMS || channel == MessageChannel.WHATSAPP) {
+            throw new MessageDispatchException("RECIPIENT_MOBILE_MISSING");
+        }
         if (execution.getRecipientPatientId() != null) {
             return execution.getRecipientPatientId().toString();
         }

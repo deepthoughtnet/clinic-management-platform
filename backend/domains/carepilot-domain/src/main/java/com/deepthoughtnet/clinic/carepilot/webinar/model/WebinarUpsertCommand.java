@@ -8,6 +8,7 @@ public record WebinarUpsertCommand(
         String description,
         WebinarType webinarType,
         WebinarStatus status,
+        java.util.UUID campaignId,
         String webinarUrl,
         String organizerName,
         String organizerEmail,

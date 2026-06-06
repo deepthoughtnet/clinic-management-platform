@@ -1,5 +1,7 @@
 package com.deepthoughtnet.clinic.carepilot.webinar.service;
 
+import com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignEntity;
+import com.deepthoughtnet.clinic.carepilot.campaign.db.CampaignRepository;
 import com.deepthoughtnet.clinic.carepilot.shared.util.CarePilotValidators;
 import com.deepthoughtnet.clinic.carepilot.webinar.db.WebinarEntity;
 import com.deepthoughtnet.clinic.carepilot.webinar.db.WebinarRepository;
@@ -26,9 +28,11 @@ import org.springframework.util.StringUtils;
 @Service
 public class WebinarService {
     private final WebinarRepository repository;
+    private final CampaignRepository campaignRepository;
 
-    public WebinarService(WebinarRepository repository) {
+    public WebinarService(WebinarRepository repository, CampaignRepository campaignRepository) {
         this.repository = repository;
+        this.campaignRepository = campaignRepository;
     }
 
     @Transactional(readOnly = true)
@@ -105,6 +109,10 @@ public class WebinarService {
         row.setDescription(normalize(command.description()));
         row.setWebinarType(command.webinarType() == null ? WebinarType.OTHER : command.webinarType());
         row.setStatus(command.status() == null ? row.getStatus() : command.status());
+        if (command.campaignId() != null && campaignRepository.findByTenantIdAndId(row.getTenantId(), command.campaignId()).isEmpty()) {
+            throw new IllegalArgumentException("campaignId does not belong to tenant");
+        }
+        row.setCampaignId(command.campaignId());
         row.setWebinarUrl(normalize(command.webinarUrl()));
         row.setOrganizerName(normalize(command.organizerName()));
         row.setOrganizerEmail(normalize(command.organizerEmail()));
@@ -120,8 +128,12 @@ public class WebinarService {
     }
 
     private WebinarRecord toRecord(WebinarEntity row) {
+        CampaignEntity campaign = row.getCampaignId() == null
+                ? null
+                : campaignRepository.findByTenantIdAndId(row.getTenantId(), row.getCampaignId()).orElse(null);
         return new WebinarRecord(
-                row.getId(), row.getTenantId(), row.getTitle(), row.getDescription(), row.getWebinarType(), row.getStatus(), row.getWebinarUrl(),
+                row.getId(), row.getTenantId(), row.getTitle(), row.getDescription(), row.getWebinarType(), row.getStatus(),
+                row.getCampaignId(), campaign == null ? null : campaign.getName(), row.getWebinarUrl(),
                 row.getOrganizerName(), row.getOrganizerEmail(), row.getScheduledStartAt(), row.getScheduledEndAt(), row.getTimezone(), row.getCapacity(),
                 row.isRegistrationEnabled(), row.isReminderEnabled(), row.isFollowupEnabled(), row.getTags(), row.getCreatedBy(), row.getUpdatedBy(),
                 row.getCreatedAt(), row.getUpdatedAt()

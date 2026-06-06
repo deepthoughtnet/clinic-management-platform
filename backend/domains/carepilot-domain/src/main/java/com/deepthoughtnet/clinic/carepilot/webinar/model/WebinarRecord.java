@@ -11,6 +11,8 @@ public record WebinarRecord(
         String description,
         WebinarType webinarType,
         WebinarStatus status,
+        UUID campaignId,
+        String campaignName,
         String webinarUrl,
         String organizerName,
         String organizerEmail,

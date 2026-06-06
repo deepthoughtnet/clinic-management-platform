@@ -594,6 +594,37 @@ public class AppointmentService {
         return toRecord(saved, tenantUsersById(tenantId), patientsByIds(tenantId, List.of(saved.getPatientId())));
     }
 
+    @Transactional(readOnly = true)
+    public void validateScheduledBookingRequest(
+            UUID tenantId,
+            UUID doctorUserId,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String reason,
+            AppointmentPriority priority,
+            boolean allowOverbooking
+    ) {
+        requireTenant(tenantId);
+        requireDoctor(doctorUserId);
+        requireDate(appointmentDate, "appointmentDate");
+        requireTime(appointmentTime, "appointmentTime");
+        ensureDoctorInTenant(tenantId, doctorUserId);
+        AppointmentUpsertCommand command = new AppointmentUpsertCommand(
+                UUID.randomUUID(),
+                doctorUserId,
+                appointmentDate,
+                appointmentTime,
+                reason,
+                AppointmentType.SCHEDULED,
+                AppointmentStatus.BOOKED,
+                priority
+        );
+        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, doctorUserId, appointmentDate);
+        DoctorAvailabilitySlotRecord matchingSlot = findMatchingSlot(slots, appointmentTime);
+        validateNotPast(appointmentDate, appointmentTime, matchingSlot);
+        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots);
+    }
+
     @Transactional
     public AppointmentRecord createWalkIn(UUID tenantId, WalkInAppointmentCommand command, UUID actorAppUserId, boolean allowOverbooking) {
         requireTenant(tenantId);

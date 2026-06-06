@@ -13,6 +13,8 @@ public interface WebinarRegistrationRepository extends JpaRepository<WebinarRegi
 
     Optional<WebinarRegistrationEntity> findByTenantIdAndWebinarIdAndAttendeeEmail(UUID tenantId, UUID webinarId, String attendeeEmail);
 
+    Optional<WebinarRegistrationEntity> findByTenantIdAndWebinarIdAndAttendeePhone(UUID tenantId, UUID webinarId, String attendeePhone);
+
     long countByTenantIdAndWebinarId(UUID tenantId, UUID webinarId);
 
     long countByTenantIdAndWebinarIdAndAttendedTrue(UUID tenantId, UUID webinarId);
