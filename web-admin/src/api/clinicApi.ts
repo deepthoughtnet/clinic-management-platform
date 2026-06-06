@@ -3798,6 +3798,36 @@ export type CarePilotAiCallAnalyticsSummary = {
   skippedCalls: number;
 };
 
+export type CarePilotAiCallCampaignUpsertInput = {
+  name: string;
+  description?: string | null;
+  callType: CarePilotAiCallType;
+  status?: CarePilotAiCallCampaignStatus | null;
+  templateId?: string | null;
+  channel?: CarePilotChannelType | null;
+  retryEnabled?: boolean | null;
+  maxAttempts?: number | null;
+  escalationEnabled?: boolean | null;
+};
+
+export type CarePilotAiCallTriggerTargetInput = {
+  patientId?: string | null;
+  leadId?: string | null;
+  phoneNumber?: string | null;
+  script?: string | null;
+  scheduledAt?: string | null;
+};
+
+export type CarePilotAiCallManualCallInput = {
+  patientId?: string | null;
+  leadId?: string | null;
+  phoneNumber: string;
+  templateId?: string | null;
+  callType: CarePilotAiCallType;
+  script?: string | null;
+  scheduledAt?: string | null;
+};
+
 export type CreateCarePilotCampaignInput = {
   name: string;
   campaignType: CarePilotCampaignType;
@@ -4620,6 +4650,27 @@ export async function listCarePilotAiCallCampaigns(token: string, tenantId: stri
   return httpGet<CarePilotAiCallCampaign[]>("/api/carepilot/ai-calls/campaigns", { token, tenantId });
 }
 
+export async function getCarePilotAiCallCampaign(token: string, tenantId: string, campaignId: string) {
+  return httpGet<CarePilotAiCallCampaign>(`/api/carepilot/ai-calls/campaigns/${campaignId}`, { token, tenantId });
+}
+
+export async function createCarePilotAiCallCampaign(
+  token: string,
+  tenantId: string,
+  body: CarePilotAiCallCampaignUpsertInput
+) {
+  return httpPost<CarePilotAiCallCampaign>("/api/carepilot/ai-calls/campaigns", body, { token, tenantId });
+}
+
+export async function updateCarePilotAiCallCampaign(
+  token: string,
+  tenantId: string,
+  campaignId: string,
+  body: CarePilotAiCallCampaignUpsertInput
+) {
+  return httpPut<CarePilotAiCallCampaign>(`/api/carepilot/ai-calls/campaigns/${campaignId}`, body, { token, tenantId });
+}
+
 export async function updateCarePilotAiCallCampaignStatus(
   token: string,
   tenantId: string,
@@ -4633,9 +4684,17 @@ export async function triggerCarePilotAiCallCampaign(
   token: string,
   tenantId: string,
   campaignId: string,
-  body: { targets: Array<{ patientId?: string | null; leadId?: string | null; phoneNumber: string; script?: string | null; scheduledAt?: string | null }> }
+  body: { targets: CarePilotAiCallTriggerTargetInput[] }
 ) {
   return httpPost<CarePilotAiCallExecution[]>(`/api/carepilot/ai-calls/campaigns/${campaignId}/trigger`, body, { token, tenantId });
+}
+
+export async function createCarePilotAiCallManualCall(
+  token: string,
+  tenantId: string,
+  body: CarePilotAiCallManualCallInput
+) {
+  return httpPost<CarePilotAiCallExecution>("/api/carepilot/ai-calls/manual-call", body, { token, tenantId });
 }
 
 export async function listCarePilotAiCallExecutions(token: string, tenantId: string, filters?: {
@@ -4665,6 +4724,10 @@ export async function listCarePilotAiCallExecutions(token: string, tenantId: str
   if (filters?.size != null) query.set("size", String(filters.size));
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return httpGet<CarePilotAiCallExecutionListResponse>(`/api/carepilot/ai-calls/executions${suffix}`, { token, tenantId });
+}
+
+export async function getCarePilotAiCallExecution(token: string, tenantId: string, executionId: string) {
+  return httpGet<CarePilotAiCallExecution>(`/api/carepilot/ai-calls/executions/${executionId}`, { token, tenantId });
 }
 
 export async function retryCarePilotAiCallExecution(token: string, tenantId: string, executionId: string) {

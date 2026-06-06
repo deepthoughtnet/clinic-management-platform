@@ -2,16 +2,19 @@ package com.deepthoughtnet.clinic.carepilot.ai_call.orchestration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.deepthoughtnet.clinic.carepilot.ai_call.db.AiCallEventEntity;
 import com.deepthoughtnet.clinic.carepilot.ai_call.db.AiCallCampaignRepository;
 import com.deepthoughtnet.clinic.carepilot.ai_call.db.AiCallEventRepository;
 import com.deepthoughtnet.clinic.carepilot.ai_call.db.AiCallExecutionEntity;
 import com.deepthoughtnet.clinic.carepilot.ai_call.db.AiCallExecutionRepository;
 import com.deepthoughtnet.clinic.carepilot.ai_call.db.AiCallTranscriptEntity;
 import com.deepthoughtnet.clinic.carepilot.ai_call.db.AiCallTranscriptRepository;
+import com.deepthoughtnet.clinic.carepilot.ai_call.model.AiCallEventType;
 import com.deepthoughtnet.clinic.carepilot.ai_call.model.AiCallExecutionStatus;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.model.NotificationChannelPreference;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
@@ -202,6 +205,59 @@ class AiCallOrchestrationServiceTest {
         assertThat(processed.failed()).isEqualTo(1);
         assertThat(execution.getExecutionStatus()).isEqualTo(AiCallExecutionStatus.FAILED);
         assertThat(execution.getFailureReason()).isEqualTo("NO_PROVIDER_CONFIGURED");
+    }
+
+    @Test
+    void retryIncrementsRetryCountForCompletedExecutionAndRecordsEvent() {
+        UUID tenantId = UUID.randomUUID();
+        AiCallExecutionEntity execution = AiCallExecutionEntity.create(tenantId, UUID.randomUUID(), null, null, "+10000000000", OffsetDateTime.now().minusMinutes(5));
+        UUID executionId = execution.getId();
+        execution.setExecutionStatus(AiCallExecutionStatus.COMPLETED);
+        execution.setRetryCount(0);
+
+        when(executionRepository.findByTenantIdAndId(tenantId, executionId)).thenReturn(java.util.Optional.of(execution));
+        when(executionRepository.save(any(AiCallExecutionEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(eventRepository.save(any(AiCallEventEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var retried = service.retry(tenantId, executionId);
+
+        assertThat(retried.retryCount()).isEqualTo(1);
+        assertThat(execution.getRetryCount()).isEqualTo(1);
+        assertThat(retried.executionStatus()).isEqualTo(AiCallExecutionStatus.QUEUED);
+        verify(eventRepository).save(argThat(event ->
+                event.getEventType() == AiCallEventType.RETRY_SCHEDULED
+                        && execution.getId().equals(event.getExecutionId())));
+    }
+
+    @Test
+    void retryPreservesIncrementedRetryCountAfterDispatch() {
+        UUID tenantId = UUID.randomUUID();
+        AiCallExecutionEntity execution = AiCallExecutionEntity.create(tenantId, UUID.randomUUID(), null, null, "+10000000000", OffsetDateTime.now().minusMinutes(1));
+        UUID executionId = execution.getId();
+        execution.setExecutionStatus(AiCallExecutionStatus.FAILED);
+
+        when(executionRepository.findByTenantIdAndId(tenantId, executionId)).thenReturn(java.util.Optional.of(execution));
+        when(executionRepository.save(any(AiCallExecutionEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(eventRepository.save(any(AiCallEventEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.retry(tenantId, executionId);
+        mockSchedulerDependencies(tenantId, execution);
+        when(providerRegistry.resolvePrimary()).thenReturn(provider);
+        when(provider.placeCall(any())).thenReturn(new VoiceCallResult(
+                VoiceCallStatus.COMPLETED,
+                "mock-voice",
+                "after-retry",
+                null,
+                OffsetDateTime.now().minusSeconds(30),
+                OffsetDateTime.now(),
+                new VoiceCallTranscript("text", "summary", "NEUTRAL", "OK", false)
+        ));
+        when(transcriptRepository.save(any(AiCallTranscriptEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.dispatchDueExecutions(tenantId);
+
+        assertThat(execution.getRetryCount()).isEqualTo(1);
+        assertThat(execution.getExecutionStatus()).isEqualTo(AiCallExecutionStatus.COMPLETED);
     }
 
     private void mockSchedulerDependencies(UUID tenantId, AiCallExecutionEntity execution) {

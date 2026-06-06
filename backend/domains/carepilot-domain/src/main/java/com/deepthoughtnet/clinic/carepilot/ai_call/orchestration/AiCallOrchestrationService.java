@@ -271,6 +271,7 @@ public class AiCallOrchestrationService {
     @Transactional
     public AiCallExecutionRecord retry(UUID tenantId, UUID executionId) {
         AiCallExecutionEntity row = requireExecution(tenantId, executionId);
+        row.setRetryCount(row.getRetryCount() + 1);
         row.setExecutionStatus(AiCallExecutionStatus.QUEUED);
         row.setFailureReason(null);
         row.setEscalationRequired(false);
