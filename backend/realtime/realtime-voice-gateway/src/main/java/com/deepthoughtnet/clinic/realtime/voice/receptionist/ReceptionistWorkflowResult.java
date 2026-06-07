@@ -1,5 +1,7 @@
 package com.deepthoughtnet.clinic.realtime.voice.receptionist;
 
+import java.util.UUID;
+
 /**
  * Result object for each receptionist workflow step.
  */
@@ -13,6 +15,9 @@ public record ReceptionistWorkflowResult(
         String escalationReason,
         String escalationCategory,
         String escalationPriority,
-        String extractionSummary
+        String extractionSummary,
+        String workflowState,
+        UUID appointmentId,
+        boolean confirmationPending
 ) {
 }

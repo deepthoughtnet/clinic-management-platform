@@ -1,5 +1,13 @@
 package com.deepthoughtnet.clinic.realtime.voice.session;
 
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiChannel;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationPersistenceService;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationStatus;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationTurnCommand;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiTransport;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiWorkflowSnapshot;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiWorkflowState;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiWorkflowType;
 import com.deepthoughtnet.clinic.realtime.voice.config.VoiceGatewayProperties;
 import com.deepthoughtnet.clinic.realtime.voice.db.VoiceSessionEntity;
 import com.deepthoughtnet.clinic.realtime.voice.db.VoiceSessionEventEntity;
@@ -52,6 +60,7 @@ public class RealtimeVoiceSessionService {
     private final VoiceSessionEventBus eventBus;
     private final VoiceGatewayProperties properties;
     private final AiReceptionistWorkflowService receptionistWorkflowService;
+    private final CareAiConversationPersistenceService conversationPersistenceService;
     private final Map<UUID, SessionAudioRuntime> audioRuntime = new ConcurrentHashMap<>();
 
     public RealtimeVoiceSessionService(
@@ -66,7 +75,8 @@ public class RealtimeVoiceSessionService {
             RealtimeVoiceGatewayMetrics metrics,
             VoiceSessionEventBus eventBus,
             VoiceGatewayProperties properties,
-            AiReceptionistWorkflowService receptionistWorkflowService
+            AiReceptionistWorkflowService receptionistWorkflowService,
+            CareAiConversationPersistenceService conversationPersistenceService
     ) {
         this.sessionRepository = sessionRepository;
         this.eventRepository = eventRepository;
@@ -80,6 +90,7 @@ public class RealtimeVoiceSessionService {
         this.eventBus = eventBus;
         this.properties = properties;
         this.receptionistWorkflowService = receptionistWorkflowService;
+        this.conversationPersistenceService = conversationPersistenceService;
     }
 
     @Transactional
@@ -238,12 +249,46 @@ public class RealtimeVoiceSessionService {
             addEvent(sessionId, VoiceSessionEventType.ESCALATION, escalationPayload, correlationId);
         }
 
+        conversationPersistenceService.safeRecordTurn(new CareAiConversationTurnCommand(
+                tenantId,
+                CareAiChannel.REALTIME_VOICE,
+                session.getPatientId(),
+                session.getLeadId(),
+                sessionId.toString(),
+                CareAiTransport.WEBSOCKET_REALTIME,
+                correlationId,
+                userText,
+                aiReply.aiText(),
+                workflow.intent() == null ? null : workflow.intent().name(),
+                "{}",
+                "{\"correlationId\":\"" + trimJson(correlationId) + "\"}",
+                "{\"provider\":\"" + trimJson(aiReply.provider()) + "\"}",
+                escalationReason == null ? null : escalationReason,
+                escalationReason == null ? CareAiConversationStatus.ACTIVE : CareAiConversationStatus.ESCALATED,
+                new CareAiWorkflowSnapshot(
+                        mapWorkflowType(workflow.intent()),
+                        mapWorkflowState(workflow),
+                        session.getMetadataJson(),
+                        workflow.workflowState(),
+                        misunderstandings,
+                        workflow.appointmentId() != null ? "APPOINTMENT_BOOKED" : workflow.escalate() ? "HANDOFF_REQUIRED" : "WORKFLOW_PROGRESS",
+                        session.getMetadataJson(),
+                        workflow.appointmentId(),
+                        workflow.confirmationPending() ? "BOOK_APPOINTMENT" : null,
+                        workflow.confirmationPending() ? sessionId + "|" + workflow.intent() : null,
+                        workflow.confirmationPending() ? aiReply.aiText() : null,
+                        workflow.confirmationPending() ? session.getMetadataJson() : null,
+                        null
+                )
+        ));
+
         return new VoiceTurnResult(userLine, aiLine, escalationReason, aiReply.provider(), aiLatency);
     }
 
     @Transactional
     public VoiceSessionRecord completeSession(UUID tenantId, UUID sessionId, String correlationId) {
         VoiceSessionEntity session = requireSession(tenantId, sessionId);
+        boolean wasEscalated = session.getSessionStatus() == VoiceSessionStatus.ESCALATED;
         String summaryPromptKey = "AI_RECEPTIONIST_SUMMARY";
         String summaryText = null;
         if (session.getSessionType() == VoiceSessionType.AI_RECEPTIONIST) {
@@ -277,6 +322,16 @@ public class RealtimeVoiceSessionService {
         }
         session.markCompleted();
         sessionRepository.save(session);
+        conversationPersistenceService.safeCloseConversation(
+                tenantId,
+                CareAiChannel.REALTIME_VOICE,
+                session.getPatientId(),
+                sessionId.toString(),
+                wasEscalated
+                        ? CareAiConversationStatus.ESCALATED
+                        : CareAiConversationStatus.COMPLETED,
+                summaryText
+        );
         rollingConversationMemory.clear(sessionId);
         SessionAudioRuntime runtime = audioRuntime.remove(sessionId);
         if (runtime != null) {
@@ -341,6 +396,38 @@ public class RealtimeVoiceSessionService {
     private String trimPayload(String value) {
         String sanitized = sanitize(value);
         return sanitized.length() <= 300 ? sanitized : sanitized.substring(0, 300);
+    }
+
+    private CareAiWorkflowType mapWorkflowType(com.deepthoughtnet.clinic.realtime.voice.receptionist.ReceptionistIntent intent) {
+        if (intent == null) {
+            return CareAiWorkflowType.UNKNOWN;
+        }
+        return switch (intent) {
+            case BOOK_APPOINTMENT -> CareAiWorkflowType.BOOK_APPOINTMENT;
+            case RESCHEDULE_APPOINTMENT -> CareAiWorkflowType.RESCHEDULE_APPOINTMENT;
+            case CANCEL_APPOINTMENT -> CareAiWorkflowType.CANCEL_APPOINTMENT;
+            case HUMAN_CALLBACK -> CareAiWorkflowType.CALLBACK_REQUEST;
+            case EMERGENCY_OR_MEDICAL_RISK, BILLING_QUERY, INSURANCE_QUERY, COMPLAINT -> CareAiWorkflowType.HUMAN_HANDOFF;
+            case CLINIC_FAQ -> CareAiWorkflowType.DOCTOR_LOOKUP;
+            case LEAD_CAPTURE, UNKNOWN -> CareAiWorkflowType.UNKNOWN;
+        };
+    }
+
+    private CareAiWorkflowState mapWorkflowState(com.deepthoughtnet.clinic.realtime.voice.receptionist.ReceptionistWorkflowResult workflow) {
+        if (workflow.escalate()) {
+            return CareAiWorkflowState.ESCALATED;
+        }
+        if (workflow.appointmentId() != null) {
+            return CareAiWorkflowState.COMPLETED;
+        }
+        if (workflow.confirmationPending()) {
+            return CareAiWorkflowState.WAITING_CONFIRMATION;
+        }
+        return CareAiWorkflowState.COLLECTING_INFO;
+    }
+
+    private String trimJson(String value) {
+        return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private boolean isSilenceTimeout(long lastAudioEpochMs) {

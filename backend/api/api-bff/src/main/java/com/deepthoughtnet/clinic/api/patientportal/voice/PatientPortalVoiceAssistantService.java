@@ -59,7 +59,7 @@ public class PatientPortalVoiceAssistantService {
 
         Instant careAiStart = Instant.now();
         log.info("patient.voice.careai.start");
-        PatientPortalCareAiMessageResponse careAiResponse = patientPortalCareAiService.message(
+        PatientPortalCareAiMessageResponse careAiResponse = patientPortalCareAiService.messageFromVoice(
                 new PatientPortalCareAiMessageRequest(transcription.transcript(), language)
         );
         long careAiDurationMs = Duration.between(careAiStart, Instant.now()).toMillis();

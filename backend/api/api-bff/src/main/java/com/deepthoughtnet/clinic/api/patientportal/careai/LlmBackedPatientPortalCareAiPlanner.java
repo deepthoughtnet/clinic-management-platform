@@ -56,6 +56,8 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
             inputVariables.put("message", context.latestMessage());
             inputVariables.put("language", safe(context.language()));
             inputVariables.put("currentIntent", safe(context.currentIntent()));
+            inputVariables.put("persistedWorkflowContextJson", safe(context.persistedWorkflowContextJson()));
+            inputVariables.put("persistedConfirmationScopeKey", safe(context.persistedConfirmationScopeKey()));
             inputVariables.put("confirmationPending", context.confirmationPending());
             inputVariables.put("pendingAction", safe(context.pendingAction()));
             inputVariables.put("requestedDoctorName", safe(context.requestedDoctorName()));
@@ -71,17 +73,21 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
             inputVariables.put("appointmentOptions", context.appointmentOptions());
             inputVariables.put("slotOptions", context.slotOptions());
             inputVariables.put("knownDoctorOptions", context.knownDoctorNames());
+            inputVariables.put("recentMessages", context.recentMessages());
+            inputVariables.put("lastQuestionKey", safe(context.lastQuestionKey()));
+            inputVariables.put("repeatedQuestionCount", context.repeatedQuestionCount());
             inputVariables.put("today", LocalDate.now().toString());
             inputVariables.put("instructions", """
                     You are a planning assistant for a patient appointment workflow.
                     Use the current conversation state and latest user message to infer the next safe planning update only.
                     Return strict JSON with keys:
-                    intent, doctorName, speciality, preferredDate, preferredTimeWindow, confirmation, reason, topicSwitch.
+                    intent, doctorName, speciality, preferredDate, preferredTimeWindow, confirmation, reason, topicSwitch, sideTopic.
                     intent must be one of BOOK_APPOINTMENT, RESCHEDULE_APPOINTMENT, CANCEL_APPOINTMENT, APPOINTMENT_STATUS, or null.
                     preferredDate should be yyyy-MM-dd when confidently known, otherwise null.
                     preferredTimeWindow may be morning, afternoon, evening, night, before lunch, after lunch, now, HH:mm, or null.
                     confirmation must be confirm, reject, or null.
                     topicSwitch must be true only if the patient is clearly abandoning the current booking topic.
+                    sideTopic may be CLINIC_TIMINGS, DOCTOR_AVAILABILITY, APPOINTMENT_STATUS, or null.
                     Do not execute actions. Do not invent patient identity. Do not return medical advice, diagnosis, or irreversible actions.
                     If the user is answering a missing field from the current state, prefer filling that field over repeating the same question.
                     """);
@@ -124,7 +130,8 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
                     trimToLength(stringValue(structured, "preferredTimeWindow"), 32),
                     parseConfirmation(stringValue(structured, "confirmation")),
                     trimToLength(stringValue(structured, "reason"), 160),
-                    parseTopicSwitch(structured.get("topicSwitch"))
+                    parseTopicSwitch(structured.get("topicSwitch")),
+                    trimToLength(stringValue(structured, "sideTopic"), 64)
             );
             return isActionable(decision) ? decision : null;
         } catch (Exception ex) {
@@ -142,7 +149,8 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
                 || StringUtils.hasText(decision.preferredTimeWindow())
                 || decision.confirmationDecision() != PatientPortalCareAiPlannerConfirmationDecision.NONE
                 || StringUtils.hasText(decision.reason())
-                || decision.topicSwitch());
+                || decision.topicSwitch()
+                || StringUtils.hasText(decision.sideTopic()));
     }
 
     private Map<String, Object> payload(AiOrchestrationResponse response) throws Exception {

@@ -6,6 +6,8 @@ public record PatientPortalCareAiPlanningContext(
         String language,
         String latestMessage,
         String currentIntent,
+        String persistedWorkflowContextJson,
+        String persistedConfirmationScopeKey,
         boolean confirmationPending,
         String pendingAction,
         String requestedDoctorName,
@@ -20,6 +22,9 @@ public record PatientPortalCareAiPlanningContext(
         List<String> doctorOptions,
         List<String> appointmentOptions,
         List<String> slotOptions,
-        List<String> knownDoctorNames
+        List<String> knownDoctorNames,
+        List<String> recentMessages,
+        String lastQuestionKey,
+        int repeatedQuestionCount
 ) {
 }

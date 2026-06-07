@@ -109,6 +109,7 @@ public class AiReceptionistWorkflowService {
         String escalationReason = null;
         String escalationCategory = null;
         String escalationPriority = null;
+        UUID appointmentId = null;
 
         if (intent == ReceptionistIntent.EMERGENCY_OR_MEDICAL_RISK) {
             escalate = true;
@@ -155,7 +156,7 @@ public class AiReceptionistWorkflowService {
                     state = ReceptionistWorkflowState.COLLECT_APPOINTMENT_DETAILS;
                     promptKey = "AI_RECEPTIONIST_APPOINTMENT_COLLECTION";
                     outcome.put("appointmentIntent", true);
-                    handleAppointmentFlow(session, slots, outcome, memory, normalized, actorUserId);
+                    appointmentId = handleAppointmentFlow(session, slots, outcome, memory, normalized, actorUserId);
                     ReceptionistWorkflowState bookingState = stateOf(memory.path("currentWorkflowState").asText(null));
                     if (bookingState != null) {
                         state = bookingState;
@@ -256,7 +257,10 @@ public class AiReceptionistWorkflowService {
                 escalationReason,
                 escalationCategory,
                 escalationPriority,
-                extractionSummary(intent, confidence, slots, memory)
+                extractionSummary(intent, confidence, slots, memory),
+                state.name(),
+                appointmentId,
+                state == ReceptionistWorkflowState.SLOT_CONFIRMATION_PENDING
         );
     }
 
@@ -284,13 +288,13 @@ public class AiReceptionistWorkflowService {
         session.setMetadataJson(writeMetadata(metadata));
     }
 
-    private void handleAppointmentFlow(VoiceSessionEntity session, ObjectNode slots, ObjectNode outcome, ObjectNode memory,
+    private UUID handleAppointmentFlow(VoiceSessionEntity session, ObjectNode slots, ObjectNode outcome, ObjectNode memory,
                                        String normalized, UUID actorUserId) {
         List<String> missing = requiredAppointmentMissing(slots);
         memory.set("missingFields", toArray(missing));
         outcome.put("appointmentRequestCreated", true);
         if (!missing.isEmpty()) {
-            return;
+            return null;
         }
         outcome.put("availabilityLookupReady", true);
         outcome.put("bookingConfirmationRequired", true);
@@ -304,7 +308,7 @@ public class AiReceptionistWorkflowService {
             outcome.put("followUpRequired", true);
             outcome.put("followUpReason", doctorUserId == null ? "Doctor resolution ambiguous" : "Preferred date not understood");
             outcome.put("bookingRequestStatus", "FOLLOW_UP_REQUIRED");
-            return;
+            return null;
         }
 
         List<String> suggestions = lookupSuggestedSlots(session.getTenantId(), doctorUserId, preferredDate, text(slots, "preferredTime"));
@@ -314,7 +318,7 @@ public class AiReceptionistWorkflowService {
             outcome.put("followUpRequired", true);
             outcome.put("followUpReason", "No available slots found");
             outcome.put("bookingRequestStatus", "FOLLOW_UP_REQUIRED");
-            return;
+            return null;
         }
         outcome.put("bookingRequestStatus", "SLOT_SUGGESTIONS_PRESENTED");
         memory.put("currentWorkflowState", ReceptionistWorkflowState.SLOT_SUGGESTIONS_PRESENTED.name());
@@ -328,16 +332,19 @@ public class AiReceptionistWorkflowService {
                 outcome.put("appointmentId", created.toString());
                 outcome.put("bookingRequestStatus", "BOOKING_CREATED");
                 memory.put("currentWorkflowState", ReceptionistWorkflowState.BOOKING_CREATED.name());
+                return created;
             } else {
                 outcome.put("bookingRequestStatus", "FOLLOW_UP_REQUIRED");
                 outcome.put("followUpRequired", true);
                 outcome.put("followUpReason", "Appointment creation failed safely");
                 memory.put("currentWorkflowState", ReceptionistWorkflowState.BOOKING_FOLLOWUP_REQUIRED.name());
+                return null;
             }
         } else {
             outcome.put("bookingConfirmation", "PENDING");
             memory.put("currentWorkflowState", ReceptionistWorkflowState.SLOT_CONFIRMATION_PENDING.name());
         }
+        return null;
     }
 
     private String appointmentCollectionPrompt(ObjectNode slots, ObjectNode memory) {

@@ -231,6 +231,10 @@ public class PatientPortalService {
                 .toList();
     }
 
+    public UUID currentPatientId() {
+        return requireCurrentPatientAccess().patient().getId();
+    }
+
     public List<PatientPortalDoctorResponse> doctors() {
         PatientAccess access = requireCurrentPatientAccess();
         return activeDoctorSnapshots(access.tenantId()).stream()

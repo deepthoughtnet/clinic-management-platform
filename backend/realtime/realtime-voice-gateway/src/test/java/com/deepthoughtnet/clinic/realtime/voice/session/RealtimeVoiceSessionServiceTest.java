@@ -15,6 +15,7 @@ import com.deepthoughtnet.clinic.realtime.voice.escalation.VoiceEscalationDecide
 import com.deepthoughtnet.clinic.realtime.voice.events.VoiceSessionEventBus;
 import com.deepthoughtnet.clinic.realtime.voice.metrics.RealtimeVoiceGatewayMetrics;
 import com.deepthoughtnet.clinic.realtime.voice.config.VoiceGatewayProperties;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationPersistenceService;
 import com.deepthoughtnet.clinic.realtime.voice.orchestration.RealtimeConversationOrchestrator;
 import com.deepthoughtnet.clinic.realtime.voice.orchestration.RollingConversationMemory;
 import com.deepthoughtnet.clinic.realtime.voice.receptionist.AiReceptionistWorkflowService;
@@ -72,7 +73,8 @@ class RealtimeVoiceSessionServiceTest {
                         Mockito.mock(ClinicProfileService.class),
                         Mockito.mock(AppointmentService.class),
                         Mockito.mock(TenantUserManagementService.class),
-                        Mockito.mock(DoctorProfileService.class))
+                        Mockito.mock(DoctorProfileService.class)),
+                Mockito.mock(CareAiConversationPersistenceService.class)
         );
     }
 

@@ -8,6 +8,7 @@ public record PatientPortalCareAiPlannerDecision(
         String preferredTimeWindow,
         PatientPortalCareAiPlannerConfirmationDecision confirmationDecision,
         String reason,
-        boolean topicSwitch
+        boolean topicSwitch,
+        String sideTopic
 ) {
 }

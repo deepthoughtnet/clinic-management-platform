@@ -51,7 +51,7 @@ class PatientPortalVoiceAssistantServiceTest {
         );
         when(orchestratorService.transcribeBufferedAudio(any(), any(), any(), any()))
                 .thenReturn(new VoiceTranscriptionResult("I want to book appointment", "faster-whisper", "ok"));
-        when(careAiService.message(any(PatientPortalCareAiMessageRequest.class)))
+        when(careAiService.messageFromVoice(any(PatientPortalCareAiMessageRequest.class)))
                 .thenReturn(new PatientPortalCareAiMessageResponse("Please confirm the 10:30 slot.", state));
         when(orchestratorService.synthesizeAssistantText("Please confirm the 10:30 slot.", "en"))
                 .thenReturn(new VoiceSynthesisResult("voice".getBytes(StandardCharsets.UTF_8), "audio/wav", "piper", "ok"));
@@ -59,7 +59,7 @@ class PatientPortalVoiceAssistantServiceTest {
         var response = service.processAudioTurn("audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "voice.webm", "auto");
 
         ArgumentCaptor<PatientPortalCareAiMessageRequest> requestCaptor = ArgumentCaptor.forClass(PatientPortalCareAiMessageRequest.class);
-        verify(careAiService).message(requestCaptor.capture());
+        verify(careAiService).messageFromVoice(requestCaptor.capture());
         assertThat(requestCaptor.getValue().message()).isEqualTo("I want to book appointment");
         assertThat(response.transcript()).isEqualTo("I want to book appointment");
         assertThat(response.assistantText()).isEqualTo("Please confirm the 10:30 slot.");
@@ -117,7 +117,7 @@ class PatientPortalVoiceAssistantServiceTest {
         );
         when(orchestratorService.transcribeBufferedAudio(any(), any(), any(), any()))
                 .thenReturn(new VoiceTranscriptionResult("What is my appointment status?", "faster-whisper", "ok"));
-        when(careAiService.message(any(PatientPortalCareAiMessageRequest.class)))
+        when(careAiService.messageFromVoice(any(PatientPortalCareAiMessageRequest.class)))
                 .thenReturn(new PatientPortalCareAiMessageResponse("Your next appointment is tomorrow at 10 AM.", state));
         when(orchestratorService.synthesizeAssistantText("Your next appointment is tomorrow at 10 AM.", "en"))
                 .thenThrow(new IllegalStateException("tts timeout"));
