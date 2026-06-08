@@ -3022,6 +3022,264 @@ export async function getPatientTimeline(token: string, tenantId: string, patien
   return httpGet<PatientTimelineItem[]>(`/api/patients/${patientId}/timeline`, { token, tenantId });
 }
 
+export type CareAiReceptionistTaskType = "HUMAN_HANDOFF" | "APPOINTMENT_HANDOFF" | "CALLBACK_REQUEST" | "ESCALATION";
+export type CareAiReceptionistTaskStatus = "OPEN" | "ASSIGNED" | "IN_PROGRESS" | "RESOLVED" | "CANCELLED";
+export type CareAiReceptionistTaskPriority = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+export type CareAiReceptionistTaskSlaStatus = "ON_TIME" | "DUE_SOON" | "OVERDUE" | "BREACHED";
+export type CareAiReceptionistTaskHandlingMode = "AI_HANDLING" | "STAFF_HANDLING" | "RETURNED_TO_AI";
+
+export type CareAiReceptionistTask = {
+  id: string;
+  tenantId: string;
+  conversationId: string | null;
+  workflowId: string | null;
+  patientId: string | null;
+  leadId: string | null;
+  appointmentId: string | null;
+  taskType: CareAiReceptionistTaskType;
+  status: CareAiReceptionistTaskStatus;
+  priority: CareAiReceptionistTaskPriority;
+  channel: string | null;
+  reason: string | null;
+  latestUserMessage: string | null;
+  callbackTimePref: string | null;
+  callbackDueAt: string | null;
+  dueAt: string | null;
+  slaStatus: CareAiReceptionistTaskSlaStatus;
+  handlingMode: CareAiReceptionistTaskHandlingMode;
+  assignedUserId: string | null;
+  assignedAt: string | null;
+  firstResponseAt: string | null;
+  breachedAt: string | null;
+  lastNotificationAt: string | null;
+  lastStaffMessageAt: string | null;
+  resolvedAt: string | null;
+  resolvedByUserId: string | null;
+  resolutionNotes: string | null;
+  metadataJson: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CareAiReceptionistTaskMessage = {
+  id: string;
+  speaker: string;
+  channel: string;
+  content: string;
+  createdAt: string;
+};
+
+export type CareAiReceptionistTaskDetail = {
+  task: CareAiReceptionistTask;
+  messages: CareAiReceptionistTaskMessage[];
+  resumeContext: CareAiReceptionistTaskResumeContext;
+};
+
+export type CareAiConversationSummary = {
+  id: string;
+  channel: string;
+  status: string;
+  patientId: string | null;
+  leadId: string | null;
+  appointmentId: string | null;
+  currentWorkflowId: string | null;
+  summary: string | null;
+  externalSessionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CareAiWorkflowSummary = {
+  id: string;
+  workflowType: string;
+  state: string;
+  lastQuestionKey: string | null;
+  repeatedQuestionCount: number;
+  context: Record<string, unknown>;
+};
+
+export type CareAiReceptionistTaskResumeContext = {
+  task: CareAiReceptionistTask;
+  conversation: CareAiConversationSummary | null;
+  workflow: CareAiWorkflowSummary | null;
+  recommendedNextPrompt: string | null;
+};
+
+export type CareAiReceptionistTaskConversation = {
+  task: CareAiReceptionistTask;
+  conversation: CareAiConversationSummary | null;
+  workflow: CareAiWorkflowSummary | null;
+  messages: CareAiReceptionistTaskMessage[];
+};
+
+export type CareAiReceptionistTaskEvent = {
+  id: string;
+  taskId: string;
+  eventType: string;
+  actorUserId: string | null;
+  payloadJson: string;
+  createdAt: string;
+};
+
+export type CareAiConversationMessage = {
+  id: string;
+  conversationId: string;
+  speaker: string;
+  channel: string;
+  content: string;
+  intent: string | null;
+  entitiesJson: string;
+  metadataJson: string;
+  createdAt: string;
+};
+
+function buildCareAiReceptionistTaskQuery(params: {
+  status?: CareAiReceptionistTaskStatus | "";
+  type?: CareAiReceptionistTaskType | "";
+  priority?: CareAiReceptionistTaskPriority | "";
+  assignedToMe?: boolean;
+  overdueOnly?: boolean;
+  dueSoonOnly?: boolean;
+  patientId?: string | null;
+} = {}) {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.type) query.set("type", params.type);
+  if (params.priority) query.set("priority", params.priority);
+  if (params.assignedToMe) query.set("assignedToMe", "true");
+  if (params.overdueOnly) query.set("overdueOnly", "true");
+  if (params.dueSoonOnly) query.set("dueSoonOnly", "true");
+  if (params.patientId) query.set("patientId", params.patientId);
+  return query.toString() ? `?${query.toString()}` : "";
+}
+
+export async function listCareAiReceptionistTasks(
+  token: string,
+  tenantId: string,
+  params: {
+    status?: CareAiReceptionistTaskStatus | "";
+    type?: CareAiReceptionistTaskType | "";
+    priority?: CareAiReceptionistTaskPriority | "";
+    assignedToMe?: boolean;
+    overdueOnly?: boolean;
+    dueSoonOnly?: boolean;
+    patientId?: string | null;
+  } = {},
+) {
+  return httpGet<CareAiReceptionistTask[]>(`/api/careai/receptionist-tasks${buildCareAiReceptionistTaskQuery(params)}`, { token, tenantId });
+}
+
+export async function listCareAiCallbackTasks(
+  token: string,
+  tenantId: string,
+  params: Parameters<typeof listCareAiReceptionistTasks>[2] = {},
+) {
+  return httpGet<CareAiReceptionistTask[]>(`/api/careai/receptionist-tasks/callbacks${buildCareAiReceptionistTaskQuery(params)}`, { token, tenantId });
+}
+
+export async function listCareAiEscalationTasks(
+  token: string,
+  tenantId: string,
+  params: Parameters<typeof listCareAiReceptionistTasks>[2] = {},
+) {
+  return httpGet<CareAiReceptionistTask[]>(`/api/careai/receptionist-tasks/escalations${buildCareAiReceptionistTaskQuery(params)}`, { token, tenantId });
+}
+
+export async function listCareAiHandoffTasks(
+  token: string,
+  tenantId: string,
+  params: Parameters<typeof listCareAiReceptionistTasks>[2] = {},
+) {
+  return httpGet<CareAiReceptionistTask[]>(`/api/careai/receptionist-tasks/handoffs${buildCareAiReceptionistTaskQuery(params)}`, { token, tenantId });
+}
+
+export async function listCareAiAppointmentHandoffTasks(
+  token: string,
+  tenantId: string,
+  params: Parameters<typeof listCareAiReceptionistTasks>[2] = {},
+) {
+  return httpGet<CareAiReceptionistTask[]>(`/api/careai/receptionist-tasks/appointment-handoffs${buildCareAiReceptionistTaskQuery(params)}`, { token, tenantId });
+}
+
+export async function getCareAiReceptionistTask(token: string, tenantId: string, taskId: string) {
+  return httpGet<CareAiReceptionistTaskDetail>(`/api/careai/receptionist-tasks/${taskId}`, { token, tenantId });
+}
+
+export async function getCareAiReceptionistTaskConversation(token: string, tenantId: string, taskId: string) {
+  return httpGet<CareAiReceptionistTaskConversation>(`/api/careai/receptionist-tasks/${taskId}/conversation`, { token, tenantId });
+}
+
+export async function getCareAiReceptionistTaskResumeContext(token: string, tenantId: string, taskId: string) {
+  return httpGet<CareAiReceptionistTaskResumeContext>(`/api/careai/receptionist-tasks/${taskId}/resume-context`, { token, tenantId });
+}
+
+export async function listCareAiReceptionistTaskEvents(token: string, tenantId: string, taskId: string) {
+  return httpGet<CareAiReceptionistTaskEvent[]>(`/api/careai/receptionist-tasks/${taskId}/events`, { token, tenantId });
+}
+
+export async function assignCareAiReceptionistTaskToMe(token: string, tenantId: string, taskId: string) {
+  return httpPost<CareAiReceptionistTask>(`/api/careai/receptionist-tasks/${taskId}/assign-me`, undefined, { token, tenantId });
+}
+
+export async function claimCareAiReceptionistTaskAssignment(token: string, tenantId: string, taskId: string) {
+  return httpPost<CareAiReceptionistTask>(`/api/careai/receptionist-tasks/${taskId}/assignments/claim`, undefined, { token, tenantId });
+}
+
+export async function markCareAiReceptionistTaskInProgress(token: string, tenantId: string, taskId: string) {
+  return httpPost<CareAiReceptionistTask>(`/api/careai/receptionist-tasks/${taskId}/in-progress`, undefined, { token, tenantId });
+}
+
+export async function resumeCareAiReceptionistTask(token: string, tenantId: string, taskId: string) {
+  return httpPost<CareAiReceptionistTask>(`/api/careai/receptionist-tasks/${taskId}/resume`, undefined, { token, tenantId });
+}
+
+export async function addCareAiReceptionistStaffNote(token: string, tenantId: string, taskId: string, note: string) {
+  return httpPost<CareAiReceptionistTask>(`/api/careai/receptionist-tasks/${taskId}/staff-note`, { note }, { token, tenantId });
+}
+
+export async function returnCareAiReceptionistTaskToAi(token: string, tenantId: string, taskId: string) {
+  return httpPost<CareAiReceptionistTask>(`/api/careai/receptionist-tasks/${taskId}/return-to-ai`, undefined, { token, tenantId });
+}
+
+export async function scheduleCareAiReceptionistTaskCallback(
+  token: string,
+  tenantId: string,
+  taskId: string,
+  callbackTimePreference?: string | null,
+  callbackDueAt?: string | null,
+) {
+  return httpPost<CareAiReceptionistTask>(
+    `/api/careai/receptionist-tasks/${taskId}/schedule-callback`,
+    { callbackTimePreference: callbackTimePreference ?? null, callbackDueAt: callbackDueAt ?? null },
+    { token, tenantId },
+  );
+}
+
+export async function resolveCareAiReceptionistTask(token: string, tenantId: string, taskId: string, resolutionNotes?: string | null) {
+  return httpPost<CareAiReceptionistTask>(`/api/careai/receptionist-tasks/${taskId}/resolve`, { resolutionNotes: resolutionNotes ?? null }, { token, tenantId });
+}
+
+export async function cancelCareAiReceptionistTask(token: string, tenantId: string, taskId: string, resolutionNotes?: string | null) {
+  return httpPost<CareAiReceptionistTask>(`/api/careai/receptionist-tasks/${taskId}/cancel`, { resolutionNotes: resolutionNotes ?? null }, { token, tenantId });
+}
+
+export async function listCareAiConversations(token: string, tenantId: string) {
+  return httpGet<CareAiConversationSummary[]>("/api/careai/conversations", { token, tenantId });
+}
+
+export async function listActiveCareAiConversations(token: string, tenantId: string, patientId?: string | null) {
+  const query = patientId ? `?patientId=${encodeURIComponent(patientId)}` : "";
+  return httpGet<CareAiConversationSummary[]>(`/api/careai/conversations/active${query}`, { token, tenantId });
+}
+
+export async function getCareAiConversation(token: string, tenantId: string, conversationId: string) {
+  return httpGet<CareAiConversationSummary>(`/api/careai/conversations/${conversationId}`, { token, tenantId });
+}
+
+export async function listCareAiConversationMessages(token: string, tenantId: string, conversationId: string) {
+  return httpGet<CareAiConversationMessage[]>(`/api/careai/conversations/${conversationId}/messages`, { token, tenantId });
+}
+
 export type PrescriptionTemplateConfig = {
   id: string | null;
   tenantId: string;

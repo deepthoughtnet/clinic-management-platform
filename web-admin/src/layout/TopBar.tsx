@@ -97,7 +97,7 @@ export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => voi
         <LocalHospitalRoundedIcon fontSize="small" color="primary" />
         <Box>
           <Typography variant="subtitle1" sx={{ fontWeight: 900, lineHeight: 1.2 }}>
-            Clinic Management
+            CuraPilot
           </Typography>
           <Typography variant="caption" color="text.secondary">
             {formatPathLabel(location.pathname)}

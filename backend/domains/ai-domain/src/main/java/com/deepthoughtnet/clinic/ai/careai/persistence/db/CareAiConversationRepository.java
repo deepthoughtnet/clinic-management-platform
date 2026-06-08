@@ -20,4 +20,10 @@ public interface CareAiConversationRepository extends JpaRepository<CareAiConver
             UUID patientId,
             List<String> statuses
     );
+
+    Optional<CareAiConversationEntity> findTopByTenantIdAndPatientIdAndStatusInOrderByUpdatedAtDesc(
+            UUID tenantId,
+            UUID patientId,
+            List<String> statuses
+    );
 }

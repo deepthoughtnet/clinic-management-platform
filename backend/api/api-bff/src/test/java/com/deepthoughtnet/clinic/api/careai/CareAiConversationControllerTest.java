@@ -55,4 +55,20 @@ class CareAiConversationControllerTest {
         String guard = method.getAnnotation(PreAuthorize.class).value();
         assertThat(guard).contains("RECEPTIONIST").contains("AUDITOR");
     }
+
+    @Test
+    void activeUsesTenantFromRequestContext() {
+        UUID tenantId = UUID.randomUUID();
+        CareAiConversationPersistenceService service = mock(CareAiConversationPersistenceService.class);
+        when(service.listActiveConversations(tenantId)).thenReturn(List.of(
+                CareAiConversationEntity.create(tenantId, "PATIENT_PORTAL_VOICE", null, null, "session-active")
+        ));
+        RequestContextHolder.set(new RequestContext(new TenantId(tenantId), UUID.randomUUID(), "sub", Set.of("RECEPTIONIST"), "RECEPTIONIST", "corr"));
+
+        CareAiConversationController controller = new CareAiConversationController(service);
+        var rows = controller.active(null);
+
+        verify(service).listActiveConversations(tenantId);
+        assertThat(rows).hasSize(1);
+    }
 }

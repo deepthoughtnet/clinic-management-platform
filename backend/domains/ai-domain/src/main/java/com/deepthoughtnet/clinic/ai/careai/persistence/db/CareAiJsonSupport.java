@@ -6,14 +6,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-final class CareAiJsonSupport {
+public final class CareAiJsonSupport {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() { };
 
     private CareAiJsonSupport() {
     }
 
-    static Map<String, Object> parseObject(String value) {
+    public static Map<String, Object> parseObject(String value) {
         if (value == null || value.isBlank()) {
             return new LinkedHashMap<>();
         }
@@ -24,7 +24,7 @@ final class CareAiJsonSupport {
         }
     }
 
-    static String writeObject(Map<String, Object> value) {
+    public static String writeObject(Map<String, Object> value) {
         try {
             return OBJECT_MAPPER.writeValueAsString(value == null ? new LinkedHashMap<>() : value);
         } catch (JsonProcessingException ex) {

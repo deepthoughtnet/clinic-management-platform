@@ -1,5 +1,9 @@
 package com.deepthoughtnet.clinic.api.patientportal.voice;
 
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiChannel;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationPersistenceService;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationSessionSnapshot;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiTransport;
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService.PatientPortalVoiceTurnResponse;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
@@ -9,6 +13,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
@@ -28,20 +34,24 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
     private static final Logger log = LoggerFactory.getLogger(PatientPortalVoiceWebSocketHandler.class);
     private static final int MAX_CHUNK_BASE64_CHARS = 32 * 1024;
     private static final int RESPONSE_CHUNK_BASE64_CHARS = 24 * 1024;
+    private static final String INSTANCE_ID = buildInstanceId();
 
     private final ObjectMapper objectMapper;
     private final PatientPortalVoiceAssistantService voiceAssistantService;
     private final VoiceTestProperties properties;
+    private final CareAiConversationPersistenceService conversationPersistenceService;
     private final Map<String, SessionState> sessionStates = new ConcurrentHashMap<>();
 
     public PatientPortalVoiceWebSocketHandler(
             ObjectMapper objectMapper,
             PatientPortalVoiceAssistantService voiceAssistantService,
-            VoiceTestProperties properties
+            VoiceTestProperties properties,
+            CareAiConversationPersistenceService conversationPersistenceService
     ) {
         this.objectMapper = objectMapper;
         this.voiceAssistantService = voiceAssistantService;
         this.properties = properties;
+        this.conversationPersistenceService = conversationPersistenceService;
     }
 
     @Override
@@ -83,7 +93,10 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        sessionStates.remove(session.getId());
+        SessionState state = sessionStates.remove(session.getId());
+        if (state != null) {
+            markVoiceDisconnected(session, state);
+        }
         log.info("patient.voice.websocket.closed sessionId={} code={} reason={}",
                 session.getId(),
                 status == null ? null : status.getCode(),
@@ -93,6 +106,8 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
     private void handleSessionStart(WebSocketSession session, JsonNode root) throws IOException {
         SessionState state = requireState(session);
         state.touch();
+        String requestedResumeSessionId = root.path("resumeSessionId").asText("").trim();
+        state.logicalSessionId = requestedResumeSessionId.isBlank() ? state.logicalSessionId : requestedResumeSessionId;
         state.language = root.path("language").asText("auto");
         state.startedAt = Instant.now();
         state.lastActivityAt = Instant.now();
@@ -100,20 +115,25 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         state.closed = false;
         state.turnCount = 0;
         clearAudioBuffer(state);
-        sendEvent(session, Map.of(
-                "type", "session.started",
-                "sessionId", state.sessionId,
-                "language", state.language,
-                "voiceConfig", Map.of(
-                        "heartbeatIntervalMs", properties.getLive().getHeartbeatIntervalMs(),
-                        "speechStartThreshold", properties.getVad().getSpeechStartThreshold(),
-                        "speechEndThreshold", properties.getVad().getSpeechEndThreshold(),
-                        "minSpeechMs", properties.getVad().getMinSpeechMs(),
-                        "silenceTimeoutMs", properties.getVad().getSilenceTimeoutMs(),
-                        "maxUtteranceMs", properties.getVad().getMaxUtteranceMs(),
-                        "autoResumeDelayMs", properties.getLive().getFrontendAutoResumeDelayMs()
-                )
+        CareAiConversationSessionSnapshot recovered = tryResumeConversation(session, state, !requestedResumeSessionId.isBlank());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "session.started");
+        payload.put("sessionId", state.logicalSessionId);
+        payload.put("language", state.language);
+        payload.put("resumed", recovered != null);
+        payload.put("conversationId", recovered == null ? null : recovered.conversation().getId());
+        payload.put("workflowId", recovered == null || recovered.workflow() == null ? null : recovered.workflow().getId());
+        payload.put("resumeMessage", recovered == null ? null : "Reconnected. Continuing your previous conversation.");
+        payload.put("voiceConfig", Map.of(
+                "heartbeatIntervalMs", properties.getLive().getHeartbeatIntervalMs(),
+                "speechStartThreshold", properties.getVad().getSpeechStartThreshold(),
+                "speechEndThreshold", properties.getVad().getSpeechEndThreshold(),
+                "minSpeechMs", properties.getVad().getMinSpeechMs(),
+                "silenceTimeoutMs", properties.getVad().getSilenceTimeoutMs(),
+                "maxUtteranceMs", properties.getVad().getMaxUtteranceMs(),
+                "autoResumeDelayMs", properties.getLive().getFrontendAutoResumeDelayMs()
         ));
+        sendEvent(session, payload);
     }
 
     private void handleAudioChunk(WebSocketSession session, JsonNode root) throws IOException {
@@ -252,7 +272,7 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         log.info("patient.voice.turn.audio.ready sessionId={} turnIndex={} chunks={} bytes={} uploadDurationMs={} uploadToProcessGapMs={}",
                 state.sessionId, turnIndex, totalChunks, audioBytes.length, uploadDurationMs, uploadToProcessGapMs);
 
-        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), appUserId, subject, roles, "PATIENT", state.sessionId));
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), appUserId, subject, roles, "PATIENT", state.logicalSessionId));
         try {
             sendEvent(session, Map.of(
                     "type", "turn.started",
@@ -373,9 +393,10 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         SessionState state = requireState(session);
         state.closed = true;
         clearAudioBuffer(state);
+        markVoiceDisconnected(session, state);
         sendEvent(session, Map.of(
                 "type", "session.closed",
-                "sessionId", state.sessionId
+                "sessionId", state.logicalSessionId
         ));
     }
 
@@ -489,8 +510,70 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         ));
     }
 
+    private CareAiConversationSessionSnapshot tryResumeConversation(WebSocketSession session, SessionState state, boolean explicitResumeRequest) {
+        UUID tenantId = uuidAttribute(session, "tenantId");
+        UUID patientId = uuidAttribute(session, "patientId");
+        if (tenantId == null || patientId == null || state.logicalSessionId == null || state.logicalSessionId.isBlank()) {
+            return null;
+        }
+        CareAiConversationSessionSnapshot snapshot = conversationPersistenceService.safeResumeSession(
+                tenantId,
+                CareAiChannel.PATIENT_PORTAL_VOICE,
+                patientId,
+                state.logicalSessionId,
+                CareAiTransport.WEBSOCKET_PATIENT_PORTAL,
+                INSTANCE_ID,
+                8
+        );
+        if (snapshot != null) {
+            state.recoveredConversationId = snapshot.conversation().getId();
+            state.recoveredWorkflowId = snapshot.workflow() == null ? null : snapshot.workflow().getId();
+            return snapshot;
+        }
+        if (explicitResumeRequest) {
+            conversationPersistenceService.safeMarkVoiceRecoveryFailed(
+                    tenantId,
+                    patientId,
+                    state.logicalSessionId,
+                    INSTANCE_ID,
+                    "active-conversation-not-found"
+            );
+        }
+        return null;
+    }
+
+    private void markVoiceDisconnected(WebSocketSession session, SessionState state) {
+        UUID tenantId = uuidAttribute(session, "tenantId");
+        UUID patientId = uuidAttribute(session, "patientId");
+        if (tenantId == null || patientId == null || state.logicalSessionId == null || state.logicalSessionId.isBlank()) {
+            return;
+        }
+        conversationPersistenceService.safeMarkVoiceDisconnected(tenantId, patientId, state.logicalSessionId, INSTANCE_ID);
+    }
+
+    private UUID uuidAttribute(WebSocketSession session, String attributeName) {
+        Object value = session.getAttributes().get(attributeName);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(String.valueOf(value));
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private static String buildInstanceId() {
+        try {
+            return InetAddress.getLocalHost().getHostName() + ":" + ManagementFactory.getRuntimeMXBean().getName();
+        } catch (Exception ex) {
+            return "api-bff:" + ManagementFactory.getRuntimeMXBean().getName();
+        }
+    }
+
     static final class SessionState {
         private final String sessionId;
+        private String logicalSessionId;
         private final Map<Integer, String> audioChunks = new LinkedHashMap<>();
         private String language = "auto";
         private String contentType;
@@ -507,9 +590,12 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
         private Instant firstUploadAt;
         private Instant lastUploadActivityAt;
         private Instant turnStartedAt;
+        private UUID recoveredConversationId;
+        private UUID recoveredWorkflowId;
 
         private SessionState(String sessionId) {
             this.sessionId = sessionId;
+            this.logicalSessionId = sessionId;
         }
 
         private void touch() {

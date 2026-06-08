@@ -53,6 +53,11 @@ import RemindersPage from "../products/carepilot/reminders/RemindersPage";
 import LeadsPage from "../products/carepilot/leads/LeadsPage";
 import WebinarsPage from "../products/carepilot/webinars/WebinarsPage";
 import AiCallsPage from "../products/carepilot/ai-calls/AiCallsPage";
+import ActiveConversationsPage from "../products/carepilot/receptionist-queue/ActiveConversationsPage";
+import AppointmentHandoffsPage from "../products/carepilot/receptionist-queue/AppointmentHandoffsPage";
+import CallbackQueuePage from "../products/carepilot/receptionist-queue/CallbackQueuePage";
+import EscalationQueuePage from "../products/carepilot/receptionist-queue/EscalationQueuePage";
+import ReceptionistQueuePage from "../products/carepilot/receptionist-queue/ReceptionistQueuePage";
 import { hasTenantModule } from "../auth/moduleEntitlements";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -124,13 +129,13 @@ function LoginPage() {
           borderColor: "divider",
           textAlign: "center",
         }}
-      >
+        >
         <Typography variant="h5" sx={{ fontWeight: 900, mb: 1 }}>
-          Clinic Management
+          CuraPilot
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          Sign in to manage patients, appointments, prescriptions, billing, and
-          clinic operations.
+          Sign in to CuraPilot Admin Console to manage patients, appointments,
+          prescriptions, billing, and clinic operations.
         </Typography>
         <Button size="large" variant="contained" onClick={() => auth?.login(true)} fullWidth>
           Sign in
@@ -199,6 +204,11 @@ function AuthedApp() {
         <Route path="/carepilot/leads" element={<ModuleGate moduleKey="carePilot"><LeadsPage /></ModuleGate>} />
         <Route path="/carepilot/webinars" element={<ModuleGate moduleKey="carePilot"><WebinarsPage /></ModuleGate>} />
         <Route path="/carepilot/ai-calls" element={<ModuleGate moduleKey="carePilot"><AiCallsPage /></ModuleGate>} />
+        <Route path="/carepilot/ai-receptionist/active-conversations" element={<ModuleGate moduleKey="carePilot"><ActiveConversationsPage /></ModuleGate>} />
+        <Route path="/carepilot/ai-receptionist/callback-queue" element={<ModuleGate moduleKey="carePilot"><CallbackQueuePage /></ModuleGate>} />
+        <Route path="/carepilot/ai-receptionist/escalation-queue" element={<ModuleGate moduleKey="carePilot"><EscalationQueuePage /></ModuleGate>} />
+        <Route path="/carepilot/ai-receptionist/appointment-handoffs" element={<ModuleGate moduleKey="carePilot"><AppointmentHandoffsPage /></ModuleGate>} />
+        <Route path="/carepilot/receptionist-queue" element={<ModuleGate moduleKey="carePilot"><ReceptionistQueuePage /></ModuleGate>} />
         <Route
           path="/platform/users"
           element={<PlaceholderPage title="Users / Admins" description="Platform user administration can be enabled when backend APIs are exposed." />}

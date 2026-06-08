@@ -340,7 +340,7 @@ function PatientPortalShell({
       <div className="patient-portal-shell">
         <aside className="patient-sidebar">
           <div className="patient-sidebar-card">
-            <span className="eyebrow">Patient portal</span>
+            <span className="eyebrow">CuraPilot Patient Portal</span>
             <h2>{session.patientLabel}</h2>
             <p>Read-only patient access stays separate from web-admin and staff workflows.</p>
           </div>
@@ -415,9 +415,9 @@ function RegistrationRequiredCard({
 }) {
   return (
     <section className="page-section narrow-page">
-      <div className="login-placeholder patient-guard-card">
+        <div className="login-placeholder patient-guard-card">
         <span className="eyebrow">Registration required</span>
-        <h1>Finish quick registration to open the patient portal.</h1>
+        <h1>Finish quick registration to open CuraPilot Patient Portal.</h1>
         <p>Your OTP is verified for this clinic, but the portal only unlocks after your tenant-scoped patient profile is linked.</p>
         <div className="cta-row">
           <Link className="primary-button" to={nextPath ? `/patient/register?next=${encodeURIComponent(nextPath)}` : "/patient/register"}>
@@ -450,7 +450,7 @@ function PatientAccessBoundary({
       <section className="page-section narrow-page">
         <div className="login-placeholder patient-guard-card">
           <span className="eyebrow">Patient login required</span>
-          <h1>Sign in with phone OTP to open the patient portal.</h1>
+          <h1>Sign in with phone OTP to open CuraPilot Patient Portal.</h1>
           <p>The patient session stays separate from public discovery and from all staff/admin authentication.</p>
           <div className="cta-row">
             <Link className="primary-button" to="/patient/login">
@@ -724,7 +724,7 @@ export function PatientLoginPage({
 
         <div className="cta-row">
           <a className="ghost-button" href={clinicLoginUrl}>
-            Clinic Login
+            Open CuraPilot Admin Console
           </a>
           {session ? (
             <>
@@ -1716,6 +1716,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const voiceAssistantAudioReadyRef = useRef(false);
   const voiceAssistantAudioPlayingRef = useRef(false);
   const voicePendingAutoPlayRef = useRef(false);
+  const patientVoiceResumeStorageKey = portalSession
+    ? `patient-careai-voice-resume:${portalSession.tenantId}:${portalSession.patientSessionToken}`
+    : null;
 
   function updateVoiceStatus(nextStatus: PatientCareAiVoiceStatus) {
     voiceStatusRef.current = nextStatus;
@@ -1724,6 +1727,32 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
 
   function appendVoiceEvent(message: string) {
     setVoiceEvents((current) => [...current.slice(-11), `${new Date().toLocaleTimeString()} • ${message}`]);
+  }
+
+  function storedVoiceResumeSessionId() {
+    if (!patientVoiceResumeStorageKey) {
+      return null;
+    }
+    try {
+      return window.sessionStorage.getItem(patientVoiceResumeStorageKey);
+    } catch {
+      return null;
+    }
+  }
+
+  function persistVoiceResumeSessionId(nextSessionId: string | null) {
+    if (!patientVoiceResumeStorageKey) {
+      return;
+    }
+    try {
+      if (nextSessionId) {
+        window.sessionStorage.setItem(patientVoiceResumeStorageKey, nextSessionId);
+      } else {
+        window.sessionStorage.removeItem(patientVoiceResumeStorageKey);
+      }
+    } catch {
+      // Ignore browser storage errors.
+    }
   }
 
   function clearVoiceHeartbeat() {
@@ -1968,6 +1997,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setVoiceAssistant("");
     setVoiceReplyReadyToPlay(false);
     setVoiceSessionId(null);
+    persistVoiceResumeSessionId(null);
     setVoiceProviderTrace(null);
     setVoiceConfig(DEFAULT_PATIENT_VOICE_CONFIG);
     setVoiceTurnMetrics(null);
@@ -2159,7 +2189,11 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       updateVoiceStatus("connecting");
       setVoiceInfo("Connecting to CareAI voice…");
       appendVoiceEvent("CONNECTED");
-      socket.send(JSON.stringify({ type: "session.start", language: "auto" }));
+      socket.send(JSON.stringify({
+        type: "session.start",
+        language: "auto",
+        resumeSessionId: storedVoiceResumeSessionId() || voiceSessionId,
+      }));
     };
     socket.onmessage = (rawMessage) => {
     let payload: Record<string, unknown>;
@@ -2178,14 +2212,17 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       return;
     }
     if (type === "session.started") {
-      setVoiceSessionId(String(payload.sessionId || ""));
+      const resumed = Boolean(payload.resumed);
+      const resumedSessionId = String(payload.sessionId || "");
+      setVoiceSessionId(resumedSessionId);
+      persistVoiceResumeSessionId(resumedSessionId || null);
       const nextVoiceConfig = parsePatientVoiceConfig(payload.voiceConfig);
       voiceConfigRef.current = nextVoiceConfig;
       setVoiceConfig(nextVoiceConfig);
       startVoiceHeartbeat(socket);
       updateVoiceStatus("session_started");
-      setVoiceInfo("Listening… speak now.");
-      appendVoiceEvent("SESSION_STARTED");
+      setVoiceInfo(resumed ? "Reconnected. Continuing your previous conversation." : "Listening… speak now.");
+      appendVoiceEvent(resumed ? "SESSION_RESUMED" : "SESSION_STARTED");
       if (voiceAutoResumeRef.current) {
         scheduleVoiceListeningResume("session_started", 0);
       }
@@ -2623,6 +2660,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     updateVoiceStatus("idle");
     setVoiceError(null);
     setVoiceInfo(null);
+    persistVoiceResumeSessionId(null);
     setVoiceInactivityWarning(null);
     setVoiceReplyReadyToPlay(false);
     appendVoiceEvent("SESSION_ENDED_BY_USER");

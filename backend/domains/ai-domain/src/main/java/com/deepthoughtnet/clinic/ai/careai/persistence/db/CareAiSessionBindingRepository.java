@@ -6,4 +6,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface CareAiSessionBindingRepository extends JpaRepository<CareAiSessionBindingEntity, UUID> {
     Optional<CareAiSessionBindingEntity> findByTenantIdAndExternalSessionIdAndActiveTrue(UUID tenantId, String externalSessionId);
+
+    java.util.List<CareAiSessionBindingEntity> findByTenantIdAndConversationIdAndActiveTrueOrderByUpdatedAtDesc(UUID tenantId, UUID conversationId);
 }

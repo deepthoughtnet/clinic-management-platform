@@ -86,4 +86,15 @@ public class CareAiSessionBindingEntity {
         this.active = false;
         this.updatedAt = OffsetDateTime.now();
     }
+
+    public UUID getId() { return id; }
+    public UUID getTenantId() { return tenantId; }
+    public UUID getConversationId() { return conversationId; }
+    public String getTransport() { return transport; }
+    public String getExternalSessionId() { return externalSessionId; }
+    public boolean isActive() { return active; }
+    public String getActiveInstanceId() { return activeInstanceId; }
+    public OffsetDateTime getLastSeenAt() { return lastSeenAt; }
+    public OffsetDateTime getCreatedAt() { return createdAt; }
+    public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

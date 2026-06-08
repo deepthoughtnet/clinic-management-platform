@@ -101,6 +101,10 @@ function iconFor(key: string): React.ReactNode {
     leads: <ContactPhoneRoundedIcon fontSize="small" />,
     "webinar-automation": <CampaignRoundedIcon fontSize="small" />,
     "ai-calls": <SmartToyRoundedIcon fontSize="small" />,
+    "ai-receptionist-active": <SmartToyRoundedIcon fontSize="small" />,
+    "ai-receptionist-callbacks": <ContactPhoneRoundedIcon fontSize="small" />,
+    "ai-receptionist-escalations": <NotificationsActiveRoundedIcon fontSize="small" />,
+    "ai-receptionist-handoffs": <CalendarMonthRoundedIcon fontSize="small" />,
     "settings-profile": <SettingsRoundedIcon fontSize="small" />,
     "settings-users-roles": <BadgeRoundedIcon fontSize="small" />,
     templates: <DescriptionRoundedIcon fontSize="small" />,
@@ -291,11 +295,11 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
     >
       <Box sx={{ px: compact ? 1 : 2, py: 1.75 }}>
         {compact ? (
-          <Typography variant="subtitle2" sx={{ fontWeight: 900, textAlign: "center" }}>CM</Typography>
+          <Typography variant="subtitle2" sx={{ fontWeight: 900, textAlign: "center" }}>CP</Typography>
         ) : (
           <>
-            <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Clinic Management</Typography>
-            <Typography variant="caption" sx={{ opacity: 0.7 }}>Care operations console</Typography>
+            <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>CuraPilot</Typography>
+            <Typography variant="caption" sx={{ opacity: 0.7 }}>AI-powered healthcare operations platform</Typography>
           </>
         )}
       </Box>

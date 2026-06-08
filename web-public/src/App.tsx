@@ -85,10 +85,10 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
     <div className="site-shell">
       <header className="site-header">
         <Link to="/" className="brand">
-          <span className="brand-badge">CM</span>
-          <span>
-            <strong>Clinic Discovery</strong>
-            <small>Public doctor discovery with a separate patient portal</small>
+          <span className="brand-badge">CP</span>
+          <span className="brand-meta">
+            <strong>CuraPilot</strong>
+            <small>The AI Co-Pilot for Healthcare</small>
           </span>
         </Link>
         <nav className="main-nav" aria-label="Main navigation">
@@ -104,23 +104,72 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
         </nav>
         <div className="header-actions">
           <a className="ghost-button" href={clinicLoginUrl}>
-            Clinic Login
+            Open CuraPilot Admin Console
           </a>
           <Link className="primary-button" to={patientPortalHomePath(session)}>
-            {session?.sessionRole === "registration" ? "Continue registration" : session ? "Open patient portal" : "Patient Login"}
+            {session?.sessionRole === "registration" ? "Continue registration" : session ? "Open CuraPilot Patient Portal" : "CuraPilot Patient Portal"}
           </Link>
         </div>
       </header>
       <main>{children}</main>
       <footer className="site-footer">
-        <div>
-          <strong>Clinic Discovery</strong>
-          <p>Search public-safe doctor and clinic listings, then continue to patient OTP when you are ready to book.</p>
+        <div className="footer-grid">
+          <section className="footer-brand-block">
+            <span className="eyebrow">By DeepThoughtNet</span>
+            <strong>CuraPilot</strong>
+            <p className="footer-tagline">The AI Co-Pilot for Healthcare</p>
+            <p>Smarter Care. Powered by AI.</p>
+            <div className="footer-meaning">
+              <p>Cura means care, healing, and wellbeing.</p>
+              <p>क्यूरा = देखभाल, उपचार और स्वास्थ्य का भरोसा</p>
+            </div>
+          </section>
+
+          <section className="footer-column">
+            <strong>CuraPilot</strong>
+            <div className="footer-link-list">
+              <Link to="/">About</Link>
+              <Link to="/clinics">For Clinics</Link>
+              <span>CuraPilot Doctor Portal</span>
+              <Link to={patientPortalHomePath(session)}>For Patients</Link>
+            </div>
+          </section>
+
+          <section className="footer-column">
+            <strong>Platform</strong>
+            <div className="footer-link-list">
+              <Link to="/careai">CareAI</Link>
+              <span>CarePilot</span>
+              <Link to={patientPortalHomePath(session)}>Patient Portal</Link>
+              <span>Doctor Portal</span>
+              <span>Pharmacy</span>
+              <span>Billing</span>
+              <span>Analytics</span>
+            </div>
+          </section>
+
+          <section className="footer-column">
+            <strong>Support</strong>
+            <div className="footer-link-list">
+              <span>Contact</span>
+              <span>Help Center</span>
+              <span>Privacy Policy</span>
+              <span>Terms</span>
+            </div>
+          </section>
+
+          <section className="footer-column">
+            <strong>DeepThoughtNet</strong>
+            <div className="footer-link-list">
+              <span>AI-powered healthcare operations platform</span>
+              <span>Smarter Care. Powered by AI.</span>
+            </div>
+          </section>
         </div>
-        <div>
-          <p>Patient portal, booking, and CareAI remain separate from web-admin and staff workflows.</p>
+        <div className="footer-bottom">
+          <p>© 2026 DeepThoughtNet. CuraPilot — The AI Co-Pilot for Healthcare.</p>
           <Link to={patientPortalHomePath(session)}>
-            {session?.sessionRole === "registration" ? "Continue registration" : session ? "Open patient portal" : "Open patient login"}
+            {session?.sessionRole === "registration" ? "Continue registration" : session ? "Open CuraPilot Patient Portal" : "Open CuraPilot Patient Portal"}
           </Link>
         </div>
       </footer>

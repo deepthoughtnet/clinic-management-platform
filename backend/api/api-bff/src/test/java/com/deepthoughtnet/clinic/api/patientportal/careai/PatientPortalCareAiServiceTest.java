@@ -10,16 +10,25 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.patientportal.PatientPortalService;
+import com.deepthoughtnet.clinic.api.careai.CareAiTaskNotificationService;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentConfirmationResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiChannel;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationSessionSnapshot;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationPersistenceService;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationTurnCommand;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiWorkflowState;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiWorkflowType;
+import com.deepthoughtnet.clinic.ai.careai.persistence.db.CareAiConversationEntity;
+import com.deepthoughtnet.clinic.ai.careai.persistence.db.CareAiWorkflowEntity;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService;
+import com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskPriority;
+import com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskService;
+import com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskUpsertResult;
+import com.deepthoughtnet.clinic.ai.careai.task.db.CareAiReceptionistTaskEntity;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationResponse;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProductCode;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
@@ -47,6 +56,8 @@ class PatientPortalCareAiServiceTest {
     private PatientPortalService patientPortalService;
     private AiOrchestrationService aiOrchestrationService;
     private CareAiConversationPersistenceService conversationPersistenceService;
+    private CareAiReceptionistTaskService receptionistTaskService;
+    private CareAiTaskNotificationService taskNotificationService;
     private VoiceTestProperties voiceTestProperties;
     private PatientPortalCareAiService service;
 
@@ -55,6 +66,8 @@ class PatientPortalCareAiServiceTest {
         patientPortalService = mock(PatientPortalService.class);
         aiOrchestrationService = mock(AiOrchestrationService.class);
         conversationPersistenceService = mock(CareAiConversationPersistenceService.class);
+        receptionistTaskService = mock(CareAiReceptionistTaskService.class);
+        taskNotificationService = mock(CareAiTaskNotificationService.class);
         voiceTestProperties = new VoiceTestProperties();
         voiceTestProperties.getLlm().setMaxOutputTokens(1024);
         PatientPortalCareAiPlanner planner = new LlmBackedPatientPortalCareAiPlanner(
@@ -66,7 +79,9 @@ class PatientPortalCareAiServiceTest {
         service = new PatientPortalCareAiService(
                 patientPortalService,
                 planner,
-                conversationPersistenceService
+                conversationPersistenceService,
+                receptionistTaskService,
+                taskNotificationService
         );
         when(patientPortalService.currentPatientId()).thenReturn(UUID.randomUUID());
         setPatientContext(TENANT_A, APP_USER_A);
@@ -244,6 +259,98 @@ class PatientPortalCareAiServiceTest {
         assertThat(newRequest.state().preferredDate()).isEqualTo(dayAfterTomorrow.toString());
         assertThat(newRequest.state().slotOptions()).containsExactly("09:00", "09:30");
         assertThat(newRequest.assistantMessage()).doesNotContain("Appointment booked successfully.");
+    }
+
+    @Test
+    void humanHandoffPhraseCreatesReceptionistTask() {
+        when(receptionistTaskService.upsertHandoffTask(any(), any())).thenReturn(new CareAiReceptionistTaskUpsertResult(receptionistTask("HUMAN_HANDOFF"), true));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest("I want to talk to receptionist", "en"));
+
+        assertThat(response.assistantMessage()).contains("I’ve created a request for our receptionist");
+        verify(receptionistTaskService).upsertHandoffTask(any(), org.mockito.Mockito.eq(CareAiReceptionistTaskPriority.MEDIUM));
+        verify(patientPortalService, never()).bookAppointment(any());
+    }
+
+    @Test
+    void callbackPhraseCreatesCallbackTask() {
+        when(receptionistTaskService.upsertCallbackTask(any(), any())).thenReturn(new CareAiReceptionistTaskUpsertResult(receptionistTask("CALLBACK_REQUEST"), true));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest("Please call me back tomorrow evening", "en"));
+
+        assertThat(response.assistantMessage()).contains("callback request");
+        assertThat(response.assistantMessage()).contains("tomorrow evening");
+        verify(receptionistTaskService).upsertCallbackTask(any(), org.mockito.Mockito.eq(CareAiReceptionistTaskPriority.MEDIUM));
+        verify(patientPortalService, never()).bookAppointment(any());
+    }
+
+    @Test
+    void bookingFlowHandoffCreatesAppointmentHandoffTask() {
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-ashish", "Dr Ashish Shri", "General Medicine")));
+        when(receptionistTaskService.upsertAppointmentHandoffTask(any(), any()))
+                .thenReturn(new CareAiReceptionistTaskUpsertResult(receptionistTask("APPOINTMENT_HANDOFF"), true));
+
+        service.message(new PatientPortalCareAiMessageRequest("Book appointment with Dr Ashish Shri", "en"));
+        var response = service.message(new PatientPortalCareAiMessageRequest("I want to talk to receptionist", "en"));
+
+        assertThat(response.assistantMessage()).contains("I’ve created a request for our receptionist");
+        verify(receptionistTaskService).upsertAppointmentHandoffTask(any(), org.mockito.Mockito.eq(CareAiReceptionistTaskPriority.MEDIUM));
+        verify(receptionistTaskService, never()).upsertHandoffTask(any(), any());
+    }
+
+    @Test
+    void missingInMemoryStateRehydratesFromPersistedWorkflowContext() {
+        UUID patientId = UUID.randomUUID();
+        when(patientPortalService.currentPatientId()).thenReturn(patientId);
+        LocalDate targetDate = LocalDate.now().plusDays(1);
+        CareAiConversationEntity conversation = CareAiConversationEntity.create(
+                TENANT_A,
+                "PATIENT_PORTAL_VOICE",
+                patientId,
+                null,
+                "resume-voice-1"
+        );
+        CareAiWorkflowEntity workflow = CareAiWorkflowEntity.create(
+                TENANT_A,
+                conversation.getId(),
+                "BOOK_APPOINTMENT",
+                "COLLECTING_INFO",
+                """
+                {
+                  "intent":"BOOK_APPOINTMENT",
+                  "doctorId":"doctor-neha",
+                  "doctorName":"Dr Neha Mehta",
+                  "preferredDate":"%s",
+                  "preferredTimeWindow":"evening",
+                  "slotPromptLead":"Please choose a slot by number or time:",
+                  "slotChoices":[
+                    {"appointmentDate":"%s","slotTime":"17:00"},
+                    {"appointmentDate":"%s","slotTime":"17:30"}
+                  ],
+                  "slotOptions":["17:00","17:30"],
+                  "answeredState":{"doctor":true,"date":true,"timePreference":true,"slot":false,"confirmation":false}
+                }
+                """.formatted(targetDate, targetDate, targetDate),
+                "choose-slot",
+                0
+        );
+        when(conversationPersistenceService.findLatestSessionSnapshot(
+                TENANT_A,
+                CareAiChannel.PATIENT_PORTAL_VOICE,
+                patientId,
+                "resume-voice-1",
+                8
+        )).thenReturn(new CareAiConversationSessionSnapshot(conversation, workflow, null, List.of()));
+
+        setPatientContext(TENANT_A, APP_USER_A, "resume-voice-1");
+        var response = service.messageFromVoice(new PatientPortalCareAiMessageRequest("2", "en"));
+
+        assertThat(response.state().doctorName()).isEqualTo("Dr Neha Mehta");
+        assertThat(response.state().preferredDate()).isEqualTo(targetDate.toString());
+        assertThat(response.state().preferredTimeWindow()).isEqualTo("evening");
+        assertThat(response.state().suggestedSlot()).isEqualTo("17:30");
+        assertThat(response.state().confirmationPending()).isTrue();
+        assertThat(response.assistantMessage()).contains("Should I book");
     }
 
     @Test
@@ -1303,8 +1410,32 @@ class PatientPortalCareAiServiceTest {
         return candidate.isBefore(today) ? candidate.plusYears(1) : candidate;
     }
 
+    private CareAiReceptionistTaskEntity receptionistTask(String taskType) {
+        return CareAiReceptionistTaskEntity.create(
+                TENANT_A,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                null,
+                null,
+                com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskType.valueOf(taskType),
+                CareAiReceptionistTaskPriority.MEDIUM,
+                "PATIENT_PORTAL_CHAT",
+                "requested-receptionist",
+                "help",
+                null,
+                null,
+                java.time.OffsetDateTime.now().plusMinutes(15),
+                "{}"
+        );
+    }
+
     private void setPatientContext(UUID tenantId, UUID appUserId) {
-        RequestContextHolder.set(new RequestContext(new TenantId(tenantId), appUserId, "subject-1", Set.of("PATIENT"), "PATIENT", "corr-1"));
+        setPatientContext(tenantId, appUserId, "corr-1");
+    }
+
+    private void setPatientContext(UUID tenantId, UUID appUserId, String correlationId) {
+        RequestContextHolder.set(new RequestContext(new TenantId(tenantId), appUserId, "subject-1", Set.of("PATIENT"), "PATIENT", correlationId));
     }
 
     private AiOrchestrationResponse aiResponse(String structuredJson) {

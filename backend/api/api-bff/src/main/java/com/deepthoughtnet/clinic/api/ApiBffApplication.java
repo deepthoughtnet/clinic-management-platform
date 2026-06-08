@@ -1,5 +1,6 @@
 package com.deepthoughtnet.clinic.api;
 
+import com.deepthoughtnet.clinic.api.careai.CareAiTaskSlaProperties;
 import com.deepthoughtnet.clinic.notification.service.NotificationProperties;
 import com.deepthoughtnet.clinic.api.notifications.NotificationsSchedulerProperties;
 import org.springframework.boot.SpringApplication;
@@ -11,7 +12,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 @EnableConfigurationProperties({
         NotificationProperties.class,
-        NotificationsSchedulerProperties.class
+        NotificationsSchedulerProperties.class,
+        CareAiTaskSlaProperties.class
 })
 public class ApiBffApplication {
     public static void main(String[] args) {

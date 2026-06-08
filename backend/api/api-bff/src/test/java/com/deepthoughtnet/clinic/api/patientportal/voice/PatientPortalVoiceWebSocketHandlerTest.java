@@ -2,16 +2,24 @@ package com.deepthoughtnet.clinic.api.patientportal.voice;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationPersistenceService;
+import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationSessionSnapshot;
+import com.deepthoughtnet.clinic.ai.careai.persistence.db.CareAiConversationEntity;
+import com.deepthoughtnet.clinic.ai.careai.persistence.db.CareAiWorkflowEntity;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiStateResponse;
 import com.deepthoughtnet.clinic.api.patientportal.voice.PatientPortalVoiceAssistantService.PatientPortalVoiceTurnResponse;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -32,6 +40,7 @@ class PatientPortalVoiceWebSocketHandlerTest {
     @Test
     void patientVoiceUsesCareAiEngineAndReturnsAssistantEvents() throws Exception {
         PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
         PatientPortalCareAiStateResponse state = new PatientPortalCareAiStateResponse(
                 "en",
                 "BOOK_APPOINTMENT",
@@ -76,7 +85,8 @@ class PatientPortalVoiceWebSocketHandlerTest {
         PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
                 new ObjectMapper(),
                 assistantService,
-                new VoiceTestProperties()
+                new VoiceTestProperties(),
+                persistenceService
         );
         SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "patient-session-1");
         String audioBase64 = Base64.getEncoder().encodeToString("voice".getBytes(StandardCharsets.UTF_8));
@@ -101,13 +111,79 @@ class PatientPortalVoiceWebSocketHandlerTest {
         PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
                 new ObjectMapper(),
                 mock(PatientPortalVoiceAssistantService.class),
-                new VoiceTestProperties()
+                new VoiceTestProperties(),
+                mock(CareAiConversationPersistenceService.class)
         );
         SessionFixture fixture = new SessionFixture(TENANT_ID, null, APP_USER_ID, Set.of("PATIENT"), "patient-session-2");
 
         handler.afterConnectionEstablished(fixture.session);
 
         verify(fixture.session).close(any(CloseStatus.class));
+    }
+
+    @Test
+    void reconnectWithResumeSessionIdMarksSessionResumed() throws Exception {
+        PatientPortalVoiceAssistantService assistantService = mock(PatientPortalVoiceAssistantService.class);
+        CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
+        UUID tenantId = UUID.fromString(TENANT_ID);
+        UUID patientId = UUID.fromString(PATIENT_ID);
+        CareAiConversationEntity conversation = CareAiConversationEntity.create(
+                tenantId,
+                "PATIENT_PORTAL_VOICE",
+                patientId,
+                null,
+                "resume-session-1"
+        );
+        CareAiWorkflowEntity workflow = CareAiWorkflowEntity.create(
+                tenantId,
+                conversation.getId(),
+                "BOOK_APPOINTMENT",
+                "COLLECTING_INFO",
+                """
+                {"intent":"BOOK_APPOINTMENT","doctorId":"doctor-neha","doctorName":"Dr Neha Mehta","preferredDate":"%s","preferredTimeWindow":"evening","slotChoices":[{"appointmentDate":"%s","slotTime":"17:00"},{"appointmentDate":"%s","slotTime":"17:30"}],"slotOptions":["17:00","17:30"]}
+                """.formatted(LocalDate.now().plusDays(1), LocalDate.now().plusDays(1), LocalDate.now().plusDays(1)),
+                "choose-slot",
+                0
+        );
+        when(persistenceService.safeResumeSession(eq(tenantId), any(), eq(patientId), eq("resume-session-1"), any(), any(), eq(8)))
+                .thenReturn(new CareAiConversationSessionSnapshot(conversation, workflow, null, List.of()));
+
+        PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
+                new ObjectMapper(),
+                assistantService,
+                new VoiceTestProperties(),
+                persistenceService
+        );
+        SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "patient-session-3");
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"language\":\"auto\",\"resumeSessionId\":\"resume-session-1\"}"));
+
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"type\":\"session.started\"") && payload.contains("\"resumed\":true"));
+        assertThat(fixture.payloads()).anyMatch(payload -> payload.contains("\"sessionId\":\"resume-session-1\""));
+    }
+
+    @Test
+    void connectionCloseMarksVoiceDisconnected() throws Exception {
+        CareAiConversationPersistenceService persistenceService = mock(CareAiConversationPersistenceService.class);
+        PatientPortalVoiceWebSocketHandler handler = new PatientPortalVoiceWebSocketHandler(
+                new ObjectMapper(),
+                mock(PatientPortalVoiceAssistantService.class),
+                new VoiceTestProperties(),
+                persistenceService
+        );
+        SessionFixture fixture = new SessionFixture(TENANT_ID, PATIENT_ID, APP_USER_ID, Set.of("PATIENT"), "patient-session-4");
+
+        handler.afterConnectionEstablished(fixture.session);
+        handler.handleForTest(fixture.session, new TextMessage("{\"type\":\"session.start\",\"language\":\"auto\",\"resumeSessionId\":\"resume-session-4\"}"));
+        handler.afterConnectionClosed(fixture.session, CloseStatus.NORMAL);
+
+        verify(persistenceService).safeMarkVoiceDisconnected(
+                eq(UUID.fromString(TENANT_ID)),
+                eq(UUID.fromString(PATIENT_ID)),
+                eq("resume-session-4"),
+                anyString()
+        );
     }
 
     private static final class SessionFixture {

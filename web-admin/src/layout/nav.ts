@@ -80,7 +80,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "CarePilot",
     requiresTenant: true,
     defaultExpanded: false,
-    rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"],
+    rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"],
     items: [
       { key: "campaigns", label: "Campaigns", path: "/carepilot/campaigns", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
       { key: "analytics", label: "Analytics", path: "/carepilot/analytics", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
@@ -91,6 +91,11 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "leads", label: "Leads", path: "/carepilot/leads", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
       { key: "webinar-automation", label: "Webinar Automation", path: "/carepilot/webinars", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
       { key: "ai-calls", label: "AI Calls", path: "/carepilot/ai-calls", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
+      { key: "ai-receptionist-active", label: "AI Receptionist · Active Conversations", path: "/carepilot/ai-receptionist/active-conversations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
+      { key: "ai-receptionist-callbacks", label: "AI Receptionist · Callback Queue", path: "/carepilot/ai-receptionist/callback-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
+      { key: "ai-receptionist-escalations", label: "AI Receptionist · Escalation Queue", path: "/carepilot/ai-receptionist/escalation-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
+      { key: "ai-receptionist-handoffs", label: "AI Receptionist · Appointment Handoffs", path: "/carepilot/ai-receptionist/appointment-handoffs", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
+      { key: "receptionist-queue", label: "Receptionist Queue", path: "/carepilot/receptionist-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
     ],
   },
   {

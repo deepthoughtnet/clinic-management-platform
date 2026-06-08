@@ -27,7 +27,7 @@ export const appTheme = createTheme({
   },
   shape: { borderRadius: 14 },
   typography: {
-    fontFamily: 'Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    fontFamily: '"Aptos", "Segoe UI Variable", "Segoe UI", "Helvetica Neue", Arial, sans-serif',
     fontSize: 13,
     h4: { fontWeight: 900, letterSpacing: -0.4 },
     h5: { fontWeight: 900, letterSpacing: -0.3 },

@@ -1,5 +1,6 @@
 package com.deepthoughtnet.clinic.api.patientportal.careai;
 
+import com.deepthoughtnet.clinic.api.careai.CareAiTaskNotificationService;
 import com.deepthoughtnet.clinic.api.patientportal.PatientPortalService;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentConfirmationResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
@@ -14,6 +15,10 @@ import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiTransport;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiWorkflowSnapshot;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiWorkflowState;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiWorkflowType;
+import com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskCreateCommand;
+import com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskPriority;
+import com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskService;
+import com.deepthoughtnet.clinic.ai.careai.task.CareAiReceptionistTaskType;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -38,6 +43,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.lang.management.ManagementFactory;
+import java.net.InetAddress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +56,7 @@ public class PatientPortalCareAiService {
     private static final ObjectMapper CARE_AI_JSON = new ObjectMapper();
     private static final TypeReference<LinkedHashMap<String, Object>> JSON_MAP_TYPE = new TypeReference<>() { };
     private static final Logger log = LoggerFactory.getLogger(PatientPortalCareAiService.class);
+    private static final String INSTANCE_ID = buildInstanceId();
     private static final Pattern ENGLISH_DOCTOR_PATTERN = Pattern.compile("(?i)\\b(?:dr\\.?|doctor)\\s+([A-Za-z][A-Za-z .'-]{1,60})");
     private static final Pattern HINDI_DOCTOR_PATTERN = Pattern.compile("(?:डॉक्टर|डॉ\\.?)([^,.!?]+)");
     private static final Pattern LETTER_ONLY_TOKEN_PATTERN = Pattern.compile("[\\p{L}]{2,}");
@@ -73,6 +81,29 @@ public class PatientPortalCareAiService {
     private static final List<String> RESCHEDULE_INTENT_KEYWORDS = List.of("reschedule", "change my appointment", "move my appointment", "change appointment");
     private static final List<String> CANCEL_INTENT_KEYWORDS = List.of("cancel appointment", "cancel my appointment", "remove booking", "cancel booking");
     private static final List<String> STATUS_INTENT_KEYWORDS = List.of("when is my appointment", "when is my next appointment", "show appointments", "appointment status", "next appointment");
+    private static final List<String> HUMAN_HANDOFF_KEYWORDS = List.of(
+            "talk to receptionist",
+            "connect me to staff",
+            "talk to human",
+            "speak to someone",
+            "transfer me",
+            "i need help",
+            "this is not working",
+            "call receptionist",
+            "please connect to clinic",
+            "connect to clinic"
+    );
+    private static final List<String> CALLBACK_REQUEST_KEYWORDS = List.of(
+            "call me back",
+            "please call me",
+            "call me tomorrow",
+            "ask receptionist to call me",
+            "doctor unavailable call me later",
+            "doctor unavailable, call me later",
+            "schedule callback",
+            "callback in evening",
+            "call me later"
+    );
     private static final List<String> TOPIC_SWITCH_KEYWORDS = List.of(
             "switch topic",
             "switch the conversation",
@@ -114,17 +145,23 @@ public class PatientPortalCareAiService {
     private final PatientPortalService patientPortalService;
     private final PatientPortalCareAiPlanner planner;
     private final CareAiConversationPersistenceService conversationPersistenceService;
+    private final CareAiReceptionistTaskService receptionistTaskService;
+    private final CareAiTaskNotificationService taskNotificationService;
     private final Map<SessionKey, CareAiState> sessions = new ConcurrentHashMap<>();
 
     @Autowired
     public PatientPortalCareAiService(
             PatientPortalService patientPortalService,
             PatientPortalCareAiPlanner planner,
-            CareAiConversationPersistenceService conversationPersistenceService
+            CareAiConversationPersistenceService conversationPersistenceService,
+            CareAiReceptionistTaskService receptionistTaskService,
+            CareAiTaskNotificationService taskNotificationService
     ) {
         this.patientPortalService = patientPortalService;
         this.planner = planner;
         this.conversationPersistenceService = conversationPersistenceService;
+        this.receptionistTaskService = receptionistTaskService;
+        this.taskNotificationService = taskNotificationService;
     }
 
     public PatientPortalCareAiMessageResponse message(PatientPortalCareAiMessageRequest request) {
@@ -183,9 +220,7 @@ public class PatientPortalCareAiService {
         );
 
         if (containsEmergency(message, state.language)) {
-            state.handoffRequired = true;
-            state.handoffReason = "emergency-symptoms";
-            state.confirmationPending = false;
+            prepareEscalationResponse(state, message, "emergency-symptoms", emergencyPriority(message));
             return response(state, emergencyPrompt(state.language));
         }
         CareAiTopicClassification topicClassification = classifyTopic(state, message);
@@ -214,6 +249,12 @@ public class PatientPortalCareAiService {
         }
         if (isNewPatientIntent(message, state.language)) {
             return response(state, newPatientPrompt(state.language));
+        }
+        if (detectCallbackRequest(message, state.language)) {
+            return handleCallbackRequest(state, message);
+        }
+        if (detectHumanHandoffRequest(message, state.language)) {
+            return handleHumanHandoffRequest(state, message);
         }
         PatientPortalCareAiPlannerDecision plannerDecision = shouldUsePlanner(state, message)
                 ? planner.plan(buildPlanningContext(state, message))
@@ -897,8 +938,7 @@ public class PatientPortalCareAiService {
             state.activeConfirmationScopeKey = null;
             state.unresolvedTurns += 1;
             if (state.unresolvedTurns >= 3) {
-                state.handoffRequired = true;
-                state.handoffReason = "booking-failed";
+                prepareAppointmentHandoffResponse(state, state.lastUserMessage, "booking-failed", CareAiReceptionistTaskPriority.HIGH);
                 return response(state, receptionHandoffPrompt(state.language));
             }
             return response(state, bookingFailedPrompt(state.language, ex.getMessage()));
@@ -919,6 +959,199 @@ public class PatientPortalCareAiService {
             state.slotOptions = List.of();
         }
         return true;
+    }
+
+    private PatientPortalCareAiMessageResponse handleHumanHandoffRequest(CareAiState state, String message) {
+        String reason = detectHumanHandoffReason(message);
+        CareAiReceptionistTaskType taskType = activeBookingHandoff(state)
+                ? CareAiReceptionistTaskType.APPOINTMENT_HANDOFF
+                : CareAiReceptionistTaskType.HUMAN_HANDOFF;
+        try {
+            var result = taskType == CareAiReceptionistTaskType.APPOINTMENT_HANDOFF
+                    ? receptionistTaskService.upsertAppointmentHandoffTask(
+                    receptionistTaskCommand(state, message, null, taskType, reason),
+                    handoffPriority(message)
+            )
+                    : receptionistTaskService.upsertHandoffTask(
+                    receptionistTaskCommand(state, message, null, taskType, reason),
+                    handoffPriority(message)
+            );
+            if (result.created()) {
+                taskNotificationService.notifyTaskCreated(result.task());
+            }
+            prepareTaskQueueResponse(state, CareAiWorkflowType.HUMAN_HANDOFF, taskType, result.task().getId(), true, reason, "HUMAN_HANDOFF_REQUESTED");
+            return response(state, humanHandoffAcknowledgement(state.language));
+        } catch (RuntimeException ex) {
+            log.warn("careai.receptionist-task.handoff.failed tenantId={} patientId={} channel={} reason={}",
+                    RequestContextHolder.requireTenantId(),
+                    state.lastPatientId,
+                    state.lastChannel,
+                    ex.getMessage(),
+                    ex);
+            state.handoffRequired = true;
+            state.handoffReason = reason;
+            queueWorkflowEvent(state, "HUMAN_HANDOFF_REQUESTED", workflowContextJson(state));
+            return response(state, humanHandoffAcknowledgement(state.language));
+        }
+    }
+
+    private void prepareAppointmentHandoffResponse(
+            CareAiState state,
+            String message,
+            String reason,
+            CareAiReceptionistTaskPriority priority
+    ) {
+        try {
+            var result = receptionistTaskService.upsertAppointmentHandoffTask(
+                    receptionistTaskCommand(state, message, null, CareAiReceptionistTaskType.APPOINTMENT_HANDOFF, reason),
+                    priority
+            );
+            if (result.created()) {
+                taskNotificationService.notifyTaskCreated(result.task());
+            }
+            prepareTaskQueueResponse(
+                    state,
+                    CareAiWorkflowType.HUMAN_HANDOFF,
+                    CareAiReceptionistTaskType.APPOINTMENT_HANDOFF,
+                    result.task().getId(),
+                    true,
+                    reason,
+                    "APPOINTMENT_HANDOFF_REQUESTED"
+            );
+        } catch (RuntimeException ex) {
+            log.warn("careai.receptionist-task.appointment-handoff.failed tenantId={} patientId={} channel={} reason={}",
+                    RequestContextHolder.requireTenantId(),
+                    state.lastPatientId,
+                    state.lastChannel,
+                    ex.getMessage(),
+                    ex);
+            state.handoffRequired = true;
+            state.handoffReason = reason;
+            queueWorkflowEvent(state, "APPOINTMENT_HANDOFF_REQUESTED", workflowContextJson(state));
+        }
+    }
+
+    private PatientPortalCareAiMessageResponse handleCallbackRequest(CareAiState state, String message) {
+        CallbackPreference callbackPreference = extractCallbackTimePreference(message, state.language);
+        try {
+            var result = receptionistTaskService.upsertCallbackTask(
+                    receptionistTaskCommand(state, message, callbackPreference, CareAiReceptionistTaskType.CALLBACK_REQUEST, "callback-request"),
+                    callbackPriority(message, callbackPreference)
+            );
+            if (result.created()) {
+                taskNotificationService.notifyTaskCreated(result.task());
+            }
+            prepareTaskQueueResponse(state, CareAiWorkflowType.CALLBACK_REQUEST, CareAiReceptionistTaskType.CALLBACK_REQUEST, result.task().getId(), false, null, "CALLBACK_REQUESTED");
+            return response(state, callbackAcknowledgement(state.language, callbackPreference.label()));
+        } catch (RuntimeException ex) {
+            log.warn("careai.receptionist-task.callback.failed tenantId={} patientId={} channel={} reason={}",
+                    RequestContextHolder.requireTenantId(),
+                    state.lastPatientId,
+                    state.lastChannel,
+                    ex.getMessage(),
+                    ex);
+            queueWorkflowEvent(state, "CALLBACK_REQUESTED", workflowContextJson(state));
+            prepareTaskQueueResponse(state, CareAiWorkflowType.CALLBACK_REQUEST, CareAiReceptionistTaskType.CALLBACK_REQUEST, null, false, null, "CALLBACK_REQUESTED");
+            return response(state, callbackAcknowledgement(state.language, callbackPreference.label()));
+        }
+    }
+
+    private CareAiReceptionistTaskCreateCommand receptionistTaskCommand(
+            CareAiState state,
+            String message,
+            CallbackPreference callbackPreference,
+            CareAiReceptionistTaskType taskType,
+            String reason
+    ) {
+        return new CareAiReceptionistTaskCreateCommand(
+                RequestContextHolder.requireTenantId(),
+                state.currentConversationId,
+                state.currentWorkflowId,
+                state.lastPatientId,
+                null,
+                parseUuid(state.selectedAppointmentId),
+                state.lastChannel == null ? null : state.lastChannel.name(),
+                reason,
+                trimToLength(message, 500),
+                callbackPreference == null ? null : callbackPreference.label(),
+                callbackPreference == null ? null : callbackPreference.dueAt(),
+                taskMetadataJson(state, taskType)
+        );
+    }
+
+    private void prepareTaskQueueResponse(
+            CareAiState state,
+            CareAiWorkflowType workflowType,
+            CareAiReceptionistTaskType taskType,
+            UUID taskId,
+            boolean escalated,
+            String handoffReason,
+            String workflowEventType
+    ) {
+        state.slotPromptLead = null;
+        state.slotChoices = List.of();
+        state.slotOptions = List.of();
+        state.selectedSlot = null;
+        state.confirmationPending = false;
+        state.pendingAction = null;
+        state.awaitingFreshConfirmation = false;
+        state.doctorChoices = List.of();
+        state.doctorOptions = List.of();
+        state.appointmentOptions = List.of();
+        state.currentIntent = null;
+        state.transientWorkflowType = workflowType;
+        state.activeTaskType = taskType;
+        state.activeTaskId = taskId;
+        state.handoffRequired = escalated;
+        state.handoffReason = handoffReason;
+        state.lastQuestionKey = null;
+        state.repeatedQuestionCount = 0;
+        queueWorkflowEvent(state, workflowEventType, taskEventPayloadJson(state, taskId, taskType, handoffReason));
+    }
+
+    private void prepareEscalationResponse(
+            CareAiState state,
+            String message,
+            String reason,
+            CareAiReceptionistTaskPriority priority
+    ) {
+        try {
+            var result = receptionistTaskService.upsertEscalationTask(
+                    receptionistTaskCommand(state, message, null, CareAiReceptionistTaskType.ESCALATION, reason),
+                    priority
+            );
+            if (result.created()) {
+                taskNotificationService.notifyTaskCreated(result.task());
+            }
+            prepareTaskQueueResponse(
+                    state,
+                    CareAiWorkflowType.HUMAN_HANDOFF,
+                    CareAiReceptionistTaskType.ESCALATION,
+                    result.task().getId(),
+                    true,
+                    reason,
+                    "ESCALATION_CREATED"
+            );
+        } catch (RuntimeException ex) {
+            log.warn("careai.receptionist-task.escalation.failed tenantId={} patientId={} channel={} reason={}",
+                    RequestContextHolder.requireTenantId(),
+                    state.lastPatientId,
+                    state.lastChannel,
+                    ex.getMessage(),
+                    ex);
+            state.handoffRequired = true;
+            state.handoffReason = reason;
+            queueWorkflowEvent(state, "ESCALATION_CREATED", workflowContextJson(state));
+        }
+    }
+
+    private boolean activeBookingHandoff(CareAiState state) {
+        return state.currentIntent == PatientPortalCareAiIntent.BOOK_APPOINTMENT
+                || state.currentIntent == PatientPortalCareAiIntent.RESCHEDULE_APPOINTMENT
+                || state.currentIntent == PatientPortalCareAiIntent.CANCEL_APPOINTMENT
+                || state.selectedDoctorId != null
+                || state.preferredDate != null
+                || state.selectedSlot != null;
     }
 
     private void resetWorkflowState(CareAiState state, PatientPortalCareAiIntent intent) {
@@ -951,6 +1184,9 @@ public class PatientPortalCareAiService {
         state.unresolvedTurns = 0;
         state.lastSideTopic = null;
         state.awaitingFreshConfirmation = false;
+        state.transientWorkflowType = null;
+        state.activeTaskId = null;
+        state.activeTaskType = null;
     }
 
     private void clearDoctorSelection(CareAiState state) {
@@ -993,6 +1229,9 @@ public class PatientPortalCareAiService {
         state.appointmentOptions = List.of();
         state.lastQuestionKey = null;
         state.repeatedQuestionCount = 0;
+        state.transientWorkflowType = null;
+        state.activeTaskType = null;
+        state.activeTaskId = null;
         state.pendingWorkflowEventType = "WORKFLOW_COMPLETED";
         state.pendingWorkflowEventPayloadJson = workflowMetadataJson(state);
     }
@@ -2308,7 +2547,7 @@ public class PatientPortalCareAiService {
                     null,
                     state.lastExternalSessionId,
                     state.lastTransport == null ? CareAiTransport.HTTP_CHAT : state.lastTransport,
-                    RequestContextHolder.require().correlationId(),
+                    INSTANCE_ID,
                     state.lastUserMessage,
                     response.assistantMessage(),
                     state.currentIntent == null ? null : state.currentIntent.name(),
@@ -2374,6 +2613,9 @@ public class PatientPortalCareAiService {
     }
 
     private CareAiWorkflowType workflowType(CareAiState state) {
+        if (state.transientWorkflowType != null) {
+            return state.transientWorkflowType;
+        }
         PatientPortalCareAiIntent intent = state.currentIntent != null ? state.currentIntent : state.lastAction;
         if (intent == null && state.handoffRequired) {
             return CareAiWorkflowType.HUMAN_HANDOFF;
@@ -2410,6 +2652,9 @@ public class PatientPortalCareAiService {
 
     private String inferQuestionKey(CareAiState state, String assistantMessage) {
         if (state.actionCompleted && state.currentIntent == null) {
+            return null;
+        }
+        if (state.transientWorkflowType != null && state.currentIntent == null) {
             return null;
         }
         if (state.handoffRequired) {
@@ -2458,6 +2703,9 @@ public class PatientPortalCareAiService {
         context.put("preferredDate", state.preferredDate);
         context.put("preferredTimeWindow", state.preferredTimeWindow);
         context.put("selectedSlot", state.selectedSlot);
+        context.put("slotPromptLead", state.slotPromptLead);
+        context.put("slotChoices", slotChoicesContext(state));
+        context.put("slotOptions", state.slotOptions);
         context.put("reason", state.reason);
         context.put("dateResolutionIssue", state.dateResolutionIssue);
         context.put("handoffReason", state.handoffReason);
@@ -2467,6 +2715,14 @@ public class PatientPortalCareAiService {
         context.put("activeConfirmationScopeKey", state.activeConfirmationScopeKey);
         context.put("confirmationVersion", state.confirmationVersion);
         context.put("awaitingFreshConfirmation", state.awaitingFreshConfirmation);
+        context.put("booked", state.booked);
+        context.put("actionCompleted", state.actionCompleted);
+        context.put("lastAction", state.lastAction == null ? null : state.lastAction.name());
+        context.put("bookingStatus", state.bookingStatus);
+        context.put("bookedAppointmentDate", state.bookedAppointmentDate);
+        context.put("bookedAppointmentTime", state.bookedAppointmentTime);
+        context.put("activeTaskId", state.activeTaskId);
+        context.put("activeTaskType", state.activeTaskType == null ? null : state.activeTaskType.name());
         context.put("askedState", askedStateMap(state));
         context.put("answeredState", answeredStateMap(state));
         return toJson(context);
@@ -2479,7 +2735,34 @@ public class PatientPortalCareAiService {
         metadata.put("bookedAppointmentDate", state.bookedAppointmentDate);
         metadata.put("bookedAppointmentTime", state.bookedAppointmentTime);
         metadata.put("sideTopic", state.lastSideTopic);
+        metadata.put("activeTaskId", state.activeTaskId);
+        metadata.put("activeTaskType", state.activeTaskType == null ? null : state.activeTaskType.name());
         return toJson(metadata);
+    }
+
+    private String taskMetadataJson(CareAiState state, CareAiReceptionistTaskType taskType) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("language", state.language);
+        metadata.put("workflowType", workflowType(state) == null ? null : workflowType(state).name());
+        metadata.put("taskType", taskType.name());
+        metadata.put("requestedDoctorName", state.requestedDoctorName);
+        metadata.put("selectedDoctorName", state.selectedDoctorName);
+        metadata.put("preferredDate", state.preferredDate);
+        metadata.put("preferredTimeWindow", state.preferredTimeWindow);
+        metadata.put("selectedAppointmentId", state.selectedAppointmentId);
+        metadata.put("selectedAppointmentLabel", state.selectedAppointmentLabel);
+        return toJson(metadata);
+    }
+
+    private List<Map<String, Object>> slotChoicesContext(CareAiState state) {
+        return state.slotChoices.stream()
+                .map(choice -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("appointmentDate", choice.appointmentDate() == null ? null : choice.appointmentDate().toString());
+                    row.put("slotTime", choice.slotTime() == null ? null : choice.slotTime().format(TIME_FORMATTER));
+                    return row;
+                })
+                .toList();
     }
 
     private Map<String, Object> askedStateMap(CareAiState state) {
@@ -2540,6 +2823,8 @@ public class PatientPortalCareAiService {
         }
         Map<String, Object> context = parseJsonMap(snapshot.workflow().getContextJson());
         state.persistedWorkflowContextJson = snapshot.workflow().getContextJson();
+        state.currentConversationId = snapshot.conversation().getId();
+        state.currentWorkflowId = snapshot.workflow().getId();
         state.recentMessages = snapshot.recentMessages().stream()
                 .map(message -> message.getSpeaker() + ": " + message.getContent())
                 .toList();
@@ -2562,6 +2847,11 @@ public class PatientPortalCareAiService {
         state.preferredDate = coalesce(state.preferredDate, stringValue(context, "preferredDate"));
         state.preferredTimeWindow = coalesce(state.preferredTimeWindow, stringValue(context, "preferredTimeWindow"));
         state.selectedSlot = coalesce(state.selectedSlot, stringValue(context, "selectedSlot"));
+        state.slotPromptLead = coalesce(state.slotPromptLead, stringValue(context, "slotPromptLead"));
+        hydrateSlotChoices(state, context.get("slotChoices"));
+        if (state.slotOptions.isEmpty()) {
+            state.slotOptions = stringList(context.get("slotOptions"));
+        }
         state.reason = coalesce(state.reason, stringValue(context, "reason"));
         state.dateResolutionIssue = coalesce(state.dateResolutionIssue, stringValue(context, "dateResolutionIssue"));
         state.handoffReason = coalesce(state.handoffReason, stringValue(context, "handoffReason"));
@@ -2576,8 +2866,29 @@ public class PatientPortalCareAiService {
             }
         }
         state.activeConfirmationScopeKey = coalesce(state.activeConfirmationScopeKey, stringValue(context, "activeConfirmationScopeKey"));
+        state.activeTaskId = parseUuid(stringValue(context, "activeTaskId"));
+        String persistedTaskType = stringValue(context, "activeTaskType");
+        if (state.activeTaskType == null && StringUtils.hasText(persistedTaskType)) {
+            try {
+                state.activeTaskType = CareAiReceptionistTaskType.valueOf(persistedTaskType);
+            } catch (IllegalArgumentException ignored) {
+                // Ignore unknown historical values.
+            }
+        }
         state.confirmationVersion = intValue(context.get("confirmationVersion"));
         state.awaitingFreshConfirmation = state.awaitingFreshConfirmation || booleanValue(context.get("awaitingFreshConfirmation"));
+        state.booked = state.booked || booleanValue(context.get("booked"));
+        state.actionCompleted = state.actionCompleted || booleanValue(context.get("actionCompleted"));
+        if (state.lastAction == null && StringUtils.hasText(stringValue(context, "lastAction"))) {
+            try {
+                state.lastAction = PatientPortalCareAiIntent.valueOf(stringValue(context, "lastAction"));
+            } catch (IllegalArgumentException ignored) {
+                // Ignore unknown historical values.
+            }
+        }
+        state.bookingStatus = coalesce(state.bookingStatus, stringValue(context, "bookingStatus"));
+        state.bookedAppointmentDate = coalesce(state.bookedAppointmentDate, stringValue(context, "bookedAppointmentDate"));
+        state.bookedAppointmentTime = coalesce(state.bookedAppointmentTime, stringValue(context, "bookedAppointmentTime"));
         hydrateAskedAnsweredState(state, context);
         if (!StringUtils.hasText(state.lastQuestionKey)) {
             state.lastQuestionKey = snapshot.workflow().getLastQuestionKey();
@@ -2592,6 +2903,30 @@ public class PatientPortalCareAiService {
             }
         }
         state.persistenceHydrated = true;
+    }
+
+    private void hydrateSlotChoices(CareAiState state, Object value) {
+        if (!(value instanceof List<?> rows) || !state.slotChoices.isEmpty()) {
+            return;
+        }
+        List<SlotChoice> hydrated = new ArrayList<>();
+        for (Object row : rows) {
+            Map<String, Object> map = nestedMap(row);
+            LocalDate appointmentDate = parseIsoDate(stringValue(map, "appointmentDate"));
+            String slotTimeValue = stringValue(map, "slotTime");
+            if (appointmentDate == null || !StringUtils.hasText(slotTimeValue)) {
+                continue;
+            }
+            try {
+                hydrated.add(new SlotChoice(appointmentDate, LocalTime.parse(slotTimeValue, TIME_FORMATTER)));
+            } catch (RuntimeException ignored) {
+                // Ignore malformed persisted slot rows.
+            }
+        }
+        if (!hydrated.isEmpty()) {
+            state.slotChoices = hydrated;
+            state.slotOptions = hydrated.stream().map(choice -> choice.slotTime().format(TIME_FORMATTER)).toList();
+        }
     }
 
     private void hydrateAskedAnsweredState(CareAiState state, Map<String, Object> context) {
@@ -2629,6 +2964,23 @@ public class PatientPortalCareAiService {
             return copy;
         }
         return Map.of();
+    }
+
+    private List<String> stringList(Object value) {
+        if (!(value instanceof List<?> values)) {
+            return List.of();
+        }
+        List<String> rows = new ArrayList<>();
+        for (Object entry : values) {
+            if (entry == null) {
+                continue;
+            }
+            String text = String.valueOf(entry).trim();
+            if (StringUtils.hasText(text)) {
+                rows.add(text);
+            }
+        }
+        return List.copyOf(rows);
     }
 
     private int intValue(Object value) {
@@ -2958,6 +3310,126 @@ public class PatientPortalCareAiService {
         state.awaitingFreshConfirmation = false;
     }
 
+    private boolean detectHumanHandoffRequest(String transcript, String language) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        if (HUMAN_HANDOFF_KEYWORDS.stream().anyMatch(lower::contains)) {
+            return true;
+        }
+        return isHindi(language) && (transcript.contains("रिसेप्शन") || transcript.contains("स्टाफ") || transcript.contains("इंसान") || transcript.contains("क्लिनिक से जोड़"));
+    }
+
+    private boolean detectCallbackRequest(String transcript, String language) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        if (CALLBACK_REQUEST_KEYWORDS.stream().anyMatch(lower::contains)) {
+            return true;
+        }
+        return isHindi(language) && (transcript.contains("कॉल बैक") || transcript.contains("फोन करें") || transcript.contains("बाद में कॉल"));
+    }
+
+    private String detectHumanHandoffReason(String transcript) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        if (lower.contains("not working")) {
+            return "this-is-not-working";
+        }
+        if (lower.contains("receptionist") || lower.contains("staff") || lower.contains("clinic")) {
+            return "requested-receptionist";
+        }
+        return "requested-human-help";
+    }
+
+    private CareAiReceptionistTaskPriority handoffPriority(String transcript) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        if (lower.contains("urgent") || lower.contains("asap") || lower.contains("not working")) {
+            return CareAiReceptionistTaskPriority.HIGH;
+        }
+        return CareAiReceptionistTaskPriority.MEDIUM;
+    }
+
+    private CareAiReceptionistTaskPriority callbackPriority(String transcript, CallbackPreference callbackPreference) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        if (lower.contains("urgent") || lower.contains("asap")) {
+            return CareAiReceptionistTaskPriority.HIGH;
+        }
+        if (callbackPreference != null && callbackPreference.dueAt() != null && callbackPreference.dueAt().isBefore(OffsetDateTime.now().plusHours(4))) {
+            return CareAiReceptionistTaskPriority.HIGH;
+        }
+        return CareAiReceptionistTaskPriority.MEDIUM;
+    }
+
+    private CareAiReceptionistTaskPriority emergencyPriority(String transcript) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        if (lower.contains("unconscious") || lower.contains("difficulty breathing") || lower.contains("severe bleeding")) {
+            return CareAiReceptionistTaskPriority.URGENT;
+        }
+        return CareAiReceptionistTaskPriority.HIGH;
+    }
+
+    private CallbackPreference extractCallbackTimePreference(String transcript, String language) {
+        DateResolution date = findPreferredDate(transcript, language);
+        String timePreference = findPreferredTimeWindow(transcript, language, null);
+        if (!StringUtils.hasText(date.date()) && !StringUtils.hasText(timePreference)) {
+            return new CallbackPreference(null, null);
+        }
+        String dateLabel = StringUtils.hasText(date.date()) ? humanReadablePreferredDate(date.date()) : null;
+        String label;
+        if (StringUtils.hasText(dateLabel) && StringUtils.hasText(timePreference)) {
+            label = dateLabel + " " + timePreference;
+        } else {
+            label = StringUtils.hasText(dateLabel) ? dateLabel : timePreference;
+        }
+        OffsetDateTime dueAt = null;
+        if (StringUtils.hasText(date.date())) {
+            LocalDate callbackDate = LocalDate.parse(date.date());
+            if (isExactTime(timePreference)) {
+                dueAt = callbackDate.atTime(LocalTime.parse(timePreference, TIME_FORMATTER)).atOffset(OffsetDateTime.now().getOffset());
+            }
+        }
+        return new CallbackPreference(label, dueAt);
+    }
+
+    private String humanHandoffAcknowledgement(String language) {
+        return isHindi(language)
+                ? "मैंने हमारी रिसेप्शन टीम के लिए एक अनुरोध बना दिया है। क्लिनिक टीम का कोई सदस्य जल्द आपकी मदद करेगा।"
+                : "I’ve created a request for our receptionist. Someone from the clinic team will help you shortly.";
+    }
+
+    private String callbackAcknowledgement(String language, String callbackTimePreference) {
+        if (StringUtils.hasText(callbackTimePreference)) {
+            return isHindi(language)
+                    ? "मैंने " + callbackTimePreference + " के लिए कॉलबैक अनुरोध बना दिया है। क्लिनिक टीम आपसे संपर्क करेगी।"
+                    : "I’ve created a callback request for " + callbackTimePreference + ". The clinic team will contact you.";
+        }
+        return isHindi(language)
+                ? "मैंने कॉलबैक अनुरोध बना दिया है। क्लिनिक टीम आपसे संपर्क करेगी।"
+                : "I’ve created a callback request. The clinic team will contact you.";
+    }
+
+    private String taskEventPayloadJson(
+            CareAiState state,
+            UUID taskId,
+            CareAiReceptionistTaskType taskType,
+            String reason
+    ) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", taskId);
+        payload.put("taskType", taskType == null ? null : taskType.name());
+        payload.put("reason", reason);
+        payload.put("channel", state.lastChannel == null ? null : state.lastChannel.name());
+        payload.put("latestUserMessage", state.lastUserMessage);
+        return toJson(payload);
+    }
+
+    private UUID parseUuid(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
     private String nullToBlank(String value) {
         return value == null ? "" : value;
     }
@@ -3044,6 +3516,14 @@ public class PatientPortalCareAiService {
         return Map.copyOf(map);
     }
 
+    private static String buildInstanceId() {
+        try {
+            return InetAddress.getLocalHost().getHostName() + ":" + ManagementFactory.getRuntimeMXBean().getName();
+        } catch (Exception ex) {
+            return "api-bff:" + ManagementFactory.getRuntimeMXBean().getName();
+        }
+    }
+
     private static final class CareAiState {
         private String language = "en";
         private PatientPortalCareAiIntent currentIntent;
@@ -3098,14 +3578,22 @@ public class PatientPortalCareAiService {
         private boolean persistenceHydrated;
         private String persistedWorkflowContextJson;
         private List<String> recentMessages = List.of();
+        private UUID currentConversationId;
+        private UUID currentWorkflowId;
         private String suspendedIntent;
         private CareAiTopicClassification lastTopicClassification;
         private String lastSideTopic;
         private boolean awaitingFreshConfirmation;
         private String activeConfirmationScopeKey;
         private int confirmationVersion;
+        private CareAiWorkflowType transientWorkflowType;
+        private UUID activeTaskId;
+        private CareAiReceptionistTaskType activeTaskType;
         private String pendingWorkflowEventType;
         private String pendingWorkflowEventPayloadJson;
+    }
+
+    private record CallbackPreference(String label, OffsetDateTime dueAt) {
     }
 
     private record SessionKey(UUID tenantId, UUID appUserId) {

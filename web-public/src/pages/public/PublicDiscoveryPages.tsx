@@ -45,6 +45,74 @@ const emptySearchResponse: PublicSearchResponse = {
 const noPublicProfilesMessage =
   "No public profiles are enabled yet. Clinic admin can enable public listing from Public Profile settings.";
 
+const POPULAR_SEARCHES = [
+  "Cardiologist",
+  "Pediatrician",
+  "Dentist",
+  "Eye Specialist",
+  "General Physician",
+  "Nearby Clinics",
+  "Book Appointment",
+  "Pharmacy",
+] as const;
+
+const POPULAR_SEARCH_EMOJI: Record<(typeof POPULAR_SEARCHES)[number], string> = {
+  Cardiologist: "❤️",
+  Pediatrician: "👶",
+  Dentist: "🦷",
+  "Eye Specialist": "👁",
+  "General Physician": "🩺",
+  "Nearby Clinics": "🏥",
+  "Book Appointment": "📅",
+  Pharmacy: "💊",
+};
+
+const CAREAI_PROMPTS = [
+  "My child has fever",
+  "I have knee pain",
+  "Need a female gynecologist",
+  "Find a dentist near me",
+  "Book appointment with Dr Neha",
+] as const;
+
+const HERO_FEATURES = [
+  {
+    icon: "🩺",
+    title: "Find Doctors",
+    text: "Verified doctors across specialities with profile, experience, and availability insights.",
+    cta: "Explore Doctors",
+    to: "/doctors",
+  },
+  {
+    icon: "🏥",
+    title: "Discover Clinics",
+    text: "Find nearby clinics and care centres by location, speciality, and services.",
+    cta: "Explore Clinics",
+    to: "/clinics",
+  },
+  {
+    icon: "🤖",
+    title: "Ask CareAI",
+    text: "Describe symptoms or care needs in simple language and get guided next steps.",
+    cta: "Ask CareAI",
+    to: "/careai",
+  },
+  {
+    icon: "📅",
+    title: "Book Appointments",
+    text: "Move from discovery to booking with availability, reminders, and assisted handoff.",
+    cta: "Book Now",
+    to: "/patient/book-appointment",
+  },
+] as const;
+
+const TRUST_SIGNALS = [
+  "Growing clinic network",
+  "Verified doctor discovery",
+  "AI-guided care navigation",
+  "Secure patient experience",
+] as const;
+
 function usePublicResource<T>(path: string, params: Record<string, string | number | undefined | null>, initialValue: T): FetchState<T> {
   const [state, setState] = useState<FetchState<T>>({
     data: initialValue,
@@ -274,6 +342,41 @@ function slugify(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
 
+function buildDirectorySearchParams({
+  query,
+  city,
+  area,
+  page,
+  size,
+  extra,
+}: {
+  query?: string | null;
+  city?: string | null;
+  area?: string | null;
+  page: number;
+  size: number;
+  extra?: Record<string, string | undefined | null>;
+}) {
+  const params = new URLSearchParams();
+  if (query?.trim()) {
+    params.set("q", query.trim());
+  }
+  if (city?.trim()) {
+    params.set("city", city.trim());
+  }
+  if (area?.trim()) {
+    params.set("area", area.trim());
+  }
+  Object.entries(extra ?? {}).forEach(([key, value]) => {
+    if (value?.trim()) {
+      params.set(key, value.trim());
+    }
+  });
+  params.set("page", `${Math.max(page, 0)}`);
+  params.set("size", `${size}`);
+  return params;
+}
+
 function useDirectoryFilters(defaultSize = 12) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -290,44 +393,26 @@ function useDirectoryFilters(defaultSize = 12) {
   }, [searchParams]);
 
   function submit(basePath: string, extra?: Record<string, string | undefined>) {
-    const params = new URLSearchParams();
-    if (query.trim()) {
-      params.set("q", query.trim());
-    }
-    if (city.trim()) {
-      params.set("city", city.trim());
-    }
-    if (area.trim()) {
-      params.set("area", area.trim());
-    }
-    Object.entries(extra ?? {}).forEach(([key, value]) => {
-      if (value?.trim()) {
-        params.set(key, value.trim());
-      }
+    const params = buildDirectorySearchParams({
+      query,
+      city,
+      area,
+      page: 0,
+      size: defaultSize,
+      extra,
     });
-    params.set("page", "0");
-    params.set("size", `${defaultSize}`);
     navigate(`${basePath}?${params.toString()}`);
   }
 
   function changePage(basePath: string, nextPage: number, extra?: Record<string, string | undefined>) {
-    const params = new URLSearchParams();
-    if (searchParams.get("q")) {
-      params.set("q", searchParams.get("q") ?? "");
-    }
-    if (searchParams.get("city")) {
-      params.set("city", searchParams.get("city") ?? "");
-    }
-    if (searchParams.get("area")) {
-      params.set("area", searchParams.get("area") ?? "");
-    }
-    Object.entries(extra ?? {}).forEach(([key, value]) => {
-      if (value?.trim()) {
-        params.set(key, value.trim());
-      }
+    const params = buildDirectorySearchParams({
+      query: searchParams.get("q"),
+      city: searchParams.get("city"),
+      area: searchParams.get("area"),
+      page: nextPage,
+      size,
+      extra,
     });
-    params.set("page", `${Math.max(nextPage, 0)}`);
-    params.set("size", `${size}`);
     navigate(`${basePath}?${params.toString()}`);
   }
 
@@ -336,6 +421,7 @@ function useDirectoryFilters(defaultSize = 12) {
 
 export function PublicHomePage({ session }: { session: PatientPortalSession | null }) {
   const filters = useDirectoryFilters(6);
+  const navigate = useNavigate();
   const hasQuery = Boolean(
     filters.searchParams.get("q") || filters.searchParams.get("city") || filters.searchParams.get("area"),
   );
@@ -350,17 +436,38 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
     },
     emptySearchResponse,
   );
+  const displayLocation = filters.city.trim() || "Pune";
+
+  function submitHeroSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const params = buildDirectorySearchParams({
+      query: filters.query,
+      city: displayLocation,
+      area: filters.area,
+      page: 0,
+      size: 6,
+    });
+    navigate(`/?${params.toString()}`);
+  }
+
+  function openCareAi(prompt?: string) {
+    if (!prompt) {
+      navigate("/careai");
+      return;
+    }
+    navigate(`/careai?prompt=${encodeURIComponent(prompt)}`);
+  }
 
   return (
     <>
-      <section className="hero">
+      <section className="hero hero-smart">
         <div className="hero-copy">
-          <span className="eyebrow">Public doctor discovery</span>
-          <h1>Discover doctors, clinics, and specialities before you sign in.</h1>
+          <span className="eyebrow">CuraPilot by DeepThoughtNet</span>
+          <h1>What healthcare help do you need today?</h1>
           <p>
-            Search by doctor name, speciality, clinic, area, or city. When you are ready to book, continue into the patient OTP flow.
+            Discover doctors, clinics, services, and next-step care through an AI-first experience designed for fast, confident patient decisions.
           </p>
-          <div className="cta-row">
+          <div className="cta-row public-quick-links">
             <Link className="primary-button" to="/doctors">
               Browse doctors
             </Link>
@@ -371,22 +478,116 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
               Ask CareAI
             </Link>
           </div>
+          <div className="hero-feature-grid">
+            {HERO_FEATURES.map((feature) => (
+              <Link key={feature.title} to={feature.to} className="hero-feature-card">
+                <div className="hero-feature-icon" aria-hidden="true">{feature.icon}</div>
+                <strong>{feature.title}</strong>
+                <p>{feature.text}</p>
+                <span>{feature.cta}</span>
+              </Link>
+            ))}
+          </div>
+          <div className="trust-strip" aria-label="CuraPilot trust signals">
+            {TRUST_SIGNALS.map((item) => (
+              <div key={item} className="trust-pill">
+                {item}
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="hero-search-card">
-          <h2>Search care near you</h2>
-          <QueryToolbar
-            actionLabel="Search discovery"
-            query={filters.query}
-            setQuery={filters.setQuery}
-            city={filters.city}
-            setCity={filters.setCity}
-            area={filters.area}
-            setArea={filters.setArea}
-            onSubmit={(event) => {
-              event.preventDefault();
-              filters.submit("/");
-            }}
-          />
+        <div className="hero-search-card hero-smart-card">
+          <div className="smart-search-shell">
+            <form className="smart-search-form" onSubmit={submitHeroSearch}>
+              <div className="smart-search-header">
+                <div>
+                  <p className="smart-search-label">SMART SEARCH</p>
+                  <h2>Search doctor, clinic, symptom, speciality, or service</h2>
+                </div>
+                <div className="smart-location-pill" aria-label={`Selected location ${displayLocation}`}>
+                  <span>📍 {displayLocation}</span>
+                  <button
+                    className="smart-location-button"
+                    type="button"
+                    onClick={() => filters.setCity("")}
+                  >
+                    Change
+                  </button>
+                </div>
+              </div>
+
+              <label className="smart-search-input-wrap">
+                <span className="sr-only">Search care discovery</span>
+                <input
+                  className="smart-search-input"
+                  value={filters.query}
+                  onChange={(event) => filters.setQuery(event.target.value)}
+                  placeholder="Search doctor, clinic, symptom, speciality, or service"
+                />
+              </label>
+
+              <div className="smart-location-editor">
+                <label className="smart-location-field">
+                  <span>Location</span>
+                  <input
+                    value={filters.city}
+                    onChange={(event) => filters.setCity(event.target.value)}
+                    placeholder="Pune"
+                  />
+                </label>
+              </div>
+
+              <div className="smart-chip-section">
+                <span className="smart-search-label">Popular searches</span>
+                <div className="smart-chip-grid">
+                  {POPULAR_SEARCHES.map((item) => {
+                    const chipLabel = `${POPULAR_SEARCH_EMOJI[item]} ${item}`;
+                    const active = filters.query.trim().toLowerCase() === item.toLowerCase();
+                    return (
+                      <button
+                        key={item}
+                        className={`smart-chip${active ? " is-active" : ""}`}
+                        type="button"
+                        onClick={() => filters.setQuery(item)}
+                      >
+                        {chipLabel}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <button className="primary-button smart-search-submit" type="submit">
+                Search
+              </button>
+            </form>
+
+            <div className="smart-divider" aria-hidden="true">
+              <span>OR</span>
+            </div>
+
+            <div className="careai-cta">
+              <div className="careai-cta-copy">
+                <p className="smart-search-label">🤖 ASK CAREAI</p>
+                <h3>Need help finding the right doctor? Ask CareAI.</h3>
+              </div>
+              <div className="careai-prompt-grid">
+                {CAREAI_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    className="careai-prompt-chip"
+                    type="button"
+                    onClick={() => openCareAi(prompt)}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+              <button className="secondary-button careai-cta-button" type="button" onClick={() => openCareAi()}>
+                Ask CareAI
+              </button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -861,6 +1062,9 @@ export function PublicSpecialityDetailPage({ session }: { session: PatientPortal
 }
 
 export function PublicCareAiPage({ session }: { session: PatientPortalSession | null }) {
+  const [searchParams] = useSearchParams();
+  const suggestedPrompt = searchParams.get("prompt")?.trim() ?? "";
+
   return (
     <section className="page-section">
       <div className="section-heading">
@@ -876,6 +1080,12 @@ export function PublicCareAiPage({ session }: { session: PatientPortalSession | 
             <li>Show me cardiologists near Baner.</li>
             <li>Which clinic has a pediatrician available today?</li>
           </ul>
+          {suggestedPrompt ? (
+            <div className="patient-inline-empty">
+              <strong>Suggested prompt</strong>
+              <span>{suggestedPrompt}</span>
+            </div>
+          ) : null}
         </article>
         <article className="info-card">
           <strong>Next step</strong>

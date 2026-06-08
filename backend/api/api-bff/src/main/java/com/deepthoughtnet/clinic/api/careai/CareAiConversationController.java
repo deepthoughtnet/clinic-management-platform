@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -26,6 +27,15 @@ public class CareAiConversationController {
     @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST')")
     public List<CareAiConversationResponse> list() {
         return conversationPersistenceService.listConversations(RequestContextHolder.requireTenantId()).stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @GetMapping("/active")
+    @PreAuthorize("@permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST')")
+    public List<CareAiConversationResponse> active(@RequestParam(required = false) UUID patientId) {
+        return conversationPersistenceService.listActiveConversations(RequestContextHolder.requireTenantId()).stream()
+                .filter(conversation -> patientId == null || patientId.equals(conversation.getPatientId()))
                 .map(this::toResponse)
                 .toList();
     }
