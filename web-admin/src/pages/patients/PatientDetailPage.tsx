@@ -128,6 +128,7 @@ export default function PatientDetailPage() {
   const [error, setError] = React.useState<string | null>(null);
   const canUploadClinicalDocument = auth.hasPermission("clinic.document.upload");
   const canReviewAiExtraction = auth.hasPermission("consultation.update") || auth.hasPermission("consultation.complete");
+  const canOpenConsultationWorkspace = (auth.tenantRole || "").toUpperCase() === "DOCTOR" && auth.hasPermission("consultation.read");
 
   React.useEffect(() => {
     if (!viewerDocument) {
@@ -684,7 +685,9 @@ export default function PatientDetailPage() {
                       <TableCell><Chip size="small" label={consultation.status} color={consultationStatusColor(consultation.status)} /></TableCell>
                       <TableCell>{consultation.diagnosis || "-"}</TableCell>
                       <TableCell align="right">
-                        <Button size="small" onClick={() => navigate(`/consultations/${consultation.id}`)}>Open</Button>
+                        {canOpenConsultationWorkspace ? (
+                          <Button size="small" onClick={() => navigate(`/consultations/${consultation.id}`)}>Open</Button>
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}

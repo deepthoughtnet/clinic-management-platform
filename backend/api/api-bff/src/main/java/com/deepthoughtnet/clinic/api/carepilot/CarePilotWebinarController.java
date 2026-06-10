@@ -147,7 +147,7 @@ public class CarePilotWebinarController {
     }
 
     @GetMapping("/analytics/summary")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
+    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
     public WebinarAnalyticsSummaryResponse analytics() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var row = analyticsService.summary(tenantId);

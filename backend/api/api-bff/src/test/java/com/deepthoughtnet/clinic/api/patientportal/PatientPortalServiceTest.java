@@ -22,6 +22,8 @@ import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlo
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.billing.service.model.BillItemType;
+import com.deepthoughtnet.clinic.billing.service.model.BillLineRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
 import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
@@ -131,6 +133,7 @@ class PatientPortalServiceTest {
         });
         assertThat(service.bills()).singleElement().satisfies(bill -> {
             assertThat(bill.billNumber()).isEqualTo("BILL-001");
+            assertThat(bill.billType()).isEqualTo("Medicine");
             assertThat(bill.dueAmount()).isEqualByComparingTo("250.00");
         });
 
@@ -547,7 +550,21 @@ class PatientPortalServiceTest {
                 "internal bill notes",
                 OffsetDateTime.now(),
                 OffsetDateTime.now(),
-                List.of()
+                List.of(
+                        new BillLineRecord(
+                                UUID.randomUUID(),
+                                BillItemType.MEDICINE,
+                                "Amoxicillin",
+                                2,
+                                new BigDecimal("500.00"),
+                                new BigDecimal("1000.00"),
+                                null,
+                                1,
+                                BigDecimal.ZERO,
+                                null,
+                                null
+                        )
+                )
         );
     }
 

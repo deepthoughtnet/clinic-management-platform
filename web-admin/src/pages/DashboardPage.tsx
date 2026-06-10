@@ -170,6 +170,10 @@ export default function DashboardPage() {
   const isClinicAdmin = tenantRole === "CLINIC_ADMIN";
   const isPharmacyRole = tenantRole === "PHARMA" || tenantRole === "PHARMACY" || tenantRole === "PHARMACIST";
   const canBilling = auth.hasPermission("billing.read") || auth.hasPermission("payment.collect") || tenantRole === "CLINIC_ADMIN" || isBillingUser;
+  const canUseAppointmentShortcuts = !isBillingUser && !isAuditor && (auth.hasPermission("appointment.manage") || auth.hasPermission("appointment.read"));
+  const canCreateAppointments = !isDoctor && !isBillingUser && !isAuditor && auth.hasPermission("appointment.manage");
+  const canOpenDayBoard = !isBillingUser && !isAuditor && auth.hasPermission("appointment.manage");
+  const canOpenQueue = !isBillingUser && !isAuditor && auth.hasPermission("appointment.manage");
 
   const [dashboard, setDashboard] = React.useState<ClinicDashboard | null>(null);
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
@@ -419,9 +423,15 @@ export default function DashboardPage() {
               </FormControl>
             ) : null}
             <Button size="small" sx={{ minHeight: 36, px: 1.5 }} variant="contained" onClick={() => void loadDashboard()}>Refresh</Button>
-            <Button size="small" sx={{ minHeight: 36, px: 1.5 }} variant="outlined" onClick={() => navigate("/appointments")}>New appointment</Button>
-            <Button size="small" sx={{ minHeight: 36, px: 1.5 }} variant="outlined" onClick={() => navigate("/appointments/day-board")}>Open day board</Button>
-            <Button size="small" sx={{ minHeight: 36, px: 1.5 }} variant="outlined" onClick={() => navigate("/queue")}>Open queue</Button>
+            {canCreateAppointments ? (
+              <Button size="small" sx={{ minHeight: 36, px: 1.5 }} variant="outlined" onClick={() => navigate("/appointments")}>New appointment</Button>
+            ) : null}
+            {canOpenDayBoard ? (
+              <Button size="small" sx={{ minHeight: 36, px: 1.5 }} variant="outlined" onClick={() => navigate("/appointments/day-board")}>Open day board</Button>
+            ) : null}
+            {canOpenQueue ? (
+              <Button size="small" sx={{ minHeight: 36, px: 1.5 }} variant="outlined" onClick={() => navigate("/queue")}>Open queue</Button>
+            ) : null}
           </Stack>
         </CardContent>
       </Card>
@@ -443,7 +453,7 @@ export default function DashboardPage() {
               },
             }}
           >
-            {(showBilling && !showOperational ? financeCards : cards).map((card) => (
+            {((showBilling && (!showOperational || !canUseAppointmentShortcuts)) ? financeCards : cards).map((card) => (
               <Box key={card.label}>
                 <KpiCard {...card} />
               </Box>
@@ -451,7 +461,7 @@ export default function DashboardPage() {
           </Box>
 
           <Grid container spacing={1.5}>
-            {showOperational ? (
+            {showOperational && canUseAppointmentShortcuts ? (
               <Grid size={{ xs: 12, lg: 7 }}>
                 <Card variant="outlined">
                   <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>

@@ -17,6 +17,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 
 @Configuration
 public class ControlPlaneWiringConfig {
@@ -24,6 +25,7 @@ public class ControlPlaneWiringConfig {
     private static final Logger log = LoggerFactory.getLogger(ControlPlaneWiringConfig.class);
 
     @Bean
+    @Lazy
     @ConditionalOnProperty(prefix = "clinic.keycloak.admin", name = "enabled", havingValue = "true")
     public Keycloak keycloakAdmin(
             @Value("${clinic.keycloak.admin.serverUrl:}") String serverUrl,
@@ -66,7 +68,9 @@ public class ControlPlaneWiringConfig {
             }
 
             Keycloak keycloak = builder.build();
-            keycloak.realm(adminRealm).toRepresentation();
+            log.info("Keycloak Admin client configured for adminRealm={} targetRealm={}; connection will be established on demand",
+                    adminRealm,
+                    (targetRealm == null || targetRealm.isBlank()) ? "(not set)" : targetRealm);
             return keycloak;
         } catch (Exception e) {
             throw new IllegalStateException("Failed to initialize Keycloak Admin client", e);

@@ -369,6 +369,7 @@ export default function DoctorAvailabilityPage() {
   const navigate = useNavigate();
   const role = (auth.tenantRole || "").toUpperCase();
   const isDoctor = role === "DOCTOR";
+  const canOpenConsultationWorkspace = isDoctor && auth.hasPermission("consultation.read");
 
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [selectedDoctorId, setSelectedDoctorId] = React.useState("");
@@ -1624,7 +1625,7 @@ export default function DoctorAvailabilityPage() {
                       <Typography variant="body2">Consultation: {selectedAppointment.consultationId ? "Linked" : "Not started"}</Typography>
                       <Stack spacing={1}>
                         <Button size="small" onClick={() => navigate("/appointments")}>Open appointments</Button>
-                        {selectedAppointment.consultationId ? (
+                        {selectedAppointment.consultationId && canOpenConsultationWorkspace ? (
                           <Button size="small" variant="outlined" onClick={() => navigate(`/consultations/${selectedAppointment.consultationId}`)}>
                             Open consultation
                           </Button>

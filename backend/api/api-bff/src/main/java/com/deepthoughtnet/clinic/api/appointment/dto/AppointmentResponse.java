@@ -20,6 +20,7 @@ public record AppointmentResponse(
         LocalDate appointmentDate,
         LocalTime appointmentTime,
         Integer tokenNumber,
+        String displayReference,
         String reason,
         AppointmentType type,
         AppointmentPriority priority,

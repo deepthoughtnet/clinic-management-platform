@@ -129,7 +129,7 @@ public class BillingService {
     @Transactional(readOnly = true)
     public List<BillRecord> list(UUID tenantId, BillingSearchCriteria criteria) {
         requireTenant(tenantId);
-        BillingSearchCriteria safe = criteria == null ? new BillingSearchCriteria(null, null, null, null, null, null) : criteria;
+        BillingSearchCriteria safe = criteria == null ? new BillingSearchCriteria(null, null, null, null, null, null, null) : criteria;
         List<BillEntity> bills = billRepository.search(tenantId, safe);
         return mapBills(tenantId, bills);
     }
@@ -878,7 +878,7 @@ public class BillingService {
     private float drawReceiptMeta(PDPageContentStream content, BillRecord record, ReceiptEntity receipt, PaymentEntity payment, AppointmentRecord appointment, ConsultationRecord consultation, float margin, float width, float y) throws IOException {
         List<MetaPair> pairs = List.of(
                 new MetaPair("Receipt No", safe(receipt.getReceiptNumber())),
-                new MetaPair("Payment Date", formatDateTime(payment == null ? null : payment.getPaymentDateTime())),
+                new MetaPair("Payment Date", payment == null ? formatDate(receipt.getReceiptDate()) : formatPaymentTimestamp(payment)),
                 new MetaPair("Patient", safe(record.patientName())),
                 new MetaPair("Bill No", record.billNumber()),
                 new MetaPair("Payment Mode", payment == null || payment.getPaymentMode() == null ? "—" : payment.getPaymentMode().name()),
@@ -994,7 +994,10 @@ public class BillingService {
     private float drawReceiptBody(PDPageContentStream content, BillRecord record, ReceiptEntity receipt, PaymentEntity payment, float margin, float width, float y) throws IOException {
         float bodyX = margin + 4;
         float bodyW = width - 8;
-        float boxH = 62f;
+        float summaryBoxW = Math.min(220f, bodyW * 0.42f);
+        float noteX = bodyX + summaryBoxW + 12;
+        float noteW = Math.max(150f, bodyW - summaryBoxW - 20);
+        float boxH = 84f;
         setFillColor(content, 249, 249, 249);
         content.addRect(bodyX, y - boxH, bodyW, boxH);
         content.fill();
@@ -1007,12 +1010,14 @@ public class BillingService {
         lineY = writeSummaryRow(content, "Amount Paid", money(receipt.getAmount()), bodyX + 10, lineY, true);
         lineY = writeSummaryRow(content, "Remaining Due", money(record.dueAmount()), bodyX + 10, lineY, true);
         lineY = writeSummaryRow(content, "Payment Mode", payment == null || payment.getPaymentMode() == null ? "—" : payment.getPaymentMode().name(), bodyX + 10, lineY, false);
-        lineY = writeSummaryRow(content, "Received By", receivedBy(payment), bodyX + 10, lineY, false);
+        writeSummaryRow(content, "Received By", receivedBy(payment), bodyX + 10, lineY, false);
 
-        float noteX = bodyX + 4;
-        float noteW = bodyW - 8;
         writeLine(content, "Payment Notes", 9, noteX, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        writeWrapped(content, safe(payment == null ? null : payment.getNotes()), 8.5f, noteX, y - 22, noteW);
+        float notesY = y - 22;
+        float afterNotesY = writeWrapped(content, safe(payment == null ? null : payment.getNotes()), 8.5f, noteX, notesY, noteW);
+        if (afterNotesY == notesY) {
+            writeLine(content, "—", 8.5f, noteX, notesY, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        }
         return y - boxH - 4;
     }
 
@@ -1142,6 +1147,16 @@ public class BillingService {
 
     private String formatDateTime(OffsetDateTime dateTime) {
         return dateTime == null ? "—" : dateTime.format(DateTimeFormatter.ofPattern("MMM d, yyyy hh:mm a", Locale.ENGLISH));
+    }
+
+    private String formatPaymentTimestamp(PaymentEntity payment) {
+        if (payment == null) {
+            return "—";
+        }
+        if (payment.getPaymentDateTime() != null) {
+            return formatDateTime(payment.getPaymentDateTime());
+        }
+        return formatDate(payment.getPaymentDate());
     }
 
     private String money(BigDecimal value) {

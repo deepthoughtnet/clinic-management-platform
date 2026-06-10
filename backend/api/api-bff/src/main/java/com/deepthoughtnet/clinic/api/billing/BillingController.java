@@ -65,19 +65,20 @@ public class BillingController {
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('payment.collect')")
     public List<BillResponse> list(
             @RequestParam(required = false) UUID patientId,
             @RequestParam(required = false) UUID appointmentId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) LocalDate fromDate,
             @RequestParam(required = false) LocalDate toDate,
-            @RequestParam(required = false) String paymentMode
+            @RequestParam(required = false) String paymentMode,
+            @RequestParam(required = false) String search
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         BillStatus billStatus = parseStatus(status);
         PaymentMode mode = parsePaymentMode(paymentMode);
-        return billingService.list(tenantId, new BillingSearchCriteria(patientId, billStatus, fromDate, toDate, mode, appointmentId)).stream().map(this::toResponse).toList();
+        return billingService.list(tenantId, new BillingSearchCriteria(patientId, billStatus, fromDate, toDate, mode, appointmentId, normalizeText(search))).stream().map(this::toResponse).toList();
     }
 
     @PostMapping
@@ -90,7 +91,7 @@ public class BillingController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('payment.collect')")
     public BillResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toResponse(billingService.findById(tenantId, id).orElseThrow(() -> new IllegalArgumentException("Bill not found")));
@@ -152,14 +153,14 @@ public class BillingController {
     }
 
     @GetMapping("/{billId}/payments")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect')")
     public List<PaymentResponse> listPayments(@PathVariable UUID billId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return billingService.listPayments(tenantId, billId).stream().map(this::toPaymentResponse).toList();
     }
 
     @GetMapping("/payments")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect')")
     public List<PaymentLedgerResponse> listAllPayments(
             @RequestParam(required = false) LocalDate fromDate,
             @RequestParam(required = false) LocalDate toDate,
@@ -178,7 +179,7 @@ public class BillingController {
         String billNumberFilter = normalizeText(billNumber);
         String freeText = normalizeText(search);
 
-        List<BillRecord> bills = billingService.list(tenantId, new BillingSearchCriteria(patientUuid, null, null, null, null, null));
+        List<BillRecord> bills = billingService.list(tenantId, new BillingSearchCriteria(patientUuid, null, null, null, null, null, freeText));
         List<PaymentLedgerResponse> rows = bills.stream()
                 .flatMap(bill -> billingService.listPayments(tenantId, bill.id()).stream().map(payment -> toPaymentLedgerResponse(payment, bill)))
                 .filter(row -> fromDate == null || !row.paymentDate().isBefore(fromDate))
@@ -186,21 +187,20 @@ public class BillingController {
                 .filter(row -> mode == null || row.paymentMode() == mode)
                 .filter(row -> receivedByUuid == null || (row.receivedBy() != null && row.receivedBy().equals(receivedByUuid.toString())))
                 .filter(row -> billNumberFilter == null || (row.billNumber() != null && row.billNumber().toLowerCase().contains(billNumberFilter)))
-                .filter(row -> matchesSearch(row.patientName(), row.patientNumber(), row.billNumber(), freeText))
                 .sorted(Comparator.comparing(PaymentLedgerResponse::createdAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
         return paginate(rows, page, size);
     }
 
     @GetMapping("/{billId}/receipts")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.receipt') or @permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.receipt') or @permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect')")
     public List<ReceiptResponse> listReceipts(@PathVariable UUID billId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return billingService.listReceipts(tenantId, billId).stream().map(this::toReceiptResponse).toList();
     }
 
     @GetMapping(value = "/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
-    @PreAuthorize("@permissionChecker.hasPermission('billing.receipt') or @permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.receipt') or @permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('payment.collect')")
     public ResponseEntity<byte[]> downloadBillPdf(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
@@ -323,14 +323,14 @@ public class BillingController {
     }
 
     @GetMapping("/{billId}/refunds")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect')")
     public List<RefundResponse> listRefunds(@PathVariable UUID billId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return billingService.listRefunds(tenantId, billId).stream().map(this::toRefundResponse).toList();
     }
 
     @GetMapping("/refunds")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect')")
     public List<RefundLedgerResponse> listAllRefunds(
             @RequestParam(required = false) LocalDate fromDate,
             @RequestParam(required = false) LocalDate toDate,
@@ -347,14 +347,13 @@ public class BillingController {
         String billNumberFilter = normalizeText(billNumber);
         String freeText = normalizeText(search);
 
-        List<BillRecord> bills = billingService.list(tenantId, new BillingSearchCriteria(patientUuid, null, null, null, null, null));
+        List<BillRecord> bills = billingService.list(tenantId, new BillingSearchCriteria(patientUuid, null, null, null, null, null, freeText));
         List<RefundLedgerResponse> rows = bills.stream()
                 .flatMap(bill -> billingService.listRefunds(tenantId, bill.id()).stream().map(refund -> toRefundLedgerResponse(refund, bill)))
                 .filter(row -> fromDate == null || !row.refundedAt().toLocalDate().isBefore(fromDate))
                 .filter(row -> toDate == null || !row.refundedAt().toLocalDate().isAfter(toDate))
                 .filter(row -> mode == null || row.refundMode() == mode)
                 .filter(row -> billNumberFilter == null || (row.billNumber() != null && row.billNumber().toLowerCase().contains(billNumberFilter)))
-                .filter(row -> matchesSearch(row.patientName(), row.patientNumber(), row.billNumber(), freeText))
                 .sorted(Comparator.comparing(RefundLedgerResponse::createdAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
         return paginate(rows, page, size);
@@ -461,17 +460,6 @@ public class BillingController {
             return null;
         }
         return value.trim().toLowerCase();
-    }
-
-    private boolean matchesSearch(String patientName, String patientNumber, String billNumber, String search) {
-        if (search == null) {
-            return true;
-        }
-        String haystack = String.join(" ",
-                patientName == null ? "" : patientName,
-                patientNumber == null ? "" : patientNumber,
-                billNumber == null ? "" : billNumber).toLowerCase();
-        return haystack.contains(search);
     }
 
     private <T> List<T> paginate(List<T> rows, int page, int size) {

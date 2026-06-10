@@ -36,6 +36,8 @@ import {
 
 function availabilityColor(status: string) {
   switch (status) {
+    case "NO_INVENTORY":
+      return "error";
     case "AVAILABLE":
       return "success";
     case "LOW_STOCK":
@@ -77,6 +79,7 @@ function dispenseColor(status: string) {
 }
 
 function aggregateAvailability(lines: DispenseLine[]) {
+  if (lines.some((line) => line.availabilityStatus === "NO_INVENTORY")) return "NO_INVENTORY";
   if (lines.some((line) => line.availabilityStatus === "OUT_OF_STOCK")) return "OUT_OF_STOCK";
   if (lines.some((line) => line.availabilityStatus === "PARTIAL_AVAILABLE")) return "PARTIAL_AVAILABLE";
   if (lines.some((line) => line.availabilityStatus === "LOW_STOCK")) return "LOW_STOCK";
@@ -111,8 +114,8 @@ export default function DispensingPage() {
   const [substitutes, setSubstitutes] = React.useState<Record<string, SubstituteSuggestion[]>>({});
   const [saving, setSaving] = React.useState(false);
 
-  const canDispense = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("PHARMACIST") || auth.rolesUpper.includes("PHARMA") || auth.rolesUpper.includes("PHARMACY") || auth.rolesUpper.includes("BILLING_USER");
-  const canBill = auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("BILLING_USER") || auth.rolesUpper.includes("RECEPTIONIST");
+  const canDispense = auth.hasPermission("inventory.manage") || auth.hasPermission("billing.create");
+  const canBill = auth.hasPermission("billing.create");
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -368,6 +371,11 @@ export default function DispensingPage() {
                         <Typography variant="caption" display="block" color="text.secondary">
                           Available: {line.availableQuantity ?? 0}
                         </Typography>
+                        {line.availabilityStatus === "NO_INVENTORY" ? (
+                          <Typography variant="caption" display="block" color="error.main">
+                            No inventory batch exists yet. Prescription remains valid; add stock before dispensing.
+                          </Typography>
+                        ) : null}
                         {substitutes[line.prescribedMedicineName]?.length ? (
                           <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>
                             {substitutes[line.prescribedMedicineName].slice(0, 2).map((suggestion) => (
@@ -411,8 +419,8 @@ export default function DispensingPage() {
                             <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
                               {canDispense ? (
                                 <>
-                                  <Button size="small" variant="contained" disabled={saving || closed} onClick={() => void dispenseLine(line, "FULL")}>Full</Button>
-                                  <Button size="small" disabled={saving || closed} onClick={() => void dispenseLine(line, "PARTIAL")}>Partial</Button>
+                                  <Button size="small" variant="contained" disabled={saving || closed || line.availabilityStatus === "NO_INVENTORY"} onClick={() => void dispenseLine(line, "FULL")}>Full</Button>
+                                  <Button size="small" disabled={saving || closed || line.availabilityStatus === "NO_INVENTORY"} onClick={() => void dispenseLine(line, "PARTIAL")}>Partial</Button>
                                   <Button size="small" color="inherit" disabled={saving || closed} onClick={() => void dispenseLine(line, "CANCEL")}>Unavailable / Cancel</Button>
                                 </>
                               ) : (

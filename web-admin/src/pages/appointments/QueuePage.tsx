@@ -263,6 +263,7 @@ export default function QueuePage() {
   const isClinicAdmin = tenantRole === "CLINIC_ADMIN";
   const isReceptionist = tenantRole === "RECEPTIONIST";
   const canCollectFee = auth.hasPermission("billing.create") || auth.hasPermission("payment.collect");
+  const canViewBillingData = auth.hasPermission("billing.read") || canCollectFee;
   const canBypassPaymentCheckIn = auth.hasPermission("appointment.checkin.payment_bypass");
   const canStartConsultation = isDoctor && auth.hasPermission("consultation.create");
   const canManageDeskStatus = (isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage");
@@ -399,17 +400,22 @@ export default function QueuePage() {
       }
       setLoadingQueue(true);
       setError(null);
+      setBills([]);
       try {
-        const [rows, billRows] = await Promise.all([
-          searchAppointments(auth.accessToken, auth.tenantId, {
-            doctorUserId: effectiveDoctorId || undefined,
-            appointmentDate: today,
-          }),
-          searchBills(auth.accessToken, auth.tenantId, {
+        const rowsPromise = searchAppointments(auth.accessToken, auth.tenantId, {
+          doctorUserId: effectiveDoctorId || undefined,
+          appointmentDate: today,
+        });
+        const billRowsPromise = canViewBillingData
+          ? searchBills(auth.accessToken, auth.tenantId, {
             fromDate: today,
             toDate: today,
-          }),
-        ]);
+          }).catch((err) => {
+            console.error("Queue bill load failed", err);
+            return [];
+          })
+          : Promise.resolve([]);
+        const [rows, billRows] = await Promise.all([rowsPromise, billRowsPromise]);
         if (cancelled) return;
         setAppointments(rows);
         setBills(billRows);
@@ -428,7 +434,7 @@ export default function QueuePage() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken, auth.tenantId, effectiveDoctorId, tenantReady, today]);
+  }, [auth.accessToken, auth.tenantId, canViewBillingData, effectiveDoctorId, tenantReady, today]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -474,17 +480,22 @@ export default function QueuePage() {
     if (!auth.accessToken || !auth.tenantId) return;
     setLoadingQueue(true);
     setError(null);
+    setBills([]);
     try {
-      const [rows, billRows] = await Promise.all([
-        searchAppointments(auth.accessToken, auth.tenantId, {
-          doctorUserId: effectiveDoctorId || undefined,
-          appointmentDate: today,
-        }),
-        searchBills(auth.accessToken, auth.tenantId, {
+      const rowsPromise = searchAppointments(auth.accessToken, auth.tenantId, {
+        doctorUserId: effectiveDoctorId || undefined,
+        appointmentDate: today,
+      });
+      const billRowsPromise = canViewBillingData
+        ? searchBills(auth.accessToken, auth.tenantId, {
           fromDate: today,
           toDate: today,
-        }),
-      ]);
+        }).catch((err) => {
+          console.error("Queue bill refresh failed", err);
+          return [];
+        })
+        : Promise.resolve([]);
+      const [rows, billRows] = await Promise.all([rowsPromise, billRowsPromise]);
       setAppointments(rows);
       setBills(billRows);
     } catch (err) {

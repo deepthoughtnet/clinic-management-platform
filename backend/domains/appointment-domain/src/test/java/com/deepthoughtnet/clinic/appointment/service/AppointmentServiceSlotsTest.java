@@ -223,6 +223,37 @@ class AppointmentServiceSlotsTest {
     }
 
     @Test
+    void createScheduledRejectsAdHocBookingWhenStandardSlotsRemainAvailable() {
+        DoctorAvailabilityEntity availability = availability(LocalTime.of(10, 0), LocalTime.of(11, 0), 30, 1);
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, APPOINTMENT_DATE, LocalTime.of(10, 45), "Emergency", AppointmentType.SCHEDULED, null, AppointmentPriority.URGENT, true),
+                ACTOR_ID,
+                false
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Standard slots are available");
+    }
+
+    @Test
+    void createScheduledReturnsReadableDisplayReference() {
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of());
+
+        var created = service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, APPOINTMENT_DATE, LocalTime.of(10, 15), "Review", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
+                ACTOR_ID,
+                false
+        );
+
+        assertThat(created.displayReference()).startsWith("APT-" + APPOINTMENT_DATE.format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE) + "-");
+        assertThat(created.displayReference()).doesNotContain(created.id().toString());
+    }
+
+    @Test
     void createScheduledAllowsNearCurrentBookingWithinGraceWindow() {
         LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
         Assumptions.assumeTrue(now.isAfter(LocalTime.of(1, 0)) && now.isBefore(LocalTime.of(22, 0)));
@@ -300,10 +331,11 @@ class AppointmentServiceSlotsTest {
 
     @Test
     void createScheduledAllowsAdHocBookingWhenFlagEnabled() {
-        DoctorAvailabilityEntity availability = availability();
+        DoctorAvailabilityEntity availability = availability(LocalTime.of(10, 0), LocalTime.of(10, 10), 10, 1);
+        AppointmentEntity booked = appointment(LocalTime.of(10, 0), AppointmentStatus.BOOKED);
         when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
         when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
-                .thenReturn(List.of());
+                .thenReturn(List.of(booked));
 
         service.createScheduled(
                 TENANT_ID,

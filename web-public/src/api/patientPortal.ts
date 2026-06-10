@@ -188,6 +188,7 @@ export type PatientPortalBillLineResponse = {
 
 export type PatientPortalBillResponse = {
   billNumber: string;
+  billType: string | null;
   billDate: string | null;
   status: string | null;
   totalAmount: number | null;

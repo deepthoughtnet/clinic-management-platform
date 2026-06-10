@@ -50,6 +50,25 @@ class RolePermissionMappingsTest {
     }
 
     @Test
+    void clinicAdminKeepsReadOnlyClinicalVisibilityWithoutWorkspaceMutationPermissions() {
+        Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
+
+        assertThat(permissions).contains(
+                Permissions.CONSULTATION_READ,
+                Permissions.PRESCRIPTION_READ
+        );
+        assertThat(permissions).doesNotContain(
+                Permissions.CONSULTATION_CREATE,
+                Permissions.CONSULTATION_UPDATE,
+                Permissions.CONSULTATION_COMPLETE,
+                Permissions.PRESCRIPTION_CREATE,
+                Permissions.PRESCRIPTION_FINALIZE,
+                Permissions.PRESCRIPTION_PRINT,
+                Permissions.PRESCRIPTION_SEND
+        );
+    }
+
+    @Test
     void billingUserCanCollectPaymentsAndReadReportsWithoutClinicalEditingOrUserManagement() {
         Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.BILLING_USER);
 

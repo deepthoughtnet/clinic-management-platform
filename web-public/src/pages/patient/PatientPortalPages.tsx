@@ -1096,6 +1096,14 @@ export function PatientDashboardPage({ session, onSignOut }: { session: PatientP
 export function PatientAppointmentsPage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
   const portalSession = isPatientPortalPatientSession(session) ? session : null;
   const appointments = usePatientPortalResource<PatientPortalAppointmentResponse[]>(portalSession, "/api/patient-portal/appointments", []);
+  const upcomingAppointments = useMemo(
+    () =>
+      appointments.data.filter((appointment) => {
+        const status = (appointment.status ?? "").toUpperCase();
+        return status !== "CANCELLED" && status !== "NO_SHOW" && status !== "COMPLETED";
+      }),
+    [appointments.data],
+  );
 
   return (
     <PatientAccessBoundary
@@ -1116,6 +1124,17 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
             Book appointment
           </Link>
         </div>
+        {upcomingAppointments.length ? (
+          <div className="patient-highlight-card patient-guidance-card">
+            <strong>Need to cancel or reschedule?</strong>
+            <p>To cancel or reschedule, please use CareAI or contact receptionist.</p>
+            <div className="patient-action-row">
+              <Link className="secondary-button" to="/patient/careai">
+                Open CareAI
+              </Link>
+            </div>
+          </div>
+        ) : null}
         <div className="patient-card-stack">
           {appointments.data.map((appointment) => (
             <article key={`${appointment.doctorName ?? "doctor"}-${appointment.appointmentDate}-${appointment.appointmentTime ?? "time"}`} className="patient-record-card">
@@ -1132,6 +1151,13 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
               <div className="record-card-meta">
                 <span>Source: {appointment.source ?? "Not available"}</span>
               </div>
+              {(appointment.status ?? "").toUpperCase() !== "CANCELLED" &&
+              (appointment.status ?? "").toUpperCase() !== "NO_SHOW" &&
+              (appointment.status ?? "").toUpperCase() !== "COMPLETED" ? (
+                <div className="patient-inline-note">
+                  To cancel or reschedule, please use CareAI or contact receptionist.
+                </div>
+              ) : null}
             </article>
           ))}
         </div>
@@ -1561,9 +1587,15 @@ export function PatientBillsPage({ session, onSignOut }: { session: PatientPorta
               <div className="record-card-top">
                 <div>
                   <strong>{bill.billNumber}</strong>
-                  <span>{formatDate(bill.billDate)}</span>
+                  <span>
+                    {bill.billType ?? "Bill"} · {formatDate(bill.billDate)}
+                  </span>
                 </div>
                 <span className="status-pill">{formatStatusLabel(bill.status)}</span>
+              </div>
+
+              <div className="record-card-meta">
+                <span>Type: {bill.billType ?? "Bill"}</span>
               </div>
 
               <div className="patient-bill-summary">

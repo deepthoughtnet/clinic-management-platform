@@ -24,6 +24,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.billing.service.model.BillItemType;
 import com.deepthoughtnet.clinic.billing.service.model.BillLineRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillPdf;
@@ -456,6 +457,7 @@ public class PatientPortalService {
     private PatientPortalBillResponse toBillResponse(BillRecord record) {
         return new PatientPortalBillResponse(
                 record.billNumber(),
+                classifyBillType(record),
                 record.billDate(),
                 record.status() == null ? null : record.status().name(),
                 record.totalAmount(),
@@ -659,6 +661,24 @@ public class PatientPortalService {
         String itemType = record.itemType() == null ? null : record.itemType().name().replace('_', ' ');
         String summary = String.join(" · ", List.of(itemType, quantity, amount).stream().filter(StringUtils::hasText).toList());
         return StringUtils.hasText(summary) ? summary : "Line summary";
+    }
+
+    private String classifyBillType(BillRecord record) {
+        if (record == null || record.lines() == null || record.lines().isEmpty()) {
+            return record != null && record.consultationId() != null ? "Consultation" : "Bill";
+        }
+        boolean hasMedicine = record.lines().stream().anyMatch(line -> line.itemType() == BillItemType.MEDICINE);
+        boolean hasConsultation = record.lines().stream().anyMatch(line -> line.itemType() == BillItemType.CONSULTATION);
+        if (hasMedicine && record.lines().stream().allMatch(line -> line.itemType() == BillItemType.MEDICINE)) {
+            return "Medicine";
+        }
+        if (hasMedicine) {
+            return "Pharmacy";
+        }
+        if (hasConsultation) {
+            return "Consultation";
+        }
+        return "Bill";
     }
 
     private List<DoctorSnapshot> activeDoctorSnapshots(UUID tenantId) {

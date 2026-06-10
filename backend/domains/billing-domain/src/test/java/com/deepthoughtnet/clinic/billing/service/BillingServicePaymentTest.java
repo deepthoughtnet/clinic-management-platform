@@ -320,7 +320,7 @@ class BillingServicePaymentTest {
     void listUsesNonPaymentModeQueryWhenPaymentModeFilterMissing() {
         when(billRepository.search(any(), any(BillingSearchCriteria.class))).thenReturn(List.of());
 
-        var rows = service.list(tenantId, new BillingSearchCriteria(null, null, null, null, null, null));
+        var rows = service.list(tenantId, new BillingSearchCriteria(null, null, null, null, null, null, null));
 
         assertThat(rows).isEmpty();
     }
@@ -329,7 +329,7 @@ class BillingServicePaymentTest {
     void listUsesPaymentModeQueryWhenPaymentModeFilterPresent() {
         when(billRepository.search(any(), any(BillingSearchCriteria.class))).thenReturn(List.of());
 
-        var rows = service.list(tenantId, new BillingSearchCriteria(null, null, null, null, PaymentMode.UPI, null));
+        var rows = service.list(tenantId, new BillingSearchCriteria(null, null, null, null, PaymentMode.UPI, null, null));
 
         assertThat(rows).isEmpty();
     }

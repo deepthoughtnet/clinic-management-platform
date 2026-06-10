@@ -6,6 +6,7 @@ import java.util.List;
 
 public record PatientPortalBillResponse(
         String billNumber,
+        String billType,
         LocalDate billDate,
         String status,
         BigDecimal totalAmount,

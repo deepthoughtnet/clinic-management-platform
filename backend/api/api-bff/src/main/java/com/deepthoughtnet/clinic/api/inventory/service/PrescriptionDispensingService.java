@@ -200,7 +200,11 @@ public class PrescriptionDispensingService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This medicine line has already been fully dispensed.");
         }
 
-        List<StockEntity> fefo = availableBatches(tenantId, medicine.getId());
+        List<StockEntity> activeStockRows = allStockBatches(tenantId, medicine.getId());
+        List<StockEntity> fefo = activeStockRows.stream()
+                .filter(stock -> stock.getQuantityOnHand() > 0)
+                .filter(stock -> !isExpired(stock))
+                .toList();
         int availableQuantity = fefo.stream().mapToInt(StockEntity::getQuantityOnHand).sum();
         if (request.batchId() != null) {
             if (!(canOverrideBatch && request.allowBatchOverride())) {
@@ -214,7 +218,14 @@ public class PrescriptionDispensingService {
         }
 
         if (availableQuantity <= 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Selected medicine has no non-expired stock available.");
+            if (activeStockRows.isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "No inventory batch exists for this medicine. The prescription is still valid; add stock before dispensing.");
+            }
+            boolean hasExpired = activeStockRows.stream().anyMatch(this::isExpired);
+            if (hasExpired) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Only expired stock exists for this medicine. The prescription is still valid; replenish with a non-expired batch before dispensing.");
+            }
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This medicine has no quantity on hand for dispensing. The prescription is still valid; replenish stock before dispensing.");
         }
 
         int targetQuantity;
@@ -259,8 +270,6 @@ public class PrescriptionDispensingService {
             if (use <= 0) {
                 continue;
             }
-            batch.setQuantityOnHand(batch.getQuantityOnHand() - use);
-            stockRepository.save(batch);
             inventoryService.createTransaction(
                     tenantId,
                     new InventoryTransactionCommand(
@@ -351,6 +360,9 @@ public class PrescriptionDispensingService {
         }
         UUID locationId = resolveDefaultLocationId(tenantId);
         List<StockEntity> active = stockRepository.findByTenantIdAndLocationIdAndMedicineIdAndActiveTrueAndQuantityOnHandGreaterThanOrderByExpiryDateAscUpdatedAtAsc(tenantId, locationId, medicine.getId(), 0);
+        if (active.isEmpty()) {
+            return new StockAvailability(0, "NO_INVENTORY", "NONE", null);
+        }
         List<StockEntity> usable = active.stream().filter(stock -> !isExpired(stock)).toList();
         int availableQuantity = usable.stream().mapToInt(StockEntity::getQuantityOnHand).sum();
         if (availableQuantity <= 0) {
@@ -377,6 +389,13 @@ public class PrescriptionDispensingService {
         return stockRepository.findByTenantIdAndLocationIdAndMedicineIdAndActiveTrueAndQuantityOnHandGreaterThanOrderByExpiryDateAscUpdatedAtAsc(tenantId, locationId, medicineId, 0)
                 .stream()
                 .filter(stock -> !isExpired(stock))
+                .toList();
+    }
+
+    private List<StockEntity> allStockBatches(UUID tenantId, UUID medicineId) {
+        UUID locationId = resolveDefaultLocationId(tenantId);
+        return stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, medicineId, locationId).stream()
+                .filter(StockEntity::isActive)
                 .toList();
     }
 

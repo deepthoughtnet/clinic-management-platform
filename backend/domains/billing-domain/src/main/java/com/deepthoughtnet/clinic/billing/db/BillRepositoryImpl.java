@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.billing.db;
 
 import com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
+import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.criteria.CriteriaBuilder;
@@ -29,7 +30,7 @@ public class BillRepositoryImpl implements BillRepositoryCustom {
         List<Predicate> predicates = new ArrayList<>();
         predicates.add(cb.equal(bill.get("tenantId"), tenantId));
 
-        BillingSearchCriteria safe = criteria == null ? new BillingSearchCriteria(null, null, null, null, null, null) : criteria;
+        BillingSearchCriteria safe = criteria == null ? new BillingSearchCriteria(null, null, null, null, null, null, null) : criteria;
         if (safe.patientId() != null) {
             predicates.add(cb.equal(bill.get("patientId"), safe.patientId()));
         }
@@ -57,6 +58,34 @@ public class BillRepositoryImpl implements BillRepositoryCustom {
                     cb.equal(payment.get("paymentMode"), paymentMode)
             );
             predicates.add(cb.exists(paymentExists));
+        }
+        if (safe.searchText() != null && !safe.searchText().isBlank()) {
+            String term = "%" + safe.searchText().trim().toLowerCase() + "%";
+            Predicate billNumberMatch = cb.like(cb.lower(bill.get("billNumber")), term);
+
+            Subquery<UUID> patientExists = cq.subquery(UUID.class);
+            Root<PatientEntity> patient = patientExists.from(PatientEntity.class);
+            Predicate patientMatches = cb.or(
+                    cb.like(cb.lower(patient.get("patientNumber")), term),
+                    cb.like(cb.lower(patient.get("mobile")), term),
+                    cb.like(cb.lower(patient.get("firstName")), term),
+                    cb.like(cb.lower(patient.get("lastName")), term),
+                    cb.like(
+                            cb.lower(
+                                    cb.concat(
+                                            cb.concat(cb.coalesce(patient.get("firstName"), ""), " "),
+                                            cb.coalesce(patient.get("lastName"), "")
+                                    )
+                            ),
+                            term
+                    )
+            );
+            patientExists.select(patient.get("id")).where(
+                    cb.equal(patient.get("tenantId"), tenantId),
+                    cb.equal(patient.get("id"), bill.get("patientId")),
+                    patientMatches
+            );
+            predicates.add(cb.or(billNumberMatch, cb.exists(patientExists)));
         }
 
         cq.select(bill)

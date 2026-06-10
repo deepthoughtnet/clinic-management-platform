@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.inventory.db.PrescriptionDispensationEntity;
@@ -22,6 +23,7 @@ import com.deepthoughtnet.clinic.inventory.db.MedicineRepository;
 import com.deepthoughtnet.clinic.inventory.db.StockEntity;
 import com.deepthoughtnet.clinic.inventory.db.StockRepository;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
+import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineEntity;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineRepository;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
@@ -100,7 +102,16 @@ class PrescriptionDispensingServiceTest {
         lenient().when(medicineRepository.findByTenantIdAndMedicineNameIgnoreCase(TENANT_ID, "Amoxicillin")).thenReturn(Optional.of(medicineRow));
         lenient().when(locationRepository.findByTenantIdAndDefaultLocationTrue(TENANT_ID))
                 .thenReturn(Optional.of(defaultLocation));
-        lenient().when(inventoryService.createTransaction(any(), any(), any())).thenReturn(null);
+        lenient().when(inventoryService.createTransaction(any(), any(), any())).thenAnswer(invocation -> {
+            InventoryTransactionCommand command = invocation.getArgument(1);
+            if (command.stockBatchId() != null && command.transactionType() == com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.DISPENSED) {
+                stockRows.stream()
+                        .filter(stock -> stock.getId().equals(command.stockBatchId()))
+                        .findFirst()
+                        .ifPresent(stock -> stock.setQuantityOnHand(Math.max(0, stock.getQuantityOnHand() - command.quantity())));
+            }
+            return null;
+        });
         lenient().when(stockRepository.findByTenantIdAndLocationIdAndMedicineIdAndActiveTrueAndQuantityOnHandGreaterThanOrderByExpiryDateAscUpdatedAtAsc(any(), any(), any(), anyInt()))
                 .thenAnswer(invocation -> stockRows.stream()
                         .filter(stock -> stock.getTenantId().equals(invocation.getArgument(0)))
@@ -108,6 +119,12 @@ class PrescriptionDispensingServiceTest {
                         .filter(stock -> stock.getMedicineId().equals(invocation.getArgument(2)))
                         .filter(stock -> stock.isActive())
                         .filter(stock -> stock.getQuantityOnHand() > invocation.<Integer>getArgument(3))
+                        .toList());
+        lenient().when(stockRepository.findByTenantIdAndMedicineIdAndLocationId(any(), any(), any()))
+                .thenAnswer(invocation -> stockRows.stream()
+                        .filter(stock -> stock.getTenantId().equals(invocation.getArgument(0)))
+                        .filter(stock -> stock.getMedicineId().equals(invocation.getArgument(1)))
+                        .filter(stock -> stock.getLocationId().equals(invocation.getArgument(2)))
                         .toList());
         lenient().when(stockRepository.findByTenantIdAndId(any(), any())).thenAnswer(invocation -> stockRows.stream()
                 .filter(stock -> stock.getTenantId().equals(invocation.getArgument(0)))
@@ -157,6 +174,40 @@ class PrescriptionDispensingServiceTest {
         ))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+    }
+
+    @Test
+    void dispenseShowsClearMessageWhenNoInventoryExists() {
+        assertThatThrownBy(() -> service.dispense(
+                TENANT_ID,
+                PRESCRIPTION_ID,
+                new DispenseRequest("Amoxicillin", medicineId, 1, null, false, "FULL"),
+                ACTOR_ID,
+                false
+        ))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> {
+                    ResponseStatusException exception = (ResponseStatusException) error;
+                    assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(exception.getReason()).contains("No inventory batch exists");
+                });
+    }
+
+    @Test
+    void dispenseDeductsStockOnlyOncePerBatch() {
+        StockEntity batch = stock(3, LocalDate.now().plusDays(10));
+
+        var response = service.dispense(
+                TENANT_ID,
+                PRESCRIPTION_ID,
+                new DispenseRequest("Amoxicillin", medicineId, 1, null, false, "PARTIAL"),
+                ACTOR_ID,
+                false
+        );
+
+        assertThat(response.lines().getFirst().dispensedQuantity()).isEqualTo(1);
+        assertThat(batch.getQuantityOnHand()).isEqualTo(2);
+        verify(inventoryService).createTransaction(any(), any(), any());
     }
 
     @Test

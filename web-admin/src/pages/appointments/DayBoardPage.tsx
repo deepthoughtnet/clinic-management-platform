@@ -348,7 +348,7 @@ function appointmentTooltip(appointment: Appointment, doctorName: string, slot: 
       <Typography variant="body2">Status: {friendlyStatusLabel(appointment.status)}</Typography>
       <Typography variant="body2">Doctor: {doctorName}</Typography>
       <Typography variant="body2">Slot: {toFive(slot.slotTime)} - {toFive(slot.slotEndTime)}</Typography>
-      <Typography variant="body2">Reference: {appointment.tokenNumber ?? appointment.id}</Typography>
+      <Typography variant="body2">Reference: {appointment.displayReference || (appointment.tokenNumber != null ? `APT-${appointment.tokenNumber}` : "Pending")}</Typography>
     </Box>
   );
 }
@@ -612,12 +612,11 @@ export default function DayBoardPage() {
 
   const tenantRole = (auth.tenantRole || "").toUpperCase();
   const isDoctor = tenantRole === "DOCTOR";
-  const isClinicAdmin = tenantRole === "CLINIC_ADMIN";
   const canManage = auth.hasPermission("appointment.manage") || tenantRole === "RECEPTIONIST" || tenantRole === "CLINIC_ADMIN";
   const canBook = auth.hasPermission("appointment.create") || tenantRole === "RECEPTIONIST" || tenantRole === "CLINIC_ADMIN";
   const canCollect = auth.hasPermission("billing.create") || auth.hasPermission("payment.collect");
-  const canStartConsultation = (isDoctor || isClinicAdmin) && auth.hasPermission("consultation.create");
-  const canOpenWorkspace = (isDoctor || isClinicAdmin) && auth.hasPermission("consultation.create");
+  const canStartConsultation = isDoctor && auth.hasPermission("consultation.create");
+  const canOpenWorkspace = isDoctor && auth.hasPermission("consultation.read");
   const doctorOptions = users.filter((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
   const selectedDoctorLabel = isDoctor && auth.appUserId
     ? displayDoctorName(users, auth.appUserId)
@@ -1469,7 +1468,7 @@ export default function DayBoardPage() {
                                                 <Typography variant="body2">Status: {friendlyStatusLabel(primaryAppointment.status)}</Typography>
                                                 <Typography variant="body2">Doctor: {panel.doctorName}</Typography>
                                                 <Typography variant="body2">Slot: {toFive(primaryAppointment.appointmentTime)}</Typography>
-                                                <Typography variant="body2">Reference: {primaryAppointment.tokenNumber ?? primaryAppointment.id}</Typography>
+                                                <Typography variant="body2">Reference: {primaryAppointment.displayReference || (primaryAppointment.tokenNumber != null ? `APT-${primaryAppointment.tokenNumber}` : "Pending")}</Typography>
                                               </Box>
                                             )
                                           : null;
@@ -1692,7 +1691,7 @@ export default function DayBoardPage() {
                     <Typography variant="caption" color="text.secondary">{selectedAppointment.appointmentDate} {toFive(selectedAppointment.appointmentTime)}</Typography>
                     <Typography variant="body2">Doctor: {selectedAppointment.doctorName || displayDoctorName(users, selectedAppointment.doctorUserId)}</Typography>
                     <Typography variant="body2">Phone: {selectedAppointment.patientMobile || "—"}</Typography>
-                    <Typography variant="body2">Reference: {selectedAppointment.tokenNumber ?? selectedAppointment.id}</Typography>
+                    <Typography variant="body2">Reference: {selectedAppointment.displayReference || (selectedAppointment.tokenNumber != null ? `APT-${selectedAppointment.tokenNumber}` : "Pending")}</Typography>
                     <Chip size="small" label={friendlyStatusLabel(selectedAppointment.status)} color={appointmentColor(selectedAppointment.status)} sx={{ width: "fit-content" }} />
                     <Typography variant="body2">Consultation fee: {formatMoney(selectedAppointmentFee?.consultationFee)}</Typography>
                     <Chip

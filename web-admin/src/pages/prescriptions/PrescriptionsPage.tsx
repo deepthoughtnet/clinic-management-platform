@@ -40,6 +40,9 @@ export default function PrescriptionsPage() {
   const navigate = useNavigate();
   const tenantRole = (auth.tenantRole || "").toUpperCase();
   const isPharmacyRole = tenantRole === "PHARMA" || tenantRole === "PHARMACY" || tenantRole === "PHARMACIST";
+  const canOpenWorkspace = tenantRole === "DOCTOR" && auth.hasPermission("consultation.read");
+  const canPrintPrescription = auth.hasPermission("prescription.print");
+  const canSendPrescription = auth.hasPermission("prescription.send");
   const [rows, setRows] = React.useState<Prescription[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -172,10 +175,18 @@ export default function PrescriptionsPage() {
                           </>
                         ) : (
                           <>
-                            <Button size="small" disabled={!row.consultationId} onClick={() => navigate(`/consultations/${row.consultationId}`)}>Open Workspace</Button>
-                            <Button size="small" disabled={workingId === row.id} onClick={() => void openPdf(row)}>PDF</Button>
-                            <Button size="small" disabled={workingId === row.id} onClick={() => void sendVia(row, "email")}>Email</Button>
-                            <Button size="small" disabled={workingId === row.id} onClick={() => void sendVia(row, "whatsapp")}>WhatsApp</Button>
+                            {canOpenWorkspace ? (
+                              <Button size="small" disabled={!row.consultationId} onClick={() => navigate(`/consultations/${row.consultationId}`)}>Open Workspace</Button>
+                            ) : null}
+                            {canPrintPrescription ? (
+                              <Button size="small" disabled={workingId === row.id} onClick={() => void openPdf(row)}>PDF</Button>
+                            ) : null}
+                            {canSendPrescription ? (
+                              <Button size="small" disabled={workingId === row.id} onClick={() => void sendVia(row, "email")}>Email</Button>
+                            ) : null}
+                            {canSendPrescription ? (
+                              <Button size="small" disabled={workingId === row.id} onClick={() => void sendVia(row, "whatsapp")}>WhatsApp</Button>
+                            ) : null}
                           </>
                         )}
                       </Stack>

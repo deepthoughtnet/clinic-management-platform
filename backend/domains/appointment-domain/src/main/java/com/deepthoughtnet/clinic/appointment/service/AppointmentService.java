@@ -42,6 +42,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Collection;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -70,6 +71,7 @@ public class AppointmentService {
     private static final LocalTime DEFAULT_CALENDAR_END = LocalTime.of(17, 0);
     private static final int DEFAULT_SLOT_DURATION_MINUTES = 15;
     private static final int BOOKING_TIME_GRACE_MINUTES = 15;
+    private static final DateTimeFormatter APPOINTMENT_REFERENCE_DATE = DateTimeFormatter.BASIC_ISO_DATE;
 
     private final AppointmentRepository appointmentRepository;
     private final DoctorAvailabilityRepository doctorAvailabilityRepository;
@@ -960,6 +962,7 @@ public class AppointmentService {
                 entity.getAppointmentDate(),
                 entity.getAppointmentTime(),
                 entity.getTokenNumber(),
+                displayReference(entity),
                 entity.getReason(),
                 entity.getType(),
                 entity.getPriority(),
@@ -1212,6 +1215,9 @@ public class AppointmentService {
                 .orElse(null);
         if (slot == null) {
             if (command.allowAdHocBooking()) {
+                if (hasBookableStandardSlot(command.appointmentDate(), slots)) {
+                    throw new IllegalArgumentException("Standard slots are available for this doctor. Please book one of the available slots instead of using emergency/ad-hoc booking.");
+                }
                 return;
             }
             throw new IllegalArgumentException("Selected time is not available for the selected doctor");
@@ -1273,6 +1279,45 @@ public class AppointmentService {
             }
             throw new IllegalArgumentException("Selected time has already passed. Choose a current or future slot.");
         }
+    }
+
+    private boolean hasBookableStandardSlot(LocalDate appointmentDate, List<DoctorAvailabilitySlotRecord> slots) {
+        if (slots == null || slots.isEmpty()) {
+            return false;
+        }
+        LocalDate today = LocalDate.now();
+        LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
+        return slots.stream()
+                .filter(DoctorAvailabilitySlotRecord::selectable)
+                .filter(slot -> slot.status() == DoctorAvailabilitySlotStatus.AVAILABLE || slot.status() == DoctorAvailabilitySlotStatus.PARTIALLY_BOOKED)
+                .anyMatch(slot -> {
+                    if (appointmentDate.isAfter(today)) {
+                        return true;
+                    }
+                    if (!appointmentDate.isEqual(today)) {
+                        return false;
+                    }
+                    return !isPastWithGrace(slot.slotEndTime(), now);
+                });
+    }
+
+    private String displayReference(AppointmentEntity entity) {
+        if (entity == null || entity.getAppointmentDate() == null) {
+            return entity == null || entity.getId() == null ? null : "APT-" + compactAppointmentId(entity.getId());
+        }
+        String datePart = APPOINTMENT_REFERENCE_DATE.format(entity.getAppointmentDate());
+        if (entity.getTokenNumber() != null && entity.getTokenNumber() > 0) {
+            return "APT-" + datePart + "-" + String.format("%04d", entity.getTokenNumber());
+        }
+        if (entity.getId() != null) {
+            return "APT-" + datePart + "-" + compactAppointmentId(entity.getId());
+        }
+        return "APT-" + datePart;
+    }
+
+    private String compactAppointmentId(UUID id) {
+        String raw = id.toString().replace("-", "").toUpperCase();
+        return raw.substring(0, Math.min(6, raw.length()));
     }
 
     private boolean isPastWithGrace(LocalTime candidate, LocalTime now) {

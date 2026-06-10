@@ -44,14 +44,14 @@ public class CarePilotCampaignController {
     }
 
     @GetMapping
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
     public List<CampaignResponse> list() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return campaignService.list(tenantId).stream().map(this::toResponse).toList();
     }
 
     @GetMapping("/{campaignId}")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
     public CampaignResponse get(@PathVariable UUID campaignId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         CampaignRecord record = campaignService.find(tenantId, campaignId).orElseThrow(() -> new IllegalArgumentException("Campaign not found"));
@@ -59,7 +59,7 @@ public class CarePilotCampaignController {
     }
 
     @GetMapping("/{campaignId}/runtime")
-    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
+    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
     public CampaignRuntimeResponse runtime(@PathVariable UUID campaignId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         var runtime = runtimeService.runtime(tenantId, campaignId);

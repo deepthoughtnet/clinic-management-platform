@@ -70,6 +70,8 @@ import {
   sendBillInvoiceEmail,
   sendReceipt,
   searchBills,
+  searchMedicines,
+  searchStocks,
   searchPatients,
   type Bill,
   type BillInput,
@@ -81,10 +83,12 @@ import {
   type Payment,
   type PaymentLedgerRow,
   type PaymentMode,
+  type Medicine,
   type Patient,
   type DoctorProfile,
   type Receipt,
   type Refund,
+  type Stock,
 } from "../../api/clinicApi";
 
 type BillItemCategory = BillItemType | "SERVICE" | "PACKAGE";
@@ -139,6 +143,8 @@ type CatalogItem = {
   itemName: string;
   itemType: BillItemCategory;
   unitPrice: string;
+  referenceId: string | null;
+  availabilityLabel: string | null;
 };
 
 type PaymentFormState = {
@@ -263,6 +269,71 @@ function draftBillTotals(form: BillFormState): DraftTotals {
 
 function normalizeDraftText(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function formatCatalogPrice(value: number | null | undefined) {
+  if (value == null || Number.isNaN(Number(value))) return "";
+  return Number(value).toFixed(2);
+}
+
+function mergeMedicineCatalog(stocks: Stock[], medicines: Medicine[]): CatalogItem[] {
+  const merged = new Map<string, CatalogItem & { quantityOnHand: number; earliestExpiry: string | null }>();
+
+  for (const stock of stocks) {
+    if (!stock.active) continue;
+    const key = stock.medicineId;
+    const current = merged.get(key) || {
+      itemName: stock.medicineName,
+      itemType: "MEDICINE" as const,
+      unitPrice: "",
+      referenceId: key,
+      availabilityLabel: null,
+      quantityOnHand: 0,
+      earliestExpiry: null,
+    };
+    current.quantityOnHand += Number(stock.quantityOnHand || 0);
+    const sellingPrice = stock.sellingPrice != null && Number(stock.sellingPrice) > 0 ? stock.sellingPrice : null;
+    if (!current.unitPrice && sellingPrice != null) {
+      current.unitPrice = formatCatalogPrice(sellingPrice);
+    }
+    if (!current.availabilityLabel) {
+      current.availabilityLabel = current.quantityOnHand > 0 ? `${current.quantityOnHand} in stock` : "No stock";
+    } else if (current.quantityOnHand > 0) {
+      current.availabilityLabel = `${current.quantityOnHand} in stock`;
+    }
+    if (stock.expiryDate && (!current.earliestExpiry || stock.expiryDate < current.earliestExpiry)) {
+      current.earliestExpiry = stock.expiryDate;
+    }
+    merged.set(key, current);
+  }
+
+  for (const medicine of medicines) {
+    const key = medicine.id;
+    const current = merged.get(key);
+    if (current) {
+      if (!current.unitPrice) {
+        current.unitPrice = formatCatalogPrice(medicine.defaultPrice);
+      }
+      if (!current.availabilityLabel) {
+        current.availabilityLabel = medicine.active ? "No stock" : "Inactive";
+      }
+      merged.set(key, current);
+      continue;
+    }
+    merged.set(key, {
+      itemName: medicine.medicineName,
+      itemType: "MEDICINE",
+      unitPrice: formatCatalogPrice(medicine.defaultPrice),
+      referenceId: key,
+      availabilityLabel: medicine.active ? "No stock" : "Inactive",
+      quantityOnHand: 0,
+      earliestExpiry: null,
+    });
+  }
+
+  return Array.from(merged.values())
+    .map(({ quantityOnHand: _quantityOnHand, earliestExpiry: _earliestExpiry, ...item }) => item)
+    .sort((left, right) => left.itemName.localeCompare(right.itemName));
 }
 
 function statusColor(status: Bill["status"]) {
@@ -459,6 +530,10 @@ export default function BillsPage() {
   const [saving, setSaving] = React.useState(false);
   const [paymentOpen, setPaymentOpen] = React.useState(false);
   const [refundOpen, setRefundOpen] = React.useState(false);
+  const [patientScopedBills, setPatientScopedBills] = React.useState<Bill[]>([]);
+  const [refundBillSearch, setRefundBillSearch] = React.useState("");
+  const [refundSearchResults, setRefundSearchResults] = React.useState<Bill[]>([]);
+  const [refundSearchLoading, setRefundSearchLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
   const [workingId, setWorkingId] = React.useState<string | null>(null);
@@ -475,6 +550,7 @@ export default function BillsPage() {
   const [consultationContextError, setConsultationContextError] = React.useState<string | null>(null);
   const [scanQuery, setScanQuery] = React.useState("");
   const [scanItemType, setScanItemType] = React.useState<BillItemCategory>("MEDICINE");
+  const [medicineCatalog, setMedicineCatalog] = React.useState<CatalogItem[]>([]);
   const [consultationDoctorUserIdForDraft, setConsultationDoctorUserIdForDraft] = React.useState("");
   const [manualScanPrompt, setManualScanPrompt] = React.useState<string | null>(null);
   const [paymentLedger, setPaymentLedger] = React.useState<PaymentLedgerRow[]>([]);
@@ -492,6 +568,7 @@ export default function BillsPage() {
   const canSendReceipt = canCollectPayment || auth.hasPermission("notification.send");
   const canRefund = auth.hasPermission("billing.update");
   const canSendInvoice = canCreateBill || canCollectPayment || auth.hasPermission("notification.send");
+  const canReadMedicineMaster = auth.permissions.includes("medicine.read");
   const denseTextFieldProps = { size: "small" as const, fullWidth: true };
   const denseSelectProps = { size: "small" as const, fullWidth: true };
   const consultationFeeRequested = React.useMemo(
@@ -552,8 +629,8 @@ export default function BillsPage() {
     [patients, form.patientId],
   );
   const patientBills = React.useMemo(
-    () => bills.filter((bill) => bill.patientId === form.patientId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [bills, form.patientId],
+    () => patientScopedBills.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [patientScopedBills],
   );
   const preferredPatientCollectPaymentBill = React.useMemo(
     () => preferredPatientCollectBill(patientBills),
@@ -582,6 +659,8 @@ export default function BillsPage() {
             itemName: line.itemName,
             itemType: line.itemType,
             unitPrice: line.unitPrice ? line.unitPrice.toFixed(2) : "",
+            referenceId: line.referenceId,
+            availabilityLabel: null,
           });
         }
       });
@@ -596,14 +675,48 @@ export default function BillsPage() {
     })),
     [doctorOptions],
   );
+  React.useEffect(() => {
+    if (!auth.accessToken || !auth.tenantId || scanItemType !== "MEDICINE") {
+      setMedicineCatalog([]);
+      return;
+    }
+    const query = scanQuery.trim();
+    if (!query) {
+      setMedicineCatalog([]);
+      return;
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const [stockRows, medicineRows] = await Promise.all([
+            searchStocks(auth.accessToken!, auth.tenantId!, query),
+            canReadMedicineMaster ? searchMedicines(auth.accessToken!, auth.tenantId!, query) : Promise.resolve([] as Medicine[]),
+          ]);
+          if (!cancelled) {
+            setMedicineCatalog(mergeMedicineCatalog(stockRows, medicineRows));
+          }
+        } catch {
+          if (!cancelled) {
+            setMedicineCatalog([]);
+          }
+        }
+      })();
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [auth.accessToken, auth.tenantId, canReadMedicineMaster, scanItemType, scanQuery]);
   const filteredCatalog = React.useMemo(() => {
     const query = normalizeDraftText(scanQuery);
-    if (!query) return itemCatalog.slice(0, 6);
-    return itemCatalog
+    const source = scanItemType === "MEDICINE" && query ? medicineCatalog.concat(itemCatalog) : itemCatalog;
+    if (!query) return source.slice(0, 6);
+    return source
       .filter((item) => item.itemType === scanItemType || scanItemType === "OTHER" || normalizeDraftText(item.itemName).includes(query))
       .filter((item) => normalizeDraftText(item.itemName).includes(query) || normalizeDraftText(item.itemType).includes(query))
       .slice(0, 6);
-  }, [itemCatalog, scanQuery]);
+  }, [itemCatalog, medicineCatalog, scanItemType, scanQuery]);
   const currentDraftTotals = React.useMemo(() => draftBillTotals(form), [form]);
   const consultationDraftReady = React.useMemo(
     () => consultationDraftHasLine && currentDraftTotals.total > 0
@@ -625,6 +738,19 @@ export default function BillsPage() {
     };
   }, [bills]);
   const consultationDraftSeededRef = React.useRef<string | null>(null);
+  const refundCandidateBills = React.useMemo(() => {
+    const fallbackBills = refundBillSearch.trim() ? refundSearchResults : [...patientBills, ...bills];
+    const seen = new Set<string>();
+    return fallbackBills
+      .filter((bill) => bill.status !== "CANCELLED" && billNetPaidAmount(bill) > 0)
+      .filter((bill) => {
+        if (seen.has(bill.id)) return false;
+        seen.add(bill.id);
+        return true;
+      })
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, refundBillSearch.trim() ? 12 : 8);
+  }, [bills, patientBills, refundBillSearch, refundSearchResults]);
   const activePatientCollectBill = selectedBill && billHasCollectableDue(selectedBill)
     ? selectedBill
     : preferredPatientCollectPaymentBill;
@@ -671,12 +797,25 @@ export default function BillsPage() {
       fromDate: fromDate || undefined,
       toDate: toDate || undefined,
       paymentMode: paymentMode ? (paymentMode as PaymentMode) : null,
+      search: text.trim() || undefined,
     });
-    const filtered = text.trim().toLowerCase();
-    setBills(filtered
-      ? rows.filter((b) => `${b.billNumber} ${b.patientName || ""} ${b.patientNumber || ""}`.toLowerCase().includes(filtered))
-      : rows);
+    setBills(rows);
   }, [auth.accessToken, auth.tenantId, billFilterPatient, billFilterAppointmentId, billFilterStatus, billFilterFromDate, billFilterToDate, billFilterMode, billFilterText]);
+
+  const loadPatientBills = React.useCallback(async (patientId: string) => {
+    if (!auth.accessToken || !auth.tenantId || !patientId) {
+      setPatientScopedBills([]);
+      return;
+    }
+    try {
+      const rows = await searchBills(auth.accessToken, auth.tenantId, {
+        patientId,
+      });
+      setPatientScopedBills(rows);
+    } catch {
+      setPatientScopedBills([]);
+    }
+  }, [auth.accessToken, auth.tenantId]);
 
   const loadPatientPayments = React.useCallback(async (patientId: string) => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -782,10 +921,12 @@ export default function BillsPage() {
   React.useEffect(() => {
     if (!form.patientId) {
       setPaymentLedger([]);
+      setPatientScopedBills([]);
       return;
     }
+    void loadPatientBills(form.patientId);
     void loadPatientPayments(form.patientId);
-  }, [form.patientId, loadPatientPayments]);
+  }, [form.patientId, loadPatientBills, loadPatientPayments]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -976,6 +1117,38 @@ export default function BillsPage() {
     return undefined;
   }, [receiptAutoPrint, receiptPreview, receiptPreviewLoading]);
 
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadRefundSearchResults() {
+      if (!refundOpen || !auth.accessToken || !auth.tenantId) {
+        return;
+      }
+      const term = refundBillSearch.trim();
+      if (term.length < 2) {
+        setRefundSearchResults([]);
+        setRefundSearchLoading(false);
+        return;
+      }
+      setRefundSearchLoading(true);
+      try {
+        const rows = await searchBills(auth.accessToken, auth.tenantId, { search: term });
+        if (!cancelled) {
+          setRefundSearchResults(rows.filter((bill) => bill.status !== "CANCELLED" && billNetPaidAmount(bill) > 0));
+        }
+      } catch {
+        if (!cancelled) {
+          setRefundSearchResults([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setRefundSearchLoading(false);
+        }
+      }
+    }
+    void loadRefundSearchResults();
+    return () => { cancelled = true; };
+  }, [auth.accessToken, auth.tenantId, refundBillSearch, refundOpen]);
+
   const loadInvoicePreview = React.useCallback(async (bill: Bill, autoPrint = false) => {
     if (!auth.accessToken || !auth.tenantId) return;
     setInvoicePreviewLoading(true);
@@ -1054,8 +1227,12 @@ export default function BillsPage() {
     setPayments(paymentRows);
     setReceipts(receiptRows);
     setRefunds(refundRows);
-    setSelectedBill(billRows.find((bill) => bill.id === billId) || null);
-  }, [auth.accessToken, auth.tenantId, billFilterPatient, billFilterAppointmentId, billFilterStatus, billFilterFromDate, billFilterToDate, billFilterMode]);
+    const refreshedBill = billRows.find((bill) => bill.id === billId) || null;
+    setSelectedBill(refreshedBill);
+    if (refreshedBill?.patientId) {
+      await loadPatientBills(refreshedBill.patientId);
+    }
+  }, [auth.accessToken, auth.tenantId, billFilterPatient, billFilterAppointmentId, billFilterStatus, billFilterFromDate, billFilterToDate, billFilterMode, loadPatientBills]);
 
   const selectBill = async (bill: Bill) => {
     setSelectedBill(bill);
@@ -1142,6 +1319,9 @@ export default function BillsPage() {
       setRefundOpen(false);
       setRefundForm(emptyRefundForm());
       await refreshSelectedBill(selectedBill.id);
+      if (selectedBill.patientId) {
+        await loadPatientBills(selectedBill.patientId);
+      }
       setSuccess("Refund recorded");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refund");
@@ -1167,8 +1347,28 @@ export default function BillsPage() {
     setPaymentOpen(true);
   };
 
+  const openRefundDialog = (bill: Bill | null = selectedBill) => {
+    if (bill) {
+      setSelectedBill(bill);
+      void selectBill(bill);
+    }
+    setRefundForm(emptyRefundForm());
+    setRefundBillSearch("");
+    setRefundSearchResults([]);
+    setRefundOpen(true);
+  };
+
   const submitPayment = async () => {
     if (!auth.accessToken || !auth.tenantId || !selectedBill) return;
+    const amount = Number(paymentForm.amount || "0");
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Payment amount must be greater than 0.");
+      return;
+    }
+    if (amount > billEffectiveDueAmount(selectedBill)) {
+      setError("Payment amount cannot exceed the remaining due amount.");
+      return;
+    }
     setSaving(true); setError(null); setSuccess(null);
     if (paymentForm.paymentMode !== "CASH" && !paymentForm.referenceNumber.trim()) {
       setSaving(false); setError("Reference number is required for non-cash payments."); return;
@@ -1176,13 +1376,16 @@ export default function BillsPage() {
     try {
       await addBillPayment(auth.accessToken, auth.tenantId, selectedBill.id, {
         paymentDate: paymentForm.paymentDate,
-        amount: Number(paymentForm.amount || "0"),
+        amount,
         paymentMode: paymentForm.paymentMode,
         referenceNumber: paymentForm.referenceNumber.trim() || null,
         notes: paymentForm.notes.trim() || null,
       });
       setPaymentOpen(false);
       await refreshSelectedBill(selectedBill.id);
+      if (selectedBill.patientId) {
+        await loadPatientBills(selectedBill.patientId);
+      }
       setSuccess("Payment collected");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to collect payment");
@@ -1294,6 +1497,21 @@ export default function BillsPage() {
     }));
   };
 
+  const loadMedicineCatalog = React.useCallback(async (query: string) => {
+    if (!auth.accessToken || !auth.tenantId) return [] as CatalogItem[];
+    const trimmed = query.trim();
+    if (!trimmed) return [] as CatalogItem[];
+    try {
+      const [stockRows, medicineRows] = await Promise.all([
+        searchStocks(auth.accessToken, auth.tenantId, trimmed),
+        canReadMedicineMaster ? searchMedicines(auth.accessToken, auth.tenantId, trimmed) : Promise.resolve([] as Medicine[]),
+      ]);
+      return mergeMedicineCatalog(stockRows, medicineRows).slice(0, 12);
+    } catch {
+      return [] as CatalogItem[];
+    }
+  }, [auth.accessToken, auth.tenantId, canReadMedicineMaster]);
+
   const addPresetLine = (preset: QuickChargePreset) => {
     addBillLine({
       itemType: preset.itemType,
@@ -1308,14 +1526,13 @@ export default function BillsPage() {
     addBillLine({
       itemType: scanItemType,
       itemName: value,
-      referenceId: value,
       scanCode: value,
     });
     setScanQuery("");
     setManualScanPrompt(null);
   };
 
-  const addScannedItem = () => {
+  const addScannedItem = async () => {
     const query = scanQuery.trim();
     if (!query) return;
     const normalized = normalizeDraftText(query);
@@ -1335,13 +1552,19 @@ export default function BillsPage() {
       setScanQuery("");
       return;
     }
-    const catalogMatch = itemCatalog.find((item) => normalizeDraftText(item.itemName) === normalized || normalizeDraftText(item.itemType) === normalized);
+    let catalogSource = itemCatalog;
+    if (scanItemType === "MEDICINE") {
+      catalogSource = medicineCatalog.length > 0 ? medicineCatalog : await loadMedicineCatalog(query);
+    }
+    const catalogMatch = catalogSource.find((item) => normalizeDraftText(item.itemName) === normalized)
+      || catalogSource.find((item) => normalizeDraftText(item.itemName).includes(normalized) || normalizeDraftText(item.itemType) === normalized)
+      || (scanItemType === "MEDICINE" ? catalogSource[0] : null);
     if (catalogMatch) {
       addBillLine({
         itemType: catalogMatch.itemType,
         itemName: catalogMatch.itemName,
         unitPrice: catalogMatch.unitPrice,
-        referenceId: query,
+        referenceId: catalogMatch.referenceId || undefined,
         scanCode: query,
       });
       setSuccess("Item added");
@@ -1378,6 +1601,7 @@ export default function BillsPage() {
       setManualScanPrompt(null);
       window.setTimeout(() => scanInputRef.current?.focus(), 50);
       await loadBills();
+      await loadPatientBills(saved.patientId);
       await selectBill(saved);
       if (collectPayment) {
         setPaymentForm({ ...emptyPaymentForm(), amount: saved.dueAmount.toFixed(2) });
@@ -1413,7 +1637,7 @@ export default function BillsPage() {
       ? <MenuItem key="receipt-pdf" onClick={() => { void openBillReceiptPdf(ledgerActionBill); closeLedgerActions(); }}>Download Receipt PDF</MenuItem>
       : <MenuItem key="pdf" onClick={() => { void openInvoicePdf(ledgerActionBill); closeLedgerActions(); }}>Download PDF</MenuItem>,
     canCollectPayment ? <MenuItem key="pay" disabled={!billHasCollectableDue(ledgerActionBill)} onClick={() => { openPaymentDialog(ledgerActionBill); closeLedgerActions(); }}>Add payment</MenuItem> : null,
-    canRefund ? <MenuItem key="refund" disabled={ledgerActionBill.status === "CANCELLED" || billNetPaidAmount(ledgerActionBill) <= 0} onClick={() => { setSelectedBill(ledgerActionBill); setRefundOpen(true); closeLedgerActions(); }}>Refund</MenuItem> : null,
+    canRefund ? <MenuItem key="refund" disabled={ledgerActionBill.status === "CANCELLED" || billNetPaidAmount(ledgerActionBill) <= 0} onClick={() => { openRefundDialog(ledgerActionBill); closeLedgerActions(); }}>Refund</MenuItem> : null,
     canSendInvoice && !ledgerBillIsSettled ? <MenuItem key="send" disabled={workingId === ledgerActionBill.id || !ledgerActionBill.patientId} onClick={() => { void sendInvoiceAction(ledgerActionBill); closeLedgerActions(); }}>Send invoice email</MenuItem> : null,
     canSendReceipt && ledgerBillIsSettled ? <MenuItem key="send-receipt" onClick={() => { void sendBillReceiptEmail(ledgerActionBill); closeLedgerActions(); }}>Send receipt email</MenuItem> : null,
     canUpdateBill ? <MenuItem key="issue" disabled={workingId === ledgerActionBill.id || ledgerActionBill.status !== "DRAFT"} onClick={() => { void issueCurrentBill(ledgerActionBill); closeLedgerActions(); }}>Issue</MenuItem> : null,
@@ -1718,7 +1942,7 @@ export default function BillsPage() {
                       <Typography variant="body2" color="text.secondary">Scan or search medicines, tests, services, procedures, packages, and other billable items.</Typography>
                     </Box>
                     {scanQuery.trim() ? (
-                      <Button size="small" variant="outlined" onClick={addScannedItem}>Add / Match</Button>
+                      <Button size="small" variant="outlined" onClick={() => { void addScannedItem(); }}>Add / Match</Button>
                     ) : null}
                   </Box>
                   <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
@@ -1742,7 +1966,7 @@ export default function BillsPage() {
                       placeholder="Scan barcode or search medicine, test, service, package"
                       value={scanQuery}
                       onChange={(e) => setScanQuery(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addScannedItem(); } }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void addScannedItem(); } }}
                       InputProps={{
                         startAdornment: (
                           <InputAdornment position="start">
@@ -1751,7 +1975,7 @@ export default function BillsPage() {
                         ),
                       }}
                     />
-                    <Button size="small" variant="outlined" onClick={addScannedItem} disabled={!scanQuery.trim()}>Add</Button>
+                    <Button size="small" variant="outlined" onClick={() => { void addScannedItem(); }} disabled={!scanQuery.trim()}>Add</Button>
                   </Stack>
                   {manualScanPrompt ? (
                     <Alert
@@ -1774,7 +1998,7 @@ export default function BillsPage() {
                               itemType: item.itemType,
                               itemName: item.itemName,
                               unitPrice: item.unitPrice,
-                              referenceId: scanQuery.trim() || item.itemName,
+                              referenceId: item.referenceId || undefined,
                               scanCode: scanQuery.trim() || item.itemName,
                             });
                             setManualScanPrompt(null);
@@ -1782,7 +2006,7 @@ export default function BillsPage() {
                           }}>
                             <ListItemText
                               primary={item.itemName}
-                              secondary={`${billItemCategoryLabel(item.itemType)}${item.unitPrice ? ` • ${formatAmount(Number(item.unitPrice))}` : ""}`}
+                              secondary={`${billItemCategoryLabel(item.itemType)}${item.unitPrice ? ` • ${formatAmount(Number(item.unitPrice))}` : ""}${item.availabilityLabel ? ` • ${item.availabilityLabel}` : ""}`}
                             />
                           </ListItemButton>
                         ))}
@@ -2066,7 +2290,7 @@ export default function BillsPage() {
                           </>
                         )}
                         {canCollectPayment ? <Button size="small" variant="outlined" onClick={() => openPaymentDialog(selectedBill)} disabled={!billHasCollectableDue(selectedBill)}>Add payment</Button> : null}
-                        {canRefund ? <Button size="small" variant="outlined" onClick={() => { setRefundOpen(true); }} disabled={selectedBill.status === "CANCELLED" || billNetPaidAmount(selectedBill) <= 0}>Refund</Button> : null}
+                        {canRefund ? <Button size="small" variant="outlined" onClick={() => { openRefundDialog(selectedBill); }} disabled={selectedBill.status === "CANCELLED" || billNetPaidAmount(selectedBill) <= 0}>Refund</Button> : null}
                         {canSendInvoice && !billCountsAsSettled(selectedBill) ? <Button size="small" variant="outlined" onClick={() => void sendInvoiceAction(selectedBill)} disabled={workingId === selectedBill.id || !selectedBill.patientId}>Send invoice email</Button> : null}
                         {canUpdateBill ? <Button size="small" variant="outlined" onClick={() => void issueCurrentBill(selectedBill)} disabled={workingId === selectedBill.id || selectedBill.status !== "DRAFT"}>Issue</Button> : null}
                         {canCancelBill ? <Button size="small" variant="outlined" onClick={() => void cancelCurrentBill(selectedBill)} disabled={workingId === selectedBill.id || selectedBill.status === "PAID"}>Cancel</Button> : null}
@@ -2098,6 +2322,7 @@ export default function BillsPage() {
                   <Button size="small" variant="outlined" onClick={() => setLedgerCollapsed((current) => !current)}>
                     {ledgerCollapsed ? "Expand" : "Collapse"}
                   </Button>
+                  {canRefund ? <Button size="small" variant="outlined" onClick={() => openRefundDialog()}>Find bill to refund</Button> : null}
                   <Button size="small" variant="outlined" onClick={() => void loadBills()}>Refresh</Button>
                   <Button size="small" variant="text" onClick={() => scanInputRef.current?.focus()}>Focus scan</Button>
                 </Stack>
@@ -2202,8 +2427,15 @@ export default function BillsPage() {
         <DialogTitle>Collect payment</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
+            {selectedBill ? (
+              <Alert severity="info">
+                {selectedBill.billNumber} • Total {formatAmount(selectedBill.totalAmount)} • Paid {formatAmount(billNetPaidAmount(selectedBill))} • Due {formatAmount(billEffectiveDueAmount(selectedBill))}
+                <br />
+                You can record a full or partial payment up to the remaining due amount.
+              </Alert>
+            ) : null}
             <TextField fullWidth label="Payment date" type="date" value={paymentForm.paymentDate} onChange={(e) => setPaymentForm((c) => ({ ...c, paymentDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
-            <TextField fullWidth label="Amount" value={paymentForm.amount} onChange={(e) => setPaymentForm((c) => ({ ...c, amount: e.target.value }))} />
+            <TextField fullWidth label="Payment amount" helperText="Enter full due amount or any partial amount to keep the balance open." value={paymentForm.amount} onChange={(e) => setPaymentForm((c) => ({ ...c, amount: e.target.value }))} />
             <FormControl fullWidth><InputLabel id="payment-mode-label">Mode</InputLabel><Select labelId="payment-mode-label" label="Mode" value={paymentForm.paymentMode} onChange={(e) => setPaymentForm((c) => ({ ...c, paymentMode: e.target.value as PaymentMode }))}>{PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}</Select></FormControl>
             <TextField fullWidth label={paymentForm.paymentMode === "CASH" ? "Reference number (optional)" : "Reference number"} required={paymentForm.paymentMode !== "CASH"} value={paymentForm.referenceNumber} onChange={(e) => setPaymentForm((c) => ({ ...c, referenceNumber: e.target.value }))} />
             <TextField fullWidth label="Notes" multiline minRows={2} value={paymentForm.notes} onChange={(e) => setPaymentForm((c) => ({ ...c, notes: e.target.value }))} />
@@ -2219,7 +2451,37 @@ export default function BillsPage() {
         <DialogTitle>Refund</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
-            <Alert severity="info">Refundable amount: {refundableAmount.toFixed(2)}</Alert>
+            <TextField
+              fullWidth
+              label="Find paid bill"
+              helperText="Search by bill number, patient name, patient number, or mobile."
+              value={refundBillSearch}
+              onChange={(e) => setRefundBillSearch(e.target.value)}
+            />
+            {refundSearchLoading ? <Alert severity="info">Searching existing bills…</Alert> : null}
+            {refundCandidateBills.length > 0 ? (
+              <Paper variant="outlined" sx={{ borderRadius: 2, overflow: "hidden", maxHeight: 220, overflowY: "auto" }}>
+                <List dense disablePadding>
+                  {refundCandidateBills.map((bill) => (
+                    <ListItemButton
+                      key={bill.id}
+                      selected={selectedBill?.id === bill.id}
+                      onClick={() => { void selectBill(bill); }}
+                    >
+                      <ListItemText
+                        primary={`${bill.billNumber} • ${bill.patientName || bill.patientNumber || "Patient"}`}
+                        secondary={`Net paid ${formatAmount(billNetPaidAmount(bill))} • Refundable ${formatAmount(Math.max(0, bill.paidAmount - bill.refundedAmount))} • Due ${formatAmount(billEffectiveDueAmount(bill))}`}
+                      />
+                    </ListItemButton>
+                  ))}
+                </List>
+              </Paper>
+            ) : refundBillSearch.trim() ? (
+              <Alert severity="warning">No refundable bill matched that search.</Alert>
+            ) : null}
+            <Alert severity="info">
+              {selectedBill ? `Selected bill: ${selectedBill.billNumber} • Refundable amount ${formatAmount(refundableAmount)}` : "Select an existing paid bill to issue a refund."}
+            </Alert>
             <TextField fullWidth label="Amount" value={refundForm.amount} onChange={(e) => setRefundForm((c) => ({ ...c, amount: e.target.value }))} />
             <FormControl fullWidth><InputLabel id="refund-mode-label">Mode</InputLabel><Select labelId="refund-mode-label" label="Mode" value={refundForm.refundMode} onChange={(e) => setRefundForm((c) => ({ ...c, refundMode: e.target.value as PaymentMode }))}>{PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}</Select></FormControl>
             <TextField fullWidth label="Reason" required value={refundForm.reason} onChange={(e) => setRefundForm((c) => ({ ...c, reason: e.target.value }))} />
@@ -2228,7 +2490,7 @@ export default function BillsPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setRefundOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={() => void submitRefund()} disabled={saving}>{saving ? "Saving..." : "Refund"}</Button>
+          <Button variant="contained" onClick={() => void submitRefund()} disabled={saving || !selectedBill}>{saving ? "Saving..." : "Refund"}</Button>
         </DialogActions>
       </Dialog>
 

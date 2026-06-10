@@ -139,13 +139,11 @@ public class PharmacyPosService {
                 .filter(MedicineEntity::isActive)
                 .collect(Collectors.toMap(MedicineEntity::getId, Function.identity(), (a, b) -> a, LinkedHashMap::new));
         Map<UUID, List<StockEntity>> stockByMedicine = stockRepository.findByTenantIdAndLocationIdOrderByUpdatedAtDesc(tenantId, location.getId()).stream()
-                .filter(stock -> stock.isActive() && stock.getQuantityOnHand() > 0)
+                .filter(StockEntity::isActive)
                 .collect(Collectors.groupingBy(StockEntity::getMedicineId, LinkedHashMap::new, Collectors.toList()));
         return medicines.values().stream()
-                .filter(medicine -> stockByMedicine.containsKey(medicine.getId()))
                 .filter(medicine -> term.isBlank() || matchesMedicine(term, medicine, stockByMedicine.get(medicine.getId())))
                 .map(medicine -> toMedicineResponse(medicine, stockByMedicine.get(medicine.getId())))
-                .filter(response -> response.totalAvailableQuantity() > 0)
                 .toList();
     }
 
@@ -602,44 +600,84 @@ public class PharmacyPosService {
             PDPage page = new PDPage(PDRectangle.A4);
             document.addPage(page);
             try (PDPageContentStream content = new PDPageContentStream(document, page)) {
-                float y = page.getMediaBox().getHeight() - 40f;
-                y = drawText(content, safeClinicName(clinic), 18, 42f, y, true);
-                y = drawText(content, "PHARMACY SALE RECEIPT", 14, 42f, y - 8f, true);
-                y = drawText(content, "Sale No: " + sale.saleNumber(), 10, 42f, y - 14f, false);
-                y = drawText(content, "Date: " + PDF_DATE_TIME.format(sale.saleDateTime()), 10, 42f, y - 12f, false);
-                y = drawText(content, "Customer: " + defaultString(sale.patientName(), defaultString(sale.customerName(), "Walk-in customer")), 10, 42f, y - 12f, false);
-                y = drawText(content, "Mobile: " + defaultString(sale.customerMobile(), "-"), 10, 42f, y - 12f, false);
+                float pageWidth = page.getMediaBox().getWidth();
+                float margin = 42f;
+                float y = page.getMediaBox().getHeight() - 42f;
+                float contentWidth = pageWidth - (margin * 2);
+                float rightColumnX = margin + 300f;
+
+                y = drawText(content, safeClinicName(clinic), 18, margin, y, true);
+                y = drawText(content, "PHARMACY SALE RECEIPT", 12, margin, y - 16f, true);
+                y = drawText(content, "Sale No: " + sale.saleNumber(), 10, rightColumnX, y + 16f, false);
+                y = drawText(content, "Date: " + PDF_DATE_TIME.format(sale.saleDateTime()), 10, rightColumnX, y + 4f, false);
+                drawDivider(content, margin, y - 8f, contentWidth);
+                y -= 24f;
+
+                y = drawKeyValue(content, "Customer", defaultString(sale.patientName(), defaultString(sale.customerName(), "Walk-in customer")), margin, y, 11);
+                y = drawKeyValue(content, "Mobile", defaultString(sale.customerMobile(), "-"), margin, y - 14f, 10);
                 if (StringUtils.hasText(sale.prescriptionFileName())) {
-                    y = drawText(content, "Prescription: " + sale.prescriptionFileName(), 10, 42f, y - 12f, false);
+                    y = drawKeyValue(content, "Prescription", sale.prescriptionFileName(), margin, y - 14f, 10);
                 }
-                y -= 16f;
+                y = drawKeyValue(content, "Status", sale.status(), rightColumnX, y + 28f, 10);
+                y = drawKeyValue(content, "FEFO", "Non-expired earliest batch allocation", rightColumnX, y + 14f, 10);
+
+                y -= 26f;
+                float[] columns = {margin, margin + 250f, margin + 330f, margin + 410f, margin + 480f};
+                drawTableHeader(content, columns, y, List.of("Medicine", "Batch", "Qty", "Rate", "Amount"));
+                y -= 18f;
                 for (PharmacyPosSaleItemResponse item : sale.items()) {
-                    String row = item.medicineName() + " x" + item.quantity() + "  Batch " + defaultString(item.batchNumber(), "-") + "  " + moneyText(item.lineTotal());
-                    y = drawText(content, row, 9, 42f, y, false);
+                    drawTableRow(content, columns, y, List.of(
+                            defaultString(item.medicineName(), "Medicine"),
+                            defaultString(item.batchNumber(), "-"),
+                            String.valueOf(item.quantity()),
+                            moneyText(item.unitPrice()),
+                            moneyText(item.lineTotal())
+                    ));
+                    y -= 16f;
                 }
-                y -= 16f;
-                y = drawText(content, "Subtotal: " + moneyText(sale.subtotal()), 10, 42f, y, false);
-                y = drawText(content, "Discount: " + moneyText(sale.discount()), 10, 42f, y - 12f, false);
-                y = drawText(content, "Tax: " + moneyText(sale.tax()), 10, 42f, y - 12f, false);
-                y = drawText(content, "Total: " + moneyText(sale.total()), 11, 42f, y - 12f, true);
-                y = drawText(content, "Paid: " + moneyText(sale.paidAmount()), 10, 42f, y - 12f, false);
-                y = drawText(content, "Due: " + moneyText(sale.dueAmount()), 10, 42f, y - 12f, false);
-                y -= 16f;
-                y = drawText(content, "FEFO: " + sale.fefoExplanation(), 9, 42f, y, false);
+
+                y -= 8f;
+                drawDivider(content, margin, y, contentWidth);
+                y -= 18f;
+                y = drawAmountRow(content, "Subtotal", sale.subtotal(), rightColumnX, y, false);
+                y = drawAmountRow(content, "Discount", sale.discount(), rightColumnX, y - 12f, false);
+                y = drawAmountRow(content, "Tax", sale.tax(), rightColumnX, y - 12f, false);
+                y = drawAmountRow(content, "Total", sale.total(), rightColumnX, y - 14f, true);
+                y = drawAmountRow(content, "Paid", sale.paidAmount(), rightColumnX, y - 14f, false);
+                y = drawAmountRow(content, "Due", sale.dueAmount(), rightColumnX, y - 12f, false);
+
+                y -= 20f;
                 if (!sale.payments().isEmpty()) {
+                    y = drawText(content, "Payments", 10, margin, y, true);
                     y -= 14f;
-                    y = drawText(content, "Payments", 10, 42f, y, true);
                     for (PharmacyPosPaymentResponse payment : sale.payments()) {
-                        y = drawText(content, payment.receiptNumber() + "  " + payment.paymentMode() + "  " + moneyText(payment.amount()), 9, 42f, y - 12f, false);
+                        drawTableRow(content, new float[]{margin, margin + 170f, margin + 300f, margin + 430f}, y, List.of(
+                                defaultString(payment.receiptNumber(), "-"),
+                                defaultString(payment.paymentMode() == null ? null : payment.paymentMode().name(), "NA"),
+                                payment.paymentDateTime() == null ? defaultString(payment.paymentDate() == null ? null : payment.paymentDate().toString(), "-") : PDF_DATE_TIME.format(payment.paymentDateTime()),
+                                moneyText(payment.amount())
+                        ));
+                        y -= 14f;
                     }
+                    y -= 8f;
                 }
                 if (!sale.returns().isEmpty()) {
+                    y = drawText(content, "Returns / Refunds", 10, margin, y, true);
                     y -= 14f;
-                    y = drawText(content, "Returns", 10, 42f, y, true);
                     for (PharmacyPosReturnResponse returned : sale.returns()) {
-                        y = drawText(content, returned.returnNumber() + "  Qty " + returned.quantity() + "  Refund " + moneyText(returned.refundAmount()), 9, 42f, y - 12f, false);
+                        drawTableRow(content, new float[]{margin, margin + 150f, margin + 270f, margin + 360f, margin + 460f}, y, List.of(
+                                defaultString(returned.returnNumber(), "-"),
+                                defaultString(returned.refundMode() == null ? null : returned.refundMode().name(), "NA"),
+                                "Qty " + returned.quantity(),
+                                returned.reusable() ? "Reusable" : "Discard",
+                                moneyText(returned.refundAmount())
+                        ));
+                        y -= 14f;
                     }
                 }
+                y -= 10f;
+                drawDivider(content, margin, y, contentWidth);
+                drawText(content, "Printed from CuraPilot Pharmacy POS", 8, margin, y - 14f, false);
             }
             document.save(output);
             return new PharmacyPosReceiptPdf(safeFilename(sale.saleNumber()) + "-receipt.pdf", output.toByteArray());
@@ -764,7 +802,9 @@ public class PharmacyPosService {
     }
 
     private PharmacyPosMedicineResponse toMedicineResponse(MedicineEntity medicine, List<StockEntity> stocks) {
-        List<StockEntity> usable = sortForFefo(stocks).stream()
+        List<StockEntity> usable = sortForFefo(stocks == null ? List.of() : stocks).stream()
+                .filter(StockEntity::isActive)
+                .filter(stock -> stock.getQuantityOnHand() > 0)
                 .filter(stock -> !isExpired(stock))
                 .toList();
         int totalAvailable = usable.stream().mapToInt(StockEntity::getQuantityOnHand).sum();
@@ -1110,6 +1150,36 @@ public class PharmacyPosService {
         content.newLineAtOffset(x, y);
         content.showText(text == null ? "" : text);
         content.endText();
+        return y;
+    }
+
+    private void drawDivider(PDPageContentStream content, float x, float y, float width) throws IOException {
+        content.moveTo(x, y);
+        content.lineTo(x + width, y);
+        content.stroke();
+    }
+
+    private float drawKeyValue(PDPageContentStream content, String label, String value, float x, float y, int valueFontSize) throws IOException {
+        drawText(content, label, 8, x, y, true);
+        drawText(content, defaultString(value, "-"), valueFontSize, x, y - 11f, false);
+        return y - 11f;
+    }
+
+    private void drawTableHeader(PDPageContentStream content, float[] columns, float y, List<String> values) throws IOException {
+        for (int index = 0; index < values.size(); index++) {
+            drawText(content, values.get(index), 9, columns[index], y, true);
+        }
+    }
+
+    private void drawTableRow(PDPageContentStream content, float[] columns, float y, List<String> values) throws IOException {
+        for (int index = 0; index < values.size(); index++) {
+            drawText(content, defaultString(values.get(index), "-"), 8, columns[index], y, false);
+        }
+    }
+
+    private float drawAmountRow(PDPageContentStream content, String label, BigDecimal amount, float x, float y, boolean bold) throws IOException {
+        drawText(content, label, bold ? 10 : 9, x, y, bold);
+        drawText(content, moneyText(amount), bold ? 10 : 9, x + 110f, y, bold);
         return y;
     }
 

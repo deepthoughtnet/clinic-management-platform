@@ -38,7 +38,7 @@ export default function ConsultationsPage() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const tenantRole = (auth.tenantRole || "").toUpperCase();
-  const canOpenWorkspace = tenantRole === "DOCTOR" || tenantRole === "CLINIC_ADMIN";
+  const canOpenWorkspace = tenantRole === "DOCTOR" && auth.hasPermission("consultation.read");
 
   React.useEffect(() => {
     let cancelled = false;

@@ -101,6 +101,17 @@ function formatPrice(value: number | null | undefined): string {
   return value.toFixed(2);
 }
 
+function mapMedicineSaveError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Failed to save medicine";
+  const normalized = message.toLowerCase();
+  if (normalized.includes("medicinename")) return "Medicine name is required.";
+  if (normalized.includes("medicinetype")) return "Medicine type is required.";
+  if (normalized.includes("medicine already exists")) return "A medicine with this name already exists.";
+  if (normalized.includes("barcode already exists")) return "This barcode is already linked to another medicine.";
+  if (normalized.includes("external code already exists")) return "This external code is already linked to another medicine.";
+  return message;
+}
+
 function formForRow(row: Medicine): MedicineInput {
   return {
     medicineName: row.medicineName,
@@ -250,7 +261,7 @@ export default function MedicineMasterPage() {
       closeEditor();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save medicine");
+      setError(mapMedicineSaveError(err));
     } finally {
       setSaving(false);
     }

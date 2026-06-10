@@ -147,6 +147,17 @@ function receiptSummaryRows(receipt: Receipt | null, payment: Payment | PaymentL
   ];
 }
 
+function receiptLineSummaryRows(bill: Bill) {
+  return bill.lines.map((line, index) => ({
+    id: line.id || `${line.itemName}-${index}`,
+    description: line.itemName,
+    itemType: line.itemType,
+    quantity: line.quantity ?? 0,
+    unitPrice: line.unitPrice ?? 0,
+    total: line.totalPrice ?? 0,
+  }));
+}
+
 function CompactDetails({
   rows,
 }: {
@@ -504,12 +515,15 @@ export function ReceiptPrintDialog({
   data: ReceiptPrintData | null;
 }) {
   const summaryRows = data ? receiptSummaryRows(data.receipt, data.payment, data.bill) : [];
+  const lineRows = data ? receiptLineSummaryRows(data.bill) : [];
   const receiptMetaRows = data
     ? [
         { label: "Receipt No", value: text(data.receipt?.receiptNumber || data.payment?.receiptNumber) },
         { label: "Payment Date", value: dateTimeText(data.payment?.paymentDateTime || data.payment?.paymentDate || data.receipt?.receiptDate) },
         { label: "Patient", value: text(data.patient ? `${data.patient.firstName} ${data.patient.lastName}`.trim() : data.bill.patientName) },
+        { label: "Mobile", value: text(data.patient?.mobile) },
         { label: "Bill No", value: text(data.bill.billNumber) },
+        { label: "Appointment", value: appointmentSummary(data.appointment, data.consultation) },
         { label: "Payment Mode", value: text(data.payment?.paymentMode) },
         { label: "Amount Paid", value: currency(data.receipt?.amount ?? data.payment?.amount ?? 0) },
         { label: "Remaining Due", value: currency(data.bill.dueAmount) },
@@ -530,7 +544,7 @@ export function ReceiptPrintDialog({
         ) : (
           <PrintShell
             title="RECEIPT"
-            subtitle="Payment acknowledgement"
+            subtitle="Printable payment acknowledgement"
             clinicProfile={data.clinicProfile}
             footerNote="This receipt acknowledges payment against the referenced bill. Please keep it for your records."
             summaryBlock={
@@ -583,6 +597,53 @@ export function ReceiptPrintDialog({
                     </Typography>
                   ) : null}
                 </Stack>
+              </Box>
+
+              <Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.75 }}>
+                  Billed Items
+                </Typography>
+                <Table size="small" sx={{ border: "1px solid", borderColor: "divider", tableLayout: "fixed" }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontWeight: 800, py: 0.75, width: "7%" }}>No</TableCell>
+                      <TableCell sx={{ fontWeight: 800, py: 0.75, width: "45%" }}>Description</TableCell>
+                      <TableCell sx={{ fontWeight: 800, py: 0.75 }} align="right">Qty</TableCell>
+                      <TableCell sx={{ fontWeight: 800, py: 0.75 }} align="right">Rate</TableCell>
+                      <TableCell sx={{ fontWeight: 800, py: 0.75 }} align="right">Amount</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {lineRows.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5}>
+                          <Typography variant="body2" color="text.secondary">
+                            No line items available.
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      lineRows.map((line, index) => (
+                        <TableRow key={line.id} className="print-row-avoid">
+                          <TableCell sx={{ py: 0.6, verticalAlign: "top" }}>{index + 1}</TableCell>
+                          <TableCell sx={{ py: 0.6, verticalAlign: "top" }}>
+                            <Stack spacing={0.1}>
+                              <Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                                {text(line.description)}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.1 }}>
+                                {text(line.itemType)}
+                              </Typography>
+                            </Stack>
+                          </TableCell>
+                          <TableCell align="right" sx={{ py: 0.6, verticalAlign: "top" }}>{line.quantity}</TableCell>
+                          <TableCell align="right" sx={{ py: 0.6, verticalAlign: "top" }}>{currency(line.unitPrice)}</TableCell>
+                          <TableCell align="right" sx={{ py: 0.6, verticalAlign: "top" }}>{currency(line.total)}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
               </Box>
             </Stack>
           </PrintShell>

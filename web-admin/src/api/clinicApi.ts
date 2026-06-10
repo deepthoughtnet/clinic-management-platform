@@ -526,6 +526,7 @@ export type Appointment = {
   appointmentDate: string;
   appointmentTime: string | null;
   tokenNumber: number | null;
+  displayReference: string | null;
   reason: string | null;
   type: AppointmentType;
   priority: AppointmentPriority;
@@ -2046,7 +2047,7 @@ export async function getPrescriptionPdf(token: string, tenantId: string, id: st
 export async function searchBills(
   token: string,
   tenantId: string,
-  params: { patientId?: string; appointmentId?: string; status?: BillStatus | null; fromDate?: string; toDate?: string; paymentMode?: PaymentMode | null } = {},
+  params: { patientId?: string; appointmentId?: string; status?: BillStatus | null; fromDate?: string; toDate?: string; paymentMode?: PaymentMode | null; search?: string } = {},
 ) {
   const query = new URLSearchParams();
   if (params.patientId) query.set("patientId", params.patientId);
@@ -2055,6 +2056,7 @@ export async function searchBills(
   if (params.fromDate) query.set("fromDate", params.fromDate);
   if (params.toDate) query.set("toDate", params.toDate);
   if (params.paymentMode) query.set("paymentMode", params.paymentMode);
+  if (params.search) query.set("search", params.search);
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return httpGet<Bill[]>(`/api/bills${suffix}`, { token, tenantId });
 }

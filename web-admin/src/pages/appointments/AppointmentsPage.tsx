@@ -48,6 +48,7 @@ import {
   rescheduleAppointment,
   searchAppointments,
   searchPatients,
+  updateAppointmentStatus,
   updateWaitlistStatus,
   type Appointment,
   type AppointmentWaitlist,
@@ -188,6 +189,10 @@ function formatDate(value: string) {
   return new Date(`${value}T00:00:00`).toLocaleDateString();
 }
 
+function appointmentReference(appointment: Appointment) {
+  return appointment.displayReference || (appointment.tokenNumber != null ? `APT-${appointment.tokenNumber}` : "Pending");
+}
+
 function localDateKey(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -314,6 +319,7 @@ export default function AppointmentsPage() {
   const [listSearch, setListSearch] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
+  const [actionAppointmentId, setActionAppointmentId] = React.useState<string | null>(null);
   const [searchingPatients, setSearchingPatients] = React.useState(false);
   const [slots, setSlots] = React.useState<DoctorAvailabilitySlot[]>([]);
   const [quickRegisterOpen, setQuickRegisterOpen] = React.useState(false);
@@ -334,6 +340,8 @@ export default function AppointmentsPage() {
 
   const tenantRole = (auth.tenantRole || "").toUpperCase();
   const isDoctor = tenantRole === "DOCTOR";
+  const canCreateAppointmentFlow = !isDoctor && auth.hasPermission("appointment.manage");
+  const canQuickRegisterPatient = canCreateAppointmentFlow && auth.hasPermission("patient.create");
   const doctorOptions = users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
   const doctorFilter = isDoctor && auth.appUserId ? auth.appUserId : undefined;
   const today = localDateKey();
@@ -370,6 +378,7 @@ export default function AppointmentsPage() {
     [appointmentDate, appointmentTime, emergencyBooking, matchingSlot, requiresAppointmentTime, selectedDoctorId, slots.length],
   );
   const canCreateAppointment = Boolean(
+    canCreateAppointmentFlow &&
     selectedPatient
     && doctorUserId
     && appointmentDate
@@ -535,7 +544,7 @@ export default function AppointmentsPage() {
         });
         if (!cancelled) {
           setPatientResults(rows);
-          if (rows.length === 0 && /^\+?[0-9\s-]{6,}$/.test(term)) {
+          if (canQuickRegisterPatient && rows.length === 0 && /^\+?[0-9\s-]{6,}$/.test(term)) {
             setQuickRegisterForm((current) => ({ ...current, mobile: digits(term) }));
             setQuickRegisterError(null);
             setQuickRegisterOpen(true);
@@ -556,7 +565,7 @@ export default function AppointmentsPage() {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [auth.accessToken, auth.tenantId, patientQuery]);
+  }, [auth.accessToken, auth.tenantId, canQuickRegisterPatient, patientQuery]);
 
   const todayRows = React.useMemo(
     () => appointments.filter((item) => item.appointmentDate === today && item.status !== "CANCELLED" && item.status !== "NO_SHOW"),
@@ -736,11 +745,19 @@ export default function AppointmentsPage() {
     }
 
     if (emergencyBooking) {
+      if (bookableSlots.length > 0) {
+        setError("Standard slots are available for this doctor. Book one of the available slots instead of using emergency/ad-hoc booking.");
+        return;
+      }
       await submitAppointment(true);
       return;
     }
 
     if (slots.length > 0) {
+      if (bookableSlots.length > 0) {
+        setError("Standard slots are available for this doctor. Book one of the available slots instead of using emergency/ad-hoc booking.");
+        return;
+      }
       setAdHocConfirmMessage(`The selected time (${appointmentTime}) is outside doctor availability. Continue as ad-hoc booking?`);
       setAdHocConfirmPending(false);
       setAdHocConfirmOpen(true);
@@ -823,8 +840,35 @@ export default function AppointmentsPage() {
     }
   };
 
-  const saveQuickPatient = async () => {
+  const cancelAppointment = async (appointment: Appointment) => {
     if (!auth.accessToken || !auth.tenantId) return;
+    const requiresReason = appointment.status === "WAITING";
+    let comment: string | null = "Cancelled from appointments list";
+    if (requiresReason) {
+      comment = window.prompt("Cancellation reason is required after check-in.", appointment.reason || "Cancelled by front desk")?.trim() || null;
+      if (!comment) {
+        setError("Cancellation reason is required after check-in.");
+        return;
+      }
+    }
+    if (!window.confirm(`Cancel appointment ${appointmentReference(appointment)}?`)) {
+      return;
+    }
+    setActionAppointmentId(appointment.id);
+    setError(null);
+    try {
+      await updateAppointmentStatus(auth.accessToken, auth.tenantId, appointment.id, "CANCELLED", comment);
+      await loadAppointments();
+      await loadSlots();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cancel appointment");
+    } finally {
+      setActionAppointmentId(null);
+    }
+  };
+
+  const saveQuickPatient = async () => {
+    if (!auth.accessToken || !auth.tenantId || !canQuickRegisterPatient) return;
     setQuickRegisterSaving(true);
     setQuickRegisterError(null);
     try {
@@ -841,6 +885,7 @@ export default function AppointmentsPage() {
   };
 
   const openQuickRegister = () => {
+    if (!canQuickRegisterPatient) return;
     const term = patientQuery.trim();
     setQuickRegisterForm((current) => ({
       ...current,
@@ -849,6 +894,12 @@ export default function AppointmentsPage() {
     setQuickRegisterError(null);
     setQuickRegisterOpen(true);
   };
+
+  React.useEffect(() => {
+    if (!canQuickRegisterPatient) {
+      setQuickRegisterOpen(false);
+    }
+  }, [canQuickRegisterPatient]);
 
   return (
     <Stack spacing={3}>
@@ -876,32 +927,39 @@ export default function AppointmentsPage() {
         <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}><CompactStatCard label="Available slots" value={summaryStats.availableSlots} tone="success" helper="Current bookable slots" /></Grid>
       </Grid>
 
-      <Grid container spacing={2} alignItems="stretch">
-        <Grid size={{ xs: 12, lg: 5 }}>
-          <Card variant="outlined" sx={{ height: "100%" }}>
-            <CardContent sx={{ p: 1.5 }}>
-              <Stack spacing={1.5}>
-                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
-                  <Box>
-                    <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Create Appointment</Typography>
-                    <Typography variant="body2" color="text.secondary">Patient search, doctor selection, time pick, waitlist, and ad-hoc emergency booking.</Typography>
-                  </Box>
-                  <Stack direction="row" spacing={0.75} flexWrap="wrap">
-                    {selectedDoctorId ? <Chip size="small" label={`Doctor: ${doctorOptions.find((doctor) => doctor.appUserId === selectedDoctorId)?.displayName || selectedDoctorId}`} sx={compactChipSx} /> : null}
-                    <Chip size="small" label={`Date: ${appointmentDate}`} variant="outlined" sx={compactChipSx} />
-                  </Stack>
-                </Box>
+      {isDoctor ? (
+        <Alert severity="info">
+          Doctors can review their assigned appointments here. Use My Queue or Day Board for clinical workflow; appointment creation and quick patient registration are hidden.
+        </Alert>
+      ) : null}
 
-                <TextField
-                  size="small"
-                  label="Search patient"
-                  value={patientQuery}
-                  onChange={(event) => {
-                    setSelectedPatient(null);
-                    setPatientQuery(event.target.value);
-                  }}
-                  helperText="Search by patient ID, patient number, mobile, or name"
-                />
+      <Grid container spacing={2} alignItems="stretch">
+        {canCreateAppointmentFlow ? (
+          <Grid size={{ xs: 12, lg: 5 }}>
+            <Card variant="outlined" sx={{ height: "100%" }}>
+              <CardContent sx={{ p: 1.5 }}>
+                <Stack spacing={1.5}>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
+                    <Box>
+                      <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Create Appointment</Typography>
+                      <Typography variant="body2" color="text.secondary">Patient search, doctor selection, time pick, waitlist, and ad-hoc emergency booking.</Typography>
+                    </Box>
+                    <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                      {selectedDoctorId ? <Chip size="small" label={`Doctor: ${doctorOptions.find((doctor) => doctor.appUserId === selectedDoctorId)?.displayName || selectedDoctorId}`} sx={compactChipSx} /> : null}
+                      <Chip size="small" label={`Date: ${appointmentDate}`} variant="outlined" sx={compactChipSx} />
+                    </Stack>
+                  </Box>
+
+                  <TextField
+                    size="small"
+                    label="Search patient"
+                    value={patientQuery}
+                    onChange={(event) => {
+                      setSelectedPatient(null);
+                      setPatientQuery(event.target.value);
+                    }}
+                    helperText="Search by patient ID, patient number, mobile, or name"
+                  />
 
                 {selectedPatient ? (
                   <Card variant="outlined" sx={{ bgcolor: alpha("#1976d2", 0.05), borderColor: "primary.light" }}>
@@ -917,31 +975,31 @@ export default function AppointmentsPage() {
                   </Card>
                 ) : null}
 
-                {patientResults.length > 0 && !selectedPatient ? (
-                  <Card variant="outlined">
-                    <List dense disablePadding>
-                      {patientResults.map((patient) => (
-                        <ListItemButton key={patient.id} onClick={() => {
-                          setSelectedPatient(patient);
-                          setPatientQuery(patientSummary(patient));
-                          setQuickRegisterOpen(false);
-                        }}>
-                          <ListItemText primary={patientLabel(patient)} secondary={patientSummary(patient)} />
-                        </ListItemButton>
-                      ))}
-                    </List>
-                  </Card>
-                ) : null}
+                  {patientResults.length > 0 && !selectedPatient ? (
+                    <Card variant="outlined">
+                      <List dense disablePadding>
+                        {patientResults.map((patient) => (
+                          <ListItemButton key={patient.id} onClick={() => {
+                            setSelectedPatient(patient);
+                            setPatientQuery(patientSummary(patient));
+                            setQuickRegisterOpen(false);
+                          }}>
+                            <ListItemText primary={patientLabel(patient)} secondary={patientSummary(patient)} />
+                          </ListItemButton>
+                        ))}
+                      </List>
+                    </Card>
+                  ) : null}
 
-                {searchingPatients ? (
-                  <Alert severity="info">Searching for matching patients...</Alert>
-                ) : patientResults.length === 0 && patientQuery.trim().length >= 2 && !selectedPatient ? (
-                  <Alert severity="info" action={<Button color="inherit" size="small" onClick={openQuickRegister}>Quick Register Patient</Button>}>
-                    No matching patient found. Quick register and continue.
-                  </Alert>
-                ) : null}
+                  {searchingPatients ? (
+                    <Alert severity="info">Searching for matching patients...</Alert>
+                  ) : canQuickRegisterPatient && patientResults.length === 0 && patientQuery.trim().length >= 2 && !selectedPatient ? (
+                    <Alert severity="info" action={<Button color="inherit" size="small" onClick={openQuickRegister}>Quick Register Patient</Button>}>
+                      No matching patient found. Quick register and continue.
+                    </Alert>
+                  ) : null}
 
-                <Grid container spacing={1}>
+                  <Grid container spacing={1}>
                   <Grid size={{ xs: 12, md: 6 }}>
                     <FormControl fullWidth size="small">
                       <InputLabel id="doctor-select-label">Doctor</InputLabel>
@@ -1020,34 +1078,35 @@ export default function AppointmentsPage() {
                       </Select>
                     </FormControl>
                   </Grid>
-                  <Grid size={12}>
-                    <TextField
-                      size="small"
-                      label="Reason"
-                      value={reason}
-                      onChange={(event) => setReason(event.target.value)}
-                      multiline
-                      minRows={3}
-                      required={emergencyBooking}
-                      helperText={emergencyBooking ? "Required for emergency/ad-hoc booking." : "Optional unless you need a specific visit reason."}
-                    />
+                    <Grid size={12}>
+                      <TextField
+                        size="small"
+                        label="Reason"
+                        value={reason}
+                        onChange={(event) => setReason(event.target.value)}
+                        multiline
+                        minRows={3}
+                        required={emergencyBooking}
+                        helperText={emergencyBooking ? "Required for emergency/ad-hoc booking." : "Optional unless you need a specific visit reason."}
+                      />
+                    </Grid>
                   </Grid>
-                </Grid>
 
-                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                  <Button variant="contained" onClick={() => void saveAppointment()} disabled={!canCreateAppointment}>
-                    {emergencyBooking ? "Create Emergency Booking" : (type === "WALK_IN" ? "Create Walk-In" : "Create Appointment")}
-                  </Button>
-                  <Button variant="outlined" onClick={() => void addToWaitlist()} disabled={!selectedPatient || !selectedDoctorId || !appointmentDate}>
-                    Add to Waitlist
-                  </Button>
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                    <Button variant="contained" onClick={() => void saveAppointment()} disabled={!canCreateAppointment}>
+                      {emergencyBooking ? "Create Emergency Booking" : (type === "WALK_IN" ? "Create Walk-In" : "Create Appointment")}
+                    </Button>
+                    <Button variant="outlined" onClick={() => void addToWaitlist()} disabled={!selectedPatient || !selectedDoctorId || !appointmentDate}>
+                      Add to Waitlist
+                    </Button>
+                  </Stack>
                 </Stack>
-              </Stack>
-            </CardContent>
-          </Card>
-        </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+        ) : null}
 
-        <Grid size={{ xs: 12, lg: 7 }}>
+        <Grid size={{ xs: 12, lg: canCreateAppointmentFlow ? 7 : 12 }}>
           <Card variant="outlined" sx={{ height: "100%" }}>
             <CardContent sx={{ p: 1.5 }}>
               <Stack spacing={1.5}>
@@ -1247,7 +1306,7 @@ export default function AppointmentsPage() {
                         <TableCell>{appointment.doctorName || appointment.doctorUserId}</TableCell>
                         <TableCell>{formatDate(appointment.appointmentDate)}</TableCell>
                         <TableCell>{appointment.appointmentTime || "-"}</TableCell>
-                        <TableCell>{appointment.tokenNumber ?? "-"}</TableCell>
+                        <TableCell>{appointment.displayReference || appointment.tokenNumber || "-"}</TableCell>
                         <TableCell><Chip size="small" label={appointment.priority || "NORMAL"} color={priorityColor(appointment.priority)} variant="outlined" sx={compactChipSx} /></TableCell>
                         <TableCell>{arrivalLabel(appointment)}</TableCell>
                         <TableCell><Chip size="small" label={appointment.status} color={statusColor(appointment.status)} sx={compactChipSx} /></TableCell>
@@ -1255,6 +1314,11 @@ export default function AppointmentsPage() {
                           <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
                             <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)}>Patient</Button>
                             <Button size="small" onClick={() => openReschedule(appointment)}>Reschedule</Button>
+                            {!isDoctor && (appointment.status === "BOOKED" || appointment.status === "WAITING") ? (
+                              <Button size="small" color="error" onClick={() => void cancelAppointment(appointment)} disabled={actionAppointmentId === appointment.id}>
+                                Cancel
+                              </Button>
+                            ) : null}
                           </Stack>
                         </TableCell>
                       </TableRow>
@@ -1285,7 +1349,8 @@ export default function AppointmentsPage() {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={quickRegisterOpen} onClose={() => setQuickRegisterOpen(false)} fullWidth maxWidth="sm">
+      {canQuickRegisterPatient ? (
+        <Dialog open={quickRegisterOpen} onClose={() => setQuickRegisterOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Quick Register Patient</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
@@ -1327,7 +1392,8 @@ export default function AppointmentsPage() {
           <Button onClick={() => setQuickRegisterOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={() => void saveQuickPatient()} disabled={quickRegisterSaving}>Save patient</Button>
         </DialogActions>
-      </Dialog>
+        </Dialog>
+      ) : null}
       <Dialog open={rescheduleOpen} onClose={() => setRescheduleOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>Reschedule Appointment</DialogTitle>
         <DialogContent>

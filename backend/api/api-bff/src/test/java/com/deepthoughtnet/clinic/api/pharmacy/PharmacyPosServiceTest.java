@@ -278,6 +278,20 @@ class PharmacyPosServiceTest {
     }
 
     @Test
+    void searchMedicinesIncludesActiveMedicineMasterRecordsWithoutStock() {
+        MedicineEntity inStock = medicine("Amoxicillin");
+        MedicineEntity noStock = medicine("Azithromycin");
+        when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)).thenReturn(List.of(inStock, noStock));
+        when(stockRepository.findByTenantIdAndLocationIdOrderByUpdatedAtDesc(tenantId, location.getId()))
+                .thenReturn(List.of(stock(inStock.getId(), "B1", LocalDate.now().plusDays(20), 5, "11.00")));
+
+        List<PharmacyPosMedicineResponse> results = service.searchMedicines(tenantId, "zi");
+
+        assertThat(results).extracting(PharmacyPosMedicineResponse::medicineName).containsExactly("Azithromycin");
+        assertThat(results.getFirst().totalAvailableQuantity()).isZero();
+    }
+
+    @Test
     void openShiftCreatesCurrentShiftForCashier() {
         PharmacyPosShiftResponse shift = service.openShift(tenantId, actorId, new PharmacyPosOpenShiftRequest(new BigDecimal("1000.00"), "Opening drawer"));
 

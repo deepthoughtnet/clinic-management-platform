@@ -278,6 +278,7 @@ public class AppointmentController {
                 record.appointmentDate(),
                 record.appointmentTime(),
                 record.tokenNumber(),
+                record.displayReference(),
                 record.reason(),
                 record.type(),
                 record.priority(),

@@ -153,6 +153,15 @@ function ModuleGate({ moduleKey, children }: { moduleKey: "carePilot" | "aiCopil
   return <>{children}</>;
 }
 
+function TenantRoleGate({ rolesAny, children }: { rolesAny: string[]; children: React.ReactNode }) {
+  const auth = useAuth();
+  const tenantRole = (auth.tenantRole || "").toUpperCase();
+  if (!rolesAny.includes(tenantRole)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return <>{children}</>;
+}
+
 function HomeRedirect() {
   const auth = useAuth();
   const tenantRole = (auth.tenantRole || "").toUpperCase();
@@ -177,7 +186,14 @@ function AuthedApp() {
         <Route path="/appointments/day-board" element={<DayBoardPage />} />
         <Route path="/queue" element={<QueuePage />} />
         <Route path="/consultations" element={<ConsultationsPage />} />
-        <Route path="/consultations/:id" element={<ConsultationWorkspacePage />} />
+        <Route
+          path="/consultations/:id"
+          element={
+            <TenantRoleGate rolesAny={["DOCTOR"]}>
+              <ConsultationWorkspacePage />
+            </TenantRoleGate>
+          }
+        />
         <Route path="/prescriptions" element={<PrescriptionsPage />} />
         <Route path="/billing" element={<BillsPage />} />
         <Route path="/finance/cash-counter" element={<CashCounterPage />} />

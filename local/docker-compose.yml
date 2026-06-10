@@ -100,6 +100,7 @@ services:
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: clinic
@@ -111,6 +112,17 @@ services:
         condition: service_healthy
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 &&
+          printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 &&
+          grep "HTTP/1.1 200" <&3'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   whisper-stt:
     image: ghcr.io/ggerganov/whisper.cpp:main
@@ -260,7 +272,7 @@ services:
       redis:
         condition: service_started
       keycloak:
-        condition: service_started
+        condition: service_healthy
       minio:
         condition: service_started
       faster-whisper:

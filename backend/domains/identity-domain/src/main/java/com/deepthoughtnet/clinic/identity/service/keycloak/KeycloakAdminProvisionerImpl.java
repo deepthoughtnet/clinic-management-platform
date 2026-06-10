@@ -1,11 +1,16 @@
 package com.deepthoughtnet.clinic.identity.service.keycloak;
 
+import jakarta.ws.rs.ProcessingException;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
+import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.SocketTimeoutException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.RoleResource;
 import org.keycloak.admin.client.resource.RealmResource;
@@ -24,6 +29,8 @@ import org.springframework.util.StringUtils;
  */
 public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
     private static final Logger log = LoggerFactory.getLogger(KeycloakAdminProvisionerImpl.class);
+    private static final int MAX_ATTEMPTS = 5;
+    private static final long INITIAL_BACKOFF_MILLIS = 1_000L;
 
     private final Keycloak keycloakAdmin;
     private final String realm;
@@ -35,35 +42,37 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
 
     @Override
     public String findUserIdByEmailOrUsername(String email, String username) {
-        RealmResource rr = keycloakAdmin.realm(realm);
+        return executeWithRetry("find user by email or username", () -> {
+            RealmResource rr = keycloakAdmin.realm(realm);
 
-        // Prefer exact email match if provided
-        if (StringUtils.hasText(email)) {
-            List<UserRepresentation> found = rr.users().search(email, true);
-            UserRepresentation existing = found == null ? null : found.stream()
-                    .filter(u -> email.equalsIgnoreCase(u.getEmail()))
-                    .findFirst()
-                    .orElse(null);
+            // Prefer exact email match if provided
+            if (StringUtils.hasText(email)) {
+                List<UserRepresentation> found = rr.users().search(email, true);
+                UserRepresentation existing = found == null ? null : found.stream()
+                        .filter(u -> email.equalsIgnoreCase(u.getEmail()))
+                        .findFirst()
+                        .orElse(null);
 
-            if (existing != null && StringUtils.hasText(existing.getId())) {
-                return existing.getId();
+                if (existing != null && StringUtils.hasText(existing.getId())) {
+                    return existing.getId();
+                }
             }
-        }
 
-        // Fallback to exact username match if provided
-        if (StringUtils.hasText(username)) {
-            List<UserRepresentation> found = rr.users().search(username, true);
-            UserRepresentation existing = found == null ? null : found.stream()
-                    .filter(u -> username.equalsIgnoreCase(u.getUsername()))
-                    .findFirst()
-                    .orElse(null);
+            // Fallback to exact username match if provided
+            if (StringUtils.hasText(username)) {
+                List<UserRepresentation> found = rr.users().search(username, true);
+                UserRepresentation existing = found == null ? null : found.stream()
+                        .filter(u -> username.equalsIgnoreCase(u.getUsername()))
+                        .findFirst()
+                        .orElse(null);
 
-            if (existing != null && StringUtils.hasText(existing.getId())) {
-                return existing.getId();
+                if (existing != null && StringUtils.hasText(existing.getId())) {
+                    return existing.getId();
+                }
             }
-        }
 
-        return null;
+            return null;
+        });
     }
 
     @Override
@@ -72,60 +81,62 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
             throw new IllegalArgumentException("email is required for tenant admin provisioning");
         }
 
-        RealmResource rr = keycloakAdmin.realm(realm);
+        return executeWithRetry("create or get tenant admin user", () -> {
+            RealmResource rr = keycloakAdmin.realm(realm);
 
-        // Try find by email
-        List<UserRepresentation> found = rr.users().search(email, true);
-        UserRepresentation existing = found == null ? null : found.stream()
-                .filter(u -> email.equalsIgnoreCase(u.getEmail()))
-                .findFirst()
-                .orElse(null);
+            // Try find by email
+            List<UserRepresentation> found = rr.users().search(email, true);
+            UserRepresentation existing = found == null ? null : found.stream()
+                    .filter(u -> email.equalsIgnoreCase(u.getEmail()))
+                    .findFirst()
+                    .orElse(null);
 
-        if (existing != null && existing.getId() != null) {
-            ensureTenantAttribute(rr, existing.getId(), tenantId);
+            if (existing != null && existing.getId() != null) {
+                ensureTenantAttribute(rr, existing.getId(), tenantId);
 
-            // Ensure enabled
-            if (existing.isEnabled() == null || !existing.isEnabled()) {
-                existing.setEnabled(true);
-                rr.users().get(existing.getId()).update(existing);
+                // Ensure enabled
+                if (existing.isEnabled() == null || !existing.isEnabled()) {
+                    existing.setEnabled(true);
+                    rr.users().get(existing.getId()).update(existing);
+                }
+
+                // Ensure tenant admin role for clinic realm.
+                ensureRealmRoleInternal(rr, existing.getId(), "CLINIC_ADMIN");
+
+                // Optional: reset password
+                if (StringUtils.hasText(tempPassword)) {
+                    resetTemporaryPasswordInternal(rr, existing.getId(), tempPassword);
+                }
+
+                return existing.getId();
             }
 
-            // Ensure tenant admin role for clinic realm.
-            ensureRealmRole(existing.getId(), "CLINIC_ADMIN");
+            // Create new user
+            UserRepresentation u = new UserRepresentation();
+            u.setEnabled(true);
+            u.setEmail(email);
+            u.setUsername(email);
+            u.setEmailVerified(Boolean.TRUE);
+            if (StringUtils.hasText(displayName)) {
+                u.setFirstName(displayName); // keep simple
+            }
 
-            // Optional: reset password
+            Response resp = rr.users().create(u);
+            if (resp.getStatus() != 201) {
+                String msg = resp.getStatusInfo() == null ? "" : resp.getStatusInfo().toString();
+                throw new IllegalStateException("Failed to create tenant admin user in Keycloak. status=" + resp.getStatus() + " " + msg);
+            }
+
+            String userId = extractCreatedId(resp);
+            ensureTenantAttribute(rr, userId, tenantId);
+            ensureRealmRoleInternal(rr, userId, "CLINIC_ADMIN");
+
             if (StringUtils.hasText(tempPassword)) {
-                resetTemporaryPassword(rr, existing.getId(), tempPassword);
+                resetTemporaryPasswordInternal(rr, userId, tempPassword);
             }
 
-            return existing.getId();
-        }
-
-        // Create new user
-        UserRepresentation u = new UserRepresentation();
-        u.setEnabled(true);
-        u.setEmail(email);
-        u.setUsername(email);
-        u.setEmailVerified(Boolean.TRUE);
-        if (StringUtils.hasText(displayName)) {
-            u.setFirstName(displayName); // keep simple
-        }
-
-        Response resp = rr.users().create(u);
-        if (resp.getStatus() != 201) {
-            String msg = resp.getStatusInfo() == null ? "" : resp.getStatusInfo().toString();
-            throw new IllegalStateException("Failed to create tenant admin user in Keycloak. status=" + resp.getStatus() + " " + msg);
-        }
-
-        String userId = extractCreatedId(resp);
-        ensureTenantAttribute(rr, userId, tenantId);
-        ensureRealmRole(userId, "CLINIC_ADMIN");
-
-        if (StringUtils.hasText(tempPassword)) {
-            resetTemporaryPassword(rr, userId, tempPassword);
-        }
-
-        return userId;
+            return userId;
+        });
     }
 
     @Override
@@ -141,101 +152,103 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
             throw new IllegalArgumentException("email or username is required");
         }
 
-        RealmResource rr = keycloakAdmin.realm(realm);
+        return executeWithRetry("create or get tenant user", () -> {
+            RealmResource rr = keycloakAdmin.realm(realm);
 
-        // Prefer email search if present; otherwise username search
-        UserRepresentation existing = null;
+            // Prefer email search if present; otherwise username search
+            UserRepresentation existing = null;
 
-        if (StringUtils.hasText(email)) {
-            List<UserRepresentation> found = rr.users().search(email, true);
-            existing = found == null ? null : found.stream()
-                    .filter(u -> email.equalsIgnoreCase(u.getEmail()))
-                    .findFirst()
-                    .orElse(null);
-        }
-
-        if (existing == null && StringUtils.hasText(username)) {
-            List<UserRepresentation> found = rr.users().search(username, true);
-            existing = found == null ? null : found.stream()
-                    .filter(u -> username.equalsIgnoreCase(u.getUsername()))
-                    .findFirst()
-                    .orElse(null);
-        }
-
-        if (existing != null && existing.getId() != null) {
-            ensureTenantAttribute(rr, existing.getId(), tenantId);
-
-            // Ensure enabled
-            if (existing.isEnabled() == null || !existing.isEnabled()) {
-                existing.setEnabled(true);
-                rr.users().get(existing.getId()).update(existing);
+            if (StringUtils.hasText(email)) {
+                List<UserRepresentation> found = rr.users().search(email, true);
+                existing = found == null ? null : found.stream()
+                        .filter(u -> email.equalsIgnoreCase(u.getEmail()))
+                        .findFirst()
+                        .orElse(null);
             }
 
-            // Ensure email/username set if missing
-            boolean changed = false;
-            if (StringUtils.hasText(email) && !email.equalsIgnoreCase(existing.getEmail())) {
-                existing.setEmail(email);
-                changed = true;
-            }
-            if (StringUtils.hasText(username) && !username.equalsIgnoreCase(existing.getUsername())) {
-                existing.setUsername(username);
-                changed = true;
-            }
-            if (StringUtils.hasText(displayName) && (existing.getFirstName() == null || existing.getFirstName().isBlank())) {
-                existing.setFirstName(displayName);
-                changed = true;
-            }
-            if (emailVerified && (existing.isEmailVerified() == null || !existing.isEmailVerified())) {
-                existing.setEmailVerified(Boolean.TRUE);
-                changed = true;
+            if (existing == null && StringUtils.hasText(username)) {
+                List<UserRepresentation> found = rr.users().search(username, true);
+                existing = found == null ? null : found.stream()
+                        .filter(u -> username.equalsIgnoreCase(u.getUsername()))
+                        .findFirst()
+                        .orElse(null);
             }
 
-            if (changed) {
-                rr.users().get(existing.getId()).update(existing);
+            if (existing != null && existing.getId() != null) {
+                ensureTenantAttribute(rr, existing.getId(), tenantId);
+
+                // Ensure enabled
+                if (existing.isEnabled() == null || !existing.isEnabled()) {
+                    existing.setEnabled(true);
+                    rr.users().get(existing.getId()).update(existing);
+                }
+
+                // Ensure email/username set if missing
+                boolean changed = false;
+                if (StringUtils.hasText(email) && !email.equalsIgnoreCase(existing.getEmail())) {
+                    existing.setEmail(email);
+                    changed = true;
+                }
+                if (StringUtils.hasText(username) && !username.equalsIgnoreCase(existing.getUsername())) {
+                    existing.setUsername(username);
+                    changed = true;
+                }
+                if (StringUtils.hasText(displayName) && (existing.getFirstName() == null || existing.getFirstName().isBlank())) {
+                    existing.setFirstName(displayName);
+                    changed = true;
+                }
+                if (emailVerified && (existing.isEmailVerified() == null || !existing.isEmailVerified())) {
+                    existing.setEmailVerified(Boolean.TRUE);
+                    changed = true;
+                }
+
+                if (changed) {
+                    rr.users().get(existing.getId()).update(existing);
+                }
+
+                if (StringUtils.hasText(tempPassword)) {
+                    resetTemporaryPasswordInternal(rr, existing.getId(), tempPassword);
+                }
+
+                return existing.getId();
             }
+
+            // Create new user
+            UserRepresentation u = new UserRepresentation();
+            u.setEnabled(true);
+
+            if (StringUtils.hasText(email)) {
+                u.setEmail(email);
+                // By default, use email as username when username not provided
+                if (!StringUtils.hasText(username)) {
+                    u.setUsername(email);
+                }
+                u.setEmailVerified(emailVerified ? Boolean.TRUE : Boolean.FALSE);
+            }
+
+            if (StringUtils.hasText(username)) {
+                u.setUsername(username);
+            }
+
+            if (StringUtils.hasText(displayName)) {
+                u.setFirstName(displayName);
+            }
+
+            Response resp = rr.users().create(u);
+            if (resp.getStatus() != 201) {
+                String msg = resp.getStatusInfo() == null ? "" : resp.getStatusInfo().toString();
+                throw new IllegalStateException("Failed to create user in Keycloak. status=" + resp.getStatus() + " " + msg);
+            }
+
+            String userId = extractCreatedId(resp);
+            ensureTenantAttribute(rr, userId, tenantId);
 
             if (StringUtils.hasText(tempPassword)) {
-                resetTemporaryPassword(rr, existing.getId(), tempPassword);
+                resetTemporaryPasswordInternal(rr, userId, tempPassword);
             }
 
-            return existing.getId();
-        }
-
-        // Create new user
-        UserRepresentation u = new UserRepresentation();
-        u.setEnabled(true);
-
-        if (StringUtils.hasText(email)) {
-            u.setEmail(email);
-            // By default, use email as username when username not provided
-            if (!StringUtils.hasText(username)) {
-                u.setUsername(email);
-            }
-            u.setEmailVerified(emailVerified ? Boolean.TRUE : Boolean.FALSE);
-        }
-
-        if (StringUtils.hasText(username)) {
-            u.setUsername(username);
-        }
-
-        if (StringUtils.hasText(displayName)) {
-            u.setFirstName(displayName);
-        }
-
-        Response resp = rr.users().create(u);
-        if (resp.getStatus() != 201) {
-            String msg = resp.getStatusInfo() == null ? "" : resp.getStatusInfo().toString();
-            throw new IllegalStateException("Failed to create user in Keycloak. status=" + resp.getStatus() + " " + msg);
-        }
-
-        String userId = extractCreatedId(resp);
-        ensureTenantAttribute(rr, userId, tenantId);
-
-        if (StringUtils.hasText(tempPassword)) {
-            resetTemporaryPassword(rr, userId, tempPassword);
-        }
-
-        return userId;
+            return userId;
+        });
     }
 
     @Override
@@ -247,15 +260,11 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
             throw new IllegalArgumentException("roleName is required");
         }
 
-        RealmResource rr = keycloakAdmin.realm(realm);
-
-        RoleRepresentation role = getOrCreateRealmRole(rr, roleName);
-
-        List<RoleRepresentation> current = rr.users().get(userId).roles().realmLevel().listAll();
-        boolean has = current != null && current.stream().anyMatch(r -> roleName.equalsIgnoreCase(r.getName()));
-        if (!has) {
-            rr.users().get(userId).roles().realmLevel().add(List.of(role));
-        }
+        executeWithRetry("ensure realm role", () -> {
+            RealmResource rr = keycloakAdmin.realm(realm);
+            ensureRealmRoleInternal(rr, userId, roleName);
+            return null;
+        });
     }
 
     @Override
@@ -266,12 +275,11 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
         if (!StringUtils.hasText(tempPassword)) {
             throw new IllegalArgumentException("tempPassword is required");
         }
-        RealmResource rr = keycloakAdmin.realm(realm);
-        var cred = new org.keycloak.representations.idm.CredentialRepresentation();
-        cred.setType(org.keycloak.representations.idm.CredentialRepresentation.PASSWORD);
-        cred.setTemporary(temporary);
-        cred.setValue(tempPassword);
-        rr.users().get(userId).resetPassword(cred);
+        executeWithRetry("reset password", () -> {
+            RealmResource rr = keycloakAdmin.realm(realm);
+            resetPasswordInternal(rr, userId, tempPassword, temporary);
+            return null;
+        });
     }
 
     private RoleRepresentation getOrCreateRealmRole(RealmResource rr, String roleName) {
@@ -304,9 +312,12 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
         if (!StringUtils.hasText(userId)) {
             return;
         }
-        RealmResource rr = keycloakAdmin.realm(realm);
         try {
-            rr.users().delete(userId);
+            executeWithRetry("delete user", () -> {
+                RealmResource rr = keycloakAdmin.realm(realm);
+                rr.users().delete(userId);
+                return null;
+            });
         } catch (Exception ignore) {
             // best-effort
         }
@@ -328,8 +339,86 @@ public class KeycloakAdminProvisionerImpl implements KeycloakAdminProvisioner {
         }
     }
 
-    private void resetTemporaryPassword(RealmResource rr, String userId, String tempPassword) {
-        resetPassword(userId, tempPassword, true);
+    private void ensureRealmRoleInternal(RealmResource rr, String userId, String roleName) {
+        RoleRepresentation role = getOrCreateRealmRole(rr, roleName);
+
+        List<RoleRepresentation> current = rr.users().get(userId).roles().realmLevel().listAll();
+        boolean has = current != null && current.stream().anyMatch(r -> roleName.equalsIgnoreCase(r.getName()));
+        if (!has) {
+            rr.users().get(userId).roles().realmLevel().add(List.of(role));
+        }
+    }
+
+    private void resetTemporaryPasswordInternal(RealmResource rr, String userId, String tempPassword) {
+        resetPasswordInternal(rr, userId, tempPassword, true);
+    }
+
+    private void resetPasswordInternal(RealmResource rr, String userId, String tempPassword, boolean temporary) {
+        var cred = new org.keycloak.representations.idm.CredentialRepresentation();
+        cred.setType(org.keycloak.representations.idm.CredentialRepresentation.PASSWORD);
+        cred.setTemporary(temporary);
+        cred.setValue(tempPassword);
+        rr.users().get(userId).resetPassword(cred);
+    }
+
+    private <T> T executeWithRetry(String operation, Callable<T> action) {
+        long backoffMillis = INITIAL_BACKOFF_MILLIS;
+        RuntimeException lastRetryable = null;
+
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                return action.call();
+            } catch (RuntimeException ex) {
+                if (!isRetryable(ex) || attempt == MAX_ATTEMPTS) {
+                    throw ex;
+                }
+                lastRetryable = ex;
+                log.warn(
+                        "Keycloak admin operation '{}' failed on attempt {}/{}; retrying in {} ms",
+                        operation,
+                        attempt,
+                        MAX_ATTEMPTS,
+                        backoffMillis,
+                        ex
+                );
+                sleep(backoffMillis);
+                backoffMillis *= 2;
+            } catch (Exception ex) {
+                throw new IllegalStateException("Keycloak admin operation failed: " + operation, ex);
+            }
+        }
+
+        throw lastRetryable == null
+                ? new IllegalStateException("Keycloak admin operation failed without a retryable exception: " + operation)
+                : lastRetryable;
+    }
+
+    private boolean isRetryable(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof ConnectException
+                    || current instanceof SocketTimeoutException
+                    || current instanceof NoRouteToHostException
+                    || current instanceof ProcessingException) {
+                return true;
+            }
+            String className = current.getClass().getName();
+            if ("org.apache.hc.client5.http.HttpHostConnectException".equals(className)
+                    || "org.apache.http.conn.HttpHostConnectException".equals(className)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private void sleep(long backoffMillis) {
+        try {
+            Thread.sleep(backoffMillis);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting to retry Keycloak admin operation", ex);
+        }
     }
 
     private static String extractCreatedId(Response resp) {

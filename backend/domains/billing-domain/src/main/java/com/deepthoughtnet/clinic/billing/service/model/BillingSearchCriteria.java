@@ -9,6 +9,7 @@ public record BillingSearchCriteria(
         LocalDate fromDate,
         LocalDate toDate,
         PaymentMode paymentMode,
-        UUID appointmentId
+        UUID appointmentId,
+        String searchText
 ) {
 }
