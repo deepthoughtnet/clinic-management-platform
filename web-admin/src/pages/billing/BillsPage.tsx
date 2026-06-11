@@ -59,6 +59,7 @@ import {
   getClinicProfile,
   getDoctorProfile,
   getConsultation,
+  getPatientBillingContext,
   getReceiptPdf,
   getPatient,
   issueBill,
@@ -86,6 +87,8 @@ import {
   type Medicine,
   type Patient,
   type DoctorProfile,
+  type PatientBillingContext,
+  type PendingConsultationFee,
   type Receipt,
   type Refund,
   type Stock,
@@ -383,6 +386,19 @@ function formatAppointmentSummary(appointment: Appointment | null) {
   return `${dateLabel} • ${timeLabel} • ${doctorLabel}`;
 }
 
+function formatPendingConsultationFeeSummary(fee: PendingConsultationFee) {
+  const time = fee.appointmentTime ? fee.appointmentTime.slice(0, 5) : null;
+  const dateLabel = new Date(`${fee.appointmentDate}T00:00:00`).toLocaleDateString(undefined, {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+  const timeLabel = time ? new Date(`1970-01-01T${time}:00`).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—";
+  const doctorLabel = fee.doctorName || "Doctor";
+  return `${dateLabel} • ${timeLabel} • ${doctorLabel}`;
+}
+
 function billHasConsultationLine(bill: Bill) {
   return bill.lines.some((line) => line.itemType === "CONSULTATION");
 }
@@ -531,6 +547,7 @@ export default function BillsPage() {
   const [paymentOpen, setPaymentOpen] = React.useState(false);
   const [refundOpen, setRefundOpen] = React.useState(false);
   const [patientScopedBills, setPatientScopedBills] = React.useState<Bill[]>([]);
+  const [patientBillingContext, setPatientBillingContext] = React.useState<PatientBillingContext | null>(null);
   const [refundBillSearch, setRefundBillSearch] = React.useState("");
   const [refundSearchResults, setRefundSearchResults] = React.useState<Bill[]>([]);
   const [refundSearchLoading, setRefundSearchLoading] = React.useState(false);
@@ -554,6 +571,8 @@ export default function BillsPage() {
   const [consultationDoctorUserIdForDraft, setConsultationDoctorUserIdForDraft] = React.useState("");
   const [manualScanPrompt, setManualScanPrompt] = React.useState<string | null>(null);
   const [paymentLedger, setPaymentLedger] = React.useState<PaymentLedgerRow[]>([]);
+  const [pendingConsultationFeeDialog, setPendingConsultationFeeDialog] = React.useState<PendingConsultationFee | null>(null);
+  const [pendingConsultationFeeOpen, setPendingConsultationFeeOpen] = React.useState(false);
   const [ledgerActionBill, setLedgerActionBill] = React.useState<Bill | null>(null);
   const [ledgerActionAnchorEl, setLedgerActionAnchorEl] = React.useState<HTMLElement | null>(null);
   const [ledgerCollapsed, setLedgerCollapsed] = React.useState(false);
@@ -648,6 +667,18 @@ export default function BillsPage() {
     () => paymentLedger.filter((payment) => payment.patientId === form.patientId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [paymentLedger, form.patientId],
   );
+  const patientPendingConsultationFees = React.useMemo(
+    () => patientBillingContext?.pendingConsultationFees || [],
+    [patientBillingContext],
+  );
+  const patientBillDueAmount = React.useMemo(
+    () => patientBillingContext?.billDueAmount ?? patientBills.reduce((sum, bill) => sum + billEffectiveDueAmount(bill), 0),
+    [patientBillingContext, patientBills],
+  );
+  const patientPendingConsultationDueAmount = React.useMemo(
+    () => patientBillingContext?.pendingConsultationFeeAmount ?? patientPendingConsultationFees.reduce((sum, fee) => sum + Math.max(0, fee.dueAmount), 0),
+    [patientBillingContext, patientPendingConsultationFees],
+  );
   const itemCatalog = React.useMemo(() => {
     const items = new Map<string, CatalogItem>();
     bills.forEach((bill) => {
@@ -725,8 +756,8 @@ export default function BillsPage() {
     [consultationDraftHasLine, currentDraftTotals.total, form.appointmentId, form.patientId, consultationAppointmentId],
   );
   const selectedPatientTotalDue = React.useMemo(
-    () => patientBills.reduce((sum, bill) => sum + billEffectiveDueAmount(bill), 0),
-    [patientBills],
+    () => patientBillDueAmount + patientPendingConsultationDueAmount,
+    [patientBillDueAmount, patientPendingConsultationDueAmount],
   );
   const ledgerSummary = React.useMemo(() => {
     const visibleBills = bills;
@@ -757,6 +788,10 @@ export default function BillsPage() {
   const activePatientReceiptBill = selectedBill && billCountsAsSettled(selectedBill)
     ? selectedBill
     : preferredPatientReceiptViewBill;
+  const preferredPatientPendingConsultationFee = React.useMemo(
+    () => patientPendingConsultationFees[0] || null,
+    [patientPendingConsultationFees],
+  );
   const patientPrimaryAction = React.useMemo(() => {
     if (selectedBill && billCountsAsSettled(selectedBill)) {
       return { kind: "receipt" as const, bill: selectedBill };
@@ -770,8 +805,11 @@ export default function BillsPage() {
     if (preferredPatientReceiptViewBill) {
       return { kind: "receipt" as const, bill: preferredPatientReceiptViewBill };
     }
+    if (preferredPatientPendingConsultationFee) {
+      return { kind: "consultation-fee" as const, fee: preferredPatientPendingConsultationFee };
+    }
     return null;
-  }, [preferredPatientCollectPaymentBill, preferredPatientReceiptViewBill, selectedBill]);
+  }, [preferredPatientCollectPaymentBill, preferredPatientPendingConsultationFee, preferredPatientReceiptViewBill, selectedBill]);
 
   const loadBills = React.useCallback(async (override?: {
     patientId?: string;
@@ -814,6 +852,19 @@ export default function BillsPage() {
       setPatientScopedBills(rows);
     } catch {
       setPatientScopedBills([]);
+    }
+  }, [auth.accessToken, auth.tenantId]);
+
+  const loadPatientBillingContext = React.useCallback(async (patientId: string) => {
+    if (!auth.accessToken || !auth.tenantId || !patientId) {
+      setPatientBillingContext(null);
+      return;
+    }
+    try {
+      const context = await getPatientBillingContext(auth.accessToken, auth.tenantId, patientId);
+      setPatientBillingContext(context);
+    } catch {
+      setPatientBillingContext(null);
     }
   }, [auth.accessToken, auth.tenantId]);
 
@@ -922,11 +973,13 @@ export default function BillsPage() {
     if (!form.patientId) {
       setPaymentLedger([]);
       setPatientScopedBills([]);
+      setPatientBillingContext(null);
       return;
     }
     void loadPatientBills(form.patientId);
     void loadPatientPayments(form.patientId);
-  }, [form.patientId, loadPatientBills, loadPatientPayments]);
+    void loadPatientBillingContext(form.patientId);
+  }, [form.patientId, loadPatientBillingContext, loadPatientBills, loadPatientPayments]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1347,6 +1400,11 @@ export default function BillsPage() {
     setPaymentOpen(true);
   };
 
+  const openPendingConsultationFeeDialog = (fee: PendingConsultationFee) => {
+    setPendingConsultationFeeDialog(fee);
+    setPendingConsultationFeeOpen(true);
+  };
+
   const openRefundDialog = (bill: Bill | null = selectedBill) => {
     if (bill) {
       setSelectedBill(bill);
@@ -1412,6 +1470,34 @@ export default function BillsPage() {
       setSuccess("Payment collected successfully.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to create consultation fee bill.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitPendingConsultationFee = async (value: ConsultationFeeDialogValue) => {
+    if (!auth.accessToken || !auth.tenantId || !pendingConsultationFeeDialog) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const payment = await collectConsultationFee(auth.accessToken, auth.tenantId, {
+        appointmentId: pendingConsultationFeeDialog.appointmentId,
+        paymentMode: value.paymentMode,
+        referenceNumber: value.referenceNumber || null,
+        notes: value.notes || null,
+      });
+      await loadBills();
+      await loadPatientBills(form.patientId);
+      await loadPatientBillingContext(form.patientId);
+      await refreshSelectedBill(payment.billId);
+      setPendingConsultationFeeOpen(false);
+      setPendingConsultationFeeDialog(null);
+      setSuccess("Payment collected successfully.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to collect pending consultation fee.");
     } finally {
       setSaving(false);
     }
@@ -1661,6 +1747,30 @@ export default function BillsPage() {
         submitLabel="Collect Fee"
         onClose={() => setConsultationFeeOpen(false)}
         onSubmit={submitConsultationFee}
+      />
+    );
+  }
+  let pendingConsultationFeeDialogNode: React.ReactNode = null;
+  if (pendingConsultationFeeOpen && pendingConsultationFeeDialog) {
+    const appointmentLabel = formatPendingConsultationFeeSummary(pendingConsultationFeeDialog);
+    const doctorLabel = pendingConsultationFeeDialog.doctorName || "Doctor";
+    const patientLabel = selectedPatient ? `${selectedPatient.firstName} ${selectedPatient.lastName}`.trim() : "Patient";
+    const feeLabel = `Consultation fee: ${formatAmount(pendingConsultationFeeDialog.dueAmount)}`;
+    pendingConsultationFeeDialogNode = (
+      <ConsultationFeeDialog
+        open={pendingConsultationFeeOpen}
+        title="Collect pending consultation fee"
+        reasonLabel={pendingConsultationFeeDialog.paymentBypassReason || "Consultation Fee"}
+        appointmentLabel={appointmentLabel}
+        doctorLabel={doctorLabel}
+        patientLabel={patientLabel}
+        feeLabel={feeLabel}
+        submitLabel="Collect Fee"
+        onClose={() => {
+          setPendingConsultationFeeOpen(false);
+          setPendingConsultationFeeDialog(null);
+        }}
+        onSubmit={submitPendingConsultationFee}
       />
     );
   }
@@ -2152,6 +2262,10 @@ export default function BillsPage() {
                           <Typography variant="body2"><strong>Current bill:</strong> {preferredPatientPaymentBill.billNumber}</Typography>
                           <Typography variant="body2" color="text.secondary">{preferredPatientPaymentBill.billDate} • Due {formatAmount(billEffectiveDueAmount(preferredPatientPaymentBill))}</Typography>
                         </Box>
+                      ) : patientPendingConsultationFees.length > 0 ? (
+                        <Box sx={{ display: "grid", gap: 0.5 }}>
+                          <Typography variant="body2" color="text.secondary">Pending consultation fee is available for collection.</Typography>
+                        </Box>
                       ) : (
                         <Typography variant="body2" color="text.secondary">No previous bills found for this patient.</Typography>
                       )}
@@ -2173,6 +2287,14 @@ export default function BillsPage() {
                           >
                             View receipt
                           </Button>
+                        ) : patientPrimaryAction?.kind === "consultation-fee" ? (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => openPendingConsultationFeeDialog(patientPrimaryAction.fee)}
+                          >
+                            Collect pending fee
+                          </Button>
                         ) : null}
                         <Button
                           size="small"
@@ -2184,13 +2306,52 @@ export default function BillsPage() {
                             }
                             if (patientPrimaryAction?.kind === "receipt") {
                               void openBillReceiptPreview(patientPrimaryAction.bill, true);
+                              return;
+                            }
+                            if (patientPrimaryAction?.kind === "consultation-fee") {
+                              openPendingConsultationFeeDialog(patientPrimaryAction.fee);
                             }
                           }}
                           disabled={!patientPrimaryAction}
                         >
-                          {patientPrimaryAction?.kind === "collect" ? "Print last invoice" : "Print receipt"}
+                          {patientPrimaryAction?.kind === "collect"
+                            ? "Print last invoice"
+                            : patientPrimaryAction?.kind === "consultation-fee"
+                              ? "Collect pending fee"
+                              : "Print receipt"}
                         </Button>
                       </Stack>
+                      {patientPendingConsultationFees.length > 0 ? (
+                        <Box>
+                          <Typography variant="caption" color="text.secondary">Pending consultation fee</Typography>
+                          <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+                            {patientPendingConsultationFees.map((fee) => (
+                              <Card key={fee.appointmentId} variant="outlined" sx={{ borderRadius: 2 }}>
+                                <CardContent sx={{ p: 1 }}>
+                                  <Stack spacing={0.75}>
+                                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
+                                      <Typography variant="body2" sx={{ fontWeight: 700 }}>{fee.doctorName || "Doctor"}</Typography>
+                                      <Typography variant="body2" color="warning.main" sx={{ fontWeight: 700 }}>{formatAmount(fee.dueAmount)}</Typography>
+                                    </Box>
+                                    <Typography variant="body2" color="text.secondary">{formatPendingConsultationFeeSummary(fee)}</Typography>
+                                    <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                                      <Chip size="small" label={`Appointment: ${fee.appointmentId.slice(0, 8)}`} variant="outlined" sx={compactChipSx} />
+                                      <Chip size="small" label={`Due: ${formatAmount(fee.dueAmount)}`} color="warning" variant="outlined" sx={compactChipSx} />
+                                    </Stack>
+                                    <Button
+                                      size="small"
+                                      variant="outlined"
+                                      onClick={() => openPendingConsultationFeeDialog(fee)}
+                                    >
+                                      Collect pending consultation fee
+                                    </Button>
+                                  </Stack>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </Stack>
+                        </Box>
+                      ) : null}
                       {patientBills.length > 0 ? (
                         <Box>
                           <Typography variant="caption" color="text.secondary">Recent bills</Typography>
@@ -2495,6 +2656,7 @@ export default function BillsPage() {
       </Dialog>
 
       {consultationFeeDialog}
+      {pendingConsultationFeeDialogNode}
 
       <InvoicePrintDialog
         open={Boolean(invoicePreview || invoicePreviewLoading)}

@@ -7,10 +7,16 @@ import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.billing.service.model.PatientBillingContextRecord;
+import com.deepthoughtnet.clinic.billing.service.model.PendingConsultationFeeRecord;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -56,5 +62,43 @@ class BillingControllerTest {
         assertThatThrownBy(() -> controller.sendInvoiceEmail(billId))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Bill not found");
+    }
+
+    @Test
+    void patientContextReturnsPendingConsultationFeeSummary() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actor = UUID.randomUUID();
+        UUID patientId = UUID.randomUUID();
+        BillingService billingService = mock(BillingService.class);
+        NotificationActionService notificationActionService = mock(NotificationActionService.class);
+        BillingController controller = new BillingController(billingService, notificationActionService);
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actor, "sub", Set.of("BILLING_USER"), "BILLING_USER", "cid"));
+        when(billingService.patientContext(tenantId, patientId)).thenReturn(new PatientBillingContextRecord(
+                patientId,
+                "PAT-1",
+                "Test Patient",
+                new BigDecimal("0.00"),
+                new BigDecimal("800.00"),
+                new BigDecimal("800.00"),
+                0,
+                List.of(new PendingConsultationFeeRecord(
+                        UUID.randomUUID(),
+                        LocalDate.of(2026, 6, 11),
+                        LocalTime.of(10, 30),
+                        UUID.randomUUID(),
+                        "Dr Demo",
+                        new BigDecimal("800.00"),
+                        new BigDecimal("800.00"),
+                        "PATIENT_WILL_PAY_AFTER_CONSULTATION",
+                        OffsetDateTime.now()
+                ))
+        ));
+
+        var response = controller.patientContext(patientId);
+
+        assertThat(response.patientId()).isEqualTo(patientId.toString());
+        assertThat(response.totalDueAmount()).isEqualByComparingTo("800.00");
+        assertThat(response.pendingConsultationFees()).hasSize(1);
+        assertThat(response.pendingConsultationFees().get(0).doctorName()).isEqualTo("Dr Demo");
     }
 }

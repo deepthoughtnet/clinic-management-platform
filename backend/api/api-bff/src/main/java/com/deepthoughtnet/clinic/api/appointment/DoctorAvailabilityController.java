@@ -15,6 +15,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityR
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityUpsertCommand;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
@@ -148,12 +149,13 @@ public class DoctorAvailabilityController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(doctorUserId);
+        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
         return toUnavailabilityResponse(appointmentService.createUnavailability(
                 tenantId,
                 effectiveDoctorUserId,
                 new DoctorUnavailabilityUpsertCommand(
-                        request.startAt(),
-                        request.endAt(),
+                        request.startAt() == null ? null : request.startAt().atZone(bookingZone).toOffsetDateTime(),
+                        request.endAt() == null ? null : request.endAt().atZone(bookingZone).toOffsetDateTime(),
                         request.type(),
                         request.reason(),
                         request.active()

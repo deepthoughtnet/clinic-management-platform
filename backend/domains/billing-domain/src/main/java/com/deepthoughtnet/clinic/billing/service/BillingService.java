@@ -2,6 +2,8 @@ package com.deepthoughtnet.clinic.billing.service;
 
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria;
+import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.billing.db.BillEntity;
 import com.deepthoughtnet.clinic.billing.db.BillLineEntity;
 import com.deepthoughtnet.clinic.billing.db.BillLineRepository;
@@ -25,6 +27,8 @@ import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentCommand;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
+import com.deepthoughtnet.clinic.billing.service.model.PatientBillingContextRecord;
+import com.deepthoughtnet.clinic.billing.service.model.PendingConsultationFeeRecord;
 import com.deepthoughtnet.clinic.billing.service.model.ReceiptPdf;
 import com.deepthoughtnet.clinic.billing.service.model.ReceiptRecord;
 import com.deepthoughtnet.clinic.billing.service.model.RefundCommand;
@@ -53,6 +57,7 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -146,6 +151,92 @@ public class BillingService {
         requireTenant(tenantId);
         requireId(patientId, "patientId");
         return mapBills(tenantId, billRepository.findByTenantIdAndPatientIdOrderByBillDateDescCreatedAtDesc(tenantId, patientId));
+    }
+
+    @Transactional(readOnly = true)
+    public PatientBillingContextRecord patientContext(UUID tenantId, UUID patientId) {
+        requireTenant(tenantId);
+        requireId(patientId, "patientId");
+        PatientEntity patient = patientRepository.findByTenantIdAndId(tenantId, patientId)
+                .orElseThrow(() -> new IllegalArgumentException("Patient not found for tenant"));
+
+        List<BillRecord> bills = listByPatient(tenantId, patientId);
+        BigDecimal billDueAmount = bills.stream()
+                .map(BillRecord::dueAmount)
+                .map(this::normalizeMoney)
+                .reduce(ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
+        if (billDueAmount.compareTo(ZERO) < 0) {
+            billDueAmount = ZERO;
+        }
+
+        List<PendingConsultationFeeRecord> pendingFees = new ArrayList<>();
+        List<AppointmentRecord> appointments = appointmentService.search(tenantId, new AppointmentSearchCriteria(null, patientId, null, null, null));
+        for (AppointmentRecord appointment : appointments) {
+            if (appointment.paymentBypassedAt() == null) {
+                continue;
+            }
+            if (appointment.status() == AppointmentStatus.CANCELLED
+                    || appointment.status() == AppointmentStatus.NO_SHOW) {
+                continue;
+            }
+            if (appointment.doctorUserId() == null) {
+                continue;
+            }
+            DoctorProfileRecord doctorProfile = doctorProfileService.findByDoctorUserId(tenantId, appointment.doctorUserId()).orElse(null);
+            if (doctorProfile == null || doctorProfile.consultationFee() == null || doctorProfile.consultationFee().compareTo(ZERO) <= 0) {
+                continue;
+            }
+            boolean alreadyInvoiced = bills.stream()
+                    .filter(bill -> appointment.id().equals(bill.appointmentId()))
+                    .filter(bill -> bill.status() != BillStatus.CANCELLED)
+                    .anyMatch(bill -> bill.lines().stream().anyMatch(line -> line.itemType() == BillItemType.CONSULTATION));
+            if (alreadyInvoiced) {
+                continue;
+            }
+            BigDecimal consultationFee = normalizeMoney(doctorProfile.consultationFee());
+            if (consultationFee.compareTo(ZERO) <= 0) {
+                continue;
+            }
+            pendingFees.add(new PendingConsultationFeeRecord(
+                    appointment.id(),
+                    appointment.appointmentDate(),
+                    appointment.appointmentTime(),
+                    appointment.doctorUserId(),
+                    appointment.doctorName(),
+                    consultationFee,
+                    consultationFee,
+                    appointment.paymentBypassReason(),
+                    appointment.paymentBypassedAt()
+            ));
+        }
+
+        pendingFees.sort(
+                Comparator.comparing(PendingConsultationFeeRecord::appointmentDate, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(PendingConsultationFeeRecord::appointmentTime, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .reversed()
+        );
+
+        BigDecimal pendingConsultationFeeAmount = pendingFees.stream()
+                .map(PendingConsultationFeeRecord::dueAmount)
+                .map(this::normalizeMoney)
+                .reduce(ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
+        if (pendingConsultationFeeAmount.compareTo(ZERO) < 0) {
+            pendingConsultationFeeAmount = ZERO;
+        }
+
+        BigDecimal totalDueAmount = billDueAmount.add(pendingConsultationFeeAmount).setScale(2, RoundingMode.HALF_UP);
+        return new PatientBillingContextRecord(
+                patient.getId(),
+                patient.getPatientNumber(),
+                patient.getFirstName() + " " + patient.getLastName(),
+                billDueAmount,
+                pendingConsultationFeeAmount,
+                totalDueAmount.compareTo(ZERO) < 0 ? ZERO : totalDueAmount,
+                bills.size(),
+                List.copyOf(pendingFees)
+        );
     }
 
     @Transactional

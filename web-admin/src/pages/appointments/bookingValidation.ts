@@ -3,7 +3,7 @@ import type { DoctorAvailabilitySlot } from "../../api/clinicApi";
 export const BOOKING_TIME_GRACE_MINUTES = 15;
 
 function resolveTimeZone(timeZone?: string | null) {
-  return timeZone && timeZone.trim() ? timeZone.trim() : "UTC";
+  return timeZone && timeZone.trim() ? timeZone.trim() : "Asia/Kolkata";
 }
 
 function currentClinicParts(timeZone?: string | null) {
@@ -42,6 +42,10 @@ function currentClinicParts(timeZone?: string | null) {
       minutes: fallback.getUTCHours() * 60 + fallback.getUTCMinutes(),
     };
   }
+}
+
+export function getClinicClockParts(timeZone?: string | null) {
+  return currentClinicParts(timeZone);
 }
 
 export function getClinicDateKey(timeZone?: string | null) {

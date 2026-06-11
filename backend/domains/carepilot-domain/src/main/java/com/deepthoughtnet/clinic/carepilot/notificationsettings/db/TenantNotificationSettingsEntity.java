@@ -137,7 +137,7 @@ public class TenantNotificationSettingsEntity {
         row.quietHoursEnabled = false;
         row.quietHoursStart = null;
         row.quietHoursEnd = null;
-        row.timezone = "UTC";
+        row.timezone = "Asia/Kolkata";
         row.defaultChannel = NotificationChannelPreference.EMAIL;
         row.fallbackChannel = NotificationChannelPreference.SMS;
         row.allowMarketingMessages = false;

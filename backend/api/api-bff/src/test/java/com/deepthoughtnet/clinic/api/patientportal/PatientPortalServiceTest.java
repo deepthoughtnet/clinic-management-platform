@@ -27,11 +27,11 @@ import com.deepthoughtnet.clinic.billing.service.model.BillLineRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
 import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
-import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
 import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
@@ -50,6 +50,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -72,7 +73,7 @@ class PatientPortalServiceTest {
     private TenantUserManagementService tenantUserManagementService;
     private DoctorProfileService doctorProfileService;
     private PatientService patientService;
-    private TenantNotificationSettingsService notificationSettingsService;
+    private ClinicTimeZoneResolver clinicTimeZoneResolver;
     private AppointmentService appointmentService;
     private PrescriptionService prescriptionService;
     private BillingService billingService;
@@ -86,7 +87,7 @@ class PatientPortalServiceTest {
         tenantUserManagementService = mock(TenantUserManagementService.class);
         doctorProfileService = mock(DoctorProfileService.class);
         patientService = mock(PatientService.class);
-        notificationSettingsService = mock(TenantNotificationSettingsService.class);
+        clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
         appointmentService = mock(AppointmentService.class);
         prescriptionService = mock(PrescriptionService.class);
         billingService = mock(BillingService.class);
@@ -97,12 +98,12 @@ class PatientPortalServiceTest {
                 tenantUserManagementService,
                 doctorProfileService,
                 patientService,
-                notificationSettingsService,
+                clinicTimeZoneResolver,
                 appointmentService,
                 prescriptionService,
                 billingService
         );
-        when(notificationSettingsService.findByTenantId(any())).thenReturn(Optional.empty());
+        when(clinicTimeZoneResolver.resolve(any())).thenReturn(ZoneId.of("Asia/Kolkata"));
         RequestContextHolder.set(new RequestContext(new TenantId(TENANT_ID), APP_USER_ID, "patient-sub", Set.of("PATIENT"), "PATIENT", "corr-1"));
     }
 

@@ -1,15 +1,15 @@
 package com.deepthoughtnet.clinic.api.appointment.dto;
 
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityType;
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 public record DoctorUnavailabilityRequest(
         @NotNull
-        OffsetDateTime startAt,
+        LocalDateTime startAt,
         @NotNull
-        OffsetDateTime endAt,
+        LocalDateTime endAt,
         @NotNull
         DoctorUnavailabilityType type,
         @Size(max = 512)

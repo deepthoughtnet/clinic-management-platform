@@ -5,6 +5,8 @@ import com.deepthoughtnet.clinic.api.billing.dto.BillLineResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.ConsultationFeePaymentRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.BillRequest;
 import com.deepthoughtnet.clinic.api.billing.dto.BillResponse;
+import com.deepthoughtnet.clinic.api.billing.dto.PatientBillingContextResponse;
+import com.deepthoughtnet.clinic.api.billing.dto.PendingConsultationFeeResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.InvoiceEmailSendResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.PaymentLedgerResponse;
 import com.deepthoughtnet.clinic.api.billing.dto.PaymentRequest;
@@ -79,6 +81,23 @@ public class BillingController {
         BillStatus billStatus = parseStatus(status);
         PaymentMode mode = parsePaymentMode(paymentMode);
         return billingService.list(tenantId, new BillingSearchCriteria(patientId, billStatus, fromDate, toDate, mode, appointmentId, normalizeText(search))).stream().map(this::toResponse).toList();
+    }
+
+    @GetMapping("/patient-context")
+    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect')")
+    public PatientBillingContextResponse patientContext(@RequestParam UUID patientId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        var context = billingService.patientContext(tenantId, patientId);
+        return new PatientBillingContextResponse(
+                context.patientId() == null ? null : context.patientId().toString(),
+                context.patientNumber(),
+                context.patientName(),
+                context.billDueAmount(),
+                context.pendingConsultationFeeAmount(),
+                context.totalDueAmount(),
+                context.billCount(),
+                context.pendingConsultationFees().stream().map(this::toResponse).toList()
+        );
     }
 
     @PostMapping
@@ -283,6 +302,20 @@ public class BillingController {
                         line.dispensationReferenceId() == null ? null : line.dispensationReferenceId().toString(),
                         line.sortOrder()
                 )).toList()
+        );
+    }
+
+    private PendingConsultationFeeResponse toResponse(com.deepthoughtnet.clinic.billing.service.model.PendingConsultationFeeRecord record) {
+        return new PendingConsultationFeeResponse(
+                record.appointmentId() == null ? null : record.appointmentId().toString(),
+                record.appointmentDate(),
+                record.appointmentTime(),
+                record.doctorUserId() == null ? null : record.doctorUserId().toString(),
+                record.doctorName(),
+                record.consultationFee(),
+                record.dueAmount(),
+                record.paymentBypassReason(),
+                record.paymentBypassedAt()
         );
     }
 

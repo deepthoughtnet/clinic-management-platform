@@ -42,7 +42,6 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Collection;
@@ -73,6 +72,7 @@ public class AppointmentService {
     private static final LocalTime DEFAULT_CALENDAR_END = LocalTime.of(17, 0);
     private static final int DEFAULT_SLOT_DURATION_MINUTES = 15;
     private static final int BOOKING_TIME_GRACE_MINUTES = 15;
+    private static final ZoneId DEFAULT_BOOKING_ZONE = ZoneId.of("Asia/Kolkata");
     private static final DateTimeFormatter APPOINTMENT_REFERENCE_DATE = DateTimeFormatter.BASIC_ISO_DATE;
     private final AppointmentRepository appointmentRepository;
     private final DoctorAvailabilityRepository doctorAvailabilityRepository;
@@ -118,7 +118,7 @@ public class AppointmentService {
 
     @Transactional(readOnly = true)
     public List<DoctorAvailabilitySlotRecord> listSlots(UUID tenantId, UUID doctorUserId, LocalDate appointmentDate) {
-        return listSlots(tenantId, doctorUserId, appointmentDate, ZoneOffset.UTC);
+        return listSlots(tenantId, doctorUserId, appointmentDate, DEFAULT_BOOKING_ZONE);
     }
 
     @Transactional(readOnly = true)
@@ -542,7 +542,7 @@ public class AppointmentService {
 
     @Transactional(readOnly = true)
     public List<AppointmentRecord> listToday(UUID tenantId) {
-        return listToday(tenantId, ZoneOffset.UTC);
+        return listToday(tenantId, DEFAULT_BOOKING_ZONE);
     }
 
     @Transactional(readOnly = true)
@@ -556,7 +556,7 @@ public class AppointmentService {
 
     @Transactional(readOnly = true)
     public List<AppointmentRecord> listQueueToday(UUID tenantId, UUID doctorUserId) {
-        return listQueueToday(tenantId, doctorUserId, ZoneOffset.UTC);
+        return listQueueToday(tenantId, doctorUserId, DEFAULT_BOOKING_ZONE);
     }
 
     @Transactional(readOnly = true)
@@ -588,7 +588,7 @@ public class AppointmentService {
 
     @Transactional
     public AppointmentRecord createScheduled(UUID tenantId, AppointmentUpsertCommand command, UUID actorAppUserId, boolean allowOverbooking) {
-        return createScheduled(tenantId, command, actorAppUserId, allowOverbooking, ZoneOffset.UTC);
+        return createScheduled(tenantId, command, actorAppUserId, allowOverbooking, DEFAULT_BOOKING_ZONE);
     }
 
     @Transactional
@@ -634,7 +634,7 @@ public class AppointmentService {
             AppointmentPriority priority,
             boolean allowOverbooking
     ) {
-        validateScheduledBookingRequest(tenantId, doctorUserId, appointmentDate, appointmentTime, reason, priority, allowOverbooking, ZoneOffset.UTC);
+        validateScheduledBookingRequest(tenantId, doctorUserId, appointmentDate, appointmentTime, reason, priority, allowOverbooking, DEFAULT_BOOKING_ZONE);
     }
 
     @Transactional(readOnly = true)
@@ -671,7 +671,7 @@ public class AppointmentService {
 
     @Transactional
     public AppointmentRecord createWalkIn(UUID tenantId, WalkInAppointmentCommand command, UUID actorAppUserId, boolean allowOverbooking) {
-        return createWalkIn(tenantId, command, actorAppUserId, allowOverbooking, ZoneOffset.UTC);
+        return createWalkIn(tenantId, command, actorAppUserId, allowOverbooking, DEFAULT_BOOKING_ZONE);
     }
 
     @Transactional
@@ -785,7 +785,7 @@ public class AppointmentService {
 
     @Transactional
     public AppointmentRecord reschedule(UUID tenantId, UUID id, AppointmentRescheduleCommand command, UUID actorAppUserId, boolean allowOverbooking) {
-        return reschedule(tenantId, id, command, actorAppUserId, allowOverbooking, ZoneOffset.UTC);
+        return reschedule(tenantId, id, command, actorAppUserId, allowOverbooking, DEFAULT_BOOKING_ZONE);
     }
 
     @Transactional
@@ -927,7 +927,7 @@ public class AppointmentService {
 
     @Transactional
     public AppointmentRecord convertWaitlistToAppointment(UUID tenantId, UUID waitlistId, AppointmentUpsertCommand command, UUID actorAppUserId, boolean allowOverbooking) {
-        return convertWaitlistToAppointment(tenantId, waitlistId, command, actorAppUserId, allowOverbooking, ZoneOffset.UTC);
+        return convertWaitlistToAppointment(tenantId, waitlistId, command, actorAppUserId, allowOverbooking, DEFAULT_BOOKING_ZONE);
     }
 
     @Transactional
@@ -954,7 +954,7 @@ public class AppointmentService {
 
     @Transactional
     public List<AppointmentRecord> reorderQueueToday(UUID tenantId, UUID doctorUserId, List<UUID> orderedAppointmentIds, UUID actorAppUserId) {
-        return reorderQueueToday(tenantId, doctorUserId, orderedAppointmentIds, actorAppUserId, ZoneOffset.UTC);
+        return reorderQueueToday(tenantId, doctorUserId, orderedAppointmentIds, actorAppUserId, DEFAULT_BOOKING_ZONE);
     }
 
     @Transactional
@@ -1002,7 +1002,7 @@ public class AppointmentService {
                 "Reordered doctor queue",
                 "{\"doctorUserId\":\"" + doctorUserId + "\"}"
         ));
-        return listQueueToday(tenantId, doctorUserId, ZoneOffset.UTC);
+        return listQueueToday(tenantId, doctorUserId, DEFAULT_BOOKING_ZONE);
     }
 
     private List<AppointmentRecord> mapAppointments(UUID tenantId, List<AppointmentEntity> appointments) {
@@ -1263,7 +1263,7 @@ public class AppointmentService {
     }
 
     private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking) {
-        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, ZoneOffset.UTC);
+        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, DEFAULT_BOOKING_ZONE);
     }
 
     private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking, ZoneId bookingZone) {
@@ -1329,7 +1329,7 @@ public class AppointmentService {
     }
 
     private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime) {
-        validateNotPast(appointmentDate, appointmentTime, ZoneOffset.UTC);
+        validateNotPast(appointmentDate, appointmentTime, DEFAULT_BOOKING_ZONE);
     }
 
     private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime, ZoneId bookingZone) {
@@ -1344,7 +1344,7 @@ public class AppointmentService {
     }
 
     private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime, DoctorAvailabilitySlotRecord matchingSlot) {
-        validateNotPast(appointmentDate, appointmentTime, matchingSlot, ZoneOffset.UTC);
+        validateNotPast(appointmentDate, appointmentTime, matchingSlot, DEFAULT_BOOKING_ZONE);
     }
 
     private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime, DoctorAvailabilitySlotRecord matchingSlot, ZoneId bookingZone) {
@@ -1363,7 +1363,7 @@ public class AppointmentService {
     }
 
     private boolean hasBookableStandardSlot(LocalDate appointmentDate, List<DoctorAvailabilitySlotRecord> slots) {
-        return hasBookableStandardSlot(appointmentDate, slots, ZoneOffset.UTC);
+        return hasBookableStandardSlot(appointmentDate, slots, DEFAULT_BOOKING_ZONE);
     }
 
     private boolean hasBookableStandardSlot(LocalDate appointmentDate, List<DoctorAvailabilitySlotRecord> slots, ZoneId bookingZone) {
@@ -1549,11 +1549,11 @@ public class AppointmentService {
     }
 
     private ZoneId resolveBookingZone(ZoneId bookingZone) {
-        return bookingZone == null ? ZoneOffset.UTC : bookingZone;
+        return bookingZone == null ? DEFAULT_BOOKING_ZONE : bookingZone;
     }
 
     private LocalDate currentDate() {
-        return currentDate(ZoneOffset.UTC);
+        return currentDate(DEFAULT_BOOKING_ZONE);
     }
 
     private LocalDate currentDate(ZoneId bookingZone) {
@@ -1561,7 +1561,7 @@ public class AppointmentService {
     }
 
     private LocalTime currentTime() {
-        return currentTime(ZoneOffset.UTC);
+        return currentTime(DEFAULT_BOOKING_ZONE);
     }
 
     private LocalTime currentTime(ZoneId bookingZone) {

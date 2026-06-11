@@ -35,6 +35,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
 import java.util.List;
@@ -50,11 +51,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class AppointmentServiceSlotsTest {
+    private static final ZoneId CLINIC_ZONE = ZoneId.of("Asia/Kolkata");
     private static final UUID TENANT_ID = UUID.randomUUID();
     private static final UUID DOCTOR_ID = UUID.randomUUID();
     private static final UUID ACTOR_ID = UUID.randomUUID();
     private static final UUID PATIENT_ID = UUID.randomUUID();
-    private static final LocalDate APPOINTMENT_DATE = LocalDate.now().with(TemporalAdjusters.next(DayOfWeek.MONDAY));
+    private static final LocalDate APPOINTMENT_DATE = LocalDate.now(CLINIC_ZONE).with(TemporalAdjusters.next(DayOfWeek.MONDAY));
 
     @Mock
     private AppointmentRepository appointmentRepository;
@@ -201,8 +203,8 @@ class AppointmentServiceSlotsTest {
         DoctorAvailabilityEntity availability = availability();
         DoctorUnavailabilityEntity leave = DoctorUnavailabilityEntity.create(TENANT_ID, DOCTOR_ID);
         leave.update(
-                APPOINTMENT_DATE.atTime(10, 0).atOffset(OffsetDateTime.now().getOffset()),
-                APPOINTMENT_DATE.atTime(10, 20).atOffset(OffsetDateTime.now().getOffset()),
+                APPOINTMENT_DATE.atTime(10, 0).atZone(CLINIC_ZONE).toOffsetDateTime(),
+                APPOINTMENT_DATE.atTime(10, 20).atZone(CLINIC_ZONE).toOffsetDateTime(),
                 DoctorUnavailabilityType.LEAVE,
                 "Personal leave",
                 true
@@ -278,12 +280,12 @@ class AppointmentServiceSlotsTest {
 
     @Test
     void createScheduledAllowsNearCurrentBookingWithinGraceWindow() {
-        LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
+        LocalTime now = LocalTime.now(CLINIC_ZONE).truncatedTo(ChronoUnit.MINUTES);
         Assumptions.assumeTrue(now.isAfter(LocalTime.of(1, 0)) && now.isBefore(LocalTime.of(22, 0)));
 
         service.createScheduled(
                 TENANT_ID,
-                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, LocalDate.now(), now.minusMinutes(10), "Near current", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, LocalDate.now(CLINIC_ZONE), now.minusMinutes(10), "Near current", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
                 ACTOR_ID,
                 false
         );
@@ -291,12 +293,12 @@ class AppointmentServiceSlotsTest {
 
     @Test
     void createScheduledRejectsClearlyPastBookingOutsideGraceWindow() {
-        LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
+        LocalTime now = LocalTime.now(CLINIC_ZONE).truncatedTo(ChronoUnit.MINUTES);
         Assumptions.assumeTrue(now.isAfter(LocalTime.of(1, 30)) && now.isBefore(LocalTime.of(22, 30)));
 
         assertThatThrownBy(() -> service.createScheduled(
                 TENANT_ID,
-                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, LocalDate.now(), now.minusMinutes(30), "Past visit", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, LocalDate.now(CLINIC_ZONE), now.minusMinutes(30), "Past visit", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
                 ACTOR_ID,
                 false
         )).isInstanceOf(IllegalArgumentException.class)

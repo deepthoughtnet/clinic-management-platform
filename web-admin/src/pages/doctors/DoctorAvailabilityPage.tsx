@@ -36,6 +36,7 @@ import {
   createDoctorUnavailability,
   createWaitlist,
   deactivateDoctorUnavailability,
+  getAdminNotificationSettings,
   getClinicUsers,
   getDoctorAvailability,
   getDoctorSlots,
@@ -55,7 +56,7 @@ import {
   type DoctorUnavailabilityType,
   type WaitlistStatus,
 } from "../../api/clinicApi";
-import { isBookingTimePast, isSlotExpired } from "../appointments/bookingValidation";
+import { formatClinicClockLabel, getClinicClockParts, getClinicDateKey, isBookingTimePast, isSlotExpired } from "../appointments/bookingValidation";
 
 const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"] as const;
 const WEEKDAY_DAYS = DAYS.slice(0, 5);
@@ -133,8 +134,8 @@ const EMPTY_AVAILABILITY_FORM: DoctorAvailabilityInput = {
 };
 
 const EMPTY_UNAVAILABILITY_FORM: DoctorUnavailabilityInput = {
-  startAt: `${new Date().toISOString().slice(0, 10)}T13:00:00Z`,
-  endAt: `${new Date().toISOString().slice(0, 10)}T14:00:00Z`,
+  startAt: `${getClinicDateKey("Asia/Kolkata")}T13:00:00`,
+  endAt: `${getClinicDateKey("Asia/Kolkata")}T14:00:00`,
   type: "LEAVE",
   reason: null,
   active: true,
@@ -192,11 +193,11 @@ function bucketForTime(time: string | null | undefined): TimeBucketKey {
 }
 
 function mondayFirstDayIndex(date: Date) {
-  return (date.getDay() + 6) % 7;
+  return (date.getUTCDay() + 6) % 7;
 }
 
-function currentDayKey() {
-  return DAYS[mondayFirstDayIndex(new Date())];
+function currentDayKey(dateKey: string) {
+  return DAYS[mondayFirstDayIndex(new Date(`${dateKey}T00:00:00Z`))];
 }
 
 function toIsoDate(d: Date) {
@@ -204,15 +205,15 @@ function toIsoDate(d: Date) {
 }
 
 function addDays(date: string, days: number) {
-  const d = new Date(`${date}T00:00:00`);
-  d.setDate(d.getDate() + days);
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
   return toIsoDate(d);
 }
 
 function weekDates(date: string) {
-  const d = new Date(`${date}T00:00:00`);
-  const day = (d.getDay() + 6) % 7;
-  d.setDate(d.getDate() - day);
+  const d = new Date(`${date}T00:00:00Z`);
+  const day = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - day);
   const start = toIsoDate(d);
   return Array.from({ length: 7 }, (_, index) => addDays(start, index));
 }
@@ -298,10 +299,11 @@ function sameTimeSlot(slot: DoctorAvailabilitySlot, appointment: Appointment) {
 
 function compactDateLabel(date: string) {
   return new Intl.DateTimeFormat(undefined, {
+    timeZone: "UTC",
     weekday: "long",
     month: "short",
     day: "numeric",
-  }).format(new Date(`${date}T00:00:00`));
+  }).format(new Date(`${date}T00:00:00Z`));
 }
 
 function localDateKey(date = new Date()) {
@@ -311,16 +313,16 @@ function localDateKey(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-function isPastDateTime(date: string, time: string | null | undefined) {
-  return isBookingTimePast(date, time);
+function isPastDateTime(date: string, time: string | null | undefined, timeZone?: string | null) {
+  return isBookingTimePast(date, time, undefined, timeZone);
 }
 
-function isPastSlot(date: string, slot: DoctorAvailabilitySlot) {
-  return isSlotExpired(date, slot);
+function isPastSlot(date: string, slot: DoctorAvailabilitySlot, timeZone?: string | null) {
+  return isSlotExpired(date, slot, undefined, timeZone);
 }
 
-function hidePastSlot(date: string, slot: DoctorAvailabilitySlot, appointment: Appointment | null) {
-  return isPastSlot(date, slot) && !appointment && slot.bookedCount <= 0;
+function hidePastSlot(date: string, slot: DoctorAvailabilitySlot, appointment: Appointment | null, timeZone?: string | null) {
+  return isPastSlot(date, slot, timeZone) && !appointment && slot.bookedCount <= 0;
 }
 
 function timeLabel(time: string) {
@@ -374,7 +376,7 @@ export default function DoctorAvailabilityPage() {
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [selectedDoctorId, setSelectedDoctorId] = React.useState("");
   const [viewMode, setViewMode] = React.useState<ViewMode>("day");
-  const [date, setDate] = React.useState(localDateKey());
+  const [date, setDate] = React.useState(() => getClinicDateKey("Asia/Kolkata"));
 
   const [availabilityRows, setAvailabilityRows] = React.useState<DoctorAvailability[]>([]);
   const [slotsByKey, setSlotsByKey] = React.useState<Record<string, DoctorAvailabilitySlot[]>>({});
@@ -399,6 +401,8 @@ export default function DoctorAvailabilityPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const [clinicTimeZone, setClinicTimeZone] = React.useState("Asia/Kolkata");
+  const [clockTick, setClockTick] = React.useState(0);
 
   const doctorOptions = React.useMemo<DoctorOption[]>(
     () =>
@@ -438,6 +442,7 @@ export default function DoctorAvailabilityPage() {
     }
     return selectedDoctorId ? availabilityRows.filter((row) => row.doctorUserId === selectedDoctorId) : availabilityRows;
   }, [auth.appUserId, availabilityRows, isDoctor, selectedDoctorId]);
+  const clinicClock = React.useMemo(() => getClinicClockParts(clinicTimeZone), [clinicTimeZone, clockTick]);
   const calendarGroups = React.useMemo(() => {
     return visibleDates.map((currentDate) => {
       const rows: CalendarSlotRow[] = effectiveDoctorIds.flatMap((doctorUserId) => {
@@ -453,7 +458,7 @@ export default function DoctorAvailabilityPage() {
           appointment: appointments.find((appointment) => appointment.id === slot.appointmentId)
             || appointments.find((appointment) => sameTimeSlot(slot, appointment))
             || null,
-        })).filter((row) => !hidePastSlot(row.date, row.slot, row.appointment));
+        })).filter((row) => !hidePastSlot(row.date, row.slot, row.appointment, clinicTimeZone));
       }).sort((left, right) => {
         const dayDelta = left.date.localeCompare(right.date);
         if (dayDelta !== 0) return dayDelta;
@@ -515,7 +520,7 @@ export default function DoctorAvailabilityPage() {
       });
   }, [doctorMap, sessionSearch, sessionStatusFilter, visibleAvailabilityRows]);
   const sessionBuckets = React.useMemo<DaySessionBucket[]>(() => {
-    const today = currentDayKey();
+    const today = currentDayKey(clinicClock.dateKey);
     return DAYS.map((dayOfWeek) => {
       const dayRows = filteredAvailabilityRows.filter((row) => row.dayOfWeek === dayOfWeek);
       const groupedByDoctor = new Map<string, DoctorSessionGroup>();
@@ -559,7 +564,7 @@ export default function DoctorAvailabilityPage() {
         expanded,
       };
     }).filter((group) => group.sessionsCount > 0);
-  }, [doctorMap, filteredAvailabilityRows, sessionOverrides]);
+  }, [clinicClock.dateKey, doctorMap, filteredAvailabilityRows, sessionOverrides]);
   const calendarGroupsWithBuckets = React.useMemo(() => {
     return calendarGroups.map((group) => {
       const rowsByBucket = new Map<TimeBucketKey, CalendarSlotRow[]>(
@@ -588,7 +593,7 @@ export default function DoctorAvailabilityPage() {
             inConsultationCount: rows.filter((row) => row.appointment?.status === "IN_CONSULTATION").length,
           };
           const bucketHasBookings = rows.some((row) => Boolean(row.appointment) || row.slot.bookedCount > 0 || row.slot.status === "PARTIALLY_BOOKED" || row.slot.status === "FULL");
-          const defaultExpanded = Boolean(group.date === date && bucket.key === bucketForTime(new Date().toTimeString().slice(0, 5))) || bucketHasBookings || bucket.key === firstBucketKey;
+          const defaultExpanded = Boolean(group.date === date && bucket.key === bucketForTime(clinicClock.timeKey)) || bucketHasBookings || bucket.key === firstBucketKey;
           const expanded = calendarOverrides[`${group.date}:${bucket.key}`] ?? defaultExpanded;
           return {
             ...bucket,
@@ -601,7 +606,7 @@ export default function DoctorAvailabilityPage() {
         }).filter((bucket) => bucket.rows.length > 0 || bucket.key === "other" && hasBookings),
       };
     });
-  }, [calendarGroups, calendarOverrides, date]);
+  }, [calendarGroups, calendarOverrides, clinicClock.minutes, date]);
 
   const loadStatic = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -674,6 +679,35 @@ export default function DoctorAvailabilityPage() {
   React.useEffect(() => {
     void loadStatic();
   }, [loadStatic]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadClinicTimeZone() {
+      if (!auth.accessToken || !auth.tenantId) {
+        setClinicTimeZone("Asia/Kolkata");
+        return;
+      }
+      try {
+        const settings = await getAdminNotificationSettings(auth.accessToken, auth.tenantId);
+        if (!cancelled) {
+          setClinicTimeZone(settings.timezone && settings.timezone.trim() ? settings.timezone.trim() : "Asia/Kolkata");
+        }
+      } catch {
+        if (!cancelled) {
+          setClinicTimeZone("Asia/Kolkata");
+        }
+      }
+    }
+    void loadClinicTimeZone();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken, auth.tenantId]);
+
+  React.useEffect(() => {
+    const handle = window.setInterval(() => setClockTick((value) => value + 1), 30_000);
+    return () => window.clearInterval(handle);
+  }, []);
 
   React.useEffect(() => {
     void loadDynamic();
@@ -787,7 +821,7 @@ export default function DoctorAvailabilityPage() {
   const selectedSlotBookingReason = React.useMemo(() => {
     if (!selectedSlot) return "Select an available slot";
     if (!auth.accessToken || !auth.tenantId) return "Clinic context is unavailable";
-    if (isPastSlot(selectedSlot.date, selectedSlot.slot)) return "Selected time has already passed. Choose a current or future slot.";
+    if (isPastSlot(selectedSlot.date, selectedSlot.slot, clinicTimeZone)) return "Selected time has already passed. Choose a current or future slot.";
     if (selectedSlot.slot.status === "BREAK" || selectedSlot.slot.status === "LEAVE" || selectedSlot.slot.status === "UNAVAILABLE" || selectedSlot.slot.status === "CONFLICTED") {
       return "Doctor is unavailable during this time.";
     }
@@ -824,7 +858,8 @@ export default function DoctorAvailabilityPage() {
             Operational scheduling console for availability, booking visibility, waitlist handling, and leave / block management.
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1} flexWrap="wrap">
+        <Stack direction="row" spacing={1} flexWrap="wrap" alignItems="center">
+          <Chip size="small" label={formatClinicClockLabel(clinicTimeZone)} variant="outlined" sx={COMPACT_CHIP_SX} />
           <Button variant="outlined" onClick={() => navigate("/appointments")}>Open appointments</Button>
           <Button variant="outlined" onClick={() => navigate("/appointments/day-board")}>Open day board</Button>
           <Button variant="contained" onClick={() => navigate("/queue")}>Open queue</Button>
@@ -995,7 +1030,7 @@ export default function DoctorAvailabilityPage() {
                           type="datetime-local"
                           label="Start"
                           value={unavailabilityForm.startAt.slice(0, 16)}
-                          onChange={(e) => setUnavailabilityForm((current) => ({ ...current, startAt: `${e.target.value}:00Z` }))}
+                          onChange={(e) => setUnavailabilityForm((current) => ({ ...current, startAt: e.target.value ? `${e.target.value}:00` : "" }))}
                           InputLabelProps={{ shrink: true }}
                         />
                         <TextField
@@ -1004,7 +1039,7 @@ export default function DoctorAvailabilityPage() {
                           type="datetime-local"
                           label="End"
                           value={unavailabilityForm.endAt.slice(0, 16)}
-                          onChange={(e) => setUnavailabilityForm((current) => ({ ...current, endAt: `${e.target.value}:00Z` }))}
+                          onChange={(e) => setUnavailabilityForm((current) => ({ ...current, endAt: e.target.value ? `${e.target.value}:00` : "" }))}
                           InputLabelProps={{ shrink: true }}
                         />
                         <FormControl fullWidth size="small">
@@ -1024,15 +1059,15 @@ export default function DoctorAvailabilityPage() {
                         <TextField size="small" fullWidth label="Reason" value={unavailabilityForm.reason || ""} onChange={(e) => setUnavailabilityForm((current) => ({ ...current, reason: e.target.value || null }))} />
                         <Stack direction="row" spacing={1} flexWrap="wrap">
                           <Button
-                            variant="outlined"
-                            onClick={() => setUnavailabilityForm((current) => {
-                              const day = (current.startAt || `${localDateKey()}T00:00:00Z`).slice(0, 10);
+                          variant="outlined"
+                          onClick={() => setUnavailabilityForm((current) => {
+                              const day = (current.startAt || `${getClinicDateKey(clinicTimeZone)}T00:00:00`).slice(0, 10);
                               const end = new Date(`${day}T00:00:00Z`);
                               end.setUTCDate(end.getUTCDate() + 1);
                               return {
                                 ...current,
-                                startAt: `${day}T00:00:00Z`,
-                                endAt: `${end.toISOString().slice(0, 10)}T00:00:00Z`,
+                                startAt: `${day}T00:00:00`,
+                                endAt: `${end.toISOString().slice(0, 10)}T00:00:00`,
                               };
                             })}
                           >
@@ -1043,8 +1078,8 @@ export default function DoctorAvailabilityPage() {
                               variant="outlined"
                               onClick={() => setUnavailabilityForm((current) => ({
                                 ...current,
-                                startAt: `${selectedSlot.date}T${selectedSlot.slot.slotTime}:00Z`,
-                                endAt: `${selectedSlot.date}T${selectedSlot.slot.slotEndTime}:00Z`,
+                                startAt: `${selectedSlot.date}T${selectedSlot.slot.slotTime}:00`,
+                                endAt: `${selectedSlot.date}T${selectedSlot.slot.slotEndTime}:00`,
                               }))}
                             >
                               Use selected slot
@@ -1134,7 +1169,7 @@ export default function DoctorAvailabilityPage() {
                     })}>
                       Collapse all
                     </Button>
-                    <Button size="small" variant="outlined" onClick={() => setDate(toIsoDate(new Date()))}>
+                    <Button size="small" variant="outlined" onClick={() => setDate(clinicClock.dateKey)}>
                       Jump to now
                     </Button>
                   </Stack>
@@ -1613,7 +1648,7 @@ export default function DoctorAvailabilityPage() {
                         <Button
                           size="small"
                           variant="outlined"
-                          onClick={() => setUnavailabilityForm((current) => ({ ...current, startAt: `${selectedSlot.date}T${selectedSlot.slot.slotTime}:00Z`, endAt: `${selectedSlot.date}T${selectedSlot.slot.slotEndTime}:00Z` }))}
+                          onClick={() => setUnavailabilityForm((current) => ({ ...current, startAt: `${selectedSlot.date}T${selectedSlot.slot.slotTime}:00`, endAt: `${selectedSlot.date}T${selectedSlot.slot.slotEndTime}:00` }))}
                         >
                           Mark unavailable
                         </Button>
@@ -1622,7 +1657,7 @@ export default function DoctorAvailabilityPage() {
                           variant="outlined"
                           onClick={() => setAvailabilityForm((current) => ({
                             ...current,
-                            dayOfWeek: DAYS[new Date(`${selectedSlot.date}T00:00:00`).getDay() === 0 ? 6 : new Date(`${selectedSlot.date}T00:00:00`).getDay() - 1],
+                            dayOfWeek: DAYS[new Date(`${selectedSlot.date}T00:00:00Z`).getUTCDay() === 0 ? 6 : new Date(`${selectedSlot.date}T00:00:00Z`).getUTCDay() - 1],
                             breakStartTime: selectedSlot.slot.slotTime,
                             breakEndTime: selectedSlot.slot.slotEndTime,
                           }))}

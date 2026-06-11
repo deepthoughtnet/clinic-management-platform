@@ -43,6 +43,7 @@ import {
   createAppointment,
   collectConsultationFee,
   createWaitlist,
+  getAdminNotificationSettings,
   getClinicUsers,
   getDoctorSlots,
   getDoctorProfile,
@@ -67,7 +68,7 @@ import {
 } from "../../api/clinicApi";
 import ConsultationFeeDialog from "../../components/ConsultationFeeDialog";
 import { CompactEmptyState } from "../../components/compact/CompactUi";
-import { isBookingTimePast, isSlotExpired } from "./bookingValidation";
+import { getClinicClockParts, getClinicDateKey, isBookingTimePast, isSlotExpired, formatClinicClockLabel } from "./bookingValidation";
 
 type SlotFilterKey = DoctorAvailabilitySlotStatus | "BOOKED" | "CHECKED_IN" | "IN_CONSULTATION" | "COMPLETED" | "NO_SHOW" | "CANCELLED";
 
@@ -232,29 +233,23 @@ function timeLabel(time: string) {
 
 function compactDateLabel(date: string) {
   return new Intl.DateTimeFormat(undefined, {
+    timeZone: "UTC",
     weekday: "long",
     month: "short",
     day: "numeric",
-  }).format(new Date(`${date}T00:00:00`));
+  }).format(new Date(`${date}T00:00:00Z`));
 }
 
-function localDateKey(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+function isPastDateTime(date: string, time: string | null | undefined, timeZone?: string | null) {
+  return isBookingTimePast(date, time, undefined, timeZone);
 }
 
-function isPastDateTime(date: string, time: string | null | undefined) {
-  return isBookingTimePast(date, time);
+function isPastSlot(date: string, slot: DoctorAvailabilitySlot, timeZone?: string | null) {
+  return isSlotExpired(date, slot, undefined, timeZone);
 }
 
-function isPastSlot(date: string, slot: DoctorAvailabilitySlot) {
-  return isSlotExpired(date, slot);
-}
-
-function isHiddenPastSlot(date: string, slot: DoctorAvailabilitySlot, appointment: Appointment | null) {
-  return isPastSlot(date, slot) && !appointment && slot.bookedCount <= 0;
+function isHiddenPastSlot(date: string, slot: DoctorAvailabilitySlot, appointment: Appointment | null, timeZone?: string | null) {
+  return isPastSlot(date, slot, timeZone) && !appointment && slot.bookedCount <= 0;
 }
 
 function slotDisplayStatus(slot: DoctorAvailabilitySlot, appointments: Appointment[]) {
@@ -573,7 +568,7 @@ export default function DayBoardPage() {
   const doctorUserIdFromQuery = searchParams.get("doctorUserId") || "";
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [doctorUserId, setDoctorUserId] = React.useState(doctorUserIdFromQuery);
-  const [date, setDate] = React.useState(localDateKey());
+  const [date, setDate] = React.useState(() => getClinicDateKey("Asia/Kolkata"));
   const [filters, setFilters] = React.useState<Record<SlotFilterKey, boolean>>(() => Object.fromEntries(STATUS_FILTERS.map((f) => [f, true])) as Record<SlotFilterKey, boolean>);
   const [patientSearch, setPatientSearch] = React.useState("");
   const [patientResults, setPatientResults] = React.useState<Patient[]>([]);
@@ -601,6 +596,8 @@ export default function DayBoardPage() {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [clinicTimeZone, setClinicTimeZone] = React.useState("Asia/Kolkata");
+  const [clockTick, setClockTick] = React.useState(0);
   const gridTopScrollRef = React.useRef<HTMLDivElement | null>(null);
   const gridBodyScrollRef = React.useRef<HTMLDivElement | null>(null);
   const sectionScrollRefs = React.useRef<Record<SchedulerSectionKey, HTMLDivElement | null>>({
@@ -680,23 +677,24 @@ export default function DayBoardPage() {
             || appointments.find((appointment) => sameTimeSlot(slot, appointment))
             || null,
         }) satisfies CalendarSlotRow)
-        .filter((row) => !isHiddenPastSlot(row.date, row.slot, row.appointment));
+        .filter((row) => !isHiddenPastSlot(row.date, row.slot, row.appointment, clinicTimeZone));
     }).sort((left, right) => {
       const doctorDelta = left.doctorName.localeCompare(right.doctorName);
       if (doctorDelta !== 0) return doctorDelta;
       return left.slot.slotTime.localeCompare(right.slot.slotTime);
     });
-  }, [appointments, date, filters, visibleDoctorPanels]);
+  }, [appointments, clinicTimeZone, date, filters, visibleDoctorPanels]);
   const calendarSummary = React.useMemo(() => summarizeRows(calendarRows), [calendarRows]);
-  const todayDate = React.useMemo(() => localDateKey(), []);
+  const clinicClock = React.useMemo(() => getClinicClockParts(clinicTimeZone), [clinicTimeZone, clockTick]);
+  const todayDate = React.useMemo(() => clinicClock.dateKey, [clinicClock.dateKey]);
   const currentTimeSection = React.useMemo<SchedulerSectionKey | null>(() => {
     if (date !== todayDate) return null;
-    const minutes = new Date().getHours() * 60 + new Date().getMinutes();
+    const minutes = clinicClock.minutes;
     if (minutes >= 6 * 60 && minutes < 12 * 60) return "morning";
     if (minutes >= 12 * 60 && minutes < 17 * 60) return "afternoon";
     if (minutes >= 17 * 60 && minutes < 22 * 60) return "evening";
     return "other";
-  }, [date, todayDate]);
+  }, [clinicClock.minutes, date, todayDate]);
   const schedulerSections = React.useMemo(() => {
     const rowsBySection = new Map<SchedulerSectionKey, CalendarSlotRow[]>(
       SCHEDULER_SECTIONS.map((section) => [section.key, [] as CalendarSlotRow[]]),
@@ -822,6 +820,35 @@ export default function DayBoardPage() {
 
   React.useEffect(() => {
     let cancelled = false;
+    async function loadClinicTimeZone() {
+      if (!auth.accessToken || !auth.tenantId) {
+        setClinicTimeZone("Asia/Kolkata");
+        return;
+      }
+      try {
+        const settings = await getAdminNotificationSettings(auth.accessToken, auth.tenantId);
+        if (!cancelled) {
+          setClinicTimeZone(settings.timezone && settings.timezone.trim() ? settings.timezone.trim() : "Asia/Kolkata");
+        }
+      } catch {
+        if (!cancelled) {
+          setClinicTimeZone("Asia/Kolkata");
+        }
+      }
+    }
+    void loadClinicTimeZone();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken, auth.tenantId]);
+
+  React.useEffect(() => {
+    const handle = window.setInterval(() => setClockTick((value) => value + 1), 30_000);
+    return () => window.clearInterval(handle);
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
     async function loadDoctorProfiles() {
       const token = auth.accessToken;
       const tenantId = auth.tenantId;
@@ -897,7 +924,7 @@ export default function DayBoardPage() {
   const selectedSlotBookingReason = React.useMemo(() => {
     if (!selectedSlot) return "Select an available slot";
     if (!auth.tenantId || !auth.accessToken) return "Clinic context is unavailable";
-    if (isPastSlot(date, selectedSlot)) return "Selected time has already passed. Choose a current or future slot.";
+    if (isPastSlot(date, selectedSlot, clinicTimeZone)) return "Selected time has already passed. Choose a current or future slot.";
     if (selectedSlot.status === "BREAK" || selectedSlot.status === "LEAVE" || selectedSlot.status === "UNAVAILABLE" || selectedSlot.status === "CONFLICTED") {
       return "Doctor is unavailable during this time.";
     }
@@ -911,7 +938,7 @@ export default function DayBoardPage() {
       return "Select an available slot";
     }
     return null;
-  }, [auth.accessToken, auth.tenantId, date, selectedSlot]);
+  }, [auth.accessToken, auth.tenantId, clinicTimeZone, date, selectedSlot]);
 
   const selectedSlotCanBook = Boolean(selectedSlot && !selectedSlotBookingReason);
 
@@ -1237,6 +1264,7 @@ export default function DayBoardPage() {
                   <Chip size="small" label={`Doctor: ${selectedDoctorLabel}`} color={effectiveDoctorId ? "primary" : "default"} variant="outlined" />
                   <Chip size="small" label={`Date: ${compactDateLabel(date)}`} variant="outlined" />
                   <Chip size="small" label={`Time period: ${currentTimeSection ? currentTimeSection.charAt(0).toUpperCase() + currentTimeSection.slice(1) : "Outside current day"}`} variant="outlined" />
+                  <Chip size="small" label={formatClinicClockLabel(clinicTimeZone)} variant="outlined" />
                 </Stack>
 
                 <Stack direction="row" spacing={0.5} flexWrap="wrap">
@@ -1271,7 +1299,7 @@ export default function DayBoardPage() {
                     size="small"
                     variant="outlined"
                     onClick={() => {
-                      const liveMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+                      const liveMinutes = clinicClock.minutes;
                       const liveSection: SchedulerSectionKey = liveMinutes >= 6 * 60 && liveMinutes < 12 * 60
                         ? "morning"
                         : liveMinutes >= 12 * 60 && liveMinutes < 17 * 60

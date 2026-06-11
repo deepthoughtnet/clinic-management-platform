@@ -14,6 +14,7 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalProfileUpdat
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionMedicineResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionTestResponse;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
@@ -34,8 +35,6 @@ import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
-import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
-import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord;
 import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
@@ -73,7 +72,7 @@ public class PatientPortalService {
     private final TenantUserManagementService tenantUserManagementService;
     private final DoctorProfileService doctorProfileService;
     private final PatientService patientService;
-    private final TenantNotificationSettingsService notificationSettingsService;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final AppointmentService appointmentService;
     private final PrescriptionService prescriptionService;
     private final BillingService billingService;
@@ -85,7 +84,7 @@ public class PatientPortalService {
             TenantUserManagementService tenantUserManagementService,
             DoctorProfileService doctorProfileService,
             PatientService patientService,
-            TenantNotificationSettingsService notificationSettingsService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
             AppointmentService appointmentService,
             PrescriptionService prescriptionService,
             BillingService billingService
@@ -96,7 +95,7 @@ public class PatientPortalService {
         this.tenantUserManagementService = tenantUserManagementService;
         this.doctorProfileService = doctorProfileService;
         this.patientService = patientService;
-        this.notificationSettingsService = notificationSettingsService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
         this.appointmentService = appointmentService;
         this.prescriptionService = prescriptionService;
         this.billingService = billingService;
@@ -194,15 +193,7 @@ public class PatientPortalService {
     }
 
     private ZoneId resolveTenantZone(UUID tenantId) {
-        NotificationSettingsRecord settings = notificationSettingsService.findByTenantId(tenantId).orElse(null);
-        if (settings == null || settings.timezone() == null || settings.timezone().isBlank()) {
-            return ZoneId.of("UTC");
-        }
-        try {
-            return ZoneId.of(settings.timezone().trim());
-        } catch (Exception ex) {
-            return ZoneId.of("UTC");
-        }
+        return clinicTimeZoneResolver.resolve(tenantId);
     }
 
     private String resolveActorEmail(UUID tenantId, UUID actorAppUserId) {

@@ -301,7 +301,7 @@ export default function AppointmentsPage() {
 
   const statePatient = (location.state as AppointmentPageState | null)?.patient ?? null;
   const doctorUserIdFromQuery = searchParams.get("doctorUserId") || "";
-  const appointmentDateFromQuery = searchParams.get("appointmentDate") || getClinicDateKey("UTC");
+  const appointmentDateFromQuery = searchParams.get("appointmentDate") || getClinicDateKey("Asia/Kolkata");
   const appointmentTimeFromQuery = searchParams.get("appointmentTime") || "";
 
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
@@ -330,7 +330,7 @@ export default function AppointmentsPage() {
   const [waitlist, setWaitlist] = React.useState<AppointmentWaitlist[]>([]);
   const [rescheduleOpen, setRescheduleOpen] = React.useState(false);
   const [rescheduleTarget, setRescheduleTarget] = React.useState<Appointment | null>(null);
-  const [rescheduleDate, setRescheduleDate] = React.useState(new Date().toISOString().slice(0, 10));
+  const [rescheduleDate, setRescheduleDate] = React.useState(() => getClinicDateKey("Asia/Kolkata"));
   const [rescheduleTime, setRescheduleTime] = React.useState("");
   const [rescheduleDoctorUserId, setRescheduleDoctorUserId] = React.useState("");
   const [emergencyBooking, setEmergencyBooking] = React.useState(false);
@@ -340,7 +340,7 @@ export default function AppointmentsPage() {
   const [cancelDialogOpen, setCancelDialogOpen] = React.useState(false);
   const [cancelTarget, setCancelTarget] = React.useState<Appointment | null>(null);
   const [cancelComment, setCancelComment] = React.useState("");
-  const [clinicTimeZone, setClinicTimeZone] = React.useState("UTC");
+  const [clinicTimeZone, setClinicTimeZone] = React.useState("Asia/Kolkata");
   const [clockTick, setClockTick] = React.useState(0);
   const [appointmentDateTouched, setAppointmentDateTouched] = React.useState(Boolean(searchParams.get("appointmentDate")));
 
@@ -485,17 +485,17 @@ export default function AppointmentsPage() {
     let cancelled = false;
     async function loadClinicTimeZone() {
       if (!auth.accessToken || !auth.tenantId) {
-        setClinicTimeZone("UTC");
+        setClinicTimeZone("Asia/Kolkata");
         return;
       }
       try {
         const settings = await getAdminNotificationSettings(auth.accessToken, auth.tenantId);
         if (!cancelled) {
-          setClinicTimeZone(settings.timezone && settings.timezone.trim() ? settings.timezone.trim() : "UTC");
+          setClinicTimeZone(settings.timezone && settings.timezone.trim() ? settings.timezone.trim() : "Asia/Kolkata");
         }
       } catch {
         if (!cancelled) {
-          setClinicTimeZone("UTC");
+          setClinicTimeZone("Asia/Kolkata");
         }
       }
     }

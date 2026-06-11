@@ -31,6 +31,7 @@ import com.deepthoughtnet.clinic.billing.service.model.BillLineCommand;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentCommand;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
+import com.deepthoughtnet.clinic.billing.service.model.PatientBillingContextRecord;
 import com.deepthoughtnet.clinic.billing.service.model.RefundCommand;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
@@ -117,6 +118,7 @@ class BillingServicePaymentTest {
         });
         when(billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(any(), any()))
                 .thenAnswer(invocation -> List.copyOf(savedBillLines.getOrDefault(invocation.getArgument(1), List.of())));
+        when(billRepository.findByTenantIdAndPatientIdOrderByBillDateDescCreatedAtDesc(any(), any())).thenReturn(List.of());
         when(patientRepository.findByTenantIdAndId(any(), any())).thenReturn(Optional.of(mock(com.deepthoughtnet.clinic.patient.db.PatientEntity.class)));
         when(patientRepository.findByTenantIdAndIdIn(any(), any())).thenReturn(List.of());
         when(appointmentService.findById(tenantId, appointmentId)).thenReturn(new AppointmentRecord(
@@ -157,6 +159,101 @@ class BillingServicePaymentTest {
                 OffsetDateTime.now(),
                 OffsetDateTime.now()
         )));
+    }
+
+    @Test
+    void patientContextIncludesPendingConsultationFeeWhenNoInvoiceExists() {
+        com.deepthoughtnet.clinic.patient.db.PatientEntity patient = mock(com.deepthoughtnet.clinic.patient.db.PatientEntity.class);
+        when(patient.getId()).thenReturn(patientId);
+        when(patient.getPatientNumber()).thenReturn("PAT-1");
+        when(patient.getFirstName()).thenReturn("Test");
+        when(patient.getLastName()).thenReturn("Patient");
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(Optional.of(patient));
+        when(billRepository.findByTenantIdAndPatientIdOrderByBillDateDescCreatedAtDesc(tenantId, patientId)).thenReturn(List.of());
+                when(appointmentService.search(tenantId, new com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria(null, patientId, null, null, null)))
+                .thenReturn(List.of(new AppointmentRecord(
+                        appointmentId,
+                        tenantId,
+                        patientId,
+                        "PAT-1",
+                        "Test Patient",
+                        "9999999999",
+                        doctorUserId,
+                        "Dr Demo",
+                        null,
+                        LocalDate.now(),
+                        null,
+                        null,
+                        null,
+                        "Consultation",
+                        AppointmentType.SCHEDULED,
+                        AppointmentPriority.NORMAL,
+                        AppointmentStatus.WAITING,
+                        "PATIENT_WILL_PAY_AFTER_CONSULTATION",
+                        null,
+                        actorId,
+                        OffsetDateTime.now(),
+                        OffsetDateTime.now(),
+                        OffsetDateTime.now()
+                )));
+
+        PatientBillingContextRecord context = service.patientContext(tenantId, patientId);
+
+        assertThat(context.billCount()).isZero();
+        assertThat(context.billDueAmount()).isEqualByComparingTo("0.00");
+        assertThat(context.pendingConsultationFeeAmount()).isEqualByComparingTo("900.00");
+        assertThat(context.totalDueAmount()).isEqualByComparingTo("900.00");
+        assertThat(context.pendingConsultationFees()).hasSize(1);
+        assertThat(context.pendingConsultationFees().get(0).appointmentId()).isEqualTo(appointmentId);
+    }
+
+    @Test
+    void patientContextDoesNotDuplicatePendingConsultationFeeWhenConsultationBillAlreadyExists() {
+        com.deepthoughtnet.clinic.patient.db.PatientEntity patient = mock(com.deepthoughtnet.clinic.patient.db.PatientEntity.class);
+        when(patient.getId()).thenReturn(patientId);
+        when(patient.getPatientNumber()).thenReturn("PAT-1");
+        when(patient.getFirstName()).thenReturn("Test");
+        when(patient.getLastName()).thenReturn("Patient");
+        when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(Optional.of(patient));
+
+        BillEntity consultationBill = consultationBill(appointmentId, new BigDecimal("900.00"));
+        when(billRepository.findByTenantIdAndPatientIdOrderByBillDateDescCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(consultationBill));
+        when(billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, consultationBill.getId())).thenReturn(List.of(
+                consultationLine(consultationBill.getId(), new BigDecimal("900.00"))
+        ));
+        when(appointmentService.search(tenantId, new com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria(null, patientId, null, null, null)))
+                .thenReturn(List.of(new AppointmentRecord(
+                        appointmentId,
+                        tenantId,
+                        patientId,
+                        "PAT-1",
+                        "Test Patient",
+                        "9999999999",
+                        doctorUserId,
+                        "Dr Demo",
+                        null,
+                        LocalDate.now(),
+                        null,
+                        null,
+                        null,
+                        "Consultation",
+                        AppointmentType.SCHEDULED,
+                        AppointmentPriority.NORMAL,
+                        AppointmentStatus.WAITING,
+                        "PATIENT_WILL_PAY_AFTER_CONSULTATION",
+                        null,
+                        actorId,
+                        OffsetDateTime.now(),
+                        OffsetDateTime.now(),
+                        OffsetDateTime.now()
+                )));
+        PatientBillingContextRecord context = service.patientContext(tenantId, patientId);
+
+        assertThat(context.billCount()).isEqualTo(1);
+        assertThat(context.billDueAmount()).isEqualByComparingTo("900.00");
+        assertThat(context.pendingConsultationFeeAmount()).isEqualByComparingTo("0.00");
+        assertThat(context.totalDueAmount()).isEqualByComparingTo("900.00");
+        assertThat(context.pendingConsultationFees()).isEmpty();
     }
 
     @Test
@@ -491,6 +588,7 @@ class BillingServicePaymentTest {
 
     private BillEntity consultationBill(UUID appointmentId, BigDecimal total) {
         BillEntity bill = BillEntity.create(tenantId, "BILL-" + UUID.randomUUID(), patientId, null, appointmentId, LocalDate.now());
+        bill.setFinancials(total, BigDecimal.ZERO, BigDecimal.ZERO, total, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, total);
         when(billRepository.findByTenantIdAndId(tenantId, bill.getId())).thenReturn(Optional.of(bill));
         return bill;
     }

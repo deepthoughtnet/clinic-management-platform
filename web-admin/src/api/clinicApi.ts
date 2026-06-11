@@ -828,6 +828,29 @@ export type Bill = {
   lines: BillLine[];
 };
 
+export type PendingConsultationFee = {
+  appointmentId: string;
+  appointmentDate: string;
+  appointmentTime: string | null;
+  doctorUserId: string | null;
+  doctorName: string | null;
+  consultationFee: number;
+  dueAmount: number;
+  paymentBypassReason: string | null;
+  paymentBypassedAt: string | null;
+};
+
+export type PatientBillingContext = {
+  patientId: string;
+  patientNumber: string | null;
+  patientName: string | null;
+  billDueAmount: number;
+  pendingConsultationFeeAmount: number;
+  totalDueAmount: number;
+  billCount: number;
+  pendingConsultationFees: PendingConsultationFee[];
+};
+
 export type BillInput = {
   patientId: string;
   consultationId: string | null;
@@ -2060,6 +2083,12 @@ export async function searchBills(
   if (params.search) query.set("search", params.search);
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return httpGet<Bill[]>(`/api/bills${suffix}`, { token, tenantId });
+}
+
+export async function getPatientBillingContext(token: string, tenantId: string, patientId: string) {
+  const query = new URLSearchParams();
+  query.set("patientId", patientId);
+  return httpGet<PatientBillingContext>(`/api/bills/patient-context?${query.toString()}`, { token, tenantId });
 }
 
 export async function getBill(token: string, tenantId: string, id: string) {

@@ -2,13 +2,13 @@ package com.deepthoughtnet.clinic.api.common;
 
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
 public class ClinicTimeZoneResolver {
+    private static final ZoneId DEFAULT_ZONE = ZoneId.of("Asia/Kolkata");
     private final TenantNotificationSettingsService notificationSettingsService;
 
     public ClinicTimeZoneResolver(TenantNotificationSettingsService notificationSettingsService) {
@@ -17,7 +17,7 @@ public class ClinicTimeZoneResolver {
 
     public ZoneId resolve(UUID tenantId) {
         if (tenantId == null) {
-            return ZoneOffset.UTC;
+            return DEFAULT_ZONE;
         }
         return notificationSettingsService.findByTenantId(tenantId)
                 .map(settings -> settings.timezone())
@@ -26,9 +26,9 @@ public class ClinicTimeZoneResolver {
                     try {
                         return ZoneId.of(timezone.trim());
                     } catch (Exception ignored) {
-                        return ZoneOffset.UTC;
+                        return DEFAULT_ZONE;
                     }
                 })
-                .orElse(ZoneOffset.UTC);
+                .orElse(DEFAULT_ZONE);
     }
 }

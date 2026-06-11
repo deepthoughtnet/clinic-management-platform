@@ -222,7 +222,7 @@ public class TenantNotificationSettingsService {
 
     private String normalizeTimezone(String timezone) {
         if (!StringUtils.hasText(timezone)) {
-            return "UTC";
+            return "Asia/Kolkata";
         }
         return timezone.trim();
     }
