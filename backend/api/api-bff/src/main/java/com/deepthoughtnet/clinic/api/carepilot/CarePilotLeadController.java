@@ -43,6 +43,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.validation.Valid;
 
 /** CarePilot lead intake, lifecycle, conversion, and analytics APIs. */
 @RestController
@@ -94,7 +95,7 @@ public class CarePilotLeadController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
-    public LeadResponse create(@RequestBody LeadUpsertRequest request) {
+    public LeadResponse create(@Valid @RequestBody LeadUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
         return toResponse(leadService.create(tenantId, toCommand(request), actor));
@@ -145,7 +146,7 @@ public class CarePilotLeadController {
 
     @PutMapping("/{id:" + UUID_PATH + "}")
     @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('RECEPTIONIST') or (@permissionChecker.hasRole('PLATFORM_ADMIN') and @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT'))")
-    public LeadResponse update(@PathVariable UUID id, @RequestBody LeadUpsertRequest request) {
+    public LeadResponse update(@PathVariable UUID id, @Valid @RequestBody LeadUpsertRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actor = RequestContextHolder.require().appUserId();
         return toResponse(leadService.update(tenantId, id, toCommand(request), actor));

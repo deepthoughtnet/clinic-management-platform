@@ -38,6 +38,7 @@ export class ApiClientError extends Error {
 
 const SELECTED_TENANT_STORAGE_KEY = "clinic_selected_tenant";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_IN_TEXT_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
 function baseUrl(apiBase?: string): string {
   const envBase = import.meta.env.VITE_API_BASE_URL || "";
@@ -137,12 +138,11 @@ async function parseResponse<T>(res: Response): Promise<T> {
       }
     }
 
-    const reference = payload?.correlationId || payload?.requestId || null;
     const message =
       sanitizeErrorMessage(
         payload?.message?.trim() ||
         (bodyText && bodyText.trim() && !looksLikeMarkup(bodyText) ? bodyText.trim() : res.statusText || "Request failed"),
-      ) + (reference ? ` (ref: ${reference})` : "");
+      );
 
     throw new ApiClientError(message, {
       status: res.status,
@@ -182,7 +182,7 @@ function sanitizeErrorMessage(message: string): string {
   ) {
     return "Request failed";
   }
-  return normalized;
+  return normalized.replace(UUID_IN_TEXT_RE, "[hidden reference]");
 }
 
 export async function httpGet<T>(path: string, opts?: ApiOpts): Promise<T> {

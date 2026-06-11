@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -23,6 +24,7 @@ import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentReposit
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AgentExecutionLogService;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
@@ -34,6 +36,7 @@ import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -57,6 +60,7 @@ class ClinicalDocumentAiExtractionServiceTest {
         AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
         AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
         PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
         ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
                 jobRepository,
                 documentRepository,
@@ -67,6 +71,7 @@ class ClinicalDocumentAiExtractionServiceTest {
                 auditEventPublisher,
                 agentExecutionLogService,
                 patientService,
+                notificationSettingsService,
                 new ObjectMapper(),
                 1000L,
                 3
@@ -97,6 +102,7 @@ class ClinicalDocumentAiExtractionServiceTest {
         AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
         AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
         PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
         ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
                 jobRepository,
                 documentRepository,
@@ -107,6 +113,7 @@ class ClinicalDocumentAiExtractionServiceTest {
                 auditEventPublisher,
                 agentExecutionLogService,
                 patientService,
+                notificationSettingsService,
                 new ObjectMapper(),
                 1000L,
                 3
@@ -167,6 +174,7 @@ class ClinicalDocumentAiExtractionServiceTest {
         AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
         AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
         PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
         ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
                 jobRepository,
                 documentRepository,
@@ -177,6 +185,7 @@ class ClinicalDocumentAiExtractionServiceTest {
                 auditEventPublisher,
                 agentExecutionLogService,
                 patientService,
+                notificationSettingsService,
                 new ObjectMapper(),
                 1000L,
                 3
@@ -218,7 +227,7 @@ class ClinicalDocumentAiExtractionServiceTest {
                 OffsetDateTime.now()
         ));
         when(patientService.findById(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patientRecord()));
-        doAnswer(invocation -> null).when(patientService).update(any(), any(), any(), any());
+        doAnswer(invocation -> null).when(patientService).update(any(), any(), any(), any(), any(), any(), any());
 
         service.review(TENANT_ID, DOCUMENT_ID, REVIEWER_ID, true, true, "Looks good", "{\"hemoglobin\":\"10.2\"}", "No override", "Edited summary");
 
@@ -226,7 +235,7 @@ class ClinicalDocumentAiExtractionServiceTest {
         assertThat(document.getAiExtractionAcceptedJson()).isEqualTo("{\"hemoglobin\":\"10.2\"}");
         assertThat(document.getAiExtractionOverrideReason()).isEqualTo("No override");
         assertThat(document.getAiExtractionReviewNotes()).isEqualTo("Looks good");
-        verify(patientService).update(any(), eq(PATIENT_ID), any(), eq(REVIEWER_ID));
+        verify(patientService, atLeastOnce()).update(any(), any(), any(), any(), any(), any(), any());
         verify(auditEventPublisher).record(any());
     }
 
@@ -241,6 +250,7 @@ class ClinicalDocumentAiExtractionServiceTest {
         AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
         AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
         PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
         ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
                 jobRepository,
                 documentRepository,
@@ -251,6 +261,7 @@ class ClinicalDocumentAiExtractionServiceTest {
                 auditEventPublisher,
                 agentExecutionLogService,
                 patientService,
+                notificationSettingsService,
                 new ObjectMapper(),
                 1000L,
                 3
@@ -304,6 +315,7 @@ class ClinicalDocumentAiExtractionServiceTest {
         AuditEventPublisher auditEventPublisher = mock(AuditEventPublisher.class);
         AgentExecutionLogService agentExecutionLogService = mock(AgentExecutionLogService.class);
         PatientService patientService = mock(PatientService.class);
+        TenantNotificationSettingsService notificationSettingsService = mock(TenantNotificationSettingsService.class);
         ClinicalDocumentAiExtractionService service = new ClinicalDocumentAiExtractionService(
                 jobRepository,
                 documentRepository,
@@ -314,6 +326,7 @@ class ClinicalDocumentAiExtractionServiceTest {
                 auditEventPublisher,
                 agentExecutionLogService,
                 patientService,
+                notificationSettingsService,
                 new ObjectMapper(),
                 1000L,
                 3

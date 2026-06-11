@@ -15,6 +15,7 @@ import {
   MenuItem,
   Select,
   Stack,
+  Tooltip,
   Table,
   TableBody,
   TableCell,
@@ -129,6 +130,7 @@ export default function PatientDetailPage() {
   const canUploadClinicalDocument = auth.hasPermission("clinic.document.upload");
   const canReviewAiExtraction = auth.hasPermission("consultation.update") || auth.hasPermission("consultation.complete");
   const canOpenConsultationWorkspace = (auth.tenantRole || "").toUpperCase() === "DOCTOR" && auth.hasPermission("consultation.read");
+  const tenantRole = (auth.tenantRole || "").toUpperCase();
 
   React.useEffect(() => {
     if (!viewerDocument) {
@@ -303,6 +305,16 @@ export default function PatientDetailPage() {
   }
 
   const patient = detail.patient;
+  const canEditPatient = patient.canEdit;
+  const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
+  const canCreateAppointment = !isDoctor;
+  const editBlockedMessage = tenantRole === "RECEPTIONIST"
+    ? "Patient details can be edited by Clinic Admin after registration day."
+    : tenantRole === "AUDITOR"
+      ? "Auditor access is read-only."
+      : tenantRole === "DOCTOR"
+        ? "Doctors can view patient demographics but cannot edit master details directly."
+        : "You have read-only access to this patient record.";
 
   return (
     <Stack spacing={3}>
@@ -317,15 +329,21 @@ export default function PatientDetailPage() {
         </Box>
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
           <Button variant="outlined" onClick={() => navigate("/patients")}>Back</Button>
-          <Button variant="outlined" onClick={() => navigate(`/patients/${patient.id}/edit`)}>Edit</Button>
-          <Button
-            variant="contained"
-            component={RouterLink}
-            to={`/appointments?patientId=${patient.id}`}
-            state={{ patient }}
-          >
-            Create Appointment
-          </Button>
+          <Tooltip title={canEditPatient ? undefined : editBlockedMessage}>
+            <span>
+              <Button variant="outlined" onClick={() => navigate(`/patients/${patient.id}/edit`)} disabled={!canEditPatient}>Edit</Button>
+            </span>
+          </Tooltip>
+          {canCreateAppointment ? (
+            <Button
+              variant="contained"
+              component={RouterLink}
+              to={`/appointments?patientId=${patient.id}`}
+              state={{ patient }}
+            >
+              Create Appointment
+            </Button>
+          ) : null}
         </Box>
       </Box>
 
@@ -364,6 +382,8 @@ export default function PatientDetailPage() {
           </Card>
         </Grid>
       </Grid>
+
+      {!canEditPatient ? <Alert severity="info">{editBlockedMessage}</Alert> : null}
 
       {viewerDocument ? (
         <Card>

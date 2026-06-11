@@ -40,6 +40,12 @@ public class TenantNotificationSettingsService {
         return toRecord(row);
     }
 
+    @Transactional(readOnly = true)
+    public java.util.Optional<NotificationSettingsRecord> findByTenantId(UUID tenantId) {
+        CarePilotValidators.requireTenant(tenantId);
+        return repository.findByTenantId(tenantId).map(this::toRecord);
+    }
+
     /**
      * Updates settings after validating cross-field channel/quiet-hour constraints.
      */

@@ -259,11 +259,11 @@ export default function QueuePage() {
 
   const today = React.useMemo(() => localDateKey(), []);
   const tenantRole = (auth.tenantRole || "").toUpperCase();
-  const isDoctor = tenantRole === "DOCTOR";
+  const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
   const isClinicAdmin = tenantRole === "CLINIC_ADMIN";
   const isReceptionist = tenantRole === "RECEPTIONIST";
-  const canCollectFee = auth.hasPermission("billing.create") || auth.hasPermission("payment.collect");
-  const canViewBillingData = auth.hasPermission("billing.read") || canCollectFee;
+  const canCollectFee = !isDoctor && (auth.hasPermission("billing.create") || auth.hasPermission("payment.collect"));
+  const canViewBillingData = !isDoctor && (auth.hasPermission("billing.read") || canCollectFee);
   const canBypassPaymentCheckIn = auth.hasPermission("appointment.checkin.payment_bypass");
   const canStartConsultation = isDoctor && auth.hasPermission("consultation.create");
   const canManageDeskStatus = (isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage");
@@ -895,7 +895,7 @@ export default function QueuePage() {
                           </TableCell>
                           <TableCell align="right" sx={{ minWidth: 300 }}>
                             <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
-                              {appointment.feeStatus !== "PAID" ? (
+                              {!isDoctor && appointment.feeStatus !== "PAID" ? (
                                 <Button size="small" variant="outlined" disabled={savingId === appointment.id} onClick={() => openConsultationBilling(appointment.id)}>
                                   {appointment.feeStatus === "NOT_CONFIGURED" ? "Open Billing" : "Collect Fee"}
                                 </Button>
@@ -903,7 +903,7 @@ export default function QueuePage() {
                               <Button size="small" variant="text" onClick={() => navigate(`/patients/${appointment.patientId}`)}>
                                 Open Patient
                               </Button>
-                              {appointment.consultationBill ? (
+                              {!isDoctor && appointment.consultationBill ? (
                                 <Button size="small" variant="outlined" onClick={() => openBillHistory(appointment.id)}>
                                   View Billing
                                 </Button>

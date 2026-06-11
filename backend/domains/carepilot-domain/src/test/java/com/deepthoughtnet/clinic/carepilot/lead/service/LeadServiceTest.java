@@ -46,7 +46,7 @@ class LeadServiceTest {
     @Test
     void createLead() {
         var record = service.create(tenantId, new LeadUpsertCommand(
-                "Ava", "Smith", "+15550100", "ava@example.com", PatientGender.FEMALE, null,
+                "Ava", "Smith", "9876543210", "ava@example.com", PatientGender.FEMALE, null,
                 LeadSource.WEBSITE, "landing page", null, null, LeadStatus.NEW, LeadPriority.HIGH,
                 "note", "vip", OffsetDateTime.now(), OffsetDateTime.now().plusDays(1)
         ), actorId);
@@ -63,20 +63,20 @@ class LeadServiceTest {
     void convertedLeadIsImmutableExceptNotesAndTags() {
         LeadEntity entity = LeadEntity.create(tenantId, actorId);
         entity.setFirstName("Old");
-        entity.setPhone("+15550000");
+        entity.setPhone("9876543210");
         entity.setSource(LeadSource.MANUAL);
         entity.setStatus(LeadStatus.CONVERTED);
         entity.setPriority(LeadPriority.MEDIUM);
         when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));
 
         var updated = service.update(tenantId, entity.getId(), new LeadUpsertCommand(
-                "New", "Name", "+16660000", "new@example.com", PatientGender.OTHER, null,
+                "New", "Name", "1234567890", "new@example.com", PatientGender.OTHER, null,
                 LeadSource.GOOGLE_ADS, "x", null, null, LeadStatus.LOST, LeadPriority.LOW,
                 "changed-note", "changed-tags", null, null
         ), actorId);
 
         assertThat(updated.firstName()).isEqualTo("Old");
-        assertThat(updated.phone()).isEqualTo("+15550000");
+        assertThat(updated.phone()).isEqualTo("9876543210");
         assertThat(updated.notes()).isEqualTo("changed-note");
         assertThat(updated.tags()).isEqualTo("changed-tags");
     }
@@ -85,7 +85,7 @@ class LeadServiceTest {
     void statusUpdateRejectsTransitionOutOfConverted() {
         LeadEntity entity = LeadEntity.create(tenantId, actorId);
         entity.setFirstName("A");
-        entity.setPhone("+15550000");
+        entity.setPhone("9876543210");
         entity.setSource(LeadSource.MANUAL);
         entity.setStatus(LeadStatus.CONVERTED);
         when(repository.findByTenantIdAndId(tenantId, entity.getId())).thenReturn(Optional.of(entity));

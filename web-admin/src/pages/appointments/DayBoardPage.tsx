@@ -358,7 +358,7 @@ function appointmentTitle(appointment: Appointment) {
 }
 
 function isDragEligibleAppointment(appointment: Appointment) {
-  return appointment.status !== "COMPLETED" && appointment.status !== "CANCELLED" && appointment.status !== "NO_SHOW";
+  return appointment.status === "BOOKED";
 }
 
 function summarizeCellStatus(slot: DoctorAvailabilitySlot | null, appointments: Appointment[]) {
@@ -611,10 +611,10 @@ export default function DayBoardPage() {
   });
 
   const tenantRole = (auth.tenantRole || "").toUpperCase();
-  const isDoctor = tenantRole === "DOCTOR";
+  const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
   const canManage = auth.hasPermission("appointment.manage") || tenantRole === "RECEPTIONIST" || tenantRole === "CLINIC_ADMIN";
-  const canBook = auth.hasPermission("appointment.create") || tenantRole === "RECEPTIONIST" || tenantRole === "CLINIC_ADMIN";
-  const canCollect = auth.hasPermission("billing.create") || auth.hasPermission("payment.collect");
+  const canBook = !isDoctor && (auth.hasPermission("appointment.create") || tenantRole === "RECEPTIONIST" || tenantRole === "CLINIC_ADMIN");
+  const canCollect = !isDoctor && (auth.hasPermission("billing.create") || auth.hasPermission("payment.collect"));
   const canStartConsultation = isDoctor && auth.hasPermission("consultation.create");
   const canOpenWorkspace = isDoctor && auth.hasPermission("consultation.read");
   const doctorOptions = users.filter((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
@@ -1133,7 +1133,7 @@ export default function DayBoardPage() {
         </Box>
         <Stack direction="row" spacing={1}>
           <Button variant="outlined" onClick={() => void refreshAll()}>Refresh</Button>
-          <Button variant="outlined" onClick={() => navigate("/appointments")}>New appointment</Button>
+          {!isDoctor ? <Button variant="outlined" onClick={() => navigate("/appointments")}>New appointment</Button> : null}
           <Button variant="outlined" onClick={() => navigate("/appointments")}>Appointments</Button>
           <Button variant="outlined" onClick={() => navigate("/queue")}>Queue</Button>
         </Stack>
@@ -1148,22 +1148,25 @@ export default function DayBoardPage() {
               <Stack spacing={1.1}>
                 <Typography variant="h6" sx={{ fontWeight: 800 }}>Filters</Typography>
                 <TextField size="small" type="date" label="Date" value={date} onChange={(e) => setDate(e.target.value)} InputLabelProps={{ shrink: true }} />
-                <Autocomplete
-                  options={[ALL_DOCTORS_OPTION, ...doctorOptions]}
-                  value={selectedDoctorOption}
-                  onChange={(_, value) => setDoctorUserId(value?.appUserId || "")}
-                  getOptionLabel={(option) => option.displayName || option.email || option.appUserId || "All Doctors"}
-                  isOptionEqualToValue={(option, value) => option.appUserId === value.appUserId}
-                  disabled={isDoctor}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      size="small"
-                      label="Doctor"
-                      placeholder="Search doctor or select All Doctors"
-                    />
-                  )}
-                />
+                {isDoctor ? (
+                  <Chip label={`Doctor: ${selectedDoctorLabel}`} color="primary" variant="outlined" />
+                ) : (
+                  <Autocomplete
+                    options={[ALL_DOCTORS_OPTION, ...doctorOptions]}
+                    value={selectedDoctorOption}
+                    onChange={(_, value) => setDoctorUserId(value?.appUserId || "")}
+                    getOptionLabel={(option) => option.displayName || option.email || option.appUserId || "All Doctors"}
+                    isOptionEqualToValue={(option, value) => option.appUserId === value.appUserId}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        size="small"
+                        label="Doctor"
+                        placeholder="Search doctor or select All Doctors"
+                      />
+                    )}
+                  />
+                )}
                 <TextField
                   size="small"
                   label="Patient quick search"
@@ -1200,12 +1203,14 @@ export default function DayBoardPage() {
                   ))}
                 </Stack>
                 <Divider />
-                <Stack direction="row" spacing={0.75} flexWrap="wrap">
-                  <Button size="small" variant="outlined" onClick={() => navigate("/doctors/availability")}>Add availability</Button>
-                  <Button size="small" variant="outlined" onClick={() => navigate("/doctors/availability")}>Add break</Button>
-                  <Button size="small" variant="outlined" onClick={() => navigate("/doctors/availability")}>Add leave</Button>
-                  <Button size="small" variant="outlined" onClick={() => setSelected(null)}>New appointment</Button>
-                </Stack>
+                {!isDoctor ? (
+                  <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                    <Button size="small" variant="outlined" onClick={() => navigate("/doctors/availability")}>Add availability</Button>
+                    <Button size="small" variant="outlined" onClick={() => navigate("/doctors/availability")}>Add break</Button>
+                    <Button size="small" variant="outlined" onClick={() => navigate("/doctors/availability")}>Add leave</Button>
+                    <Button size="small" variant="outlined" onClick={() => setSelected(null)}>New appointment</Button>
+                  </Stack>
+                ) : null}
               </Stack>
             </CardContent>
           </Card>
@@ -1502,14 +1507,14 @@ export default function DayBoardPage() {
                                               }
                                             }}
                                             onDragOver={(event) => {
-                                              if (canDropToSlot(slot)) {
+                                              if (!isDoctor && canDropToSlot(slot)) {
                                                 event.preventDefault();
                                                 event.dataTransfer.dropEffect = "move";
                                               }
                                             }}
                                             onDrop={(event) => {
                                               event.preventDefault();
-                                              if (slot) {
+                                              if (!isDoctor && slot) {
                                                 openMoveConfirm(slot);
                                               }
                                             }}
@@ -1565,7 +1570,7 @@ export default function DayBoardPage() {
                                                     label={firstPatient}
                                                     color={appointmentColor(primaryAppointment.status)}
                                                     variant="filled"
-                                                    draggable={isDragEligibleAppointment(primaryAppointment)}
+                                                    draggable={!isDoctor && isDragEligibleAppointment(primaryAppointment)}
                                                     onDragStart={(event) => {
                                                       event.dataTransfer.setData("text/plain", primaryAppointment.id);
                                                       event.dataTransfer.effectAllowed = "move";
@@ -1664,24 +1669,30 @@ export default function DayBoardPage() {
                         </Stack>
                       </Stack>
                     ) : null}
-                    <FormControl size="small" fullWidth>
-                      <InputLabel id="db-type">Type</InputLabel>
-                      <Select labelId="db-type" label="Type" value={appointmentType} onChange={(e) => setAppointmentType(e.target.value as AppointmentType)}>
-                        {APPOINTMENT_TYPES.map((t) => <MenuItem key={t} value={t}>{t}</MenuItem>)}
-                      </Select>
-                    </FormControl>
-                    <TextField size="small" label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
-                    <Button variant="contained" disabled={!selectedSlotCanBook || saving} onClick={openBookingFlow}>
-                      Book appointment
-                    </Button>
-                    {selectedSlotBookingReason ? (
-                      <Typography variant="caption" color="text.secondary">
-                        {selectedSlotBookingReason}
-                      </Typography>
-                    ) : null}
-                    <Button variant="outlined" disabled={!canBook || !selectedPatient} onClick={() => void addWaitlistFromSelection()}>
-                      Add to waitlist
-                    </Button>
+                    {!isDoctor ? (
+                      <>
+                        <FormControl size="small" fullWidth>
+                          <InputLabel id="db-type">Type</InputLabel>
+                          <Select labelId="db-type" label="Type" value={appointmentType} onChange={(e) => setAppointmentType(e.target.value as AppointmentType)}>
+                            {APPOINTMENT_TYPES.map((t) => <MenuItem key={t} value={t}>{t}</MenuItem>)}
+                          </Select>
+                        </FormControl>
+                        <TextField size="small" label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} />
+                        <Button variant="contained" disabled={!selectedSlotCanBook || saving} onClick={openBookingFlow}>
+                          Book appointment
+                        </Button>
+                        {selectedSlotBookingReason ? (
+                          <Typography variant="caption" color="text.secondary">
+                            {selectedSlotBookingReason}
+                          </Typography>
+                        ) : null}
+                        <Button variant="outlined" disabled={!canBook || !selectedPatient} onClick={() => void addWaitlistFromSelection()}>
+                          Add to waitlist
+                        </Button>
+                      </>
+                    ) : (
+                      <Alert severity="info">Doctor schedule is read-only. Use Queue to start consultation.</Alert>
+                    )}
                   </Stack>
                 ) : null}
 
@@ -1704,16 +1715,22 @@ export default function DayBoardPage() {
                     <Typography variant="body2">Queue: {selectedAppointment.status === "WAITING" ? "Checked in" : friendlyStatusLabel(selectedAppointment.status)}</Typography>
                     <Typography variant="body2">Consultation: {selectedAppointment.consultationId ? "Started" : "Not started"}</Typography>
                     <Stack direction="row" gap={0.75} flexWrap="wrap">
-                      {canCollect && selectedAppointmentFee?.consultationFee != null && selectedAppointmentFee.consultationFee > 0 && selectedAppointmentFee.feeStatus !== "PAID" ? (
+                      {!isDoctor && canCollect && selectedAppointmentFee?.consultationFee != null && selectedAppointmentFee.consultationFee > 0 && selectedAppointmentFee.feeStatus !== "PAID" ? (
                         <Button size="small" variant="outlined" onClick={() => setFeeDialog({ appointment: selectedAppointment, action: "collect" })}>Collect Fee</Button>
                       ) : null}
-                      {selectedAppointmentFee?.bill ? (
+                      {!isDoctor && selectedAppointmentFee?.bill ? (
                         <Button size="small" variant="outlined" onClick={() => navigate(`/billing?appointmentId=${selectedAppointment.id}`)}>View Payment</Button>
                       ) : null}
-                      <Button size="small" variant="contained" disabled={!canManage} onClick={() => void checkInAppointment(selectedAppointment)}>Check-in</Button>
-                      <Button size="small" variant="outlined" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "NO_SHOW")}>No-show</Button>
-                      <Button size="small" variant="outlined" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "CANCELLED")}>Cancel</Button>
-                      <Button size="small" variant="outlined" onClick={() => openReschedule(selectedAppointment)}>Reschedule</Button>
+                      {!isDoctor ? (
+                        <>
+                          <Button size="small" variant="contained" disabled={!canManage} onClick={() => void checkInAppointment(selectedAppointment)}>Check-in</Button>
+                          <Button size="small" variant="outlined" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "NO_SHOW")}>No-show</Button>
+                          <Button size="small" variant="outlined" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "CANCELLED")}>Cancel</Button>
+                        </>
+                      ) : null}
+                      {!isDoctor && selectedAppointment.status === "BOOKED" ? (
+                        <Button size="small" variant="outlined" onClick={() => openReschedule(selectedAppointment)}>Reschedule</Button>
+                      ) : null}
                       {canStartConsultation ? (
                         <Button size="small" variant="outlined" disabled={!canStartConsultation} onClick={() => void startConsultation(selectedAppointment.id)}>Start consultation</Button>
                       ) : null}

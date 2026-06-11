@@ -1022,6 +1022,35 @@ export default function DoctorAvailabilityPage() {
                           </Select>
                         </FormControl>
                         <TextField size="small" fullWidth label="Reason" value={unavailabilityForm.reason || ""} onChange={(e) => setUnavailabilityForm((current) => ({ ...current, reason: e.target.value || null }))} />
+                        <Stack direction="row" spacing={1} flexWrap="wrap">
+                          <Button
+                            variant="outlined"
+                            onClick={() => setUnavailabilityForm((current) => {
+                              const day = (current.startAt || `${localDateKey()}T00:00:00Z`).slice(0, 10);
+                              const end = new Date(`${day}T00:00:00Z`);
+                              end.setUTCDate(end.getUTCDate() + 1);
+                              return {
+                                ...current,
+                                startAt: `${day}T00:00:00Z`,
+                                endAt: `${end.toISOString().slice(0, 10)}T00:00:00Z`,
+                              };
+                            })}
+                          >
+                            Full day
+                          </Button>
+                          {selectedSlot ? (
+                            <Button
+                              variant="outlined"
+                              onClick={() => setUnavailabilityForm((current) => ({
+                                ...current,
+                                startAt: `${selectedSlot.date}T${selectedSlot.slot.slotTime}:00Z`,
+                                endAt: `${selectedSlot.date}T${selectedSlot.slot.slotEndTime}:00Z`,
+                              }))}
+                            >
+                              Use selected slot
+                            </Button>
+                          ) : null}
+                        </Stack>
                         <Button variant="outlined" onClick={() => void quickCreateUnavailability()} disabled={!canMutateSchedule}>
                           Add block
                         </Button>

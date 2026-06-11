@@ -11,6 +11,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlo
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
@@ -38,12 +39,14 @@ class PublicCatalogFacadeTest {
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
         DoctorProfileService doctorProfileService = mock(DoctorProfileService.class);
         AppointmentService appointmentService = mock(AppointmentService.class);
+        ClinicTimeZoneResolver clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
         PublicCatalogFacade facade = new PublicCatalogFacade(
                 tenantService,
                 clinicProfileService,
                 tenantUserManagementService,
                 doctorProfileService,
-                appointmentService
+                appointmentService,
+                clinicTimeZoneResolver
         );
 
         UUID publicTenantId = UUID.randomUUID();
@@ -73,10 +76,11 @@ class PublicCatalogFacadeTest {
                 doctorProfile(publicTenantId, hiddenDoctorId, "Cardiology", true, false, "dr-hidden", 12)
         ));
 
-        when(appointmentService.listSlots(any(), any(), any())).thenAnswer(invocation -> {
+        when(clinicTimeZoneResolver.resolve(any())).thenReturn(java.time.ZoneOffset.UTC);
+        when(appointmentService.listSlots(any(), any(), any(), any())).thenAnswer(invocation -> {
             UUID doctorId = invocation.getArgument(1, UUID.class);
             LocalDate date = invocation.getArgument(2, LocalDate.class);
-            if (doctorId.equals(visibleDoctorId) && date.equals(LocalDate.now())) {
+            if (doctorId.equals(visibleDoctorId) && date.equals(LocalDate.now(java.time.ZoneOffset.UTC))) {
                 return List.of(slot(doctorId, date, LocalTime.of(10, 30), true));
             }
             return List.of();
@@ -111,12 +115,14 @@ class PublicCatalogFacadeTest {
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
         DoctorProfileService doctorProfileService = mock(DoctorProfileService.class);
         AppointmentService appointmentService = mock(AppointmentService.class);
+        ClinicTimeZoneResolver clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
         PublicCatalogFacade facade = new PublicCatalogFacade(
                 tenantService,
                 clinicProfileService,
                 tenantUserManagementService,
                 doctorProfileService,
-                appointmentService
+                appointmentService,
+                clinicTimeZoneResolver
         );
 
         UUID tenantId = UUID.randomUUID();
@@ -130,7 +136,8 @@ class PublicCatalogFacadeTest {
         when(doctorProfileService.findByDoctorUserId(tenantId, doctorId)).thenReturn(Optional.of(
                 doctorProfile(tenantId, doctorId, "Dermatology, Skin Care", true, true, "dr-asha-menon", 8)
         ));
-        when(appointmentService.listSlots(any(), any(), any())).thenReturn(List.of());
+        when(clinicTimeZoneResolver.resolve(any())).thenReturn(java.time.ZoneOffset.UTC);
+        when(appointmentService.listSlots(any(), any(), any(), any())).thenReturn(List.of());
         when(appointmentService.listDoctorAvailabilities(any(), any())).thenReturn(List.of());
 
         assertThat(facade.listDoctors(null, "pune", null, "Skin Care", "sunrise", null, 0, 12).items()).hasSize(1);

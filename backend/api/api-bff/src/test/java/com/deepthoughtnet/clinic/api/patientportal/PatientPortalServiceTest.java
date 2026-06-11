@@ -31,6 +31,7 @@ import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
 import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
@@ -48,6 +49,7 @@ import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -70,6 +72,7 @@ class PatientPortalServiceTest {
     private TenantUserManagementService tenantUserManagementService;
     private DoctorProfileService doctorProfileService;
     private PatientService patientService;
+    private TenantNotificationSettingsService notificationSettingsService;
     private AppointmentService appointmentService;
     private PrescriptionService prescriptionService;
     private BillingService billingService;
@@ -83,6 +86,7 @@ class PatientPortalServiceTest {
         tenantUserManagementService = mock(TenantUserManagementService.class);
         doctorProfileService = mock(DoctorProfileService.class);
         patientService = mock(PatientService.class);
+        notificationSettingsService = mock(TenantNotificationSettingsService.class);
         appointmentService = mock(AppointmentService.class);
         prescriptionService = mock(PrescriptionService.class);
         billingService = mock(BillingService.class);
@@ -93,10 +97,12 @@ class PatientPortalServiceTest {
                 tenantUserManagementService,
                 doctorProfileService,
                 patientService,
+                notificationSettingsService,
                 appointmentService,
                 prescriptionService,
                 billingService
         );
+        when(notificationSettingsService.findByTenantId(any())).thenReturn(Optional.empty());
         RequestContextHolder.set(new RequestContext(new TenantId(TENANT_ID), APP_USER_ID, "patient-sub", Set.of("PATIENT"), "PATIENT", "corr-1"));
     }
 
@@ -185,9 +191,9 @@ class PatientPortalServiceTest {
         when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile()));
         when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Mehta", TENANT_ID)));
         when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.of(doctorProfile(doctorUserId)));
-        when(appointmentService.listSlots(TENANT_ID, doctorUserId, appointmentDate))
+        when(appointmentService.listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any()))
                 .thenReturn(List.of(slotRecord(doctorUserId, appointmentDate, java.time.LocalTime.of(10, 30), DoctorAvailabilitySlotStatus.AVAILABLE, true)));
-        when(appointmentService.createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false)))
+        when(appointmentService.createScheduled(eq(TENANT_ID), any(AppointmentUpsertCommand.class), eq(APP_USER_ID), eq(false), any()))
                 .thenReturn(appointment);
         when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(appointment));
 
@@ -199,7 +205,7 @@ class PatientPortalServiceTest {
         ));
 
         ArgumentCaptor<AppointmentUpsertCommand> commandCaptor = ArgumentCaptor.forClass(AppointmentUpsertCommand.class);
-        verify(appointmentService).createScheduled(eq(TENANT_ID), commandCaptor.capture(), eq(APP_USER_ID), eq(false));
+        verify(appointmentService).createScheduled(eq(TENANT_ID), commandCaptor.capture(), eq(APP_USER_ID), eq(false), any());
         assertThat(commandCaptor.getValue().patientId()).isEqualTo(PATIENT_ID);
         assertThat(commandCaptor.getValue().doctorUserId()).isEqualTo(doctorUserId);
         assertThat(commandCaptor.getValue().type()).isEqualTo(AppointmentType.SCHEDULED);
@@ -244,7 +250,7 @@ class PatientPortalServiceTest {
         when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
         when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Mehta", TENANT_ID)));
         when(doctorProfileService.findByDoctorUserId(TENANT_ID, doctorUserId)).thenReturn(Optional.of(doctorProfile(doctorUserId)));
-        when(appointmentService.listSlots(TENANT_ID, doctorUserId, appointmentDate))
+        when(appointmentService.listSlots(eq(TENANT_ID), eq(doctorUserId), eq(appointmentDate), any()))
                 .thenReturn(List.of(slotRecord(doctorUserId, appointmentDate, java.time.LocalTime.of(9, 0), DoctorAvailabilitySlotStatus.FULL, false)));
 
         assertThatThrownBy(() -> service.bookAppointment(new PatientPortalAppointmentBookingRequest(
@@ -328,7 +334,7 @@ class PatientPortalServiceTest {
         when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
         when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile()));
         when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(current));
-        when(appointmentService.reschedule(eq(TENANT_ID), eq(appointmentId), any(AppointmentRescheduleCommand.class), eq(APP_USER_ID), eq(false)))
+        when(appointmentService.reschedule(eq(TENANT_ID), eq(appointmentId), any(AppointmentRescheduleCommand.class), eq(APP_USER_ID), eq(false), any()))
                 .thenReturn(rescheduled);
 
         var confirmation = service.rescheduleAppointment(appointmentId, newDate, java.time.LocalTime.of(11, 30), "Review visit");
@@ -340,7 +346,8 @@ class PatientPortalServiceTest {
                         && command.appointmentDate().equals(newDate)
                         && command.appointmentTime().equals(java.time.LocalTime.of(11, 30))),
                 eq(APP_USER_ID),
-                eq(false)
+                eq(false),
+                any()
         );
         assertThat(confirmation.message()).contains("rescheduled successfully");
     }

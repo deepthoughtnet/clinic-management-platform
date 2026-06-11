@@ -90,12 +90,14 @@ const emptyForm = (): FormState => ({
   active: true,
 });
 
-function patientToForm(patient: PatientInput): FormState {
+function patientToForm(patient: Patient): FormState {
   return {
-    ...patient,
+    firstName: patient.firstName,
     lastName: patient.lastName || "",
+    gender: patient.gender,
     dateOfBirth: patient.dateOfBirth || "",
     ageYears: patient.ageYears ?? null,
+    mobile: patient.mobile,
     email: patient.email || "",
     addressLine1: patient.addressLine1 || "",
     addressLine2: patient.addressLine2 || "",
@@ -111,6 +113,7 @@ function patientToForm(patient: PatientInput): FormState {
     longTermMedications: patient.longTermMedications || "",
     surgicalHistory: patient.surgicalHistory || "",
     notes: patient.notes || "",
+    active: patient.active,
   };
 }
 
@@ -121,7 +124,7 @@ function formToInput(form: FormState): PatientInput {
     gender: form.gender,
     dateOfBirth: form.dateOfBirth || null,
     ageYears: form.ageYears === null || form.ageYears === undefined || Number.isNaN(Number(form.ageYears)) ? null : Number(form.ageYears),
-    mobile: form.mobile.trim(),
+    mobile: mobileDigits(form.mobile),
     email: form.email.trim() || null,
     addressLine1: form.addressLine1.trim() || null,
     addressLine2: form.addressLine2.trim() || null,
@@ -130,7 +133,7 @@ function formToInput(form: FormState): PatientInput {
     country: form.country.trim() || null,
     postalCode: form.postalCode.trim() || null,
     emergencyContactName: form.emergencyContactName.trim() || null,
-    emergencyContactMobile: form.emergencyContactMobile.trim() || null,
+    emergencyContactMobile: form.emergencyContactMobile.trim() ? mobileDigits(form.emergencyContactMobile) : null,
     bloodGroup: form.bloodGroup.trim() || null,
     allergies: form.allergies.trim() || null,
     existingConditions: form.existingConditions.trim() || null,
@@ -181,19 +184,22 @@ function approximateDobFromAge(age: number | null) {
 }
 
 function mobileDigits(value: string) {
-  return value.replace(/[\s-]/g, "").trim();
+  return value.replace(/[^0-9]/g, "").slice(0, 10);
 }
 
 function isValidMobile(value: string) {
-  return /^\+?[0-9]{7,15}$/.test(mobileDigits(value));
+  return /^[0-9]{10}$/.test(mobileDigits(value));
 }
 
 function friendlyError(err: unknown) {
   const message = err instanceof Error ? err.message : "Unable to save patient. Please check the details and try again.";
   if (message.includes("mobile is required")) return "Mobile number is required.";
-  if (message.includes("mobile must be")) return "Enter a valid mobile number.";
+  if (message.includes("Enter a valid 10-digit mobile number.")) return "Enter a valid 10-digit mobile number.";
+  if (message.includes("mobile must be")) return "Enter a valid 10-digit mobile number.";
+  if (message.includes("emergencyContactMobile must be")) return "Enter a valid 10-digit mobile number.";
   if (message.includes("same mobile")) return "Possible duplicate patient found. Open the existing patient or confirm that this is a new patient.";
   if (message.includes("firstName")) return "First name is required.";
+  if (message.includes("Patient details can be edited by Clinic Admin after registration day.")) return "Patient details can be edited by Clinic Admin after registration day.";
   return "Unable to save patient. Please check the details and try again.";
 }
 
@@ -207,7 +213,6 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   const navigate = useNavigate();
   const params = useParams();
   const id = params.id || "";
-  const canEdit = mode === "create" ? auth.hasPermission("patient.create") : auth.hasPermission("patient.update");
 
   const [form, setForm] = React.useState<FormState>(emptyForm());
   const [loading, setLoading] = React.useState(mode === "edit");
@@ -217,6 +222,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   const [duplicates, setDuplicates] = React.useState<Patient[]>([]);
   const [checkingDuplicates, setCheckingDuplicates] = React.useState(false);
   const [continueNew, setContinueNew] = React.useState(false);
+  const [loadedPatient, setLoadedPatient] = React.useState<Patient | null>(null);
   const mobileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   React.useEffect(() => {
@@ -236,6 +242,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
       try {
         const detail = await getPatient(auth.accessToken, auth.tenantId, id);
         if (!cancelled) {
+          setLoadedPatient(detail.patient);
           setForm(patientToForm(detail.patient));
         }
       } catch (err) {
@@ -295,6 +302,12 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
   }
 
+  const tenantRole = (auth.tenantRole || "").toUpperCase();
+  const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
+  const canEditRecord = mode === "create"
+    ? !isDoctor && auth.hasPermission("patient.create")
+    : Boolean(loadedPatient?.canEdit ?? auth.hasPermission("patient.update"));
+
   const updateField = (field: Exclude<keyof FormState, "ageYears" | "active" | "gender" | "dateOfBirth" | "mobile">) =>
     (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       setForm((current) => ({ ...current, [field]: event.target.value }));
@@ -302,7 +315,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
 
   const updateMobile = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setContinueNew(false);
-    setForm((current) => ({ ...current, mobile: event.target.value.replace(/[^0-9+\s-]/g, "") }));
+    setForm((current) => ({ ...current, mobile: mobileDigits(event.target.value) }));
   };
 
   const updateDateOfBirth = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -317,8 +330,9 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
 
   const validateQuickFields = () => {
     if (!form.mobile.trim()) return "Mobile number is required.";
-    if (!isValidMobile(form.mobile)) return "Enter a valid mobile number.";
+    if (!isValidMobile(form.mobile)) return "Enter a valid 10-digit mobile number.";
     if (!form.firstName.trim()) return "First name is required.";
+    if (form.emergencyContactMobile.trim() && !isValidMobile(form.emergencyContactMobile)) return "Enter a valid 10-digit mobile number.";
     return null;
   };
 
@@ -374,7 +388,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
     }
   };
 
-  const disabled = !canEdit || saving;
+  const disabled = !canEditRecord || saving;
 
   return (
     <Stack spacing={2.5} component="form" onSubmit={onSave}>
@@ -392,7 +406,13 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
 
       {error ? <Alert severity="error">{error}</Alert> : null}
       {success ? <Alert severity="success">{success}</Alert> : null}
-      {!canEdit ? <Alert severity="info">You have read-only access to this patient record.</Alert> : null}
+      {!canEditRecord ? (
+        <Alert severity="info">
+          {mode === "edit" && (loadedPatient?.canEdit === false)
+            ? "Patient details can be edited by Clinic Admin after registration day."
+            : "You have read-only access to this patient record."}
+        </Alert>
+      ) : null}
 
       <Card sx={{ border: "1px solid", borderColor: "primary.light", boxShadow: "0 18px 45px rgba(15, 23, 42, 0.08)" }}>
         <CardContent sx={{ p: { xs: 2, md: 3 } }}>
@@ -421,8 +441,10 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     onChange={updateMobile}
                     disabled={disabled}
                     error={Boolean(form.mobile) && !isValidMobile(form.mobile)}
-                    helperText="Primary lookup and duplicate check"
-                    inputProps={{ inputMode: "tel", autoComplete: "tel" }}
+                    helperText={Boolean(form.mobile) && !isValidMobile(form.mobile)
+                      ? "Enter a valid 10-digit mobile number."
+                      : "Primary lookup and duplicate check"}
+                    inputProps={{ inputMode: "numeric", autoComplete: "tel", maxLength: 10, pattern: "[0-9]*" }}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
@@ -486,7 +508,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                 </Card>
               ) : null}
 
-              {mode === "create" ? (
+              {mode === "create" && !isDoctor ? (
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                   <Button type="button" variant="outlined" disabled={disabled} onClick={() => void savePatient("appointment")}>Save & Create Appointment</Button>
                   <Button type="button" variant="outlined" disabled={disabled} onClick={() => void savePatient("queue")}>Save & Add to Queue</Button>
@@ -509,7 +531,16 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
             <AccordionDetails>
               <Grid container spacing={1.5}>
                 <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Email" value={form.email} onChange={updateField("email")} disabled={disabled} inputProps={{ autoComplete: "email" }} /></Grid>
-                <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Emergency contact mobile" value={form.emergencyContactMobile} onChange={updateField("emergencyContactMobile")} disabled={disabled} inputProps={{ inputMode: "tel" }} /></Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    label="Emergency contact mobile"
+                    value={form.emergencyContactMobile}
+                    onChange={(event) => setForm((current) => ({ ...current, emergencyContactMobile: mobileDigits(event.target.value) }))}
+                    disabled={disabled}
+                    inputProps={{ inputMode: "numeric", maxLength: 10, pattern: "[0-9]*" }}
+                  />
+                </Grid>
                 <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Emergency contact name" value={form.emergencyContactName} onChange={updateField("emergencyContactName")} disabled={disabled} /></Grid>
                 <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Address" value={form.addressLine1} onChange={updateField("addressLine1")} disabled={disabled} /></Grid>
                 <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Address line 2" value={form.addressLine2} onChange={updateField("addressLine2")} disabled={disabled} /></Grid>

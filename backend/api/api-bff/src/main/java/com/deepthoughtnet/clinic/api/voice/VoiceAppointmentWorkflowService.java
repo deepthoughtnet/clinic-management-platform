@@ -5,6 +5,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
@@ -13,6 +14,7 @@ import com.deepthoughtnet.clinic.patient.service.model.PatientSearchCriteria;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.TemporalAdjusters;
@@ -45,15 +47,18 @@ class VoiceAppointmentWorkflowService {
     private final AppointmentService appointmentService;
     private final PatientService patientService;
     private final TenantUserManagementService tenantUserManagementService;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
 
     VoiceAppointmentWorkflowService(
             AppointmentService appointmentService,
             PatientService patientService,
-            TenantUserManagementService tenantUserManagementService
+            TenantUserManagementService tenantUserManagementService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver
     ) {
         this.appointmentService = appointmentService;
         this.patientService = patientService;
         this.tenantUserManagementService = tenantUserManagementService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
     }
 
     VoiceWorkflowSummary resolve(UUID tenantId,
@@ -66,7 +71,7 @@ class VoiceAppointmentWorkflowService {
 
         String resolvedLanguage = normalizeLanguage(language, previousSummary, transcript);
         MutableState state = MutableState.from(tenantId, previousSummary, resolvedLanguage);
-        ExtractedTurnDetails extracted = extract(transcript, resolvedLanguage);
+        ExtractedTurnDetails extracted = extract(state.tenantId, transcript, resolvedLanguage);
         boolean madeProgress = applyExtractedFields(state, extracted);
 
         PatientResolution patientResolution = resolvePatient(state, extracted);
@@ -287,7 +292,8 @@ class VoiceAppointmentWorkflowService {
         try {
             UUID doctorUserId = UUID.fromString(state.doctorUserId);
             LocalDate preferredDate = LocalDate.parse(state.preferredDate);
-            List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(state.tenantId, doctorUserId, preferredDate).stream()
+            ZoneId tenantZone = clinicTimeZoneResolver.resolve(state.tenantId);
+            List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(state.tenantId, doctorUserId, preferredDate, tenantZone).stream()
                     .filter(DoctorAvailabilitySlotRecord::selectable)
                     .sorted(Comparator.comparing(DoctorAvailabilitySlotRecord::slotTime))
                     .toList();
@@ -327,7 +333,8 @@ class VoiceAppointmentWorkflowService {
                             false
                     ),
                     null,
-                    false
+                    false,
+                    clinicTimeZoneResolver.resolve(state.tenantId)
             );
             state.confirmationRequested = false;
             state.bookingConfirmed = true;
@@ -362,7 +369,7 @@ class VoiceAppointmentWorkflowService {
                 : "I’ll ask the receptionist to help you with this booking.";
     }
 
-    private ExtractedTurnDetails extract(String transcript, String language) {
+    private ExtractedTurnDetails extract(UUID tenantId, String transcript, String language) {
         String normalized = transcript.trim();
         String lower = normalized.toLowerCase(Locale.ROOT);
         return new ExtractedTurnDetails(
@@ -370,7 +377,7 @@ class VoiceAppointmentWorkflowService {
                 findPhone(normalized),
                 findPatientNumber(normalized),
                 findRequestedDoctorName(normalized, language),
-                findPreferredDate(normalized, language),
+                findPreferredDate(tenantId, normalized, language),
                 findPreferredTimeWindow(normalized, lower, language),
                 findReason(normalized, lower, language),
                 containsAny(lower, POSITIVE_CONFIRMATIONS) || containsAny(normalized, POSITIVE_CONFIRMATIONS_HI),
@@ -601,13 +608,13 @@ class VoiceAppointmentWorkflowService {
         return normalized.length() >= 7 ? normalized : null;
     }
 
-    private String findPreferredDate(String transcript, String language) {
+    private String findPreferredDate(UUID tenantId, String transcript, String language) {
         Matcher iso = ISO_DATE_PATTERN.matcher(transcript);
         if (iso.find()) {
             return iso.group(1);
         }
         String lower = transcript.toLowerCase(Locale.ROOT);
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(clinicTimeZoneResolver.resolve(tenantId));
         if (lower.contains("day after tomorrow") || transcript.contains("परसों")) {
             return today.plusDays(2).toString();
         }

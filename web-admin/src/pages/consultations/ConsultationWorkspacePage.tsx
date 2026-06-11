@@ -411,8 +411,8 @@ function buildPrescriptionInput(form: PrescriptionFormState, consultation: Consu
   if (invalidMedicineRowIds.length) {
     throw new PrescriptionPayloadValidationError("Complete medicine name, dosage, frequency, and duration for highlighted rows.", invalidMedicineRowIds);
   }
-  if (!normalizedMedicines.length) {
-    throw new PrescriptionPayloadValidationError("At least one valid medicine is required.");
+  if (!normalizedMedicines.length && !hasPrescriptionContent(form)) {
+    throw new PrescriptionPayloadValidationError("Add a medicine or prescription note before saving.");
   }
 
   const recommendedTests = form.recommendedTests
@@ -1153,11 +1153,11 @@ export default function ConsultationWorkspacePage() {
     if (!consultationForm.chiefComplaints.trim() || !consultationForm.diagnosis.trim()) {
       return { title: "Fill consultation details", detail: "Capture the complaint and diagnosis, then save the draft." };
     }
-    if (!prescription || !hasAtLeastOneValidMedicineRow(prescriptionForm)) {
-      return { title: "Build the prescription", detail: "Add medicines manually or from a fast pack, then preview or save the Rx draft." };
+    if (!hasPrescriptionContent(prescriptionForm)) {
+      return { title: "Build the prescription", detail: "Add medicines, advice, follow-up, or tests, then preview or save the Rx draft." };
     }
     if (!prescriptionReadyForCompletion) {
-      return { title: "Finalize the prescription", detail: "Preview or finalize the prescription before completing the consultation." };
+      return { title: "Finalize the prescription", detail: hasAtLeastOneValidMedicineRow(prescriptionForm) ? "Preview or finalize the prescription before completing the consultation." : "No medicines added. Finalize the prescription or continue with the consultation notes only." };
     }
     return { title: "Complete consultation", detail: "Prescription is finalized. Review once, then complete the consultation." };
   }, [consultationForm.chiefComplaints, consultationForm.diagnosis, prescription, prescriptionForm, prescriptionReadyForCompletion, readOnly]);
@@ -1407,7 +1407,7 @@ export default function ConsultationWorkspacePage() {
         void manualSaveDraft();
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p" && canEditConsultation && !prescriptionReadOnly && hasAtLeastOneValidMedicineRow(prescriptionForm)) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p" && canEditConsultation && !prescriptionReadOnly && hasPrescriptionContent(prescriptionForm)) {
         event.preventDefault();
         void previewCurrentPrescription();
         return;
@@ -1508,8 +1508,8 @@ export default function ConsultationWorkspacePage() {
 
   const previewCurrentPrescription = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
-    if (!hasAtLeastOneValidMedicineRow(prescriptionForm)) {
-      setError("At least one valid medicine is required before previewing.");
+    if (!hasPrescriptionContent(prescriptionForm)) {
+      setError("Add consultation notes or a medicine before previewing.");
       return;
     }
     const popup = window.open("", "_blank", "noopener,noreferrer");
@@ -1589,8 +1589,11 @@ export default function ConsultationWorkspacePage() {
 
   const finalizeCurrentPrescription = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
-    if (!hasAtLeastOneValidMedicineRow(prescriptionForm)) {
-      setError("At least one valid medicine is required before finalizing.");
+    if (!hasPrescriptionContent(prescriptionForm)) {
+      setError("Add consultation notes or a medicine before finalizing.");
+      return;
+    }
+    if (!hasAtLeastOneValidMedicineRow(prescriptionForm) && !window.confirm("No medicines added. Continue without prescription?")) {
       return;
     }
     const saved = await persistPrescription();
@@ -1612,8 +1615,8 @@ export default function ConsultationWorkspacePage() {
 
   const printCurrentPrescription = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
-    if (!hasAtLeastOneValidMedicineRow(prescriptionForm)) {
-      setError("At least one valid medicine is required before printing.");
+    if (!hasPrescriptionContent(prescriptionForm)) {
+      setError("Add consultation notes or a medicine before printing.");
       return;
     }
     const popup = window.open("", "_blank");
@@ -1649,8 +1652,8 @@ export default function ConsultationWorkspacePage() {
 
   const downloadCurrentPrescription = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
-    if (!hasAtLeastOneValidMedicineRow(prescriptionForm)) {
-      setError("At least one valid medicine is required before downloading.");
+    if (!hasPrescriptionContent(prescriptionForm)) {
+      setError("Add consultation notes or a medicine before downloading.");
       return;
     }
     const saved = await persistPrescription();
@@ -2067,10 +2070,10 @@ export default function ConsultationWorkspacePage() {
           <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" justifyContent={{ xs: "flex-start", xl: "flex-end" }}>
             <Button type="button" size="small" variant="outlined" onClick={() => void backToQueue()}>Back to Queue</Button>
             {canEditConsultation && !readOnly ? <Button type="button" size="small" disabled={saving} onClick={() => void manualSaveDraft()}>Save Draft</Button> : null}
-            {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void previewCurrentPrescription()}>Preview Rx</Button> : null}
+            {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void previewCurrentPrescription()}>Preview Rx</Button> : null}
             {canCompleteConsultation && !readOnly ? <Button type="button" size="small" color="secondary" disabled={saving || !prescriptionReadyForCompletion} onClick={() => void completeCurrentConsultation()}>Complete</Button> : null}
-            {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void printCurrentPrescription()}>Print Rx</Button> : null}
-            {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
+            {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void printCurrentPrescription()}>Print Rx</Button> : null}
+            {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
           </Stack>
         </Stack>
         <Stack direction={{ xs: "column", lg: "row" }} spacing={1} justifyContent="space-between" alignItems={{ xs: "flex-start", lg: "center" }} sx={{ mt: 1 }}>
@@ -2445,9 +2448,9 @@ export default function ConsultationWorkspacePage() {
                       <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
                         {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" startIcon={<AddRoundedIcon />} onClick={addManualMedicine}>Manual row</Button> : null}
                         {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void persistPrescription()}>Save Rx</Button> : null}
-                        {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void previewCurrentPrescription()}>Preview</Button> : null}
-                        {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
-                        {canFinalizePrescription ? <Button type="button" size="small" color="secondary" disabled={saving || prescriptionReadOnly || prescription?.status === "DRAFT" || !hasAtLeastOneValidMedicineRow(prescriptionForm)} onClick={() => void finalizeCurrentPrescription()}>Finalize</Button> : null}
+                        {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void previewCurrentPrescription()}>Preview</Button> : null}
+                        {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
+                        {canFinalizePrescription ? <Button type="button" size="small" color="secondary" disabled={saving || prescriptionReadOnly || prescription?.status === "DRAFT" || !hasPrescriptionContent(prescriptionForm)} onClick={() => void finalizeCurrentPrescription()}>Finalize</Button> : null}
                       </Stack>
                     </Box>
                     {selectedRxTemplateKey ? (

@@ -30,6 +30,7 @@ public record PatientResponse(
         String surgicalHistory,
         String notes,
         boolean active,
+        boolean canEdit,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

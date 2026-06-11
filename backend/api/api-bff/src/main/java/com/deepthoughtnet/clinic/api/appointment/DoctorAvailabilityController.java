@@ -5,6 +5,7 @@ import com.deepthoughtnet.clinic.api.appointment.dto.DoctorAvailabilityResponse;
 import com.deepthoughtnet.clinic.api.appointment.dto.DoctorAvailabilitySlotResponse;
 import com.deepthoughtnet.clinic.api.appointment.dto.DoctorUnavailabilityRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.DoctorUnavailabilityResponse;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
@@ -14,6 +15,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityR
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityUpsertCommand;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -36,10 +38,12 @@ import jakarta.validation.Valid;
 public class DoctorAvailabilityController {
     private final AppointmentService appointmentService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
 
-    public DoctorAvailabilityController(AppointmentService appointmentService, DoctorAssignmentSecurityService doctorAssignmentSecurityService) {
+    public DoctorAvailabilityController(AppointmentService appointmentService, DoctorAssignmentSecurityService doctorAssignmentSecurityService, ClinicTimeZoneResolver clinicTimeZoneResolver) {
         this.appointmentService = appointmentService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
     }
 
     @GetMapping("/availability")
@@ -58,7 +62,8 @@ public class DoctorAvailabilityController {
     public List<DoctorAvailabilitySlotResponse> slots(@PathVariable UUID doctorUserId, @org.springframework.web.bind.annotation.RequestParam("date") LocalDate date) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(doctorUserId);
-        return appointmentService.listSlots(tenantId, effectiveDoctorUserId, date).stream().map(this::toSlotResponse).toList();
+        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
+        return appointmentService.listSlots(tenantId, effectiveDoctorUserId, date, bookingZone).stream().map(this::toSlotResponse).toList();
     }
 
     @GetMapping("/{doctorUserId}/queue/today")
@@ -66,7 +71,8 @@ public class DoctorAvailabilityController {
     public List<com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse> queueToday(@PathVariable UUID doctorUserId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(doctorUserId);
-        return appointmentService.listQueueToday(tenantId, effectiveDoctorUserId).stream()
+        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
+        return appointmentService.listQueueToday(tenantId, effectiveDoctorUserId, bookingZone).stream()
                 .map(record -> new com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse(
                         record.id() == null ? null : record.id().toString(),
                         record.tenantId() == null ? null : record.tenantId().toString(),

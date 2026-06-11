@@ -9,6 +9,7 @@ import com.deepthoughtnet.clinic.api.appointment.dto.QueueReorderRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.WalkInAppointmentRequest;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
@@ -25,6 +26,7 @@ import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.deepthoughtnet.clinic.platform.security.Permissions;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -64,19 +66,22 @@ public class AppointmentController {
     private final BillingService billingService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
     private final PermissionChecker permissionChecker;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
 
     public AppointmentController(
             AppointmentService appointmentService,
             ConsultationService consultationService,
             BillingService billingService,
             DoctorAssignmentSecurityService doctorAssignmentSecurityService,
-            PermissionChecker permissionChecker
+            PermissionChecker permissionChecker,
+            ClinicTimeZoneResolver clinicTimeZoneResolver
     ) {
         this.appointmentService = appointmentService;
         this.consultationService = consultationService;
         this.billingService = billingService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
         this.permissionChecker = permissionChecker;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
     }
 
     @GetMapping
@@ -107,6 +112,7 @@ public class AppointmentController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         boolean allowOverbooking = doctorAssignmentSecurityService.isClinicAdmin();
+        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
         return toResponse(appointmentService.createScheduled(tenantId, new AppointmentUpsertCommand(
                 request.patientId(),
                 request.doctorUserId(),
@@ -117,7 +123,7 @@ public class AppointmentController {
                 request.status(),
                 request.priority(),
                 request.allowAdHocBooking()
-        ), actorAppUserId, allowOverbooking));
+        ), actorAppUserId, allowOverbooking, bookingZone));
     }
 
     @PostMapping("/walk-in")
@@ -127,13 +133,14 @@ public class AppointmentController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         boolean allowOverbooking = doctorAssignmentSecurityService.isClinicAdmin();
+        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
         return toResponse(appointmentService.createWalkIn(tenantId, new WalkInAppointmentCommand(
                 request.patientId(),
                 request.doctorUserId(),
                 request.appointmentDate(),
                 request.reason(),
                 request.priority()
-        ), actorAppUserId, allowOverbooking));
+        ), actorAppUserId, allowOverbooking, bookingZone));
     }
 
     @GetMapping("/{id}")
@@ -196,12 +203,13 @@ public class AppointmentController {
         doctorAssignmentSecurityService.requireAppointmentAccess(tenantId, id);
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         boolean allowOverbooking = doctorAssignmentSecurityService.isClinicAdmin();
+        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
         return toResponse(appointmentService.reschedule(tenantId, id, new AppointmentRescheduleCommand(
                 request.doctorUserId(),
                 request.appointmentDate(),
                 request.appointmentTime(),
                 request.reason()
-        ), actorAppUserId, allowOverbooking));
+        ), actorAppUserId, allowOverbooking, bookingZone));
     }
 
     @PostMapping("/{appointmentId}/start-consultation")
@@ -219,17 +227,18 @@ public class AppointmentController {
     public List<AppointmentResponse> today() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(null);
+        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
         if (effectiveDoctorUserId != null) {
             List<AppointmentRecord> appointments = appointmentService.search(tenantId, new AppointmentSearchCriteria(
                     effectiveDoctorUserId,
                     null,
-                    LocalDate.now(),
+                    LocalDate.now(bookingZone),
                     null,
                     null
             ));
             return toResponsesWithConsultations(tenantId, appointments, effectiveDoctorUserId);
         }
-        return toResponsesWithConsultations(tenantId, appointmentService.listToday(tenantId), null);
+        return toResponsesWithConsultations(tenantId, appointmentService.listToday(tenantId, bookingZone), null);
     }
 
     @PostMapping("/queue/reorder")
@@ -238,7 +247,8 @@ public class AppointmentController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requireQueueReorderAccess(doctorUserId);
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return appointmentService.reorderQueueToday(tenantId, doctorUserId, request.orderedAppointmentIds(), actorAppUserId)
+        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
+        return appointmentService.reorderQueueToday(tenantId, doctorUserId, request.orderedAppointmentIds(), actorAppUserId, bookingZone)
                 .stream()
                 .map(record -> toResponse(record, null))
                 .toList();

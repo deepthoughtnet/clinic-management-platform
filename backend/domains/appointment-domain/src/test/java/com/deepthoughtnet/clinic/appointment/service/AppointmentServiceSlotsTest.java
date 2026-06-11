@@ -239,6 +239,29 @@ class AppointmentServiceSlotsTest {
     }
 
     @Test
+    void createScheduledRejectsAdHocBookingWhenLeaveBlockCoversRequestedTimeEvenWithoutSlots() {
+        DoctorUnavailabilityEntity leave = DoctorUnavailabilityEntity.create(TENANT_ID, DOCTOR_ID);
+        leave.update(
+                APPOINTMENT_DATE.atTime(11, 0).atOffset(OffsetDateTime.now().getOffset()),
+                APPOINTMENT_DATE.atTime(12, 0).atOffset(OffsetDateTime.now().getOffset()),
+                DoctorUnavailabilityType.LEAVE,
+                "Personal leave",
+                true
+        );
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of());
+        when(doctorUnavailabilityRepository.findByTenantIdAndDoctorUserIdAndActiveTrueAndStartAtLessThanAndEndAtGreaterThan(eq(TENANT_ID), eq(DOCTOR_ID), any(), any()))
+                .thenReturn(List.of(leave));
+
+        assertThatThrownBy(() -> service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, APPOINTMENT_DATE, LocalTime.of(11, 30), "Emergency", AppointmentType.SCHEDULED, null, AppointmentPriority.URGENT, true),
+                ACTOR_ID,
+                false
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unavailable");
+    }
+
+    @Test
     void createScheduledReturnsReadableDisplayReference() {
         when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of());
 
@@ -327,6 +350,46 @@ class AppointmentServiceSlotsTest {
         );
 
         verify(appointmentRepository).save(any(AppointmentEntity.class));
+    }
+
+    @Test
+    void rescheduleRejectsNonBookedAppointments() {
+        AppointmentEntity source = appointment(LocalTime.of(10, 0), AppointmentStatus.WAITING);
+        when(appointmentRepository.findByTenantIdAndId(TENANT_ID, source.getId())).thenReturn(Optional.of(source));
+
+        assertThatThrownBy(() -> service.reschedule(
+                TENANT_ID,
+                source.getId(),
+                new AppointmentRescheduleCommand(DOCTOR_ID, APPOINTMENT_DATE, LocalTime.of(10, 0), "Move later"),
+                ACTOR_ID,
+                false
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Only booked appointments can be rescheduled");
+    }
+
+    @Test
+    void createUnavailabilityRejectsConflictingAppointments() {
+        AppointmentEntity booked = appointment(LocalTime.of(10, 0), AppointmentStatus.BOOKED);
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateBetweenOrderByAppointmentDateAscAppointmentTimeAscCreatedAtAsc(
+                TENANT_ID,
+                DOCTOR_ID,
+                APPOINTMENT_DATE,
+                APPOINTMENT_DATE.plusDays(1)
+        )).thenReturn(List.of(booked));
+
+        assertThatThrownBy(() -> service.createUnavailability(
+                TENANT_ID,
+                DOCTOR_ID,
+                new com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityUpsertCommand(
+                        APPOINTMENT_DATE.atStartOfDay().atOffset(java.time.ZoneOffset.UTC),
+                        APPOINTMENT_DATE.plusDays(1).atStartOfDay().atOffset(java.time.ZoneOffset.UTC),
+                        DoctorUnavailabilityType.LEAVE,
+                        "Leave",
+                        true
+                ),
+                ACTOR_ID
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("existing appointments already overlap");
     }
 
     @Test

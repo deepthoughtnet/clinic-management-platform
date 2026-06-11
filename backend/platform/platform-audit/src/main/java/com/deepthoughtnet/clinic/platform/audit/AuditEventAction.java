@@ -65,6 +65,7 @@ public final class AuditEventAction {
     public static final String AGENT_INTAKE_ITEM_IMPORTED = "AGENT_INTAKE_ITEM_IMPORTED";
     public static final String AGENT_INTAKE_ITEM_SKIPPED_DUPLICATE = "AGENT_INTAKE_ITEM_SKIPPED_DUPLICATE";
     public static final String AGENT_INTAKE_ITEM_FAILED = "AGENT_INTAKE_ITEM_FAILED";
+    public static final String PATIENT_PROFILE_UPDATED = "PATIENT_PROFILE_UPDATED";
 
     private AuditEventAction() {
     }

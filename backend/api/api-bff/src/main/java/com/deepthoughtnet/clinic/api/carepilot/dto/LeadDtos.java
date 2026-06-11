@@ -12,6 +12,8 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 
 /** DTOs for CarePilot lead management APIs. */
 public final class LeadDtos {
@@ -51,6 +53,8 @@ public final class LeadDtos {
     public record LeadUpsertRequest(
             String firstName,
             String lastName,
+            @NotBlank(message = "phone is required")
+            @Pattern(regexp = "^[0-9]{10}$", message = "Enter a valid 10-digit mobile number.")
             String phone,
             String email,
             PatientGender gender,

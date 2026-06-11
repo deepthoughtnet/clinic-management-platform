@@ -97,6 +97,14 @@ const emptyDraft = (): LeadDraft => ({ firstName: "", lastName: "", phone: "", e
 const emptyConvertDraft = (): ConvertDraft => ({ bookAppointment: false, doctorUserId: "", appointmentDate: "", appointmentTime: "", reason: "", notes: "", priority: "NORMAL" });
 const emptyFollowUpDraft = (): FollowUpDraft => ({ date: "", time: "" });
 
+function normalizeIndianMobile(value: string) {
+  return value.replace(/[^0-9]/g, "").slice(0, 10);
+}
+
+function isValidIndianMobile(value: string) {
+  return /^[0-9]{10}$/.test(normalizeIndianMobile(value));
+}
+
 function toDateTimeInputParts(value?: string | null): FollowUpDraft {
   if (!value) return emptyFollowUpDraft();
   const parsed = new Date(value);
@@ -208,7 +216,7 @@ export default function LeadsPage() {
     setDraft({
       firstName: lead.firstName,
       lastName: lead.lastName || "",
-      phone: lead.phone,
+      phone: normalizeIndianMobile(lead.phone),
       email: lead.email || "",
       source: lead.source,
       sourceDetails: lead.sourceDetails || "",
@@ -226,10 +234,14 @@ export default function LeadsPage() {
 
   const save = async () => {
     if (!auth.accessToken || !auth.tenantId || !canMutate) return;
+    if (!isValidIndianMobile(draft.phone)) {
+      setToast("Enter a valid 10-digit mobile number.");
+      return;
+    }
     const payload = {
       firstName: draft.firstName,
       lastName: draft.lastName || null,
-      phone: draft.phone,
+      phone: normalizeIndianMobile(draft.phone),
       email: draft.email || null,
       source: draft.source,
       sourceDetails: draft.sourceDetails || null,
@@ -519,7 +531,17 @@ export default function LeadsPage() {
           <Grid container spacing={1.5} sx={{ pt: 0.5 }}>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="First name" value={draft.firstName} onChange={(e) => setDraft((d) => ({ ...d, firstName: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Last name" value={draft.lastName} onChange={(e) => setDraft((d) => ({ ...d, lastName: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Phone" value={draft.phone} onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <TextField
+                fullWidth
+                label="Phone"
+                value={draft.phone}
+                onChange={(e) => setDraft((d) => ({ ...d, phone: normalizeIndianMobile(e.target.value) }))}
+                inputProps={{ inputMode: "numeric", maxLength: 10, pattern: "[0-9]*" }}
+                error={Boolean(draft.phone) && !isValidIndianMobile(draft.phone)}
+                helperText={Boolean(draft.phone) && !isValidIndianMobile(draft.phone) ? "Enter a valid 10-digit mobile number." : ""}
+              />
+            </Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Email" value={draft.email} onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Source</InputLabel><Select value={draft.source} label="Source" onChange={(e) => setDraft((d) => ({ ...d, source: String(e.target.value) as CarePilotLeadSource }))}>{SOURCES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
             <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={draft.status} label="Status" onChange={(e) => setDraft((d) => ({ ...d, status: String(e.target.value) as CarePilotLeadStatus }))}>{STATUSES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>

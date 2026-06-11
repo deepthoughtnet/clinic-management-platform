@@ -15,6 +15,7 @@ import {
   Select,
   Stack,
   TextField,
+  Tooltip,
   Typography,
   Table,
   TableBody,
@@ -45,6 +46,16 @@ export default function PatientsPage() {
     name: "",
     active: "",
   });
+  const tenantRole = (auth.tenantRole || "").toUpperCase();
+  const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
+  const canCreatePatient = !isDoctor && auth.hasPermission("patient.create");
+  const canEditOlderPatientMessage = tenantRole === "RECEPTIONIST"
+    ? "Patient details can be edited by Clinic Admin after registration day."
+    : tenantRole === "AUDITOR"
+      ? "Auditor access is read-only."
+      : tenantRole === "DOCTOR"
+        ? "Doctors can view patient demographics but cannot edit master details directly."
+        : "You have read-only access to this patient record.";
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) {
@@ -88,9 +99,11 @@ export default function PatientsPage() {
             Tenant-scoped enrollment, search, and profile management.
           </Typography>
         </Box>
-        <Button variant="contained" onClick={() => navigate("/patients/new")}>
-          New Patient
-        </Button>
+        {canCreatePatient ? (
+          <Button variant="contained" onClick={() => navigate("/patients/new")}>
+            New Patient
+          </Button>
+        ) : null}
       </Box>
 
       {error ? <Alert severity="error">{error}</Alert> : null}
@@ -183,9 +196,20 @@ export default function PatientsPage() {
                       <Button size="small" sx={{ whiteSpace: "nowrap" }} onClick={() => navigate(`/patients/${patient.id}`)}>
                         View
                       </Button>
-                      <Button size="small" sx={{ whiteSpace: "nowrap" }} onClick={() => navigate(`/patients/${patient.id}/edit`)}>
-                        Edit
-                      </Button>
+                      <Tooltip
+                        title={patient.canEdit ? undefined : canEditOlderPatientMessage}
+                      >
+                        <span>
+                          <Button
+                            size="small"
+                            sx={{ whiteSpace: "nowrap" }}
+                            onClick={() => navigate(`/patients/${patient.id}/edit`)}
+                            disabled={!patient.canEdit}
+                          >
+                            Edit
+                          </Button>
+                        </span>
+                      </Tooltip>
                     </TableCell>
                   </TableRow>
                 ))}

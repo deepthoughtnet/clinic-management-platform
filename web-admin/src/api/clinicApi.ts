@@ -500,6 +500,7 @@ export type Patient = {
   surgicalHistory: string | null;
   notes: string | null;
   active: boolean;
+  canEdit: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -511,7 +512,7 @@ export type PatientDetail = {
   previousConsultations: Consultation[];
 };
 
-export type PatientInput = Omit<Patient, "id" | "tenantId" | "patientNumber" | "createdAt" | "updatedAt">;
+export type PatientInput = Omit<Patient, "id" | "tenantId" | "patientNumber" | "canEdit" | "createdAt" | "updatedAt">;
 
 export type Appointment = {
   id: string;

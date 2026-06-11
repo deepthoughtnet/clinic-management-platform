@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.api.voice.spi.SpeechToTextProvider;
@@ -34,6 +35,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.DayOfWeek;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -44,6 +46,12 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockMultipartFile;
 
 class VoiceOrchestratorServiceTest {
+
+    private ClinicTimeZoneResolver zoneResolver() {
+        ClinicTimeZoneResolver resolver = mock(ClinicTimeZoneResolver.class);
+        when(resolver.resolve(any())).thenReturn(ZoneOffset.UTC);
+        return resolver;
+    }
 
     @AfterEach
     void clear() {
@@ -538,7 +546,7 @@ class VoiceOrchestratorServiceTest {
                 new ObjectMapper(),
                 mock(FasterWhisperSpeechToTextProvider.class),
                 mock(PiperTextToSpeechProvider.class),
-                new VoiceAppointmentWorkflowService(appointmentService, patientService, mock(TenantUserManagementService.class))
+                new VoiceAppointmentWorkflowService(appointmentService, patientService, mock(TenantUserManagementService.class), zoneResolver())
         );
 
         service.processAudio(
@@ -581,7 +589,7 @@ class VoiceOrchestratorServiceTest {
                 new ObjectMapper(),
                 mock(FasterWhisperSpeechToTextProvider.class),
                 mock(PiperTextToSpeechProvider.class),
-                new VoiceAppointmentWorkflowService(mock(AppointmentService.class), mock(PatientService.class), mock(TenantUserManagementService.class))
+                new VoiceAppointmentWorkflowService(mock(AppointmentService.class), mock(PatientService.class), mock(TenantUserManagementService.class), zoneResolver())
         );
 
         VoiceTestResponse response = service.processAudio(

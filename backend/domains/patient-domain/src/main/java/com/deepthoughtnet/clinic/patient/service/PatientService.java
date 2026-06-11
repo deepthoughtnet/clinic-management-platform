@@ -6,18 +6,24 @@ import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
 import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
 import com.deepthoughtnet.clinic.patient.service.model.PatientSearchCriteria;
 import com.deepthoughtnet.clinic.patient.service.model.PatientUpsertCommand;
+import com.deepthoughtnet.clinic.platform.audit.AuditEntityType;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventAction;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.Period;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.Locale;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
@@ -26,7 +32,8 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class PatientService {
-    private static final String ENTITY_TYPE = "PATIENT";
+    private static final String ENTITY_TYPE = AuditEntityType.PATIENT;
+    private static final String RECEPTIONIST_ROLE = "RECEPTIONIST";
 
     private final PatientRepository repository;
     private final AuditEventPublisher auditEventPublisher;
@@ -116,6 +123,11 @@ public class PatientService {
 
     @Transactional
     public PatientRecord update(UUID tenantId, UUID id, PatientUpsertCommand command, UUID actorAppUserId) {
+        return update(tenantId, id, command, actorAppUserId, null, null, null);
+    }
+
+    @Transactional
+    public PatientRecord update(UUID tenantId, UUID id, PatientUpsertCommand command, UUID actorAppUserId, String actorRole, ZoneId zoneId, String actorEmail) {
         requireTenant(tenantId);
         if (id == null) {
             throw new IllegalArgumentException("id is required");
@@ -124,31 +136,32 @@ public class PatientService {
         PatientEntity entity = repository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
 
+        enforceEditWindow(entity, actorRole, zoneId);
+
+        Map<String, Object> before = snapshot(entity);
         applyCommand(entity, command);
         PatientEntity saved = repository.save(entity);
 
-        auditEventPublisher.record(new AuditEventCommand(
-                tenantId,
-                ENTITY_TYPE,
-                saved.getId(),
-                "patient.updated",
-                actorAppUserId,
-                OffsetDateTime.now(),
-                "Updated patient " + saved.getPatientNumber(),
-                detailsJson(saved)
-        ));
+        recordFieldChanges(tenantId, saved, before, actorAppUserId, actorEmail, actorRole, OffsetDateTime.now());
 
         return toRecord(saved);
     }
 
     @Transactional
     public PatientRecord deactivate(UUID tenantId, UUID id, UUID actorAppUserId) {
+        return deactivate(tenantId, id, actorAppUserId, null, null, null);
+    }
+
+    @Transactional
+    public PatientRecord deactivate(UUID tenantId, UUID id, UUID actorAppUserId, String actorRole, ZoneId zoneId, String actorEmail) {
         requireTenant(tenantId);
         if (id == null) {
             throw new IllegalArgumentException("id is required");
         }
         PatientEntity entity = repository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
+        enforceEditWindow(entity, actorRole, zoneId);
+        Map<String, Object> before = snapshot(entity);
         entity.update(
                 entity.getFirstName(),
                 entity.getLastName(),
@@ -174,17 +187,27 @@ public class PatientService {
                 false
         );
         PatientEntity saved = repository.save(entity);
-        auditEventPublisher.record(new AuditEventCommand(
-                tenantId,
-                ENTITY_TYPE,
-                saved.getId(),
-                "patient.deactivated",
-                actorAppUserId,
-                OffsetDateTime.now(),
-                "Deactivated patient " + saved.getPatientNumber(),
-                detailsJson(saved)
-        ));
+        recordFieldChanges(tenantId, saved, before, actorAppUserId, actorEmail, actorRole, OffsetDateTime.now());
         return toRecord(saved);
+    }
+
+    public boolean canEditPatient(PatientRecord patient, String actorRole, ZoneId zoneId) {
+        if (patient == null) {
+            return false;
+        }
+        return canEditPatient(patient.createdAt(), actorRole, zoneId);
+    }
+
+    public boolean canEditPatient(OffsetDateTime createdAt, String actorRole, ZoneId zoneId) {
+        if (!RECEPTIONIST_ROLE.equals(normalizeRole(actorRole))) {
+            return true;
+        }
+        ZoneId effectiveZone = zoneId == null ? ZoneId.systemDefault() : zoneId;
+        if (createdAt == null) {
+            return false;
+        }
+        LocalDate createdDate = createdAt.atZoneSameInstant(effectiveZone).toLocalDate();
+        return createdDate.isEqual(LocalDate.now(effectiveZone));
     }
 
     private void applyCommand(PatientEntity entity, PatientUpsertCommand command) {
@@ -198,7 +221,7 @@ public class PatientService {
                 command.gender() == null ? PatientGender.UNKNOWN : command.gender(),
                 command.dateOfBirth(),
                 ageYears,
-                normalize(command.mobile()),
+                normalizeMobile(command.mobile(), "mobile"),
                 normalizeNullable(command.email()),
                 normalizeNullable(command.addressLine1()),
                 normalizeNullable(command.addressLine2()),
@@ -207,7 +230,7 @@ public class PatientService {
                 normalizeNullable(command.country()),
                 normalizeNullable(command.postalCode()),
                 normalizeNullable(command.emergencyContactName()),
-                normalizeNullable(command.emergencyContactMobile()),
+                StringUtils.hasText(command.emergencyContactMobile()) ? normalizeMobile(command.emergencyContactMobile(), "emergencyContactMobile") : null,
                 normalizeNullable(command.bloodGroup()),
                 normalizeNullable(command.allergies()),
                 normalizeNullable(command.existingConditions()),
@@ -268,10 +291,9 @@ public class PatientService {
         if (command.gender() == null) {
             throw new IllegalArgumentException("gender is required");
         }
-        requireText(command.mobile(), "mobile");
-        String mobile = command.mobile().trim();
-        if (!mobile.matches("\\+?[0-9]{7,15}")) {
-            throw new IllegalArgumentException("mobile must be a valid phone number");
+        normalizeMobile(command.mobile(), "mobile");
+        if (StringUtils.hasText(command.emergencyContactMobile())) {
+            normalizeMobile(command.emergencyContactMobile(), "emergencyContactMobile");
         }
     }
 
@@ -299,6 +321,15 @@ public class PatientService {
         return StringUtils.hasText(value) ? value.trim() : "";
     }
 
+    private String normalizeMobile(String value, String field) {
+        requireText(value, field);
+        String normalized = value.trim().replaceAll("[\\s-]", "");
+        if (!normalized.matches("[0-9]{10}")) {
+            throw new IllegalArgumentException(field + " must be a valid 10-digit mobile number");
+        }
+        return normalized;
+    }
+
     private String detailsJson(PatientEntity entity) {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("id", entity.getId());
@@ -314,5 +345,101 @@ public class PatientService {
         } catch (JsonProcessingException ex) {
             return "{\"patientNumber\":\"" + entity.getPatientNumber() + "\"}";
         }
+    }
+
+    private void enforceEditWindow(PatientEntity entity, String actorRole, ZoneId zoneId) {
+        if (canEditPatient(entity.getCreatedAt(), actorRole, zoneId)) {
+            return;
+        }
+        if (RECEPTIONIST_ROLE.equals(normalizeRole(actorRole))) {
+            throw new ForbiddenException("Patient details can be edited by Clinic Admin after registration day.");
+        }
+    }
+
+    private void recordFieldChanges(
+            UUID tenantId,
+            PatientEntity saved,
+            Map<String, Object> before,
+            UUID actorAppUserId,
+            String actorEmail,
+            String actorRole,
+            OffsetDateTime occurredAt
+    ) {
+        Map<String, Object> after = snapshot(saved);
+        List<String> changedFields = before.keySet().stream()
+                .filter(field -> !Objects.equals(before.get(field), after.get(field)))
+                .toList();
+        if (changedFields.isEmpty()) {
+            return;
+        }
+
+        for (String field : changedFields) {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("actionType", AuditEventAction.PATIENT_PROFILE_UPDATED);
+            details.put("patientId", saved.getId());
+            details.put("patientNumber", saved.getPatientNumber());
+            details.put("tenantId", tenantId);
+            details.put("actorAppUserId", actorAppUserId);
+            details.put("actorEmail", actorEmail);
+            details.put("actorRole", normalizeRole(actorRole));
+            details.put("timestamp", occurredAt == null ? null : occurredAt.toString());
+            details.put("changedField", field);
+            details.put("oldValue", before.get(field));
+            details.put("newValue", after.get(field));
+
+            auditEventPublisher.record(new AuditEventCommand(
+                    tenantId,
+                    ENTITY_TYPE,
+                    saved.getId(),
+                    AuditEventAction.PATIENT_PROFILE_UPDATED,
+                    actorAppUserId,
+                    occurredAt,
+                    "Updated patient " + saved.getPatientNumber() + " field " + field,
+                    toJson(details)
+            ));
+        }
+    }
+
+    private Map<String, Object> snapshot(PatientEntity entity) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("firstName", entity.getFirstName());
+        data.put("lastName", entity.getLastName());
+        data.put("gender", entity.getGender());
+        data.put("dateOfBirth", entity.getDateOfBirth());
+        data.put("ageYears", entity.getAgeYears());
+        data.put("mobile", entity.getMobile());
+        data.put("email", entity.getEmail());
+        data.put("addressLine1", entity.getAddressLine1());
+        data.put("addressLine2", entity.getAddressLine2());
+        data.put("city", entity.getCity());
+        data.put("state", entity.getState());
+        data.put("country", entity.getCountry());
+        data.put("postalCode", entity.getPostalCode());
+        data.put("emergencyContactName", entity.getEmergencyContactName());
+        data.put("emergencyContactMobile", entity.getEmergencyContactMobile());
+        data.put("bloodGroup", entity.getBloodGroup());
+        data.put("allergies", entity.getAllergies());
+        data.put("existingConditions", entity.getExistingConditions());
+        data.put("longTermMedications", entity.getLongTermMedications());
+        data.put("surgicalHistory", entity.getSurgicalHistory());
+        data.put("notes", entity.getNotes());
+        data.put("active", entity.isActive());
+        return data;
+    }
+
+    private String toJson(Map<String, Object> data) {
+        try {
+            return objectMapper.writeValueAsString(data);
+        } catch (JsonProcessingException ex) {
+            return "{\"patientId\":\"" + (data.get("patientId") == null ? "" : data.get("patientId")) + "\"}";
+        }
+    }
+
+    private String normalizeRole(String role) {
+        if (!StringUtils.hasText(role)) {
+            return "";
+        }
+        String normalized = role.trim().replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT);
+        return normalized.startsWith("ROLE_") ? normalized.substring(5) : normalized;
     }
 }

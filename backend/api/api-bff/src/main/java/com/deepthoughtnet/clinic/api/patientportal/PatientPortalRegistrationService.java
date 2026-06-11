@@ -158,7 +158,11 @@ public class PatientPortalRegistrationService {
         if (!StringUtils.hasText(phone)) {
             throw new UnauthorizedException("Verified mobile number is missing");
         }
-        return phone.trim();
+        String normalized = phone.trim().replaceAll("[\\s-]", "");
+        if (!normalized.matches("[0-9]{10}")) {
+            throw new UnauthorizedException("Verified mobile number is missing");
+        }
+        return normalized;
     }
 
     private String fullName(String firstName, String lastName) {

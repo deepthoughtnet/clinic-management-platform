@@ -244,13 +244,36 @@ class PrescriptionServiceTest {
     }
 
     @Test
-    void updateDraftRejectsMissingMedicines() {
+    void updateDraftRejectsCompletelyEmptyPrescription() {
         PrescriptionEntity parent = finalizeSavedPrescription();
-        PrescriptionUpsertCommand invalid = new PrescriptionUpsertCommand(PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, "Dx", "Advice", null, List.of(), List.of());
+        PrescriptionUpsertCommand invalid = new PrescriptionUpsertCommand(PATIENT_ID, DOCTOR_ID, CONSULTATION_ID, APPOINTMENT_ID, null, null, null, List.of(), List.of());
 
         assertThatThrownBy(() -> service.updateDraft(TENANT_ID, parent.getId(), invalid, ACTOR_ID))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("At least one medicine is required");
+                .hasMessage("Add a medicine or prescription note before saving");
+    }
+
+    @Test
+    void createDraftAllowsNoMedicinesWhenNotesArePresent() {
+        LocalDate followUpDate = LocalDate.now().plusDays(2);
+        PrescriptionUpsertCommand noteOnly = new PrescriptionUpsertCommand(
+                PATIENT_ID,
+                DOCTOR_ID,
+                CONSULTATION_ID,
+                APPOINTMENT_ID,
+                "Viral fever",
+                "Hydrate well",
+                followUpDate,
+                List.of(),
+                List.of()
+        );
+
+        PrescriptionRecord created = service.createDraft(TENANT_ID, noteOnly, ACTOR_ID);
+
+        assertThat(created.medicines()).isEmpty();
+        assertThat(created.diagnosisSnapshot()).isEqualTo("Viral fever");
+        assertThat(created.advice()).isEqualTo("Hydrate well");
+        assertThat(created.followUpDate()).isEqualTo(followUpDate);
     }
 
     @Test

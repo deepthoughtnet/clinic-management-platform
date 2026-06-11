@@ -12,6 +12,8 @@ import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentReposit
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
 import com.deepthoughtnet.clinic.ai.orchestration.service.AgentExecutionLogService;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
 import com.deepthoughtnet.clinic.platform.audit.AuditEntityType;
@@ -26,6 +28,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,6 +60,7 @@ public class ClinicalDocumentAiExtractionService {
     private final AuditEventPublisher auditEventPublisher;
     private final AgentExecutionLogService agentExecutionLogService;
     private final PatientService patientService;
+    private final TenantNotificationSettingsService notificationSettingsService;
     private final ObjectMapper objectMapper;
     private final long retryBackoffMs;
     private final int maxAttempts;
@@ -70,6 +74,7 @@ public class ClinicalDocumentAiExtractionService {
                                                AuditEventPublisher auditEventPublisher,
                                                AgentExecutionLogService agentExecutionLogService,
                                                PatientService patientService,
+                                               TenantNotificationSettingsService notificationSettingsService,
                                                ObjectMapper objectMapper,
                                                @Value("${clinic.ai.jobs.retryBackoffMs:60000}") long retryBackoffMs,
                                                @Value("${clinic.ai.jobs.maxAttempts:3}") int maxAttempts) {
@@ -82,6 +87,7 @@ public class ClinicalDocumentAiExtractionService {
         this.auditEventPublisher = auditEventPublisher;
         this.agentExecutionLogService = agentExecutionLogService;
         this.patientService = patientService;
+        this.notificationSettingsService = notificationSettingsService;
         this.objectMapper = objectMapper;
         this.retryBackoffMs = retryBackoffMs <= 0 ? 60000 : retryBackoffMs;
         this.maxAttempts = maxAttempts <= 0 ? 3 : maxAttempts;
@@ -296,6 +302,9 @@ public class ClinicalDocumentAiExtractionService {
         PatientRecord patient = patientService.findById(document.getTenantId(), document.getPatientId())
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
         String appended = appendPatientNote(patient.notes(), document, reviewNotes, reviewerAppUserId);
+        String actorRole = RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantRole();
+        ZoneId tenantZone = resolveTenantZone(document.getTenantId());
+        String actorEmail = resolveActorEmail(document.getTenantId(), reviewerAppUserId);
         patientService.update(document.getTenantId(), patient.id(), new com.deepthoughtnet.clinic.patient.service.model.PatientUpsertCommand(
                 patient.firstName(),
                 patient.lastName(),
@@ -319,7 +328,23 @@ public class ClinicalDocumentAiExtractionService {
                 patient.surgicalHistory(),
                 appended,
                 patient.active()
-        ), reviewerAppUserId);
+        ), reviewerAppUserId, actorRole, tenantZone, actorEmail);
+    }
+
+    private ZoneId resolveTenantZone(UUID tenantId) {
+        NotificationSettingsRecord settings = notificationSettingsService.findByTenantId(tenantId).orElse(null);
+        if (settings == null || settings.timezone() == null || settings.timezone().isBlank()) {
+            return ZoneId.systemDefault();
+        }
+        try {
+            return ZoneId.of(settings.timezone().trim());
+        } catch (Exception ex) {
+            return ZoneId.systemDefault();
+        }
+    }
+
+    private String resolveActorEmail(UUID tenantId, UUID actorAppUserId) {
+        return null;
     }
 
     private String appendPatientNote(String existing, ClinicalDocumentEntity document, String reviewNotes, UUID reviewerAppUserId) {

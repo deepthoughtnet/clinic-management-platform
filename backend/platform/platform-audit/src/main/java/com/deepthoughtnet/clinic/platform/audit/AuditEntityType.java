@@ -18,6 +18,7 @@ public final class AuditEntityType {
     public static final String AGENT_INTAKE_SOURCE = "AGENT_INTAKE_SOURCE";
     public static final String AGENT_INTAKE_RUN = "AGENT_INTAKE_RUN";
     public static final String AGENT_INTAKE_ITEM = "AGENT_INTAKE_ITEM";
+    public static final String PATIENT = "PATIENT";
 
     private AuditEntityType() {
     }

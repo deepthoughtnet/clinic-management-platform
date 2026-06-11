@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
@@ -25,6 +26,7 @@ import com.deepthoughtnet.clinic.patient.service.model.PatientSearchCriteria;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -32,12 +34,22 @@ import org.mockito.ArgumentCaptor;
 
 class VoiceAppointmentWorkflowServiceTest {
 
+    private VoiceAppointmentWorkflowService newService(
+            AppointmentService appointmentService,
+            PatientService patientService,
+            TenantUserManagementService tenantUserManagementService
+    ) {
+        ClinicTimeZoneResolver clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
+        when(clinicTimeZoneResolver.resolve(any())).thenReturn(ZoneOffset.UTC);
+        return new VoiceAppointmentWorkflowService(appointmentService, patientService, tenantUserManagementService, clinicTimeZoneResolver);
+    }
+
     @Test
     void genericAppointmentIntentCollectsMissingFieldsWithoutBooking() {
         AppointmentService appointmentService = mock(AppointmentService.class);
         PatientService patientService = mock(PatientService.class);
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
-        VoiceAppointmentWorkflowService service = new VoiceAppointmentWorkflowService(appointmentService, patientService, tenantUserManagementService);
+        VoiceAppointmentWorkflowService service = newService(appointmentService, patientService, tenantUserManagementService);
 
         VoiceWorkflowSummary summary = service.resolve(UUID.randomUUID(), "I want to book an appointment.", "en", null);
 
@@ -54,7 +66,7 @@ class VoiceAppointmentWorkflowServiceTest {
         AppointmentService appointmentService = mock(AppointmentService.class);
         PatientService patientService = mock(PatientService.class);
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
-        VoiceAppointmentWorkflowService service = new VoiceAppointmentWorkflowService(appointmentService, patientService, tenantUserManagementService);
+        VoiceAppointmentWorkflowService service = newService(appointmentService, patientService, tenantUserManagementService);
         UUID tenantId = UUID.randomUUID();
         UUID doctorUserId = UUID.randomUUID();
         UUID patientId = UUID.randomUUID();
@@ -62,7 +74,7 @@ class VoiceAppointmentWorkflowServiceTest {
 
         when(patientService.search(eq(tenantId), any(PatientSearchCriteria.class))).thenReturn(List.of(patient(patientId, tenantId, "PAT-1001", "Manha", "Singh", "9876543210")));
         when(tenantUserManagementService.list(tenantId)).thenReturn(List.of(doctor(doctorUserId, tenantId, "Dr Suresh Iyer")));
-        when(appointmentService.listSlots(tenantId, doctorUserId, tomorrow)).thenReturn(List.of(
+        when(appointmentService.listSlots(eq(tenantId), eq(doctorUserId), eq(tomorrow), any())).thenReturn(List.of(
                 slot(doctorUserId, "Dr Suresh Iyer", tomorrow, LocalTime.of(9, 0), true),
                 slot(doctorUserId, "Dr Suresh Iyer", tomorrow, LocalTime.of(9, 15), true)
         ));
@@ -82,7 +94,7 @@ class VoiceAppointmentWorkflowServiceTest {
         assertThat(summary.suggestedSlot().slotTime()).isEqualTo("09:00");
         assertThat(summary.confirmationRequested()).isTrue();
         assertThat(summary.booked()).isFalse();
-        verify(appointmentService).listSlots(tenantId, doctorUserId, tomorrow);
+        verify(appointmentService).listSlots(eq(tenantId), eq(doctorUserId), eq(tomorrow), any());
         verify(appointmentService, never()).createScheduled(any(), any(), any(), any(Boolean.class));
     }
 
@@ -91,7 +103,7 @@ class VoiceAppointmentWorkflowServiceTest {
         AppointmentService appointmentService = mock(AppointmentService.class);
         PatientService patientService = mock(PatientService.class);
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
-        VoiceAppointmentWorkflowService service = new VoiceAppointmentWorkflowService(appointmentService, patientService, tenantUserManagementService);
+        VoiceAppointmentWorkflowService service = newService(appointmentService, patientService, tenantUserManagementService);
         UUID tenantId = UUID.randomUUID();
 
         when(patientService.search(eq(tenantId), any(PatientSearchCriteria.class))).thenReturn(List.of(
@@ -112,7 +124,7 @@ class VoiceAppointmentWorkflowServiceTest {
         AppointmentService appointmentService = mock(AppointmentService.class);
         PatientService patientService = mock(PatientService.class);
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
-        VoiceAppointmentWorkflowService service = new VoiceAppointmentWorkflowService(appointmentService, patientService, tenantUserManagementService);
+        VoiceAppointmentWorkflowService service = newService(appointmentService, patientService, tenantUserManagementService);
         UUID tenantId = UUID.randomUUID();
 
         when(patientService.search(eq(tenantId), any(PatientSearchCriteria.class))).thenReturn(List.of(patient(UUID.randomUUID(), tenantId, "PAT-1001", "Manha", "Singh", "9876543210")));
@@ -134,7 +146,7 @@ class VoiceAppointmentWorkflowServiceTest {
         AppointmentService appointmentService = mock(AppointmentService.class);
         PatientService patientService = mock(PatientService.class);
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
-        VoiceAppointmentWorkflowService service = new VoiceAppointmentWorkflowService(appointmentService, patientService, tenantUserManagementService);
+        VoiceAppointmentWorkflowService service = newService(appointmentService, patientService, tenantUserManagementService);
         UUID tenantA = UUID.randomUUID();
         UUID tenantB = UUID.randomUUID();
 
@@ -169,7 +181,7 @@ class VoiceAppointmentWorkflowServiceTest {
         AppointmentService appointmentService = mock(AppointmentService.class);
         PatientService patientService = mock(PatientService.class);
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
-        VoiceAppointmentWorkflowService service = new VoiceAppointmentWorkflowService(appointmentService, patientService, tenantUserManagementService);
+        VoiceAppointmentWorkflowService service = newService(appointmentService, patientService, tenantUserManagementService);
         UUID tenantId = UUID.randomUUID();
         UUID doctorUserId = UUID.randomUUID();
         UUID patientId = UUID.randomUUID();
@@ -178,8 +190,8 @@ class VoiceAppointmentWorkflowServiceTest {
 
         when(patientService.search(eq(tenantId), any(PatientSearchCriteria.class))).thenReturn(List.of(patient(patientId, tenantId, "PAT-1001", "Manha", "Singh", "9876543210")));
         when(tenantUserManagementService.list(tenantId)).thenReturn(List.of(doctor(doctorUserId, tenantId, "Dr Suresh Iyer")));
-        when(appointmentService.listSlots(tenantId, doctorUserId, tomorrow)).thenReturn(List.of(slot(doctorUserId, "Dr Suresh Iyer", tomorrow, LocalTime.of(9, 0), true)));
-        when(appointmentService.createScheduled(eq(tenantId), any(AppointmentUpsertCommand.class), eq(null), eq(false)))
+        when(appointmentService.listSlots(eq(tenantId), eq(doctorUserId), eq(tomorrow), any())).thenReturn(List.of(slot(doctorUserId, "Dr Suresh Iyer", tomorrow, LocalTime.of(9, 0), true)));
+        when(appointmentService.createScheduled(eq(tenantId), any(AppointmentUpsertCommand.class), eq(null), eq(false), any()))
                 .thenReturn(new AppointmentRecord(
                         appointmentId,
                         tenantId,
@@ -207,7 +219,7 @@ class VoiceAppointmentWorkflowServiceTest {
         VoiceWorkflowSummary confirmed = service.resolve(tenantId, "Yes, book it.", "en", collected);
 
         ArgumentCaptor<AppointmentUpsertCommand> commandCaptor = ArgumentCaptor.forClass(AppointmentUpsertCommand.class);
-        verify(appointmentService).createScheduled(eq(tenantId), commandCaptor.capture(), eq(null), eq(false));
+        verify(appointmentService).createScheduled(eq(tenantId), commandCaptor.capture(), eq(null), eq(false), any());
         AppointmentUpsertCommand command = commandCaptor.getValue();
         assertThat(command.patientId()).isEqualTo(patientId);
         assertThat(command.doctorUserId()).isEqualTo(doctorUserId);
@@ -224,7 +236,7 @@ class VoiceAppointmentWorkflowServiceTest {
         AppointmentService appointmentService = mock(AppointmentService.class);
         PatientService patientService = mock(PatientService.class);
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
-        VoiceAppointmentWorkflowService service = new VoiceAppointmentWorkflowService(appointmentService, patientService, tenantUserManagementService);
+        VoiceAppointmentWorkflowService service = newService(appointmentService, patientService, tenantUserManagementService);
         UUID tenantId = UUID.randomUUID();
         UUID doctorUserId = UUID.randomUUID();
         UUID patientId = UUID.randomUUID();
@@ -232,7 +244,7 @@ class VoiceAppointmentWorkflowServiceTest {
 
         when(patientService.search(eq(tenantId), any(PatientSearchCriteria.class))).thenReturn(List.of(patient(patientId, tenantId, "PAT-1001", "Manha", "Singh", "9876543210")));
         when(tenantUserManagementService.list(tenantId)).thenReturn(List.of(doctor(doctorUserId, tenantId, "Dr Suresh Iyer")));
-        when(appointmentService.listSlots(tenantId, doctorUserId, tomorrow)).thenReturn(List.of(
+        when(appointmentService.listSlots(eq(tenantId), eq(doctorUserId), eq(tomorrow), any())).thenReturn(List.of(
                 slot(doctorUserId, "Dr Suresh Iyer", tomorrow, LocalTime.of(9, 0), true),
                 slot(doctorUserId, "Dr Suresh Iyer", tomorrow, LocalTime.of(10, 0), true),
                 slot(doctorUserId, "Dr Suresh Iyer", tomorrow, LocalTime.of(11, 0), true)
@@ -251,7 +263,7 @@ class VoiceAppointmentWorkflowServiceTest {
         AppointmentService appointmentService = mock(AppointmentService.class);
         PatientService patientService = mock(PatientService.class);
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
-        VoiceAppointmentWorkflowService service = new VoiceAppointmentWorkflowService(appointmentService, patientService, tenantUserManagementService);
+        VoiceAppointmentWorkflowService service = newService(appointmentService, patientService, tenantUserManagementService);
         UUID tenantId = UUID.randomUUID();
 
         VoiceWorkflowSummary first = service.resolve(tenantId, "book appointment", "en", null);
@@ -269,7 +281,7 @@ class VoiceAppointmentWorkflowServiceTest {
         AppointmentService appointmentService = mock(AppointmentService.class);
         PatientService patientService = mock(PatientService.class);
         TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
-        VoiceAppointmentWorkflowService service = new VoiceAppointmentWorkflowService(appointmentService, patientService, tenantUserManagementService);
+        VoiceAppointmentWorkflowService service = newService(appointmentService, patientService, tenantUserManagementService);
         UUID tenantId = UUID.randomUUID();
         UUID doctorUserId = UUID.randomUUID();
         UUID patientId = UUID.randomUUID();
@@ -277,8 +289,8 @@ class VoiceAppointmentWorkflowServiceTest {
 
         when(patientService.search(eq(tenantId), any(PatientSearchCriteria.class))).thenReturn(List.of(patient(patientId, tenantId, "PAT-1001", "मनहा", "सिंह", "9876543210")));
         when(tenantUserManagementService.list(tenantId)).thenReturn(List.of(doctor(doctorUserId, tenantId, "Dr Suresh Iyer")));
-        when(appointmentService.listSlots(tenantId, doctorUserId, tomorrow)).thenReturn(List.of(slot(doctorUserId, "Dr Suresh Iyer", tomorrow, LocalTime.of(9, 0), true)));
-        when(appointmentService.createScheduled(eq(tenantId), any(AppointmentUpsertCommand.class), eq(null), eq(false)))
+        when(appointmentService.listSlots(eq(tenantId), eq(doctorUserId), eq(tomorrow), any())).thenReturn(List.of(slot(doctorUserId, "Dr Suresh Iyer", tomorrow, LocalTime.of(9, 0), true)));
+        when(appointmentService.createScheduled(eq(tenantId), any(AppointmentUpsertCommand.class), eq(null), eq(false), any()))
                 .thenReturn(new AppointmentRecord(
                         UUID.randomUUID(),
                         tenantId,

@@ -32,10 +32,12 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
 import jakarta.validation.ConstraintViolationException;
+import java.util.regex.Pattern;
 
 @RestControllerAdvice
 public class GlobalRestExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalRestExceptionHandler.class);
+    private static final Pattern UUID_PATTERN = Pattern.compile("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b");
 
     @ExceptionHandler(BadRequestException.class)
     public ResponseEntity<?> handleBadRequest(BadRequestException ex, HttpServletRequest req) {
@@ -274,7 +276,7 @@ public class GlobalRestExceptionHandler {
         if (message == null || message.isBlank()) {
             return fallback;
         }
-        String normalized = message.trim();
+        String normalized = redactInternalReferences(message.trim());
         if (normalized.startsWith("No enum constant")
                 || normalized.contains("org.springframework")
                 || normalized.contains("java.lang.reflect")
@@ -283,6 +285,13 @@ public class GlobalRestExceptionHandler {
             return fallback;
         }
         return normalized;
+    }
+
+    private String redactInternalReferences(String message) {
+        if (message == null || message.isBlank()) {
+            return message;
+        }
+        return UUID_PATTERN.matcher(message).replaceAll("[hidden reference]");
     }
 
     private boolean isClientDisconnect(Throwable throwable) {

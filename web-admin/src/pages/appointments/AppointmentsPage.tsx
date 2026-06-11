@@ -41,6 +41,7 @@ import {
   createWaitlist,
   createPatient,
   createWalkInAppointment,
+  getAdminNotificationSettings,
   getDoctorSlots,
   getWaitlist,
   getClinicUsers,
@@ -62,6 +63,8 @@ import {
   type WaitlistStatus,
 } from "../../api/clinicApi";
 import {
+  formatClinicClockLabel,
+  getClinicDateKey,
   isBookingTimePast,
   isCurrentSlot,
   findSlotForTime,
@@ -117,8 +120,12 @@ function priorityColor(priority: Appointment["priority"]) {
   }
 }
 
-function digits(value: string) {
-  return value.replace(/[\s-]/g, "").trim();
+function normalizeIndianMobile(value: string) {
+  return value.replace(/[^0-9]/g, "").slice(0, 10);
+}
+
+function isValidIndianMobile(value: string) {
+  return /^[0-9]{10}$/.test(normalizeIndianMobile(value));
 }
 
 function isUuid(value: string) {
@@ -193,28 +200,21 @@ function appointmentReference(appointment: Appointment) {
   return appointment.displayReference || (appointment.tokenNumber != null ? `APT-${appointment.tokenNumber}` : "Pending");
 }
 
-function localDateKey(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 function toFive(time: string | null | undefined) {
   if (!time) return "";
   return time.slice(0, 5);
 }
 
-function isPastDateTime(date: string, time: string | null | undefined) {
-  return isBookingTimePast(date, time);
+function isPastDateTime(date: string, time: string | null | undefined, timeZone?: string | null) {
+  return isBookingTimePast(date, time, undefined, timeZone);
 }
 
-function isPastSlot(date: string, slot: DoctorAvailabilitySlot) {
-  return isSlotExpired(date, slot);
+function isPastSlot(date: string, slot: DoctorAvailabilitySlot, timeZone?: string | null) {
+  return isSlotExpired(date, slot, undefined, timeZone);
 }
 
-function isBookableSlot(date: string, slot: DoctorAvailabilitySlot) {
-  if (isPastSlot(date, slot)) return false;
+function isBookableSlot(date: string, slot: DoctorAvailabilitySlot, timeZone?: string | null) {
+  if (isPastSlot(date, slot, timeZone)) return false;
   if (slot.status === "AVAILABLE") return slot.selectable;
   if (slot.status === "PARTIALLY_BOOKED") {
     return slot.selectable && slot.bookedCount < slot.maxPatientsPerSlot;
@@ -243,13 +243,13 @@ function slotChipTone(slot: DoctorAvailabilitySlot) {
   return tone === "inherit" ? "default" : tone;
 }
 
-function slotLabel(slot: DoctorAvailabilitySlot, date: string) {
+function slotLabel(slot: DoctorAvailabilitySlot, date: string, timeZone?: string | null) {
   const timeLabel = toFive(slot.slotTime);
   const capacityLabel = `${slot.bookedCount}/${slot.maxPatientsPerSlot}`;
-  if (isCurrentSlot(date, slot)) {
+  if (isCurrentSlot(date, slot, undefined, timeZone)) {
     return `${timeLabel} • current • ${capacityLabel}`;
   }
-  if (isPastSlot(date, slot)) {
+  if (isPastSlot(date, slot, timeZone)) {
     return `${timeLabel} • past • ${capacityLabel}`;
   }
   return `${timeLabel} • ${slot.status.toLowerCase().replace(/_/g, " ")} • ${capacityLabel}`;
@@ -262,7 +262,7 @@ function toPatientInput(form: QuickRegisterForm): PatientInput {
     gender: form.gender,
     dateOfBirth: form.dateOfBirth || null,
     ageYears: form.ageYears ? Number(form.ageYears) : null,
-    mobile: digits(form.mobile),
+    mobile: normalizeIndianMobile(form.mobile),
     email: null,
     addressLine1: null,
     addressLine2: null,
@@ -301,7 +301,7 @@ export default function AppointmentsPage() {
 
   const statePatient = (location.state as AppointmentPageState | null)?.patient ?? null;
   const doctorUserIdFromQuery = searchParams.get("doctorUserId") || "";
-  const appointmentDateFromQuery = searchParams.get("appointmentDate") || localDateKey();
+  const appointmentDateFromQuery = searchParams.get("appointmentDate") || getClinicDateKey("UTC");
   const appointmentTimeFromQuery = searchParams.get("appointmentTime") || "";
 
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
@@ -337,14 +337,21 @@ export default function AppointmentsPage() {
   const [adHocConfirmOpen, setAdHocConfirmOpen] = React.useState(false);
   const [adHocConfirmMessage, setAdHocConfirmMessage] = React.useState("");
   const [adHocConfirmPending, setAdHocConfirmPending] = React.useState(false);
+  const [cancelDialogOpen, setCancelDialogOpen] = React.useState(false);
+  const [cancelTarget, setCancelTarget] = React.useState<Appointment | null>(null);
+  const [cancelComment, setCancelComment] = React.useState("");
+  const [clinicTimeZone, setClinicTimeZone] = React.useState("UTC");
+  const [clockTick, setClockTick] = React.useState(0);
+  const [appointmentDateTouched, setAppointmentDateTouched] = React.useState(Boolean(searchParams.get("appointmentDate")));
 
   const tenantRole = (auth.tenantRole || "").toUpperCase();
-  const isDoctor = tenantRole === "DOCTOR";
+  const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
   const canCreateAppointmentFlow = !isDoctor && auth.hasPermission("appointment.manage");
   const canQuickRegisterPatient = canCreateAppointmentFlow && auth.hasPermission("patient.create");
   const doctorOptions = users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
   const doctorFilter = isDoctor && auth.appUserId ? auth.appUserId : undefined;
-  const today = localDateKey();
+  const today = React.useMemo(() => getClinicDateKey(clinicTimeZone), [clinicTimeZone, clockTick]);
+  const clinicClockLabel = React.useMemo(() => formatClinicClockLabel(clinicTimeZone), [clinicTimeZone, clockTick]);
 
   const selectedDoctorId = doctorFilter || doctorUserId || "";
   const requiresAppointmentTime = type !== "WALK_IN";
@@ -353,16 +360,17 @@ export default function AppointmentsPage() {
     [appointmentDate, appointmentTime, slots],
   );
   const bookableSlots = React.useMemo(
-    () => slots.filter((slot) => isBookableSlot(appointmentDate, slot)),
-    [appointmentDate, slots],
+    () => slots.filter((slot) => isBookableSlot(appointmentDate, slot, clinicTimeZone)),
+    [appointmentDate, clinicTimeZone, slots],
   );
+  const hasStandardBookableSlots = bookableSlots.length > 0;
   const visibleSlots = React.useMemo(
-    () => slots.filter((slot) => isCurrentSlot(appointmentDate, slot) || !isPastSlot(appointmentDate, slot)),
-    [appointmentDate, slots],
+    () => slots.filter((slot) => isCurrentSlot(appointmentDate, slot, undefined, clinicTimeZone) || !isPastSlot(appointmentDate, slot, clinicTimeZone)),
+    [appointmentDate, clinicTimeZone, slots],
   );
   const currentSlot = React.useMemo(
-    () => slots.find((slot) => isCurrentSlot(appointmentDate, slot)) || null,
-    [appointmentDate, slots],
+    () => slots.find((slot) => isCurrentSlot(appointmentDate, slot, undefined, clinicTimeZone)) || null,
+    [appointmentDate, clinicTimeZone, slots],
   );
   const adHocBookingNeeded = React.useMemo(
     () => Boolean(
@@ -371,11 +379,11 @@ export default function AppointmentsPage() {
     && appointmentDate
     && appointmentTime
     && !matchingSlot
-    && !isPastDateTime(appointmentDate, appointmentTime)
-    && slots.length > 0
+    && !isPastDateTime(appointmentDate, appointmentTime, clinicTimeZone)
+    && hasStandardBookableSlots
     && !emergencyBooking
     ),
-    [appointmentDate, appointmentTime, emergencyBooking, matchingSlot, requiresAppointmentTime, selectedDoctorId, slots.length],
+    [appointmentDate, appointmentTime, clinicTimeZone, emergencyBooking, hasStandardBookableSlots, matchingSlot, requiresAppointmentTime, selectedDoctorId],
   );
   const canCreateAppointment = Boolean(
     canCreateAppointmentFlow &&
@@ -475,6 +483,42 @@ export default function AppointmentsPage() {
 
   React.useEffect(() => {
     let cancelled = false;
+    async function loadClinicTimeZone() {
+      if (!auth.accessToken || !auth.tenantId) {
+        setClinicTimeZone("UTC");
+        return;
+      }
+      try {
+        const settings = await getAdminNotificationSettings(auth.accessToken, auth.tenantId);
+        if (!cancelled) {
+          setClinicTimeZone(settings.timezone && settings.timezone.trim() ? settings.timezone.trim() : "UTC");
+        }
+      } catch {
+        if (!cancelled) {
+          setClinicTimeZone("UTC");
+        }
+      }
+    }
+
+    void loadClinicTimeZone();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken, auth.tenantId]);
+
+  React.useEffect(() => {
+    const handle = window.setInterval(() => setClockTick((value) => value + 1), 30_000);
+    return () => window.clearInterval(handle);
+  }, []);
+
+  React.useEffect(() => {
+    if (!appointmentDateTouched) {
+      setAppointmentDate(today);
+    }
+  }, [appointmentDateTouched, today]);
+
+  React.useEffect(() => {
+    let cancelled = false;
     async function hydrateHandoff() {
       if (!auth.accessToken || !auth.tenantId) return;
       if (statePatient) {
@@ -538,14 +582,14 @@ export default function AppointmentsPage() {
 
         const rows = await searchPatients(auth.accessToken, auth.tenantId, {
           patientNumber: term.toUpperCase().startsWith("PAT-") ? term : undefined,
-          mobile: /^\+?[0-9\s-]{6,}$/.test(term) ? digits(term) : undefined,
+          mobile: /^\+?[0-9\s-]{6,}$/.test(term) ? normalizeIndianMobile(term) || undefined : undefined,
           name: term.toUpperCase().startsWith("PAT-") || /^\+?[0-9\s-]{6,}$/.test(term) ? undefined : term,
           active: true,
         });
         if (!cancelled) {
           setPatientResults(rows);
           if (canQuickRegisterPatient && rows.length === 0 && /^\+?[0-9\s-]{6,}$/.test(term)) {
-            setQuickRegisterForm((current) => ({ ...current, mobile: digits(term) }));
+            setQuickRegisterForm((current) => ({ ...current, mobile: normalizeIndianMobile(term) }));
             setQuickRegisterError(null);
             setQuickRegisterOpen(true);
           }
@@ -635,8 +679,8 @@ export default function AppointmentsPage() {
     partial: bookableSlots.filter((slot) => slot.status === "PARTIALLY_BOOKED").length,
     full: slots.filter((slot) => slot.status === "FULL").length,
     unavailable: slots.filter((slot) => slot.status === "BREAK" || slot.status === "LEAVE" || slot.status === "UNAVAILABLE" || slot.status === "CONFLICTED").length,
-    past: slots.filter((slot) => isPastSlot(appointmentDate, slot)).length,
-  }), [appointmentDate, bookableSlots, slots]);
+    past: slots.filter((slot) => isPastSlot(appointmentDate, slot, clinicTimeZone)).length,
+  }), [appointmentDate, bookableSlots, clinicTimeZone, slots]);
   const summaryStats = React.useMemo(() => ({
     totalToday: todayRows.length,
     booked: todayRows.filter((item) => item.status === "BOOKED").length,
@@ -722,13 +766,13 @@ export default function AppointmentsPage() {
       return;
     }
 
-    if (!matchedSlot && isPastDateTime(appointmentDate, timeValue)) {
+    if (!matchedSlot && isPastDateTime(appointmentDate, timeValue, clinicTimeZone)) {
       setError("Selected time has already passed. Choose a current or future slot.");
       return;
     }
 
     if (matchedSlot) {
-      if (isPastSlot(appointmentDate, matchedSlot)) {
+      if (isPastSlot(appointmentDate, matchedSlot, clinicTimeZone)) {
         setError("Selected time has already passed. Choose a current or future slot.");
         return;
       }
@@ -745,7 +789,7 @@ export default function AppointmentsPage() {
     }
 
     if (emergencyBooking) {
-      if (bookableSlots.length > 0) {
+      if (hasStandardBookableSlots) {
         setError("Standard slots are available for this doctor. Book one of the available slots instead of using emergency/ad-hoc booking.");
         return;
       }
@@ -754,7 +798,7 @@ export default function AppointmentsPage() {
     }
 
     if (slots.length > 0) {
-      if (bookableSlots.length > 0) {
+      if (hasStandardBookableSlots) {
         setError("Standard slots are available for this doctor. Book one of the available slots instead of using emergency/ad-hoc booking.");
         return;
       }
@@ -805,7 +849,7 @@ export default function AppointmentsPage() {
         type: "SCHEDULED",
         status: null,
         priority: "NORMAL",
-        allowAdHocBooking: slots.length > 0 && !matchingSlot,
+        allowAdHocBooking: !hasStandardBookableSlots && !matchingSlot,
       });
       await updateWaitlistStatus(auth.accessToken, auth.tenantId, entry.id, "BOOKED");
       await loadAppointments();
@@ -842,22 +886,26 @@ export default function AppointmentsPage() {
 
   const cancelAppointment = async (appointment: Appointment) => {
     if (!auth.accessToken || !auth.tenantId) return;
-    const requiresReason = appointment.status === "WAITING";
-    let comment: string | null = "Cancelled from appointments list";
-    if (requiresReason) {
-      comment = window.prompt("Cancellation reason is required after check-in.", appointment.reason || "Cancelled by front desk")?.trim() || null;
-      if (!comment) {
-        setError("Cancellation reason is required after check-in.");
-        return;
-      }
-    }
-    if (!window.confirm(`Cancel appointment ${appointmentReference(appointment)}?`)) {
+    setCancelTarget(appointment);
+    setCancelComment(appointment.status === "WAITING" ? (appointment.reason || "Cancelled by front desk") : "Cancelled from appointments list");
+    setCancelDialogOpen(true);
+  };
+
+  const confirmCancelAppointment = async () => {
+    if (!auth.accessToken || !auth.tenantId || !cancelTarget) return;
+    const requiresReason = cancelTarget.status === "WAITING";
+    const comment = cancelComment.trim();
+    if (requiresReason && !comment) {
+      setError("Cancellation reason is required after check-in.");
       return;
     }
-    setActionAppointmentId(appointment.id);
+    setActionAppointmentId(cancelTarget.id);
     setError(null);
     try {
-      await updateAppointmentStatus(auth.accessToken, auth.tenantId, appointment.id, "CANCELLED", comment);
+      await updateAppointmentStatus(auth.accessToken, auth.tenantId, cancelTarget.id, "CANCELLED", comment || "Cancelled from appointments list");
+      setCancelDialogOpen(false);
+      setCancelTarget(null);
+      setCancelComment("");
       await loadAppointments();
       await loadSlots();
     } catch (err) {
@@ -869,6 +917,10 @@ export default function AppointmentsPage() {
 
   const saveQuickPatient = async () => {
     if (!auth.accessToken || !auth.tenantId || !canQuickRegisterPatient) return;
+    if (!isValidIndianMobile(quickRegisterForm.mobile)) {
+      setQuickRegisterError("Enter a valid 10-digit mobile number.");
+      return;
+    }
     setQuickRegisterSaving(true);
     setQuickRegisterError(null);
     try {
@@ -889,7 +941,7 @@ export default function AppointmentsPage() {
     const term = patientQuery.trim();
     setQuickRegisterForm((current) => ({
       ...current,
-      mobile: current.mobile || (term && /^\+?[0-9\s-]{6,}$/.test(term) ? digits(term) : ""),
+      mobile: current.mobile || (term && /^\+?[0-9\s-]{6,}$/.test(term) ? normalizeIndianMobile(term) : ""),
     }));
     setQuickRegisterError(null);
     setQuickRegisterOpen(true);
@@ -910,7 +962,8 @@ export default function AppointmentsPage() {
             Reception flow: search patient, pick doctor and slot, book, waitlist, or check in without scrolling through a long page.
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1} flexWrap="wrap">
+        <Stack direction="row" spacing={1} flexWrap="wrap" alignItems="center">
+          <Chip size="small" label={clinicClockLabel} variant="outlined" sx={compactChipSx} />
           <Button variant="outlined" onClick={() => navigate("/queue")}>Open Queue</Button>
           <Button variant="outlined" onClick={() => navigate("/appointments/day-board")}>Day Board</Button>
         </Stack>
@@ -1020,7 +1073,7 @@ export default function AppointmentsPage() {
                     </FormControl>
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField size="small" fullWidth type="date" label="Date" value={appointmentDate} onChange={(event) => setAppointmentDate(event.target.value)} InputLabelProps={{ shrink: true }} />
+                    <TextField size="small" fullWidth type="date" label="Date" value={appointmentDate} onChange={(event) => { setAppointmentDateTouched(true); setAppointmentDate(event.target.value); }} InputLabelProps={{ shrink: true }} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
                     <TextField
@@ -1127,7 +1180,7 @@ export default function AppointmentsPage() {
 
                 {currentSlot ? (
                   <Alert severity="info">
-                    Current slot: {slotLabel(currentSlot, appointmentDate)}. If capacity remains, it can still be booked.
+                    Current slot: {slotLabel(currentSlot, appointmentDate, clinicTimeZone)}. If capacity remains, it can still be booked.
                   </Alert>
                 ) : null}
 
@@ -1152,9 +1205,9 @@ export default function AppointmentsPage() {
                     {visibleSlots.map((slot) => {
                       const timeLabel = toFive(slot.slotTime);
                       const selected = appointmentTime === timeLabel;
-                      const current = isCurrentSlot(appointmentDate, slot);
-                      const past = isPastSlot(appointmentDate, slot);
-                      const bookable = isBookableSlot(appointmentDate, slot);
+                      const current = isCurrentSlot(appointmentDate, slot, undefined, clinicTimeZone);
+                      const past = isPastSlot(appointmentDate, slot, clinicTimeZone);
+                      const bookable = isBookableSlot(appointmentDate, slot, clinicTimeZone);
                       return (
                         <Button
                           key={`${slot.slotTime}-${slot.slotEndTime}`}
@@ -1313,7 +1366,9 @@ export default function AppointmentsPage() {
                         <TableCell align="right" sx={{ minWidth: 180 }}>
                           <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
                             <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)}>Patient</Button>
-                            <Button size="small" onClick={() => openReschedule(appointment)}>Reschedule</Button>
+                            {appointment.status === "BOOKED" ? (
+                              <Button size="small" onClick={() => openReschedule(appointment)}>Reschedule</Button>
+                            ) : null}
                             {!isDoctor && (appointment.status === "BOOKED" || appointment.status === "WAITING") ? (
                               <Button size="small" color="error" onClick={() => void cancelAppointment(appointment)} disabled={actionAppointmentId === appointment.id}>
                                 Cancel
@@ -1355,7 +1410,13 @@ export default function AppointmentsPage() {
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             {quickRegisterError ? <Alert severity="error">{quickRegisterError}</Alert> : null}
-            <TextField fullWidth label="Mobile" value={quickRegisterForm.mobile} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, mobile: event.target.value }))} />
+            <TextField
+              fullWidth
+              label="Mobile"
+              value={quickRegisterForm.mobile}
+              onChange={(event) => setQuickRegisterForm((current) => ({ ...current, mobile: normalizeIndianMobile(event.target.value) }))}
+              inputProps={{ inputMode: "numeric", maxLength: 10, pattern: "[0-9]*" }}
+            />
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, md: 6 }}>
                 <TextField fullWidth label="First name" value={quickRegisterForm.firstName} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, firstName: event.target.value }))} />
@@ -1417,6 +1478,45 @@ export default function AppointmentsPage() {
         <DialogActions>
           <Button onClick={() => setRescheduleOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={() => void saveReschedule()} disabled={!rescheduleDate || !rescheduleTime}>Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={cancelDialogOpen} onClose={() => { setCancelDialogOpen(false); setCancelTarget(null); setCancelComment(""); }} fullWidth maxWidth="sm">
+        <DialogTitle>Cancel appointment</DialogTitle>
+        <DialogContent>
+          {cancelTarget ? (
+            <Stack spacing={1.25} sx={{ pt: 1 }}>
+              <Alert severity="warning">This will cancel the appointment and remove it from active scheduling.</Alert>
+              <Typography variant="body2">
+                Patient: {cancelTarget.patientName || cancelTarget.patientNumber || cancelTarget.patientId}
+              </Typography>
+              <Typography variant="body2">
+                Doctor: {cancelTarget.doctorName || cancelTarget.doctorUserId}
+              </Typography>
+              <Typography variant="body2">
+                When: {formatDate(cancelTarget.appointmentDate)} {cancelTarget.appointmentTime || "-"}
+              </Typography>
+              <Typography variant="body2">
+                Reference: {appointmentReference(cancelTarget)}
+              </Typography>
+              <TextField
+                fullWidth
+                label={cancelTarget.status === "WAITING" ? "Cancellation reason" : "Comment"}
+                value={cancelComment}
+                onChange={(event) => setCancelComment(event.target.value)}
+                required={cancelTarget.status === "WAITING"}
+                helperText={cancelTarget.status === "WAITING" ? "Reason is required after check-in." : "Optional note for the audit trail."}
+                multiline
+                minRows={2}
+              />
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setCancelDialogOpen(false); setCancelTarget(null); setCancelComment(""); }} disabled={actionAppointmentId !== null}>Close</Button>
+          <Button variant="contained" color="error" onClick={() => void confirmCancelAppointment()} disabled={!cancelTarget || actionAppointmentId === cancelTarget.id}>
+            Cancel appointment
+          </Button>
         </DialogActions>
       </Dialog>
     </Stack>

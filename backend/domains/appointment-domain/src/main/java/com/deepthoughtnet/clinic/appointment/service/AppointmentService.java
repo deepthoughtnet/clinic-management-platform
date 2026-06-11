@@ -42,6 +42,8 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Collection;
 import java.util.ArrayList;
@@ -72,7 +74,6 @@ public class AppointmentService {
     private static final int DEFAULT_SLOT_DURATION_MINUTES = 15;
     private static final int BOOKING_TIME_GRACE_MINUTES = 15;
     private static final DateTimeFormatter APPOINTMENT_REFERENCE_DATE = DateTimeFormatter.BASIC_ISO_DATE;
-
     private final AppointmentRepository appointmentRepository;
     private final DoctorAvailabilityRepository doctorAvailabilityRepository;
     private final DoctorUnavailabilityRepository doctorUnavailabilityRepository;
@@ -117,9 +118,15 @@ public class AppointmentService {
 
     @Transactional(readOnly = true)
     public List<DoctorAvailabilitySlotRecord> listSlots(UUID tenantId, UUID doctorUserId, LocalDate appointmentDate) {
+        return listSlots(tenantId, doctorUserId, appointmentDate, ZoneOffset.UTC);
+    }
+
+    @Transactional(readOnly = true)
+    public List<DoctorAvailabilitySlotRecord> listSlots(UUID tenantId, UUID doctorUserId, LocalDate appointmentDate, ZoneId bookingZone) {
         requireTenant(tenantId);
         requireDoctor(doctorUserId);
         requireDate(appointmentDate, "appointmentDate");
+        ZoneId zone = resolveBookingZone(bookingZone);
 
         List<DoctorAvailabilityEntity> availabilities = doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(tenantId)
                 .stream()
@@ -136,8 +143,8 @@ public class AppointmentService {
                 doctorUserId,
                 appointmentDate
         );
-        OffsetDateTime dayStart = appointmentDate.atStartOfDay().atOffset(OffsetDateTime.now().getOffset());
-        OffsetDateTime dayEnd = appointmentDate.plusDays(1).atStartOfDay().atOffset(OffsetDateTime.now().getOffset());
+        OffsetDateTime dayStart = appointmentDate.atStartOfDay(zone).toOffsetDateTime();
+        OffsetDateTime dayEnd = appointmentDate.plusDays(1).atStartOfDay(zone).toOffsetDateTime();
         List<DoctorUnavailabilityEntity> unavailabilityBlocks = doctorUnavailabilityRepository
                 .findByTenantIdAndDoctorUserIdAndActiveTrueAndStartAtLessThanAndEndAtGreaterThan(
                         tenantId,
@@ -158,6 +165,8 @@ public class AppointmentService {
         Map<UUID, TenantUserRecord> users = tenantUsersById(tenantId);
         Map<UUID, PatientEntity> patients = patientsByIds(tenantId, appointments.stream().map(AppointmentEntity::getPatientId).distinct().toList());
         TenantUserRecord doctor = users.get(doctorUserId);
+        LocalDate today = currentDate(zone);
+        LocalTime now = currentTime(zone);
         for (DoctorAvailabilityEntity availability : availabilities) {
             int capacity = Math.max(1, availability.getMaxPatientsPerSlot() == null ? 1 : availability.getMaxPatientsPerSlot());
             LocalTime slotStart = availability.getStartTime();
@@ -165,7 +174,7 @@ public class AppointmentService {
             while (!slotStart.plusMinutes(availability.getConsultationDurationMinutes()).isAfter(slotEnd)) {
                 LocalTime candidateEnd = slotStart.plusMinutes(availability.getConsultationDurationMinutes());
                 boolean inBreak = isWithinBreak(slotStart, availability.getBreakStartTime(), availability.getBreakEndTime());
-                boolean inLeave = isWithinUnavailability(appointmentDate, slotStart, candidateEnd, unavailabilityBlocks);
+                boolean inLeave = isWithinUnavailability(appointmentDate, slotStart, candidateEnd, unavailabilityBlocks, zone);
                 List<AppointmentEntity> booked = bookingsByTime.getOrDefault(slotStart, List.of());
                 DoctorAvailabilitySlotStatus status;
                 boolean selectable;
@@ -190,6 +199,9 @@ public class AppointmentService {
                 } else {
                     status = DoctorAvailabilitySlotStatus.PARTIALLY_BOOKED;
                     selectable = true;
+                }
+                if (isPastSlot(appointmentDate, candidateEnd, today, now)) {
+                    selectable = false;
                 }
 
                 AppointmentEntity firstBooking = booked.isEmpty() ? null : booked.get(0);
@@ -345,6 +357,7 @@ public class AppointmentService {
         validateUnavailability(command);
         ensureDoctorInTenant(tenantId, doctorUserId);
         ensureNoUnavailabilityOverlap(tenantId, doctorUserId, command.startAt(), command.endAt(), null);
+        ensureNoAppointmentConflictForUnavailability(tenantId, doctorUserId, command.startAt(), command.endAt());
         DoctorUnavailabilityEntity entity = DoctorUnavailabilityEntity.create(tenantId, doctorUserId);
         entity.update(command.startAt(), command.endAt(), command.type(), normalizeNullable(command.reason()), command.active());
         DoctorUnavailabilityEntity saved = doctorUnavailabilityRepository.save(entity);
@@ -529,8 +542,13 @@ public class AppointmentService {
 
     @Transactional(readOnly = true)
     public List<AppointmentRecord> listToday(UUID tenantId) {
+        return listToday(tenantId, ZoneOffset.UTC);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AppointmentRecord> listToday(UUID tenantId, ZoneId bookingZone) {
         requireTenant(tenantId);
-        return mapAppointments(tenantId, appointmentRepository.findByTenantIdAndAppointmentDateOrderByAppointmentTimeAscCreatedAtAsc(tenantId, LocalDate.now()))
+        return mapAppointments(tenantId, appointmentRepository.findByTenantIdAndAppointmentDateOrderByAppointmentTimeAscCreatedAtAsc(tenantId, currentDate(bookingZone)))
                 .stream()
                 .filter(record -> record.status() != AppointmentStatus.CANCELLED)
                 .toList();
@@ -538,12 +556,17 @@ public class AppointmentService {
 
     @Transactional(readOnly = true)
     public List<AppointmentRecord> listQueueToday(UUID tenantId, UUID doctorUserId) {
+        return listQueueToday(tenantId, doctorUserId, ZoneOffset.UTC);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AppointmentRecord> listQueueToday(UUID tenantId, UUID doctorUserId, ZoneId bookingZone) {
         requireTenant(tenantId);
         requireDoctor(doctorUserId);
         return sortQueueRecords(mapAppointments(tenantId, appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(
                 tenantId,
                 doctorUserId,
-                LocalDate.now()
+                currentDate(bookingZone)
         )));
     }
 
@@ -565,15 +588,20 @@ public class AppointmentService {
 
     @Transactional
     public AppointmentRecord createScheduled(UUID tenantId, AppointmentUpsertCommand command, UUID actorAppUserId, boolean allowOverbooking) {
+        return createScheduled(tenantId, command, actorAppUserId, allowOverbooking, ZoneOffset.UTC);
+    }
+
+    @Transactional
+    public AppointmentRecord createScheduled(UUID tenantId, AppointmentUpsertCommand command, UUID actorAppUserId, boolean allowOverbooking, ZoneId bookingZone) {
         requireTenant(tenantId);
         validateAppointment(command);
-        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, command.doctorUserId(), command.appointmentDate());
+        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, command.doctorUserId(), command.appointmentDate(), bookingZone);
         DoctorAvailabilitySlotRecord matchingSlot = findMatchingSlot(slots, command.appointmentTime());
-        validateNotPast(command.appointmentDate(), command.appointmentTime(), matchingSlot);
+        validateNotPast(command.appointmentDate(), command.appointmentTime(), matchingSlot, bookingZone);
         ensurePatientInTenant(tenantId, command.patientId());
         ensureDoctorInTenant(tenantId, command.doctorUserId());
         ensureNoDuplicateActiveAppointment(tenantId, command.patientId(), command.doctorUserId(), command.appointmentDate(), command.appointmentTime());
-        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots);
+        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots, bookingZone);
 
         AppointmentEntity entity = AppointmentEntity.create(tenantId, command.patientId(), command.doctorUserId());
         AppointmentType type = command.type() == null ? AppointmentType.SCHEDULED : command.type();
@@ -606,6 +634,20 @@ public class AppointmentService {
             AppointmentPriority priority,
             boolean allowOverbooking
     ) {
+        validateScheduledBookingRequest(tenantId, doctorUserId, appointmentDate, appointmentTime, reason, priority, allowOverbooking, ZoneOffset.UTC);
+    }
+
+    @Transactional(readOnly = true)
+    public void validateScheduledBookingRequest(
+            UUID tenantId,
+            UUID doctorUserId,
+            LocalDate appointmentDate,
+            LocalTime appointmentTime,
+            String reason,
+            AppointmentPriority priority,
+            boolean allowOverbooking,
+            ZoneId bookingZone
+    ) {
         requireTenant(tenantId);
         requireDoctor(doctorUserId);
         requireDate(appointmentDate, "appointmentDate");
@@ -621,17 +663,22 @@ public class AppointmentService {
                 AppointmentStatus.BOOKED,
                 priority
         );
-        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, doctorUserId, appointmentDate);
+        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, doctorUserId, appointmentDate, bookingZone);
         DoctorAvailabilitySlotRecord matchingSlot = findMatchingSlot(slots, appointmentTime);
-        validateNotPast(appointmentDate, appointmentTime, matchingSlot);
-        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots);
+        validateNotPast(appointmentDate, appointmentTime, matchingSlot, bookingZone);
+        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots, bookingZone);
     }
 
     @Transactional
     public AppointmentRecord createWalkIn(UUID tenantId, WalkInAppointmentCommand command, UUID actorAppUserId, boolean allowOverbooking) {
+        return createWalkIn(tenantId, command, actorAppUserId, allowOverbooking, ZoneOffset.UTC);
+    }
+
+    @Transactional
+    public AppointmentRecord createWalkIn(UUID tenantId, WalkInAppointmentCommand command, UUID actorAppUserId, boolean allowOverbooking, ZoneId bookingZone) {
         requireTenant(tenantId);
         validateWalkIn(command);
-        validateNotPast(command.appointmentDate(), null);
+        validateNotPast(command.appointmentDate(), null, bookingZone);
         ensurePatientInTenant(tenantId, command.patientId());
         ensureDoctorInTenant(tenantId, command.doctorUserId());
 
@@ -738,6 +785,11 @@ public class AppointmentService {
 
     @Transactional
     public AppointmentRecord reschedule(UUID tenantId, UUID id, AppointmentRescheduleCommand command, UUID actorAppUserId, boolean allowOverbooking) {
+        return reschedule(tenantId, id, command, actorAppUserId, allowOverbooking, ZoneOffset.UTC);
+    }
+
+    @Transactional
+    public AppointmentRecord reschedule(UUID tenantId, UUID id, AppointmentRescheduleCommand command, UUID actorAppUserId, boolean allowOverbooking, ZoneId bookingZone) {
         requireTenant(tenantId);
         requireId(id, "id");
         if (command == null) {
@@ -748,10 +800,13 @@ public class AppointmentService {
 
         AppointmentEntity entity = appointmentRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Appointment not found"));
+        if (entity.getStatus() != AppointmentStatus.BOOKED) {
+            throw new IllegalArgumentException("Only booked appointments can be rescheduled");
+        }
         UUID targetDoctor = command.doctorUserId() == null ? entity.getDoctorUserId() : command.doctorUserId();
-        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, targetDoctor, command.appointmentDate());
+        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, targetDoctor, command.appointmentDate(), bookingZone);
         DoctorAvailabilitySlotRecord matchingSlot = findMatchingSlot(slots, command.appointmentTime());
-        validateNotPast(command.appointmentDate(), command.appointmentTime(), matchingSlot);
+        validateNotPast(command.appointmentDate(), command.appointmentTime(), matchingSlot, bookingZone);
         ensureDoctorInTenant(tenantId, targetDoctor);
         ensureNoDuplicateActiveAppointment(tenantId, entity.getPatientId(), targetDoctor, command.appointmentDate(), command.appointmentTime());
         ensureScheduledSlotAvailable(tenantId, new AppointmentUpsertCommand(
@@ -764,7 +819,7 @@ public class AppointmentService {
                 entity.getStatus(),
                 entity.getPriority(),
                 false
-        ), allowOverbooking, slots);
+        ), allowOverbooking, slots, bookingZone);
         Integer token = entity.getType() == AppointmentType.WALK_IN
                 ? nextToken(tenantId, targetDoctor, command.appointmentDate())
                 : entity.getTokenNumber();
@@ -872,11 +927,16 @@ public class AppointmentService {
 
     @Transactional
     public AppointmentRecord convertWaitlistToAppointment(UUID tenantId, UUID waitlistId, AppointmentUpsertCommand command, UUID actorAppUserId, boolean allowOverbooking) {
+        return convertWaitlistToAppointment(tenantId, waitlistId, command, actorAppUserId, allowOverbooking, ZoneOffset.UTC);
+    }
+
+    @Transactional
+    public AppointmentRecord convertWaitlistToAppointment(UUID tenantId, UUID waitlistId, AppointmentUpsertCommand command, UUID actorAppUserId, boolean allowOverbooking, ZoneId bookingZone) {
         requireTenant(tenantId);
         requireId(waitlistId, "waitlistId");
         AppointmentWaitlistEntity waitlist = appointmentWaitlistRepository.findByTenantIdAndId(tenantId, waitlistId)
                 .orElseThrow(() -> new IllegalArgumentException("Waitlist entry not found"));
-        AppointmentRecord appointment = createScheduled(tenantId, command, actorAppUserId, allowOverbooking);
+        AppointmentRecord appointment = createScheduled(tenantId, command, actorAppUserId, allowOverbooking, bookingZone);
         waitlist.markBooked(appointment.id());
         appointmentWaitlistRepository.save(waitlist);
         auditEventPublisher.record(new AuditEventCommand(
@@ -894,6 +954,11 @@ public class AppointmentService {
 
     @Transactional
     public List<AppointmentRecord> reorderQueueToday(UUID tenantId, UUID doctorUserId, List<UUID> orderedAppointmentIds, UUID actorAppUserId) {
+        return reorderQueueToday(tenantId, doctorUserId, orderedAppointmentIds, actorAppUserId, ZoneOffset.UTC);
+    }
+
+    @Transactional
+    public List<AppointmentRecord> reorderQueueToday(UUID tenantId, UUID doctorUserId, List<UUID> orderedAppointmentIds, UUID actorAppUserId, ZoneId bookingZone) {
         requireTenant(tenantId);
         requireDoctor(doctorUserId);
         if (orderedAppointmentIds == null || orderedAppointmentIds.isEmpty()) {
@@ -902,7 +967,7 @@ public class AppointmentService {
         List<AppointmentEntity> queue = appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(
                 tenantId,
                 doctorUserId,
-                LocalDate.now()
+                currentDate(bookingZone)
         );
         List<AppointmentEntity> reorderable = queue.stream()
                 .filter(entity -> entity.getStatus() == AppointmentStatus.BOOKED || entity.getStatus() == AppointmentStatus.WAITING)
@@ -937,7 +1002,7 @@ public class AppointmentService {
                 "Reordered doctor queue",
                 "{\"doctorUserId\":\"" + doctorUserId + "\"}"
         ));
-        return listQueueToday(tenantId, doctorUserId);
+        return listQueueToday(tenantId, doctorUserId, ZoneOffset.UTC);
     }
 
     private List<AppointmentRecord> mapAppointments(UUID tenantId, List<AppointmentEntity> appointments) {
@@ -1198,15 +1263,22 @@ public class AppointmentService {
     }
 
     private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking) {
-        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, command.doctorUserId(), command.appointmentDate());
-        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots);
+        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, ZoneOffset.UTC);
     }
 
-    private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking, List<DoctorAvailabilitySlotRecord> slots) {
+    private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking, ZoneId bookingZone) {
+        List<DoctorAvailabilitySlotRecord> slots = listSlots(tenantId, command.doctorUserId(), command.appointmentDate(), bookingZone);
+        ensureScheduledSlotAvailable(tenantId, command, allowOverbooking, slots, bookingZone);
+    }
+
+    private void ensureScheduledSlotAvailable(UUID tenantId, AppointmentUpsertCommand command, boolean allowOverbooking, List<DoctorAvailabilitySlotRecord> slots, ZoneId bookingZone) {
         if (command.type() == AppointmentType.WALK_IN) {
             return;
         }
         if (slots.isEmpty()) {
+            if (command.allowAdHocBooking()) {
+                ensureNoUnavailabilityConflictForAdHocBooking(tenantId, command.doctorUserId(), command.appointmentDate(), command.appointmentTime(), bookingZone);
+            }
             return;
         }
         DoctorAvailabilitySlotRecord slot = slots.stream()
@@ -1215,13 +1287,14 @@ public class AppointmentService {
                 .orElse(null);
         if (slot == null) {
             if (command.allowAdHocBooking()) {
-                if (hasBookableStandardSlot(command.appointmentDate(), slots)) {
-                    throw new IllegalArgumentException("Standard slots are available for this doctor. Please book one of the available slots instead of using emergency/ad-hoc booking.");
-                }
-                return;
+            if (hasBookableStandardSlot(command.appointmentDate(), slots, bookingZone)) {
+                throw new IllegalArgumentException("Standard slots are available for this doctor. Please book one of the available slots instead of using emergency/ad-hoc booking.");
             }
-            throw new IllegalArgumentException("Selected time is not available for the selected doctor");
+            ensureNoUnavailabilityConflictForAdHocBooking(tenantId, command.doctorUserId(), command.appointmentDate(), command.appointmentTime(), bookingZone);
+            return;
         }
+        throw new IllegalArgumentException("Selected time is not available for the selected doctor");
+    }
         if (slot.status() == DoctorAvailabilitySlotStatus.UNAVAILABLE
                 || slot.status() == DoctorAvailabilitySlotStatus.BREAK
                 || slot.status() == DoctorAvailabilitySlotStatus.LEAVE) {
@@ -1256,8 +1329,12 @@ public class AppointmentService {
     }
 
     private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime) {
-        LocalDate today = LocalDate.now();
-        LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
+        validateNotPast(appointmentDate, appointmentTime, ZoneOffset.UTC);
+    }
+
+    private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime, ZoneId bookingZone) {
+        LocalDate today = currentDate(bookingZone);
+        LocalTime now = currentTime(bookingZone);
         if (appointmentDate.isBefore(today)) {
             throw new IllegalArgumentException("Please select a future time or current running slot.");
         }
@@ -1267,8 +1344,12 @@ public class AppointmentService {
     }
 
     private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime, DoctorAvailabilitySlotRecord matchingSlot) {
-        LocalDate today = LocalDate.now();
-        LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
+        validateNotPast(appointmentDate, appointmentTime, matchingSlot, ZoneOffset.UTC);
+    }
+
+    private void validateNotPast(LocalDate appointmentDate, LocalTime appointmentTime, DoctorAvailabilitySlotRecord matchingSlot, ZoneId bookingZone) {
+        LocalDate today = currentDate(bookingZone);
+        LocalTime now = currentTime(bookingZone);
         if (appointmentDate.isBefore(today)) {
             throw new IllegalArgumentException("Selected time has already passed. Choose a current or future slot.");
         }
@@ -1282,11 +1363,15 @@ public class AppointmentService {
     }
 
     private boolean hasBookableStandardSlot(LocalDate appointmentDate, List<DoctorAvailabilitySlotRecord> slots) {
+        return hasBookableStandardSlot(appointmentDate, slots, ZoneOffset.UTC);
+    }
+
+    private boolean hasBookableStandardSlot(LocalDate appointmentDate, List<DoctorAvailabilitySlotRecord> slots, ZoneId bookingZone) {
         if (slots == null || slots.isEmpty()) {
             return false;
         }
-        LocalDate today = LocalDate.now();
-        LocalTime now = LocalTime.now().truncatedTo(ChronoUnit.MINUTES);
+        LocalDate today = currentDate(bookingZone);
+        LocalTime now = currentTime(bookingZone);
         return slots.stream()
                 .filter(DoctorAvailabilitySlotRecord::selectable)
                 .filter(slot -> slot.status() == DoctorAvailabilitySlotStatus.AVAILABLE || slot.status() == DoctorAvailabilitySlotStatus.PARTIALLY_BOOKED)
@@ -1299,6 +1384,34 @@ public class AppointmentService {
                     }
                     return !isPastWithGrace(slot.slotEndTime(), now);
                 });
+    }
+
+    private boolean isPastSlot(LocalDate appointmentDate, LocalTime slotEnd, LocalDate today, LocalTime now) {
+        if (appointmentDate.isBefore(today)) {
+            return true;
+        }
+        if (!appointmentDate.isEqual(today)) {
+            return false;
+        }
+        return slotEnd != null && isPastWithGrace(slotEnd, now);
+    }
+
+    private void ensureNoUnavailabilityConflictForAdHocBooking(UUID tenantId, UUID doctorUserId, LocalDate appointmentDate, LocalTime appointmentTime, ZoneId bookingZone) {
+        if (appointmentDate == null || appointmentTime == null) {
+            return;
+        }
+        ZoneId zone = resolveBookingZone(bookingZone);
+        OffsetDateTime startAt = appointmentDate.atTime(appointmentTime).atZone(zone).toOffsetDateTime();
+        OffsetDateTime endAt = startAt.plusMinutes(DEFAULT_SLOT_DURATION_MINUTES);
+        List<DoctorUnavailabilityEntity> conflicts = doctorUnavailabilityRepository.findByTenantIdAndDoctorUserIdAndActiveTrueAndStartAtLessThanAndEndAtGreaterThan(
+                tenantId,
+                doctorUserId,
+                endAt,
+                startAt
+        );
+        if (!conflicts.isEmpty()) {
+            throw new IllegalArgumentException("Doctor is unavailable during this time.");
+        }
     }
 
     private String displayReference(AppointmentEntity entity) {
@@ -1331,12 +1444,13 @@ public class AppointmentService {
         return !slotStart.isBefore(breakStart) && slotStart.isBefore(breakEnd);
     }
 
-    private boolean isWithinUnavailability(LocalDate appointmentDate, LocalTime slotStart, LocalTime slotEnd, List<DoctorUnavailabilityEntity> blocks) {
+    private boolean isWithinUnavailability(LocalDate appointmentDate, LocalTime slotStart, LocalTime slotEnd, List<DoctorUnavailabilityEntity> blocks, ZoneId bookingZone) {
         if (blocks == null || blocks.isEmpty()) {
             return false;
         }
-        OffsetDateTime slotStartAt = appointmentDate.atTime(slotStart).atOffset(OffsetDateTime.now().getOffset());
-        OffsetDateTime slotEndAt = appointmentDate.atTime(slotEnd).atOffset(OffsetDateTime.now().getOffset());
+        ZoneId zone = resolveBookingZone(bookingZone);
+        OffsetDateTime slotStartAt = appointmentDate.atTime(slotStart).atZone(zone).toOffsetDateTime();
+        OffsetDateTime slotEndAt = appointmentDate.atTime(slotEnd).atZone(zone).toOffsetDateTime();
         return blocks.stream().anyMatch(block -> block.isActive()
                 && block.getStartAt().isBefore(slotEndAt)
                 && block.getEndAt().isAfter(slotStartAt));
@@ -1353,6 +1467,38 @@ public class AppointmentService {
         if (conflict) {
             throw new IllegalArgumentException("Unavailability block overlaps an existing block");
         }
+    }
+
+    private void ensureNoAppointmentConflictForUnavailability(UUID tenantId, UUID doctorUserId, OffsetDateTime startAt, OffsetDateTime endAt) {
+        LocalDate startDate = startAt.toLocalDate();
+        LocalDate endDate = endAt.toLocalDate();
+        List<AppointmentEntity> appointments = appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateBetweenOrderByAppointmentDateAscAppointmentTimeAscCreatedAtAsc(
+                tenantId,
+                doctorUserId,
+                startDate,
+                endDate
+        );
+        List<AppointmentEntity> conflicts = appointments.stream()
+                .filter(appointment -> appointment.getStatus() != AppointmentStatus.CANCELLED && appointment.getStatus() != AppointmentStatus.NO_SHOW)
+                .filter(appointment -> appointmentOverlapsUnavailability(appointment, startAt, endAt))
+                .toList();
+        if (!conflicts.isEmpty()) {
+            throw new IllegalArgumentException("Cannot create this leave or block because existing appointments already overlap the selected time range.");
+        }
+    }
+
+    private boolean appointmentOverlapsUnavailability(AppointmentEntity appointment, OffsetDateTime blockStart, OffsetDateTime blockEnd) {
+        if (appointment == null || appointment.getAppointmentDate() == null) {
+            return false;
+        }
+        if (appointment.getAppointmentTime() == null) {
+            OffsetDateTime appointmentStart = appointment.getAppointmentDate().atStartOfDay().atOffset(blockStart.getOffset());
+            OffsetDateTime appointmentEnd = appointmentStart.plusMinutes(DEFAULT_SLOT_DURATION_MINUTES);
+            return appointmentStart.isBefore(blockEnd) && appointmentEnd.isAfter(blockStart);
+        }
+        OffsetDateTime appointmentStart = appointment.getAppointmentDate().atTime(appointment.getAppointmentTime()).atOffset(blockStart.getOffset());
+        OffsetDateTime appointmentEnd = appointmentStart.plusMinutes(DEFAULT_SLOT_DURATION_MINUTES);
+        return appointmentStart.isBefore(blockEnd) && appointmentEnd.isAfter(blockStart);
     }
 
     private void ensureTransitionAllowed(AppointmentStatus current, AppointmentStatus target) {
@@ -1400,6 +1546,26 @@ public class AppointmentService {
         if (time == null) {
             throw new IllegalArgumentException(field + " is required");
         }
+    }
+
+    private ZoneId resolveBookingZone(ZoneId bookingZone) {
+        return bookingZone == null ? ZoneOffset.UTC : bookingZone;
+    }
+
+    private LocalDate currentDate() {
+        return currentDate(ZoneOffset.UTC);
+    }
+
+    private LocalDate currentDate(ZoneId bookingZone) {
+        return LocalDate.now(resolveBookingZone(bookingZone));
+    }
+
+    private LocalTime currentTime() {
+        return currentTime(ZoneOffset.UTC);
+    }
+
+    private LocalTime currentTime(ZoneId bookingZone) {
+        return LocalTime.now(resolveBookingZone(bookingZone)).truncatedTo(ChronoUnit.MINUTES);
     }
 
     private String normalizeNullable(String value) {

@@ -199,17 +199,14 @@ public class LeadService {
         if (command.source() == null) {
             throw new IllegalArgumentException("source is required");
         }
-        String phone = command.phone().trim();
-        if (!phone.matches("\\+?[0-9]{7,15}")) {
-            throw new IllegalArgumentException("phone must be a valid phone number");
-        }
+        normalizeMobile(command.phone(), "phone");
     }
 
     private void applyUpsert(LeadEntity entity, LeadUpsertCommand command, UUID actorId, boolean convertedImmutable) {
         if (!convertedImmutable) {
             entity.setFirstName(command.firstName().trim());
             entity.setLastName(normalizeNullable(command.lastName()));
-            entity.setPhone(command.phone().trim());
+            entity.setPhone(normalizeMobile(command.phone(), "phone"));
             entity.setEmail(normalizeNullable(command.email()));
             entity.setGender(command.gender());
             entity.setDateOfBirth(command.dateOfBirth());
@@ -275,6 +272,17 @@ public class LeadService {
 
     private String normalizeNullable(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeMobile(String value, String field) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim().replaceAll("[\\s-]", "");
+        if (!normalized.matches("[0-9]{10}")) {
+            throw new IllegalArgumentException(field + " must be a valid 10-digit mobile number");
+        }
+        return normalized;
     }
 
     private String fullName(String first, String last) {

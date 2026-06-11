@@ -97,6 +97,14 @@ class GlobalRestExceptionHandlerTest {
     }
 
     @Test
+    void redactsUuidReferencesFromUserFacingErrors() throws Exception {
+        mockMvc.perform(get("/uuid-error")
+                        .header("X-Correlation-Id", "corr-uuid"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Invalid appointment [hidden reference]"));
+    }
+
+    @Test
     void formatsJsonMappingErrorsWithFieldPath() throws Exception {
         mockMvc.perform(post("/json-mapping")
                         .header("X-Correlation-Id", "corr-json")
@@ -130,6 +138,11 @@ class GlobalRestExceptionHandlerTest {
         @GetMapping("/availability-conflict")
         void availabilityConflict() {
             throw new DoctorAvailabilityConflictException("Availability already exists for this doctor, day, and time range.");
+        }
+
+        @GetMapping("/uuid-error")
+        void uuidError() {
+            throw new IllegalArgumentException("Invalid appointment 123e4567-e89b-12d3-a456-426614174000");
         }
 
         @PostMapping("/json-mapping")

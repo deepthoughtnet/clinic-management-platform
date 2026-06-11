@@ -528,9 +528,17 @@ public class PrescriptionService {
         requireId(command.patientId(), "patientId");
         requireId(command.doctorUserId(), "doctorUserId");
         requireId(command.consultationId(), "consultationId");
-        if (command.medicines() == null || command.medicines().isEmpty()) {
-            throw new IllegalArgumentException("At least one medicine is required");
+        if (!hasMeaningfulPrescriptionContent(command)) {
+            throw new IllegalArgumentException("Add a medicine or prescription note before saving");
         }
+    }
+
+    private boolean hasMeaningfulPrescriptionContent(PrescriptionUpsertCommand command) {
+        return command.medicines() != null && !command.medicines().isEmpty()
+                || StringUtils.hasText(command.diagnosisSnapshot())
+                || StringUtils.hasText(command.advice())
+                || command.followUpDate() != null
+                || (command.recommendedTests() != null && !command.recommendedTests().isEmpty());
     }
 
     private void validateMedicine(PrescriptionMedicineCommand line) {

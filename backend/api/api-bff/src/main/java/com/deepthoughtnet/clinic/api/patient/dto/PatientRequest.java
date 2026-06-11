@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PastOrPresent;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public record PatientRequest(
@@ -21,7 +22,8 @@ public record PatientRequest(
         LocalDate dateOfBirth,
         @PositiveOrZero @Max(130)
         Integer ageYears,
-        @Size(max = 24)
+        @NotBlank(message = "mobile is required")
+        @Pattern(regexp = "^[0-9]{10}$", message = "Enter a valid 10-digit mobile number.")
         String mobile,
         @Email @Size(max = 255)
         String email,
@@ -39,7 +41,7 @@ public record PatientRequest(
         String postalCode,
         @Size(max = 128)
         String emergencyContactName,
-        @Size(max = 24)
+        @Pattern(regexp = "^[0-9]{10}$", message = "Enter a valid 10-digit mobile number.")
         String emergencyContactMobile,
         @Size(max = 12)
         String bloodGroup,

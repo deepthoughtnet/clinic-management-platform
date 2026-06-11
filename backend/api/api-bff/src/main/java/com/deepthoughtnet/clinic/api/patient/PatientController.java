@@ -17,10 +17,17 @@ import com.deepthoughtnet.clinic.patient.service.model.PatientSearchCriteria;
 import com.deepthoughtnet.clinic.patient.service.model.PatientUpsertCommand;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord;
+import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
+import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
+import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.Locale;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -47,19 +54,28 @@ public class PatientController {
     private final ConsultationService consultationService;
     private final PrescriptionService prescriptionService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
+    private final TenantNotificationSettingsService notificationSettingsService;
+    private final AppUserRepository appUserRepository;
+    private final PermissionChecker permissionChecker;
 
     public PatientController(
             PatientService patientService,
             AppointmentService appointmentService,
             ConsultationService consultationService,
             PrescriptionService prescriptionService,
-            DoctorAssignmentSecurityService doctorAssignmentSecurityService
+            DoctorAssignmentSecurityService doctorAssignmentSecurityService,
+            TenantNotificationSettingsService notificationSettingsService,
+            AppUserRepository appUserRepository,
+            PermissionChecker permissionChecker
     ) {
         this.patientService = patientService;
         this.appointmentService = appointmentService;
         this.consultationService = consultationService;
         this.prescriptionService = prescriptionService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
+        this.notificationSettingsService = notificationSettingsService;
+        this.appUserRepository = appUserRepository;
+        this.permissionChecker = permissionChecker;
     }
 
     @GetMapping
@@ -71,11 +87,13 @@ public class PatientController {
             @RequestParam(required = false) Boolean active
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        String actorRole = currentTenantRole();
+        ZoneId tenantZone = resolveTenantZone(tenantId);
         List<UUID> visiblePatientIds = doctorAssignmentSecurityService.visiblePatientIds(tenantId);
         return patientService.search(tenantId, new PatientSearchCriteria(patientNumber, mobile, name, active))
                 .stream()
                 .filter(patient -> !doctorAssignmentSecurityService.isDoctor() || visiblePatientIds.contains(patient.id()))
-                .map(this::toResponse)
+                .map(patient -> toResponse(patient, canCurrentActorEditPatient(patient, actorRole, tenantZone)))
                 .toList();
     }
 
@@ -85,20 +103,25 @@ public class PatientController {
     public PatientResponse create(@Valid @RequestBody PatientRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return toResponse(patientService.create(tenantId, toCommand(request), actorAppUserId));
+        String actorRole = currentTenantRole();
+        ZoneId tenantZone = resolveTenantZone(tenantId);
+        PatientRecord saved = patientService.create(tenantId, toCommand(request), actorAppUserId);
+        return toResponse(saved, canCurrentActorEditPatient(saved, actorRole, tenantZone));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("@permissionChecker.hasPermission('patient.read')")
     public PatientDetailResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        String actorRole = currentTenantRole();
+        ZoneId tenantZone = resolveTenantZone(tenantId);
         doctorAssignmentSecurityService.requirePatientAccess(tenantId, id);
         PatientRecord patient = patientService.findById(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
         List<AppointmentRecord> appointments = appointmentService.listByPatient(tenantId, id);
         List<ConsultationRecord> consultations = consultationService.listByPatient(tenantId, id);
         return new PatientDetailResponse(
-                toResponse(patient),
+                toResponse(patient, canCurrentActorEditPatient(patient, actorRole, tenantZone)),
                 appointments.stream()
                         .filter(this::isUpcoming)
                         .map(this::toSummaryResponse)
@@ -136,7 +159,14 @@ public class PatientController {
     public PatientResponse update(@PathVariable UUID id, @Valid @RequestBody PatientRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return toResponse(patientService.update(tenantId, id, toCommand(request), actorAppUserId));
+        String actorRole = currentTenantRole();
+        ZoneId tenantZone = resolveTenantZone(tenantId);
+        String actorEmail = resolveActorEmail(tenantId, actorAppUserId);
+        PatientRecord existing = patientService.findById(tenantId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
+        ensureCanEditPatient(existing, actorRole, tenantZone);
+        PatientRecord updated = patientService.update(tenantId, id, toCommand(request), actorAppUserId, actorRole, tenantZone, actorEmail);
+        return toResponse(updated, canCurrentActorEditPatient(updated, actorRole, tenantZone));
     }
 
     @PatchMapping("/{id}/deactivate")
@@ -144,7 +174,14 @@ public class PatientController {
     public PatientResponse deactivate(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return toResponse(patientService.deactivate(tenantId, id, actorAppUserId));
+        String actorRole = currentTenantRole();
+        ZoneId tenantZone = resolveTenantZone(tenantId);
+        String actorEmail = resolveActorEmail(tenantId, actorAppUserId);
+        PatientRecord existing = patientService.findById(tenantId, id)
+                .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
+        ensureCanEditPatient(existing, actorRole, tenantZone);
+        PatientRecord updated = patientService.deactivate(tenantId, id, actorAppUserId, actorRole, tenantZone, actorEmail);
+        return toResponse(updated, canCurrentActorEditPatient(updated, actorRole, tenantZone));
     }
 
     private boolean isUpcoming(AppointmentRecord appointment) {
@@ -184,7 +221,7 @@ public class PatientController {
         );
     }
 
-    private PatientResponse toResponse(PatientRecord record) {
+    private PatientResponse toResponse(PatientRecord record, boolean canEdit) {
         return new PatientResponse(
                 record.id() == null ? null : record.id().toString(),
                 record.tenantId() == null ? null : record.tenantId().toString(),
@@ -211,6 +248,7 @@ public class PatientController {
                 record.surgicalHistory(),
                 record.notes(),
                 record.active(),
+                canEdit,
                 record.createdAt(),
                 record.updatedAt()
         );
@@ -302,5 +340,74 @@ public class PatientController {
                 record.medicines(),
                 record.recommendedTests()
         );
+    }
+
+    private String currentTenantRole() {
+        String role = RequestContextHolder.require().tenantRole();
+        if (role == null) {
+            return null;
+        }
+        return role.trim().replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT);
+    }
+
+    private ZoneId resolveTenantZone(UUID tenantId) {
+        if (tenantId == null) {
+            return ZoneId.systemDefault();
+        }
+        NotificationSettingsRecord settings = notificationSettingsService.findByTenantId(tenantId).orElse(null);
+        if (settings == null || settings.timezone() == null || settings.timezone().isBlank()) {
+            return ZoneId.systemDefault();
+        }
+        try {
+            return ZoneId.of(settings.timezone().trim());
+        } catch (Exception ex) {
+            return ZoneId.systemDefault();
+        }
+    }
+
+    private String resolveActorEmail(UUID tenantId, UUID actorAppUserId) {
+        if (tenantId == null || actorAppUserId == null) {
+            return null;
+        }
+        return appUserRepository.findByTenantIdAndId(tenantId, actorAppUserId)
+                .map(AppUserEntity::getEmail)
+                .orElse(null);
+    }
+
+    private boolean canCurrentActorEditPatient(PatientRecord patient, String actorRole, ZoneId tenantZone) {
+        if (!permissionChecker.hasPermission("patient.update")) {
+            return false;
+        }
+        String normalizedRole = normalizeRole(actorRole);
+        if ("CLINIC_ADMIN".equals(normalizedRole)) {
+            return true;
+        }
+        if ("RECEPTIONIST".equals(normalizedRole)) {
+            return patientService.canEditPatient(patient, actorRole, tenantZone);
+        }
+        return false;
+    }
+
+    private void ensureCanEditPatient(PatientRecord patient, String actorRole, ZoneId tenantZone) {
+        if (canCurrentActorEditPatient(patient, actorRole, tenantZone)) {
+            return;
+        }
+        if ("RECEPTIONIST".equals(normalizeRole(actorRole))) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Patient details can be edited by Clinic Admin after registration day."
+            );
+        }
+        throw new org.springframework.web.server.ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "You do not have permission to edit patient master details."
+        );
+    }
+
+    private String normalizeRole(String role) {
+        if (role == null) {
+            return "";
+        }
+        return role.trim().replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT);
     }
 }

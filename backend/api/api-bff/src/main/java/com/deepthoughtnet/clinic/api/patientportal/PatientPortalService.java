@@ -34,6 +34,8 @@ import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
+import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord;
 import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
@@ -53,6 +55,7 @@ import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTestReco
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
@@ -70,6 +73,7 @@ public class PatientPortalService {
     private final TenantUserManagementService tenantUserManagementService;
     private final DoctorProfileService doctorProfileService;
     private final PatientService patientService;
+    private final TenantNotificationSettingsService notificationSettingsService;
     private final AppointmentService appointmentService;
     private final PrescriptionService prescriptionService;
     private final BillingService billingService;
@@ -81,6 +85,7 @@ public class PatientPortalService {
             TenantUserManagementService tenantUserManagementService,
             DoctorProfileService doctorProfileService,
             PatientService patientService,
+            TenantNotificationSettingsService notificationSettingsService,
             AppointmentService appointmentService,
             PrescriptionService prescriptionService,
             BillingService billingService
@@ -91,6 +96,7 @@ public class PatientPortalService {
         this.tenantUserManagementService = tenantUserManagementService;
         this.doctorProfileService = doctorProfileService;
         this.patientService = patientService;
+        this.notificationSettingsService = notificationSettingsService;
         this.appointmentService = appointmentService;
         this.prescriptionService = prescriptionService;
         this.billingService = billingService;
@@ -128,6 +134,9 @@ public class PatientPortalService {
         }
         PatientAccess access = requireCurrentPatientAccess();
         PatientEntity patient = access.patient();
+        String actorRole = RequestContextHolder.require().tenantRole();
+        ZoneId tenantZone = resolveTenantZone(access.tenantId());
+        String actorEmail = resolveActorEmail(access.tenantId(), requireActorAppUserId());
         var updated = patientService.update(
                 access.tenantId(),
                 patient.getId(),
@@ -155,7 +164,10 @@ public class PatientPortalService {
                         patient.getNotes(),
                         patient.isActive()
                 ),
-                requireActorAppUserId()
+                requireActorAppUserId(),
+                actorRole,
+                tenantZone,
+                actorEmail
         );
         return new PatientPortalMeResponse(
                 updated.patientNumber(),
@@ -179,6 +191,27 @@ public class PatientPortalService {
                 updated.existingConditions(),
                 updated.longTermMedications()
         );
+    }
+
+    private ZoneId resolveTenantZone(UUID tenantId) {
+        NotificationSettingsRecord settings = notificationSettingsService.findByTenantId(tenantId).orElse(null);
+        if (settings == null || settings.timezone() == null || settings.timezone().isBlank()) {
+            return ZoneId.of("UTC");
+        }
+        try {
+            return ZoneId.of(settings.timezone().trim());
+        } catch (Exception ex) {
+            return ZoneId.of("UTC");
+        }
+    }
+
+    private String resolveActorEmail(UUID tenantId, UUID actorAppUserId) {
+        if (tenantId == null || actorAppUserId == null) {
+            return null;
+        }
+        return appUserRepository.findByTenantIdAndId(tenantId, actorAppUserId)
+                .map(AppUserEntity::getEmail)
+                .orElse(null);
     }
 
     private PatientPortalMeResponse toMeResponse(UUID tenantId, PatientEntity patient) {
@@ -254,7 +287,8 @@ public class PatientPortalService {
         PatientAccess access = requireCurrentPatientAccess();
         requireAppointmentDate(date);
         DoctorSnapshot doctor = requireActiveDoctor(access.tenantId(), publicDoctorId);
-        return appointmentService.listSlots(access.tenantId(), doctor.user().appUserId(), date).stream()
+        ZoneId tenantZone = resolveTenantZone(access.tenantId());
+        return appointmentService.listSlots(access.tenantId(), doctor.user().appUserId(), date, tenantZone).stream()
                 .map(this::toDoctorSlotResponse)
                 .toList();
     }
@@ -271,7 +305,8 @@ public class PatientPortalService {
         }
 
         DoctorSnapshot doctor = requireActiveDoctor(access.tenantId(), request.publicDoctorId());
-        List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(access.tenantId(), doctor.user().appUserId(), request.appointmentDate());
+        ZoneId tenantZone = resolveTenantZone(access.tenantId());
+        List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(access.tenantId(), doctor.user().appUserId(), request.appointmentDate(), tenantZone);
         boolean slotSelectable = slots.stream()
                 .anyMatch(slot -> request.appointmentTime().equals(slot.slotTime()) && slot.selectable());
         if (!slotSelectable) {
@@ -292,7 +327,8 @@ public class PatientPortalService {
                         false
                 ),
                 requireActorAppUserId(),
-                false
+                false,
+                tenantZone
         );
         return new PatientPortalAppointmentConfirmationResponse(
                 booked.appointmentDate(),
@@ -319,6 +355,7 @@ public class PatientPortalService {
             throw new IllegalArgumentException("Appointment time is required");
         }
         AppointmentRecord current = requireAccessibleUpcomingAppointment(access, appointmentId);
+        ZoneId tenantZone = resolveTenantZone(access.tenantId());
         var updated = appointmentService.reschedule(
                 access.tenantId(),
                 current.id(),
@@ -329,7 +366,8 @@ public class PatientPortalService {
                         normalizeBookingReason(reason == null ? current.reason() : reason)
                 ),
                 requireActorAppUserId(),
-                false
+                false,
+                tenantZone
         );
         return new PatientPortalAppointmentConfirmationResponse(
                 updated.appointmentDate(),
@@ -536,8 +574,9 @@ public class PatientPortalService {
     }
 
     private PatientPortalAppointmentResponse nextUpcomingAppointment(List<PatientPortalAppointmentResponse> appointments) {
-        LocalDate today = LocalDate.now();
-        LocalTime now = LocalTime.now();
+        ZoneId tenantZone = resolveTenantZone(requireCurrentPatientAccess().tenantId());
+        LocalDate today = LocalDate.now(tenantZone);
+        LocalTime now = LocalTime.now(tenantZone);
         return appointments.stream()
                 .filter(this::isUpcomingStatus)
                 .filter(appointment -> appointment.appointmentDate() != null)
@@ -565,8 +604,9 @@ public class PatientPortalService {
                 || appointment.status() == AppointmentStatus.COMPLETED) {
             return false;
         }
-        LocalDate today = LocalDate.now();
-        LocalTime now = LocalTime.now();
+        ZoneId tenantZone = resolveTenantZone(requireCurrentPatientAccess().tenantId());
+        LocalDate today = LocalDate.now(tenantZone);
+        LocalTime now = LocalTime.now(tenantZone);
         return appointment.appointmentDate().isAfter(today)
                 || (appointment.appointmentDate().isEqual(today)
                 && (appointment.appointmentTime() == null || !appointment.appointmentTime().isBefore(now)));
@@ -715,7 +755,7 @@ public class PatientPortalService {
         if (appointmentDate == null) {
             throw new IllegalArgumentException("Appointment date is required");
         }
-        if (appointmentDate.isBefore(LocalDate.now())) {
+        if (appointmentDate.isBefore(LocalDate.now(resolveTenantZone(requireCurrentPatientAccess().tenantId())))) {
             throw new IllegalArgumentException("Please choose a current or future appointment date.");
         }
     }

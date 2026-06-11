@@ -4,12 +4,14 @@ import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.WaitlistRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.WaitlistResponse;
 import com.deepthoughtnet.clinic.api.appointment.dto.WaitlistStatusRequest;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.WaitlistCreateCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.WaitlistRecord;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -31,9 +33,11 @@ import jakarta.validation.Valid;
 @RequestMapping("/api/appointments/waitlist")
 public class AppointmentWaitlistController {
     private final AppointmentService appointmentService;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
 
-    public AppointmentWaitlistController(AppointmentService appointmentService) {
+    public AppointmentWaitlistController(AppointmentService appointmentService, ClinicTimeZoneResolver clinicTimeZoneResolver) {
         this.appointmentService = appointmentService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
     }
 
     @PostMapping
@@ -82,6 +86,7 @@ public class AppointmentWaitlistController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         boolean allowOverbooking = true;
+        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
         var record = appointmentService.convertWaitlistToAppointment(tenantId, id, new AppointmentUpsertCommand(
                 request.patientId(),
                 request.doctorUserId(),
@@ -92,7 +97,7 @@ public class AppointmentWaitlistController {
                 request.status(),
                 request.priority(),
                 request.allowAdHocBooking()
-        ), actorAppUserId, allowOverbooking);
+        ), actorAppUserId, allowOverbooking, bookingZone);
         return new com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse(
                 record.id() == null ? null : record.id().toString(),
                 record.tenantId() == null ? null : record.tenantId().toString(),

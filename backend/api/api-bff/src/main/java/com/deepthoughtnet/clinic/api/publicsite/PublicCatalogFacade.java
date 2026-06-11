@@ -9,6 +9,7 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicPageResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSearchResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialityDetailResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialitySummaryResponse;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
@@ -22,6 +23,7 @@ import com.deepthoughtnet.clinic.identity.service.model.PlatformTenantRecord;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
@@ -56,19 +58,22 @@ public class PublicCatalogFacade {
     private final TenantUserManagementService tenantUserManagementService;
     private final DoctorProfileService doctorProfileService;
     private final AppointmentService appointmentService;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
 
     public PublicCatalogFacade(
             PlatformTenantManagementService platformTenantManagementService,
             ClinicProfileService clinicProfileService,
             TenantUserManagementService tenantUserManagementService,
             DoctorProfileService doctorProfileService,
-            AppointmentService appointmentService
+            AppointmentService appointmentService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver
     ) {
         this.platformTenantManagementService = platformTenantManagementService;
         this.clinicProfileService = clinicProfileService;
         this.tenantUserManagementService = tenantUserManagementService;
         this.doctorProfileService = doctorProfileService;
         this.appointmentService = appointmentService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
     }
 
     public PublicPageResponse<PublicClinicSummaryResponse> listClinics(
@@ -432,13 +437,14 @@ public class PublicCatalogFacade {
     }
 
     private SlotSummary slotSummary(UUID tenantId, UUID doctorUserId) {
-        LocalDate today = LocalDate.now();
+        ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
+        LocalDate today = LocalDate.now(bookingZone);
         List<String> nextSlots = new ArrayList<>();
         boolean availableToday = false;
 
         for (int offset = 0; offset < SLOT_LOOKAHEAD_DAYS && nextSlots.size() < SLOT_SUGGESTION_LIMIT; offset++) {
             LocalDate date = today.plusDays(offset);
-            List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(tenantId, doctorUserId, date).stream()
+            List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(tenantId, doctorUserId, date, bookingZone).stream()
                     .filter(DoctorAvailabilitySlotRecord::selectable)
                     .sorted(Comparator.comparing(DoctorAvailabilitySlotRecord::slotTime))
                     .toList();
@@ -446,7 +452,7 @@ public class PublicCatalogFacade {
                 availableToday = true;
             }
             for (DoctorAvailabilitySlotRecord slot : slots) {
-                nextSlots.add(formatSlot(slot));
+                nextSlots.add(formatSlot(slot, today));
                 if (nextSlots.size() >= SLOT_SUGGESTION_LIMIT) {
                     break;
                 }
@@ -456,8 +462,8 @@ public class PublicCatalogFacade {
         return new SlotSummary(availableToday, nextSlots);
     }
 
-    private String formatSlot(DoctorAvailabilitySlotRecord slot) {
-        String prefix = slot.appointmentDate().equals(LocalDate.now()) ? "Today" : SLOT_DATE_FORMAT.format(slot.appointmentDate());
+    private String formatSlot(DoctorAvailabilitySlotRecord slot, LocalDate today) {
+        String prefix = slot.appointmentDate().equals(today) ? "Today" : SLOT_DATE_FORMAT.format(slot.appointmentDate());
         return prefix + " · " + TIME_FORMAT.format(slot.slotTime());
     }
 
