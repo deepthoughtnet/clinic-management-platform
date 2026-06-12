@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.appointment.dto;
 
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotTimeState;
 import java.time.LocalDate;
 import java.time.LocalTime;
 
@@ -15,6 +16,11 @@ public record DoctorAvailabilitySlotResponse(
         int bookedCount,
         int maxPatientsPerSlot,
         boolean selectable,
+        DoctorAvailabilitySlotTimeState timeState,
+        boolean past,
+        boolean current,
+        boolean bookable,
+        String notBookableReason,
         String appointmentId,
         String patientId,
         String patientNumber,

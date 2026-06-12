@@ -20,6 +20,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotTimeState;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillItemType;
@@ -655,12 +656,17 @@ class PatientPortalServiceTest {
                 selectable ? 0 : 1,
                 1,
                 selectable,
+                DoctorAvailabilitySlotTimeState.FUTURE,
+                false,
+                false,
+                selectable,
                 null,
                 null,
                 null,
                 null,
                 null,
                 null,
+                AppointmentStatus.BOOKED,
                 null
         );
     }

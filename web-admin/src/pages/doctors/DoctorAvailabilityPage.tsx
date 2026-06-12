@@ -36,7 +36,7 @@ import {
   createDoctorUnavailability,
   createWaitlist,
   deactivateDoctorUnavailability,
-  getAdminNotificationSettings,
+  getClinicClock,
   getClinicUsers,
   getDoctorAvailability,
   getDoctorSlots,
@@ -56,7 +56,8 @@ import {
   type DoctorUnavailabilityType,
   type WaitlistStatus,
 } from "../../api/clinicApi";
-import { formatClinicClockLabel, getClinicClockParts, getClinicDateKey, isBookingTimePast, isSlotExpired } from "../appointments/bookingValidation";
+import { formatClinicClockLabel, getClinicClockParts, getClinicDateKey, isBookingTimePast } from "../appointments/bookingValidation";
+import { getAppointmentSlotPresentation } from "../appointments/slotState";
 
 const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"] as const;
 const WEEKDAY_DAYS = DAYS.slice(0, 5);
@@ -147,6 +148,7 @@ const DEFAULT_FILTERS: StatusFilters = {
   FULL: true,
   BREAK: true,
   LEAVE: true,
+  HOLIDAY: true,
   UNAVAILABLE: true,
   CONFLICTED: true,
   WAITLIST: true,
@@ -232,18 +234,24 @@ function friendlyStatusLabel(value: string | null | undefined) {
       return "No-show";
     case "AVAILABLE":
       return "Available";
+    case "CURRENT":
+      return "Current";
     case "BOOKED":
       return "Booked";
     case "CANCELLED":
       return "Cancelled";
     case "COMPLETED":
       return "Completed";
+    case "PAST":
+      return "Past";
     case "WAITING":
       return "Checked in";
     case "BREAK":
       return "Break";
     case "LEAVE":
       return "Leave";
+    case "HOLIDAY":
+      return "Holiday";
     case "UNAVAILABLE":
       return "Unavailable";
     case "CONFLICTED":
@@ -269,6 +277,23 @@ function slotColor(status: DoctorAvailabilitySlotStatus) {
       return "default";
     case "CONFLICTED":
       return "error";
+    default:
+      return "default";
+  }
+}
+
+function slotStateColor(state: ReturnType<typeof getAppointmentSlotPresentation>["state"]) {
+  switch (state) {
+    case "AVAILABLE":
+    case "CURRENT":
+    case "PARTIALLY_BOOKED":
+      return "success";
+    case "FULL":
+      return "error";
+    case "PAST":
+    case "LEAVE":
+    case "HOLIDAY":
+    case "UNAVAILABLE":
     default:
       return "default";
   }
@@ -313,16 +338,12 @@ function localDateKey(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-function isPastDateTime(date: string, time: string | null | undefined, timeZone?: string | null) {
-  return isBookingTimePast(date, time, undefined, timeZone);
+function isPastDateTime(date: string, time: string | null | undefined, timeZone?: string | null, clinicNow?: string | null) {
+  return isBookingTimePast(date, time, undefined, timeZone, clinicNow);
 }
 
-function isPastSlot(date: string, slot: DoctorAvailabilitySlot, timeZone?: string | null) {
-  return isSlotExpired(date, slot, undefined, timeZone);
-}
-
-function hidePastSlot(date: string, slot: DoctorAvailabilitySlot, appointment: Appointment | null, timeZone?: string | null) {
-  return isPastSlot(date, slot, timeZone) && !appointment && slot.bookedCount <= 0;
+function slotPresentation(date: string, slot: DoctorAvailabilitySlot, timeZone?: string | null, clinicNow?: string | null) {
+  return getAppointmentSlotPresentation(date, slot, timeZone, clinicNow);
 }
 
 function timeLabel(time: string) {
@@ -339,10 +360,10 @@ function appointmentLabel(appointment: Appointment | null) {
   return appointment.patientName || appointment.patientNumber || appointment.patientId;
 }
 
-function slotTint(theme: Theme, status: DoctorAvailabilitySlotStatus, selected: boolean) {
+function slotTint(theme: Theme, status: string, selected: boolean) {
   const base = selected
     ? theme.palette.primary.main
-    : status === "AVAILABLE"
+    : status === "AVAILABLE" || status === "CURRENT"
       ? theme.palette.success.main
       : status === "PARTIALLY_BOOKED"
         ? theme.palette.warning.main
@@ -351,8 +372,10 @@ function slotTint(theme: Theme, status: DoctorAvailabilitySlotStatus, selected: 
           : status === "BREAK"
             ? theme.palette.grey[500]
             : status === "LEAVE"
-              ? theme.palette.secondary.main
-              : status === "UNAVAILABLE"
+        ? theme.palette.secondary.main
+        : status === "PAST"
+          ? theme.palette.grey[500]
+        : status === "UNAVAILABLE"
                 ? theme.palette.grey[600]
                 : theme.palette.error.main;
   return alpha(base, selected ? 0.12 : 0.08);
@@ -402,6 +425,8 @@ export default function DoctorAvailabilityPage() {
   const [info, setInfo] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [clinicTimeZone, setClinicTimeZone] = React.useState("Asia/Kolkata");
+  const [clinicNowSnapshot, setClinicNowSnapshot] = React.useState<string | null>(null);
+  const [clinicClockUnavailable, setClinicClockUnavailable] = React.useState(false);
   const [clockTick, setClockTick] = React.useState(0);
 
   const doctorOptions = React.useMemo<DoctorOption[]>(
@@ -442,7 +467,7 @@ export default function DoctorAvailabilityPage() {
     }
     return selectedDoctorId ? availabilityRows.filter((row) => row.doctorUserId === selectedDoctorId) : availabilityRows;
   }, [auth.appUserId, availabilityRows, isDoctor, selectedDoctorId]);
-  const clinicClock = React.useMemo(() => getClinicClockParts(clinicTimeZone), [clinicTimeZone, clockTick]);
+  const clinicClock = React.useMemo(() => getClinicClockParts(clinicTimeZone, clinicNowSnapshot), [clinicNowSnapshot, clinicTimeZone, clockTick]);
   const calendarGroups = React.useMemo(() => {
     return visibleDates.map((currentDate) => {
       const rows: CalendarSlotRow[] = effectiveDoctorIds.flatMap((doctorUserId) => {
@@ -458,7 +483,7 @@ export default function DoctorAvailabilityPage() {
           appointment: appointments.find((appointment) => appointment.id === slot.appointmentId)
             || appointments.find((appointment) => sameTimeSlot(slot, appointment))
             || null,
-        })).filter((row) => !hidePastSlot(row.date, row.slot, row.appointment, clinicTimeZone));
+        })).filter((row) => !slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).hidden);
       }).sort((left, right) => {
         const dayDelta = left.date.localeCompare(right.date);
         if (dayDelta !== 0) return dayDelta;
@@ -470,16 +495,19 @@ export default function DoctorAvailabilityPage() {
       const checkedInCount = rows.filter((row) => row.appointment?.status === "WAITING").length;
       const inConsultationCount = rows.filter((row) => row.appointment?.status === "IN_CONSULTATION").length;
       const completedCount = rows.filter((row) => row.appointment?.status === "COMPLETED").length;
-      const partialCount = rows.filter((row) => row.slot.status === "PARTIALLY_BOOKED").length;
-      const fullCount = rows.filter((row) => row.slot.status === "FULL").length;
-      const availableCount = rows.filter((row) => row.slot.status === "AVAILABLE").length;
+      const partialCount = rows.filter((row) => slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).state === "PARTIALLY_BOOKED").length;
+      const fullCount = rows.filter((row) => slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).state === "FULL").length;
+      const availableCount = rows.filter((row) => {
+        const presentation = slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot);
+        return presentation.counterEligible;
+      }).length;
       return {
         date: currentDate,
         rows,
         summary: { bookedCount, checkedInCount, inConsultationCount, completedCount, partialCount, fullCount, availableCount },
       };
     });
-  }, [appointmentsByKey, doctorMap, effectiveDoctorIds, filters, slotsByKey, visibleDates]);
+  }, [appointmentsByKey, clinicNowSnapshot, doctorMap, effectiveDoctorIds, filters, slotsByKey, visibleDates]);
   const selectedAppointment = React.useMemo(() => {
     if (!selectedSlot) return null;
     const key = `${selectedSlot.doctorUserId}:${selectedSlot.date}`;
@@ -573,7 +601,7 @@ export default function DoctorAvailabilityPage() {
       for (const row of group.rows) {
         rowsByBucket.get(bucketForTime(row.slot.slotTime))?.push(row);
       }
-      const hasBookings = group.rows.some((row) => Boolean(row.appointment) || row.slot.bookedCount > 0 || row.slot.status === "PARTIALLY_BOOKED" || row.slot.status === "FULL");
+      const hasBookings = group.rows.some((row) => Boolean(row.appointment) || row.slot.bookedCount > 0 || slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).state === "PARTIALLY_BOOKED" || slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).state === "FULL");
       const firstBucketKey = TIME_BUCKETS.find((bucket) => (rowsByBucket.get(bucket.key) || []).length > 0)?.key || "morning";
       return {
         ...group,
@@ -586,13 +614,13 @@ export default function DoctorAvailabilityPage() {
           const summary = {
             totalSlots: rows.length,
             bookedCount: rows.filter((row) => Boolean(row.appointment)).length,
-            partialCount: rows.filter((row) => row.slot.status === "PARTIALLY_BOOKED").length,
-            fullCount: rows.filter((row) => row.slot.status === "FULL").length,
-            availableCount: rows.filter((row) => row.slot.status === "AVAILABLE").length,
+            partialCount: rows.filter((row) => slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).state === "PARTIALLY_BOOKED").length,
+            fullCount: rows.filter((row) => slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).state === "FULL").length,
+            availableCount: rows.filter((row) => slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).counterEligible).length,
             checkedInCount: rows.filter((row) => row.appointment?.status === "WAITING").length,
             inConsultationCount: rows.filter((row) => row.appointment?.status === "IN_CONSULTATION").length,
           };
-          const bucketHasBookings = rows.some((row) => Boolean(row.appointment) || row.slot.bookedCount > 0 || row.slot.status === "PARTIALLY_BOOKED" || row.slot.status === "FULL");
+          const bucketHasBookings = rows.some((row) => Boolean(row.appointment) || row.slot.bookedCount > 0 || slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).state === "PARTIALLY_BOOKED" || slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).state === "FULL");
           const defaultExpanded = Boolean(group.date === date && bucket.key === bucketForTime(clinicClock.timeKey)) || bucketHasBookings || bucket.key === firstBucketKey;
           const expanded = calendarOverrides[`${group.date}:${bucket.key}`] ?? defaultExpanded;
           return {
@@ -685,16 +713,43 @@ export default function DoctorAvailabilityPage() {
     async function loadClinicTimeZone() {
       if (!auth.accessToken || !auth.tenantId) {
         setClinicTimeZone("Asia/Kolkata");
+        setClinicNowSnapshot(null);
+        setClinicClockUnavailable(true);
+        console.info("[doctor-availability] clinic clock unavailable", {
+          tenantId: auth.tenantId,
+          source: "missing-auth",
+          effectiveTimezone: "Asia/Kolkata",
+          browserReportedTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        });
         return;
       }
       try {
-        const settings = await getAdminNotificationSettings(auth.accessToken, auth.tenantId);
+        const settings = await getClinicClock(auth.accessToken, auth.tenantId);
         if (!cancelled) {
-          setClinicTimeZone(settings.timezone && settings.timezone.trim() ? settings.timezone.trim() : "Asia/Kolkata");
+          setClinicTimeZone(settings.clinicTimeZone?.trim() || "Asia/Kolkata");
+          setClinicNowSnapshot(settings.clinicNow || null);
+          setClinicClockUnavailable(false);
+          console.info("[doctor-availability] clinic clock loaded", {
+            tenantId: auth.tenantId,
+            clinicTimeZone: settings.clinicTimeZone,
+            clinicNow: settings.clinicNow,
+            serverNowUtc: settings.serverNowUtc,
+            effectiveTimezone: settings.clinicTimeZone?.trim() || "Asia/Kolkata",
+            browserReportedTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          });
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
           setClinicTimeZone("Asia/Kolkata");
+          setClinicNowSnapshot(null);
+          setClinicClockUnavailable(true);
+          console.info("[doctor-availability] clinic clock unavailable", {
+            tenantId: auth.tenantId,
+            source: "clock-error",
+            effectiveTimezone: "Asia/Kolkata",
+            error: error instanceof Error ? error.message : String(error),
+            browserReportedTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          });
         }
       }
     }
@@ -813,6 +868,10 @@ export default function DoctorAvailabilityPage() {
   };
 
   const selectSlot = (row: CalendarSlotRow) => {
+    const presentation = slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot);
+    if (presentation.isPast || !presentation.selectable) {
+      return;
+    }
     setSelectedSlot({ date: row.date, doctorUserId: row.doctorUserId, slot: row.slot });
   };
 
@@ -821,21 +880,11 @@ export default function DoctorAvailabilityPage() {
   const selectedSlotBookingReason = React.useMemo(() => {
     if (!selectedSlot) return "Select an available slot";
     if (!auth.accessToken || !auth.tenantId) return "Clinic context is unavailable";
-    if (isPastSlot(selectedSlot.date, selectedSlot.slot, clinicTimeZone)) return "Selected time has already passed. Choose a current or future slot.";
-    if (selectedSlot.slot.status === "BREAK" || selectedSlot.slot.status === "LEAVE" || selectedSlot.slot.status === "UNAVAILABLE" || selectedSlot.slot.status === "CONFLICTED") {
-      return "Doctor is unavailable during this time.";
-    }
-    if (selectedSlot.slot.status === "FULL" || selectedSlot.slot.bookedCount >= selectedSlot.slot.maxPatientsPerSlot) {
-      return "This slot is full.";
-    }
-    if (selectedSlot.slot.status !== "AVAILABLE" && selectedSlot.slot.status !== "PARTIALLY_BOOKED") {
-      return "Select an available slot";
-    }
-    if (!selectedSlot.slot.selectable) {
-      return "Select an available slot";
-    }
+    const presentation = slotPresentation(selectedSlot.date, selectedSlot.slot, clinicTimeZone, clinicNowSnapshot);
+    if (presentation.isPast) return "Selected time has already passed. Please choose a current or future slot.";
+    if (!presentation.bookable) return presentation.tooltip;
     return null;
-  }, [auth.accessToken, auth.tenantId, selectedSlot]);
+  }, [auth.accessToken, auth.tenantId, clinicNowSnapshot, clinicTimeZone, selectedSlot]);
   const selectedSlotCanBook = Boolean(selectedSlot && !selectedSlotBookingReason);
   const openBookingFlow = () => {
     if (!selectedSlot || !selectedSlotCanBook) return;
@@ -859,7 +908,7 @@ export default function DoctorAvailabilityPage() {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap" alignItems="center">
-          <Chip size="small" label={formatClinicClockLabel(clinicTimeZone)} variant="outlined" sx={COMPACT_CHIP_SX} />
+          <Chip size="small" label={clinicClockUnavailable ? "Clinic time unavailable" : formatClinicClockLabel(clinicTimeZone, clinicNowSnapshot)} variant="outlined" sx={COMPACT_CHIP_SX} />
           <Button variant="outlined" onClick={() => navigate("/appointments")}>Open appointments</Button>
           <Button variant="outlined" onClick={() => navigate("/appointments/day-board")}>Open day board</Button>
           <Button variant="contained" onClick={() => navigate("/queue")}>Open queue</Button>
@@ -1061,7 +1110,7 @@ export default function DoctorAvailabilityPage() {
                           <Button
                           variant="outlined"
                           onClick={() => setUnavailabilityForm((current) => {
-                              const day = (current.startAt || `${getClinicDateKey(clinicTimeZone)}T00:00:00`).slice(0, 10);
+                              const day = (current.startAt || `${getClinicDateKey(clinicTimeZone, clinicNowSnapshot)}T00:00:00`).slice(0, 10);
                               const end = new Date(`${day}T00:00:00Z`);
                               end.setUTCDate(end.getUTCDate() + 1);
                               return {
@@ -1278,16 +1327,23 @@ export default function DoctorAvailabilityPage() {
                                               </TableCell>
                                             </TableRow>
                                           ) : bucket.rows.map((row) => {
+                                            const presentation = slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot);
                                             const selected = selectedSlot?.date === row.date && selectedSlot.doctorUserId === row.doctorUserId && selectedSlot.slot.slotTime === row.slot.slotTime;
+                                            const rowState = presentation.state;
                                             return (
                                               <TableRow
                                                 key={`${row.date}-${row.doctorUserId}-${row.slot.slotTime}-${row.slot.slotEndTime}`}
                                                 hover
-                                                onClick={() => selectSlot(row)}
+                                                onClick={() => {
+                                                  if (!presentation.isPast && presentation.selectable) {
+                                                    selectSlot(row);
+                                                  }
+                                                }}
                                                 sx={{
-                                                  cursor: "pointer",
-                                                  bgcolor: (theme) => slotTint(theme, row.slot.status, selected),
+                                                  cursor: presentation.selectable ? "pointer" : "default",
+                                                  bgcolor: (theme) => slotTint(theme, rowState, selected),
                                                   "& td": { borderColor: selected ? "primary.main" : "divider" },
+                                                  opacity: presentation.isPast ? 0.7 : 1,
                                                 }}
                                               >
                                                 <TableCell sx={{ whiteSpace: "nowrap", fontWeight: 700, py: 0.75 }}>
@@ -1296,8 +1352,8 @@ export default function DoctorAvailabilityPage() {
                                                 {!isDoctor && !selectedDoctorId ? <TableCell sx={{ whiteSpace: "nowrap", py: 0.75 }}>{row.doctorName}</TableCell> : null}
                                                 <TableCell sx={{ py: 0.75 }}>
                                                   <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
-                                                    <Chip size="small" label={friendlyStatusLabel(row.slot.status)} color={slotColor(row.slot.status)} variant="outlined" sx={COMPACT_CHIP_SX} />
-                                                    {row.slot.selectable ? <Chip size="small" label="Selectable" variant="outlined" sx={COMPACT_CHIP_SX} /> : null}
+                                                    <Chip size="small" label={friendlyStatusLabel(rowState)} color={slotStateColor(rowState)} variant="outlined" sx={COMPACT_CHIP_SX} />
+                                                    {presentation.selectable ? <Chip size="small" label="Selectable" variant="outlined" sx={COMPACT_CHIP_SX} /> : null}
                                                   </Stack>
                                                 </TableCell>
                                                 <TableCell sx={{ whiteSpace: "nowrap", py: 0.75, pr: 1 }}>
@@ -1331,7 +1387,7 @@ export default function DoctorAvailabilityPage() {
                                                     {!row.appointment && row.slot.bookedCount > 0 ? (
                                                       <Chip size="small" label={`${row.slot.bookedCount} booked`} color="warning" variant="outlined" sx={COMPACT_CHIP_SX} />
                                                     ) : null}
-                                                    {!row.appointment && row.slot.status === "AVAILABLE" ? (
+                                                    {!row.appointment && rowState === "AVAILABLE" ? (
                                                       <Chip size="small" label="Open slot" color="success" variant="outlined" sx={COMPACT_CHIP_SX} />
                                                     ) : null}
                                                     {!row.appointment && row.slot.bookedCount === 0 ? (
@@ -1343,6 +1399,7 @@ export default function DoctorAvailabilityPage() {
                                                   <Button
                                                     size="small"
                                                     variant="text"
+                                                    disabled={!presentation.selectable}
                                                     onClick={(event) => {
                                                       event.stopPropagation();
                                                       selectSlot(row);
@@ -1617,7 +1674,7 @@ export default function DoctorAvailabilityPage() {
                         </Typography>
                       </Box>
                       <Stack direction="row" spacing={0.5} flexWrap="wrap">
-                        <Chip size="small" label={friendlyStatusLabel(selectedSlot.slot.status)} color={slotColor(selectedSlot.slot.status)} variant="outlined" sx={COMPACT_CHIP_SX} />
+                        <Chip size="small" label={friendlyStatusLabel(slotPresentation(selectedSlot.date, selectedSlot.slot, clinicTimeZone, clinicNowSnapshot).state)} color={slotStateColor(slotPresentation(selectedSlot.date, selectedSlot.slot, clinicTimeZone, clinicNowSnapshot).state)} variant="outlined" sx={COMPACT_CHIP_SX} />
                         <Chip size="small" label={`${selectedSlot.slot.bookedCount}/${selectedSlot.slot.maxPatientsPerSlot}`} variant="outlined" sx={COMPACT_CHIP_SX} />
                         {selectedSlot.slot.selectable ? <Chip size="small" label="Selectable" color="success" variant="outlined" sx={COMPACT_CHIP_SX} /> : <Chip size="small" label="Not selectable" variant="outlined" sx={COMPACT_CHIP_SX} />}
                       </Stack>

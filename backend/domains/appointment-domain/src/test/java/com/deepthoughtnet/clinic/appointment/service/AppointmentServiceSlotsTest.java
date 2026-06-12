@@ -22,6 +22,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotTimeState;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityType;
 import com.deepthoughtnet.clinic.appointment.service.model.WaitlistCreateCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.WaitlistStatus;
@@ -279,13 +280,34 @@ class AppointmentServiceSlotsTest {
     }
 
     @Test
-    void createScheduledAllowsNearCurrentBookingWithinGraceWindow() {
+    void createScheduledRejectsNearCurrentBookingWithoutGraceWindow() {
         LocalTime now = LocalTime.now(CLINIC_ZONE).truncatedTo(ChronoUnit.MINUTES);
         Assumptions.assumeTrue(now.isAfter(LocalTime.of(1, 0)) && now.isBefore(LocalTime.of(22, 0)));
 
-        service.createScheduled(
+        assertThatThrownBy(() -> service.createScheduled(
                 TENANT_ID,
                 new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, LocalDate.now(CLINIC_ZONE), now.minusMinutes(10), "Near current", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
+                ACTOR_ID,
+                false
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Selected time has already passed. Please choose a current or future slot.");
+    }
+
+    @Test
+    void createScheduledAllowsCurrentRunningSlotWhenCapacityRemains() {
+        LocalTime now = LocalTime.now(CLINIC_ZONE).truncatedTo(ChronoUnit.MINUTES);
+        Assumptions.assumeTrue(now.isAfter(LocalTime.of(1, 0)) && now.isBefore(LocalTime.of(22, 45)));
+        LocalTime slotStart = now.minusMinutes(now.getMinute() % 15L);
+        LocalTime slotEnd = slotStart.plusMinutes(30);
+        DoctorAvailabilityEntity availability = DoctorAvailabilityEntity.create(TENANT_ID, DOCTOR_ID);
+        availability.update(LocalDate.now(CLINIC_ZONE).getDayOfWeek(), slotStart, slotEnd, null, null, 15, 1, true);
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, LocalDate.now(CLINIC_ZONE)))
+                .thenReturn(List.of());
+
+        service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, LocalDate.now(CLINIC_ZONE), slotStart, "Current visit", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
                 ACTOR_ID,
                 false
         );
@@ -302,7 +324,7 @@ class AppointmentServiceSlotsTest {
                 ACTOR_ID,
                 false
         )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Selected time has already passed. Choose a current or future slot.");
+                .hasMessageContaining("Selected time has already passed. Please choose a current or future slot.");
     }
 
     @Test
@@ -432,7 +454,7 @@ class AppointmentServiceSlotsTest {
                 ACTOR_ID,
                 false
         )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Selected time has already passed. Choose a current or future slot.");
+                .hasMessageContaining("Selected time has already passed. Please choose a current or future slot.");
     }
 
     @Test

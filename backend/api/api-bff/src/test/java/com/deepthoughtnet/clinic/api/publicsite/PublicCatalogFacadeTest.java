@@ -9,6 +9,7 @@ import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotTimeState;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
@@ -264,6 +265,11 @@ class PublicCatalogFacadeTest {
                 0,
                 1,
                 selectable,
+                DoctorAvailabilitySlotTimeState.FUTURE,
+                false,
+                false,
+                selectable,
+                null,
                 null,
                 null,
                 null,

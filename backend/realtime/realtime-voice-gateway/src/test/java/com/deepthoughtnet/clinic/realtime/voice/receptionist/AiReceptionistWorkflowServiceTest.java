@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotTimeState;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
@@ -156,6 +157,7 @@ class AiReceptionistWorkflowServiceTest {
         when(appointmentService.listSlots(Mockito.eq(tenantId), Mockito.eq(doctorId), Mockito.any(LocalDate.class))).thenReturn(List.of(
                 new DoctorAvailabilitySlotRecord(doctorId, "Dr Cardio", LocalDate.now().plusDays(1), LocalTime.of(10, 0),
                         LocalTime.of(10, 15), DoctorAvailabilitySlotStatus.AVAILABLE, 0, 1, true,
+                        DoctorAvailabilitySlotTimeState.FUTURE, false, false, true, null,
                         null, null, null, null, null, null, null)
         ));
         when(appointmentService.createScheduled(Mockito.eq(tenantId), Mockito.any(), Mockito.any(), Mockito.eq(false)))

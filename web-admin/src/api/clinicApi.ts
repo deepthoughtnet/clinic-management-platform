@@ -588,7 +588,7 @@ export type DoctorAvailabilityInput = {
   active: boolean;
 };
 
-export type DoctorAvailabilitySlotStatus = "AVAILABLE" | "PARTIALLY_BOOKED" | "FULL" | "BREAK" | "LEAVE" | "UNAVAILABLE" | "CONFLICTED";
+export type DoctorAvailabilitySlotStatus = "AVAILABLE" | "PARTIALLY_BOOKED" | "FULL" | "BREAK" | "LEAVE" | "HOLIDAY" | "UNAVAILABLE" | "CONFLICTED";
 
 export type DoctorAvailabilitySlot = {
   doctorUserId: string;
@@ -600,6 +600,11 @@ export type DoctorAvailabilitySlot = {
   bookedCount: number;
   maxPatientsPerSlot: number;
   selectable: boolean;
+  timeState: "PAST" | "CURRENT" | "FUTURE";
+  past: boolean;
+  current: boolean;
+  bookable: boolean;
+  notBookableReason: string | null;
   appointmentId: string | null;
   patientId: string | null;
   patientNumber: string | null;
@@ -1895,7 +1900,12 @@ export async function getDoctorAvailability(token: string, tenantId: string) {
 }
 
 export async function getDoctorSlots(token: string, tenantId: string, doctorUserId: string, date: string) {
-  return httpGet<DoctorAvailabilitySlot[]>(`/api/doctors/${doctorUserId}/slots?date=${encodeURIComponent(date)}`, { token, tenantId });
+  const browserTimeZone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone || null : null;
+  return httpGet<DoctorAvailabilitySlot[]>(`/api/doctors/${doctorUserId}/slots?date=${encodeURIComponent(date)}`, {
+    token,
+    tenantId,
+    clientTimeZone: browserTimeZone,
+  });
 }
 
 export async function createDoctorAvailability(token: string, tenantId: string, doctorUserId: string, body: DoctorAvailabilityInput) {
@@ -4200,6 +4210,9 @@ export type AdminNotificationSettings = {
   quietHoursStart: string | null;
   quietHoursEnd: string | null;
   timezone: string | null;
+  clinicTimeZone: string | null;
+  clinicNow: string;
+  serverNowUtc: string;
   defaultChannel: AdminNotificationChannel;
   fallbackChannel: AdminNotificationChannel | null;
   allowMarketingMessages: boolean;
@@ -4214,6 +4227,12 @@ export type AdminNotificationSettings = {
   smsReady: boolean;
   whatsappReady: boolean;
   warnings: string[];
+};
+
+export type ClinicClock = {
+  clinicTimeZone: string;
+  clinicNow: string;
+  serverNowUtc: string;
 };
 
 export type AdminNotificationSettingsUpdateInput = {
@@ -4388,6 +4407,10 @@ export async function previewAdminTemplate(token: string, tenantId: string, temp
 
 export async function getAdminNotificationSettings(token: string, tenantId: string) {
   return httpGet<AdminNotificationSettings>("/api/admin/notification-settings", { token, tenantId });
+}
+
+export async function getClinicClock(token: string, tenantId: string) {
+  return httpGet<ClinicClock>("/api/clinic/clock", { token, tenantId });
 }
 
 export async function updateAdminNotificationSettings(

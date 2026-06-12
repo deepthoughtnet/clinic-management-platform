@@ -19,6 +19,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertComm
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotTimeState;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorCalendarReconcileResult;
@@ -56,6 +57,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.time.temporal.ChronoUnit;
 import jakarta.persistence.criteria.Predicate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -65,6 +68,7 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class AppointmentService {
+    private static final Logger log = LoggerFactory.getLogger(AppointmentService.class);
     private static final String APPOINTMENT_ENTITY = "APPOINTMENT";
     private static final String AVAILABILITY_ENTITY = "DOCTOR_AVAILABILITY";
     private static final DayOfWeek DEFAULT_CALENDAR_DAY = DayOfWeek.MONDAY;
@@ -73,6 +77,7 @@ public class AppointmentService {
     private static final int DEFAULT_SLOT_DURATION_MINUTES = 15;
     private static final int BOOKING_TIME_GRACE_MINUTES = 15;
     private static final ZoneId DEFAULT_BOOKING_ZONE = ZoneId.of("Asia/Kolkata");
+    private static final String PAST_SLOT_MESSAGE = "Selected time has already passed. Please choose a current or future slot.";
     private static final DateTimeFormatter APPOINTMENT_REFERENCE_DATE = DateTimeFormatter.BASIC_ISO_DATE;
     private final AppointmentRepository appointmentRepository;
     private final DoctorAvailabilityRepository doctorAvailabilityRepository;
@@ -165,8 +170,9 @@ public class AppointmentService {
         Map<UUID, TenantUserRecord> users = tenantUsersById(tenantId);
         Map<UUID, PatientEntity> patients = patientsByIds(tenantId, appointments.stream().map(AppointmentEntity::getPatientId).distinct().toList());
         TenantUserRecord doctor = users.get(doctorUserId);
-        LocalDate today = currentDate(zone);
-        LocalTime now = currentTime(zone);
+        OffsetDateTime clinicNow = OffsetDateTime.now(zone);
+        LocalDate today = clinicNow.toLocalDate();
+        LocalTime now = clinicNow.toLocalTime().truncatedTo(ChronoUnit.MINUTES);
         for (DoctorAvailabilityEntity availability : availabilities) {
             int capacity = Math.max(1, availability.getMaxPatientsPerSlot() == null ? 1 : availability.getMaxPatientsPerSlot());
             LocalTime slotStart = availability.getStartTime();
@@ -200,8 +206,35 @@ public class AppointmentService {
                     status = DoctorAvailabilitySlotStatus.PARTIALLY_BOOKED;
                     selectable = true;
                 }
-                if (isPastSlot(appointmentDate, candidateEnd, today, now)) {
+                SlotTiming timing = evaluateSlotTiming(appointmentDate, slotStart, candidateEnd, today, now);
+                boolean bookable = selectable && !timing.past();
+                String notBookableReason;
+                if (bookable) {
+                    notBookableReason = null;
+                } else if (timing.past()) {
+                    notBookableReason = PAST_SLOT_MESSAGE;
+                } else {
+                    notBookableReason = switch (status) {
+                        case BREAK -> "Doctor is on break during this time.";
+                        case LEAVE -> "Doctor is unavailable during this time.";
+                        case UNAVAILABLE -> "Doctor is unavailable during this time.";
+                        case CONFLICTED -> "Selected time has scheduling conflicts for the selected doctor";
+                        case FULL -> "Selected time is already fully booked";
+                        default -> "Selected time is not available for the selected doctor";
+                    };
+                }
+                if (!bookable) {
                     selectable = false;
+                }
+                if (log.isDebugEnabled()) {
+                    log.debug("slot evaluation slot={} slotStart={} slotEnd={} clinicNow={} isPast={} isCurrent={} isBookable={}",
+                            appointmentDate + " " + slotStart,
+                            slotStart,
+                            candidateEnd,
+                            clinicNow,
+                            timing.past(),
+                            timing.current(),
+                            bookable);
                 }
 
                 AppointmentEntity firstBooking = booked.isEmpty() ? null : booked.get(0);
@@ -216,6 +249,11 @@ public class AppointmentService {
                         booked.size(),
                         capacity,
                         selectable,
+                        timing.state(),
+                        timing.past(),
+                        timing.current(),
+                        bookable,
+                        notBookableReason,
                         firstBooking == null ? null : firstBooking.getId(),
                         firstBooking == null ? null : firstBooking.getPatientId(),
                         patient == null ? null : patient.getPatientNumber(),
@@ -1287,14 +1325,14 @@ public class AppointmentService {
                 .orElse(null);
         if (slot == null) {
             if (command.allowAdHocBooking()) {
-            if (hasBookableStandardSlot(command.appointmentDate(), slots, bookingZone)) {
-                throw new IllegalArgumentException("Standard slots are available for this doctor. Please book one of the available slots instead of using emergency/ad-hoc booking.");
+                if (hasBookableStandardSlot(command.appointmentDate(), slots, bookingZone)) {
+                    throw new IllegalArgumentException("Standard slots are available for this doctor. Please book one of the available slots instead of using emergency/ad-hoc booking.");
+                }
+                ensureNoUnavailabilityConflictForAdHocBooking(tenantId, command.doctorUserId(), command.appointmentDate(), command.appointmentTime(), bookingZone);
+                return;
             }
-            ensureNoUnavailabilityConflictForAdHocBooking(tenantId, command.doctorUserId(), command.appointmentDate(), command.appointmentTime(), bookingZone);
-            return;
+            throw new IllegalArgumentException("Selected time is not available for the selected doctor");
         }
-        throw new IllegalArgumentException("Selected time is not available for the selected doctor");
-    }
         if (slot.status() == DoctorAvailabilitySlotStatus.UNAVAILABLE
                 || slot.status() == DoctorAvailabilitySlotStatus.BREAK
                 || slot.status() == DoctorAvailabilitySlotStatus.LEAVE) {
@@ -1303,10 +1341,13 @@ public class AppointmentService {
         if (slot.status() == DoctorAvailabilitySlotStatus.CONFLICTED) {
             throw new IllegalArgumentException("Selected time has scheduling conflicts for the selected doctor");
         }
+        if (slot.past()) {
+            throw new IllegalArgumentException(PAST_SLOT_MESSAGE);
+        }
         if (slot.status() == DoctorAvailabilitySlotStatus.FULL && !allowOverbooking) {
             throw new IllegalArgumentException("Selected time is already fully booked");
         }
-        if (!slot.selectable() && !allowOverbooking) {
+        if (!slot.bookable() && !allowOverbooking) {
             throw new IllegalArgumentException("Selected time is already fully booked");
         }
         if (!StringUtils.hasText(command.reason()) && allowOverbooking && slot.bookedCount() >= slot.maxPatientsPerSlot()) {
@@ -1336,10 +1377,10 @@ public class AppointmentService {
         LocalDate today = currentDate(bookingZone);
         LocalTime now = currentTime(bookingZone);
         if (appointmentDate.isBefore(today)) {
-            throw new IllegalArgumentException("Please select a future time or current running slot.");
+            throw new IllegalArgumentException(PAST_SLOT_MESSAGE);
         }
-        if (appointmentDate.isEqual(today) && appointmentTime != null && isPastWithGrace(appointmentTime, now)) {
-            throw new IllegalArgumentException("Please select a future time or current running slot.");
+        if (appointmentDate.isEqual(today) && appointmentTime != null && !appointmentTime.isAfter(now)) {
+            throw new IllegalArgumentException(PAST_SLOT_MESSAGE);
         }
     }
 
@@ -1351,14 +1392,11 @@ public class AppointmentService {
         LocalDate today = currentDate(bookingZone);
         LocalTime now = currentTime(bookingZone);
         if (appointmentDate.isBefore(today)) {
-            throw new IllegalArgumentException("Selected time has already passed. Choose a current or future slot.");
+            throw new IllegalArgumentException(PAST_SLOT_MESSAGE);
         }
         LocalTime effectiveTime = matchingSlot == null ? appointmentTime : matchingSlot.slotEndTime();
-        if (appointmentDate.isEqual(today) && effectiveTime != null && isPastWithGrace(effectiveTime, now)) {
-            if (matchingSlot != null) {
-                throw new IllegalArgumentException("Selected time has already passed. Choose a current or future slot.");
-            }
-            throw new IllegalArgumentException("Selected time has already passed. Choose a current or future slot.");
+        if (appointmentDate.isEqual(today) && effectiveTime != null && !effectiveTime.isAfter(now)) {
+            throw new IllegalArgumentException(PAST_SLOT_MESSAGE);
         }
     }
 
@@ -1373,7 +1411,7 @@ public class AppointmentService {
         LocalDate today = currentDate(bookingZone);
         LocalTime now = currentTime(bookingZone);
         return slots.stream()
-                .filter(DoctorAvailabilitySlotRecord::selectable)
+                .filter(DoctorAvailabilitySlotRecord::bookable)
                 .filter(slot -> slot.status() == DoctorAvailabilitySlotStatus.AVAILABLE || slot.status() == DoctorAvailabilitySlotStatus.PARTIALLY_BOOKED)
                 .anyMatch(slot -> {
                     if (appointmentDate.isAfter(today)) {
@@ -1382,18 +1420,8 @@ public class AppointmentService {
                     if (!appointmentDate.isEqual(today)) {
                         return false;
                     }
-                    return !isPastWithGrace(slot.slotEndTime(), now);
+                    return slot.slotEndTime() != null && slot.slotEndTime().isAfter(now);
                 });
-    }
-
-    private boolean isPastSlot(LocalDate appointmentDate, LocalTime slotEnd, LocalDate today, LocalTime now) {
-        if (appointmentDate.isBefore(today)) {
-            return true;
-        }
-        if (!appointmentDate.isEqual(today)) {
-            return false;
-        }
-        return slotEnd != null && isPastWithGrace(slotEnd, now);
     }
 
     private void ensureNoUnavailabilityConflictForAdHocBooking(UUID tenantId, UUID doctorUserId, LocalDate appointmentDate, LocalTime appointmentTime, ZoneId bookingZone) {
@@ -1412,6 +1440,25 @@ public class AppointmentService {
         if (!conflicts.isEmpty()) {
             throw new IllegalArgumentException("Doctor is unavailable during this time.");
         }
+    }
+
+    private SlotTiming evaluateSlotTiming(LocalDate appointmentDate, LocalTime slotStart, LocalTime slotEnd, LocalDate clinicDate, LocalTime clinicTime) {
+        if (appointmentDate.isBefore(clinicDate)) {
+            return new SlotTiming(DoctorAvailabilitySlotTimeState.PAST, true, false);
+        }
+        if (appointmentDate.isAfter(clinicDate)) {
+            return new SlotTiming(DoctorAvailabilitySlotTimeState.FUTURE, false, false);
+        }
+        if (slotEnd != null && !slotEnd.isAfter(clinicTime)) {
+            return new SlotTiming(DoctorAvailabilitySlotTimeState.PAST, true, false);
+        }
+        if (slotStart != null && !slotStart.isAfter(clinicTime) && slotEnd != null && slotEnd.isAfter(clinicTime)) {
+            return new SlotTiming(DoctorAvailabilitySlotTimeState.CURRENT, false, true);
+        }
+        return new SlotTiming(DoctorAvailabilitySlotTimeState.FUTURE, false, false);
+    }
+
+    private record SlotTiming(DoctorAvailabilitySlotTimeState state, boolean past, boolean current) {
     }
 
     private String displayReference(AppointmentEntity entity) {

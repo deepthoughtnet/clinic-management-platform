@@ -43,7 +43,7 @@ import {
   createAppointment,
   collectConsultationFee,
   createWaitlist,
-  getAdminNotificationSettings,
+  getClinicClock,
   getClinicUsers,
   getDoctorSlots,
   getDoctorProfile,
@@ -68,7 +68,8 @@ import {
 } from "../../api/clinicApi";
 import ConsultationFeeDialog from "../../components/ConsultationFeeDialog";
 import { CompactEmptyState } from "../../components/compact/CompactUi";
-import { getClinicClockParts, getClinicDateKey, isBookingTimePast, isSlotExpired, formatClinicClockLabel } from "./bookingValidation";
+import { getClinicClockParts, getClinicDateKey, isBookingTimePast, formatClinicClockLabel } from "./bookingValidation";
+import { getAppointmentSlotPresentation } from "./slotState";
 
 type SlotFilterKey = DoctorAvailabilitySlotStatus | "BOOKED" | "CHECKED_IN" | "IN_CONSULTATION" | "COMPLETED" | "NO_SHOW" | "CANCELLED";
 
@@ -205,14 +206,20 @@ function friendlyStatusLabel(value: string | null | undefined) {
       return "Cancelled";
     case "AVAILABLE":
       return "Available";
+    case "CURRENT":
+      return "Current";
     case "BOOKED":
       return "Booked";
     case "FULL":
       return "Full";
+    case "PAST":
+      return "Past";
     case "BREAK":
       return "Break";
     case "LEAVE":
       return "Leave";
+    case "HOLIDAY":
+      return "Holiday";
     case "UNAVAILABLE":
       return "Unavailable";
     case "CONFLICTED":
@@ -240,16 +247,12 @@ function compactDateLabel(date: string) {
   }).format(new Date(`${date}T00:00:00Z`));
 }
 
-function isPastDateTime(date: string, time: string | null | undefined, timeZone?: string | null) {
-  return isBookingTimePast(date, time, undefined, timeZone);
+function isPastDateTime(date: string, time: string | null | undefined, timeZone?: string | null, clinicNow?: string | null) {
+  return isBookingTimePast(date, time, undefined, timeZone, clinicNow);
 }
 
-function isPastSlot(date: string, slot: DoctorAvailabilitySlot, timeZone?: string | null) {
-  return isSlotExpired(date, slot, undefined, timeZone);
-}
-
-function isHiddenPastSlot(date: string, slot: DoctorAvailabilitySlot, appointment: Appointment | null, timeZone?: string | null) {
-  return isPastSlot(date, slot, timeZone) && !appointment && slot.bookedCount <= 0;
+function slotPresentation(date: string, slot: DoctorAvailabilitySlot, timeZone?: string | null, clinicNow?: string | null) {
+  return getAppointmentSlotPresentation(date, slot, timeZone, clinicNow);
 }
 
 function slotDisplayStatus(slot: DoctorAvailabilitySlot, appointments: Appointment[]) {
@@ -266,6 +269,7 @@ function slotDisplayStatus(slot: DoctorAvailabilitySlot, appointments: Appointme
 function slotCellColor(status: string) {
   switch (status) {
     case "AVAILABLE":
+    case "CURRENT":
       return "success";
     case "PARTIALLY_BOOKED":
       return "warning";
@@ -279,6 +283,10 @@ function slotCellColor(status: string) {
       return "secondary";
     case "COMPLETED":
       return "success";
+    case "PAST":
+      return "default";
+    case "HOLIDAY":
+      return "default";
     case "NO_SHOW":
       return "error";
     case "CANCELLED":
@@ -297,6 +305,7 @@ function slotCellColor(status: string) {
 function slotTint(status: string) {
   switch (status) {
     case "AVAILABLE":
+    case "CURRENT":
       return "success.50";
     case "PARTIALLY_BOOKED":
       return "warning.50";
@@ -314,8 +323,11 @@ function slotTint(status: string) {
       return "error.100";
     case "CANCELLED":
       return "grey.100";
+    case "PAST":
+      return "grey.200";
     case "BREAK":
     case "LEAVE":
+    case "HOLIDAY":
     case "UNAVAILABLE":
       return "grey.200";
     case "CONFLICTED":
@@ -356,39 +368,37 @@ function isDragEligibleAppointment(appointment: Appointment) {
   return appointment.status === "BOOKED";
 }
 
-function summarizeCellStatus(slot: DoctorAvailabilitySlot | null, appointments: Appointment[]) {
+function summarizeCellStatus(slot: DoctorAvailabilitySlot | null, appointments: Appointment[], date: string, timeZone?: string | null, clinicNow?: string | null) {
   if (!slot && appointments.length === 0) {
     return {
       status: "UNAVAILABLE",
+      displayState: "UNAVAILABLE",
       label: "No slot",
     };
   }
   if (appointments.some((appointment) => appointment.status === "IN_CONSULTATION")) {
-    return { status: "IN_CONSULTATION", label: "In consultation" };
+    return { status: "IN_CONSULTATION", displayState: "IN_CONSULTATION", label: "In consultation" };
   }
   if (appointments.some((appointment) => appointment.status === "WAITING")) {
-    return { status: "CHECKED_IN", label: "Checked in" };
+    return { status: "CHECKED_IN", displayState: "CHECKED_IN", label: "Checked in" };
   }
   if (appointments.length > 0 && appointments.every((appointment) => appointment.status === "COMPLETED")) {
-    return { status: "COMPLETED", label: "Completed" };
+    return { status: "COMPLETED", displayState: "COMPLETED", label: "Completed" };
   }
   if (slot) {
-    if (slot.status === "AVAILABLE" && appointments.length > 0) {
-      return slot.bookedCount >= slot.maxPatientsPerSlot
-        ? { status: "FULL", label: "Full" }
-        : { status: "PARTIALLY_BOOKED", label: "Partial" };
-    }
-    return { status: slot.status, label: friendlyStatusLabel(slot.status) };
+    const presentation = slotPresentation(date, slot, timeZone, clinicNow);
+    return { status: slot.status, displayState: presentation.state, label: friendlyStatusLabel(presentation.state) };
   }
   if (appointments.some((appointment) => appointment.status === "BOOKED")) {
-    return { status: "BOOKED", label: "Booked" };
+    return { status: "BOOKED", displayState: "BOOKED", label: "Booked" };
   }
-  return { status: "UNAVAILABLE", label: "No slot" };
+  return { status: "UNAVAILABLE", displayState: "UNAVAILABLE", label: "No slot" };
 }
 
 function cellBackground(status: string) {
   switch (status) {
     case "AVAILABLE":
+    case "CURRENT":
       return (theme: Theme) => alpha(theme.palette.success.main, 0.08);
     case "PARTIALLY_BOOKED":
       return (theme: Theme) => alpha(theme.palette.warning.main, 0.12);
@@ -402,12 +412,15 @@ function cellBackground(status: string) {
       return (theme: Theme) => alpha(theme.palette.secondary.main, 0.12);
     case "COMPLETED":
       return (theme: Theme) => alpha(theme.palette.success.main, 0.14);
+    case "PAST":
+      return (theme: Theme) => alpha(theme.palette.grey[500], 0.10);
     case "NO_SHOW":
       return (theme: Theme) => alpha(theme.palette.error.main, 0.14);
     case "CANCELLED":
       return (theme: Theme) => alpha(theme.palette.grey[500], 0.12);
     case "BREAK":
     case "LEAVE":
+    case "HOLIDAY":
     case "UNAVAILABLE":
       return (theme: Theme) => alpha(theme.palette.grey[500], 0.12);
     case "CONFLICTED":
@@ -421,6 +434,7 @@ function cellBorder(status: string, selected = false) {
   if (selected) return "primary.main";
   switch (status) {
     case "AVAILABLE":
+    case "CURRENT":
       return "success.200";
     case "PARTIALLY_BOOKED":
       return "warning.200";
@@ -432,12 +446,15 @@ function cellBorder(status: string, selected = false) {
       return "info.200";
     case "COMPLETED":
       return "success.300";
+    case "PAST":
+      return "grey.300";
     case "NO_SHOW":
     case "CONFLICTED":
       return "error.200";
     case "CANCELLED":
     case "BREAK":
     case "LEAVE":
+    case "HOLIDAY":
     case "UNAVAILABLE":
       return "divider";
     default:
@@ -482,13 +499,16 @@ function sectionTone(sectionKey: SchedulerSectionKey) {
   }
 }
 
-function summarizeRows(rows: CalendarSlotRow[]): SchedulerSectionSummary {
+function summarizeRows(rows: CalendarSlotRow[], timeZone?: string | null, clinicNow?: string | null): SchedulerSectionSummary {
   return {
     totalSlots: rows.length,
-    availableCount: rows.filter((row) => row.slot.status === "AVAILABLE").length,
+    availableCount: rows.filter((row) => {
+      const presentation = slotPresentation(row.date, row.slot, timeZone, clinicNow);
+      return presentation.counterEligible;
+    }).length,
     bookedCount: rows.filter((row) => Boolean(row.appointment)).length,
-    partialCount: rows.filter((row) => row.slot.status === "PARTIALLY_BOOKED").length,
-    fullCount: rows.filter((row) => row.slot.status === "FULL").length,
+    partialCount: rows.filter((row) => slotPresentation(row.date, row.slot, timeZone, clinicNow).state === "PARTIALLY_BOOKED").length,
+    fullCount: rows.filter((row) => slotPresentation(row.date, row.slot, timeZone, clinicNow).state === "FULL").length,
     checkedInCount: rows.filter((row) => row.appointment?.status === "WAITING").length,
     inConsultationCount: rows.filter((row) => row.appointment?.status === "IN_CONSULTATION").length,
   };
@@ -597,6 +617,8 @@ export default function DayBoardPage() {
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [clinicTimeZone, setClinicTimeZone] = React.useState("Asia/Kolkata");
+  const [clinicNowSnapshot, setClinicNowSnapshot] = React.useState<string | null>(null);
+  const [clinicClockUnavailable, setClinicClockUnavailable] = React.useState(false);
   const [clockTick, setClockTick] = React.useState(0);
   const gridTopScrollRef = React.useRef<HTMLDivElement | null>(null);
   const gridBodyScrollRef = React.useRef<HTMLDivElement | null>(null);
@@ -677,15 +699,15 @@ export default function DayBoardPage() {
             || appointments.find((appointment) => sameTimeSlot(slot, appointment))
             || null,
         }) satisfies CalendarSlotRow)
-        .filter((row) => !isHiddenPastSlot(row.date, row.slot, row.appointment, clinicTimeZone));
+        .filter((row) => !slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).hidden);
     }).sort((left, right) => {
       const doctorDelta = left.doctorName.localeCompare(right.doctorName);
       if (doctorDelta !== 0) return doctorDelta;
       return left.slot.slotTime.localeCompare(right.slot.slotTime);
     });
-  }, [appointments, clinicTimeZone, date, filters, visibleDoctorPanels]);
-  const calendarSummary = React.useMemo(() => summarizeRows(calendarRows), [calendarRows]);
-  const clinicClock = React.useMemo(() => getClinicClockParts(clinicTimeZone), [clinicTimeZone, clockTick]);
+  }, [appointments, clinicNowSnapshot, clinicTimeZone, date, filters, visibleDoctorPanels]);
+  const calendarSummary = React.useMemo(() => summarizeRows(calendarRows, clinicTimeZone, clinicNowSnapshot), [calendarRows, clinicNowSnapshot, clinicTimeZone]);
+  const clinicClock = React.useMemo(() => getClinicClockParts(clinicTimeZone, clinicNowSnapshot), [clinicNowSnapshot, clinicTimeZone, clockTick]);
   const todayDate = React.useMemo(() => clinicClock.dateKey, [clinicClock.dateKey]);
   const currentTimeSection = React.useMemo<SchedulerSectionKey | null>(() => {
     if (date !== todayDate) return null;
@@ -709,8 +731,8 @@ export default function DayBoardPage() {
         return left.slot.slotTime.localeCompare(right.slot.slotTime);
       });
       const times = Array.from(new Set(rows.map((row) => toFive(row.slot.slotTime)))).sort((left, right) => left.localeCompare(right));
-      const summary = summarizeRows(rows);
-      const hasBookings = rows.some((row) => Boolean(row.appointment) || row.slot.bookedCount > 0 || row.slot.status === "PARTIALLY_BOOKED" || row.slot.status === "FULL");
+      const summary = summarizeRows(rows, clinicTimeZone, clinicNowSnapshot);
+      const hasBookings = rows.some((row) => Boolean(row.appointment) || row.slot.bookedCount > 0 || slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).state === "PARTIALLY_BOOKED" || slotPresentation(row.date, row.slot, clinicTimeZone, clinicNowSnapshot).state === "FULL");
       const autoExpanded = Boolean((currentTimeSection && currentTimeSection === section.key) || hasBookings);
       const override = sectionOverrides[section.key];
       const expanded = override === undefined ? autoExpanded : override;
@@ -823,16 +845,43 @@ export default function DayBoardPage() {
     async function loadClinicTimeZone() {
       if (!auth.accessToken || !auth.tenantId) {
         setClinicTimeZone("Asia/Kolkata");
+        setClinicNowSnapshot(null);
+        setClinicClockUnavailable(true);
+        console.info("[day-board] clinic clock unavailable", {
+          tenantId: auth.tenantId,
+          source: "missing-auth",
+          effectiveTimezone: "Asia/Kolkata",
+          browserReportedTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        });
         return;
       }
       try {
-        const settings = await getAdminNotificationSettings(auth.accessToken, auth.tenantId);
+        const settings = await getClinicClock(auth.accessToken, auth.tenantId);
         if (!cancelled) {
-          setClinicTimeZone(settings.timezone && settings.timezone.trim() ? settings.timezone.trim() : "Asia/Kolkata");
+          setClinicTimeZone(settings.clinicTimeZone?.trim() || "Asia/Kolkata");
+          setClinicNowSnapshot(settings.clinicNow || null);
+          setClinicClockUnavailable(false);
+          console.info("[day-board] clinic clock loaded", {
+            tenantId: auth.tenantId,
+            clinicTimeZone: settings.clinicTimeZone,
+            clinicNow: settings.clinicNow,
+            serverNowUtc: settings.serverNowUtc,
+            effectiveTimezone: settings.clinicTimeZone?.trim() || "Asia/Kolkata",
+            browserReportedTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          });
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
           setClinicTimeZone("Asia/Kolkata");
+          setClinicNowSnapshot(null);
+          setClinicClockUnavailable(true);
+          console.info("[day-board] clinic clock unavailable", {
+            tenantId: auth.tenantId,
+            source: "clock-error",
+            effectiveTimezone: "Asia/Kolkata",
+            error: error instanceof Error ? error.message : String(error),
+            browserReportedTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          });
         }
       }
     }
@@ -924,21 +973,11 @@ export default function DayBoardPage() {
   const selectedSlotBookingReason = React.useMemo(() => {
     if (!selectedSlot) return "Select an available slot";
     if (!auth.tenantId || !auth.accessToken) return "Clinic context is unavailable";
-    if (isPastSlot(date, selectedSlot, clinicTimeZone)) return "Selected time has already passed. Choose a current or future slot.";
-    if (selectedSlot.status === "BREAK" || selectedSlot.status === "LEAVE" || selectedSlot.status === "UNAVAILABLE" || selectedSlot.status === "CONFLICTED") {
-      return "Doctor is unavailable during this time.";
-    }
-    if (selectedSlot.status === "FULL" || selectedSlot.bookedCount >= selectedSlot.maxPatientsPerSlot) {
-      return "This slot is full.";
-    }
-    if (selectedSlot.status !== "AVAILABLE" && selectedSlot.status !== "PARTIALLY_BOOKED") {
-      return "Select an available slot";
-    }
-    if (!selectedSlot.selectable) {
-      return "Select an available slot";
-    }
+    const presentation = slotPresentation(date, selectedSlot, clinicTimeZone, clinicNowSnapshot);
+    if (presentation.isPast) return "Selected time has already passed. Please choose a current or future slot.";
+    if (!presentation.bookable) return presentation.tooltip;
     return null;
-  }, [auth.accessToken, auth.tenantId, clinicTimeZone, date, selectedSlot]);
+  }, [auth.accessToken, auth.tenantId, clinicNowSnapshot, clinicTimeZone, date, selectedSlot]);
 
   const selectedSlotCanBook = Boolean(selectedSlot && !selectedSlotBookingReason);
 
@@ -961,6 +1000,16 @@ export default function DayBoardPage() {
     const slotTime = selectedSlot ? toFive(selectedSlot.slotTime) : manualTime;
     if (!slotTime) {
       setError("Pick a slot or enter manual time.");
+      return;
+    }
+    const matchingSlot = selectedSlot || slots.find((slot) => toFive(slot.slotTime) === slotTime) || null;
+    const matchingPresentation = matchingSlot ? slotPresentation(date, matchingSlot, clinicTimeZone, clinicNowSnapshot) : null;
+    if (matchingPresentation?.isPast || isPastDateTime(date, slotTime, clinicTimeZone, clinicNowSnapshot)) {
+      setError("Selected time has already passed. Please choose a current or future slot.");
+      return;
+    }
+    if (matchingPresentation && !matchingPresentation.bookable) {
+      setError(matchingPresentation.tooltip);
       return;
     }
     setSaving(true);
@@ -1073,6 +1122,10 @@ export default function DayBoardPage() {
 
   const saveReschedule = async () => {
     if (!auth.accessToken || !auth.tenantId || !rescheduleTarget || !rescheduleDate || !rescheduleTime) return;
+    if (isPastDateTime(rescheduleDate, rescheduleTime, clinicTimeZone, clinicNowSnapshot)) {
+      setError("Selected time has already passed. Please choose a current or future slot.");
+      return;
+    }
     try {
       await rescheduleAppointment(auth.accessToken, auth.tenantId, rescheduleTarget.id, {
         doctorUserId: rescheduleDoctorUserId || null,
@@ -1090,6 +1143,15 @@ export default function DayBoardPage() {
   const bookWaitlistEntry = async (entry: AppointmentWaitlist) => {
     const bookingDoctorId = selectedSlot?.doctorUserId || effectiveDoctorId;
     if (!auth.accessToken || !auth.tenantId || !bookingDoctorId || !selectedSlot) return;
+    const presentation = slotPresentation(date, selectedSlot, clinicTimeZone, clinicNowSnapshot);
+    if (presentation.isPast) {
+      setError("Selected time has already passed. Please choose a current or future slot.");
+      return;
+    }
+    if (!presentation.bookable) {
+      setError(presentation.tooltip);
+      return;
+    }
     try {
       await createAppointment(auth.accessToken, auth.tenantId, {
         patientId: entry.patientId,
@@ -1113,7 +1175,7 @@ export default function DayBoardPage() {
     setDraggedAppointment(appointment);
   };
 
-  const canDropToSlot = (slot: DoctorAvailabilitySlot | null) => Boolean(slot && slot.selectable && slot.status !== "BREAK" && slot.status !== "LEAVE" && slot.status !== "UNAVAILABLE" && slot.status !== "CONFLICTED");
+  const canDropToSlot = (slot: DoctorAvailabilitySlot | null) => Boolean(slot && slotPresentation(date, slot, clinicTimeZone, clinicNowSnapshot).selectable);
 
   const openMoveConfirm = (slot: DoctorAvailabilitySlot) => {
     if (!draggedAppointment || !canDropToSlot(slot)) return;
@@ -1264,7 +1326,7 @@ export default function DayBoardPage() {
                   <Chip size="small" label={`Doctor: ${selectedDoctorLabel}`} color={effectiveDoctorId ? "primary" : "default"} variant="outlined" />
                   <Chip size="small" label={`Date: ${compactDateLabel(date)}`} variant="outlined" />
                   <Chip size="small" label={`Time period: ${currentTimeSection ? currentTimeSection.charAt(0).toUpperCase() + currentTimeSection.slice(1) : "Outside current day"}`} variant="outlined" />
-                  <Chip size="small" label={formatClinicClockLabel(clinicTimeZone)} variant="outlined" />
+                  <Chip size="small" label={clinicClockUnavailable ? "Clinic time unavailable" : formatClinicClockLabel(clinicTimeZone, clinicNowSnapshot)} variant="outlined" />
                 </Stack>
 
                 <Stack direction="row" spacing={0.5} flexWrap="wrap">
@@ -1479,7 +1541,8 @@ export default function DayBoardPage() {
                                       {visibleDoctorPanels.map((panel) => {
                                         const slot = panel.slots.find((candidate) => toFive(candidate.slotTime) === time) || null;
                                         const slotAppointments = cellAppointments(panel.doctorUserId, time);
-                                        const summary = summarizeCellStatus(slot, slotAppointments);
+                                        const summary = summarizeCellStatus(slot, slotAppointments, date, clinicTimeZone, clinicNowSnapshot);
+                                        const slotContext = slot ? slotPresentation(date, slot, clinicTimeZone, clinicNowSnapshot) : null;
                                         const primaryAppointment = slotAppointments[0] || null;
                                         const selectedCell = (selectedSlot?.doctorUserId === panel.doctorUserId && toFive(selectedSlot.slotTime) === time)
                                           || (selectedAppointment?.doctorUserId === panel.doctorUserId && toFive(selectedAppointment.appointmentTime) === time);
@@ -1490,10 +1553,14 @@ export default function DayBoardPage() {
                                           : slotAppointments.length > 0
                                             ? `${slotAppointments.length} booking${slotAppointments.length > 1 ? "s" : ""}`
                                             : "—";
-                                        const tooltip = primaryAppointment
-                                          ? slot
-                                            ? appointmentTooltip(primaryAppointment, panel.doctorName, slot)
-                                            : (
+                                        let tooltip: React.ReactNode = null;
+                                        if (primaryAppointment) {
+                                          if (slot) {
+                                            tooltip = appointmentTooltip(primaryAppointment, panel.doctorName, slot);
+                                          } else if (slotContext?.tooltip) {
+                                            tooltip = slotContext.tooltip;
+                                          } else {
+                                            tooltip = (
                                               <Box sx={{ p: 0.5, maxWidth: 280 }}>
                                                 <Typography sx={{ fontWeight: 800 }}>{appointmentTitle(primaryAppointment)}</Typography>
                                                 <Typography variant="body2">Phone: {primaryAppointment.patientMobile || "—"}</Typography>
@@ -1503,8 +1570,9 @@ export default function DayBoardPage() {
                                                 <Typography variant="body2">Slot: {toFive(primaryAppointment.appointmentTime)}</Typography>
                                                 <Typography variant="body2">Reference: {primaryAppointment.displayReference || (primaryAppointment.tokenNumber != null ? `APT-${primaryAppointment.tokenNumber}` : "Pending")}</Typography>
                                               </Box>
-                                            )
-                                          : null;
+                                            );
+                                          }
+                                        }
                                         const firstPatient = primaryAppointment ? appointmentTitle(primaryAppointment) : slot?.patientName || slot?.patientNumber || slot?.patientId || null;
                                         const cellContent = !slot && slotAppointments.length === 0 ? (
                                           <Box
@@ -1526,11 +1594,14 @@ export default function DayBoardPage() {
                                             role="button"
                                             tabIndex={0}
                                             onClick={() => {
+                                              if (slotContext?.isPast) {
+                                                return;
+                                              }
                                               if (slotAppointments.length > 0 && primaryAppointment) {
                                                 setSelected({ kind: "appointment", appointment: primaryAppointment });
                                                 return;
                                               }
-                                              if (slot) {
+                                              if (slot && slotContext?.selectable) {
                                                 setSelected({ kind: "slot", slot });
                                               }
                                             }}
@@ -1556,10 +1627,10 @@ export default function DayBoardPage() {
                                               justifyContent: "space-between",
                                               borderRadius: 1,
                                               border: "1px solid",
-                                              borderColor: cellBorder(summary.status, Boolean(selectedCell)),
-                                              bgcolor: cellBackground(summary.status),
+                                              borderColor: cellBorder(summary.displayState, Boolean(selectedCell)),
+                                              bgcolor: cellBackground(summary.displayState),
                                               opacity: cellVisible ? 1 : 0.42,
-                                              cursor: slot || slotAppointments.length > 0 ? "pointer" : "default",
+                                              cursor: (slotContext?.selectable || slotAppointments.length > 0) ? "pointer" : "default",
                                               transition: "all 120ms ease",
                                               minWidth: 0,
                                               "&:hover": {
@@ -1570,9 +1641,12 @@ export default function DayBoardPage() {
                                             onKeyDown={(event) => {
                                               if (event.key === "Enter" || event.key === " ") {
                                                 event.preventDefault();
+                                                if (slotContext?.isPast) {
+                                                  return;
+                                                }
                                                 if (slotAppointments.length > 0 && primaryAppointment) {
                                                   setSelected({ kind: "appointment", appointment: primaryAppointment });
-                                                } else if (slot) {
+                                                } else if (slot && slotContext?.selectable) {
                                                   setSelected({ kind: "slot", slot });
                                                 }
                                               }
@@ -1582,7 +1656,7 @@ export default function DayBoardPage() {
                                               <Chip
                                                 size="small"
                                                 label={summary.label}
-                                                color={slotCellColor(summary.status as DoctorAvailabilitySlotStatus)}
+                                                color={slotCellColor(summary.displayState)}
                                                 variant="outlined"
                                                 sx={{ height: 20, fontSize: "0.68rem", "& .MuiChip-label": { px: 0.75 } }}
                                               />
@@ -1620,7 +1694,7 @@ export default function DayBoardPage() {
                                                 </>
                                               ) : slot ? (
                                                 <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1 }}>
-                                                  {summary.status === "AVAILABLE" ? "Open" : friendlyStatusLabel(summary.status)}
+                                                  {summary.displayState === "AVAILABLE" ? "Open" : friendlyStatusLabel(summary.displayState)}
                                                 </Typography>
                                               ) : null}
                                             </Box>

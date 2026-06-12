@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityU
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
@@ -28,15 +29,19 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestController
 @Validated
 @RequestMapping("/api/doctors")
 public class DoctorAvailabilityController {
+    private static final Logger log = LoggerFactory.getLogger(DoctorAvailabilityController.class);
     private final AppointmentService appointmentService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
@@ -60,10 +65,27 @@ public class DoctorAvailabilityController {
 
     @GetMapping("/{doctorUserId}/slots")
     @PreAuthorize("@permissionChecker.hasPermission('appointment.read') or @permissionChecker.hasPermission('appointment.manage')")
-    public List<DoctorAvailabilitySlotResponse> slots(@PathVariable UUID doctorUserId, @org.springframework.web.bind.annotation.RequestParam("date") LocalDate date) {
+    public List<DoctorAvailabilitySlotResponse> slots(
+            @PathVariable UUID doctorUserId,
+            @org.springframework.web.bind.annotation.RequestParam("date") LocalDate date,
+            @RequestHeader(value = "X-Client-Timezone", required = false) String browserReportedTimezone
+    ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(doctorUserId);
         ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
+        if (log.isDebugEnabled()) {
+            OffsetDateTime clinicNow = OffsetDateTime.now(bookingZone);
+            OffsetDateTime utcNow = OffsetDateTime.now(ZoneOffset.UTC);
+            log.debug("appointment availability request tenantId={} role={} clinicTimezone={} clinicNow={} utcNow={} browserReportedTimezone={} selectedDate={} doctorId={}",
+                    tenantId,
+                    RequestContextHolder.require().tenantRole(),
+                    bookingZone.getId(),
+                    clinicNow,
+                    utcNow,
+                    browserReportedTimezone,
+                    date,
+                    effectiveDoctorUserId);
+        }
         return appointmentService.listSlots(tenantId, effectiveDoctorUserId, date, bookingZone).stream().map(this::toSlotResponse).toList();
     }
 
@@ -215,6 +237,11 @@ public class DoctorAvailabilityController {
                 record.bookedCount(),
                 record.maxPatientsPerSlot(),
                 record.selectable(),
+                record.timeState(),
+                record.past(),
+                record.current(),
+                record.bookable(),
+                record.notBookableReason(),
                 record.appointmentId() == null ? null : record.appointmentId().toString(),
                 record.patientId() == null ? null : record.patientId().toString(),
                 record.patientNumber(),

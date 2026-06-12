@@ -6,6 +6,7 @@ import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.api.patient.dto.PatientDetailResponse;
 import com.deepthoughtnet.clinic.api.patient.dto.PatientRequest;
 import com.deepthoughtnet.clinic.api.patient.dto.PatientResponse;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria;
@@ -17,8 +18,6 @@ import com.deepthoughtnet.clinic.patient.service.model.PatientSearchCriteria;
 import com.deepthoughtnet.clinic.patient.service.model.PatientUpsertCommand;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
-import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
-import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord;
 import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
@@ -54,7 +53,7 @@ public class PatientController {
     private final ConsultationService consultationService;
     private final PrescriptionService prescriptionService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
-    private final TenantNotificationSettingsService notificationSettingsService;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final AppUserRepository appUserRepository;
     private final PermissionChecker permissionChecker;
 
@@ -64,7 +63,7 @@ public class PatientController {
             ConsultationService consultationService,
             PrescriptionService prescriptionService,
             DoctorAssignmentSecurityService doctorAssignmentSecurityService,
-            TenantNotificationSettingsService notificationSettingsService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
             AppUserRepository appUserRepository,
             PermissionChecker permissionChecker
     ) {
@@ -73,7 +72,7 @@ public class PatientController {
         this.consultationService = consultationService;
         this.prescriptionService = prescriptionService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
-        this.notificationSettingsService = notificationSettingsService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
         this.appUserRepository = appUserRepository;
         this.permissionChecker = permissionChecker;
     }
@@ -185,7 +184,7 @@ public class PatientController {
     }
 
     private boolean isUpcoming(AppointmentRecord appointment) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(resolveTenantZone(RequestContextHolder.requireTenantId()));
         return appointment.appointmentDate() != null
                 && (appointment.appointmentDate().isAfter(today)
                 || (appointment.appointmentDate().isEqual(today)
@@ -351,18 +350,7 @@ public class PatientController {
     }
 
     private ZoneId resolveTenantZone(UUID tenantId) {
-        if (tenantId == null) {
-            return ZoneId.systemDefault();
-        }
-        NotificationSettingsRecord settings = notificationSettingsService.findByTenantId(tenantId).orElse(null);
-        if (settings == null || settings.timezone() == null || settings.timezone().isBlank()) {
-            return ZoneId.systemDefault();
-        }
-        try {
-            return ZoneId.of(settings.timezone().trim());
-        } catch (Exception ex) {
-            return ZoneId.systemDefault();
-        }
+        return clinicTimeZoneResolver.resolve(tenantId);
     }
 
     private String resolveActorEmail(UUID tenantId, UUID actorAppUserId) {

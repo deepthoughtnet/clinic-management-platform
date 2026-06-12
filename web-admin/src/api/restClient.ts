@@ -6,6 +6,7 @@ export type ApiOpts = {
   requireTenant?: boolean;
   platformOperation?: boolean;
   accept?: string;
+  clientTimeZone?: string | null;
 };
 
 export type ApiErrorResponse = {
@@ -115,6 +116,7 @@ function buildHeaders(path: string, opts?: ApiOpts, withContentType = true): Hea
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(platformOp ? { "X-Platform-Op": "true" } : {}),
     ...(headerTenantId ? { "X-Tenant-Id": headerTenantId } : {}),
+    ...(opts?.clientTimeZone ? { "X-Client-Timezone": opts.clientTimeZone } : {}),
     ...(withContentType ? { "Content-Type": "application/json" } : {}),
     Accept: opts?.accept || "application/json",
   };

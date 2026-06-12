@@ -3,12 +3,19 @@ package com.deepthoughtnet.clinic.api.admin;
 import com.deepthoughtnet.clinic.api.admin.dto.AdminNotificationSettingsDtos.NotificationSettingsResponse;
 import com.deepthoughtnet.clinic.api.admin.dto.AdminNotificationSettingsDtos.UpdateNotificationSettingsRequest;
 import com.deepthoughtnet.clinic.api.carepilot.CarePilotMessagingStatusService;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.carepilot.dto.MessagingDtos.ProviderReadinessStatus;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.TenantNotificationSettingsService;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsRecord;
 import com.deepthoughtnet.clinic.carepilot.notificationsettings.service.model.NotificationSettingsUpdateCommand;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -22,21 +29,29 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/admin/notification-settings")
 public class AdminNotificationSettingsController {
+    private static final Logger log = LoggerFactory.getLogger(AdminNotificationSettingsController.class);
     private final TenantNotificationSettingsService settingsService;
     private final CarePilotMessagingStatusService messagingStatusService;
+    private final ClinicTimeZoneResolver clinicTimeZoneResolver;
 
     public AdminNotificationSettingsController(
             TenantNotificationSettingsService settingsService,
-            CarePilotMessagingStatusService messagingStatusService
+            CarePilotMessagingStatusService messagingStatusService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver
     ) {
         this.settingsService = settingsService;
         this.messagingStatusService = messagingStatusService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
     }
 
     @GetMapping
     @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('AUDITOR') or @permissionChecker.hasRole('RECEPTIONIST') or @permissionChecker.hasRole('PLATFORM_ADMIN') or @permissionChecker.hasRole('PLATFORM_TENANT_SUPPORT')")
     public NotificationSettingsResponse get() {
         UUID tenantId = RequestContextHolder.requireTenantId();
+        String actorRole = RequestContextHolder.require().tenantRole();
+        if (log.isInfoEnabled()) {
+            log.info("admin.notification-settings request tenantId={} role={}", tenantId, actorRole);
+        }
         return toResponse(settingsService.getOrCreate(tenantId));
     }
 
@@ -45,6 +60,7 @@ public class AdminNotificationSettingsController {
     public NotificationSettingsResponse update(@RequestBody UpdateNotificationSettingsRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorId = RequestContextHolder.require().appUserId();
+        String normalizedTimezone = clinicTimeZoneResolver.normalizeForPersistence(tenantId, request.timezone());
         NotificationSettingsRecord updated = settingsService.update(tenantId, new NotificationSettingsUpdateCommand(
                 request.emailEnabled(),
                 request.smsEnabled(),
@@ -63,7 +79,7 @@ public class AdminNotificationSettingsController {
                 request.quietHoursEnabled(),
                 request.quietHoursStart(),
                 request.quietHoursEnd(),
-                request.timezone(),
+                normalizedTimezone,
                 request.defaultChannel(),
                 request.fallbackChannel(),
                 request.allowMarketingMessages(),
@@ -71,6 +87,10 @@ public class AdminNotificationSettingsController {
                 request.unsubscribeFooterEnabled(),
                 request.maxMessagesPerPatientPerDay()
         ), actorId);
+        if (log.isDebugEnabled()) {
+            log.debug("admin.notification-settings update tenantId={} requestedTimezone={} persistedTimezone={}",
+                    tenantId, request.timezone(), normalizedTimezone);
+        }
         return toResponse(updated);
     }
 
@@ -80,6 +100,15 @@ public class AdminNotificationSettingsController {
         boolean smsReady = statuses.stream().anyMatch(s -> s.channel().name().equals("SMS") && s.status() == ProviderReadinessStatus.READY);
         boolean whatsappReady = statuses.stream().anyMatch(s -> s.channel().name().equals("WHATSAPP") && s.status() == ProviderReadinessStatus.READY);
         var warnings = settingsService.computeWarnings(record, emailReady, smsReady, whatsappReady);
+        ZoneId effectiveZone = clinicTimeZoneResolver.resolve(record.tenantId(), record.timezone());
+        String effectiveTimezone = effectiveZone.getId();
+        Instant now = Instant.now();
+        OffsetDateTime serverNowUtc = now.atOffset(ZoneOffset.UTC);
+        OffsetDateTime clinicNow = now.atZone(effectiveZone).toOffsetDateTime();
+        if (log.isInfoEnabled()) {
+            log.info("admin.notification-settings response tenantId={} storedTimezone={} effectiveTimezone={} serverNowUtc={} clinicNow={}",
+                    record.tenantId(), record.timezone(), effectiveTimezone, serverNowUtc, clinicNow);
+        }
         return new NotificationSettingsResponse(
                 record.id(),
                 record.tenantId(),
@@ -100,7 +129,10 @@ public class AdminNotificationSettingsController {
                 record.quietHoursEnabled(),
                 record.quietHoursStart(),
                 record.quietHoursEnd(),
-                record.timezone(),
+                effectiveTimezone,
+                effectiveTimezone,
+                clinicNow,
+                serverNowUtc,
                 record.defaultChannel(),
                 record.fallbackChannel(),
                 record.allowMarketingMessages(),

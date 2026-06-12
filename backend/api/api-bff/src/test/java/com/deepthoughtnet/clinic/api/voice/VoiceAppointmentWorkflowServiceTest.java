@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentType;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
+import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotTimeState;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
@@ -368,6 +369,11 @@ class VoiceAppointmentWorkflowServiceTest {
                 selectable ? 0 : 1,
                 1,
                 selectable,
+                DoctorAvailabilitySlotTimeState.FUTURE,
+                false,
+                false,
+                selectable,
+                null,
                 null,
                 null,
                 null,

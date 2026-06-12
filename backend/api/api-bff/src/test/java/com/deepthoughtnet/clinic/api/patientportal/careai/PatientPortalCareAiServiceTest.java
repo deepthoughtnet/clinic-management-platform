@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.patientportal.PatientPortalService;
 import com.deepthoughtnet.clinic.api.careai.CareAiTaskNotificationService;
+import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentConfirmationResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
@@ -40,6 +41,7 @@ import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -58,6 +60,7 @@ class PatientPortalCareAiServiceTest {
     private CareAiConversationPersistenceService conversationPersistenceService;
     private CareAiReceptionistTaskService receptionistTaskService;
     private CareAiTaskNotificationService taskNotificationService;
+    private ClinicTimeZoneResolver clinicTimeZoneResolver;
     private VoiceTestProperties voiceTestProperties;
     private PatientPortalCareAiService service;
 
@@ -68,6 +71,7 @@ class PatientPortalCareAiServiceTest {
         conversationPersistenceService = mock(CareAiConversationPersistenceService.class);
         receptionistTaskService = mock(CareAiReceptionistTaskService.class);
         taskNotificationService = mock(CareAiTaskNotificationService.class);
+        clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
         voiceTestProperties = new VoiceTestProperties();
         voiceTestProperties.getLlm().setMaxOutputTokens(1024);
         PatientPortalCareAiPlanner planner = new LlmBackedPatientPortalCareAiPlanner(
@@ -78,12 +82,14 @@ class PatientPortalCareAiServiceTest {
         );
         service = new PatientPortalCareAiService(
                 patientPortalService,
+                clinicTimeZoneResolver,
                 planner,
                 conversationPersistenceService,
                 receptionistTaskService,
                 taskNotificationService
         );
         when(patientPortalService.currentPatientId()).thenReturn(UUID.randomUUID());
+        when(clinicTimeZoneResolver.resolve(any())).thenReturn(ZoneId.of("Asia/Kolkata"));
         setPatientContext(TENANT_A, APP_USER_A);
     }
 
@@ -1405,7 +1411,7 @@ class PatientPortalCareAiServiceTest {
     }
 
     private LocalDate nextDate(int month, int day) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
         LocalDate candidate = LocalDate.of(today.getYear(), month, day);
         return candidate.isBefore(today) ? candidate.plusYears(1) : candidate;
     }
