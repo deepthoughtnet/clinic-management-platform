@@ -189,7 +189,7 @@ public class BillingService {
             }
             boolean alreadyInvoiced = bills.stream()
                     .filter(bill -> appointment.id().equals(bill.appointmentId()))
-                    .filter(bill -> bill.status() != BillStatus.CANCELLED)
+                    .filter(bill -> !isCancelledLifecycle(bill.status()))
                     .anyMatch(bill -> bill.lines().stream().anyMatch(line -> line.itemType() == BillItemType.CONSULTATION));
             if (alreadyInvoiced) {
                 continue;
@@ -279,8 +279,8 @@ public class BillingService {
     public BillRecord issue(UUID tenantId, UUID id, UUID actorAppUserId) {
         requireTenant(tenantId);
         BillEntity entity = findBill(tenantId, id);
-        if (entity.getStatus() == BillStatus.CANCELLED) {
-            throw new IllegalArgumentException("Cancelled bill cannot be issued");
+        if (isClosedForLifecycle(entity.getStatus())) {
+            throw new IllegalArgumentException("Closed bill cannot be issued");
         }
         entity.markStatus(BillStatus.ISSUED);
         BillEntity saved = billRepository.save(entity);
@@ -307,8 +307,8 @@ public class BillingService {
     public BillRecord cancel(UUID tenantId, UUID id, UUID actorAppUserId) {
         requireTenant(tenantId);
         BillEntity entity = findBill(tenantId, id);
-        if (entity.getStatus() == BillStatus.PAID) {
-            throw new IllegalArgumentException("Paid bill cannot be cancelled");
+        if (entity.getStatus() == BillStatus.REFUNDED || entity.getStatus() == BillStatus.CANCELLED_REFUNDED) {
+            throw new IllegalArgumentException("Refunded bill cannot be cancelled");
         }
         entity.cancel();
         BillEntity saved = billRepository.save(entity);
@@ -323,8 +323,8 @@ public class BillingService {
         requireId(billId, "billId");
         validate(command);
         BillEntity bill = findBill(tenantId, billId);
-        if (bill.getStatus() == BillStatus.CANCELLED) {
-            throw new IllegalArgumentException("Cancelled bill cannot accept payments");
+        if (isClosedForLifecycle(bill.getStatus())) {
+            throw new IllegalArgumentException("Closed bill cannot accept payments");
         }
         if (bill.getStatus() == BillStatus.DRAFT) {
             bill.markStatus(BillStatus.ISSUED);
@@ -334,9 +334,13 @@ public class BillingService {
         if (command.amount().compareTo(bill.getDueAmount()) > 0) {
             throw new IllegalArgumentException("Payment amount cannot exceed bill due amount");
         }
+        return persistPayment(tenantId, bill, command, actorAppUserId);
+    }
+
+    private PaymentRecord persistPayment(UUID tenantId, BillEntity bill, PaymentCommand command, UUID actorAppUserId) {
         PaymentEntity payment = paymentRepository.save(PaymentEntity.create(
                 tenantId,
-                billId,
+                bill.getId(),
                 command.paymentDate(),
                 command.paymentDateTime(),
                 normalizeMoney(command.amount()),
@@ -349,7 +353,7 @@ public class BillingService {
         ReceiptEntity receipt = receiptRepository.save(ReceiptEntity.create(
                 tenantId,
                 generateReceiptNumber(tenantId),
-                billId,
+                bill.getId(),
                 payment.getId(),
                 payment.getPaymentDate(),
                 normalizeMoney(command.amount())
@@ -417,9 +421,9 @@ public class BillingService {
         }
 
         BigDecimal paymentAmount = assessment.remainingDue();
-        PaymentRecord payment = recordPayment(
+        PaymentRecord payment = persistPayment(
                 tenantId,
-                consultationBill.getId(),
+                consultationBill,
                 new PaymentCommand(
                         appointment.appointmentDate(),
                         OffsetDateTime.now(),
@@ -471,13 +475,10 @@ public class BillingService {
         requireId(billId, "billId");
         validate(command);
         BillEntity bill = findBill(tenantId, billId);
-        if (bill.getStatus() == BillStatus.CANCELLED) {
-            throw new IllegalArgumentException("Cancelled bill cannot be refunded");
-        }
         refreshFinancials(bill);
-        BigDecimal refundable = normalizeMoney(bill.getPaidAmount()).subtract(normalizeMoney(bill.getRefundedAmount())).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal refundable = refundableAmount(bill);
         if (command.amount().compareTo(refundable) > 0) {
-            throw new IllegalArgumentException("Refund amount cannot exceed paid amount minus previous refunds");
+            throw new IllegalArgumentException("Refund amount cannot exceed refundable amount");
         }
         BillRefundEntity refund = billRefundRepository.save(BillRefundEntity.create(
                 tenantId,
@@ -602,25 +603,31 @@ public class BillingService {
         BigDecimal paid = payments.stream().map(PaymentEntity::getAmount).reduce(ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
         BigDecimal refunded = refunds.stream().map(BillRefundEntity::getAmount).reduce(ZERO, BigDecimal::add).setScale(2, RoundingMode.HALF_UP);
         BigDecimal netPaid = paid.subtract(refunded).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal due = total.subtract(netPaid).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal due = isCancelledLifecycle(entity.getStatus())
+                ? ZERO
+                : total.subtract(paid).setScale(2, RoundingMode.HALF_UP);
         if (due.compareTo(ZERO) < 0) due = ZERO;
 
         entity.setFinancials(subtotal, discount, tax, total, paid, refunded, netPaid, due);
-        if (entity.getStatus() != BillStatus.CANCELLED) {
-            entity.markStatus(computeStatus(total, paid, refunded));
-        }
+        entity.markStatus(computeStatus(entity.getStatus(), total, paid, refunded));
         billRepository.save(entity);
     }
 
-    private BillStatus computeStatus(BigDecimal total, BigDecimal paid, BigDecimal refunded) {
-        BigDecimal netPaid = paid.subtract(refunded).setScale(2, RoundingMode.HALF_UP);
+    private BillStatus computeStatus(BillStatus currentStatus, BigDecimal total, BigDecimal paid, BigDecimal refunded) {
+        boolean cancelledLifecycle = isCancelledLifecycle(currentStatus);
+        BigDecimal refundable = paid.subtract(refunded).setScale(2, RoundingMode.HALF_UP);
+        if (cancelledLifecycle) {
+            if (paid.compareTo(ZERO) == 0 && refunded.compareTo(ZERO) == 0) return BillStatus.CANCELLED;
+            if (refundable.compareTo(ZERO) <= 0) return BillStatus.CANCELLED_REFUNDED;
+            return BillStatus.REFUND_PENDING;
+        }
         if (paid.compareTo(ZERO) == 0 && refunded.compareTo(ZERO) == 0) return BillStatus.UNPAID;
         if (refunded.compareTo(ZERO) > 0) {
             if (refunded.compareTo(paid) >= 0) return BillStatus.REFUNDED;
             return BillStatus.PARTIALLY_REFUNDED;
         }
-        if (netPaid.compareTo(total) >= 0) return BillStatus.PAID;
-        if (netPaid.compareTo(ZERO) > 0 && netPaid.compareTo(total) < 0) return BillStatus.PARTIALLY_PAID;
+        if (paid.compareTo(total) >= 0) return BillStatus.PAID;
+        if (paid.compareTo(ZERO) > 0 && paid.compareTo(total) < 0) return BillStatus.PARTIALLY_PAID;
         return BillStatus.UNPAID;
     }
 
@@ -687,7 +694,7 @@ public class BillingService {
     }
 
     private void ensureEditable(BillEntity entity) {
-        if (entity.getStatus() == BillStatus.CANCELLED || entity.getStatus() == BillStatus.PAID || entity.getStatus() == BillStatus.REFUNDED) {
+        if (isClosedForLifecycle(entity.getStatus())) {
             throw new IllegalArgumentException("Closed bill cannot be modified");
         }
     }
@@ -745,7 +752,7 @@ public class BillingService {
         List<BillEntity> bills = billRepository.findByTenantIdAndAppointmentIdOrderByCreatedAtDesc(tenantId, appointmentId);
         List<BillEntity> consultationBills = new ArrayList<>();
         for (BillEntity bill : bills) {
-            if (bill.getStatus() == BillStatus.CANCELLED) {
+            if (isCancelledLifecycle(bill.getStatus())) {
                 continue;
             }
             boolean consultationLine = billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, bill.getId()).stream()
@@ -757,6 +764,18 @@ public class BillingService {
             consultationBills.add(bill);
         }
         return consultationBills;
+    }
+
+    private boolean isCancelledLifecycle(BillStatus status) {
+        return status == BillStatus.CANCELLED || status == BillStatus.REFUND_PENDING || status == BillStatus.CANCELLED_REFUNDED;
+    }
+
+    private boolean isClosedForLifecycle(BillStatus status) {
+        return isCancelledLifecycle(status) || status == BillStatus.PAID || status == BillStatus.REFUNDED;
+    }
+
+    private BigDecimal refundableAmount(BillEntity bill) {
+        return normalizeMoney(bill.getPaidAmount()).subtract(normalizeMoney(bill.getRefundedAmount())).setScale(2, RoundingMode.HALF_UP);
     }
 
     private record ConsultationFeeAssessment(

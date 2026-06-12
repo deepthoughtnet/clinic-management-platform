@@ -211,6 +211,34 @@ class PrescriptionServiceTest {
     }
 
     @Test
+    void sameDayCorrectionRejectsOlderVersionWhenNewerVersionExists() {
+        PrescriptionEntity parent = finalizeSavedPrescription();
+        PrescriptionRecord child = service.createCorrectionVersion(TENANT_ID, parent.getId(), command("Diagnosis B", "Advice B", LocalDate.now().plusDays(10)), ACTOR_ID, "FOLLOW_UP", "Correction reason");
+
+        assertThatThrownBy(() -> service.createCorrectionVersion(TENANT_ID, parent.getId(), command("Diagnosis C", "Advice C", LocalDate.now().plusDays(12)), ACTOR_ID, "FOLLOW_UP", "Older version correction"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Only the latest prescription version can be corrected");
+
+        assertThat(child.status()).isEqualTo(PrescriptionStatus.DRAFT);
+    }
+
+    @Test
+    void discardedCorrectionDraftFallsBackToLatestFinalizedPrescription() {
+        PrescriptionEntity parent = finalizeSavedPrescription();
+        PrescriptionRecord child = service.createCorrectionVersion(TENANT_ID, parent.getId(), command("Diagnosis B", "Advice B", LocalDate.now().plusDays(10)), ACTOR_ID, "FOLLOW_UP", "Correction reason");
+
+        PrescriptionRecord cancelled = service.cancel(TENANT_ID, child.id(), ACTOR_ID);
+
+        assertThat(cancelled.status()).isEqualTo(PrescriptionStatus.CANCELLED);
+        assertThat(service.findByConsultationId(TENANT_ID, CONSULTATION_ID))
+                .hasValueSatisfying(record -> assertThat(record.status()).isEqualTo(PrescriptionStatus.CORRECTED));
+
+        PrescriptionRecord replacement = service.createCorrectionVersion(TENANT_ID, parent.getId(), command("Diagnosis C", "Advice C", LocalDate.now().plusDays(12)), ACTOR_ID, "FOLLOW_UP", "Replacement correction");
+        assertThat(replacement.parentPrescriptionId()).isEqualTo(parent.getId());
+        assertThat(replacement.status()).isEqualTo(PrescriptionStatus.DRAFT);
+    }
+
+    @Test
     void historyReturnsAllVersionsForTheConsultationInOrder() {
         PrescriptionEntity parent = finalizeSavedPrescription();
         PrescriptionRecord child = service.createCorrectionVersion(TENANT_ID, parent.getId(), command("Diagnosis B", "Advice B", LocalDate.now().plusDays(10)), ACTOR_ID, "FOLLOW_UP", "Correction reason");

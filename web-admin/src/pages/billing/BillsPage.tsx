@@ -344,8 +344,10 @@ function statusColor(status: Bill["status"]) {
     case "PAID": return "success";
     case "PARTIALLY_PAID":
     case "PARTIALLY_REFUNDED": return "warning";
+    case "REFUND_PENDING": return "warning";
     case "UNPAID":
     case "ISSUED": return "info";
+    case "CANCELLED_REFUNDED": return "success";
     case "REFUNDED":
     case "CANCELLED":
     case "DRAFT":
@@ -427,7 +429,7 @@ function createConsultationDraftLine(doctorName: string, doctorUserId: string, c
 
 function consultationAppointmentBills(bills: Bill[], appointmentId: string) {
   return bills
-    .filter((bill) => bill.appointmentId === appointmentId && billHasConsultationLine(bill) && bill.status !== "CANCELLED")
+    .filter((bill) => bill.appointmentId === appointmentId && billHasConsultationLine(bill) && bill.status !== "CANCELLED" && bill.status !== "REFUND_PENDING" && bill.status !== "CANCELLED_REFUNDED")
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
@@ -437,11 +439,11 @@ function consultationEffectiveBill(bills: Bill[]) {
 
 function consultationFeeState(consultationFee: number | null, bills: Bill[]) {
   const effectiveFee = consultationFee ?? (bills.length > 0 ? Math.max(...bills.map((bill) => bill.totalAmount)) : null);
-  const netPaid = bills.reduce((sum, bill) => sum + billNetPaidAmount(bill), 0);
-  const due = effectiveFee == null ? null : Math.max(0, effectiveFee - netPaid);
+  const grossPaid = bills.reduce((sum, bill) => sum + Math.max(0, bill.paidAmount), 0);
+  const due = effectiveFee == null ? null : Math.max(0, effectiveFee - grossPaid);
   return {
     effectiveFee,
-    netPaid,
+    netPaid: grossPaid,
     due,
     paid: effectiveFee != null && due != null && due <= 0,
     effectiveBill: consultationEffectiveBill(bills),
@@ -452,11 +454,12 @@ function billNetPaidAmount(bill: Bill) {
   return Math.max(0, bill.netPaidAmount ?? (bill.paidAmount - bill.refundedAmount));
 }
 
+function billRefundableAmount(bill: Bill) {
+  return Math.max(0, bill.paidAmount - bill.refundedAmount);
+}
+
 function billEffectiveDueAmount(bill: Bill) {
-  if (bill.status === "CANCELLED") {
-    return 0;
-  }
-  return Math.max(0, bill.dueAmount ?? (bill.totalAmount - billNetPaidAmount(bill)));
+  return Math.max(0, bill.dueAmount ?? (bill.totalAmount - bill.paidAmount));
 }
 
 function billRefundedAmount(bill: Bill) {
@@ -464,13 +467,12 @@ function billRefundedAmount(bill: Bill) {
 }
 
 function billHasCollectableDue(bill: Bill) {
-  return bill.status !== "CANCELLED" && billEffectiveDueAmount(bill) > 0;
+  return billEffectiveDueAmount(bill) > 0;
 }
 
 function billCountsAsSettled(bill: Bill) {
   return bill.status !== "CANCELLED"
-    && bill.status !== "REFUNDED"
-    && billNetPaidAmount(bill) > 0
+    && bill.paidAmount > 0
     && billEffectiveDueAmount(bill) <= 0;
 }
 
@@ -498,7 +500,7 @@ function preferredPatientReceiptBill(bills: Bill[]) {
 
 function preferredPatientBill(bills: Bill[]) {
   return bills.find((bill) => billHasCollectableDue(bill))
-    || bills.find((bill) => bill.status !== "CANCELLED")
+    || bills.find((bill) => bill.status !== "CANCELLED" && bill.status !== "REFUND_PENDING" && bill.status !== "CANCELLED_REFUNDED")
     || bills[0]
     || null;
 }
@@ -773,7 +775,7 @@ export default function BillsPage() {
     const fallbackBills = refundBillSearch.trim() ? refundSearchResults : [...patientBills, ...bills];
     const seen = new Set<string>();
     return fallbackBills
-      .filter((bill) => bill.status !== "CANCELLED" && billNetPaidAmount(bill) > 0)
+      .filter((bill) => billRefundableAmount(bill) > 0)
       .filter((bill) => {
         if (seen.has(bill.id)) return false;
         seen.add(bill.id);
@@ -1186,7 +1188,7 @@ export default function BillsPage() {
       try {
         const rows = await searchBills(auth.accessToken, auth.tenantId, { search: term });
         if (!cancelled) {
-          setRefundSearchResults(rows.filter((bill) => bill.status !== "CANCELLED" && billNetPaidAmount(bill) > 0));
+          setRefundSearchResults(rows.filter((bill) => billRefundableAmount(bill) > 0));
         }
       } catch {
         if (!cancelled) {
@@ -1351,7 +1353,7 @@ export default function BillsPage() {
     await sendReceiptAction(resolved.receipt, "email");
   }, [resolveBillReceipt]);
 
-  const refundableAmount = selectedBill ? Math.max(0, selectedBill.paidAmount - selectedBill.refundedAmount) : 0;
+  const refundableAmount = selectedBill ? billRefundableAmount(selectedBill) : 0;
 
   const submitRefund = async () => {
     if (!auth.accessToken || !auth.tenantId || !selectedBill) return;
@@ -1723,11 +1725,11 @@ export default function BillsPage() {
       ? <MenuItem key="receipt-pdf" onClick={() => { void openBillReceiptPdf(ledgerActionBill); closeLedgerActions(); }}>Download Receipt PDF</MenuItem>
       : <MenuItem key="pdf" onClick={() => { void openInvoicePdf(ledgerActionBill); closeLedgerActions(); }}>Download PDF</MenuItem>,
     canCollectPayment ? <MenuItem key="pay" disabled={!billHasCollectableDue(ledgerActionBill)} onClick={() => { openPaymentDialog(ledgerActionBill); closeLedgerActions(); }}>Add payment</MenuItem> : null,
-    canRefund ? <MenuItem key="refund" disabled={ledgerActionBill.status === "CANCELLED" || billNetPaidAmount(ledgerActionBill) <= 0} onClick={() => { openRefundDialog(ledgerActionBill); closeLedgerActions(); }}>Refund</MenuItem> : null,
+    canRefund ? <MenuItem key="refund" disabled={billRefundableAmount(ledgerActionBill) <= 0} onClick={() => { openRefundDialog(ledgerActionBill); closeLedgerActions(); }}>Refund</MenuItem> : null,
     canSendInvoice && !ledgerBillIsSettled ? <MenuItem key="send" disabled={workingId === ledgerActionBill.id || !ledgerActionBill.patientId} onClick={() => { void sendInvoiceAction(ledgerActionBill); closeLedgerActions(); }}>Send invoice email</MenuItem> : null,
     canSendReceipt && ledgerBillIsSettled ? <MenuItem key="send-receipt" onClick={() => { void sendBillReceiptEmail(ledgerActionBill); closeLedgerActions(); }}>Send receipt email</MenuItem> : null,
     canUpdateBill ? <MenuItem key="issue" disabled={workingId === ledgerActionBill.id || ledgerActionBill.status !== "DRAFT"} onClick={() => { void issueCurrentBill(ledgerActionBill); closeLedgerActions(); }}>Issue</MenuItem> : null,
-    canCancelBill ? <MenuItem key="cancel" disabled={workingId === ledgerActionBill.id || ledgerActionBill.status === "PAID"} onClick={() => { void cancelCurrentBill(ledgerActionBill); closeLedgerActions(); }}>Cancel</MenuItem> : null,
+    canCancelBill ? <MenuItem key="cancel" disabled={workingId === ledgerActionBill.id || ledgerActionBill.status === "CANCELLED" || ledgerActionBill.status === "REFUND_PENDING" || ledgerActionBill.status === "REFUNDED" || ledgerActionBill.status === "CANCELLED_REFUNDED"} onClick={() => { void cancelCurrentBill(ledgerActionBill); closeLedgerActions(); }}>Cancel</MenuItem> : null,
   ].filter(Boolean) : null;
   const consultationAppointmentDisplay = consultationAppointmentLabel ? `Appointment: ${consultationAppointmentLabel}` : "Appointment: —";
   const consultationDoctorDisplay = consultationDoctorLabel ? `Doctor: ${consultationDoctorLabel}` : "Doctor: —";
@@ -2427,6 +2429,7 @@ export default function BillsPage() {
                       <Stack direction="row" spacing={0.75} flexWrap="wrap">
                         <Chip size="small" label={`Due: ${formatAmount(billEffectiveDueAmount(selectedBill))}`} color="warning" variant="outlined" sx={compactChipSx} />
                         <Chip size="small" label={`Net paid: ${formatAmount(billNetPaidAmount(selectedBill))}`} variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`Refundable: ${formatAmount(billRefundableAmount(selectedBill))}`} variant="outlined" sx={compactChipSx} />
                         {billRefundedAmount(selectedBill) > 0 ? <Chip size="small" label={`Gross paid: ${formatAmount(selectedBill.paidAmount)}`} variant="outlined" sx={compactChipSx} /> : null}
                         <Chip size="small" label={`Refunded: ${formatAmount(selectedBill.refundedAmount)}`} variant="outlined" sx={compactChipSx} />
                       </Stack>
@@ -2451,10 +2454,10 @@ export default function BillsPage() {
                           </>
                         )}
                         {canCollectPayment ? <Button size="small" variant="outlined" onClick={() => openPaymentDialog(selectedBill)} disabled={!billHasCollectableDue(selectedBill)}>Add payment</Button> : null}
-                        {canRefund ? <Button size="small" variant="outlined" onClick={() => { openRefundDialog(selectedBill); }} disabled={selectedBill.status === "CANCELLED" || billNetPaidAmount(selectedBill) <= 0}>Refund</Button> : null}
+                        {canRefund ? <Button size="small" variant="outlined" onClick={() => { openRefundDialog(selectedBill); }} disabled={billRefundableAmount(selectedBill) <= 0}>Refund</Button> : null}
                         {canSendInvoice && !billCountsAsSettled(selectedBill) ? <Button size="small" variant="outlined" onClick={() => void sendInvoiceAction(selectedBill)} disabled={workingId === selectedBill.id || !selectedBill.patientId}>Send invoice email</Button> : null}
                         {canUpdateBill ? <Button size="small" variant="outlined" onClick={() => void issueCurrentBill(selectedBill)} disabled={workingId === selectedBill.id || selectedBill.status !== "DRAFT"}>Issue</Button> : null}
-                        {canCancelBill ? <Button size="small" variant="outlined" onClick={() => void cancelCurrentBill(selectedBill)} disabled={workingId === selectedBill.id || selectedBill.status === "PAID"}>Cancel</Button> : null}
+                        {canCancelBill ? <Button size="small" variant="outlined" onClick={() => void cancelCurrentBill(selectedBill)} disabled={workingId === selectedBill.id || selectedBill.status === "CANCELLED" || selectedBill.status === "REFUND_PENDING" || selectedBill.status === "REFUNDED" || selectedBill.status === "CANCELLED_REFUNDED"}>Cancel</Button> : null}
                       </Stack>
                     </Stack>
                   </CardContent>
@@ -2499,7 +2502,7 @@ export default function BillsPage() {
                         <InputLabel id="bill-status-label">Status</InputLabel>
                         <Select labelId="bill-status-label" label="Status" value={billFilterStatus} onChange={(e) => setBillFilterStatus(String(e.target.value))}>
                           <MenuItem value="">All</MenuItem>
-                          {["DRAFT", "ISSUED", "UNPAID", "PARTIALLY_PAID", "PAID", "CANCELLED", "REFUNDED", "PARTIALLY_REFUNDED"].map((status) => (
+                          {["DRAFT", "ISSUED", "UNPAID", "PARTIALLY_PAID", "PAID", "REFUND_PENDING", "CANCELLED", "CANCELLED_REFUNDED", "REFUNDED", "PARTIALLY_REFUNDED"].map((status) => (
                             <MenuItem key={status} value={status}>{status}</MenuItem>
                           ))}
                         </Select>
@@ -2631,7 +2634,7 @@ export default function BillsPage() {
                     >
                       <ListItemText
                         primary={`${bill.billNumber} • ${bill.patientName || bill.patientNumber || "Patient"}`}
-                        secondary={`Net paid ${formatAmount(billNetPaidAmount(bill))} • Refundable ${formatAmount(Math.max(0, bill.paidAmount - bill.refundedAmount))} • Due ${formatAmount(billEffectiveDueAmount(bill))}`}
+                        secondary={`Net paid ${formatAmount(billNetPaidAmount(bill))} • Refundable ${formatAmount(billRefundableAmount(bill))} • Due ${formatAmount(billEffectiveDueAmount(bill))}`}
                       />
                     </ListItemButton>
                   ))}

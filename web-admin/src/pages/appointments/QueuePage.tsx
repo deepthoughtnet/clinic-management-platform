@@ -202,6 +202,24 @@ function consultationFeeSummary(consultationFee: number | null, bills: Bill[]) {
   };
 }
 
+function canShowCollectFee(row: QueueViewRow) {
+  if (row.status === "CANCELLED" || row.status === "COMPLETED") {
+    return false;
+  }
+  if (row.status === "NO_SHOW" && !row.consultationBill) {
+    return false;
+  }
+  return row.feeStatus !== "PAID";
+}
+
+function canShowPayAfterConsultation(row: QueueViewRow) {
+  return row.status === "BOOKED" && row.feeStatus !== "PAID" && row.feeStatus !== "NOT_CONFIGURED";
+}
+
+function canShowViewBilling(row: QueueViewRow, canViewBillingData: boolean) {
+  return Boolean(row.consultationBill) || canViewBillingData;
+}
+
 type FeeStatus = "NOT_CONFIGURED" | "UNPAID" | "PARTIAL" | "PAID";
 
 type QueueViewRow = Appointment & {
@@ -230,6 +248,13 @@ type CheckInBypassDialogState = {
   notes: string;
 };
 
+type CancellationDialogState = {
+  appointment: QueueViewRow;
+  nextStatus: "CANCELLED" | "NO_SHOW";
+  variant: "paid-cancel" | "reason";
+  reason: string;
+};
+
 const CHECK_IN_BYPASS_REASON_OPTIONS: Array<{ value: CheckInBypassReason; label: string }> = [
   { value: "EMERGENCY", label: "Emergency" },
   { value: "DOCTOR_APPROVED", label: "Doctor approved" },
@@ -256,6 +281,7 @@ export default function QueuePage() {
   const [draggingId, setDraggingId] = React.useState<string | null>(null);
   const [feeDialog, setFeeDialog] = React.useState<FeeDialogState | null>(null);
   const [bypassDialog, setBypassDialog] = React.useState<CheckInBypassDialogState | null>(null);
+  const [cancellationDialog, setCancellationDialog] = React.useState<CancellationDialogState | null>(null);
 
   const today = React.useMemo(() => localDateKey(), []);
   const tenantRole = (auth.tenantRole || "").toUpperCase();
@@ -526,16 +552,50 @@ export default function QueuePage() {
         }
         return;
       }
-      let comment: string | null = null;
       const requiresComment = (status === "CANCELLED" || status === "NO_SHOW") && current?.status === "WAITING";
-      if (requiresComment) {
-        comment = window.prompt("Cancellation/No-show reason is required after check-in.")?.trim() || null;
-        if (!comment) {
-          setError("Reason/comment is required after check-in.");
-          return;
-        }
+      if (status === "CANCELLED" && current?.feeStatus === "PAID") {
+        setCancellationDialog({
+          appointment: current,
+          nextStatus: status,
+          variant: "paid-cancel",
+          reason: "",
+        });
+        return;
       }
+      if (requiresComment && current) {
+        setCancellationDialog({
+          appointment: current,
+          nextStatus: status,
+          variant: "reason",
+          reason: "",
+        });
+        return;
+      }
+      const comment = null;
       await updateAppointmentStatus(auth.accessToken, auth.tenantId, appointmentId, status, comment);
+      await refreshQueue();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Queue action failed. Please refresh and verify the appointment status.");
+      console.error("Queue status update failed", err);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const confirmCancellationDialog = async () => {
+    if (!auth.accessToken || !auth.tenantId || !cancellationDialog) {
+      return;
+    }
+    setSavingId(cancellationDialog.appointment.id);
+    setError(null);
+    try {
+      const comment = cancellationDialog.variant === "reason" ? cancellationDialog.reason.trim() || null : null;
+      if (cancellationDialog.variant === "reason" && !comment) {
+        setError("Reason/comment is required after check-in.");
+        return;
+      }
+      await updateAppointmentStatus(auth.accessToken, auth.tenantId, cancellationDialog.appointment.id, cancellationDialog.nextStatus, comment);
+      setCancellationDialog(null);
       await refreshQueue();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Queue action failed. Please refresh and verify the appointment status.");
@@ -895,7 +955,7 @@ export default function QueuePage() {
                           </TableCell>
                           <TableCell align="right" sx={{ minWidth: 300 }}>
                             <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
-                              {!isDoctor && appointment.feeStatus !== "PAID" ? (
+                              {!isDoctor && canShowCollectFee(appointment) ? (
                                 <Button size="small" variant="outlined" disabled={savingId === appointment.id} onClick={() => openConsultationBilling(appointment.id)}>
                                   {appointment.feeStatus === "NOT_CONFIGURED" ? "Open Billing" : "Collect Fee"}
                                 </Button>
@@ -903,12 +963,12 @@ export default function QueuePage() {
                               <Button size="small" variant="text" onClick={() => navigate(`/patients/${appointment.patientId}`)}>
                                 Open Patient
                               </Button>
-                              {!isDoctor && appointment.consultationBill ? (
+                              {!isDoctor && canShowViewBilling(appointment, canViewBillingData) ? (
                                 <Button size="small" variant="outlined" onClick={() => openBillHistory(appointment.id)}>
-                                  View Billing
+                                  {appointment.consultationBill ? "View Billing" : "Open Billing"}
                                 </Button>
                               ) : null}
-                              {canManageDeskStatus && canBypassPaymentCheckIn && appointment.status === "BOOKED" && appointment.feeStatus !== "PAID" && appointment.feeStatus !== "NOT_CONFIGURED" ? (
+                              {canManageDeskStatus && canBypassPaymentCheckIn && canShowPayAfterConsultation(appointment) ? (
                                 <Button size="small" variant="outlined" color="secondary" disabled={savingId === appointment.id} onClick={() => openBypassDialog(appointment)}>
                                   Pay after consultation
                                 </Button>
@@ -964,6 +1024,59 @@ export default function QueuePage() {
           onClose={() => setFeeDialog(null)}
           onSubmit={submitFeeDialog}
         />
+      ) : null}
+
+      {cancellationDialog ? (
+        <Dialog open onClose={() => setCancellationDialog(null)} fullWidth maxWidth="sm">
+          <DialogTitle>Appointment Cancellation</DialogTitle>
+          <DialogContent>
+            <Stack spacing={1.5} sx={{ pt: 0.5 }}>
+              {cancellationDialog.variant === "paid-cancel" ? (
+                <>
+                  <Typography variant="body2" color="text.secondary">
+                    Payment has already been collected for this appointment.
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    If you continue, the appointment will be cancelled. The consultation fee remains recorded. If money should be returned, process the refund from Billing.
+                  </Typography>
+                  <Typography variant="body2">
+                    Appointment: <strong>{cancellationDialog.appointment.patientName || cancellationDialog.appointment.patientNumber || cancellationDialog.appointment.patientId}</strong>
+                  </Typography>
+                </>
+              ) : (
+                <>
+                  <Typography variant="body2" color="text.secondary">
+                    Provide a reason before cancelling or marking the appointment as no-show after check-in.
+                  </Typography>
+                  <TextField
+                    label="Reason"
+                    size="small"
+                    multiline
+                    minRows={2}
+                    value={cancellationDialog.reason}
+                    onChange={(event) => setCancellationDialog((current) => current ? { ...current, reason: event.target.value } : current)}
+                    required
+                  />
+                </>
+              )}
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setCancellationDialog(null)}>Cancel</Button>
+            {cancellationDialog.variant === "paid-cancel" ? (
+              <>
+                <Button variant="outlined" onClick={() => { setCancellationDialog(null); navigate("/billing"); }}>Go To Billing</Button>
+                <Button variant="contained" color="error" disabled={savingId === cancellationDialog.appointment.id} onClick={() => void confirmCancellationDialog()}>
+                  Cancel Appointment
+                </Button>
+              </>
+            ) : (
+              <Button variant="contained" disabled={savingId === cancellationDialog.appointment.id} onClick={() => void confirmCancellationDialog()}>
+                Confirm
+              </Button>
+            )}
+          </DialogActions>
+        </Dialog>
       ) : null}
 
       {bypassDialog ? (

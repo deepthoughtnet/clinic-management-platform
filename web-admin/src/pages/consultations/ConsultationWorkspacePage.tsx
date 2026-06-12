@@ -10,6 +10,11 @@ import {
   CircularProgress,
   Collapse,
   Divider,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   FormControl,
   Grid,
   IconButton,
@@ -38,6 +43,7 @@ import {
   cancelConsultation,
   completeConsultation,
   createPrescriptionCorrection,
+  cancelPrescription,
   createPrescription,
   getAiStatus,
   getAppointment,
@@ -530,6 +536,10 @@ function isPrescriptionReadyForConsultationCompletion(prescription: Prescription
   return prescription ? ["FINALIZED", "PRINTED", "SENT"].includes(prescription.status) : false;
 }
 
+function isEditablePrescriptionStatus(status: Prescription["status"] | null | undefined): boolean {
+  return status === "DRAFT" || status === "PREVIEWED";
+}
+
 function appendTokenLine(base: string, token: string): string {
   const current = base.trim();
   if (!token.trim()) return base;
@@ -870,6 +880,7 @@ export default function ConsultationWorkspacePage() {
   const [selectedPrescriptionVersionId, setSelectedPrescriptionVersionId] = React.useState<string | null>(null);
   const [invalidMedicineRowIds, setInvalidMedicineRowIds] = React.useState<string[]>([]);
   const [selectedRxTemplateKey, setSelectedRxTemplateKey] = React.useState<string | null>(null);
+  const [completeConsultationDialogOpen, setCompleteConsultationDialogOpen] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
 
@@ -1104,7 +1115,7 @@ export default function ConsultationWorkspacePage() {
   const canPrintPrescription = auth.hasPermission("prescription.print");
   const canRunAi = auth.hasPermission("ai_copilot.run") || auth.hasPermission("ai_copilot.clinic.run");
   const readOnly = consultation ? consultation.status !== "DRAFT" || !canEditConsultation : !canEditConsultation;
-  const prescriptionReadOnly = readOnly || (prescription ? !["DRAFT", "PREVIEWED"].includes(prescription.status) : false);
+  const prescriptionReadOnly = readOnly || (prescription ? !isEditablePrescriptionStatus(prescription.status) : false);
   const prescriptionReadyForCompletion = isPrescriptionReadyForConsultationCompletion(prescription);
   const patientRow = patient?.patient;
   const currentAppointment = appointment;
@@ -1115,7 +1126,18 @@ export default function ConsultationWorkspacePage() {
   const lastBmiCategory = bmiCategory(lastBmi);
   const recentMedicineNames = Array.from(new Set(previousPrescriptions.flatMap((rx) => rx.medicines.map((med) => med.medicineName)).filter(Boolean))).slice(0, 10);
   const activeTimeline = patientTimeline.length ? patientTimeline : [];
-  const selectedPrescriptionVersion = prescriptionHistory.find((row) => row.id === selectedPrescriptionVersionId) || prescriptionHistory[prescriptionHistory.length - 1] || null;
+  const visiblePrescriptionHistory = prescriptionHistory.filter((row) => row.status !== "CANCELLED");
+  const latestPrescriptionVersion = visiblePrescriptionHistory[visiblePrescriptionHistory.length - 1] || null;
+  const selectedPrescriptionVersion = prescriptionHistory.find((row) => row.id === selectedPrescriptionVersionId) || latestPrescriptionVersion || null;
+  const currentPrescriptionIsEditableDraft = Boolean(prescription && isEditablePrescriptionStatus(prescription.status));
+  const currentPrescriptionIsActiveCorrectionDraft = Boolean(currentPrescriptionIsEditableDraft && prescription?.parentPrescriptionId);
+  const selectedPrescriptionIsLatest = Boolean(selectedPrescriptionVersion && latestPrescriptionVersion && selectedPrescriptionVersion.id === latestPrescriptionVersion.id);
+  const canCreateCorrectionFromLatest = Boolean(
+    canFinalizePrescription &&
+      prescription &&
+      !currentPrescriptionIsEditableDraft &&
+      selectedPrescriptionIsLatest
+  );
   const filteredMedicines = medicineCatalog
     .filter((medicine) => medicine.active !== false)
     .filter((medicine) => !medicineSearch.trim() || `${medicine.medicineName} ${medicine.strength || ""}`.toLowerCase().includes(medicineSearch.trim().toLowerCase()))
@@ -1428,8 +1450,6 @@ export default function ConsultationWorkspacePage() {
       setError(CONSULTATION_COMPLETION_BLOCKED_MESSAGE);
       return;
     }
-    const confirmComplete = window.confirm("Complete consultation now? Consultation notes become read-only after completion.");
-    if (!confirmComplete) return;
     const saved = await flushAutosave();
     if (!saved) return;
     setSaving(true);
@@ -1440,6 +1460,39 @@ export default function ConsultationWorkspacePage() {
       setInfo("Consultation completed");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to complete consultation");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const continueActivePrescriptionDraft = () => {
+    if (!prescription) return;
+    setSelectedPrescriptionVersionId(prescription.id);
+    setInfo("Continuing the active correction draft");
+  };
+
+  const discardCurrentPrescriptionDraft = async () => {
+    if (!auth.accessToken || !auth.tenantId || !consultation || !prescription) return;
+    if (!currentPrescriptionIsActiveCorrectionDraft) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await cancelPrescription(auth.accessToken, auth.tenantId, prescription.id);
+      const activePrescription = await getConsultationPrescription(auth.accessToken, auth.tenantId, consultation.id);
+      setPrescription(activePrescription);
+      prescriptionRef.current = activePrescription;
+      const activeForm = emptyPrescriptionForm(activePrescription, consultation);
+      setPrescriptionForm(activeForm);
+      savedPrescriptionSnapshotRef.current = serializePrescriptionForm(activeForm);
+      setInvalidMedicineRowIds([]);
+      const historyRows = activePrescription
+        ? await getPrescriptionHistory(auth.accessToken, auth.tenantId, activePrescription.id).catch(() => [activePrescription])
+        : [];
+      setPrescriptionHistory(historyRows);
+      setSelectedPrescriptionVersionId(activePrescription?.id || historyRows[historyRows.length - 1]?.id || null);
+      setInfo("Prescription draft discarded");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to discard prescription draft");
     } finally {
       setSaving(false);
     }
@@ -1558,6 +1611,14 @@ export default function ConsultationWorkspacePage() {
 
   const createCorrectionDraft = async (flowType: "SAME_DAY_CORRECTION" | "FOLLOW_UP") => {
     if (!auth.accessToken || !auth.tenantId || !consultation || !prescription) return;
+    if (currentPrescriptionIsEditableDraft) {
+      setError("Continue or finalize the active draft before starting a new correction.");
+      return;
+    }
+    if (!selectedPrescriptionIsLatest) {
+      setError("Only the latest prescription version can be corrected.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -2071,7 +2132,7 @@ export default function ConsultationWorkspacePage() {
             <Button type="button" size="small" variant="outlined" onClick={() => void backToQueue()}>Back to Queue</Button>
             {canEditConsultation && !readOnly ? <Button type="button" size="small" disabled={saving} onClick={() => void manualSaveDraft()}>Save Draft</Button> : null}
             {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void previewCurrentPrescription()}>Preview Rx</Button> : null}
-            {canCompleteConsultation && !readOnly ? <Button type="button" size="small" color="secondary" disabled={saving || !prescriptionReadyForCompletion} onClick={() => void completeCurrentConsultation()}>Complete</Button> : null}
+            {canCompleteConsultation && !readOnly ? <Button type="button" size="small" color="secondary" disabled={saving || !prescriptionReadyForCompletion} onClick={() => setCompleteConsultationDialogOpen(true)}>Complete</Button> : null}
             {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void printCurrentPrescription()}>Print Rx</Button> : null}
             {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
           </Stack>
@@ -2450,12 +2511,31 @@ export default function ConsultationWorkspacePage() {
                         {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving} onClick={() => void persistPrescription()}>Save Rx</Button> : null}
                         {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void previewCurrentPrescription()}>Preview</Button> : null}
                         {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
-                        {canFinalizePrescription ? <Button type="button" size="small" color="secondary" disabled={saving || prescriptionReadOnly || prescription?.status === "DRAFT" || !hasPrescriptionContent(prescriptionForm)} onClick={() => void finalizeCurrentPrescription()}>Finalize</Button> : null}
+                        {canFinalizePrescription ? <Button type="button" size="small" color="secondary" disabled={saving || prescriptionReadOnly || !hasPrescriptionContent(prescriptionForm)} onClick={() => void finalizeCurrentPrescription()}>Finalize</Button> : null}
                       </Stack>
                     </Box>
                     {selectedRxTemplateKey ? (
                       <Alert severity="info" sx={{ py: 0.5 }}>
                         {selectedRxTemplateKey === "repeat-previous" ? "Previous prescription loaded into the active draft." : `${RX_TEMPLATES.find((template) => template.key === selectedRxTemplateKey)?.label || "Template"} loaded into the active draft.`}
+                      </Alert>
+                    ) : null}
+                    {currentPrescriptionIsActiveCorrectionDraft ? (
+                      <Alert severity="warning">
+                        Active correction draft in progress. You can continue editing, finalize the draft, or discard it before starting a new correction.
+                        <Stack direction={{ xs: "column", md: "row" }} spacing={1} sx={{ mt: 1 }}>
+                          <Button type="button" size="small" variant="outlined" onClick={continueActivePrescriptionDraft}>Continue Draft</Button>
+                          <Button type="button" size="small" color="secondary" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void finalizeCurrentPrescription()}>Finalize Draft</Button>
+                          <Button type="button" size="small" variant="outlined" color="error" disabled={saving} onClick={() => void discardCurrentPrescriptionDraft()}>Discard Draft</Button>
+                        </Stack>
+                      </Alert>
+                    ) : canCreateCorrectionFromLatest ? (
+                      <Alert severity="info">
+                        Finalized prescriptions are immutable. Create a correction or follow-up draft to make changes.
+                        <Stack direction={{ xs: "column", md: "row" }} spacing={1} sx={{ mt: 1 }}>
+                          <TextField size="small" label="Correction reason" value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)} />
+                          <Button type="button" size="small" variant="outlined" onClick={() => void createCorrectionDraft("SAME_DAY_CORRECTION")}>Same-day correction</Button>
+                          <Button type="button" size="small" variant="outlined" onClick={() => void createCorrectionDraft("FOLLOW_UP")}>Follow-up draft</Button>
+                        </Stack>
                       </Alert>
                     ) : null}
                     {!prescriptionReadyForCompletion && !prescriptionReadOnly ? (
@@ -2542,17 +2622,6 @@ export default function ConsultationWorkspacePage() {
                           </Stack>
                         </CardContent>
                       </Card>
-                    ) : null}
-
-                    {prescription && !["DRAFT", "PREVIEWED"].includes(prescription.status) && canFinalizePrescription ? (
-                      <Alert severity="info">
-                        Finalized prescriptions are immutable. Create a correction or follow-up draft to make changes.
-                        <Stack direction={{ xs: "column", md: "row" }} spacing={1} sx={{ mt: 1 }}>
-                          <TextField size="small" label="Correction reason" value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)} />
-                          <Button type="button" size="small" variant="outlined" onClick={() => void createCorrectionDraft("SAME_DAY_CORRECTION")}>Same-day correction</Button>
-                          <Button type="button" size="small" variant="outlined" onClick={() => void createCorrectionDraft("FOLLOW_UP")}>Follow-up draft</Button>
-                        </Stack>
-                      </Alert>
                     ) : null}
 
                     <Grid container spacing={1}>
@@ -2832,6 +2901,29 @@ export default function ConsultationWorkspacePage() {
         {canFinalizePrescription ? <Button type="button" variant="outlined" disabled={saving} onClick={() => void sendCurrentPrescription("email")}>Email Rx</Button> : null}
         {canFinalizePrescription ? <Button type="button" variant="outlined" disabled={saving} onClick={() => void sendCurrentPrescription("whatsapp")}>WhatsApp Rx</Button> : null}
       </Stack>
+      <Dialog open={completeConsultationDialogOpen} onClose={() => setCompleteConsultationDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Complete consultation?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Consultation notes become read-only after completion.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button type="button" onClick={() => setCompleteConsultationDialogOpen(false)}>Cancel</Button>
+          <Button
+            type="button"
+            variant="contained"
+            color="secondary"
+            disabled={saving || !prescriptionReadyForCompletion}
+            onClick={async () => {
+              setCompleteConsultationDialogOpen(false);
+              await completeCurrentConsultation();
+            }}
+          >
+            Complete Consultation
+          </Button>
+        </DialogActions>
+      </Dialog>
       <ClinicalDocumentViewer open={!!viewerDocument} document={viewerDocument} url={viewerUrl} onClose={() => { setViewerDocument(null); setViewerUrl(null); }} />
     </Stack>
   );

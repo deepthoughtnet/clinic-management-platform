@@ -378,18 +378,11 @@ export default function AppointmentsPage() {
     () => slotPresentations.find(({ presentation }) => presentation.isCurrent)?.slot || null,
     [slotPresentations],
   );
-  const adHocBookingNeeded = React.useMemo(
-    () => Boolean(
-      requiresAppointmentTime
-    && selectedDoctorId
-    && appointmentDate
-    && appointmentTime
-    && !matchingSlot
-    && !isPastDateTime(appointmentDate, appointmentTime, clinicTimeZone, clinicNowSnapshot)
-    && hasStandardBookableSlots
-    && !emergencyBooking
-    ),
-    [appointmentDate, appointmentTime, clinicNowSnapshot, clinicTimeZone, emergencyBooking, hasStandardBookableSlots, matchingSlot, requiresAppointmentTime, selectedDoctorId],
+  const emergencyWarning = React.useMemo(
+    () => (emergencyBooking && requiresAppointmentTime && appointmentTime && !matchingSlot && hasStandardBookableSlots)
+      ? "Standard slots are available. Use emergency booking only when needed."
+      : null,
+    [appointmentTime, emergencyBooking, hasStandardBookableSlots, matchingSlot, requiresAppointmentTime],
   );
   const canCreateAppointment = Boolean(
     canCreateAppointmentFlow &&
@@ -550,6 +543,12 @@ export default function AppointmentsPage() {
       setAppointmentDate(today);
     }
   }, [appointmentDateTouched, today]);
+
+  React.useEffect(() => {
+    if (emergencyBooking && priority === "NORMAL") {
+      setPriority("URGENT");
+    }
+  }, [emergencyBooking, priority]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -813,39 +812,24 @@ export default function AppointmentsPage() {
         setError("Selected time has already passed. Please choose a current or future slot.");
         return;
       }
-      if (!matchedSlotPresentation.bookable) {
-        setError(matchedSlotPresentation.tooltip);
-        return;
-      }
       if (matchedSlotPresentation.state === "FULL") {
         setError("This slot is full.");
         return;
       }
       if (["LEAVE", "HOLIDAY", "UNAVAILABLE"].includes(matchedSlotPresentation.state)) {
-        setError("Doctor is unavailable during this time.");
+        setError("Doctor is unavailable for the selected time.");
+        return;
+      }
+      if (!matchedSlotPresentation.bookable) {
+        setError(matchedSlotPresentation.tooltip);
         return;
       }
       await submitAppointment(false);
       return;
     }
 
-    if (emergencyBooking) {
-      if (hasStandardBookableSlots) {
-        setError("Standard slots are available for this doctor. Book one of the available slots instead of using emergency/ad-hoc booking.");
-        return;
-      }
-      await submitAppointment(true);
-      return;
-    }
-
-    if (slots.length > 0) {
-      if (hasStandardBookableSlots) {
-        setError("Standard slots are available for this doctor. Book one of the available slots instead of using emergency/ad-hoc booking.");
-        return;
-      }
-      setAdHocConfirmMessage(`The selected time (${appointmentTime}) is outside doctor availability. Continue as ad-hoc booking?`);
-      setAdHocConfirmPending(false);
-      setAdHocConfirmOpen(true);
+    if (!emergencyBooking) {
+      setError("Selected time is outside configured doctor availability. Please choose an available slot.");
       return;
     }
 
@@ -1153,9 +1137,9 @@ export default function AppointmentsPage() {
                   </Grid>
                 </Grid>
 
-                {emergencyBooking || adHocBookingNeeded ? (
+                {emergencyWarning ? (
                   <Alert severity="warning">
-                    This time is outside configured doctor availability. Use only for emergency/ad-hoc booking.
+                    {emergencyWarning}
                   </Alert>
                 ) : null}
 

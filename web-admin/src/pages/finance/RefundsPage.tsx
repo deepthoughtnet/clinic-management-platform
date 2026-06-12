@@ -90,7 +90,7 @@ export default function RefundsPage() {
   const refundsToday = rows.filter((row) => row.refundedAt?.slice(0, 10) === today);
   const totalRefunded = rows.reduce((sum, row) => sum + (row.amount || 0), 0);
   const partialRefunds = rows.filter((row) => row.billStatus === "PARTIALLY_REFUNDED").length;
-  const fullRefunds = rows.filter((row) => row.billStatus === "REFUNDED").length;
+  const fullRefunds = rows.filter((row) => row.billStatus === "REFUNDED" || row.billStatus === "CANCELLED_REFUNDED").length;
 
   async function submitRefund() {
     if (!auth.accessToken || !auth.tenantId || !issueBillId) return;
@@ -190,11 +190,11 @@ export default function RefundsPage() {
                       <TableCell sx={{ py: 0.65 }}><Chip size="small" label={row.refundMode || "N/A"} sx={compactChipSx} /></TableCell>
                       <TableCell sx={{ py: 0.65, maxWidth: 170, wordBreak: "break-word" }}>{row.reason || "—"}</TableCell>
                       <TableCell sx={{ py: 0.65 }}>{row.refundedBy || "—"}</TableCell>
-                      <TableCell sx={{ py: 0.65 }}><Chip size="small" label={row.billStatus} color={row.billStatus === "REFUNDED" ? "success" : row.billStatus === "PARTIALLY_REFUNDED" ? "warning" : "default"} sx={compactChipSx} /></TableCell>
+                      <TableCell sx={{ py: 0.65 }}><Chip size="small" label={row.billStatus} color={row.billStatus === "REFUNDED" || row.billStatus === "CANCELLED_REFUNDED" ? "success" : row.billStatus === "PARTIALLY_REFUNDED" || row.billStatus === "REFUND_PENDING" ? "warning" : "default"} sx={compactChipSx} /></TableCell>
                       <TableCell sx={{ py: 0.65 }} align="right">
                         <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap">
                           <Button size="small" variant="text" onClick={() => navigate("/billing")}>Open Bill</Button>
-                          {canIssueRefund && <Button size="small" variant="text" onClick={() => { setIssueBillId(row.billId); setIssueAmount(""); setIssueReason(""); setIssueOpen(true); }}>Issue Refund</Button>}
+                          {canIssueRefund && row.billRefundableAmount > 0 ? <Button size="small" variant="text" onClick={() => { setIssueBillId(row.billId); setIssueAmount(""); setIssueReason(""); setIssueOpen(true); }}>Issue Refund</Button> : null}
                         </Stack>
                       </TableCell>
                     </TableRow>

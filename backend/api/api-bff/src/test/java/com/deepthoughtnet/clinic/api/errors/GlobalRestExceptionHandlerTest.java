@@ -101,7 +101,7 @@ class GlobalRestExceptionHandlerTest {
         mockMvc.perform(get("/uuid-error")
                         .header("X-Correlation-Id", "corr-uuid"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value("Invalid appointment [hidden reference]"));
+                .andExpect(jsonPath("$.message").value("Invalid appointment"));
     }
 
     @Test
@@ -142,7 +142,7 @@ class GlobalRestExceptionHandlerTest {
 
         @GetMapping("/uuid-error")
         void uuidError() {
-            throw new IllegalArgumentException("Invalid appointment 123e4567-e89b-12d3-a456-426614174000");
+            throw new IllegalArgumentException("Invalid appointment ref: 123e4567-e89b-12d3-a456-426614174000");
         }
 
         @PostMapping("/json-mapping")

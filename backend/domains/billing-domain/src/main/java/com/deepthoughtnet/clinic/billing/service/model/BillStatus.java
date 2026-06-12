@@ -6,7 +6,9 @@ public enum BillStatus {
     ISSUED,
     PARTIALLY_PAID,
     PAID,
+    REFUND_PENDING,
     PARTIALLY_REFUNDED,
     REFUNDED,
-    CANCELLED
+    CANCELLED,
+    CANCELLED_REFUNDED
 }

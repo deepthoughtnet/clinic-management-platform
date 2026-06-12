@@ -115,7 +115,7 @@ public class PrescriptionService {
     public Optional<PrescriptionRecord> findByConsultationId(UUID tenantId, UUID consultationId) {
         requireTenant(tenantId);
         requireId(consultationId, "consultationId");
-        return prescriptionRepository.findFirstByTenantIdAndConsultationIdOrderByVersionNumberDesc(tenantId, consultationId).map(entity -> toRecord(entity, tenantData(tenantId)));
+        return latestNonCancelledVersion(tenantId, consultationId).map(entity -> toRecord(entity, tenantData(tenantId)));
     }
 
     @Transactional(readOnly = true)
@@ -446,13 +446,10 @@ public class PrescriptionService {
         if (parent.getStatus() == PrescriptionStatus.DRAFT || parent.getStatus() == PrescriptionStatus.PREVIEWED) {
             throw new IllegalArgumentException("Editable prescriptions do not need a correction version");
         }
-        PrescriptionEntity openCorrection = openCorrectionDraft(tenantId, parent.getId());
-        if (openCorrection != null) {
-            openCorrection.update(normalizeNullable(command.diagnosisSnapshot()), normalizeNullable(command.advice()), command.followUpDate());
-            PrescriptionEntity saved = prescriptionRepository.save(openCorrection);
-            replaceLines(tenantId, saved.getId(), command.medicines(), command.recommendedTests());
-            audit(tenantId, saved, "prescription.updated", actorAppUserId, "Updated prescription correction draft");
-            return toRecord(saved, tenantData(tenantId));
+        PrescriptionEntity latest = latestNonCancelledVersion(tenantId, parent.getConsultationId())
+                .orElseThrow(() -> new IllegalArgumentException("Prescription not found"));
+        if (!latest.getId().equals(parent.getId())) {
+            throw new IllegalArgumentException("Only the latest prescription version can be corrected");
         }
         parent.markCorrected();
         prescriptionRepository.save(parent);
@@ -505,6 +502,12 @@ public class PrescriptionService {
         return prescriptionRepository.findFirstByTenantIdAndParentPrescriptionIdOrderByVersionNumberDesc(tenantId, parentPrescriptionId)
                 .filter(this::isEditable)
                 .orElse(null);
+    }
+
+    private Optional<PrescriptionEntity> latestNonCancelledVersion(UUID tenantId, UUID consultationId) {
+        return prescriptionRepository.findByTenantIdAndConsultationIdOrderByVersionNumberDesc(tenantId, consultationId).stream()
+                .filter(entity -> entity.getStatus() != PrescriptionStatus.CANCELLED)
+                .findFirst();
     }
 
     private void supersedeParentIfNeeded(UUID tenantId, PrescriptionEntity child, UUID actorAppUserId) {

@@ -366,6 +366,7 @@ class BillingServicePaymentTest {
         service.refund(tenantId, bill.getId(), new RefundCommand(payments.get(0).getId(), new BigDecimal("20.00"), "partial", PaymentMode.CASH, null, null), actorId);
 
         assertThat(bill.getStatus()).isEqualTo(BillStatus.PARTIALLY_REFUNDED);
+        assertThat(bill.getDueAmount()).isEqualByComparingTo("0.00");
         org.mockito.Mockito.verify(auditEventPublisher, org.mockito.Mockito.atLeastOnce()).record(argThat(command -> "refund.created".equals(command.action())));
     }
 
@@ -389,6 +390,47 @@ class BillingServicePaymentTest {
         service.refund(tenantId, bill.getId(), new RefundCommand(payments.get(0).getId(), new BigDecimal("100.00"), "full", PaymentMode.CASH, null, null), actorId);
 
         assertThat(bill.getStatus()).isEqualTo(BillStatus.REFUNDED);
+        assertThat(bill.getDueAmount()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void cancelUnpaidBillSetsCancelledAndClearsDue() {
+        BillEntity bill = billWithTotal(new BigDecimal("100.00"), new ArrayList<>());
+
+        service.cancel(tenantId, bill.getId(), actorId);
+
+        assertThat(bill.getStatus()).isEqualTo(BillStatus.CANCELLED);
+        assertThat(bill.getDueAmount()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void cancelPaidBillSetsRefundPendingAndKeepsRefundableBalance() {
+        List<PaymentEntity> payments = new ArrayList<>();
+        List<com.deepthoughtnet.clinic.billing.db.BillRefundEntity> refunds = new ArrayList<>();
+        BillEntity bill = billWithTotal(new BigDecimal("100.00"), payments, refunds);
+        when(paymentRepository.save(any(PaymentEntity.class))).thenAnswer(invocation -> {
+            PaymentEntity payment = invocation.getArgument(0);
+            payments.add(payment);
+            return payment;
+        });
+        when(billRefundRepository.save(any())).thenAnswer(invocation -> {
+            com.deepthoughtnet.clinic.billing.db.BillRefundEntity refund = invocation.getArgument(0);
+            refunds.add(refund);
+            return refund;
+        });
+
+        service.recordPayment(tenantId, bill.getId(), payment("100.00"), actorId);
+        service.cancel(tenantId, bill.getId(), actorId);
+
+        assertThat(bill.getStatus()).isEqualTo(BillStatus.REFUND_PENDING);
+        assertThat(bill.getDueAmount()).isEqualByComparingTo("0.00");
+        assertThatThrownBy(() -> service.recordPayment(tenantId, bill.getId(), payment("1.00"), actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Closed bill cannot accept payments");
+
+        service.refund(tenantId, bill.getId(), new RefundCommand(payments.get(0).getId(), new BigDecimal("100.00"), "refund", PaymentMode.CASH, null, null), actorId);
+        assertThat(bill.getStatus()).isEqualTo(BillStatus.CANCELLED_REFUNDED);
+        assertThat(bill.getDueAmount()).isEqualByComparingTo("0.00");
     }
 
     @Test
@@ -403,7 +445,7 @@ class BillingServicePaymentTest {
         service.recordPayment(tenantId, bill.getId(), payment("50.00"), actorId);
         assertThatThrownBy(() -> service.refund(tenantId, bill.getId(), new RefundCommand(payments.get(0).getId(), new BigDecimal("60.00"), "bad", PaymentMode.CASH, null, null), actorId))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Refund amount cannot exceed paid amount minus previous refunds");
+                .hasMessageContaining("Refund amount cannot exceed refundable amount");
     }
 
     @Test

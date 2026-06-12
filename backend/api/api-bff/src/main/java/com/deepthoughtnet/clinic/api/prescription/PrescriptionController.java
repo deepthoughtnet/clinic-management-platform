@@ -114,6 +114,15 @@ public class PrescriptionController {
         return toResponse(prescriptionService.finalizePrescription(tenantId, id, actorAppUserId));
     }
 
+    @PatchMapping("/{id}/cancel")
+    @PreAuthorize("@permissionChecker.hasPermission('prescription.create')")
+    public PrescriptionResponse cancelPrescription(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        prescriptionService.findById(tenantId, id).ifPresent(record -> doctorAssignmentSecurityService.requirePatientAccess(tenantId, record.patientId()));
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toResponse(prescriptionService.cancel(tenantId, id, actorAppUserId));
+    }
+
     @PostMapping("/{id}/preview")
     @PreAuthorize("@permissionChecker.hasPermission('prescription.create')")
     public PrescriptionResponse previewPrescription(@PathVariable UUID id) {

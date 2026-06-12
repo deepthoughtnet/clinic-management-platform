@@ -788,7 +788,7 @@ export type Prescription = {
   recommendedTests: PrescriptionTest[];
 };
 
-export type BillStatus = "DRAFT" | "UNPAID" | "ISSUED" | "PARTIALLY_PAID" | "PAID" | "PARTIALLY_REFUNDED" | "REFUNDED" | "CANCELLED";
+export type BillStatus = "DRAFT" | "UNPAID" | "ISSUED" | "PARTIALLY_PAID" | "PAID" | "REFUND_PENDING" | "PARTIALLY_REFUNDED" | "REFUNDED" | "CANCELLED" | "CANCELLED_REFUNDED";
 export type BillItemType = "CONSULTATION" | "MEDICINE" | "TEST" | "VACCINATION" | "PROCEDURE" | "OTHER";
 export type PaymentMode = "CASH" | "CARD" | "UPI" | "PAYTM" | "PHONEPE" | "GOOGLE_PAY" | "BANK_TRANSFER" | "CHEQUE" | "OTHER";
 export type DiscountType = "NONE" | "AMOUNT" | "PERCENTAGE";
@@ -949,6 +949,7 @@ export type RefundLedgerRow = {
   notes: string | null;
   billStatus: BillStatus;
   billDueAmount: number;
+  billRefundableAmount: number;
   createdAt: string;
 };
 
@@ -2015,6 +2016,10 @@ export async function updatePrescription(token: string, tenantId: string, id: st
 
 export async function finalizePrescription(token: string, tenantId: string, id: string) {
   return httpPatch<Prescription>(`/api/prescriptions/${id}/finalize`, undefined, { token, tenantId });
+}
+
+export async function cancelPrescription(token: string, tenantId: string, id: string) {
+  return httpPatch<Prescription>(`/api/prescriptions/${id}/cancel`, undefined, { token, tenantId });
 }
 
 export async function previewPrescription(token: string, tenantId: string, id: string) {

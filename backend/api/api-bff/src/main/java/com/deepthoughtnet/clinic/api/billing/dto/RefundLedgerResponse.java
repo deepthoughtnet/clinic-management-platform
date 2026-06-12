@@ -25,6 +25,7 @@ public record RefundLedgerResponse(
         String notes,
         BillStatus billStatus,
         BigDecimal billDueAmount,
+        BigDecimal billRefundableAmount,
         OffsetDateTime createdAt
 ) {
 }

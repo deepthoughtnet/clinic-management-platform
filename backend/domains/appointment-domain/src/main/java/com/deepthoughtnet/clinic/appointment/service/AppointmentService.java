@@ -1325,18 +1325,18 @@ public class AppointmentService {
                 .orElse(null);
         if (slot == null) {
             if (command.allowAdHocBooking()) {
-                if (hasBookableStandardSlot(command.appointmentDate(), slots, bookingZone)) {
-                    throw new IllegalArgumentException("Standard slots are available for this doctor. Please book one of the available slots instead of using emergency/ad-hoc booking.");
-                }
                 ensureNoUnavailabilityConflictForAdHocBooking(tenantId, command.doctorUserId(), command.appointmentDate(), command.appointmentTime(), bookingZone);
                 return;
             }
-            throw new IllegalArgumentException("Selected time is not available for the selected doctor");
+            throw new IllegalArgumentException("Selected time is outside configured doctor availability. Please choose an available slot.");
+        }
+        if (slot.status() == DoctorAvailabilitySlotStatus.FULL) {
+            throw new IllegalArgumentException("This slot is full.");
         }
         if (slot.status() == DoctorAvailabilitySlotStatus.UNAVAILABLE
                 || slot.status() == DoctorAvailabilitySlotStatus.BREAK
                 || slot.status() == DoctorAvailabilitySlotStatus.LEAVE) {
-            throw new IllegalArgumentException("Selected time is unavailable for the selected doctor");
+            throw new IllegalArgumentException("Doctor is unavailable for the selected time.");
         }
         if (slot.status() == DoctorAvailabilitySlotStatus.CONFLICTED) {
             throw new IllegalArgumentException("Selected time has scheduling conflicts for the selected doctor");
@@ -1344,11 +1344,8 @@ public class AppointmentService {
         if (slot.past()) {
             throw new IllegalArgumentException(PAST_SLOT_MESSAGE);
         }
-        if (slot.status() == DoctorAvailabilitySlotStatus.FULL && !allowOverbooking) {
-            throw new IllegalArgumentException("Selected time is already fully booked");
-        }
         if (!slot.bookable() && !allowOverbooking) {
-            throw new IllegalArgumentException("Selected time is already fully booked");
+            throw new IllegalArgumentException("This slot is full.");
         }
         if (!StringUtils.hasText(command.reason()) && allowOverbooking && slot.bookedCount() >= slot.maxPatientsPerSlot()) {
             throw new IllegalArgumentException("Reason is required when overbooking a slot");

@@ -184,7 +184,12 @@ function sanitizeErrorMessage(message: string): string {
   ) {
     return "Request failed";
   }
-  return normalized.replace(UUID_IN_TEXT_RE, "[hidden reference]");
+  const redacted = normalized
+    .replace(UUID_IN_TEXT_RE, "[hidden reference]")
+    .replace(/\s*\(?\s*ref:\s*\[hidden reference\]\s*\)?/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return redacted || "Request failed";
 }
 
 export async function httpGet<T>(path: string, opts?: ApiOpts): Promise<T> {

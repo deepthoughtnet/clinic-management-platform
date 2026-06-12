@@ -30,6 +30,7 @@ import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
 import com.deepthoughtnet.clinic.billing.service.model.ReceiptRecord;
 import com.deepthoughtnet.clinic.billing.service.model.RefundCommand;
 import com.deepthoughtnet.clinic.billing.service.model.RefundRecord;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.Comparator;
@@ -473,6 +474,7 @@ public class BillingController {
                 refund.notes(),
                 bill.status(),
                 bill.dueAmount(),
+                bill.paidAmount() == null || bill.refundedAmount() == null ? BigDecimal.ZERO : bill.paidAmount().subtract(bill.refundedAmount()).max(BigDecimal.ZERO),
                 refund.createdAt()
         );
     }

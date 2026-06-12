@@ -757,13 +757,17 @@ export default function DayBoardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [clinicUsers, appointmentRows, billRows] = await Promise.all([
+      const appointmentRows = await searchAppointments(auth.accessToken, auth.tenantId, { appointmentDate: date, doctorUserId: effectiveDoctorId || undefined });
+      const clinicUsersResult = await Promise.allSettled([
         getClinicUsers(auth.accessToken, auth.tenantId),
-        searchAppointments(auth.accessToken, auth.tenantId, { appointmentDate: date, doctorUserId: effectiveDoctorId || undefined }),
-        searchBills(auth.accessToken, auth.tenantId, { fromDate: date, toDate: date }),
       ]);
-      setUsers(clinicUsers);
       setAppointments(appointmentRows);
+      setUsers(clinicUsersResult[0].status === "fulfilled" ? clinicUsersResult[0].value : []);
+      if (isDoctor) {
+        setBills([]);
+        return;
+      }
+      const billRows = await searchBills(auth.accessToken, auth.tenantId, { fromDate: date, toDate: date });
       setBills(billRows);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load day board data");
@@ -1833,7 +1837,7 @@ export default function DayBoardPage() {
                       {!isDoctor && selectedAppointment.status === "BOOKED" ? (
                         <Button size="small" variant="outlined" onClick={() => openReschedule(selectedAppointment)}>Reschedule</Button>
                       ) : null}
-                      {canStartConsultation ? (
+                      {!isDoctor && canStartConsultation ? (
                         <Button size="small" variant="outlined" disabled={!canStartConsultation} onClick={() => void startConsultation(selectedAppointment.id)}>Start consultation</Button>
                       ) : null}
                       <Button size="small" onClick={() => navigate(`/patients/${selectedAppointment.patientId}`)}>Open patient</Button>

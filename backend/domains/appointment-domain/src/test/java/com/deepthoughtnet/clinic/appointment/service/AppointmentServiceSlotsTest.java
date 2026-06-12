@@ -158,7 +158,7 @@ class AppointmentServiceSlotsTest {
                 ACTOR_ID,
                 false
         )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("fully booked");
+                .hasMessageContaining("This slot is full.");
     }
 
     @Test
@@ -226,19 +226,20 @@ class AppointmentServiceSlotsTest {
     }
 
     @Test
-    void createScheduledRejectsAdHocBookingWhenStandardSlotsRemainAvailable() {
+    void createScheduledAllowsAdHocBookingWhenStandardSlotsRemainAvailable() {
         DoctorAvailabilityEntity availability = availability(LocalTime.of(10, 0), LocalTime.of(11, 0), 30, 1);
         when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
         when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
                 .thenReturn(List.of());
 
-        assertThatThrownBy(() -> service.createScheduled(
+        service.createScheduled(
                 TENANT_ID,
                 new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, APPOINTMENT_DATE, LocalTime.of(10, 45), "Emergency", AppointmentType.SCHEDULED, null, AppointmentPriority.URGENT, true),
                 ACTOR_ID,
                 false
-        )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Standard slots are available");
+        );
+
+        verify(appointmentRepository).save(any(AppointmentEntity.class));
     }
 
     @Test
@@ -344,7 +345,7 @@ class AppointmentServiceSlotsTest {
                 ACTOR_ID,
                 false
         )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("fully booked");
+                .hasMessageContaining("This slot is full.");
     }
 
     @Test
@@ -374,6 +375,22 @@ class AppointmentServiceSlotsTest {
         );
 
         verify(appointmentRepository).save(any(AppointmentEntity.class));
+    }
+
+    @Test
+    void createScheduledRejectsNormalBookingOutsideAvailabilityWhenSlotsExist() {
+        DoctorAvailabilityEntity availability = availability(LocalTime.of(10, 0), LocalTime.of(11, 0), 30, 1);
+        when(doctorAvailabilityRepository.findByTenantIdOrderByDoctorUserIdAscDayOfWeekAscStartTimeAsc(TENANT_ID)).thenReturn(List.of(availability));
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, APPOINTMENT_DATE))
+                .thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.createScheduled(
+                TENANT_ID,
+                new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, APPOINTMENT_DATE, LocalTime.of(14, 0), "New visit", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),
+                ACTOR_ID,
+                false
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("outside configured doctor availability");
     }
 
     @Test

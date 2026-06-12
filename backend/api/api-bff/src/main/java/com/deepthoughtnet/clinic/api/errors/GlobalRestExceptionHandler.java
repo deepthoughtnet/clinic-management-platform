@@ -291,7 +291,10 @@ public class GlobalRestExceptionHandler {
         if (message == null || message.isBlank()) {
             return message;
         }
-        return UUID_PATTERN.matcher(message).replaceAll("[hidden reference]");
+        String redacted = UUID_PATTERN.matcher(message).replaceAll("[hidden reference]");
+        redacted = redacted.replaceAll("(?i)\\s*\\(?\\s*ref:\\s*\\[hidden reference\\]\\s*\\)?", "");
+        redacted = redacted.replaceAll("\\s{2,}", " ").trim();
+        return redacted;
     }
 
     private boolean isClientDisconnect(Throwable throwable) {
