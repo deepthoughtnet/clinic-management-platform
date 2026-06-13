@@ -152,7 +152,7 @@ public class PharmacyPosService {
         requireId(medicineId, "medicineId");
         InventoryLocationEntity location = ensureDefaultLocation(tenantId);
         return sortForFefo(stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, medicineId, location.getId())).stream()
-                .filter(stock -> stock.isActive() && stock.getQuantityOnHand() > 0)
+                .filter(stock -> stock.isActive() && stock.getQuantityOnHand() > 0 && !isExpired(stock))
                 .map(stock -> toBatchResponse(stock, location))
                 .toList();
     }
@@ -332,16 +332,28 @@ public class PharmacyPosService {
         if (total.compareTo(ZERO) < 0) {
             total = ZERO;
         }
+        if (request.paidAmount() == null) {
+            throw new IllegalArgumentException("paidAmount is required");
+        }
         BigDecimal paidAmount = money(request.paidAmount());
-        PharmacyCashierShiftEntity activeShift = paidAmount.compareTo(ZERO) > 0 ? requireOpenShift(tenantId, actorAppUserId) : null;
+        if (paidAmount.compareTo(ZERO) < 0) {
+            throw new IllegalArgumentException("Paid amount cannot be negative.");
+        }
+        if (paidAmount.compareTo(total) < 0 && total.compareTo(ZERO) > 0) {
+            throw new IllegalArgumentException("Full payment is required before completing the pharmacy sale.");
+        }
         if (paidAmount.compareTo(total) > 0) {
-            throw new IllegalArgumentException("paidAmount cannot exceed sale total");
+            throw new IllegalArgumentException("Paid amount cannot exceed sale total.");
         }
-        if (paidAmount.compareTo(ZERO) > 0 && request.paymentMode() == null) {
-            throw new IllegalArgumentException("paymentMode is required when paidAmount is provided");
+        if (request.paymentMode() == null) {
+            throw new IllegalArgumentException("Payment mode is required.");
         }
+        if (total.compareTo(ZERO) > 0 && paidAmount.compareTo(ZERO) <= 0) {
+            throw new IllegalArgumentException("Full payment is required before completing the pharmacy sale.");
+        }
+        PharmacyCashierShiftEntity activeShift = paidAmount.compareTo(ZERO) > 0 ? requireOpenShift(tenantId, actorAppUserId) : null;
         if (request.paymentMode() != null && request.paymentMode() != PaymentMode.CASH && !StringUtils.hasText(request.paymentReference()) && paidAmount.compareTo(ZERO) > 0) {
-            throw new IllegalArgumentException("paymentReference is required for non-cash payments");
+            throw new IllegalArgumentException("Payment reference is required for non-cash payments.");
         }
         BigDecimal dueAmount = total.subtract(paidAmount).setScale(2, RoundingMode.HALF_UP);
         PharmacySaleEntity sale = saleRepository.save(PharmacySaleEntity.create(
@@ -527,14 +539,6 @@ public class PharmacyPosService {
             returnValue = returnValue.add(value).setScale(2, RoundingMode.HALF_UP);
         }
 
-        BigDecimal newSubtotal = sale.getSubtotal().subtract(returnGross).max(ZERO).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal newDiscount = sale.getDiscount().subtract(returnDiscount).max(ZERO).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal newTax = sale.getTax().subtract(returnTax).max(ZERO).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal newTotal = sale.getTotal().subtract(returnValue).max(ZERO).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal refundable = sale.getPaidAmount().subtract(newTotal).max(ZERO).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal refundToIssue = refundable.min(returnValue).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal newPaidAmount = sale.getPaidAmount().subtract(refundToIssue).max(ZERO).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal newDueAmount = newTotal.subtract(newPaidAmount).max(ZERO).setScale(2, RoundingMode.HALF_UP);
         String returnNumber = generateReturnNumber(tenantId);
 
         for (int index = 0; index < drafts.size(); index++) {
@@ -542,7 +546,7 @@ public class PharmacyPosService {
             PharmacySaleItemEntity item = draft.item();
             item.addReturnedQuantity(draft.quantity());
             saleItemRepository.save(item);
-            BigDecimal refundAmount = allocatePortion(refundToIssue, returnValue, draft.returnValue(), index == drafts.size() - 1, drafts.stream().limit(index).map(ReturnDraft::returnValue).toList());
+            BigDecimal refundAmount = draft.returnValue();
             saleReturnRepository.save(PharmacySaleReturnEntity.create(
                     tenantId,
                     saleId,
@@ -563,30 +567,46 @@ public class PharmacyPosService {
                     actorAppUserId
             ));
             if (draft.reusable()) {
+                StockEntity batch = item.getStockBatchId() == null ? null : stockRepository.findByTenantIdAndId(tenantId, item.getStockBatchId()).orElse(null);
+                if (batch == null) {
+                    throw new IllegalArgumentException("Stock batch not found");
+                }
+                if (isExpired(batch)) {
+                    throw new IllegalArgumentException("Batch expired and cannot be sold or dispensed.");
+                }
                 inventoryService.createTransaction(tenantId, new InventoryTransactionCommand(
                         item.getMedicineId(),
                         item.getStockBatchId(),
                         sale.getLocationId(),
                         null,
-                        InventoryTransactionType.RETURN,
+                        InventoryTransactionType.CUSTOMER_RETURN_IN,
                         draft.quantity(),
-                        "Pharmacy sale return " + returnNumber,
+                        "Customer return " + returnNumber,
                         "PHARMACY_SALE_RETURN",
                         saleId,
                         actorAppUserId,
-                        "Reusable pharmacy return for sale " + sale.getSaleNumber()
+                        "Reusable customer return for sale " + sale.getSaleNumber()
+                ), actorAppUserId);
+            } else {
+                inventoryService.createTransaction(tenantId, new InventoryTransactionCommand(
+                        item.getMedicineId(),
+                        item.getStockBatchId(),
+                        sale.getLocationId(),
+                        null,
+                        InventoryTransactionType.CUSTOMER_RETURN_NON_SELLABLE,
+                        draft.quantity(),
+                        "Customer return " + returnNumber,
+                        "PHARMACY_SALE_RETURN",
+                        saleId,
+                        actorAppUserId,
+                        "Non-sellable customer return for sale " + sale.getSaleNumber()
                 ), actorAppUserId);
             }
         }
-
-        boolean fullyReturned = saleItemRepository.findByTenantIdAndSaleIdOrderByCreatedAtAsc(tenantId, saleId).stream()
-                .allMatch(item -> item.getReturnedQuantity() >= item.getQuantity());
-        sale.updateFinancials(newSubtotal, newDiscount, newTax, newTotal, newPaidAmount, newDueAmount, statusForSale(newTotal, newPaidAmount, true, fullyReturned));
-        saleRepository.save(sale);
         audit("pharmacy.sale.return_created", tenantId, saleId, actorAppUserId, "Processed pharmacy sale return", Map.of(
                 "returnNumber", returnNumber,
                 "returnValue", returnValue,
-                "refundIssued", refundToIssue
+                "refundIssued", ZERO
         ));
         return mapSale(tenantId, sale);
     }
@@ -662,7 +682,7 @@ public class PharmacyPosService {
                     y -= 8f;
                 }
                 if (!sale.returns().isEmpty()) {
-                    y = drawText(content, "Returns / Refunds", 10, margin, y, true);
+                    y = drawText(content, "Returns / Refundable Value", 10, margin, y, true);
                     y -= 14f;
                     for (PharmacyPosReturnResponse returned : sale.returns()) {
                         drawTableRow(content, new float[]{margin, margin + 150f, margin + 270f, margin + 360f, margin + 460f}, y, List.of(
@@ -767,9 +787,13 @@ public class PharmacyPosService {
         }
         MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, line.medicineId())
                 .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
+        List<StockEntity> allBatches = sortForFefo(stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, line.medicineId(), locationId));
         List<StockEntity> batches = stockRepository.findSellableBatchesForUpdate(tenantId, locationId, line.medicineId()).stream()
                 .filter(stock -> !isExpired(stock))
                 .toList();
+        if (batches.isEmpty() && allBatches.stream().anyMatch(stock -> stock.isActive() && stock.getQuantityOnHand() > 0 && isExpired(stock))) {
+            throw new IllegalArgumentException("Batch expired and cannot be sold or dispensed.");
+        }
         int available = batches.stream().mapToInt(StockEntity::getQuantityOnHand).sum();
         if (available < line.quantity()) {
             throw new IllegalArgumentException("Insufficient stock for " + medicine.getMedicineName());
@@ -979,11 +1003,14 @@ public class PharmacyPosService {
     }
 
     private String statusForSale(BigDecimal total, BigDecimal paidAmount, boolean hasReturns, boolean fullyReturned) {
-        if (fullyReturned || total.compareTo(ZERO) == 0) {
+        if (fullyReturned) {
             return "RETURNED";
         }
         if (hasReturns) {
             return "PARTIALLY_RETURNED";
+        }
+        if (total.compareTo(ZERO) == 0) {
+            return "PAID";
         }
         if (paidAmount.compareTo(ZERO) == 0) {
             return "UNPAID";
@@ -1000,6 +1027,11 @@ public class PharmacyPosService {
         }
         if (request.items() == null || request.items().isEmpty()) {
             throw new IllegalArgumentException("At least one sale item is required");
+        }
+        for (PharmacyPosSaleLineRequest item : request.items()) {
+            if (item == null || item.quantity() == null || item.quantity() <= 0) {
+                throw new IllegalArgumentException("quantity must be positive");
+            }
         }
         if (request.patientId() == null && !StringUtils.hasText(request.customerName())) {
             throw new IllegalArgumentException("customerName is required for walk-in sales");

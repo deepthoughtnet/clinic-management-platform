@@ -39,10 +39,12 @@ const FILTER_TYPES: Array<{
   { label: "All", value: "" },
   { label: "Sale", value: "SALE" },
   { label: "Return", value: "RETURN" },
+  { label: "Customer Return", value: "CUSTOMER_RETURN_IN" },
   { label: "Purchase", value: "PURCHASE" },
   { label: "Adjustment", value: "ADJUSTMENT" },
   { label: "Transfer", value: "TRANSFER" },
   { label: "Reconciliation", value: "RECONCILIATION" },
+  { label: "Write-Off", value: "WRITE_OFF" },
 ];
 
 const MOVEMENT_TYPES: InventoryTransactionType[] = [
@@ -51,6 +53,10 @@ const MOVEMENT_TYPES: InventoryTransactionType[] = [
   "ADJUSTMENT",
   "SALE",
   "RETURN",
+  "CUSTOMER_RETURN_IN",
+  "CUSTOMER_RETURN_NON_SELLABLE",
+  "VENDOR_RETURN_OUT",
+  "WRITE_OFF",
   "DISPENSED",
   "EXPIRED",
   "CANCELLED_DISPENSE",
@@ -62,8 +68,8 @@ const MOVEMENT_TYPES: InventoryTransactionType[] = [
 ];
 
 function movementChip(type: string) {
-  if (["OPENING", "PURCHASE", "STOCK_IN", "RETURN", "ADJUSTMENT_IN", "TRANSFER_IN"].includes(type)) return "success" as const;
-  if (["SALE", "DISPENSED", "ADJUSTMENT_OUT", "EXPIRED", "CANCELLED_DISPENSE", "TRANSFER_OUT"].includes(type)) return "warning" as const;
+  if (["OPENING", "PURCHASE", "STOCK_IN", "RETURN", "CUSTOMER_RETURN_IN", "ADJUSTMENT_IN", "TRANSFER_IN"].includes(type)) return "success" as const;
+  if (["SALE", "DISPENSED", "ADJUSTMENT_OUT", "EXPIRED", "CANCELLED_DISPENSE", "TRANSFER_OUT", "CUSTOMER_RETURN_NON_SELLABLE", "VENDOR_RETURN_OUT", "WRITE_OFF"].includes(type)) return "warning" as const;
   return "default" as const;
 }
 
@@ -74,6 +80,10 @@ function movementLabel(type: string) {
     SALE: "Sale",
     ADJUSTMENT: "Adjustment",
     RETURN: "Return",
+    CUSTOMER_RETURN_IN: "Customer Return In",
+    CUSTOMER_RETURN_NON_SELLABLE: "Customer Return Non-sellable",
+    VENDOR_RETURN_OUT: "Vendor Return Out",
+    WRITE_OFF: "Write-off",
     DISPENSED: "Dispensed",
     EXPIRED: "Expired",
     CANCELLED_DISPENSE: "Cancelled Dispense",
@@ -92,6 +102,8 @@ function movementMatchesChip(row: InventoryTransaction, chip: string) {
       return true;
     case "TRANSFER":
       return row.transactionType === "TRANSFER_IN" || row.transactionType === "TRANSFER_OUT";
+    case "RETURN":
+      return row.transactionType === "RETURN" || row.transactionType === "CUSTOMER_RETURN_IN" || row.transactionType === "CUSTOMER_RETURN_NON_SELLABLE";
     case "ADJUSTMENT":
       return row.transactionType === "ADJUSTMENT";
     case "RECONCILIATION":
@@ -175,7 +187,7 @@ export default function StockMovementsPage() {
   const filteredSummary = React.useMemo(() => ({
     total: filtered.length,
     adjustments: filtered.filter((row) => row.transactionType.includes("ADJUSTMENT")).length,
-    stockIns: filtered.filter((row) => row.transactionType === "STOCK_IN" || row.transactionType === "OPENING" || row.transactionType === "PURCHASE").length,
+    stockIns: filtered.filter((row) => row.transactionType === "STOCK_IN" || row.transactionType === "OPENING" || row.transactionType === "PURCHASE" || row.transactionType === "CUSTOMER_RETURN_IN").length,
     dispenseRelated: filtered.filter((row) => row.transactionType === "DISPENSED" || row.transactionType === "CANCELLED_DISPENSE" || row.transactionType === "SALE").length,
   }), [filtered]);
 

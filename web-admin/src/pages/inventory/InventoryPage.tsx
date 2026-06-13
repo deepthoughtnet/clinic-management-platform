@@ -17,6 +17,8 @@ import {
   DialogTitle,
   FormControl,
   Grid,
+  IconButton,
+  InputAdornment,
   InputLabel,
   MenuItem,
   Select,
@@ -33,11 +35,13 @@ import {
   Typography,
 } from "@mui/material";
 import ExpandMoreRounded from "@mui/icons-material/ExpandMoreRounded";
+import CameraAltRoundedIcon from "@mui/icons-material/CameraAltRounded";
 import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactFilterCard, CompactStatCard, compactCardContentSx } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
+import CodeScannerDialog from "../../components/pharmacy/CodeScannerDialog";
 import {
   createInventoryTransaction,
   createMedicine,
@@ -46,7 +50,9 @@ import {
   getInventoryTransactions,
   getLowStock,
   getMedicines,
+  listPharmacyPosSales,
   getStocks,
+  returnPharmacyPosSale,
   transferInventoryStock,
   updateStock,
   type InventoryLocation,
@@ -57,8 +63,10 @@ import {
   type Medicine,
   type MedicineInput,
   type MedicineType,
+  type PharmacyPosSale,
   type Stock,
   type StockInput,
+  type PaymentMode,
 } from "../../api/clinicApi";
 
 type StockFormState = {
@@ -87,12 +95,38 @@ type TransactionFormState = {
   notes: string;
 };
 
+type StockCountFormState = {
+  medicineId: string;
+  locationId: string;
+  stockBatchId: string;
+  countedQuantity: string;
+  reason: string;
+};
+
 const TABS = [
   { value: "stocks", label: "Stock" },
+  { value: "count", label: "Physical count" },
+  { value: "expiry-report", label: "Expiry report" },
   { value: "low-stock", label: "Low stock" },
+  { value: "returns", label: "Returns & write-offs" },
 ] as const;
 
-const TRANSACTION_TYPES: InventoryTransactionType[] = ["OPENING", "PURCHASE", "SALE", "ADJUSTMENT", "RETURN", "EXPIRED", "CANCELLED_DISPENSE", "STOCK_IN", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"];
+const TRANSACTION_TYPES: InventoryTransactionType[] = [
+  "OPENING",
+  "PURCHASE",
+  "SALE",
+  "ADJUSTMENT",
+  "RETURN",
+  "CUSTOMER_RETURN_IN",
+  "CUSTOMER_RETURN_NON_SELLABLE",
+  "VENDOR_RETURN_OUT",
+  "WRITE_OFF",
+  "EXPIRED",
+  "CANCELLED_DISPENSE",
+  "STOCK_IN",
+  "ADJUSTMENT_IN",
+  "ADJUSTMENT_OUT",
+];
 const MEDICINE_TYPES: MedicineType[] = ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "DROP", "OINTMENT", "OTHER"];
 
 type MedicineAutocompleteOption =
@@ -126,6 +160,16 @@ function emptyTransactionForm(): TransactionFormState {
     referenceType: "",
     referenceId: "",
     notes: "",
+  };
+}
+
+function emptyStockCountForm(): StockCountFormState {
+  return {
+    medicineId: "",
+    locationId: "",
+    stockBatchId: "",
+    countedQuantity: "",
+    reason: "",
   };
 }
 
@@ -201,6 +245,10 @@ function transactionLabel(type: InventoryTransactionType) {
     SALE: "Sale",
     ADJUSTMENT: "Adjustment",
     RETURN: "Patient Return",
+    CUSTOMER_RETURN_IN: "Customer Return In",
+    CUSTOMER_RETURN_NON_SELLABLE: "Customer Return Non-sellable",
+    VENDOR_RETURN_OUT: "Vendor Return Out",
+    WRITE_OFF: "Write-off",
     DISPENSED: "Dispensed",
     EXPIRED: "Expired",
     CANCELLED_DISPENSE: "Cancelled Dispense",
@@ -213,21 +261,31 @@ function transactionLabel(type: InventoryTransactionType) {
   return labels[type] || type;
 }
 
-function expiryBadge(expiryDate: string | null) {
-  if (!expiryDate) return { label: "No expiry", color: "default" as const };
-  const today = new Date();
-  const expiry = new Date(expiryDate);
-  const diffDays = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-  if (diffDays < 0) return { label: "Expired", color: "error" as const };
-  if (diffDays <= 30) return { label: `Near expiry`, color: "warning" as const };
-  return { label: "Fresh", color: "success" as const };
+function utcDayNumber(dateValue: string) {
+  const [year, month, day] = dateValue.split("-").map((value) => Number(value));
+  return Date.UTC(year, month - 1, day);
+}
+
+function todayUtcDayNumber() {
+  const now = new Date();
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 }
 
 function daysUntil(dateValue: string | null) {
   if (!dateValue) return Number.POSITIVE_INFINITY;
-  const today = new Date();
-  const target = new Date(dateValue);
-  return Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.floor((utcDayNumber(dateValue) - todayUtcDayNumber()) / (1000 * 60 * 60 * 24));
+}
+
+function expiryState(expiryDate: string | null) {
+  if (!expiryDate) {
+    return { label: "No expiry", color: "default" as const, bucket: "No expiry" as const };
+  }
+  const diffDays = daysUntil(expiryDate);
+  if (diffDays < 0) return { label: "EXPIRED", color: "error" as const, bucket: "Expired" as const };
+  if (diffDays <= 30) return { label: "0-30 days", color: "warning" as const, bucket: "0-30" as const };
+  if (diffDays <= 60) return { label: "31-60 days", color: "info" as const, bucket: "31-60" as const };
+  if (diffDays <= 90) return { label: "61-90 days", color: "secondary" as const, bucket: "61-90" as const };
+  return { label: "91+ days", color: "success" as const, bucket: "91+" as const };
 }
 
 function formatCurrency(value: number) {
@@ -252,11 +310,25 @@ export default function InventoryPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
   const [stockSearch, setStockSearch] = React.useState("");
+  const [stockSearchScannerOpen, setStockSearchScannerOpen] = React.useState(false);
   const [transferForm, setTransferForm] = React.useState({ medicineId: "", stockBatchId: "", fromLocationId: "", toLocationId: "", quantity: "", reason: "" });
-  const [stockActionPanel, setStockActionPanel] = React.useState<"add" | "transaction" | "transfer">("add");
+  const [stockCountForm, setStockCountForm] = React.useState<StockCountFormState>(emptyStockCountForm());
+  const [expiryReportMedicineId, setExpiryReportMedicineId] = React.useState("");
+  const [stockActionPanel, setStockActionPanel] = React.useState<"add" | "transaction" | "transfer" | "count">("add");
   const [medicineSearchInput, setMedicineSearchInput] = React.useState("");
   const [quickMedicineOpen, setQuickMedicineOpen] = React.useState(false);
   const [quickMedicineForm, setQuickMedicineForm] = React.useState<MedicineInput>(emptyQuickMedicineForm());
+  const [sales, setSales] = React.useState<PharmacyPosSale[]>([]);
+  const [saleSearch, setSaleSearch] = React.useState("");
+  const [customerReturnSaleId, setCustomerReturnSaleId] = React.useState("");
+  const [customerReturnLineId, setCustomerReturnLineId] = React.useState("");
+  const [customerReturnQuantity, setCustomerReturnQuantity] = React.useState("1");
+  const [customerReturnReusable, setCustomerReturnReusable] = React.useState(true);
+  const [customerReturnReason, setCustomerReturnReason] = React.useState("");
+  const [customerReturnMode, setCustomerReturnMode] = React.useState<PaymentMode>("CASH");
+  const [customerReturnReference, setCustomerReturnReference] = React.useState("");
+  const [vendorReturnForm, setVendorReturnForm] = React.useState({ medicineId: "", stockBatchId: "", quantity: "", supplierReference: "", reason: "", notes: "" });
+  const [writeOffForm, setWriteOffForm] = React.useState({ medicineId: "", stockBatchId: "", quantity: "", reason: "", notes: "" });
 
   const medicineById = React.useMemo(() => new Map(medicines.map((medicine) => [medicine.id, medicine])), [medicines]);
   const medicineAutocompleteOptions = React.useMemo<MedicineAutocompleteOption[]>(
@@ -281,6 +353,49 @@ export default function InventoryPage() {
     const diff = daysUntil(stock.expiryDate);
     return diff >= 0 && diff <= 30;
   }).length, [stocks]);
+  const countableStocks = React.useMemo(() => stocks.filter((stock) => {
+    const matchesMedicine = !stockCountForm.medicineId || stock.medicineId === stockCountForm.medicineId;
+    const matchesLocation = !stockCountForm.locationId || stock.locationId === stockCountForm.locationId;
+    return matchesMedicine && matchesLocation;
+  }), [stockCountForm.locationId, stockCountForm.medicineId, stocks]);
+  const selectedCountStock = React.useMemo(
+    () => stocks.find((stock) => stock.id === stockCountForm.stockBatchId) || null,
+    [stockCountForm.stockBatchId, stocks],
+  );
+  const countVariance = React.useMemo(() => {
+    if (!selectedCountStock || !stockCountForm.countedQuantity.trim()) {
+      return null;
+    }
+    const countedQuantityValue = Number(stockCountForm.countedQuantity);
+    if (Number.isNaN(countedQuantityValue)) {
+      return null;
+    }
+    return countedQuantityValue - selectedCountStock.quantityOnHand;
+  }, [selectedCountStock, stockCountForm.countedQuantity]);
+  const expiryReportRows = React.useMemo(() => {
+    const term = expiryReportMedicineId.trim().toLowerCase();
+    return stocks
+      .filter((stock) => !!stock.expiryDate)
+      .filter((stock) => !selectedLocationId || stock.locationId === selectedLocationId)
+      .filter((stock) => !term || [stock.medicineName, stock.batchNumber, stock.purchaseReferenceNumber, stock.locationName]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term)))
+      .map((stock) => {
+        const state = expiryState(stock.expiryDate);
+        return {
+          ...stock,
+          expiryBucket: state.bucket,
+          expiryLabel: state.label,
+          expiryColor: state.color,
+          expiryDays: daysUntil(stock.expiryDate),
+        };
+      })
+      .sort((a, b) => a.expiryDays - b.expiryDays || a.medicineName.localeCompare(b.medicineName));
+  }, [expiryReportMedicineId, selectedLocationId, stocks]);
+  const expiryBucketCounts = React.useMemo(() => expiryReportRows.reduce((acc, row) => {
+    acc[row.expiryBucket] = (acc[row.expiryBucket] || 0) + 1;
+    return acc;
+  }, { "Expired": 0, "0-30": 0, "31-60": 0, "61-90": 0, "91+": 0 } as Record<string, number>), [expiryReportRows]);
   const totalQuantity = React.useMemo(() => stocks.reduce((sum, stock) => sum + stock.quantityOnHand, 0), [stocks]);
   const estimatedStockValue = React.useMemo(() => stocks.reduce((sum, stock) => {
     const rate = stock.sellingPrice ?? stock.unitCost ?? 0;
@@ -302,6 +417,61 @@ export default function InventoryPage() {
     () => stocks.filter((stock) => !transferForm.medicineId || stock.medicineId === transferForm.medicineId),
     [stocks, transferForm.medicineId],
   );
+  const filteredCustomerSales = React.useMemo(() => {
+    const term = saleSearch.trim().toLowerCase();
+    if (!term) {
+      return sales;
+    }
+    return sales.filter((sale) =>
+      [sale.saleNumber, sale.patientName, sale.customerName, sale.customerMobile, sale.items.map((item) => item.medicineName).join(" ")]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term)),
+    );
+  }, [saleSearch, sales]);
+  const selectedCustomerSale = React.useMemo(
+    () => sales.find((sale) => sale.id === customerReturnSaleId) ?? null,
+    [customerReturnSaleId, sales],
+  );
+  const selectedCustomerReturnItem = React.useMemo(
+    () => selectedCustomerSale?.items.find((item) => item.id === customerReturnLineId) ?? null,
+    [customerReturnLineId, selectedCustomerSale],
+  );
+  const customerReturnHistory = React.useMemo(
+    () => transactions.filter((row) => ["RETURN", "CUSTOMER_RETURN_IN", "CUSTOMER_RETURN_NON_SELLABLE"].includes(row.transactionType)),
+    [transactions],
+  );
+  const vendorReturnHistory = React.useMemo(
+    () => transactions.filter((row) => row.transactionType === "VENDOR_RETURN_OUT"),
+    [transactions],
+  );
+  const writeOffHistory = React.useMemo(
+    () => transactions.filter((row) => row.transactionType === "WRITE_OFF"),
+    [transactions],
+  );
+  const vendorReturnBatches = React.useMemo(
+    () => stocks.filter((stock) => !vendorReturnForm.medicineId || stock.medicineId === vendorReturnForm.medicineId),
+    [stocks, vendorReturnForm.medicineId],
+  );
+  const writeOffBatches = React.useMemo(
+    () => stocks.filter((stock) => !writeOffForm.medicineId || stock.medicineId === writeOffForm.medicineId),
+    [stocks, writeOffForm.medicineId],
+  );
+
+  React.useEffect(() => {
+    if (selectedCountStock) {
+      setStockCountForm((current) => ({
+        ...current,
+        medicineId: selectedCountStock.medicineId,
+        locationId: selectedCountStock.locationId || "",
+      }));
+    }
+  }, [selectedCountStock]);
+
+  React.useEffect(() => {
+    if (stockCountForm.stockBatchId && !countableStocks.some((stock) => stock.id === stockCountForm.stockBatchId)) {
+      setStockCountForm((current) => ({ ...current, stockBatchId: "", countedQuantity: "" }));
+    }
+  }, [countableStocks, stockCountForm.stockBatchId]);
 
   const openQuickCreateMedicine = React.useCallback((seedText = "") => {
     setQuickMedicineForm((current) => ({
@@ -354,18 +524,20 @@ export default function InventoryPage() {
     if (!auth.accessToken || !auth.tenantId) {
       return;
     }
-    const [medicineRows, stockRows, transactionRows, lowStockRows, locationRows] = await Promise.all([
+    const [medicineRows, stockRows, transactionRows, lowStockRows, locationRows, saleRows] = await Promise.all([
       getMedicines(auth.accessToken, auth.tenantId),
       getStocks(auth.accessToken, auth.tenantId),
       getInventoryTransactions(auth.accessToken, auth.tenantId),
       getLowStock(auth.accessToken, auth.tenantId),
       getInventoryLocations(auth.accessToken, auth.tenantId),
+      listPharmacyPosSales(auth.accessToken, auth.tenantId).catch(() => [] as PharmacyPosSale[]),
     ]);
     setMedicines(medicineRows);
     setStocks(stockRows);
     setTransactions(transactionRows);
     setLowStock(lowStockRows);
     setLocations(locationRows);
+    setSales(saleRows);
     setSelectedLocationId((current) => current || locationRows.find((location) => location.defaultLocation)?.id || null);
   }, [auth.accessToken, auth.tenantId]);
 
@@ -465,6 +637,10 @@ export default function InventoryPage() {
       setError("Select a medicine and quantity before saving a transaction.");
       return;
     }
+    if (["ADJUSTMENT", "ADJUSTMENT_IN", "ADJUSTMENT_OUT", "CUSTOMER_RETURN_IN", "CUSTOMER_RETURN_NON_SELLABLE", "VENDOR_RETURN_OUT", "WRITE_OFF"].includes(transactionForm.transactionType) && !transactionForm.notes.trim()) {
+      setError("Reason is required for this stock movement.");
+      return;
+    }
     setSaving(true);
     setError(null);
     setSuccess(null);
@@ -475,6 +651,161 @@ export default function InventoryPage() {
       setSuccess("Inventory transaction saved");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save inventory transaction");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitCustomerReturn = async () => {
+    if (!auth.accessToken || !auth.tenantId || !selectedCustomerSale || !selectedCustomerReturnItem) {
+      setError("Select a sale line before submitting a customer return.");
+      return;
+    }
+    const quantity = Number(customerReturnQuantity);
+    const returnable = selectedCustomerReturnItem.quantity - selectedCustomerReturnItem.returnedQuantity;
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError("Return quantity must be positive.");
+      return;
+    }
+    if (quantity > returnable) {
+      setError("Return quantity exceeds the remaining sold quantity.");
+      return;
+    }
+    if (!customerReturnReason.trim()) {
+      setError("Reason is required for customer returns.");
+      return;
+    }
+    if (customerReturnReusable && selectedCustomerReturnItem.expiryDate && new Date(selectedCustomerReturnItem.expiryDate) < new Date()) {
+      setError("Batch expired and cannot be sold or dispensed.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await returnPharmacyPosSale(auth.accessToken, auth.tenantId, selectedCustomerSale.id, {
+        reason: customerReturnReason.trim(),
+        refundMode: customerReturnMode,
+        referenceNumber: customerReturnReference.trim() || null,
+        notes: `Customer return from Inventory: ${customerReturnReusable ? "Reusable" : "Non-sellable"} - ${customerReturnReason.trim()}`,
+        items: [{
+          saleItemId: selectedCustomerReturnItem.id,
+          quantity,
+          reusable: customerReturnReusable,
+        }],
+      });
+      await loadAll();
+      setCustomerReturnQuantity("1");
+      setCustomerReturnReason("");
+      setCustomerReturnReference("");
+      setSuccess(selectedCustomerSale.paidAmount > 0
+        ? "Customer return processed. Refund can be processed from Billing / Refunds."
+        : "Customer return processed.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Customer return could not be processed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitVendorReturn = async () => {
+    if (!auth.accessToken || !auth.tenantId || !vendorReturnForm.stockBatchId || !vendorReturnForm.medicineId) {
+      setError("Select a medicine batch before submitting a vendor return.");
+      return;
+    }
+    const batch = stocks.find((stock) => stock.id === vendorReturnForm.stockBatchId) ?? null;
+    const quantity = Number(vendorReturnForm.quantity);
+    if (!batch) {
+      setError("Select a valid batch.");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError("Return quantity must be positive.");
+      return;
+    }
+    if (quantity > batch.quantityOnHand) {
+      setError("Insufficient stock available.");
+      return;
+    }
+    if (!vendorReturnForm.reason.trim()) {
+      setError("Reason is required for vendor returns.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await createInventoryTransaction(auth.accessToken, auth.tenantId, {
+        medicineId: batch.medicineId,
+        stockBatchId: batch.id,
+        transactionType: "VENDOR_RETURN_OUT",
+        quantity,
+        reason: vendorReturnForm.reason.trim(),
+        referenceType: "VENDOR_RETURN",
+        referenceId: batch.id,
+        notes: [
+          batch.supplierName ? `Supplier ${batch.supplierName}` : null,
+          batch.purchaseReferenceNumber ? `Invoice/GRN ${batch.purchaseReferenceNumber}` : null,
+          vendorReturnForm.supplierReference.trim() || null,
+          vendorReturnForm.notes.trim() || null,
+        ].filter(Boolean).join(" • "),
+      });
+      await loadAll();
+      setVendorReturnForm({ medicineId: "", stockBatchId: "", quantity: "", supplierReference: "", reason: "", notes: "" });
+      setSuccess("Vendor return posted and stock reduced.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Vendor return could not be processed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitWriteOff = async () => {
+    if (!auth.accessToken || !auth.tenantId || !writeOffForm.stockBatchId || !writeOffForm.medicineId) {
+      setError("Select a medicine batch before posting a write-off.");
+      return;
+    }
+    const batch = stocks.find((stock) => stock.id === writeOffForm.stockBatchId) ?? null;
+    const quantity = Number(writeOffForm.quantity);
+    if (!batch) {
+      setError("Select a valid batch.");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError("Write-off quantity must be positive.");
+      return;
+    }
+    if (quantity > batch.quantityOnHand) {
+      setError("Insufficient stock available.");
+      return;
+    }
+    if (!writeOffForm.reason.trim()) {
+      setError("Reason is required for write-offs.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await createInventoryTransaction(auth.accessToken, auth.tenantId, {
+        medicineId: batch.medicineId,
+        stockBatchId: batch.id,
+        transactionType: "WRITE_OFF",
+        quantity,
+        reason: writeOffForm.reason.trim(),
+        referenceType: "WRITE_OFF",
+        referenceId: batch.id,
+        notes: [
+          `Batch ${batch.batchNumber || "NA"}`,
+          batch.locationName || null,
+          writeOffForm.notes.trim() || null,
+        ].filter(Boolean).join(" • "),
+      });
+      await loadAll();
+      setWriteOffForm({ medicineId: "", stockBatchId: "", quantity: "", reason: "", notes: "" });
+      setSuccess("Write-off posted and stock reduced.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Write-off could not be processed.");
     } finally {
       setSaving(false);
     }
@@ -832,6 +1163,159 @@ export default function InventoryPage() {
                   </Grid>
                 </AccordionDetails>
               </Accordion>
+              <Accordion expanded={stockActionPanel === "count"} onChange={(_, expanded) => setStockActionPanel(expanded ? "count" : "add")} disableGutters sx={{ "&:before": { display: "none" }, borderRadius: 4, overflow: "hidden" }}>
+                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 2, py: 0.5 }}>
+                  <Stack spacing={0.4}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                      Physical stock count
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Compare system quantity with a counted quantity and post a variance adjustment with audit reason.
+                    </Typography>
+                  </Stack>
+                </AccordionSummary>
+                <AccordionDetails sx={{ px: 2, pb: 2, pt: 0 }}>
+                  <Grid container spacing={1.25}>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="count-medicine-label">Medicine</InputLabel>
+                        <Select
+                          labelId="count-medicine-label"
+                          label="Medicine"
+                          value={stockCountForm.medicineId}
+                          onChange={(e) => setStockCountForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))}
+                        >
+                          <MenuItem value="">Select medicine</MenuItem>
+                          {medicines.map((medicine) => (
+                            <MenuItem key={medicine.id} value={medicine.id}>{medicine.medicineName}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="count-location-label">Location</InputLabel>
+                        <Select
+                          labelId="count-location-label"
+                          label="Location"
+                          value={stockCountForm.locationId}
+                          onChange={(e) => setStockCountForm((current) => ({ ...current, locationId: String(e.target.value), stockBatchId: "" }))}
+                        >
+                          <MenuItem value="">All locations</MenuItem>
+                          {locations.map((location) => (
+                            <MenuItem key={location.id} value={location.id}>{location.locationName}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="count-batch-label">Batch</InputLabel>
+                        <Select
+                          labelId="count-batch-label"
+                          label="Batch"
+                          value={stockCountForm.stockBatchId}
+                          onChange={(e) => setStockCountForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}
+                        >
+                          <MenuItem value="">Select batch</MenuItem>
+                          {countableStocks.map((stock) => (
+                            <MenuItem key={stock.id} value={stock.id}>
+                              {(stock.batchNumber || "No batch")} • {stock.locationName || "Main Pharmacy"} • Qty {stock.quantityOnHand}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField
+                        size="small"
+                        fullWidth
+                        label="System quantity"
+                        value={selectedCountStock ? selectedCountStock.quantityOnHand : ""}
+                        InputProps={{ readOnly: true }}
+                        helperText="Quantity currently recorded in the system."
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField
+                        size="small"
+                        fullWidth
+                        type="number"
+                        label="Counted quantity"
+                        value={stockCountForm.countedQuantity}
+                        onChange={(e) => setStockCountForm((current) => ({ ...current, countedQuantity: e.target.value }))}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField
+                        size="small"
+                        fullWidth
+                        label="Reason"
+                        value={stockCountForm.reason}
+                        onChange={(e) => setStockCountForm((current) => ({ ...current, reason: e.target.value }))}
+                        helperText="Reason is required for audit trail."
+                      />
+                    </Grid>
+                    <Grid size={12}>
+                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                        <Chip
+                          size="small"
+                          label={countVariance === null ? "Variance: -" : `Variance: ${countVariance > 0 ? "+" : ""}${countVariance}`}
+                          color={countVariance === null ? "default" : countVariance === 0 ? "default" : countVariance > 0 ? "success" : "warning"}
+                        />
+                        <Button
+                          variant="contained"
+                          disabled={saving || !selectedCountStock || !stockCountForm.reason.trim() || stockCountForm.countedQuantity.trim() === "" || countVariance === 0}
+                          onClick={async () => {
+                            if (!auth.accessToken || !auth.tenantId || !selectedCountStock) {
+                              setError("Select a batch before posting the stock count.");
+                              return;
+                            }
+                            const counted = Number(stockCountForm.countedQuantity);
+                            if (!Number.isFinite(counted) || counted < 0) {
+                              setError("Enter a valid counted quantity.");
+                              return;
+                            }
+                            const variance = counted - selectedCountStock.quantityOnHand;
+                            if (variance === 0) {
+                              setError("No variance to post for this stock count.");
+                              return;
+                            }
+                            if (!stockCountForm.reason.trim()) {
+                              setError("Reason is required for stock count adjustments.");
+                              return;
+                            }
+                            setSaving(true);
+                            setError(null);
+                            setSuccess(null);
+                            try {
+                              await createInventoryTransaction(auth.accessToken, auth.tenantId, {
+                                medicineId: selectedCountStock.medicineId,
+                                stockBatchId: selectedCountStock.id,
+                                transactionType: variance > 0 ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT",
+                                quantity: Math.abs(variance),
+                                reason: `Physical stock count: ${stockCountForm.reason.trim()}`,
+                                referenceType: "PHYSICAL_STOCK_COUNT",
+                                referenceId: selectedCountStock.id,
+                                notes: `System ${selectedCountStock.quantityOnHand}, counted ${counted}, variance ${variance > 0 ? "+" : ""}${variance}`,
+                              });
+                              await loadAll();
+                              setSuccess(`Physical stock count posted. Variance ${variance > 0 ? "+" : ""}${variance}.`);
+                              setStockCountForm(emptyStockCountForm());
+                            } catch (err) {
+                              setError(err instanceof Error ? err.message : "Failed to post stock count");
+                            } finally {
+                              setSaving(false);
+                            }
+                          }}
+                        >
+                          Post count
+                        </Button>
+                      </Stack>
+                    </Grid>
+                  </Grid>
+                </AccordionDetails>
+              </Accordion>
 
               <Accordion expanded={stockActionPanel === "transfer"} onChange={(_, expanded) => setStockActionPanel(expanded ? "transfer" : "add")} disableGutters sx={{ "&:before": { display: "none" }, borderRadius: 4, overflow: "hidden" }}>
                 <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 2, py: 0.5 }}>
@@ -977,10 +1461,29 @@ export default function InventoryPage() {
                       value={stockSearch}
                       onChange={(e) => setStockSearch(e.target.value)}
                       placeholder="barcode / QR / batch / reference"
+                      InputProps={{
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <IconButton size="small" onClick={() => setStockSearchScannerOpen(true)} aria-label="Scan stock code">
+                              <CameraAltRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </InputAdornment>
+                        ),
+                      }}
                     />
                   </Grid>
                 </Grid>
               </CompactFilterCard>
+              <CodeScannerDialog
+                open={stockSearchScannerOpen}
+                title="Scan stock code"
+                description="Scan a barcode or QR code to fill the stock workspace search field."
+                value={stockSearch}
+                onClose={() => setStockSearchScannerOpen(false)}
+                onDetected={(code) => setStockSearch(code)}
+                manualLabel="Enter stock code"
+                manualPlaceholder="barcode / QR / batch / reference"
+              />
 
               <Card>
                 <CardContent sx={compactCardContentSx}>
@@ -1033,14 +1536,18 @@ export default function InventoryPage() {
                                 </TableCell>
                                 <TableCell>
                                   <Stack spacing={0.3}>
-                                    <Chip size="small" label={expiryBadge(stock.expiryDate).label} color={expiryBadge(stock.expiryDate).color} />
+                                    <Chip size="small" label={expiryState(stock.expiryDate).label} color={expiryState(stock.expiryDate).color} />
                                     <Typography variant="caption" color="text.secondary">{stock.expiryDate || "No expiry date"}</Typography>
                                   </Stack>
                                 </TableCell>
                                 <TableCell align="right">{stock.quantityOnHand}</TableCell>
                                 <TableCell align="right">{stock.lowStockThreshold ?? "-"}</TableCell>
                                 <TableCell>
-                                  <Chip size="small" label={stock.active ? "Active" : "Inactive"} color={stock.active ? statusColor(stock.quantityOnHand, stock.lowStockThreshold) : "default"} />
+                                  <Chip
+                                    size="small"
+                                    label={stock.expiryDate && daysUntil(stock.expiryDate) < 0 ? "EXPIRED" : stock.active ? "Active" : "Inactive"}
+                                    color={stock.expiryDate && daysUntil(stock.expiryDate) < 0 ? "error" : stock.active ? statusColor(stock.quantityOnHand, stock.lowStockThreshold) : "default"}
+                                  />
                                 </TableCell>
                                 <TableCell align="right">
                                   <Button size="small" onClick={() => { editStock(stock); setStockActionPanel("add"); }}>
@@ -1098,7 +1605,7 @@ export default function InventoryPage() {
                                     <Typography variant="body2">{transaction.referenceId || "-"}</Typography>
                                   </Stack>
                                 </TableCell>
-                                <TableCell>{transaction.createdBy || "-"}</TableCell>
+                                <TableCell>{transaction.adjustedByName || transaction.createdBy || "-"}</TableCell>
                                 <TableCell sx={{ maxWidth: 240 }}>{transaction.notes || "-"}</TableCell>
                                 <TableCell>{new Date(transaction.createdAt).toLocaleString()}</TableCell>
                               </TableRow>
@@ -1111,6 +1618,103 @@ export default function InventoryPage() {
                 </CardContent>
               </Card>
             </Stack>
+          </Grid>
+        </Grid>
+      ) : null}
+
+      {tab === "expiry-report" ? (
+        <Grid container spacing={2}>
+          <Grid size={12}>
+            <Card>
+              <CardContent>
+                <Stack spacing={2}>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                    <Box>
+                      <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                        Near expiry / expired report
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Buckets are grouped by expiry date so you can move medicine before it becomes unusable.
+                      </Typography>
+                    </Box>
+                    <Chip size="small" label={`${expiryReportRows.length} batches`} variant="outlined" />
+                  </Box>
+                  <Grid container spacing={1.25}>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="expiry-report-location-label">Location</InputLabel>
+                        <Select
+                          labelId="expiry-report-location-label"
+                          label="Location"
+                          value={selectedLocationId || ""}
+                          onChange={(e) => setSelectedLocationId(String(e.target.value) || null)}
+                        >
+                          <MenuItem value="">All locations</MenuItem>
+                          {locations.map((location) => (
+                            <MenuItem key={location.id} value={location.id}>
+                              {location.locationName}{location.defaultLocation ? " (Default)" : ""}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField
+                        size="small"
+                        fullWidth
+                        label="Search medicine / batch"
+                        value={expiryReportMedicineId}
+                        onChange={(e) => setExpiryReportMedicineId(e.target.value)}
+                        placeholder="medicine name / batch / reference"
+                      />
+                    </Grid>
+                  </Grid>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    <Chip size="small" color="error" label={`Expired ${expiryBucketCounts.Expired || 0}`} />
+                    <Chip size="small" color="warning" label={`0-30 days ${expiryBucketCounts["0-30"] || 0}`} />
+                    <Chip size="small" color="info" label={`31-60 days ${expiryBucketCounts["31-60"] || 0}`} />
+                    <Chip size="small" color="secondary" label={`61-90 days ${expiryBucketCounts["61-90"] || 0}`} />
+                    <Chip size="small" color="success" label={`91+ days ${expiryBucketCounts["91+"] || 0}`} />
+                  </Stack>
+                  {expiryReportRows.length === 0 ? (
+                    <CompactEmptyState title="No expiry report rows found." subtitle="Adjust the medicine or location filter to inspect a different slice of inventory." />
+                  ) : (
+                    <TableContainer sx={{ maxHeight: 420 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Medicine</TableCell>
+                            <TableCell>Batch</TableCell>
+                            <TableCell>Location</TableCell>
+                            <TableCell>Expiry</TableCell>
+                            <TableCell align="right">Qty</TableCell>
+                            <TableCell>Bucket</TableCell>
+                            <TableCell>Status</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {expiryReportRows.map((row) => (
+                            <TableRow key={row.id} sx={{ "& td": { py: 0.8, verticalAlign: "top" } }}>
+                              <TableCell>{row.medicineName}</TableCell>
+                              <TableCell>{row.batchNumber || "-"}</TableCell>
+                              <TableCell>{row.locationName || "Main Pharmacy"}</TableCell>
+                              <TableCell>{row.expiryDate || "-"}</TableCell>
+                              <TableCell align="right">{row.quantityOnHand}</TableCell>
+                              <TableCell>
+                                <Chip size="small" label={row.expiryLabel} color={row.expiryColor} />
+                              </TableCell>
+                              <TableCell>
+                                <Chip size="small" label={row.expiryBucket === "Expired" ? "EXPIRED" : "AVAILABLE"} color={row.expiryBucket === "Expired" ? "error" : "success"} />
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
           </Grid>
         </Grid>
       ) : null}
@@ -1143,7 +1747,7 @@ export default function InventoryPage() {
                             <TableCell>{row.medicineName}</TableCell>
                             <TableCell>{row.batchNumber || "-"}</TableCell>
                             <TableCell>
-                              <Chip size="small" label={expiryBadge(row.expiryDate).label} color={expiryBadge(row.expiryDate).color} />
+                              <Chip size="small" label={expiryState(row.expiryDate).label} color={expiryState(row.expiryDate).color} />
                             </TableCell>
                             <TableCell align="right">{row.quantityOnHand}</TableCell>
                             <TableCell align="right">{row.lowStockThreshold ?? "-"}</TableCell>
@@ -1176,6 +1780,329 @@ export default function InventoryPage() {
             </Card>
           </Grid>
         </Grid>
+      ) : null}
+
+      {tab === "returns" ? (
+        <Stack spacing={2}>
+          <Card>
+            <CardContent>
+              <Stack spacing={1.5}>
+                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
+                  <Box>
+                    <Typography variant="h6" sx={{ fontWeight: 800 }}>Customer Returns</Typography>
+                    <Typography variant="body2" color="text.secondary">Search a completed pharmacy sale, choose the line, and record a reusable or non-sellable return.</Typography>
+                  </Box>
+                  <Chip size="small" label={`${customerReturnHistory.length} return movements`} variant="outlined" />
+                </Box>
+                <Grid container spacing={1.25}>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <TextField size="small" fullWidth label="Search sale / receipt" value={saleSearch} onChange={(e) => setSaleSearch(e.target.value)} />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="customer-return-sale-label">Sale / receipt</InputLabel>
+                      <Select
+                        labelId="customer-return-sale-label"
+                        label="Sale / receipt"
+                        value={customerReturnSaleId}
+                        onChange={(e) => {
+                          const value = String(e.target.value);
+                          setCustomerReturnSaleId(value);
+                          setCustomerReturnLineId("");
+                        }}
+                      >
+                        <MenuItem value="">Select sale</MenuItem>
+                        {filteredCustomerSales.map((sale) => (
+                          <MenuItem key={sale.id} value={sale.id}>
+                            {sale.saleNumber} • {sale.patientName || sale.customerName || "Walk-in"} • Due {sale.dueAmount}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="customer-return-line-label">Medicine line</InputLabel>
+                      <Select
+                        labelId="customer-return-line-label"
+                        label="Medicine line"
+                        value={customerReturnLineId}
+                        onChange={(e) => setCustomerReturnLineId(String(e.target.value))}
+                      >
+                        <MenuItem value="">Select line</MenuItem>
+                        {selectedCustomerSale?.items.map((item) => {
+                          const remaining = item.quantity - item.returnedQuantity;
+                          return (
+                            <MenuItem key={item.id} value={item.id} disabled={remaining <= 0}>
+                              {item.medicineName} • Sold {item.quantity} • Returned {item.returnedQuantity} • Remaining {remaining}
+                            </MenuItem>
+                          );
+                        })}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 3 }}>
+                    <TextField size="small" fullWidth type="number" label="Return quantity" value={customerReturnQuantity} onChange={(e) => setCustomerReturnQuantity(e.target.value)} />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 3 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="customer-return-mode-label">Refund mode</InputLabel>
+                      <Select labelId="customer-return-mode-label" label="Refund mode" value={customerReturnMode} onChange={(e) => setCustomerReturnMode(e.target.value as PaymentMode)}>
+                        <MenuItem value="CASH">CASH</MenuItem>
+                        <MenuItem value="UPI">UPI</MenuItem>
+                        <MenuItem value="CARD">CARD</MenuItem>
+                        <MenuItem value="OTHER">OTHER</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 3 }}>
+                    <TextField size="small" fullWidth label="Reason" value={customerReturnReason} onChange={(e) => setCustomerReturnReason(e.target.value)} />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 3 }}>
+                    <TextField size="small" fullWidth label="Reference number" value={customerReturnReference} onChange={(e) => setCustomerReturnReference(e.target.value)} />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 3 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="customer-return-reusable-label">Condition</InputLabel>
+                      <Select labelId="customer-return-reusable-label" label="Condition" value={customerReturnReusable ? "reusable" : "non_sellable"} onChange={(e) => setCustomerReturnReusable(String(e.target.value) === "reusable")}>
+                        <MenuItem value="reusable">Reusable</MenuItem>
+                        <MenuItem value="non_sellable">Damaged / Expired / Non-sellable</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Alert severity="info" sx={{ height: "100%", alignItems: "center" }}>
+                      {selectedCustomerSale?.paidAmount && selectedCustomerSale.paidAmount > 0
+                        ? "Refund can be processed from Billing / Refunds."
+                        : "No payment recorded. Return will only adjust inventory and history."}
+                    </Alert>
+                  </Grid>
+                </Grid>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                  <Button
+                    variant="contained"
+                    disabled={saving || !selectedCustomerSale || !selectedCustomerReturnItem}
+                    onClick={() => void submitCustomerReturn()}
+                  >
+                    Process Customer Return
+                  </Button>
+                  <Button variant="outlined" onClick={() => {
+                    setCustomerReturnSaleId("");
+                    setCustomerReturnLineId("");
+                    setCustomerReturnQuantity("1");
+                    setCustomerReturnReason("");
+                    setCustomerReturnReference("");
+                    setSaleSearch("");
+                    setCustomerReturnReusable(true);
+                  }}>
+                    Clear
+                  </Button>
+                </Box>
+                {customerReturnHistory.length ? (
+                  <TableContainer sx={{ maxHeight: 260 }}>
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Medicine</TableCell>
+                          <TableCell>Type</TableCell>
+                          <TableCell align="right">Qty</TableCell>
+                          <TableCell>Reference</TableCell>
+                          <TableCell>Reason</TableCell>
+                          <TableCell>Adjusted by</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {customerReturnHistory.slice(0, 8).map((row) => (
+                          <TableRow key={row.id}>
+                            <TableCell>{medicineById.get(row.medicineId)?.medicineName || row.medicineId}</TableCell>
+                            <TableCell>{transactionLabel(row.transactionType)}</TableCell>
+                            <TableCell align="right">{row.quantity}</TableCell>
+                            <TableCell>{row.businessReference || row.referenceType || "-"}</TableCell>
+                            <TableCell>{row.reason || "-"}</TableCell>
+                            <TableCell>{row.adjustedByName || row.createdBy || "-"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                ) : null}
+              </Stack>
+            </CardContent>
+          </Card>
+
+          <Grid container spacing={2}>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <Card>
+                <CardContent>
+                  <Stack spacing={1.5}>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
+                      <Box>
+                        <Typography variant="h6" sx={{ fontWeight: 800 }}>Vendor Returns</Typography>
+                        <Typography variant="body2" color="text.secondary">Return supplied stock back to the vendor and record the movement for audit.</Typography>
+                      </Box>
+                      <Chip size="small" label={`${vendorReturnHistory.length} movements`} variant="outlined" />
+                    </Box>
+                    <Grid container spacing={1.25}>
+                      <Grid size={{ xs: 12, md: 5 }}>
+                        <FormControl fullWidth size="small">
+                          <InputLabel id="vendor-return-medicine-label">Medicine</InputLabel>
+                          <Select
+                            labelId="vendor-return-medicine-label"
+                            label="Medicine"
+                            value={vendorReturnForm.medicineId}
+                            onChange={(e) => setVendorReturnForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))}
+                          >
+                            <MenuItem value="">Select medicine</MenuItem>
+                            {medicines.map((medicine) => <MenuItem key={medicine.id} value={medicine.id}>{medicine.medicineName}</MenuItem>)}
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 7 }}>
+                        <FormControl fullWidth size="small">
+                          <InputLabel id="vendor-return-batch-label">Batch</InputLabel>
+                          <Select
+                            labelId="vendor-return-batch-label"
+                            label="Batch"
+                            value={vendorReturnForm.stockBatchId}
+                            onChange={(e) => setVendorReturnForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}
+                          >
+                            <MenuItem value="">Select batch</MenuItem>
+                            {vendorReturnBatches.map((stock) => (
+                              <MenuItem key={stock.id} value={stock.id}>
+                                {stock.batchNumber || "No batch"} • {stock.locationName || "Main Pharmacy"} • Qty {stock.quantityOnHand}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <TextField size="small" fullWidth type="number" label="Return quantity" value={vendorReturnForm.quantity} onChange={(e) => setVendorReturnForm((current) => ({ ...current, quantity: e.target.value }))} />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 8 }}>
+                        <TextField size="small" fullWidth label="Supplier / invoice reference" value={vendorReturnForm.supplierReference} onChange={(e) => setVendorReturnForm((current) => ({ ...current, supplierReference: e.target.value }))} />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField size="small" fullWidth label="Reason" value={vendorReturnForm.reason} onChange={(e) => setVendorReturnForm((current) => ({ ...current, reason: e.target.value }))} />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField size="small" fullWidth label="Notes" value={vendorReturnForm.notes} onChange={(e) => setVendorReturnForm((current) => ({ ...current, notes: e.target.value }))} />
+                      </Grid>
+                    </Grid>
+                    <Button variant="contained" disabled={saving} onClick={() => void submitVendorReturn()}>Post Vendor Return</Button>
+                    {vendorReturnHistory.length ? (
+                      <TableContainer sx={{ maxHeight: 240 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>Medicine</TableCell>
+                              <TableCell>Qty</TableCell>
+                              <TableCell>Reference</TableCell>
+                              <TableCell>Reason</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {vendorReturnHistory.slice(0, 6).map((row) => (
+                              <TableRow key={row.id}>
+                                <TableCell>{medicineById.get(row.medicineId)?.medicineName || row.medicineId}</TableCell>
+                                <TableCell align="right">{row.quantity}</TableCell>
+                                <TableCell>{row.businessReference || row.referenceType || "-"}</TableCell>
+                                <TableCell>{row.reason || "-"}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    ) : null}
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            <Grid size={{ xs: 12, md: 6 }}>
+              <Card>
+                <CardContent>
+                  <Stack spacing={1.5}>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
+                      <Box>
+                        <Typography variant="h6" sx={{ fontWeight: 800 }}>Write-Offs</Typography>
+                        <Typography variant="body2" color="text.secondary">Remove damaged, lost, or expired stock with a clear audit movement.</Typography>
+                      </Box>
+                      <Chip size="small" label={`${writeOffHistory.length} movements`} variant="outlined" />
+                    </Box>
+                    <Grid container spacing={1.25}>
+                      <Grid size={{ xs: 12, md: 5 }}>
+                        <FormControl fullWidth size="small">
+                          <InputLabel id="writeoff-medicine-label">Medicine</InputLabel>
+                          <Select
+                            labelId="writeoff-medicine-label"
+                            label="Medicine"
+                            value={writeOffForm.medicineId}
+                            onChange={(e) => setWriteOffForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))}
+                          >
+                            <MenuItem value="">Select medicine</MenuItem>
+                            {medicines.map((medicine) => <MenuItem key={medicine.id} value={medicine.id}>{medicine.medicineName}</MenuItem>)}
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 7 }}>
+                        <FormControl fullWidth size="small">
+                          <InputLabel id="writeoff-batch-label">Batch</InputLabel>
+                          <Select
+                            labelId="writeoff-batch-label"
+                            label="Batch"
+                            value={writeOffForm.stockBatchId}
+                            onChange={(e) => setWriteOffForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}
+                          >
+                            <MenuItem value="">Select batch</MenuItem>
+                            {writeOffBatches.map((stock) => (
+                              <MenuItem key={stock.id} value={stock.id}>
+                                {stock.batchNumber || "No batch"} • {stock.locationName || "Main Pharmacy"} • Qty {stock.quantityOnHand}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <TextField size="small" fullWidth type="number" label="Write-off quantity" value={writeOffForm.quantity} onChange={(e) => setWriteOffForm((current) => ({ ...current, quantity: e.target.value }))} />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 8 }}>
+                        <TextField size="small" fullWidth label="Reason" value={writeOffForm.reason} onChange={(e) => setWriteOffForm((current) => ({ ...current, reason: e.target.value }))} />
+                      </Grid>
+                      <Grid size={{ xs: 12 }}>
+                        <TextField size="small" fullWidth label="Notes" value={writeOffForm.notes} onChange={(e) => setWriteOffForm((current) => ({ ...current, notes: e.target.value }))} />
+                      </Grid>
+                    </Grid>
+                    <Button variant="contained" disabled={saving} onClick={() => void submitWriteOff()}>Post Write-Off</Button>
+                    {writeOffHistory.length ? (
+                      <TableContainer sx={{ maxHeight: 240 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>Medicine</TableCell>
+                              <TableCell>Qty</TableCell>
+                              <TableCell>Reference</TableCell>
+                              <TableCell>Reason</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {writeOffHistory.slice(0, 6).map((row) => (
+                              <TableRow key={row.id}>
+                                <TableCell>{medicineById.get(row.medicineId)?.medicineName || row.medicineId}</TableCell>
+                                <TableCell align="right">{row.quantity}</TableCell>
+                                <TableCell>{row.businessReference || row.referenceType || "-"}</TableCell>
+                                <TableCell>{row.reason || "-"}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    ) : null}
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+        </Stack>
       ) : null}
 
       <Dialog open={quickMedicineOpen} onClose={() => setQuickMedicineOpen(false)} fullWidth maxWidth="md">

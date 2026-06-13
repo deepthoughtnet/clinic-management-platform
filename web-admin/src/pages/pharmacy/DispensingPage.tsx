@@ -114,8 +114,8 @@ export default function DispensingPage() {
   const [substitutes, setSubstitutes] = React.useState<Record<string, SubstituteSuggestion[]>>({});
   const [saving, setSaving] = React.useState(false);
 
-  const canDispense = auth.hasPermission("inventory.manage") || auth.hasPermission("billing.create");
-  const canBill = auth.hasPermission("billing.create");
+  const canDispense = auth.hasPermission("inventory.manage");
+  const canBill = auth.hasPermission("inventory.manage");
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -233,6 +233,11 @@ export default function DispensingPage() {
 
   return (
     <Stack spacing={2}>
+      {!canDispense ? (
+        <Alert severity="info">
+          Dispensing is read-only for your role. You can review prescription queue details, but dispensing and bill generation are restricted to inventory-managed pharmacy roles.
+        </Alert>
+      ) : null}
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 900 }}>Dispensing</Typography>

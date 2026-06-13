@@ -16,9 +16,9 @@ class DispensingControllerSecurityTest {
         Method view = DispensingController.class.getMethod("view", UUID.class);
 
         assertThat(queue.getAnnotation(PreAuthorize.class).value())
-                .isEqualTo("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('prescription.read')");
+                .isEqualTo("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('prescription.read')");
         assertThat(view.getAnnotation(PreAuthorize.class).value())
-                .isEqualTo("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('prescription.read')");
+                .isEqualTo("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('prescription.read')");
     }
 
     @Test
@@ -27,8 +27,8 @@ class DispensingControllerSecurityTest {
         Method generateBill = DispensingController.class.getMethod("generateBill", UUID.class);
 
         assertThat(dispense.getAnnotation(PreAuthorize.class).value())
-                .isEqualTo("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('billing.create')");
+                .isEqualTo("@permissionChecker.hasPermission('inventory.manage')");
         assertThat(generateBill.getAnnotation(PreAuthorize.class).value())
-                .isEqualTo("@permissionChecker.hasPermission('billing.create')");
+                .isEqualTo("@permissionChecker.hasPermission('inventory.manage')");
     }
 }

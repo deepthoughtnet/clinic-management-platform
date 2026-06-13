@@ -34,6 +34,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class AppointmentServiceStatusTransitionTest {
+    private static final java.time.ZoneId CLINIC_ZONE = java.time.ZoneId.of("Asia/Kolkata");
     private static final UUID TENANT_ID = UUID.randomUUID();
     private static final UUID PATIENT_ID = UUID.randomUUID();
     private static final UUID DOCTOR_ID = UUID.randomUUID();
@@ -172,7 +173,7 @@ class AppointmentServiceStatusTransitionTest {
 
     private AppointmentEntity appointment(AppointmentStatus status) {
         AppointmentEntity entity = AppointmentEntity.create(TENANT_ID, PATIENT_ID, DOCTOR_ID);
-        entity.update(LocalDate.now(), null, 1, "OPD visit", AppointmentType.SCHEDULED, status, AppointmentPriority.NORMAL);
+        entity.update(LocalDate.now(CLINIC_ZONE), null, 1, "OPD visit", AppointmentType.SCHEDULED, status, AppointmentPriority.NORMAL);
         return entity;
     }
 }

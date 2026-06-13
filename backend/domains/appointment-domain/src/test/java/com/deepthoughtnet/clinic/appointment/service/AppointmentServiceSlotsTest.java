@@ -464,7 +464,7 @@ class AppointmentServiceSlotsTest {
 
     @Test
     void createScheduledRejectsPastDateTime() {
-        LocalDate pastDate = LocalDate.now().minusDays(1);
+        LocalDate pastDate = LocalDate.now(CLINIC_ZONE).minusDays(1);
         assertThatThrownBy(() -> service.createScheduled(
                 TENANT_ID,
                 new AppointmentUpsertCommand(PATIENT_ID, DOCTOR_ID, pastDate, LocalTime.of(10, 0), "New visit", AppointmentType.SCHEDULED, null, AppointmentPriority.NORMAL),

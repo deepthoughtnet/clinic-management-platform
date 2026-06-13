@@ -152,6 +152,99 @@ class InventoryServiceImplStockTest {
         org.mockito.Mockito.verify(auditEventPublisher, org.mockito.Mockito.atLeast(2)).record(any());
     }
 
+    @Test
+    void createStockRejectsNegativeQuantities() {
+        StockUpsertCommand invalid = new StockUpsertCommand(
+                MEDICINE_ID,
+                LOCATION_ID,
+                "890100000001",
+                null,
+                null,
+                "BNEG",
+                null,
+                null,
+                null,
+                "Acme Pharma",
+                5,
+                -1,
+                5,
+                new BigDecimal("10.00"),
+                new BigDecimal("10.00"),
+                new BigDecimal("12.00"),
+                true
+        );
+
+        assertThatThrownBy(() -> service.createStock(TENANT_ID, invalid, ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("quantityOnHand cannot be negative");
+    }
+
+    @Test
+    void createTransactionRejectsAdjustmentThatWouldGoNegative() {
+        StockEntity existing = StockEntity.create(TENANT_ID, MEDICINE_ID, LOCATION_ID);
+        existing.update(LOCATION_ID, "890100000001", null, null, "B002", "REF-2", null, null, "Acme Pharma", 2, 2, 5, new BigDecimal("10.00"), new BigDecimal("10.00"), new BigDecimal("12.00"), true);
+        when(stockRepository.findByTenantIdAndId(TENANT_ID, existing.getId())).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.createTransaction(TENANT_ID, new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand(
+                MEDICINE_ID,
+                existing.getId(),
+                LOCATION_ID,
+                null,
+                com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.ADJUSTMENT_OUT,
+                5,
+                "Physical count variance",
+                "PHYSICAL_STOCK_COUNT",
+                existing.getId(),
+                ACTOR_ID,
+                "Counted lower than system"
+        ), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Insufficient stock available.");
+    }
+
+    @Test
+    void createTransactionSupportsVendorReturnAndWriteOffMovements() {
+        StockEntity existing = StockEntity.create(TENANT_ID, MEDICINE_ID, LOCATION_ID);
+        existing.update(LOCATION_ID, "890100000001", null, null, "B003", "REF-3", null, null, "Acme Pharma", 20, 20, 5, new BigDecimal("10.00"), new BigDecimal("10.00"), new BigDecimal("12.00"), true);
+        when(stockRepository.findByTenantIdAndId(TENANT_ID, existing.getId())).thenReturn(Optional.of(existing));
+
+        service.createTransaction(TENANT_ID, new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand(
+                MEDICINE_ID,
+                existing.getId(),
+                LOCATION_ID,
+                null,
+                com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.VENDOR_RETURN_OUT,
+                5,
+                "Vendor return",
+                "VENDOR_RETURN",
+                existing.getId(),
+                ACTOR_ID,
+                "Wrong supply"
+        ), ACTOR_ID);
+
+        service.createTransaction(TENANT_ID, new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand(
+                MEDICINE_ID,
+                existing.getId(),
+                LOCATION_ID,
+                null,
+                com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.WRITE_OFF,
+                3,
+                "Write-off",
+                "WRITE_OFF",
+                existing.getId(),
+                ACTOR_ID,
+                "Expired stock"
+        ), ACTOR_ID);
+
+        assertThat(savedTransactions).hasSize(2);
+        assertThat(savedTransactions.get(0).getTransactionType()).isEqualTo("VENDOR_RETURN_OUT");
+        assertThat(savedTransactions.get(0).getBeforeQuantity()).isEqualTo(20);
+        assertThat(savedTransactions.get(0).getAfterQuantity()).isEqualTo(15);
+        assertThat(savedTransactions.get(1).getTransactionType()).isEqualTo("WRITE_OFF");
+        assertThat(savedTransactions.get(1).getBeforeQuantity()).isEqualTo(15);
+        assertThat(savedTransactions.get(1).getAfterQuantity()).isEqualTo(12);
+    }
+
     private StockUpsertCommand stockCommand(String batchNumber, String barcode) {
         return new StockUpsertCommand(
                 MEDICINE_ID,

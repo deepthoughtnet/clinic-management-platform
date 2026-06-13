@@ -215,14 +215,19 @@ public class InventoryServiceImpl implements InventoryService {
         Integer beforeQuantity = null;
         Integer afterQuantity = null;
         if (stock != null) {
+            InventoryTransactionType normalizedType = normalizeTransactionType(command.transactionType());
+            if (isExpired(stock) && (normalizedType == InventoryTransactionType.SALE || normalizedType == InventoryTransactionType.DISPENSED)) {
+                throw new IllegalArgumentException("Batch expired and cannot be sold or dispensed.");
+            }
             int current = stock.getQuantityOnHand();
-            int nextQuantity = switch (normalizeTransactionType(command.transactionType())) {
-                case DISPENSED, ADJUSTMENT_OUT, EXPIRED, SALE -> current - delta;
+            int nextQuantity = switch (normalizedType) {
+                case DISPENSED, ADJUSTMENT_OUT, EXPIRED, SALE, VENDOR_RETURN_OUT, WRITE_OFF -> current - delta;
+                case CUSTOMER_RETURN_NON_SELLABLE -> current;
                 case ADJUSTMENT -> current + delta;
                 default -> current + delta;
             };
             if (nextQuantity < 0) {
-                throw new IllegalArgumentException("quantityAvailable cannot go negative");
+                throw new IllegalArgumentException("Insufficient stock available.");
             }
             beforeQuantity = current;
             afterQuantity = nextQuantity;
@@ -274,7 +279,7 @@ public class InventoryServiceImpl implements InventoryService {
             throw new IllegalArgumentException("quantity must be positive");
         }
         if (source.getQuantityOnHand() < quantity) {
-            throw new IllegalArgumentException("quantityAvailable cannot go negative");
+            throw new IllegalArgumentException("Insufficient stock available.");
         }
         MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, command.medicineId())
                 .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
@@ -343,16 +348,17 @@ public class InventoryServiceImpl implements InventoryService {
     @Transactional(readOnly = true)
     public List<StockRecord> listExpiredStocks(UUID tenantId) {
         return listStocks(tenantId).stream()
-                .filter(stock -> stock.expiryDate() != null && stock.expiryDate().isBefore(LocalDate.now().plusDays(1)))
+                .filter(stock -> stock.expiryDate() != null && stock.expiryDate().isBefore(today()))
                 .toList();
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<StockRecord> listExpiringStocks(UUID tenantId, int days) {
-        LocalDate end = LocalDate.now().plusDays(Math.max(days, 1));
+        LocalDate current = today();
+        LocalDate end = current.plusDays(Math.max(days, 1));
         return listStocks(tenantId).stream()
-                .filter(stock -> stock.expiryDate() != null && !stock.expiryDate().isBefore(LocalDate.now()) && !stock.expiryDate().isAfter(end))
+                .filter(stock -> stock.expiryDate() != null && !stock.expiryDate().isBefore(current) && !stock.expiryDate().isAfter(end))
                 .toList();
     }
 
@@ -444,7 +450,9 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     private void applyStock(StockEntity entity, StockUpsertCommand command) {
-        entity.update(resolveLocationId(entity.getTenantId(), command.locationId()), normalizeNullable(command.barcode()), normalizeNullable(command.qrCode()), normalizeNullable(command.externalCode()), normalizeNullable(command.batchNumber()), normalizeNullable(command.purchaseReferenceNumber()), command.expiryDate(), command.purchaseDate(), normalizeNullable(command.supplierName()), command.quantityReceived() == null ? Math.max(0, command.quantityOnHand()) : Math.max(0, command.quantityReceived()), Math.max(0, command.quantityOnHand()), command.lowStockThreshold(), normalizeMoney(command.unitCost()), normalizeMoney(command.purchasePrice()), normalizeMoney(command.sellingPrice()), command.active());
+        int quantityOnHand = command.quantityOnHand();
+        int quantityReceived = command.quantityReceived() == null ? quantityOnHand : command.quantityReceived();
+        entity.update(resolveLocationId(entity.getTenantId(), command.locationId()), normalizeNullable(command.barcode()), normalizeNullable(command.qrCode()), normalizeNullable(command.externalCode()), normalizeNullable(command.batchNumber()), normalizeNullable(command.purchaseReferenceNumber()), command.expiryDate(), command.purchaseDate(), normalizeNullable(command.supplierName()), quantityReceived, quantityOnHand, command.lowStockThreshold(), normalizeMoney(command.unitCost()), normalizeMoney(command.purchasePrice()), normalizeMoney(command.sellingPrice()), command.active());
     }
 
     private void recordStockQuantityAudit(
@@ -514,6 +522,8 @@ public class InventoryServiceImpl implements InventoryService {
         if (command == null) throw new IllegalArgumentException("command is required");
         requireId(command.medicineId(), "medicineId");
         if (medicineRepository.findByTenantIdAndId(tenantId, command.medicineId()).isEmpty()) throw new IllegalArgumentException("Medicine not found");
+        if (command.quantityOnHand() < 0) throw new IllegalArgumentException("quantityOnHand cannot be negative");
+        if (command.quantityReceived() != null && command.quantityReceived() < 0) throw new IllegalArgumentException("quantityReceived cannot be negative");
     }
 
     private void ensureUniqueStockBatch(UUID tenantId, UUID medicineId, UUID locationId, String batchNumber, UUID id) {
@@ -533,10 +543,27 @@ public class InventoryServiceImpl implements InventoryService {
         requireId(command.medicineId(), "medicineId");
         if (command.transactionType() == null) throw new IllegalArgumentException("transactionType is required");
         if (command.quantity() <= 0) throw new IllegalArgumentException("quantity must be positive");
-        if ((command.transactionType() == InventoryTransactionType.ADJUSTMENT_IN || command.transactionType() == InventoryTransactionType.ADJUSTMENT_OUT || command.transactionType() == InventoryTransactionType.ADJUSTMENT) && !StringUtils.hasText(command.reason())) {
-            throw new IllegalArgumentException("reason is required for adjustment");
+        if (requiresReason(command.transactionType()) && !StringUtils.hasText(command.reason())) {
+            throw new IllegalArgumentException("reason is required");
+        }
+        if (requiresBatch(command.transactionType()) && command.stockBatchId() == null) {
+            throw new IllegalArgumentException("stockBatchId is required");
         }
         if (medicineRepository.findByTenantIdAndId(tenantId, command.medicineId()).isEmpty()) throw new IllegalArgumentException("Medicine not found");
+    }
+
+    private boolean requiresReason(InventoryTransactionType type) {
+        return switch (type) {
+            case ADJUSTMENT_IN, ADJUSTMENT_OUT, ADJUSTMENT, RETURN, CUSTOMER_RETURN_IN, CUSTOMER_RETURN_NON_SELLABLE, VENDOR_RETURN_OUT, WRITE_OFF, EXPIRED, DISPENSED, SALE -> true;
+            default -> false;
+        };
+    }
+
+    private boolean requiresBatch(InventoryTransactionType type) {
+        return switch (type) {
+            case CUSTOMER_RETURN_IN, CUSTOMER_RETURN_NON_SELLABLE, VENDOR_RETURN_OUT, WRITE_OFF, DISPENSED, SALE, RETURN, EXPIRED, ADJUSTMENT_IN, ADJUSTMENT_OUT, ADJUSTMENT -> true;
+            default -> false;
+        };
     }
 
     private void ensureUniqueMedicine(UUID tenantId, MedicineUpsertCommand command, UUID id) {
@@ -556,6 +583,7 @@ public class InventoryServiceImpl implements InventoryService {
     private String normalizeType(String value) { return normalize(value).toUpperCase(Locale.ROOT); }
     private BigDecimal normalizeMoney(BigDecimal value) { return value == null ? null : value.setScale(2, RoundingMode.HALF_UP); }
     private int effectiveThreshold(StockEntity stock) { return stock.getLowStockThreshold() == null ? 5 : Math.max(0, stock.getLowStockThreshold()); }
+    private LocalDate today() { return LocalDate.now(); }
 
     private UUID resolveLocationId(UUID tenantId, UUID requestedLocationId) {
         if (requestedLocationId != null) {
@@ -605,4 +633,5 @@ public class InventoryServiceImpl implements InventoryService {
 
     private void requireTenant(UUID tenantId) { if (tenantId == null) throw new IllegalArgumentException("tenantId is required"); }
     private void requireId(UUID id, String field) { if (id == null) throw new IllegalArgumentException(field + " is required"); }
+    private boolean isExpired(StockEntity stock) { return stock != null && stock.getExpiryDate() != null && stock.getExpiryDate().isBefore(today()); }
 }

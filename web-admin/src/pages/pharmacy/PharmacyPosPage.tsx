@@ -45,6 +45,7 @@ import PreviewRoundedIcon from "@mui/icons-material/PreviewRounded";
 import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
 import ShoppingCartCheckoutRoundedIcon from "@mui/icons-material/ShoppingCartCheckoutRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
+import CodeScannerDialog from "../../components/pharmacy/CodeScannerDialog";
 import {
   addPharmacyPosPayment,
   closePharmacyPosShift,
@@ -232,13 +233,40 @@ function mapPosError(raw: unknown, fallback: string) {
     return "Payment requires an open cashier shift.";
   }
   if (normalized.includes("insufficient stock")) {
-    return "Insufficient stock for selected medicine.";
+    return "Inventory changed while preparing the sale. Please review the cart.";
   }
   if (normalized.includes("payment amount cannot exceed due")) {
     return "Payment amount cannot exceed the remaining due.";
   }
+  if (normalized.includes("paid amount cannot exceed sale total")) {
+    return "Paid amount cannot exceed sale total.";
+  }
+  if (normalized.includes("full payment is required")) {
+    return "Full payment is required before completing the pharmacy sale.";
+  }
+  if (normalized.includes("paymentmode is required")) {
+    return "Payment mode is required.";
+  }
+  if (normalized.includes("paidamount is required")) {
+    return "Payment amount is required.";
+  }
+  if (normalized.includes("paid amount cannot be negative")) {
+    return "Payment amount cannot be negative.";
+  }
+  if (normalized.includes("paymentreference is required")) {
+    return "Payment reference is required for non-cash payments.";
+  }
+  if (normalized.includes("at least one sale item is required")) {
+    return "Add at least one medicine to the cart.";
+  }
+  if (normalized.includes("quantity must be positive")) {
+    return "Cart item quantity must be positive.";
+  }
   if (normalized.includes("return quantity exceeds")) {
     return "Return quantity exceeds the remaining sold quantity.";
+  }
+  if (normalized.includes("batch expired and cannot be sold or dispensed")) {
+    return "Batch expired and cannot be sold or dispensed.";
   }
   return fallback;
 }
@@ -274,10 +302,6 @@ export default function PharmacyPosPage() {
   const cameraVideoRef = React.useRef<HTMLVideoElement | null>(null);
   const cameraCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
-  const codeScannerVideoRef = React.useRef<HTMLVideoElement | null>(null);
-  const codeScannerControlsRef = React.useRef<{ stop: () => void } | null>(null);
-  const codeScannerReaderRef = React.useRef<{ reset?: () => void } | null>(null);
-  const codeScanHandledRef = React.useRef(false);
   const actionLockRef = React.useRef<string | null>(null);
 
   const [loading, setLoading] = React.useState(true);
@@ -293,8 +317,6 @@ export default function PharmacyPosPage() {
   const [capturedImageBlob, setCapturedImageBlob] = React.useState<Blob | null>(null);
   const [codeScanDialogOpen, setCodeScanDialogOpen] = React.useState(false);
   const [codeScanMode, setCodeScanMode] = React.useState<CodeScanMode>("BARCODE");
-  const [codeScanError, setCodeScanError] = React.useState<string | null>(null);
-  const [codeScanStatus, setCodeScanStatus] = React.useState<string>("Align the code inside the frame.");
 
   const [medicineQuery, setMedicineQuery] = React.useState("");
   const [medicineResults, setMedicineResults] = React.useState<PharmacyPosMedicine[]>([]);
@@ -343,6 +365,8 @@ export default function PharmacyPosPage() {
   const [shiftHistoryDrawerOpen, setShiftHistoryDrawerOpen] = React.useState(false);
   const [customerSectionOpen, setCustomerSectionOpen] = React.useState(true);
   const [prescriptionSectionOpen, setPrescriptionSectionOpen] = React.useState(false);
+  const [saleConfirmOpen, setSaleConfirmOpen] = React.useState(false);
+  const [clearCartConfirmOpen, setClearCartConfirmOpen] = React.useState(false);
   const [previewDialogOpen, setPreviewDialogOpen] = React.useState(false);
   const [previewDocumentName, setPreviewDocumentName] = React.useState<string | null>(null);
   const [previewDocumentUrl, setPreviewDocumentUrl] = React.useState<string | null>(null);
@@ -378,7 +402,7 @@ export default function PharmacyPosPage() {
   const reusableSelectedCount = React.useMemo(() =>
     selectedReturnRows.filter((entry) => entry.draft.reusable).length, [selectedReturnRows]);
   const discardSelectedCount = selectedReturnRows.length - reusableSelectedCount;
-  const collectingPaymentWithoutShift = numeric(paidAmount) > 0 && !currentShift;
+  const collectingPaymentWithoutShift = total > 0 && numeric(paidAmount) > 0 && !currentShift;
   const paymentTopupBlocked = !currentShift;
   const closeVariancePreview = React.useMemo(() => {
     const actualTotal = numeric(actualCashAmount) + numeric(actualUpiAmount) + numeric(actualCardAmount) + numeric(actualOtherAmount);
@@ -392,6 +416,56 @@ export default function PharmacyPosPage() {
     if (!name && !mobile) return "No customer selected";
     return `${name || "Walk-in"}${mobile ? ` • ${mobile}` : ""}`;
   }, [customerMobile, customerName, selectedPatient]);
+  const saleValidationMessage = React.useMemo(() => {
+    if (!cart.length) {
+      return "Add at least one medicine to the cart.";
+    }
+    if (!selectedPatient && !customerName.trim()) {
+      return "Choose a patient or enter a walk-in customer name.";
+    }
+    if (cartHasStockIssue) {
+      return "Inventory changed while preparing the sale. Please review the cart.";
+    }
+    if (!paymentMode) {
+      return "Payment mode is required.";
+    }
+    if (total > 0) {
+      if (!paidAmount.trim()) {
+        return "Full payment is required before completing the pharmacy sale.";
+      }
+      const amount = numeric(paidAmount);
+      if (amount < 0) {
+        return "Payment amount cannot be negative.";
+      }
+      if (amount <= 0 || amount < total) {
+        return "Full payment is required before completing the pharmacy sale.";
+      }
+      if (amount > total) {
+        return "Paid amount cannot exceed sale total.";
+      }
+      if (paymentMode !== "CASH" && !paymentReference.trim()) {
+        return "Payment reference is required for non-cash payments.";
+      }
+      if (!currentShift) {
+        return "Payment requires an open cashier shift.";
+      }
+    } else {
+      const amount = numeric(paidAmount);
+      if (amount < 0) {
+        return "Payment amount cannot be negative.";
+      }
+      if (amount > 0) {
+        return "Paid amount cannot exceed sale total.";
+      }
+    }
+    return null;
+  }, [cart.length, cartHasStockIssue, currentShift, customerName, paidAmount, paymentMode, paymentReference, selectedPatient, total]);
+  const saleSummary = React.useMemo(() => ({
+    itemCount: cart.length,
+    totalAmount: money(total),
+    paymentMode,
+    amountReceived: money(Math.max(0, numeric(paidAmount))),
+  }), [cart.length, paidAmount, paymentMode, total]);
 
   const beginAction = React.useCallback((name: string) => {
     if (actionLockRef.current) return false;
@@ -408,6 +482,8 @@ export default function PharmacyPosPage() {
   }, []);
 
   const clearDraft = React.useCallback(() => {
+    setSaleConfirmOpen(false);
+    setClearCartConfirmOpen(false);
     setCart([]);
     setSelectedCartMedicineId(null);
     setCustomerName("");
@@ -429,10 +505,7 @@ export default function PharmacyPosPage() {
       clearDraft();
       return;
     }
-    if (!window.confirm("Clear the current POS cart, customer details, and attached prescription?")) {
-      return;
-    }
-    clearDraft();
+    setClearCartConfirmOpen(true);
   }, [cart.length, clearDraft, customerMobile, customerName, paidAmount, prescription]);
 
   const refreshSales = React.useCallback(async () => {
@@ -479,17 +552,6 @@ export default function PharmacyPosPage() {
     }
     if (cameraVideoRef.current) {
       cameraVideoRef.current.srcObject = null;
-    }
-  }, []);
-
-  const stopCodeScanner = React.useCallback(() => {
-    codeScanHandledRef.current = false;
-    codeScannerControlsRef.current?.stop();
-    codeScannerControlsRef.current = null;
-    codeScannerReaderRef.current?.reset?.();
-    codeScannerReaderRef.current = null;
-    if (codeScannerVideoRef.current) {
-      codeScannerVideoRef.current.srcObject = null;
     }
   }, []);
 
@@ -555,8 +617,7 @@ export default function PharmacyPosPage() {
       }
       return null;
     });
-    stopCodeScanner();
-  }, [stopCameraStream, stopCodeScanner]);
+  }, [stopCameraStream]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -650,6 +711,11 @@ export default function PharmacyPosPage() {
   }, [selectedSale]);
 
   const addMedicine = React.useCallback(async (medicine: PharmacyPosMedicine) => {
+    if (medicine.totalAvailableQuantity <= 0) {
+      setError("No inventory available for this medicine.");
+      window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      return false;
+    }
     setCart((current) => {
       const existing = current.find((line) => line.medicineId === medicine.medicineId);
       if (existing) {
@@ -676,7 +742,7 @@ export default function PharmacyPosPage() {
     setSelectedCartMedicineId(medicine.medicineId);
     setMedicineQuery("");
     window.setTimeout(() => searchInputRef.current?.focus(), 0);
-    if (batchPreview[medicine.medicineId] || !token || !tenantId) return;
+    if (batchPreview[medicine.medicineId] || !token || !tenantId) return true;
     try {
       const rows = await getPharmacyPosAvailableBatches(token, tenantId, medicine.medicineId);
       setBatchPreview((current) => ({ ...current, [medicine.medicineId]: rows }));
@@ -684,6 +750,7 @@ export default function PharmacyPosPage() {
       setError("Available stock batches could not be loaded.");
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
     }
+    return true;
   }, [batchPreview, tenantId, token]);
 
   const handleScannedCode = React.useCallback(async (rawValue: string, mode: CodeScanMode) => {
@@ -692,29 +759,25 @@ export default function PharmacyPosPage() {
     }
     const value = rawValue.trim();
     if (!value) {
-      setCodeScanError(`No ${scanModeLabel(mode)} content was detected. Try again.`);
+      setError("No code was detected. Try again or enter the code manually.");
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
       return;
     }
     setMedicineQuery(value);
-    setCodeScanStatus(`Detected ${scanModeLabel(mode)}: ${value}`);
     try {
       const rows = await searchPharmacyPosMedicines(token, tenantId, value);
       setMedicineResults(rows);
       if (!rows.length) {
         setError("No medicine found for this code. If stock exists, only expired stock may be available.");
-        window.setTimeout(() => searchInputRef.current?.focus(), 0);
-        return;
+      } else {
+        setSuccess(`${scanModeLabel(mode)} scan filled search with ${value}.`);
       }
-      await addMedicine(rows[0]);
-      setSuccess(`${scanModeLabel(mode) === "QR" ? "QR" : "Barcode"} scan added ${rows[0].medicineName} using FEFO-eligible stock.`);
-      setCodeScanDialogOpen(false);
-      setCodeScanError(null);
+      window.setTimeout(() => searchInputRef.current?.focus(), 0);
     } catch {
       setError("Medicine lookup failed after scanning. Please retry or use the search box.");
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
     }
-  }, [addMedicine, tenantId, token]);
+  }, [tenantId, token]);
 
   const updateCartLine = React.useCallback((medicineId: string, patch: Partial<CartLine>) => {
     setSelectedCartMedicineId(medicineId);
@@ -822,33 +885,9 @@ export default function PharmacyPosPage() {
     setSuccess("Cart held. Use Hold Cart again on an empty cart to restore it.");
   }, [cart, clearDraft, customerMobile, customerName, heldDraft, notes, paidAmount, paymentMode, paymentReference, prescription, selectedPatient, tenantId]);
 
-  const submitSale = React.useCallback(async () => {
+  const executeSale = React.useCallback(async () => {
     if (!token || !tenantId) return;
     if (!beginAction("sale")) return;
-    if (!cart.length) {
-      setError("Add at least one medicine to the cart.");
-      endAction();
-      return;
-    }
-    if (cartHasStockIssue) {
-      setError("Reduce cart quantity for items showing a stock warning before completing the sale.");
-      endAction();
-      return;
-    }
-    if (numeric(paidAmount) > 0 && !currentShift) {
-      setError("Payment requires an open cashier shift.");
-      endAction();
-      return;
-    }
-    if (!selectedPatient && !customerName.trim()) {
-      setError("Choose a patient or enter a walk-in customer name.");
-      endAction();
-      return;
-    }
-    if (!window.confirm("Confirm stock deduction and create this pharmacy sale using FEFO allocation?")) {
-      endAction();
-      return;
-    }
     try {
       const sale = await createPharmacyPosSale(token, tenantId, {
         patientId: selectedPatient?.id ?? null,
@@ -856,7 +895,7 @@ export default function PharmacyPosPage() {
         customerMobile: customerMobile.trim() || null,
         prescriptionDocumentId: prescription?.documentId ?? null,
         paidAmount: numeric(paidAmount),
-        paymentMode: numeric(paidAmount) > 0 ? paymentMode : null,
+        paymentMode,
         paymentReference: paymentReference.trim() || null,
         notes: notes.trim() || null,
         items: cart.map((line) => ({
@@ -882,7 +921,15 @@ export default function PharmacyPosPage() {
       endAction();
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
     }
-  }, [beginAction, cart, cartHasStockIssue, clearDraft, currentShift, customerMobile, customerName, endAction, notes, paidAmount, paymentMode, paymentReference, prescription, refreshMedicineResults, refreshSales, refreshShifts, selectSale, selectedPatient, tenantId, token]);
+  }, [beginAction, cart, clearDraft, customerMobile, customerName, endAction, notes, paidAmount, paymentMode, paymentReference, prescription, refreshMedicineResults, refreshSales, refreshShifts, selectSale, selectedPatient, tenantId, token]);
+
+  const requestSaleConfirmation = React.useCallback(() => {
+    if (saleValidationMessage) {
+      setError(saleValidationMessage);
+      return;
+    }
+    setSaleConfirmOpen(true);
+  }, [saleValidationMessage]);
 
   const printReceipt = React.useCallback(async (saleId: string) => {
     if (!token || !tenantId) return;
@@ -985,61 +1032,6 @@ export default function PharmacyPosPage() {
     resetCapturedImage();
   }, [capturedImageBlob, resetCapturedImage, uploadPrescription]);
 
-  const startCodeScanner = React.useCallback(async () => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setCodeScanError("No camera available on this device. Use the search box or a hardware scanner instead.");
-      return;
-    }
-    const videoElement = codeScannerVideoRef.current;
-    if (!videoElement) {
-      setCodeScanError("Scanner preview is not ready yet.");
-      return;
-    }
-    try {
-      stopCodeScanner();
-      codeScanHandledRef.current = false;
-      setCodeScanError(null);
-      setCodeScanStatus(
-        codeScanMode === "QR"
-          ? "Point the camera at the medicine QR code."
-          : "Point the camera at the medicine barcode.",
-      );
-      const zxing = await import("@zxing/browser");
-      const reader = codeScanMode === "QR"
-        ? new zxing.BrowserQRCodeReader()
-        : new zxing.BrowserMultiFormatReader();
-      codeScannerReaderRef.current = reader as { reset?: () => void };
-      const controls = await reader.decodeFromVideoDevice(undefined, videoElement, (result, error, activeControls) => {
-        if (result && !codeScanHandledRef.current) {
-          codeScanHandledRef.current = true;
-          codeScannerControlsRef.current = activeControls;
-          activeControls.stop();
-          void handleScannedCode(result.getText(), codeScanMode);
-          return;
-        }
-        if (!error) {
-          return;
-        }
-        const errorName = error instanceof Error ? error.name : "";
-        if (errorName === "NotFoundException" || errorName === "ChecksumException" || errorName === "FormatException") {
-          return;
-        }
-        setCodeScanError("Scanner could not read this code. Retake and try again.");
-      });
-      codeScannerControlsRef.current = controls;
-    } catch (err) {
-      if (err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "SecurityError")) {
-        setCodeScanError("Camera access denied. Use the search box or hardware scanner instead.");
-        return;
-      }
-      if (err instanceof DOMException && (err.name === "NotFoundError" || err.name === "OverconstrainedError" || err.name === "DevicesNotFoundError")) {
-        setCodeScanError("No camera available on this device. Use the search box or a hardware scanner instead.");
-        return;
-      }
-      setCodeScanError("Unable to start the scanner. Use the search box or hardware scanner instead.");
-    }
-  }, [codeScanMode, handleScannedCode, stopCodeScanner]);
-
   const openCodeScanner = React.useCallback((mode: CodeScanMode) => {
     setCodeScanMode(mode);
     setCodeScanDialogOpen(true);
@@ -1047,28 +1039,8 @@ export default function PharmacyPosPage() {
 
   const closeCodeScanner = React.useCallback(() => {
     setCodeScanDialogOpen(false);
-    setCodeScanError(null);
-    setCodeScanStatus("Align the code inside the frame.");
-    stopCodeScanner();
     window.setTimeout(() => searchInputRef.current?.focus(), 0);
-  }, [stopCodeScanner]);
-
-  const restartCodeScanner = React.useCallback(() => {
-    codeScanHandledRef.current = false;
-    setCodeScanError(null);
-    void startCodeScanner();
-  }, [startCodeScanner]);
-
-  React.useEffect(() => {
-    if (!codeScanDialogOpen) {
-      stopCodeScanner();
-      return;
-    }
-    void startCodeScanner();
-    return () => {
-      stopCodeScanner();
-    };
-  }, [codeScanDialogOpen, codeScanMode, startCodeScanner, stopCodeScanner]);
+  }, []);
 
   React.useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -1112,8 +1084,8 @@ export default function PharmacyPosPage() {
 
       if (event.key === "F4") {
         event.preventDefault();
-        if (!submitting && cart.length && !cartHasStockIssue) {
-          void submitSale();
+        if (!submitting) {
+          requestSaleConfirmation();
         }
         return;
       }
@@ -1160,7 +1132,7 @@ export default function PharmacyPosPage() {
     scanDialogOpen,
     selectedCartMedicineId,
     stopCameraStream,
-    submitSale,
+    requestSaleConfirmation,
     submitting,
   ]);
 
@@ -1232,7 +1204,7 @@ export default function PharmacyPosPage() {
       setReturnDrawerOpen(false);
       const newReturns = sale.returns.filter((item) => !existingReturnIds.has(item.id));
       const returnNumbers = Array.from(new Set(newReturns.map((item) => item.returnNumber))).join(", ");
-      setSuccess(`Return ${returnNumbers || "processed"} for sale ${sale.saleNumber}. Refund recorded ${money(newReturns.reduce((sum, item) => sum + item.refundAmount, 0))}. Reusable items were restocked with RETURN audit movements.`);
+      setSuccess(`Return ${returnNumbers || "processed"} for sale ${sale.saleNumber}. Refund can be processed from Billing / Refunds. Reusable items were restocked with customer return audit movements.`);
       setError(null);
     } catch (err) {
       setError(mapPosError(err, "Return could not be processed."));
@@ -1390,6 +1362,7 @@ export default function PharmacyPosPage() {
           Sale {lastCompletedSale.saleNumber} completed successfully.
         </Alert>
       ) : null}
+      {saleValidationMessage && cart.length ? <Alert severity="warning">{saleValidationMessage}</Alert> : null}
       {cartHasStockIssue ? <Alert severity="warning">Some cart quantities exceed available stock. Adjust the highlighted rows before completing the sale.</Alert> : null}
       {collectingPaymentWithoutShift ? <Alert severity="warning">Open cashier shift before collecting payment. Unpaid sale checkout remains available.</Alert> : null}
 
@@ -1417,12 +1390,19 @@ export default function PharmacyPosPage() {
                     <TableBody>
                       {medicineResults.map((medicine) => {
                         const resultExpiryWarning = expiryWarning(medicine.earliestExpiryDate);
+                        const outOfStock = medicine.totalAvailableQuantity <= 0;
                         return (
                           <TableRow
                             key={medicine.medicineId}
                             hover
-                            sx={{ cursor: "pointer" }}
-                            onClick={() => void addMedicine(medicine)}
+                            sx={{ cursor: outOfStock ? "default" : "pointer", opacity: outOfStock ? 0.7 : 1 }}
+                            onClick={() => {
+                              if (outOfStock) {
+                                setError("No inventory available for this medicine.");
+                                return;
+                              }
+                              void addMedicine(medicine);
+                            }}
                           >
                             <TableCell>
                               <Typography variant="body2" fontWeight={600}>{medicine.medicineName}</Typography>
@@ -1440,13 +1420,31 @@ export default function PharmacyPosPage() {
                                 {medicine.barcode || medicine.qrCode || medicine.externalCode || "Direct search"}
                               </Typography>
                             </TableCell>
-                            <TableCell>{medicine.totalAvailableQuantity}</TableCell>
+                            <TableCell>
+                              <Stack spacing={0.5} alignItems="flex-start">
+                                <Typography variant="body2">{medicine.totalAvailableQuantity}</Typography>
+                                {outOfStock ? <Chip size="small" color="error" variant="outlined" label="OUT OF STOCK" /> : null}
+                              </Stack>
+                            </TableCell>
                             <TableCell>{medicine.earliestExpiryDate ?? "NA"}</TableCell>
                             <TableCell>{money(medicine.defaultUnitPrice ?? 0)}</TableCell>
                             <TableCell align="right">
-                              <Button size="small" variant="text" onClick={(event) => { event.stopPropagation(); void addMedicine(medicine); }}>
-                                Add
-                              </Button>
+                              <Tooltip title={outOfStock ? "No inventory available" : "Add to cart"}>
+                                <span>
+                                  <Button
+                                    size="small"
+                                    variant="text"
+                                    disabled={outOfStock}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (outOfStock) return;
+                                      void addMedicine(medicine);
+                                    }}
+                                  >
+                                    Add
+                                  </Button>
+                                </span>
+                              </Tooltip>
                             </TableCell>
                           </TableRow>
                         );
@@ -1598,8 +1596,8 @@ export default function PharmacyPosPage() {
                   variant="contained"
                   size="large"
                   startIcon={<ShoppingCartCheckoutRoundedIcon />}
-                  disabled={submitting || !cart.length || cartHasStockIssue || collectingPaymentWithoutShift}
-                  onClick={() => void submitSale()}
+                  disabled={submitting || Boolean(saleValidationMessage)}
+                  onClick={requestSaleConfirmation}
                 >
                   {activeAction === "sale" ? "Completing Sale..." : "Complete Sale"}
                 </Button>
@@ -1886,7 +1884,7 @@ export default function PharmacyPosPage() {
       <Drawer anchor="right" open={returnDrawerOpen} onClose={() => setReturnDrawerOpen(false)}>
         <Box sx={{ width: { xs: 360, md: 520 }, p: 2 }}>
           <Stack spacing={1.25}>
-            <Typography variant="h6">Process Return / Refund</Typography>
+            <Typography variant="h6">Process Customer Return</Typography>
             {selectedSale ? (
               <>
                 <Typography variant="body2" fontWeight={600}>{selectedSale.saleNumber} • {saleDisplayName(selectedSale)}</Typography>
@@ -1964,7 +1962,7 @@ export default function PharmacyPosPage() {
                 <TextField size="small" label="Reason" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} fullWidth />
                 <TextField size="small" label="Refund reference" value={returnReference} onChange={(event) => setReturnReference(event.target.value)} fullWidth />
                 <Alert severity="info" sx={{ py: 0 }}>
-                  Refund estimate {money(refundEstimate)}. Reusable lines: {reusableSelectedCount}. Discard lines: {discardSelectedCount}.
+                  Return estimate {money(refundEstimate)}. Refunds are handled separately in Billing / Refunds. Reusable lines: {reusableSelectedCount}. Non-sellable lines: {discardSelectedCount}.
                 </Alert>
                 <Stack direction="row" spacing={1}>
                   <Button onClick={() => setReturnDrawerOpen(false)}>Cancel</Button>
@@ -2000,6 +1998,71 @@ export default function PharmacyPosPage() {
           </Stack>
         </Box>
       </Drawer>
+
+      <Dialog open={saleConfirmOpen} onClose={() => setSaleConfirmOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Confirm Pharmacy Sale</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Alert severity="info" sx={{ py: 0 }}>
+              Stock will be deducted using FEFO allocation and inventory will be updated.
+            </Alert>
+            <Stack spacing={0.75}>
+              <Stack direction="row" justifyContent="space-between">
+                <Typography variant="body2">Items count</Typography>
+                <Typography variant="body2" fontWeight={600}>{saleSummary.itemCount}</Typography>
+              </Stack>
+              <Stack direction="row" justifyContent="space-between">
+                <Typography variant="body2">Total amount</Typography>
+                <Typography variant="body2" fontWeight={600}>{saleSummary.totalAmount}</Typography>
+              </Stack>
+              <Stack direction="row" justifyContent="space-between">
+                <Typography variant="body2">Payment mode</Typography>
+                <Typography variant="body2" fontWeight={600}>{saleSummary.paymentMode}</Typography>
+              </Stack>
+              <Stack direction="row" justifyContent="space-between">
+                <Typography variant="body2">Amount received</Typography>
+                <Typography variant="body2" fontWeight={600}>{saleSummary.amountReceived}</Typography>
+              </Stack>
+            </Stack>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSaleConfirmOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={async () => {
+              setSaleConfirmOpen(false);
+              await executeSale();
+            }}
+            disabled={submitting}
+          >
+            {activeAction === "sale" ? "Completing..." : "Confirm Sale"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={clearCartConfirmOpen} onClose={() => setClearCartConfirmOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Clear Pharmacy Draft?</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Clear the current POS cart, customer details, and attached prescription?
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setClearCartConfirmOpen(false)}>Cancel</Button>
+          <Button
+            color="inherit"
+            onClick={() => {
+              setClearCartConfirmOpen(false);
+              clearDraft();
+            }}
+          >
+            Clear Draft
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={openShiftDialogOpen} onClose={() => setOpenShiftDialogOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>Open Cashier Shift</DialogTitle>
@@ -2064,48 +2127,16 @@ export default function PharmacyPosPage() {
         </DialogActions>
       </Dialog>
 
-      <Dialog
+      <CodeScannerDialog
         open={codeScanDialogOpen}
+        title={codeScanMode === "QR" ? "Scan medicine QR code" : "Scan medicine barcode"}
+        description="Point the camera at a medicine barcode or QR code. The scanned value fills the search field and refreshes the medicine list."
+        value={medicineQuery}
         onClose={closeCodeScanner}
-        fullWidth
-        maxWidth="sm"
-      >
-        <DialogTitle>{codeScanMode === "QR" ? "Scan QR Code" : "Scan Barcode"}</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} sx={{ pt: 1 }}>
-            {codeScanError ? <Alert severity="warning">{codeScanError}</Alert> : null}
-            <Typography variant="body2" color="text.secondary">
-              The scanned value will populate the POS search box, trigger medicine lookup, and add the best FEFO-eligible result automatically.
-            </Typography>
-            <Box
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 2,
-                overflow: "hidden",
-                bgcolor: "grey.100",
-                minHeight: 280,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Box component="video" ref={codeScannerVideoRef} muted playsInline autoPlay sx={{ width: "100%", display: "block" }} />
-            </Box>
-            <Typography variant="caption" color="text.secondary">
-              {codeScanStatus}
-            </Typography>
-            <Stack direction="row" spacing={1}>
-              <Button variant="outlined" onClick={restartCodeScanner}>
-                Retake
-              </Button>
-              <Button variant="text" onClick={closeCodeScanner}>
-                Cancel
-              </Button>
-            </Stack>
-          </Stack>
-        </DialogContent>
-      </Dialog>
+        onDetected={(code) => handleScannedCode(code, codeScanMode)}
+        manualLabel="Scan or enter medicine code"
+        manualPlaceholder="barcode / QR / external code"
+      />
 
       <Dialog
         open={scanDialogOpen}

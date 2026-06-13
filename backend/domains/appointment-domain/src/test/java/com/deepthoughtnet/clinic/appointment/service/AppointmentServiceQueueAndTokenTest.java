@@ -35,6 +35,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class AppointmentServiceQueueAndTokenTest {
+    private static final java.time.ZoneId CLINIC_ZONE = java.time.ZoneId.of("Asia/Kolkata");
     private static final UUID TENANT_ID = UUID.randomUUID();
     private static final UUID DOCTOR_ID = UUID.randomUUID();
     private static final UUID SECOND_DOCTOR_ID = UUID.randomUUID();
@@ -92,7 +93,7 @@ class AppointmentServiceQueueAndTokenTest {
 
     @Test
     void createWalkInGeneratesSequentialDailyTokens() {
-        LocalDate firstDate = LocalDate.now().plusDays(1);
+        LocalDate firstDate = LocalDate.now(CLINIC_ZONE).plusDays(1);
         LocalDate secondDate = firstDate.plusDays(1);
         when(appointmentRepository.findMaxTokenNumber(TENANT_ID, DOCTOR_ID, firstDate)).thenReturn(0, 1);
         when(appointmentRepository.findMaxTokenNumber(TENANT_ID, DOCTOR_ID, secondDate)).thenReturn(0);
@@ -112,7 +113,7 @@ class AppointmentServiceQueueAndTokenTest {
         AppointmentEntity normal = appointment(PATIENT_TWO_ID, 1, AppointmentStatus.WAITING, AppointmentPriority.NORMAL);
         AppointmentEntity inConsultation = appointment(PATIENT_ONE_ID, 2, AppointmentStatus.IN_CONSULTATION, AppointmentPriority.MANUAL_PRIORITY);
         AppointmentEntity completed = appointment(PATIENT_TWO_ID, 4, AppointmentStatus.COMPLETED, AppointmentPriority.NORMAL);
-        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, LocalDate.now()))
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, LocalDate.now(CLINIC_ZONE)))
                 .thenReturn(List.of(completed, normal, inConsultation, urgent));
 
         var rows = service.listQueueToday(TENANT_ID, DOCTOR_ID);
@@ -135,7 +136,7 @@ class AppointmentServiceQueueAndTokenTest {
     void listTodayExcludesCancelledAppointments() {
         AppointmentEntity cancelled = appointment(PATIENT_ONE_ID, 1, AppointmentStatus.CANCELLED, AppointmentPriority.NORMAL);
         AppointmentEntity waiting = appointment(PATIENT_TWO_ID, 2, AppointmentStatus.WAITING, AppointmentPriority.NORMAL);
-        when(appointmentRepository.findByTenantIdAndAppointmentDateOrderByAppointmentTimeAscCreatedAtAsc(TENANT_ID, LocalDate.now()))
+        when(appointmentRepository.findByTenantIdAndAppointmentDateOrderByAppointmentTimeAscCreatedAtAsc(TENANT_ID, LocalDate.now(CLINIC_ZONE)))
                 .thenReturn(List.of(cancelled, waiting));
 
         var today = service.listToday(TENANT_ID);
@@ -147,7 +148,7 @@ class AppointmentServiceQueueAndTokenTest {
     void listTodayRetainsEachAppointmentsActualDoctorName() {
         AppointmentEntity firstDoctorAppointment = appointment(PATIENT_ONE_ID, DOCTOR_ID, 1, AppointmentStatus.WAITING, AppointmentPriority.NORMAL);
         AppointmentEntity secondDoctorAppointment = appointment(PATIENT_TWO_ID, SECOND_DOCTOR_ID, 2, AppointmentStatus.BOOKED, AppointmentPriority.NORMAL);
-        when(appointmentRepository.findByTenantIdAndAppointmentDateOrderByAppointmentTimeAscCreatedAtAsc(TENANT_ID, LocalDate.now()))
+        when(appointmentRepository.findByTenantIdAndAppointmentDateOrderByAppointmentTimeAscCreatedAtAsc(TENANT_ID, LocalDate.now(CLINIC_ZONE)))
                 .thenReturn(List.of(firstDoctorAppointment, secondDoctorAppointment));
 
         var today = service.listToday(TENANT_ID);
@@ -161,7 +162,7 @@ class AppointmentServiceQueueAndTokenTest {
         AppointmentEntity first = appointment(PATIENT_ONE_ID, 1, AppointmentStatus.BOOKED, AppointmentPriority.NORMAL);
         AppointmentEntity second = appointment(PATIENT_TWO_ID, 2, AppointmentStatus.WAITING, AppointmentPriority.NORMAL);
         AppointmentEntity completed = appointment(PATIENT_ONE_ID, 3, AppointmentStatus.COMPLETED, AppointmentPriority.NORMAL);
-        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, LocalDate.now()))
+        when(appointmentRepository.findByTenantIdAndDoctorUserIdAndAppointmentDateOrderByTokenNumberAscAppointmentTimeAscCreatedAtAsc(TENANT_ID, DOCTOR_ID, LocalDate.now(CLINIC_ZONE)))
                 .thenReturn(List.of(first, second, completed));
 
         var reordered = service.reorderQueueToday(TENANT_ID, DOCTOR_ID, List.of(second.getId(), first.getId()), ACTOR_ID);
@@ -180,7 +181,7 @@ class AppointmentServiceQueueAndTokenTest {
 
     private AppointmentEntity appointment(UUID patientId, UUID doctorId, Integer token, AppointmentStatus status, AppointmentPriority priority) {
         AppointmentEntity entity = AppointmentEntity.create(TENANT_ID, patientId, doctorId);
-        entity.update(LocalDate.now(), null, token, "OPD visit", AppointmentType.SCHEDULED, status, priority);
+        entity.update(LocalDate.now(CLINIC_ZONE), null, token, "OPD visit", AppointmentType.SCHEDULED, status, priority);
         return entity;
     }
 

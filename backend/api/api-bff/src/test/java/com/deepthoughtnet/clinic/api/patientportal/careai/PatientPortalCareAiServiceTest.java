@@ -54,6 +54,7 @@ import org.mockito.ArgumentCaptor;
 class PatientPortalCareAiServiceTest {
     private static final UUID TENANT_A = UUID.randomUUID();
     private static final UUID APP_USER_A = UUID.randomUUID();
+    private static final ZoneId CLINIC_ZONE = ZoneId.of("Asia/Kolkata");
 
     private PatientPortalService patientPortalService;
     private AiOrchestrationService aiOrchestrationService;
@@ -124,7 +125,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void doctorSelectionByPartialNameChoosesSingleDoctor() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(
                 doctor("doctor-1", "Dr Ashish Shri", "Dermatology"),
                 doctor("doctor-2", "Dr Neha Mehta", "Dermatology")
@@ -146,7 +147,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void bookingFlowRequiresExplicitSlotAndConfirmation() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(9, 0), true),
@@ -196,7 +197,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void afterBookingSuccessThankYouByeDoesNotReuseSlotMenu() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(16, 0), true),
@@ -229,8 +230,8 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void newBookingRequestAfterCompletionStartsCleanly() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
-        LocalDate dayAfterTomorrow = LocalDate.now().plusDays(2);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        LocalDate dayAfterTomorrow = LocalDate.now(CLINIC_ZONE).plusDays(2);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(16, 0), true),
@@ -308,7 +309,7 @@ class PatientPortalCareAiServiceTest {
     void missingInMemoryStateRehydratesFromPersistedWorkflowContext() {
         UUID patientId = UUID.randomUUID();
         when(patientPortalService.currentPatientId()).thenReturn(patientId);
-        LocalDate targetDate = LocalDate.now().plusDays(1);
+        LocalDate targetDate = LocalDate.now(CLINIC_ZONE).plusDays(1);
         CareAiConversationEntity conversation = CareAiConversationEntity.create(
                 TENANT_A,
                 "PATIENT_PORTAL_VOICE",
@@ -361,7 +362,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void absoluteDateDayMonthYearIsRecognized() {
-        LocalDate targetDate = LocalDate.now().plusDays(30);
+        LocalDate targetDate = LocalDate.now(CLINIC_ZONE).plusDays(30);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", targetDate)).thenReturn(List.of(
                 slot(targetDate, LocalTime.of(10, 0), true),
@@ -380,7 +381,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void absoluteDateMonthDayYearIsRecognized() {
-        LocalDate targetDate = LocalDate.now().plusDays(31);
+        LocalDate targetDate = LocalDate.now(CLINIC_ZONE).plusDays(31);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", targetDate)).thenReturn(List.of(
                 slot(targetDate, LocalTime.of(16, 0), true),
@@ -469,8 +470,8 @@ class PatientPortalCareAiServiceTest {
     void nextFridayIsRecognizedForReschedule() {
         UUID appointmentId = UUID.randomUUID();
         UUID doctorUserId = UUID.randomUUID();
-        LocalDate currentDate = LocalDate.now().plusDays(1);
-        LocalDate nextFriday = LocalDate.now().with(java.time.temporal.TemporalAdjusters.next(DayOfWeek.FRIDAY));
+        LocalDate currentDate = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        LocalDate nextFriday = LocalDate.now(CLINIC_ZONE).with(java.time.temporal.TemporalAdjusters.next(DayOfWeek.FRIDAY));
         when(patientPortalService.careAiUpcomingAppointments()).thenReturn(List.of(
                 appointment(appointmentId, doctorUserId, "Dr Neha Mehta", currentDate, LocalTime.of(11, 0), "BOOKED")
         ));
@@ -491,7 +492,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void thisSaturdayIsRecognized() {
-        LocalDate saturday = LocalDate.now().with(java.time.temporal.TemporalAdjusters.nextOrSame(DayOfWeek.SATURDAY));
+        LocalDate saturday = LocalDate.now(CLINIC_ZONE).with(java.time.temporal.TemporalAdjusters.nextOrSame(DayOfWeek.SATURDAY));
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", saturday)).thenReturn(List.of(
                 slot(saturday, LocalTime.of(9, 0), true),
@@ -509,7 +510,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void tomorrowMorningBiasesSlotSuggestions() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(9, 0), true),
@@ -529,7 +530,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void afterLunchBiasesSlotSuggestions() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(10, 30), true),
@@ -550,8 +551,8 @@ class PatientPortalCareAiServiceTest {
     void rescheduleFlowSelectsAppointmentThenSlotThenConfirms() {
         UUID appointmentId = UUID.randomUUID();
         UUID doctorUserId = UUID.randomUUID();
-        LocalDate currentDate = LocalDate.now().plusDays(2);
-        LocalDate newDate = LocalDate.now().plusDays(4);
+        LocalDate currentDate = LocalDate.now(CLINIC_ZONE).plusDays(2);
+        LocalDate newDate = LocalDate.now(CLINIC_ZONE).plusDays(4);
         when(patientPortalService.careAiUpcomingAppointments()).thenReturn(List.of(
                 appointment(appointmentId, doctorUserId, "Dr Neha Mehta", currentDate, LocalTime.of(11, 0), "BOOKED")
         ));
@@ -590,7 +591,7 @@ class PatientPortalCareAiServiceTest {
         UUID appointmentA = UUID.randomUUID();
         UUID appointmentB = UUID.randomUUID();
         UUID doctorUserId = UUID.randomUUID();
-        LocalDate date = LocalDate.now().plusDays(1);
+        LocalDate date = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.careAiUpcomingAppointments()).thenReturn(List.of(
                 appointment(appointmentA, doctorUserId, "Dr Ashish Shri", date, LocalTime.of(9, 0), "BOOKED"),
                 appointment(appointmentB, doctorUserId, "Dr Neha Mehta", date.plusDays(1), LocalTime.of(10, 0), "BOOKED")
@@ -635,7 +636,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void pastDateIsRejectedPolitely() {
-        LocalDate pastDate = LocalDate.now().minusDays(1);
+        LocalDate pastDate = LocalDate.now(CLINIC_ZONE).minusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
 
         var response = service.message(new PatientPortalCareAiMessageRequest(
@@ -649,7 +650,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void appointmentStatusReturnsNextAppointmentDetails() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.careAiUpcomingAppointments()).thenReturn(List.of(
                 appointment(UUID.randomUUID(), UUID.randomUUID(), "Dr Neha Mehta", tomorrow, LocalTime.of(14, 0), "BOOKED")
         ));
@@ -664,7 +665,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void waitingForTimeAndBookAtSevenPmProgressesToNearestSlots() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(18, 30), true),
@@ -686,7 +687,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void waitingForTimeAndCheckSlotInEveningProgresses() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(17, 0), true),
@@ -707,8 +708,8 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void eveningWithoutNearestOptionsDoesNotEndWithEmptyColonPrompt() {
-        LocalDate tuesday = LocalDate.now().with(java.time.temporal.TemporalAdjusters.nextOrSame(DayOfWeek.TUESDAY));
-        if (!tuesday.isAfter(LocalDate.now())) {
+        LocalDate tuesday = LocalDate.now(CLINIC_ZONE).with(java.time.temporal.TemporalAdjusters.nextOrSame(DayOfWeek.TUESDAY));
+        if (!tuesday.isAfter(LocalDate.now(CLINIC_ZONE))) {
             tuesday = tuesday.plusWeeks(1);
         }
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
@@ -725,7 +726,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void eveningWithoutMatchingSlotsRendersNearestAvailableOptions() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(9, 0), true),
@@ -746,7 +747,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void cantSeeTheOptionsRerendersStoredSlotChoices() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(9, 0), true),
@@ -782,7 +783,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void waitingForTimeAndSwitchTopicAsksForClarification() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
 
         service.message(new PatientPortalCareAiMessageRequest(
@@ -800,7 +801,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void doesNotRepeatSameTimePromptThirdTime() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of());
 
@@ -847,7 +848,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void aiOrchestrationHelpsWhenNaturalLanguageNeedsStructuredExtraction() {
-        LocalDate targetDate = LocalDate.now().plusDays(32);
+        LocalDate targetDate = LocalDate.now(CLINIC_ZONE).plusDays(32);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(aiOrchestrationService.complete(any())).thenReturn(aiResponse("""
                 {
@@ -885,7 +886,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void plannerReceivesConversationStateAndAvailableActions() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(aiOrchestrationService.complete(any()))
                 .thenReturn(aiResponse("""
@@ -921,7 +922,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void plannerCanRequestTopicSwitchClarification() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(aiOrchestrationService.complete(any()))
                 .thenReturn(aiResponse("""
@@ -951,7 +952,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void deterministicParserStillWorksWhenAiOrchestrationFails() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(aiOrchestrationService.complete(any())).thenThrow(new IllegalStateException("provider down"));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
@@ -971,7 +972,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void truncatedAiExtractionFallsBackSafelyToDeterministicParser() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(aiOrchestrationService.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(),
@@ -1009,7 +1010,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void invalidAiExtractionDoesNotEraseDeterministicTimeFields() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(aiOrchestrationService.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(),
@@ -1047,7 +1048,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void nonActionableAiPayloadDoesNotOverrideDeterministicParser() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(aiOrchestrationService.complete(any())).thenReturn(aiResponse("""
                 {
@@ -1072,7 +1073,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void aiInterpretationCanUseJsonOutputTextWhenStructuredJsonIsAbsent() {
-        LocalDate targetDate = LocalDate.now().plusDays(33);
+        LocalDate targetDate = LocalDate.now(CLINIC_ZONE).plusDays(33);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(aiOrchestrationService.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(),
@@ -1131,7 +1132,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void bookingWorkflowPersistenceTransitionsFromConfirmationToCompleted() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(9, 30), true)
@@ -1176,7 +1177,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void bookInEveningDoesNotRepeatSameTimeQuestion() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(18, 0), true),
@@ -1206,7 +1207,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void optionThreeCapturesEveningTimePreference() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(18, 0), true),
@@ -1224,7 +1225,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void numericThreeCapturesEveningWhenLastQuestionWasTimePreference() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(18, 0), true),
@@ -1242,7 +1243,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void dateAndTimePreferenceArePersistedInWorkflowContext() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(18, 0), true),
@@ -1263,7 +1264,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void topicSwitchToClinicTimingDoesNotClearBookingWorkflow() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
 
         service.message(new PatientPortalCareAiMessageRequest("Book appointment with Dr Neha Mehta tomorrow", "en"));
@@ -1276,7 +1277,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void changeConversationDuringBookingAsksTopicSwitchClarification() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
 
         service.message(new PatientPortalCareAiMessageRequest("Book appointment with Dr Neha Mehta", "en"));
@@ -1291,7 +1292,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void switchTheConversationDuringBookingAsksTopicSwitchClarification() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
 
         service.message(new PatientPortalCareAiMessageRequest("Book appointment with Dr Neha Mehta", "en"));
@@ -1316,7 +1317,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void staleConfirmationResetWhenSlotChanges() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(10, 0), true),
@@ -1337,7 +1338,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void yesAfterStaleConfirmationDoesNotExecuteStaleAction() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(10, 0), true),
@@ -1357,7 +1358,7 @@ class PatientPortalCareAiServiceTest {
 
     @Test
     void voiceMessagePathPersistsVoiceChannelAndAppliesRepeatedQuestionGuard() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
         when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
                 slot(tomorrow, LocalTime.of(18, 0), true),

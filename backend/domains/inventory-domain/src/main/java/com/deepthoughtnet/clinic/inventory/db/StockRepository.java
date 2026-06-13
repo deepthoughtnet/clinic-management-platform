@@ -36,6 +36,7 @@ public interface StockRepository extends JpaRepository<StockEntity, UUID> {
               and stock.medicineId = :medicineId
               and stock.active = true
               and stock.quantityOnHand > 0
+              and (stock.expiryDate is null or stock.expiryDate >= current date)
             order by
               case when stock.expiryDate is null then 1 else 0 end asc,
               stock.expiryDate asc,

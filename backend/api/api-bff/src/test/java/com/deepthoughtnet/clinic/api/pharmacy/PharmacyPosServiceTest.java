@@ -240,7 +240,7 @@ class PharmacyPosServiceTest {
                 OffsetDateTime.now(),
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,
-                new BigDecimal("10.00"),
+                new BigDecimal("48.00"),
                 PaymentMode.CASH,
                 null,
                 null,
@@ -254,13 +254,28 @@ class PharmacyPosServiceTest {
         assertThat(sale.items().get(1).batchNumber()).isEqualTo("LATE");
         assertThat(sale.items().get(1).quantity()).isEqualTo(2);
         assertThat(sale.payments()).hasSize(1);
-        assertThat(sale.dueAmount()).isEqualByComparingTo("38.00");
+        assertThat(sale.dueAmount()).isZero();
 
         ArgumentCaptor<InventoryTransactionCommand> captor = ArgumentCaptor.forClass(InventoryTransactionCommand.class);
         verify(inventoryService, org.mockito.Mockito.times(2)).createTransaction(eq(tenantId), captor.capture(), eq(actorId));
         assertThat(captor.getAllValues()).extracting(InventoryTransactionCommand::stockBatchId)
                 .containsExactly(earliest.getId(), later.getId());
         verify(auditEventPublisher).record(any());
+    }
+
+    @Test
+    void availableBatchesExcludeExpiredStock() {
+        MedicineEntity medicine = medicine("Paracetamol");
+        StockEntity expired = stock(medicine.getId(), "EXP", LocalDate.now().minusDays(1), 10, "10.00");
+        StockEntity usable = stock(medicine.getId(), "LIVE", LocalDate.now().plusDays(14), 8, "12.00");
+        when(stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, medicine.getId(), location.getId()))
+                .thenReturn(List.of(expired, usable));
+
+        List<PharmacyPosBatchResponse> batches = service.availableBatches(tenantId, medicine.getId());
+
+        assertThat(batches).hasSize(1);
+        assertThat(batches.getFirst().batchNumber()).isEqualTo("LIVE");
+        assertThat(batches.getFirst().expired()).isFalse();
     }
 
     @Test
@@ -275,6 +290,123 @@ class PharmacyPosServiceTest {
                 List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 2, new BigDecimal("5.00"), BigDecimal.ZERO, BigDecimal.ZERO))
         ), actorId)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Insufficient stock");
+    }
+
+    @Test
+    void createSaleRejectsPartialPayment() {
+        MedicineEntity medicine = medicine("Diclofenac");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId()))
+                .thenReturn(List.of(stock(medicine.getId(), "D1", LocalDate.now().plusDays(20), 2, "10.00")));
+
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("5.00"),
+                PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("10.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Full payment is required");
+    }
+
+    @Test
+    void createSaleRejectsOverpayment() {
+        MedicineEntity medicine = medicine("Naproxen");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId()))
+                .thenReturn(List.of(stock(medicine.getId(), "N1", LocalDate.now().plusDays(20), 2, "10.00")));
+
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("11.00"),
+                PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("10.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Paid amount cannot exceed sale total");
+    }
+
+    @Test
+    void createSaleRejectsMissingPaymentModeForPaidSale() {
+        MedicineEntity medicine = medicine("Meloxicam");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId()))
+                .thenReturn(List.of(stock(medicine.getId(), "M1", LocalDate.now().plusDays(20), 2, "10.00")));
+
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("10.00"),
+                null, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("10.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Payment mode is required");
+    }
+
+    @Test
+    void createSaleRejectsMissingPaymentAmount() {
+        MedicineEntity medicine = medicine("Loratadine");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId()))
+                .thenReturn(List.of(stock(medicine.getId(), "L1", LocalDate.now().plusDays(20), 2, "10.00")));
+
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, null,
+                PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("10.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("paidAmount is required");
+    }
+
+    @Test
+    void createSaleRejectsNegativePaymentAmount() {
+        MedicineEntity medicine = medicine("Ondansetron");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId()))
+                .thenReturn(List.of(stock(medicine.getId(), "O1", LocalDate.now().plusDays(20), 2, "10.00")));
+
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("-1.00"),
+                PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("10.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Paid amount cannot be negative");
+    }
+
+    @Test
+    void createSaleRejectsZeroQuantity() {
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(UUID.randomUUID(), 0, new BigDecimal("10.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("quantity must be positive");
+    }
+
+    @Test
+    void createSaleRejectsNegativeQuantity() {
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(UUID.randomUUID(), -1, new BigDecimal("10.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("quantity must be positive");
+    }
+
+    @Test
+    void createSaleAllowsZeroValueSaleWithPaymentMode() {
+        openShiftFor(actorId);
+        MedicineEntity medicine = medicine("Saline");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)).thenReturn(List.of(medicine));
+        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId()))
+                .thenReturn(List.of(stock(medicine.getId(), "Z1", LocalDate.now().plusDays(20), 2, "0.00")));
+
+        PharmacyPosSaleResponse sale = service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId);
+
+        assertThat(sale.total()).isZero();
+        assertThat(sale.paidAmount()).isZero();
+        assertThat(sale.dueAmount()).isZero();
+        assertThat(sale.status()).isEqualTo("PAID");
+        assertThat(sale.payments()).isEmpty();
     }
 
     @Test
@@ -313,6 +445,8 @@ class PharmacyPosServiceTest {
     void expiredBatchesAreExcludedFromAvailableStock() {
         MedicineEntity medicine = medicine("Cetirizine");
         when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, medicine.getId(), location.getId()))
+                .thenReturn(List.of(stock(medicine.getId(), "OLD", LocalDate.now().minusDays(2), 10, "3.00")));
         when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId()))
                 .thenReturn(List.of(stock(medicine.getId(), "OLD", LocalDate.now().minusDays(2), 10, "3.00")));
 
@@ -320,17 +454,18 @@ class PharmacyPosServiceTest {
                 null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, null, null, null,
                 List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("3.00"), BigDecimal.ZERO, BigDecimal.ZERO))
         ), actorId)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Insufficient stock");
+                .hasMessageContaining("Batch expired and cannot be sold or dispensed.");
     }
 
     @Test
-    void returnRestocksReusableQuantityAndUpdatesStatus() {
+    void returnRestocksReusableQuantityWithoutAutoRefund() {
         openShiftFor(actorId);
         MedicineEntity medicine = medicine("Paracetamol");
         StockEntity batch = stock(medicine.getId(), "P1", LocalDate.now().plusDays(30), 10, "4.00");
         when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
         when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)).thenReturn(List.of(medicine));
         when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId())).thenReturn(List.of(batch));
+        when(stockRepository.findByTenantIdAndId(tenantId, batch.getId())).thenReturn(Optional.of(batch));
 
         PharmacyPosSaleResponse created = service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
                 null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("8.00"), PaymentMode.CASH, null, null, null,
@@ -345,13 +480,15 @@ class PharmacyPosServiceTest {
                 List.of(new PharmacyPosReturnLineRequest(created.items().get(0).id(), 1, true))
         ), actorId);
 
-        assertThat(returned.status()).isEqualTo("PARTIALLY_RETURNED");
+        assertThat(returned.status()).isEqualTo("PAID");
         assertThat(returned.returns()).hasSize(1);
         assertThat(returned.returns().get(0).reusable()).isTrue();
+        assertThat(returned.paidAmount()).isEqualByComparingTo("8.00");
+        assertThat(returned.dueAmount()).isZero();
 
         ArgumentCaptor<InventoryTransactionCommand> captor = ArgumentCaptor.forClass(InventoryTransactionCommand.class);
-        verify(inventoryService, org.mockito.Mockito.atLeastOnce()).createTransaction(eq(tenantId), captor.capture(), eq(actorId));
-        assertThat(captor.getAllValues().stream().anyMatch(command -> command.transactionType() == com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.RETURN)).isTrue();
+        verify(inventoryService, org.mockito.Mockito.times(2)).createTransaction(eq(tenantId), captor.capture(), eq(actorId));
+        assertThat(captor.getAllValues().stream().anyMatch(command -> command.transactionType() == com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.CUSTOMER_RETURN_IN)).isTrue();
         verify(auditEventPublisher, org.mockito.Mockito.atLeast(2)).record(any());
     }
 
@@ -453,8 +590,8 @@ class PharmacyPosServiceTest {
         ), actorId);
 
         ArgumentCaptor<InventoryTransactionCommand> captor = ArgumentCaptor.forClass(InventoryTransactionCommand.class);
-        verify(inventoryService, org.mockito.Mockito.times(1)).createTransaction(eq(tenantId), captor.capture(), eq(actorId));
-        assertThat(captor.getValue().transactionType()).isEqualTo(com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.SALE);
+        verify(inventoryService, org.mockito.Mockito.times(2)).createTransaction(eq(tenantId), captor.capture(), eq(actorId));
+        assertThat(captor.getAllValues().stream().anyMatch(command -> command.transactionType() == com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.CUSTOMER_RETURN_NON_SELLABLE)).isTrue();
     }
 
     @Test
@@ -484,17 +621,27 @@ class PharmacyPosServiceTest {
     @Test
     void recordPaymentLinksToCurrentOpenShift() {
         PharmacyCashierShiftEntity shift = openShiftFor(actorId);
-        MedicineEntity medicine = medicine("Levocetirizine");
-        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
-        when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(tenantId)).thenReturn(List.of(medicine));
-        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId())).thenReturn(List.of(stock(medicine.getId(), "L1", LocalDate.now().plusDays(30), 10, "6.00")));
+        PharmacySaleEntity saleEntity = PharmacySaleEntity.create(
+                tenantId,
+                "PS-TEST-1",
+                null,
+                "Walk-in",
+                null,
+                OffsetDateTime.now(),
+                location.getId(),
+                new BigDecimal("6.00"),
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                new BigDecimal("6.00"),
+                BigDecimal.ZERO,
+                new BigDecimal("6.00"),
+                "UNPAID",
+                null,
+                actorId
+        );
+        saleRepository.save(saleEntity);
 
-        PharmacyPosSaleResponse created = service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
-                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, null, null, null,
-                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("6.00"), BigDecimal.ZERO, BigDecimal.ZERO))
-        ), actorId);
-
-        PharmacyPosSaleResponse paid = service.recordPayment(tenantId, created.id(), new PharmacyPosPaymentRequest(
+        PharmacyPosSaleResponse paid = service.recordPayment(tenantId, saleEntity.getId(), new PharmacyPosPaymentRequest(
                 new BigDecimal("6.00"), PaymentMode.CASH, null, null, LocalDate.now(), OffsetDateTime.now()
         ), actorId);
 

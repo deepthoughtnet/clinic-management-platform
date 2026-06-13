@@ -27,14 +27,14 @@ public class DispensingController {
     }
 
     @GetMapping("/queue")
-    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('prescription.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('prescription.read')")
     public List<PrescriptionDispenseResponse> queue() {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return dispensingService.queue(tenantId);
     }
 
     @GetMapping("/{prescriptionId}")
-    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('prescription.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('prescription.read')")
     public PrescriptionDispenseResponse view(@PathVariable UUID prescriptionId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return dispensingService.view(tenantId, prescriptionId);
@@ -42,7 +42,7 @@ public class DispensingController {
 
     @PostMapping("/{prescriptionId}/dispense")
     @ResponseStatus(HttpStatus.OK)
-    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('billing.create')")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
     public PrescriptionDispenseResponse dispense(@PathVariable UUID prescriptionId, @jakarta.validation.Valid @RequestBody DispenseRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
@@ -55,7 +55,7 @@ public class DispensingController {
     }
 
     @PostMapping("/{prescriptionId}/bill")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.create')")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
     public BillRecord generateBill(@PathVariable UUID prescriptionId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();

@@ -36,7 +36,7 @@ public class InventoryTransactionEntity {
     @Column(name = "target_location_id")
     private UUID targetLocationId;
 
-    @Column(name = "transaction_type", nullable = false, length = 24)
+    @Column(name = "transaction_type", nullable = false, length = 40)
     private String transactionType;
 
     @Column(nullable = false)
