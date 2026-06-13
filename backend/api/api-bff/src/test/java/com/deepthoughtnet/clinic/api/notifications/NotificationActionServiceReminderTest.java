@@ -75,7 +75,7 @@ class NotificationActionServiceReminderTest {
         when(patientRepository.findByTenantIdAndId(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patient()));
         when(notificationHistoryService.queueDetailed(eq(TENANT_ID), eq(PATIENT_ID), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), eq(due.id()), eq(ACTOR_ID)))
                 .thenReturn(new NotificationQueueResult(
-                        new NotificationHistoryRecord(UUID.randomUUID(), TENANT_ID, PATIENT_ID, "APPOINTMENT_REMINDER", "email", "patient@clinic.local", "Appointment reminder", "msg", "PENDING", null, "APPOINTMENT", due.id(), "dedup", null, 0, null, now, now),
+                        new NotificationHistoryRecord(UUID.randomUUID(), TENANT_ID, PATIENT_ID, "APPOINTMENT_REMINDER", "email", "patient@clinic.local", "Appointment reminder", "msg", "PENDING", null, "APPOINTMENT", due.id(), "dedup", null, 0, null, null, now, now),
                         true
                 ));
 
@@ -121,7 +121,7 @@ class NotificationActionServiceReminderTest {
         when(patientRepository.findByTenantIdAndId(eq(TENANT_ID), eq(PATIENT_ID))).thenReturn(Optional.of(patient()));
         when(notificationHistoryService.queueDetailed(eq(TENANT_ID), eq(PATIENT_ID), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), eq(due.id()), eq(ACTOR_ID)))
                 .thenReturn(new NotificationQueueResult(
-                        new NotificationHistoryRecord(UUID.randomUUID(), TENANT_ID, PATIENT_ID, "APPOINTMENT_REMINDER", "email", "patient@clinic.local", "Appointment reminder", "msg", "PENDING", null, "APPOINTMENT", due.id(), "dedup", null, 0, null, now, now),
+                        new NotificationHistoryRecord(UUID.randomUUID(), TENANT_ID, PATIENT_ID, "APPOINTMENT_REMINDER", "email", "patient@clinic.local", "Appointment reminder", "msg", "PENDING", null, "APPOINTMENT", due.id(), "dedup", null, 0, null, null, now, now),
                         false
                 ));
 

@@ -84,6 +84,18 @@ public class LabNotificationService {
         queueAndSend(tenantId, patientId, sourceId, "LAB_REPORT_REVIEWED", subject, body, actorAppUserId, null);
     }
 
+    public void notifyCriticalResult(UUID tenantId, UUID patientId, UUID sourceId, String orderNumber, String patientName, String doctorName, List<String> criticalSummaries, UUID actorAppUserId) {
+        String subject = "Critical lab result " + orderNumber;
+        String body = buildBody(
+                "Critical laboratory result detected.",
+                "Order: " + orderNumber,
+                patientName,
+                doctorName,
+                criticalSummaries == null || criticalSummaries.isEmpty() ? null : "Critical values: " + String.join("; ", criticalSummaries)
+        );
+        queueAndSend(tenantId, patientId, sourceId, "LAB_CRITICAL_RESULT", subject, body, actorAppUserId, null);
+    }
+
     private void queueAndSend(
             UUID tenantId,
             UUID patientId,

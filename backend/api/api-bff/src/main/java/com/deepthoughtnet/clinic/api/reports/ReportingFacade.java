@@ -34,6 +34,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.notification.service.NotificationCenterService;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderRepository;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderItemRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderStatus;
 import com.deepthoughtnet.clinic.platform.security.Roles;
 import com.deepthoughtnet.clinic.notification.service.NotificationSummary;
@@ -57,6 +58,7 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.Set;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Service
 public class ReportingFacade {
@@ -76,7 +78,9 @@ public class ReportingFacade {
     private final PatientRepository patientRepository;
     private final NotificationCenterService notificationCenterService;
     private final LabOrderRepository labOrderRepository;
+    private final LabOrderItemRepository labOrderItemRepository;
 
+    @Autowired
     public ReportingFacade(
             AppointmentService appointmentService,
             ConsultationService consultationService,
@@ -93,7 +97,8 @@ public class ReportingFacade {
             AppUserRepository appUserRepository,
             PatientRepository patientRepository,
             NotificationCenterService notificationCenterService,
-            LabOrderRepository labOrderRepository
+            LabOrderRepository labOrderRepository,
+            LabOrderItemRepository labOrderItemRepository
     ) {
         this.appointmentService = appointmentService;
         this.consultationService = consultationService;
@@ -111,6 +116,7 @@ public class ReportingFacade {
         this.patientRepository = patientRepository;
         this.notificationCenterService = notificationCenterService;
         this.labOrderRepository = labOrderRepository;
+        this.labOrderItemRepository = labOrderItemRepository;
     }
 
     public ReportingFacade(
@@ -146,6 +152,7 @@ public class ReportingFacade {
                 appUserRepository,
                 patientRepository,
                 notificationCenterService,
+                null,
                 null
         );
     }
@@ -1040,13 +1047,46 @@ public class ReportingFacade {
             long dailyLabOrders = dayOrders.size();
             long pendingCollections = dayOrders.stream().filter(order -> order.getStatus() == LabOrderStatus.READY_FOR_COLLECTION).count();
             long pendingResults = dayOrders.stream().filter(order -> order.getStatus() == LabOrderStatus.SAMPLE_COLLECTED || order.getStatus() == LabOrderStatus.PROCESSING).count();
-            long reportsGenerated = dayOrders.stream().filter(order -> order.getStatus() == LabOrderStatus.REPORT_READY || order.getStatus() == LabOrderStatus.REPORT_GENERATED || order.getStatus() == LabOrderStatus.DOCTOR_REVIEWED).count();
+            long reportsGenerated = dayOrders.stream().filter(order -> order.getStatus() == LabOrderStatus.REPORT_READY || order.getStatus() == LabOrderStatus.REPORT_GENERATED || order.getStatus() == LabOrderStatus.DOCTOR_REVIEWED || order.getStatus() == LabOrderStatus.DELIVERED).count();
+            long testVolume = dayOrders.stream()
+                    .flatMap(order -> labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, order.getId()).stream())
+                    .count();
+            BigDecimal revenue = dayOrders.stream()
+                    .map(order -> order.getBillId() == null ? null : billingService.findById(tenantId, order.getBillId()).orElse(null))
+                    .filter(java.util.Objects::nonNull)
+                    .map(BillRecord::totalAmount)
+                    .filter(java.util.Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            double avgTurnaroundHours = dayOrders.stream()
+                    .map(order -> {
+                        OffsetDateTime endTime = order.getDeliveredAt() != null ? order.getDeliveredAt()
+                                : order.getDoctorReviewedAt() != null ? order.getDoctorReviewedAt()
+                                : order.getReportGeneratedAt() != null ? order.getReportGeneratedAt()
+                                : order.getResultEnteredAt();
+                        return endTime == null ? null : (double) ChronoUnit.MINUTES.between(order.getOrderedAt(), endTime) / 60.0d;
+                    })
+                    .filter(java.util.Objects::nonNull)
+                    .mapToDouble(Double::doubleValue)
+                    .average()
+                    .orElse(0d);
+            String topOrderedTests = dayOrders.stream()
+                    .flatMap(order -> labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, order.getId()).stream())
+                    .collect(java.util.stream.Collectors.groupingBy(com.deepthoughtnet.clinic.api.lab.db.LabOrderItemEntity::getTestName, java.util.stream.Collectors.counting()))
+                    .entrySet().stream()
+                    .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                    .limit(5)
+                    .map(entry -> entry.getKey() + " (" + entry.getValue() + ")")
+                    .collect(java.util.stream.Collectors.joining(", "));
             rows.add(row(
                     "date", date,
                     "dailyLabOrders", dailyLabOrders,
+                    "testVolume", testVolume,
+                    "revenue", revenue,
                     "pendingCollections", pendingCollections,
                     "pendingResults", pendingResults,
-                    "reportsGenerated", reportsGenerated
+                    "reportsGenerated", reportsGenerated,
+                    "avgTurnaroundHours", BigDecimal.valueOf(avgTurnaroundHours).setScale(2, RoundingMode.HALF_UP),
+                    "topOrderedTests", topOrderedTests
             ));
         }
         return rows;

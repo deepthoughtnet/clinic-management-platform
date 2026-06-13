@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentRescheduleReques
 import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentStatusRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.QueueReorderRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.WalkInAppointmentRequest;
+import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
@@ -67,6 +68,7 @@ public class AppointmentController {
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
     private final PermissionChecker permissionChecker;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
+    private final NotificationActionService notificationActionService;
 
     public AppointmentController(
             AppointmentService appointmentService,
@@ -74,7 +76,8 @@ public class AppointmentController {
             BillingService billingService,
             DoctorAssignmentSecurityService doctorAssignmentSecurityService,
             PermissionChecker permissionChecker,
-            ClinicTimeZoneResolver clinicTimeZoneResolver
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
+            NotificationActionService notificationActionService
     ) {
         this.appointmentService = appointmentService;
         this.consultationService = consultationService;
@@ -82,6 +85,7 @@ public class AppointmentController {
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
         this.permissionChecker = permissionChecker;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
+        this.notificationActionService = notificationActionService;
     }
 
     @GetMapping
@@ -113,7 +117,7 @@ public class AppointmentController {
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         boolean allowOverbooking = doctorAssignmentSecurityService.isClinicAdmin();
         ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
-        return toResponse(appointmentService.createScheduled(tenantId, new AppointmentUpsertCommand(
+        AppointmentResponse response = toResponse(appointmentService.createScheduled(tenantId, new AppointmentUpsertCommand(
                 request.patientId(),
                 request.doctorUserId(),
                 request.appointmentDate(),
@@ -124,6 +128,8 @@ public class AppointmentController {
                 request.priority(),
                 request.allowAdHocBooking()
         ), actorAppUserId, allowOverbooking, bookingZone));
+        notificationActionService.sendAppointmentBooked(tenantId, UUID.fromString(response.id()), actorAppUserId);
+        return response;
     }
 
     @PostMapping("/walk-in")
@@ -134,13 +140,15 @@ public class AppointmentController {
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         boolean allowOverbooking = doctorAssignmentSecurityService.isClinicAdmin();
         ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
-        return toResponse(appointmentService.createWalkIn(tenantId, new WalkInAppointmentCommand(
+        AppointmentResponse response = toResponse(appointmentService.createWalkIn(tenantId, new WalkInAppointmentCommand(
                 request.patientId(),
                 request.doctorUserId(),
                 request.appointmentDate(),
                 request.reason(),
                 request.priority()
         ), actorAppUserId, allowOverbooking, bookingZone));
+        notificationActionService.sendAppointmentBooked(tenantId, UUID.fromString(response.id()), actorAppUserId);
+        return response;
     }
 
     @GetMapping("/{id}")
@@ -173,7 +181,7 @@ public class AppointmentController {
                 }
             }
         }
-        return toResponse(appointmentService.updateStatus(
+        AppointmentResponse response = toResponse(appointmentService.updateStatus(
                 tenantId,
                 id,
                 new AppointmentStatusUpdateCommand(
@@ -185,6 +193,12 @@ public class AppointmentController {
                 ),
                 actorAppUserId
         ));
+        if (request.status() == AppointmentStatus.CANCELLED) {
+            notificationActionService.sendAppointmentCancelled(tenantId, id, actorAppUserId);
+        } else if (request.status() == AppointmentStatus.NO_SHOW) {
+            notificationActionService.sendAppointmentNoShow(tenantId, id, actorAppUserId);
+        }
+        return response;
     }
 
     @PatchMapping("/{id}/priority")
@@ -204,12 +218,14 @@ public class AppointmentController {
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         boolean allowOverbooking = doctorAssignmentSecurityService.isClinicAdmin();
         ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
-        return toResponse(appointmentService.reschedule(tenantId, id, new AppointmentRescheduleCommand(
+        AppointmentResponse response = toResponse(appointmentService.reschedule(tenantId, id, new AppointmentRescheduleCommand(
                 request.doctorUserId(),
                 request.appointmentDate(),
                 request.appointmentTime(),
                 request.reason()
         ), actorAppUserId, allowOverbooking, bookingZone));
+        notificationActionService.sendAppointmentRescheduled(tenantId, id, actorAppUserId);
+        return response;
     }
 
     @PostMapping("/{appointmentId}/start-consultation")

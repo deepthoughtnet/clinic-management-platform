@@ -50,4 +50,8 @@ public interface NotificationHistoryService {
     NotificationHistoryRecord markFailed(UUID tenantId, UUID id, String reason);
 
     NotificationHistoryRecord markSkipped(UUID tenantId, UUID id, String reason);
+
+    NotificationHistoryRecord markRead(UUID tenantId, UUID id);
+
+    NotificationHistoryRecord markUnread(UUID tenantId, UUID id);
 }

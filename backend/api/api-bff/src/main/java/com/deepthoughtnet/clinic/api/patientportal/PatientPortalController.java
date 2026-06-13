@@ -13,11 +13,13 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorRespon
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabLatestResultResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabOrderResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalNotificationResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalMeResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalProfileUpdateRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionResponse;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 import jakarta.validation.Valid;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -122,6 +124,16 @@ public class PatientPortalController {
         return patientPortalService.latestLabResults(query);
     }
 
+    @GetMapping("/notifications")
+    public List<PatientPortalNotificationResponse> notifications() {
+        return patientPortalService.notifications();
+    }
+
+    @PostMapping("/notifications/{id}/read")
+    public PatientPortalNotificationResponse markNotificationRead(@PathVariable UUID id) {
+        return patientPortalService.markNotificationRead(id);
+    }
+
     @GetMapping(value = "/prescriptions/{prescriptionNumber}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
     public ResponseEntity<byte[]> prescriptionPdf(@PathVariable String prescriptionNumber) {
         var pdf = patientPortalService.prescriptionPdf(prescriptionNumber);
@@ -157,4 +169,5 @@ public class PatientPortalController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline().filename(pdf.filename()).build().toString())
                 .body(pdf.content());
     }
+
 }

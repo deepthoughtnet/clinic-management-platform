@@ -9,6 +9,7 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalBillResponse
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDashboardResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalNotificationResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabLatestResultResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabOrderResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabResultResponse;
@@ -17,6 +18,7 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalProfileUpdat
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionMedicineResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionTestResponse;
+import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.api.lab.service.LabService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord;
@@ -52,6 +54,8 @@ import com.deepthoughtnet.clinic.patient.service.model.PatientUpsertCommand;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionPdf;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicineRecord;
@@ -64,6 +68,7 @@ import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -83,7 +88,10 @@ public class PatientPortalService {
     private final PrescriptionService prescriptionService;
     private final BillingService billingService;
     private final LabService labService;
+    private final NotificationHistoryService notificationHistoryService;
+    private final NotificationActionService notificationActionService;
 
+    @Autowired
     public PatientPortalService(
             AppUserRepository appUserRepository,
             PatientRepository patientRepository,
@@ -95,7 +103,9 @@ public class PatientPortalService {
             AppointmentService appointmentService,
             PrescriptionService prescriptionService,
             BillingService billingService,
-            LabService labService
+            LabService labService,
+            NotificationHistoryService notificationHistoryService,
+            NotificationActionService notificationActionService
     ) {
         this.appUserRepository = appUserRepository;
         this.patientRepository = patientRepository;
@@ -108,6 +118,8 @@ public class PatientPortalService {
         this.prescriptionService = prescriptionService;
         this.billingService = billingService;
         this.labService = labService;
+        this.notificationHistoryService = notificationHistoryService;
+        this.notificationActionService = notificationActionService;
     }
 
     public PatientPortalService(
@@ -133,6 +145,8 @@ public class PatientPortalService {
                 appointmentService,
                 prescriptionService,
                 billingService,
+                null,
+                null,
                 null
         );
     }
@@ -357,6 +371,9 @@ public class PatientPortalService {
                 false,
                 tenantZone
         );
+        if (notificationActionService != null) {
+            notificationActionService.sendAppointmentBooked(access.tenantId(), booked.id(), requireActorAppUserId());
+        }
         return new PatientPortalAppointmentConfirmationResponse(
                 booked.appointmentDate(),
                 booked.appointmentTime(),
@@ -396,6 +413,9 @@ public class PatientPortalService {
                 false,
                 tenantZone
         );
+        if (notificationActionService != null) {
+            notificationActionService.sendAppointmentRescheduled(access.tenantId(), updated.id(), requireActorAppUserId());
+        }
         return new PatientPortalAppointmentConfirmationResponse(
                 updated.appointmentDate(),
                 updated.appointmentTime(),
@@ -425,6 +445,9 @@ public class PatientPortalService {
                 ),
                 requireActorAppUserId()
         );
+        if (notificationActionService != null) {
+            notificationActionService.sendAppointmentCancelled(access.tenantId(), current.id(), requireActorAppUserId());
+        }
         return new PatientPortalAppointmentConfirmationResponse(
                 updated.appointmentDate(),
                 updated.appointmentTime(),
@@ -445,6 +468,24 @@ public class PatientPortalService {
     public List<PatientPortalBillResponse> bills() {
         PatientAccess access = requireCurrentPatientAccess();
         return billResponses(access);
+    }
+
+    public List<PatientPortalNotificationResponse> notifications() {
+        if (notificationHistoryService == null) {
+            return List.of();
+        }
+        PatientAccess access = requireCurrentPatientAccess();
+        return notificationHistoryService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+                .map(this::toNotificationResponse)
+                .toList();
+    }
+
+    public PatientPortalNotificationResponse markNotificationRead(UUID notificationId) {
+        if (notificationHistoryService == null) {
+            throw new IllegalStateException("Notification history service is not available");
+        }
+        PatientAccess access = requireCurrentPatientAccess();
+        return toNotificationResponse(notificationHistoryService.markRead(access.tenantId(), notificationId));
     }
 
     public List<PatientPortalLabOrderResponse> labOrders() {
@@ -489,7 +530,9 @@ public class PatientPortalService {
     public com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultPdf labReportPdf(String orderNumber) {
         PatientAccess access = requireCurrentPatientAccess();
         LabOrderRecord record = findAccessibleLabOrder(access, orderNumber);
-        return labService.renderReportPdf(access.tenantId(), record.id());
+        var pdf = labService.renderReportPdf(access.tenantId(), record.id());
+        labService.markDelivered(access.tenantId(), record.id(), requireActorAppUserId());
+        return pdf;
     }
 
     public BillPdf billPdf(String billNumber) {
@@ -533,7 +576,8 @@ public class PatientPortalService {
         }
         return "REPORT_READY".equalsIgnoreCase(status)
                 || "REPORT_GENERATED".equalsIgnoreCase(status)
-                || "DOCTOR_REVIEWED".equalsIgnoreCase(status);
+                || "DOCTOR_REVIEWED".equalsIgnoreCase(status)
+                || "DELIVERED".equalsIgnoreCase(status);
     }
 
     private PatientPortalLabOrderResponse toLabOrderResponse(LabOrderRecord record) {
@@ -648,6 +692,21 @@ public class PatientPortalService {
                 record.dueAmount(),
                 latestReceipt(record),
                 record.lines().stream().map(this::toBillLineResponse).toList()
+        );
+    }
+
+    private PatientPortalNotificationResponse toNotificationResponse(NotificationHistoryRecord record) {
+        return new PatientPortalNotificationResponse(
+                record.id() == null ? null : record.id().toString(),
+                record.eventType(),
+                record.subject(),
+                record.message(),
+                record.status(),
+                record.readAt(),
+                record.sourceType(),
+                record.sourceId() == null ? null : record.sourceId().toString(),
+                record.createdAt(),
+                actionPath(record)
         );
     }
 
@@ -846,6 +905,20 @@ public class PatientPortalService {
         String itemType = record.itemType() == null ? null : record.itemType().name().replace('_', ' ');
         String summary = String.join(" · ", List.of(itemType, quantity, amount).stream().filter(StringUtils::hasText).toList());
         return StringUtils.hasText(summary) ? summary : "Line summary";
+    }
+
+    private String actionPath(NotificationHistoryRecord record) {
+        if (record == null || record.sourceType() == null) {
+            return null;
+        }
+        return switch (record.sourceType().toUpperCase()) {
+            case "APPOINTMENT" -> "/patient/appointments";
+            case "PRESCRIPTION" -> "/patient/prescriptions";
+            case "RECEIPT", "BILL" -> "/patient/bills";
+            case "LAB_ORDER" -> "/patient/lab";
+            case "CONSULTATION" -> "/patient/careai";
+            default -> null;
+        };
     }
 
     private String classifyBillType(BillRecord record) {

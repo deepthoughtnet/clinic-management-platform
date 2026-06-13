@@ -181,6 +181,22 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
         return toRecord(repository.save(entity));
     }
 
+    @Override
+    @Transactional
+    public NotificationHistoryRecord markRead(UUID tenantId, UUID id) {
+        NotificationHistoryEntity entity = findEntity(tenantId, id);
+        entity.markRead();
+        return toRecord(repository.save(entity));
+    }
+
+    @Override
+    @Transactional
+    public NotificationHistoryRecord markUnread(UUID tenantId, UUID id) {
+        NotificationHistoryEntity entity = findEntity(tenantId, id);
+        entity.markUnread();
+        return toRecord(repository.save(entity));
+    }
+
     private NotificationHistoryEntity findEntity(UUID tenantId, UUID id) {
         requireTenant(tenantId);
         requireId(id, "id");
@@ -234,6 +250,7 @@ public class NotificationHistoryServiceImpl implements NotificationHistoryServic
                 entity.getOutboxEventId(),
                 entity.getAttemptCount(),
                 entity.getSentAt(),
+                entity.getReadAt(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );

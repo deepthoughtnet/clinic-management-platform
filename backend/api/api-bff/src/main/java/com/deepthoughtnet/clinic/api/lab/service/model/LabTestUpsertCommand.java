@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.lab.service.model;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 public record LabTestUpsertCommand(
         String testCode,
@@ -12,6 +13,7 @@ public record LabTestUpsertCommand(
         String referenceRange,
         String turnaroundTime,
         BigDecimal price,
-        boolean active
+        boolean active,
+        List<LabTestParameterUpsertCommand> parameters
 ) {
 }

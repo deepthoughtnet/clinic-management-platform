@@ -33,6 +33,7 @@ import com.deepthoughtnet.clinic.inventory.db.PharmacySaleReturnRepository;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.notification.service.NotificationCenterService;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderItemRepository;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
@@ -67,6 +68,7 @@ class ReportingFacadeClinicDashboardTest {
     @Mock private AppUserRepository appUserRepository;
     @Mock private PatientRepository patientRepository;
     @Mock private NotificationCenterService notificationCenterService;
+    @Mock private LabOrderItemRepository labOrderItemRepository;
 
     private ReportingFacade reportingFacade;
 
@@ -87,7 +89,9 @@ class ReportingFacadeClinicDashboardTest {
                 pharmacyCashierShiftRepository,
                 appUserRepository,
                 patientRepository,
-                notificationCenterService
+                notificationCenterService,
+                null,
+                labOrderItemRepository
         );
     }
 

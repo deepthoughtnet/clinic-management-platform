@@ -46,7 +46,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "consultations", label: "Consultations", path: "/consultations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "AUDITOR"] },
       { key: "prescriptions", label: "Prescriptions", path: "/prescriptions", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"] },
       { key: "vaccinations", label: "Vaccinations", path: "/vaccinations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
-      { key: "laboratory", label: "Laboratory", path: "/lab", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_TECHNICIAN", "LAB_ASSISTANT"] },
+      { key: "laboratory", label: "Laboratory", path: "/lab", requiresTenant: true, rolesAny: ["PLATFORM_ADMIN", "CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_TECHNICIAN", "LAB_ASSISTANT"] },
     ],
   },
   {

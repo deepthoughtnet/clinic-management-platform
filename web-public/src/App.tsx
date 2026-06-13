@@ -17,10 +17,12 @@ import {
   PatientCareAiPage,
   PatientDashboardPage,
   PatientLoginPage,
+  PatientNotificationsPage,
   PatientProfilePage,
   PatientRegistrationPage,
   PatientPrescriptionsPage,
 } from "./pages/patient/PatientPortalPages";
+import PatientLabPage from "./pages/patient/PatientLabPage";
 import {
   type PatientPortalSession,
   patientPortalHomePath,
@@ -217,6 +219,8 @@ export function App() {
         <Route path="/patient/appointments" element={<PatientAppointmentsPage session={session} onSignOut={clearSession} />} />
         <Route path="/patient/prescriptions" element={<PatientPrescriptionsPage session={session} onSignOut={clearSession} />} />
         <Route path="/patient/bills" element={<PatientBillsPage session={session} onSignOut={clearSession} />} />
+        <Route path="/patient/notifications" element={<PatientNotificationsPage session={session} onSignOut={clearSession} />} />
+        <Route path="/patient/lab" element={<PatientLabPage session={session} onSignOut={clearSession} />} />
         <Route path="/patient/careai" element={<PatientCareAiPage session={session} onSignOut={clearSession} />} />
         <Route path="/patient/profile" element={<PatientProfilePage session={session} onSignOut={clearSession} />} />
       </Routes>

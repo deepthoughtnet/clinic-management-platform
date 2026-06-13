@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.lab.service.model;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 public record LabTestRecord(
@@ -17,6 +18,7 @@ public record LabTestRecord(
         String turnaroundTime,
         BigDecimal price,
         boolean active,
+        List<LabTestParameterRecord> parameters,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

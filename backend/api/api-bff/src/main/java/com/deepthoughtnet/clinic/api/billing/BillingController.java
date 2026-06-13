@@ -130,7 +130,9 @@ public class BillingController {
     public BillResponse issue(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return toResponse(billingService.issue(tenantId, id, actorAppUserId));
+        BillResponse response = toResponse(billingService.issue(tenantId, id, actorAppUserId));
+        notificationActionService.sendBillGenerated(tenantId, id, actorAppUserId);
+        return response;
     }
 
     @PatchMapping("/{id}/cancel")
@@ -147,7 +149,7 @@ public class BillingController {
     public PaymentResponse addPayment(@PathVariable UUID billId, @Valid @RequestBody PaymentRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return toPaymentResponse(billingService.recordPayment(tenantId, billId, new PaymentCommand(
+        PaymentResponse response = toPaymentResponse(billingService.recordPayment(tenantId, billId, new PaymentCommand(
                 request.paymentDate(),
                 request.paymentDateTime(),
                 request.amount(),
@@ -156,6 +158,11 @@ public class BillingController {
                 request.notes(),
                 request.receivedBy()
         ), actorAppUserId));
+        notificationActionService.sendBillPaid(tenantId, billId, actorAppUserId);
+        if (response.receiptId() != null) {
+            notificationActionService.sendReceiptReady(tenantId, UUID.fromString(response.receiptId()), actorAppUserId);
+        }
+        return response;
     }
 
     @PostMapping("/consultation-fees")
@@ -353,6 +360,7 @@ public class BillingController {
                 request.notes(),
                 request.refundedAt()
         ), actorAppUserId);
+        notificationActionService.sendRefundProcessed(tenantId, billId, actorAppUserId);
         return toRefundResponse(record);
     }
 

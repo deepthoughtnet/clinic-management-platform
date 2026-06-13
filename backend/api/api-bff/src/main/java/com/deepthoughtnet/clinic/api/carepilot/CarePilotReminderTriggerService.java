@@ -5,6 +5,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCriteria;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
 import com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria;
@@ -98,6 +99,7 @@ public class CarePilotReminderTriggerService {
     private final LeadRepository leadRepository;
     private final LeadActivityService leadActivityService;
     private final TenantNotificationSettingsService notificationSettingsService;
+    private final NotificationActionService notificationActionService;
     private final WebinarRepository webinarRepository;
     private final WebinarRegistrationRepository webinarRegistrationRepository;
     private final ObjectMapper objectMapper;
@@ -121,6 +123,7 @@ public class CarePilotReminderTriggerService {
             LeadRepository leadRepository,
             LeadActivityService leadActivityService,
             TenantNotificationSettingsService notificationSettingsService,
+            NotificationActionService notificationActionService,
             WebinarRepository webinarRepository,
             WebinarRegistrationRepository webinarRegistrationRepository,
             ObjectMapper objectMapper,
@@ -143,6 +146,7 @@ public class CarePilotReminderTriggerService {
         this.leadRepository = leadRepository;
         this.leadActivityService = leadActivityService;
         this.notificationSettingsService = notificationSettingsService;
+        this.notificationActionService = notificationActionService;
         this.webinarRepository = webinarRepository;
         this.webinarRegistrationRepository = webinarRegistrationRepository;
         this.objectMapper = objectMapper;
@@ -440,6 +444,17 @@ public class CarePilotReminderTriggerService {
                     reminderWindow,
                     followUpAt
             ))) {
+                if (notificationActionService != null) {
+                    notificationActionService.sendFollowUpDue(
+                            tenantId,
+                            prescription.consultationId() == null ? prescription.id() : prescription.consultationId(),
+                            prescription.patientId(),
+                            prescription.patientName(),
+                            prescription.doctorName(),
+                            prescription.followUpDate(),
+                            null
+                    );
+                }
                 queued += 1;
             }
         }

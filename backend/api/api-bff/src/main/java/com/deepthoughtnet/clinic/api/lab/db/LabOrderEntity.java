@@ -65,6 +65,12 @@ public class LabOrderEntity {
     @Column(name = "bill_id")
     private UUID billId;
 
+    @Column(name = "external_lab_vendor", length = 256)
+    private String externalLabVendor;
+
+    @Column(name = "external_reference_number", length = 128)
+    private String externalReferenceNumber;
+
     @Column(name = "payment_collected_at")
     private OffsetDateTime paymentCollectedAt;
 
@@ -116,6 +122,12 @@ public class LabOrderEntity {
     @Column(name = "doctor_comments", columnDefinition = "text")
     private String doctorComments;
 
+    @Column(name = "delivered_at")
+    private OffsetDateTime deliveredAt;
+
+    @Column(name = "delivered_by_user_id")
+    private UUID deliveredByUserId;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
@@ -156,6 +168,12 @@ public class LabOrderEntity {
 
     public void linkBill(UUID billId) {
         this.billId = billId;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void linkExternalLab(String vendor, String referenceNumber) {
+        this.externalLabVendor = vendor;
+        this.externalReferenceNumber = referenceNumber;
         this.updatedAt = OffsetDateTime.now();
     }
 
@@ -217,6 +235,13 @@ public class LabOrderEntity {
         this.updatedAt = this.doctorReviewedAt;
     }
 
+    public void markDelivered(UUID deliveredByUserId) {
+        this.status = LabOrderStatus.DELIVERED;
+        this.deliveredAt = OffsetDateTime.now();
+        this.deliveredByUserId = deliveredByUserId;
+        this.updatedAt = this.deliveredAt;
+    }
+
     public UUID getId() { return id; }
     public UUID getTenantId() { return tenantId; }
     public String getOrderNumber() { return orderNumber; }
@@ -230,6 +255,8 @@ public class LabOrderEntity {
     public LabOrderStatus getStatus() { return status; }
     public OffsetDateTime getOrderedAt() { return orderedAt; }
     public UUID getBillId() { return billId; }
+    public String getExternalLabVendor() { return externalLabVendor; }
+    public String getExternalReferenceNumber() { return externalReferenceNumber; }
     public OffsetDateTime getPaymentCollectedAt() { return paymentCollectedAt; }
     public OffsetDateTime getReadyForCollectionAt() { return readyForCollectionAt; }
     public String getSampleType() { return sampleType; }
@@ -247,6 +274,8 @@ public class LabOrderEntity {
     public UUID getDoctorReviewedByUserId() { return doctorReviewedByUserId; }
     public String getDoctorReviewedBy() { return doctorReviewedBy; }
     public String getDoctorComments() { return doctorComments; }
+    public OffsetDateTime getDeliveredAt() { return deliveredAt; }
+    public UUID getDeliveredByUserId() { return deliveredByUserId; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

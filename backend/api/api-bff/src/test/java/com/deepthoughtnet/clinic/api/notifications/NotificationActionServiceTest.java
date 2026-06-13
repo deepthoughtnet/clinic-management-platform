@@ -260,6 +260,7 @@ class NotificationActionServiceTest {
                 null,
                 0,
                 null,
+                null,
                 now,
                 now
         );

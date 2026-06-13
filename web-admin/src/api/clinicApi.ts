@@ -12,14 +12,22 @@ export type Timing = "BEFORE_FOOD" | "AFTER_FOOD" | "WITH_FOOD" | "ANYTIME";
 export type NotificationStatus = "PENDING" | "SENT" | "FAILED" | "SKIPPED";
 export type NotificationChannel = "EMAIL" | "WHATSAPP" | "SMS" | "PUSH" | "IN_APP";
 export type NotificationEventType =
+  | "APPOINTMENT_BOOKED"
+  | "APPOINTMENT_RESCHEDULED"
+  | "APPOINTMENT_CANCELLED"
+  | "APPOINTMENT_NO_SHOW"
   | "PRESCRIPTION_READY"
   | "PRESCRIPTION_SENT"
+  | "BILL_GENERATED"
   | "BILL_PAID"
   | "RECEIPT_SENT"
+  | "REFUND_PROCESSED"
   | "LAB_ORDER_CREATED"
   | "LAB_SAMPLE_COLLECTED"
   | "LAB_REPORT_READY"
   | "LAB_REPORT_REVIEWED"
+  | "LAB_CRITICAL_RESULT"
+  | "FOLLOW_UP_DUE"
   | "FOLLOW_UP_REMINDER"
   | "VACCINATION_REMINDER"
   | "APPOINTMENT_REMINDER"
@@ -251,6 +259,7 @@ export type NotificationHistory = {
   outboxEventId: string | null;
   attemptCount: number;
   sentAt: string | null;
+  readAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -1230,11 +1239,33 @@ export type LabTestInput = {
   turnaroundTime: string | null;
   price: number;
   active: boolean;
+  parameters: LabTestParameterInput[];
 };
 
 export type LabTest = LabTestInput & {
   id: string;
   tenantId: string;
+  createdAt: string;
+  updatedAt: string;
+  parameters: LabTestParameter[];
+};
+
+export type LabTestParameterInput = {
+  parameterName: string;
+  unit: string | null;
+  normalRange: string | null;
+  criticalRange: string | null;
+  sortOrder: number;
+};
+
+export type LabTestParameter = {
+  id: string;
+  labTestId: string;
+  parameterName: string;
+  unit: string | null;
+  normalRange: string | null;
+  criticalRange: string | null;
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -1250,6 +1281,7 @@ export type LabOrderStatus =
   | "REPORT_READY"
   | "REPORT_GENERATED"
   | "DOCTOR_REVIEWED"
+  | "DELIVERED"
   | "CANCELLED";
 
 export type LabOrderItem = {
@@ -1266,6 +1298,7 @@ export type LabOrderItem = {
   price: number;
   sortOrder: number;
   createdAt: string;
+  parameters: LabTestParameter[];
 };
 
 export type LabOrderResult = {
@@ -1274,13 +1307,30 @@ export type LabOrderResult = {
   labOrderItemId: string;
   testCode: string;
   testName: string;
+  parameterName: string | null;
   componentName: string | null;
   resultValue: string | null;
   unit: string | null;
   referenceRange: string | null;
   sortOrder: number | null;
+  resultFlag: string | null;
+  criticalResult: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+export type LabOrderAttachment = {
+  id: string;
+  labOrderId: string;
+  attachmentType: string;
+  originalFilename: string;
+  mediaType: string;
+  storageKey: string | null;
+  sizeBytes: number | null;
+  checksumSha256: string | null;
+  dicomMetadataJson: string | null;
+  uploadedByUserId: string | null;
+  createdAt: string;
 };
 
 export type LabOrder = {
@@ -1301,6 +1351,10 @@ export type LabOrder = {
   billStatus: BillStatus | null;
   billTotalAmount: number | null;
   billDueAmount: number | null;
+  externalLabVendor: string | null;
+  externalReferenceNumber: string | null;
+  deliveredAt: string | null;
+  deliveredByUserId: string | null;
   paymentCollectedAt: string | null;
   readyForCollectionAt: string | null;
   sampleType: string | null;
@@ -1319,6 +1373,7 @@ export type LabOrder = {
   doctorReviewedByUserId: string | null;
   doctorReviewedBy: string | null;
   doctorComments: string | null;
+  attachments: LabOrderAttachment[];
   items: LabOrderItem[];
   results: LabOrderResult[];
   createdAt: string;
@@ -2558,6 +2613,7 @@ export async function enterLabOrderResults(token: string, tenantId: string, id: 
     unit?: string | null;
     referenceRange?: string | null;
     componentResults?: Array<{
+      parameterName?: string | null;
       componentName?: string | null;
       resultValue?: string | null;
       unit?: string | null;
@@ -2663,6 +2719,14 @@ export async function getPatientNotifications(token: string, tenantId: string, p
 
 export async function retryNotification(token: string, tenantId: string, id: string) {
   return httpPost<NotificationHistory>(`/api/notifications/${id}/retry`, undefined, { token, tenantId });
+}
+
+export async function markNotificationRead(token: string, tenantId: string, id: string) {
+  return httpPost<NotificationHistory>(`/api/notifications/${id}/read`, undefined, { token, tenantId });
+}
+
+export async function markNotificationUnread(token: string, tenantId: string, id: string) {
+  return httpPost<NotificationHistory>(`/api/notifications/${id}/unread`, undefined, { token, tenantId });
 }
 
 export async function runVoiceTest(

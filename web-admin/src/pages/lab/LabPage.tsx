@@ -53,6 +53,7 @@ import {
   type LabOrderStatus,
   type LabTest,
   type LabTestInput,
+  type LabTestParameterInput,
   type PaymentMode,
 } from "../../api/clinicApi";
 
@@ -67,14 +68,18 @@ const emptyTestForm: LabTestInput = {
   turnaroundTime: "",
   price: 0,
   active: true,
+  parameters: [],
 };
 
 type ResultComponentForm = {
+  parameterName: string;
   componentName: string;
   resultValue: string;
   unit: string;
   referenceRange: string;
 };
+
+type LabParameterForm = LabTestParameterInput;
 
 type ResultItemForm = {
   labOrderItemId: string;
@@ -102,6 +107,7 @@ function statusTone(status: LabOrderStatus | string) {
     case "REPORT_READY":
     case "REPORT_GENERATED":
     case "DOCTOR_REVIEWED":
+    case "DELIVERED":
     case "PAID":
       return "success";
     case "PAYMENT_PENDING":
@@ -110,6 +116,20 @@ function statusTone(status: LabOrderStatus | string) {
       return "default";
     case "CANCELLED":
       return "default";
+    default:
+      return "default";
+  }
+}
+
+function resultTone(flag: string | null | undefined) {
+  switch ((flag || "").toUpperCase()) {
+    case "CRITICAL":
+      return "error";
+    case "LOW":
+    case "HIGH":
+      return "warning";
+    case "NORMAL":
+      return "success";
     default:
       return "default";
   }
@@ -149,6 +169,7 @@ function defaultResultsForItem(orderItem: LabOrder["items"][number], existingRes
         unit: orderItem.unit || "",
         referenceRange: orderItem.referenceRange || "",
         componentResults: existingForItem.map((row) => ({
+          parameterName: row.parameterName || "",
           componentName: row.componentName || "",
           resultValue: row.resultValue || "",
           unit: row.unit || "",
@@ -167,14 +188,23 @@ function defaultResultsForItem(orderItem: LabOrder["items"][number], existingRes
       componentResults: [],
     };
   }
-  const defaultComponents = orderItem.testName.toUpperCase().includes("CBC")
-    ? ["Hemoglobin", "WBC", "RBC", "Platelets"].map((componentName) => ({
-        componentName,
+  const defaultComponents = orderItem.parameters.length
+    ? orderItem.parameters.map((parameter) => ({
+        parameterName: parameter.parameterName,
+        componentName: parameter.parameterName,
         resultValue: "",
-        unit: "",
-        referenceRange: "",
+        unit: parameter.unit || "",
+        referenceRange: parameter.normalRange || "",
       }))
-    : [];
+    : orderItem.testName.toUpperCase().includes("CBC")
+      ? ["Hemoglobin", "WBC", "RBC", "Platelets"].map((componentName) => ({
+          parameterName: componentName,
+          componentName,
+          resultValue: "",
+          unit: "",
+          referenceRange: "",
+        }))
+      : [];
   return {
     labOrderItemId: orderItem.id,
     testName: orderItem.testName,
@@ -215,18 +245,18 @@ export default function LabPage() {
   const [resultItems, setResultItems] = React.useState<ResultItemForm[]>([]);
   const [reviewComments, setReviewComments] = React.useState("");
 
-  const canManageTests = auth.hasPermission("lab.test.manage") || auth.rolesUpper.includes("CLINIC_ADMIN");
+  const canManageTests = auth.hasPermission("lab.test.manage") || auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("PLATFORM_ADMIN");
   const canViewOrders = auth.hasPermission("lab.order.read")
     || auth.hasPermission("lab.order.collect_payment")
     || auth.hasPermission("lab.order.collect_sample")
     || auth.hasPermission("lab.order.result_entry")
     || auth.hasPermission("lab.order.generate_report")
     || auth.hasPermission("lab.order.create");
-  const canCollectPayment = auth.hasPermission("lab.order.collect_payment") || auth.rolesUpper.includes("RECEPTIONIST") || auth.rolesUpper.includes("BILLING_USER") || auth.rolesUpper.includes("CLINIC_ADMIN");
-  const canCollectSample = auth.hasPermission("lab.order.collect_sample") || auth.rolesUpper.includes("LAB_TECHNICIAN") || auth.rolesUpper.includes("LAB_ASSISTANT") || auth.rolesUpper.includes("CLINIC_ADMIN");
-  const canEnterResults = auth.hasPermission("lab.order.result_entry") || auth.rolesUpper.includes("LAB_TECHNICIAN") || auth.rolesUpper.includes("LAB_ASSISTANT") || auth.rolesUpper.includes("CLINIC_ADMIN");
-  const canGenerateReport = auth.hasPermission("lab.order.generate_report") || auth.rolesUpper.includes("LAB_TECHNICIAN") || auth.rolesUpper.includes("LAB_ASSISTANT") || auth.rolesUpper.includes("CLINIC_ADMIN");
-  const canReviewReport = auth.hasPermission("lab.order.review") || auth.rolesUpper.includes("DOCTOR") || auth.rolesUpper.includes("CLINIC_ADMIN");
+  const canCollectPayment = auth.hasPermission("lab.order.collect_payment") || auth.rolesUpper.includes("RECEPTIONIST") || auth.rolesUpper.includes("BILLING_USER") || auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("PLATFORM_ADMIN");
+  const canCollectSample = auth.hasPermission("lab.order.collect_sample") || auth.rolesUpper.includes("LAB_TECHNICIAN") || auth.rolesUpper.includes("LAB_ASSISTANT") || auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("PLATFORM_ADMIN");
+  const canEnterResults = auth.hasPermission("lab.order.result_entry") || auth.rolesUpper.includes("LAB_TECHNICIAN") || auth.rolesUpper.includes("LAB_ASSISTANT") || auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("PLATFORM_ADMIN");
+  const canGenerateReport = auth.hasPermission("lab.order.generate_report") || auth.rolesUpper.includes("LAB_TECHNICIAN") || auth.rolesUpper.includes("LAB_ASSISTANT") || auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("PLATFORM_ADMIN");
+  const canReviewReport = auth.hasPermission("lab.order.review") || auth.rolesUpper.includes("DOCTOR") || auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("PLATFORM_ADMIN");
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -300,6 +330,13 @@ export default function LabPage() {
       turnaroundTime: row.turnaroundTime,
       price: row.price,
       active: row.active,
+      parameters: row.parameters.map((parameter, index) => ({
+        parameterName: parameter.parameterName,
+        unit: parameter.unit || "",
+        normalRange: parameter.normalRange || "",
+        criticalRange: parameter.criticalRange || "",
+        sortOrder: parameter.sortOrder || index + 1,
+      })),
     });
     setEditorOpen(true);
   };
@@ -411,6 +448,7 @@ export default function LabPage() {
           unit: item.unit.trim() || null,
           referenceRange: item.referenceRange.trim() || null,
           componentResults: item.componentResults.map((component) => ({
+            parameterName: component.parameterName.trim() || null,
             componentName: component.componentName.trim() || null,
             resultValue: component.resultValue.trim() || null,
             unit: component.unit.trim() || null,
@@ -643,7 +681,7 @@ export default function LabPage() {
           ) : (
             <Stack spacing={2}>
               <Stack direction="row" spacing={1} flexWrap="wrap">
-                {(["ALL", "ORDERED", "PAYMENT_PENDING", "PAID", "READY_FOR_COLLECTION", "SAMPLE_COLLECTED", "PROCESSING", "RESULT_ENTERED", "REPORT_READY", "REPORT_GENERATED", "DOCTOR_REVIEWED"] as const).map((status) => (
+                {(["ALL", "ORDERED", "PAYMENT_PENDING", "PAID", "READY_FOR_COLLECTION", "SAMPLE_COLLECTED", "PROCESSING", "RESULT_ENTERED", "REPORT_READY", "REPORT_GENERATED", "DOCTOR_REVIEWED", "DELIVERED"] as const).map((status) => (
                   <Chip
                     key={status}
                     clickable
@@ -690,6 +728,19 @@ export default function LabPage() {
                             <Stack spacing={0.25}>
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.items.length} tests</Typography>
                               <Typography variant="caption" color="text.secondary">{row.results.length ? `${row.results.length} result rows` : "No results yet"}</Typography>
+                              {row.results.length ? (
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  {row.results.slice(0, 3).map((result, resultIndex) => (
+                                    <Chip
+                                      key={`${row.id}-result-${resultIndex}`}
+                                      size="small"
+                                      label={`${result.parameterName || result.componentName || result.testName}: ${result.resultFlag || "NORMAL"}`}
+                                      color={resultTone(result.resultFlag)}
+                                      variant="outlined"
+                                    />
+                                  ))}
+                                </Stack>
+                              ) : null}
                             </Stack>
                           </TableCell>
                           <TableCell>
@@ -770,6 +821,63 @@ export default function LabPage() {
             <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth type="number" label="Price" value={form.price} onChange={(e) => setForm((current) => ({ ...current, price: Number(e.target.value) }))} /></Grid>
             <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth label="Status" value={form.active ? "Active" : "Inactive"} disabled /></Grid>
           </Grid>
+          <Stack spacing={1.5} sx={{ mt: 3 }}>
+            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Parameters</Typography>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => setForm((current) => ({
+                  ...current,
+                  parameters: [...(current.parameters || []), { parameterName: "", unit: "", normalRange: "", criticalRange: "", sortOrder: (current.parameters?.length || 0) + 1 }],
+                }))}
+              >
+                Add parameter
+              </Button>
+            </Box>
+            {!form.parameters?.length ? (
+              <Alert severity="info">Add parameter rows for tests such as CBC or other multi-parameter panels.</Alert>
+            ) : (
+              <Stack spacing={1}>
+                {form.parameters.map((parameter, index) => (
+                  <Grid container spacing={1} key={`${parameter.parameterName || "parameter"}-${index}`}>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <TextField fullWidth size="small" label="Parameter Name" value={parameter.parameterName} onChange={(e) => setForm((current) => ({
+                        ...current,
+                        parameters: current.parameters.map((row, rowIndex) => rowIndex === index ? { ...row, parameterName: e.target.value } : row),
+                      }))} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 2 }}>
+                      <TextField fullWidth size="small" label="Unit" value={parameter.unit || ""} onChange={(e) => setForm((current) => ({
+                        ...current,
+                        parameters: current.parameters.map((row, rowIndex) => rowIndex === index ? { ...row, unit: e.target.value } : row),
+                      }))} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 3 }}>
+                      <TextField fullWidth size="small" label="Normal Range" value={parameter.normalRange || ""} onChange={(e) => setForm((current) => ({
+                        ...current,
+                        parameters: current.parameters.map((row, rowIndex) => rowIndex === index ? { ...row, normalRange: e.target.value } : row),
+                      }))} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 2 }}>
+                      <TextField fullWidth size="small" label="Critical Range" value={parameter.criticalRange || ""} onChange={(e) => setForm((current) => ({
+                        ...current,
+                        parameters: current.parameters.map((row, rowIndex) => rowIndex === index ? { ...row, criticalRange: e.target.value } : row),
+                      }))} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 1 }} sx={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+                      <IconButton size="small" onClick={() => setForm((current) => ({
+                        ...current,
+                        parameters: current.parameters.filter((_, rowIndex) => rowIndex !== index),
+                      }))}>
+                        <Typography variant="caption">x</Typography>
+                      </IconButton>
+                    </Grid>
+                  </Grid>
+                ))}
+              </Stack>
+            )}
+          </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditorOpen(false)}>Cancel</Button>
@@ -846,7 +954,7 @@ export default function LabPage() {
                       <Button size="small" onClick={() => {
                         setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
                           ...row,
-                          componentResults: [...row.componentResults, { componentName: "", resultValue: "", unit: "", referenceRange: "" }],
+                          componentResults: [...row.componentResults, { parameterName: "", componentName: "", resultValue: "", unit: "", referenceRange: "" }],
                         }) : row));
                       }}>
                         Add component
@@ -856,11 +964,15 @@ export default function LabPage() {
                       <Stack spacing={1}>
                         {item.componentResults.map((component, componentIndex) => (
                           <Grid container spacing={1} key={`${item.labOrderItemId}-component-${componentIndex}`}>
+                            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Parameter" value={component.parameterName} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
+                              ...row,
+                              componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, parameterName: e.target.value } : currentComponent),
+                            }) : row))} /></Grid>
                             <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Component" value={component.componentName} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
                               ...row,
                               componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, componentName: e.target.value } : currentComponent),
                             }) : row))} /></Grid>
-                            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Result Value" value={component.resultValue} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
+                            <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Result Value" value={component.resultValue} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
                               ...row,
                               componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, resultValue: e.target.value } : currentComponent),
                             }) : row))} /></Grid>
@@ -972,6 +1084,19 @@ function OrderQueue(props: {
                 <Stack spacing={0.25}>
                   <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.items.length} tests</Typography>
                   <Typography variant="caption" color="text.secondary">{row.results.length ? `${row.results.length} result rows` : "No results yet"}</Typography>
+                  {row.results.length ? (
+                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                      {row.results.slice(0, 3).map((result, resultIndex) => (
+                        <Chip
+                          key={`${row.id}-result-${resultIndex}`}
+                          size="small"
+                          label={`${result.parameterName || result.componentName || result.testName}: ${result.resultFlag || "NORMAL"}`}
+                          color={resultTone(result.resultFlag)}
+                          variant="outlined"
+                        />
+                      ))}
+                    </Stack>
+                  ) : null}
                 </Stack>
               </TableCell>
               <TableCell>

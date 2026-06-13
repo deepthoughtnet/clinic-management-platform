@@ -29,6 +29,7 @@ import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
 import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
+import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
@@ -40,6 +41,7 @@ import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
+import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
@@ -78,6 +80,8 @@ class PatientPortalServiceTest {
     private AppointmentService appointmentService;
     private PrescriptionService prescriptionService;
     private BillingService billingService;
+    private NotificationHistoryService notificationHistoryService;
+    private NotificationActionService notificationActionService;
     private PatientPortalService service;
 
     @BeforeEach
@@ -92,6 +96,8 @@ class PatientPortalServiceTest {
         appointmentService = mock(AppointmentService.class);
         prescriptionService = mock(PrescriptionService.class);
         billingService = mock(BillingService.class);
+        notificationHistoryService = mock(NotificationHistoryService.class);
+        notificationActionService = mock(NotificationActionService.class);
         service = new PatientPortalService(
                 appUserRepository,
                 patientRepository,
@@ -102,7 +108,10 @@ class PatientPortalServiceTest {
                 clinicTimeZoneResolver,
                 appointmentService,
                 prescriptionService,
-                billingService
+                billingService,
+                null,
+                notificationHistoryService,
+                notificationActionService
         );
         when(clinicTimeZoneResolver.resolve(any())).thenReturn(ZoneId.of("Asia/Kolkata"));
         RequestContextHolder.set(new RequestContext(new TenantId(TENANT_ID), APP_USER_ID, "patient-sub", Set.of("PATIENT"), "PATIENT", "corr-1"));

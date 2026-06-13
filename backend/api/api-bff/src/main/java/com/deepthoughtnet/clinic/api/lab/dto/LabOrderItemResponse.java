@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.lab.dto;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 
 public record LabOrderItemResponse(
         String id,
@@ -16,6 +17,7 @@ public record LabOrderItemResponse(
         String turnaroundTime,
         BigDecimal price,
         int sortOrder,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        List<LabTestResponse.LabTestParameterResponse> parameters
 ) {
 }

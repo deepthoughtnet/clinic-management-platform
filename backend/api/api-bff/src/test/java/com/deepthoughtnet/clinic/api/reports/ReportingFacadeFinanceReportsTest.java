@@ -37,6 +37,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderItemRepository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -66,6 +67,7 @@ class ReportingFacadeFinanceReportsTest {
     @Mock private AppUserRepository appUserRepository;
     @Mock private PatientRepository patientRepository;
     @Mock private NotificationCenterService notificationCenterService;
+    @Mock private LabOrderItemRepository labOrderItemRepository;
 
     private ReportingFacade reportingFacade;
 
@@ -86,7 +88,9 @@ class ReportingFacadeFinanceReportsTest {
                 pharmacyCashierShiftRepository,
                 appUserRepository,
                 patientRepository,
-                notificationCenterService
+                notificationCenterService,
+                null,
+                labOrderItemRepository
         );
     }
 

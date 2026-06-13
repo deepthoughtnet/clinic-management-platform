@@ -20,6 +20,7 @@ public record NotificationHistoryRecord(
         UUID outboxEventId,
         int attemptCount,
         OffsetDateTime sentAt,
+        OffsetDateTime readAt,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

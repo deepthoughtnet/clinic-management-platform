@@ -13,6 +13,7 @@ import {
   type PatientPortalDoctorResponse,
   type PatientPortalDoctorSlotResponse,
   type PatientPortalMeResponse,
+  type PatientPortalNotificationResponse,
   type PatientPortalOtpRequestResponse,
   type PatientPortalPatientSession,
   type PatientPortalProfileUpdateRequest,
@@ -26,6 +27,7 @@ import {
   fetchPatientPortalJson,
   isPatientPortalPatientSession,
   isPatientPortalRegistrationSession,
+  markPatientNotificationRead,
   openPatientPortalPdf,
   patientPortalHomePath,
   postPatientPortalJson,
@@ -214,6 +216,8 @@ const patientNavItems = [
   { to: "/patient/appointments", label: "Appointments", shortLabel: "Visits" },
   { to: "/patient/prescriptions", label: "Prescriptions", shortLabel: "Rx" },
   { to: "/patient/bills", label: "Bills", shortLabel: "Bills" },
+  { to: "/patient/notifications", label: "Notifications", shortLabel: "Notify" },
+  { to: "/patient/lab", label: "Lab Reports", shortLabel: "Lab" },
   { to: "/patient/careai", label: "CareAI", shortLabel: "CareAI" },
   { to: "/patient/profile", label: "Profile", shortLabel: "Profile" },
 ];
@@ -1667,6 +1671,115 @@ export function PatientBillsPage({ session, onSignOut }: { session: PatientPorta
                     }
                   >
                     {busyKey === `${bill.billNumber}-receipt` ? "Opening..." : "View receipt"}
+                  </button>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      </PatientPortalApiState>
+    </PatientAccessBoundary>
+  );
+}
+
+export function PatientNotificationsPage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
+  const portalSession = isPatientPortalPatientSession(session) ? session : null;
+  const [refreshKey, setRefreshKey] = useState(0);
+  const notifications = usePatientPortalResource<PatientPortalNotificationResponse[]>(
+    portalSession,
+    `/api/patient-portal/notifications?refresh=${refreshKey}`,
+    [],
+  );
+  const [workingId, setWorkingId] = useState<string | null>(null);
+
+  function actionPath(notification: PatientPortalNotificationResponse) {
+    return notification.actionPath ?? switchActionPath(notification.sourceType);
+  }
+
+  function switchActionPath(sourceType: string | null) {
+    switch ((sourceType ?? "").toUpperCase()) {
+      case "APPOINTMENT":
+        return "/patient/appointments";
+      case "PRESCRIPTION":
+        return "/patient/prescriptions";
+      case "BILL":
+      case "RECEIPT":
+        return "/patient/bills";
+      case "LAB_ORDER":
+        return "/patient/lab";
+      default:
+        return null;
+    }
+  }
+
+  async function handleMarkRead(id: string) {
+    if (!portalSession) {
+      return;
+    }
+    setWorkingId(id);
+    try {
+      await markPatientNotificationRead(portalSession, id);
+      setRefreshKey((current) => current + 1);
+    } finally {
+      setWorkingId(null);
+    }
+  }
+
+  const unreadCount = notifications.data.filter((notification) => !notification.readAt).length;
+
+  return (
+    <PatientAccessBoundary
+      session={session}
+      onSignOut={onSignOut}
+      title="Notifications"
+      subtitle="See patient-safe appointment, prescription, bill, lab, and follow-up notifications for your own tenant session."
+    >
+      <PatientPortalApiState
+        loading={notifications.loading}
+        error={notifications.error}
+        empty={notifications.data.length === 0}
+        emptyTitle="No notifications yet"
+        emptyMessage="Your portal notifications will appear here once the clinic sends them."
+      >
+        <div className="portal-dashboard-grid">
+          <article className="dashboard-card">
+            <strong>Total</strong>
+            <span>{notifications.data.length}</span>
+          </article>
+          <article className="dashboard-card">
+            <strong>Unread</strong>
+            <span>{unreadCount}</span>
+          </article>
+          <article className="dashboard-card">
+            <strong>Read</strong>
+            <span>{notifications.data.length - unreadCount}</span>
+          </article>
+        </div>
+
+        <div className="portal-list">
+          {notifications.data.map((notification) => (
+            <article key={notification.id} className="portal-list-card">
+              <div className="portal-list-card-header">
+                <strong>{notification.subject ?? notification.eventType.replaceAll("_", " ")}</strong>
+                <span className={`status-pill status-${notification.readAt ? "success" : "warning"}`}>
+                  {notification.readAt ? "Read" : "Unread"}
+                </span>
+              </div>
+              <div className="portal-list-meta">
+                <span>{new Date(notification.createdAt).toLocaleString()}</span>
+                <span>{notification.sourceType ?? "Notification"}</span>
+                <span>{notification.status}</span>
+              </div>
+              <p className="portal-help-text">{notification.message}</p>
+              <div className="cta-row">
+                {actionPath(notification) ? (
+                  <Link className="secondary-button" to={actionPath(notification) as string}>
+                    Open related page
+                  </Link>
+                ) : null}
+                {!notification.readAt ? (
+                  <button className="ghost-button" type="button" disabled={workingId === notification.id} onClick={() => void handleMarkRead(notification.id)}>
+                    {workingId === notification.id ? "Marking..." : "Mark as read"}
                   </button>
                 ) : null}
               </div>

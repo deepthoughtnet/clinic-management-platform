@@ -36,6 +36,9 @@ public class LabOrderResultEntity {
     @Column(name = "test_name", nullable = false, length = 256)
     private String testName;
 
+    @Column(name = "parameter_name", length = 256)
+    private String parameterName;
+
     @Column(name = "component_name", length = 256)
     private String componentName;
 
@@ -50,6 +53,12 @@ public class LabOrderResultEntity {
 
     @Column(name = "sort_order", nullable = false)
     private Integer sortOrder;
+
+    @Column(name = "result_flag", length = 32)
+    private String resultFlag;
+
+    @Column(name = "critical_result", nullable = false)
+    private boolean criticalResult;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
@@ -66,11 +75,14 @@ public class LabOrderResultEntity {
             UUID labOrderItemId,
             String testCode,
             String testName,
+            String parameterName,
             String componentName,
             String resultValue,
             String unit,
             String referenceRange,
-            Integer sortOrder
+            Integer sortOrder,
+            String resultFlag,
+            boolean criticalResult
     ) {
         LabOrderResultEntity entity = new LabOrderResultEntity();
         entity.id = UUID.randomUUID();
@@ -79,11 +91,14 @@ public class LabOrderResultEntity {
         entity.labOrderItemId = labOrderItemId;
         entity.testCode = testCode;
         entity.testName = testName;
+        entity.parameterName = parameterName;
         entity.componentName = componentName;
         entity.resultValue = resultValue;
         entity.unit = unit;
         entity.referenceRange = referenceRange;
         entity.sortOrder = sortOrder;
+        entity.resultFlag = resultFlag;
+        entity.criticalResult = criticalResult;
         entity.createdAt = OffsetDateTime.now();
         entity.updatedAt = entity.createdAt;
         return entity;
@@ -95,11 +110,14 @@ public class LabOrderResultEntity {
     public UUID getLabOrderItemId() { return labOrderItemId; }
     public String getTestCode() { return testCode; }
     public String getTestName() { return testName; }
+    public String getParameterName() { return parameterName; }
     public String getComponentName() { return componentName; }
     public String getResultValue() { return resultValue; }
     public String getUnit() { return unit; }
     public String getReferenceRange() { return referenceRange; }
     public Integer getSortOrder() { return sortOrder; }
+    public String getResultFlag() { return resultFlag; }
+    public boolean isCriticalResult() { return criticalResult; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

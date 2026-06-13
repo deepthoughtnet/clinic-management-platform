@@ -53,4 +53,18 @@ public class NotificationController {
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return notificationHistoryService.retry(tenantId, id, actorAppUserId);
     }
+
+    @PostMapping("/{id}/read")
+    @PreAuthorize("@permissionChecker.hasPermission('notification.read')")
+    public NotificationHistoryRecord read(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return notificationHistoryService.markRead(tenantId, id);
+    }
+
+    @PostMapping("/{id}/unread")
+    @PreAuthorize("@permissionChecker.hasPermission('notification.read')")
+    public NotificationHistoryRecord unread(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return notificationHistoryService.markUnread(tenantId, id);
+    }
 }

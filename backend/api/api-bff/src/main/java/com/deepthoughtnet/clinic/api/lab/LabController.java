@@ -23,8 +23,10 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderSampleCollectionCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterUpsertCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestUpsertCommand;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.ContentDisposition;
@@ -171,14 +173,7 @@ public class LabController {
                         item.resultValue(),
                         item.unit(),
                         item.referenceRange(),
-                        item.componentResults() == null ? List.of() : item.componentResults().stream()
-                                .map(component -> new LabOrderResultComponentCommand(
-                                        component.componentName(),
-                                        component.resultValue(),
-                                        component.unit(),
-                                        component.referenceRange()
-                                ))
-                                .toList()
+                        mapComponentResults(item.componentResults())
                 ))
                 .toList();
         return toResponse(labService.enterResults(tenantId, id, new LabOrderResultEntryCommand(items, request.comments()), actorAppUserId));
@@ -215,8 +210,32 @@ public class LabController {
                 request.referenceRange(),
                 request.turnaroundTime(),
                 request.price(),
-                request.active()
+                request.active(),
+                request.parameters() == null ? List.of() : request.parameters().stream()
+                        .map(parameter -> new LabTestParameterUpsertCommand(
+                                parameter.parameterName(),
+                                parameter.unit(),
+                                parameter.normalRange(),
+                                parameter.criticalRange(),
+                                parameter.sortOrder()
+                        ))
+                        .toList()
         );
+    }
+
+    private List<LabOrderResultComponentCommand> mapComponentResults(List<LabOrderResultRequest.LabOrderResultComponentRequest> componentResults) {
+        if (componentResults == null || componentResults.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return componentResults.stream()
+                .map(component -> new LabOrderResultComponentCommand(
+                        component.parameterName(),
+                        component.componentName(),
+                        component.resultValue(),
+                        component.unit(),
+                        component.referenceRange()
+                ))
+                .toList();
     }
 
     private LabTestResponse toResponse(LabTestRecord record) {
@@ -233,6 +252,19 @@ public class LabController {
                 record.turnaroundTime(),
                 record.price(),
                 record.active(),
+                record.parameters().stream()
+                        .map(parameter -> new LabTestResponse.LabTestParameterResponse(
+                                parameter.id() == null ? null : parameter.id().toString(),
+                                parameter.labTestId() == null ? null : parameter.labTestId().toString(),
+                                parameter.parameterName(),
+                                parameter.unit(),
+                                parameter.normalRange(),
+                                parameter.criticalRange(),
+                                parameter.sortOrder(),
+                                parameter.createdAt(),
+                                parameter.updatedAt()
+                        ))
+                        .toList(),
                 record.createdAt(),
                 record.updatedAt()
         );
@@ -257,6 +289,10 @@ public class LabController {
                 record.billStatus(),
                 record.billTotalAmount(),
                 record.billDueAmount(),
+                record.externalLabVendor(),
+                record.externalReferenceNumber(),
+                record.deliveredAt(),
+                record.deliveredByUserId() == null ? null : record.deliveredByUserId().toString(),
                 record.paymentCollectedAt(),
                 record.readyForCollectionAt(),
                 record.sampleType(),
@@ -275,6 +311,21 @@ public class LabController {
                 record.doctorReviewedByUserId() == null ? null : record.doctorReviewedByUserId().toString(),
                 record.doctorReviewedBy(),
                 record.doctorComments(),
+                record.attachments().stream()
+                        .map(attachment -> new LabOrderResponse.LabOrderAttachmentResponse(
+                                attachment.id() == null ? null : attachment.id().toString(),
+                                attachment.labOrderId() == null ? null : attachment.labOrderId().toString(),
+                                attachment.attachmentType(),
+                                attachment.originalFilename(),
+                                attachment.mediaType(),
+                                attachment.storageKey(),
+                                attachment.sizeBytes(),
+                                attachment.checksumSha256(),
+                                attachment.dicomMetadataJson(),
+                                attachment.uploadedByUserId() == null ? null : attachment.uploadedByUserId().toString(),
+                                attachment.createdAt()
+                        ))
+                        .toList(),
                 record.items().stream().map(this::toResponse).toList(),
                 record.results().stream().map(this::toResponse).toList(),
                 record.createdAt(),
@@ -321,11 +372,14 @@ public class LabController {
                 record.labOrderItemId() == null ? null : record.labOrderItemId().toString(),
                 record.testCode(),
                 record.testName(),
+                record.parameterName(),
                 record.componentName(),
                 record.resultValue(),
                 record.unit(),
                 record.referenceRange(),
                 record.sortOrder(),
+                record.resultFlag(),
+                record.criticalResult(),
                 record.createdAt(),
                 record.updatedAt()
         );
@@ -345,7 +399,20 @@ public class LabController {
                 record.turnaroundTime(),
                 record.price(),
                 record.sortOrder(),
-                record.createdAt()
+                record.createdAt(),
+                record.parameters().stream()
+                        .map(parameter -> new LabTestResponse.LabTestParameterResponse(
+                                parameter.id() == null ? null : parameter.id().toString(),
+                                parameter.labTestId() == null ? null : parameter.labTestId().toString(),
+                                parameter.parameterName(),
+                                parameter.unit(),
+                                parameter.normalRange(),
+                                parameter.criticalRange(),
+                                parameter.sortOrder(),
+                                parameter.createdAt(),
+                                parameter.updatedAt()
+                        ))
+                        .toList()
         );
     }
 

@@ -198,6 +198,57 @@ export type PatientPortalBillResponse = {
   lines: PatientPortalBillLineResponse[];
 };
 
+export type PatientPortalNotificationResponse = {
+  id: string;
+  eventType: string;
+  subject: string | null;
+  message: string;
+  status: string;
+  readAt: string | null;
+  sourceType: string | null;
+  sourceId: string | null;
+  createdAt: string;
+  actionPath: string | null;
+};
+
+export type PatientPortalLabResultResponse = {
+  testCode: string;
+  testName: string;
+  parameterName: string | null;
+  componentName: string | null;
+  resultValue: string | null;
+  unit: string | null;
+  referenceRange: string | null;
+  resultFlag: string | null;
+  criticalResult: boolean;
+};
+
+export type PatientPortalLabOrderResponse = {
+  orderNumber: string;
+  doctorName: string | null;
+  status: string | null;
+  orderedAt: string;
+  sampleCollectedAt: string | null;
+  resultEnteredAt: string | null;
+  reportGeneratedAt: string | null;
+  doctorReviewedAt: string | null;
+  doctorComments: string | null;
+  results: PatientPortalLabResultResponse[];
+};
+
+export type PatientPortalLabLatestResultResponse = {
+  orderNumber: string;
+  testCode: string;
+  testName: string;
+  componentName: string | null;
+  resultValue: string | null;
+  unit: string | null;
+  referenceRange: string | null;
+  resultEnteredAt: string | null;
+  doctorReviewedAt: string | null;
+  doctorComments: string | null;
+};
+
 export type PatientPortalDashboardResponse = {
   patientDisplayName: string;
   patientNumber: string;
@@ -378,4 +429,36 @@ export async function openPatientPortalPdf(path: string, session: PatientPortalS
   const blobUrl = window.URL.createObjectURL(blob);
   window.open(blobUrl, "_blank", "noopener,noreferrer");
   window.setTimeout(() => window.URL.revokeObjectURL(blobUrl), 60_000);
+}
+
+export async function getPatientLabOrders(session: PatientPortalSession) {
+  return fetchPatientPortalJson<PatientPortalLabOrderResponse[]>("/api/patient-portal/lab/orders", session);
+}
+
+export async function getPatientLabReports(session: PatientPortalSession) {
+  return fetchPatientPortalJson<PatientPortalLabOrderResponse[]>("/api/patient-portal/lab/reports", session);
+}
+
+export async function getPatientLabLatestResults(session: PatientPortalSession, query?: string | null) {
+  const suffix = query?.trim() ? `?query=${encodeURIComponent(query.trim())}` : "";
+  return fetchPatientPortalJson<PatientPortalLabLatestResultResponse[]>(`/api/patient-portal/lab/reports/latest${suffix}`, session);
+}
+
+export async function getPatientNotifications(session: PatientPortalSession) {
+  return fetchPatientPortalJson<PatientPortalNotificationResponse[]>("/api/patient-portal/notifications", session);
+}
+
+export async function markPatientNotificationRead(session: PatientPortalSession, id: string) {
+  const response = await fetch(buildUrl(`/api/patient-portal/notifications/${id}/read`), {
+    method: "POST",
+    headers: buildHeaders(session),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return response.json() as Promise<PatientPortalNotificationResponse>;
+}
+
+export async function getPatientLabReportPdfPath(orderNumber: string) {
+  return `/api/patient-portal/lab/orders/${encodeURIComponent(orderNumber)}/pdf`;
 }

@@ -24,6 +24,10 @@ public record LabOrderResponse(
         BillStatus billStatus,
         BigDecimal billTotalAmount,
         BigDecimal billDueAmount,
+        String externalLabVendor,
+        String externalReferenceNumber,
+        OffsetDateTime deliveredAt,
+        String deliveredByUserId,
         OffsetDateTime paymentCollectedAt,
         OffsetDateTime readyForCollectionAt,
         String sampleType,
@@ -42,9 +46,24 @@ public record LabOrderResponse(
         String doctorReviewedByUserId,
         String doctorReviewedBy,
         String doctorComments,
+        List<LabOrderAttachmentResponse> attachments,
         List<LabOrderItemResponse> items,
         List<LabOrderResultResponse> results,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {
+    public record LabOrderAttachmentResponse(
+            String id,
+            String labOrderId,
+            String attachmentType,
+            String originalFilename,
+            String mediaType,
+            String storageKey,
+            Long sizeBytes,
+            String checksumSha256,
+            String dicomMetadataJson,
+            String uploadedByUserId,
+            OffsetDateTime createdAt
+    ) {
+    }
 }

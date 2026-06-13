@@ -74,6 +74,9 @@ public class NotificationHistoryEntity {
     @Column(name = "sent_at")
     private OffsetDateTime sentAt;
 
+    @Column(name = "read_at")
+    private OffsetDateTime readAt;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -135,6 +138,7 @@ public class NotificationHistoryEntity {
     public UUID getOutboxEventId() { return outboxEventId; }
     public int getAttemptCount() { return attemptCount; }
     public OffsetDateTime getSentAt() { return sentAt; }
+    public OffsetDateTime getReadAt() { return readAt; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public int getVersion() { return version; }
@@ -144,6 +148,18 @@ public class NotificationHistoryEntity {
         this.status = "SENT";
         this.sentAt = now;
         this.failureReason = null;
+        this.updatedAt = now;
+    }
+
+    public void markRead() {
+        OffsetDateTime now = OffsetDateTime.now();
+        this.readAt = now;
+        this.updatedAt = now;
+    }
+
+    public void markUnread() {
+        OffsetDateTime now = OffsetDateTime.now();
+        this.readAt = null;
         this.updatedAt = now;
     }
 

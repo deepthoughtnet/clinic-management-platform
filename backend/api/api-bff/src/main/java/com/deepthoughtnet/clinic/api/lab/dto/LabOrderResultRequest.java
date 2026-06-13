@@ -19,6 +19,7 @@ public record LabOrderResultRequest(
     }
 
     public record LabOrderResultComponentRequest(
+            @Size(max = 256) String parameterName,
             @Size(max = 256) String componentName,
             @Size(max = 256) String resultValue,
             @Size(max = 64) String unit,

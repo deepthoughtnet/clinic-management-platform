@@ -111,7 +111,9 @@ public class PrescriptionController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         prescriptionService.findById(tenantId, id).ifPresent(record -> doctorAssignmentSecurityService.requirePatientAccess(tenantId, record.patientId()));
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return toResponse(prescriptionService.finalizePrescription(tenantId, id, actorAppUserId));
+        PrescriptionResponse response = toResponse(prescriptionService.finalizePrescription(tenantId, id, actorAppUserId));
+        notificationActionService.sendPrescriptionReady(tenantId, id, actorAppUserId);
+        return response;
     }
 
     @PatchMapping("/{id}/cancel")
@@ -154,7 +156,9 @@ public class PrescriptionController {
     public PrescriptionResponse print(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return toResponse(prescriptionService.markPrinted(tenantId, id, actorAppUserId));
+        PrescriptionResponse response = toResponse(prescriptionService.markPrinted(tenantId, id, actorAppUserId));
+        notificationActionService.sendPrescriptionReady(tenantId, id, actorAppUserId);
+        return response;
     }
 
     @PostMapping("/{id}/mark-sent")

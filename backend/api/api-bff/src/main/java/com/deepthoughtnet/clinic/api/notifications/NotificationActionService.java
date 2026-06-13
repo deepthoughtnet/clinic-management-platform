@@ -137,6 +137,123 @@ public class NotificationActionService {
         );
     }
 
+    public NotificationHistoryRecord sendAppointmentBooked(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
+        return sendAppointmentEvent(tenantId, appointmentId, "APPOINTMENT_BOOKED", "Appointment booked", "Your appointment has been booked successfully.", actorAppUserId);
+    }
+
+    public NotificationHistoryRecord sendAppointmentRescheduled(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
+        return sendAppointmentEvent(tenantId, appointmentId, "APPOINTMENT_RESCHEDULED", "Appointment rescheduled", "Your appointment has been rescheduled successfully.", actorAppUserId);
+    }
+
+    public NotificationHistoryRecord sendAppointmentCancelled(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
+        return sendAppointmentEvent(tenantId, appointmentId, "APPOINTMENT_CANCELLED", "Appointment cancelled", "Your appointment has been cancelled successfully.", actorAppUserId);
+    }
+
+    public NotificationHistoryRecord sendAppointmentNoShow(UUID tenantId, UUID appointmentId, UUID actorAppUserId) {
+        return sendAppointmentEvent(tenantId, appointmentId, "APPOINTMENT_NO_SHOW", "Appointment marked no-show", "Your appointment was marked as a no-show. Please reschedule or contact the clinic.", actorAppUserId);
+    }
+
+    public NotificationHistoryRecord sendPrescriptionReady(UUID tenantId, UUID prescriptionId, UUID actorAppUserId) {
+        PrescriptionRecord prescription = prescriptionService.findById(tenantId, prescriptionId)
+                .orElseThrow(() -> new IllegalArgumentException("Prescription not found"));
+        PatientEntity patient = patient(tenantId, prescription.patientId());
+        String subject = "Prescription ready " + prescription.prescriptionNumber();
+        String message = "Your prescription is ready. You can view it in the patient portal.";
+        return queuePatientNotification(tenantId, patient, "PRESCRIPTION_READY", subject, message, "PRESCRIPTION", prescription.id(), actorAppUserId, true, null);
+    }
+
+    public NotificationHistoryRecord sendBillGenerated(UUID tenantId, UUID billId, UUID actorAppUserId) {
+        BillRecord bill = billingService.findById(tenantId, billId)
+                .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
+        PatientEntity patient = patient(tenantId, bill.patientId());
+        return queuePatientNotification(
+                tenantId,
+                patient,
+                "BILL_GENERATED",
+                "Bill generated " + bill.billNumber(),
+                "Your bill is ready. You can view it in the patient portal.",
+                "BILL",
+                bill.id(),
+                actorAppUserId,
+                true,
+                null
+        );
+    }
+
+    public NotificationHistoryRecord sendBillPaid(UUID tenantId, UUID billId, UUID actorAppUserId) {
+        BillRecord bill = billingService.findById(tenantId, billId)
+                .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
+        PatientEntity patient = patient(tenantId, bill.patientId());
+        return queuePatientNotification(
+                tenantId,
+                patient,
+                "BILL_PAID",
+                "Bill paid " + bill.billNumber(),
+                "Your bill payment has been recorded.",
+                "BILL",
+                bill.id(),
+                actorAppUserId,
+                true,
+                null
+        );
+    }
+
+    public NotificationHistoryRecord sendReceiptReady(UUID tenantId, UUID receiptId, UUID actorAppUserId) {
+        ReceiptRecord receipt = billingService.findReceipt(tenantId, receiptId)
+                .orElseThrow(() -> new IllegalArgumentException("Receipt not found"));
+        BillRecord bill = billingService.findById(tenantId, receipt.billId())
+                .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
+        PatientEntity patient = patient(tenantId, bill.patientId());
+        return queuePatientNotification(
+                tenantId,
+                patient,
+                "RECEIPT_SENT",
+                "Receipt ready " + receipt.receiptNumber(),
+                "Your receipt is available in the patient portal.",
+                "RECEIPT",
+                receipt.id(),
+                actorAppUserId,
+                true,
+                null
+        );
+    }
+
+    public NotificationHistoryRecord sendRefundProcessed(UUID tenantId, UUID billId, UUID actorAppUserId) {
+        BillRecord bill = billingService.findById(tenantId, billId)
+                .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
+        PatientEntity patient = patient(tenantId, bill.patientId());
+        return queuePatientNotification(
+                tenantId,
+                patient,
+                "REFUND_PROCESSED",
+                "Refund processed " + bill.billNumber(),
+                "Your refund has been processed. Please review the updated bill in the patient portal.",
+                "BILL",
+                bill.id(),
+                actorAppUserId,
+                true,
+                null
+        );
+    }
+
+    public NotificationHistoryRecord sendFollowUpDue(UUID tenantId, UUID consultationId, UUID patientId, String patientName, String doctorName, LocalDate followUpDate, UUID actorAppUserId) {
+        PatientEntity patient = patient(tenantId, patientId);
+        String subject = "Follow-up due";
+        String message = "Your follow-up is due. Please book a visit or contact the clinic.";
+        return queuePatientNotification(
+                tenantId,
+                patient,
+                "FOLLOW_UP_DUE",
+                subject,
+                message,
+                "CONSULTATION",
+                consultationId,
+                actorAppUserId,
+                true,
+                null
+        );
+    }
+
     public InvoiceEmailResult sendInvoiceEmail(UUID tenantId, UUID billId, UUID actorAppUserId) {
         BillRecord bill = billingService.findById(tenantId, billId)
                 .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
@@ -177,6 +294,75 @@ public class NotificationActionService {
         } catch (NotificationDeliveryException ex) {
             throw new IllegalArgumentException("Invoice email could not be sent. Please check email provider configuration.");
         }
+    }
+
+    private NotificationHistoryRecord sendAppointmentEvent(
+            UUID tenantId,
+            UUID appointmentId,
+            String eventType,
+            String subject,
+            String message,
+            UUID actorAppUserId
+    ) {
+        var appointment = appointmentService.findById(tenantId, appointmentId);
+        PatientEntity patient = patient(tenantId, appointment.patientId());
+        return queuePatientNotification(
+                tenantId,
+                patient,
+                eventType,
+                subject + " " + appointment.appointmentDate(),
+                message,
+                "APPOINTMENT",
+                appointment.id(),
+                actorAppUserId,
+                true,
+                null
+        );
+    }
+
+    private NotificationHistoryRecord queuePatientNotification(
+            UUID tenantId,
+            PatientEntity patient,
+            String eventType,
+            String subject,
+            String message,
+            String sourceType,
+            UUID sourceId,
+            UUID actorAppUserId,
+            boolean sendEmail,
+            NotificationAttachment attachment
+    ) {
+        String recipient = resolveRecipient(patient, "email");
+        NotificationHistoryRecord notification = notificationHistoryService.queue(
+                tenantId,
+                patient.getId(),
+                eventType,
+                "in_app",
+                "patient:" + patient.getId(),
+                subject,
+                message,
+                sourceType,
+                sourceId,
+                actorAppUserId
+        );
+        if (sendEmail && StringUtils.hasText(patient.getEmail())) {
+            try {
+                List<NotificationAttachment> attachments = attachment == null ? List.of() : List.of(attachment);
+                notificationProvider.send(new NotificationMessage(
+                        tenantId,
+                        "EMAIL",
+                        patient.getEmail().trim(),
+                        subject,
+                        message,
+                        "{\"sourceType\":\"" + sourceType + "\",\"sourceId\":\"" + sourceId + "\"}",
+                        null,
+                        attachments
+                ));
+            } catch (RuntimeException ex) {
+                log.warn("Unable to send notification email for {}", eventType, ex);
+            }
+        }
+        return notification;
     }
 
     public ReminderQueueSummary queueAppointmentReminders(UUID tenantId, LocalDate appointmentDate, UUID actorAppUserId) {

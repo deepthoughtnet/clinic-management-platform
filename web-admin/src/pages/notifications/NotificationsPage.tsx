@@ -26,6 +26,8 @@ import {
 import { useAuth } from "../../auth/useAuth";
 import {
   getNotifications,
+  markNotificationRead,
+  markNotificationUnread,
   retryNotification,
   searchPatients,
   type NotificationChannel,
@@ -39,14 +41,22 @@ const STATUS_OPTIONS: Array<NotificationStatus | ""> = ["", "PENDING", "SENT", "
 const CHANNEL_OPTIONS: Array<NotificationChannel | ""> = ["", "EMAIL", "WHATSAPP", "SMS", "PUSH", "IN_APP"];
 const EVENT_OPTIONS: Array<NotificationEventType | ""> = [
   "",
+  "APPOINTMENT_BOOKED",
+  "APPOINTMENT_RESCHEDULED",
+  "APPOINTMENT_CANCELLED",
+  "APPOINTMENT_NO_SHOW",
   "PRESCRIPTION_READY",
   "PRESCRIPTION_SENT",
+  "BILL_GENERATED",
   "BILL_PAID",
   "RECEIPT_SENT",
+  "REFUND_PROCESSED",
   "LAB_ORDER_CREATED",
   "LAB_SAMPLE_COLLECTED",
   "LAB_REPORT_READY",
   "LAB_REPORT_REVIEWED",
+  "LAB_CRITICAL_RESULT",
+  "FOLLOW_UP_DUE",
   "FOLLOW_UP_REMINDER",
   "VACCINATION_REMINDER",
   "APPOINTMENT_REMINDER",
@@ -165,6 +175,36 @@ export default function NotificationsPage() {
     }
   };
 
+  const markRead = async (id: string) => {
+    if (!auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    setWorkingId(id);
+    try {
+      await markNotificationRead(auth.accessToken, auth.tenantId, id);
+      await loadRows();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to mark notification read");
+    } finally {
+      setWorkingId(null);
+    }
+  };
+
+  const markUnread = async (id: string) => {
+    if (!auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    setWorkingId(id);
+    try {
+      await markNotificationUnread(auth.accessToken, auth.tenantId, id);
+      await loadRows();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to mark notification unread");
+    } finally {
+      setWorkingId(null);
+    }
+  };
+
   const reminderRows = rows.filter((row) => REMINDER_EVENT_TYPES.has(row.eventType));
   const pendingCount = rows.filter((row) => row.status === "PENDING").length;
   const failedCount = rows.filter((row) => row.status === "FAILED").length;
@@ -184,6 +224,7 @@ export default function NotificationsPage() {
     if (row.sourceType === "BILL") return "Bill";
     if (row.sourceType === "CONSULTATION") return "Consultation";
     if (row.sourceType === "PRESCRIPTION") return "Prescription";
+    if (row.sourceType === "LAB_ORDER") return "Lab";
     if (row.sourceType === "PATIENT_VACCINATION") return "Vaccination";
     if (row.sourceType === "RECEIPT") return "Receipt";
     return row.sourceType ? row.sourceType.replaceAll("_", " ") : "-";
@@ -353,6 +394,7 @@ export default function NotificationsPage() {
                     <TableCell>Channel</TableCell>
                     <TableCell>Source</TableCell>
                     <TableCell>Status</TableCell>
+                    <TableCell>Read</TableCell>
                     <TableCell>Message preview</TableCell>
                     <TableCell>Queued</TableCell>
                     <TableCell>Sent</TableCell>
@@ -388,6 +430,9 @@ export default function NotificationsPage() {
                           ) : null}
                         </Stack>
                       </TableCell>
+                      <TableCell>
+                        <Chip size="small" label={row.readAt ? "Read" : "Unread"} color={row.readAt ? "success" : "warning"} />
+                      </TableCell>
                       <TableCell sx={{ maxWidth: 360 }}>
                         <Typography variant="body2" noWrap title={row.message}>{row.message}</Typography>
                       </TableCell>
@@ -395,9 +440,20 @@ export default function NotificationsPage() {
                       <TableCell>{row.sentAt ? new Date(row.sentAt).toLocaleString() : "-"}</TableCell>
                       {canRetry ? (
                         <TableCell align="right">
-                          <Button size="small" disabled={workingId === row.id || (row.status !== "FAILED" && row.status !== "SKIPPED")} onClick={() => void retry(row.id)}>
-                            Retry
-                          </Button>
+                          <Stack direction="row" spacing={1} justifyContent="flex-end">
+                            {row.readAt ? (
+                              <Button size="small" disabled={workingId === row.id} onClick={() => void markUnread(row.id)}>
+                                Mark unread
+                              </Button>
+                            ) : (
+                              <Button size="small" disabled={workingId === row.id} onClick={() => void markRead(row.id)}>
+                                Mark read
+                              </Button>
+                            )}
+                            <Button size="small" disabled={workingId === row.id || (row.status !== "FAILED" && row.status !== "SKIPPED")} onClick={() => void retry(row.id)}>
+                              Retry
+                            </Button>
+                          </Stack>
                         </TableCell>
                       ) : null}
                     </TableRow>

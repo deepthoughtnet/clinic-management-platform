@@ -1,6 +1,8 @@
 package com.deepthoughtnet.clinic.api.lab.service;
 
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderEntity;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderAttachmentEntity;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderAttachmentRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderItemEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderItemRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderRepository;
@@ -9,6 +11,8 @@ import com.deepthoughtnet.clinic.api.lab.db.LabOrderResultRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderStatus;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterRepository;
+import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterEntity;
+import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterRepository;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderCreateCommand;
@@ -19,12 +23,16 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultEntryComman
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultPdf;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultItemCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabResultFlag;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderSampleCollectionCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderAttachmentRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestUpsertCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterUpsertCommand;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.notifications.LabNotificationService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
@@ -96,9 +104,11 @@ public class LabService {
     );
 
     private final LabTestMasterRepository labTestMasterRepository;
+    private final LabTestParameterRepository labTestParameterRepository;
     private final LabOrderRepository labOrderRepository;
     private final LabOrderItemRepository labOrderItemRepository;
     private final LabOrderResultRepository labOrderResultRepository;
+    private final LabOrderAttachmentRepository labOrderAttachmentRepository;
     private final ConsultationService consultationService;
     private final PatientRepository patientRepository;
     private final TenantUserManagementService tenantUserManagementService;
@@ -112,9 +122,11 @@ public class LabService {
 
     public LabService(
             LabTestMasterRepository labTestMasterRepository,
+            LabTestParameterRepository labTestParameterRepository,
             LabOrderRepository labOrderRepository,
             LabOrderItemRepository labOrderItemRepository,
             LabOrderResultRepository labOrderResultRepository,
+            LabOrderAttachmentRepository labOrderAttachmentRepository,
             ConsultationService consultationService,
             PatientRepository patientRepository,
             TenantUserManagementService tenantUserManagementService,
@@ -127,9 +139,11 @@ public class LabService {
             ObjectMapper objectMapper
     ) {
         this.labTestMasterRepository = labTestMasterRepository;
+        this.labTestParameterRepository = labTestParameterRepository;
         this.labOrderRepository = labOrderRepository;
         this.labOrderItemRepository = labOrderItemRepository;
         this.labOrderResultRepository = labOrderResultRepository;
+        this.labOrderAttachmentRepository = labOrderAttachmentRepository;
         this.consultationService = consultationService;
         this.patientRepository = patientRepository;
         this.tenantUserManagementService = tenantUserManagementService;
@@ -187,6 +201,7 @@ public class LabService {
                 command.active()
         );
         LabTestMasterEntity saved = labTestMasterRepository.save(entity);
+        saveParameters(tenantId, saved.getId(), command.parameters());
         auditTest(tenantId, saved, "lab_test.created", actorAppUserId, "Created lab test master");
         return toRecord(saved);
     }
@@ -213,6 +228,7 @@ public class LabService {
                 command.active()
         );
         LabTestMasterEntity saved = labTestMasterRepository.save(entity);
+        saveParameters(tenantId, saved.getId(), command.parameters());
         auditTest(tenantId, saved, "lab_test.updated", actorAppUserId, "Updated lab test master");
         return toRecord(saved);
     }
@@ -443,8 +459,17 @@ public class LabService {
         if (orderItems.isEmpty()) {
             throw new IllegalArgumentException("Lab order has no ordered tests");
         }
+        Map<UUID, List<LabTestParameterEntity>> parametersByTestId = orderItems.values().stream()
+                .filter(item -> item.getLabTestId() != null)
+                .collect(Collectors.toMap(
+                        LabOrderItemEntity::getLabTestId,
+                        item -> labTestParameterRepository.findByTenantIdAndLabTestIdOrderBySortOrderAsc(tenantId, item.getLabTestId()),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
         labOrderResultRepository.deleteByTenantIdAndLabOrderId(tenantId, orderId);
         List<LabOrderResultEntity> persistedResults = new ArrayList<>();
+        List<String> criticalLabels = new ArrayList<>();
         int sortOrder = 1;
         for (LabOrderResultItemCommand itemCommand : command.items()) {
             LabOrderItemEntity orderItem = orderItems.get(itemCommand.labOrderItemId());
@@ -454,31 +479,47 @@ public class LabService {
             List<LabOrderResultComponentCommand> components = itemCommand.componentResults() == null ? List.of() : itemCommand.componentResults();
             if (!components.isEmpty()) {
                 for (LabOrderResultComponentCommand component : components) {
+                    LabTestParameterEntity parameter = findParameter(parametersByTestId.get(orderItem.getLabTestId()), component.parameterName(), component.componentName());
+                    ResultFlagResolution resolution = resolveResultFlag(component.resultValue(), parameter == null ? itemCommand.referenceRange() : parameter.getNormalRange(), parameter == null ? null : parameter.getCriticalRange());
+                    if (resolution.critical()) {
+                        criticalLabels.add(orderItem.getTestName() + " / " + firstText(component.parameterName(), component.componentName()));
+                    }
                     persistedResults.add(LabOrderResultEntity.create(
                             tenantId,
                             orderId,
                             orderItem.getId(),
                             orderItem.getTestCode(),
                             orderItem.getTestName(),
+                            firstText(component.parameterName(), component.componentName()),
                             normalizeNullable(component.componentName()),
                             normalizeNullable(component.resultValue()),
                             normalizeNullable(component.unit()),
                             normalizeNullable(component.referenceRange()),
-                            sortOrder++
+                            sortOrder++,
+                            resolution.flag().name(),
+                            resolution.critical()
                     ));
                 }
             } else {
+                LabTestParameterEntity parameter = firstParameter(parametersByTestId.get(orderItem.getLabTestId()));
+                ResultFlagResolution resolution = resolveResultFlag(itemCommand.resultValue(), parameter == null ? itemCommand.referenceRange() : parameter.getNormalRange(), parameter == null ? null : parameter.getCriticalRange());
+                if (resolution.critical()) {
+                    criticalLabels.add(orderItem.getTestName());
+                }
                 persistedResults.add(LabOrderResultEntity.create(
                         tenantId,
                         orderId,
                         orderItem.getId(),
                         orderItem.getTestCode(),
                         orderItem.getTestName(),
+                        parameter == null ? null : parameter.getParameterName(),
                         null,
                         normalizeNullable(itemCommand.resultValue()),
                         normalizeNullable(itemCommand.unit()),
                         normalizeNullable(itemCommand.referenceRange()),
-                        sortOrder++
+                        sortOrder++,
+                        resolution.flag().name(),
+                        resolution.critical()
                 ));
             }
         }
@@ -491,6 +532,18 @@ public class LabService {
         order.markResultsEntered(normalizeNullable(command.comments()));
         LabOrderEntity saved = labOrderRepository.save(order);
         auditOrder(tenantId, saved, "lab_order.results_entered", actorAppUserId, "Entered lab results");
+        if (!criticalLabels.isEmpty()) {
+            labNotificationService.notifyCriticalResult(
+                    tenantId,
+                    null,
+                    saved.getId(),
+                    saved.getOrderNumber(),
+                    saved.getPatientName(),
+                    saved.getDoctorName(),
+                    criticalLabels,
+                    actorAppUserId
+            );
+        }
         return toRecord(tenantId, saved);
     }
 
@@ -528,7 +581,8 @@ public class LabService {
         if (order.getStatus() != LabOrderStatus.RESULT_ENTERED
                 && order.getStatus() != LabOrderStatus.REPORT_READY
                 && order.getStatus() != LabOrderStatus.REPORT_GENERATED
-                && order.getStatus() != LabOrderStatus.DOCTOR_REVIEWED) {
+                && order.getStatus() != LabOrderStatus.DOCTOR_REVIEWED
+                && order.getStatus() != LabOrderStatus.DELIVERED) {
             throw new IllegalArgumentException("Lab order results are not ready for report generation");
         }
         return buildReportPdf(tenantId, order);
@@ -560,12 +614,36 @@ public class LabService {
         return toRecord(tenantId, saved);
     }
 
+    @Transactional
+    public LabOrderRecord markDelivered(UUID tenantId, UUID orderId, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireId(orderId, "orderId");
+        LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+        if (order.getStatus() == LabOrderStatus.DELIVERED) {
+            return toRecord(tenantId, order);
+        }
+        if (order.getStatus() != LabOrderStatus.DOCTOR_REVIEWED
+                && order.getStatus() != LabOrderStatus.REPORT_GENERATED
+                && order.getStatus() != LabOrderStatus.REPORT_READY) {
+            return toRecord(tenantId, order);
+        }
+        order.markDelivered(actorAppUserId);
+        LabOrderEntity saved = labOrderRepository.save(order);
+        auditOrder(tenantId, saved, "lab_order.delivered", actorAppUserId, "Lab report delivered to patient");
+        return toRecord(tenantId, saved);
+    }
+
     private List<LabOrderRecord> mapOrders(UUID tenantId, List<LabOrderEntity> orders) {
         return orders.stream().map(order -> toRecord(tenantId, order)).toList();
     }
 
     private LabOrderRecord toRecord(UUID tenantId, LabOrderEntity order) {
-        List<LabOrderItemRecord> items = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, order.getId()).stream()
+        List<LabOrderAttachmentRecord> attachments = labOrderAttachmentRepository.findByTenantIdAndLabOrderIdOrderByCreatedAtDesc(tenantId, order.getId()).stream()
+                .map(this::toRecord)
+                .toList();
+        List<LabOrderItemEntity> itemEntities = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, order.getId());
+        List<LabOrderItemRecord> items = itemEntities.stream()
                 .map(item -> new LabOrderItemRecord(
                         item.getId(),
                         item.getLabTestId(),
@@ -579,7 +657,8 @@ public class LabService {
                         item.getTurnaroundTime(),
                         item.getPrice(),
                         item.getSortOrder(),
-                        item.getCreatedAt()
+                        item.getCreatedAt(),
+                        resolveParameters(tenantId, item)
                 ))
                 .toList();
         List<LabOrderResultRecord> results = labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, order.getId()).stream()
@@ -589,11 +668,14 @@ public class LabService {
                         result.getLabOrderItemId(),
                         result.getTestCode(),
                         result.getTestName(),
+                        result.getParameterName(),
                         result.getComponentName(),
                         result.getResultValue(),
                         result.getUnit(),
                         result.getReferenceRange(),
                         result.getSortOrder(),
+                        result.getResultFlag(),
+                        result.isCriticalResult(),
                         result.getCreatedAt(),
                         result.getUpdatedAt()
                 ))
@@ -617,6 +699,10 @@ public class LabService {
                 bill == null ? null : bill.status(),
                 bill == null ? null : bill.totalAmount(),
                 bill == null ? null : bill.dueAmount(),
+                order.getExternalLabVendor(),
+                order.getExternalReferenceNumber(),
+                order.getDeliveredAt(),
+                order.getDeliveredByUserId(),
                 order.getPaymentCollectedAt(),
                 order.getReadyForCollectionAt(),
                 order.getSampleType(),
@@ -635,6 +721,7 @@ public class LabService {
                 order.getDoctorReviewedByUserId(),
                 order.getDoctorReviewedBy(),
                 order.getDoctorComments(),
+                attachments,
                 items,
                 results,
                 order.getCreatedAt(),
@@ -654,6 +741,7 @@ public class LabService {
             case REPORT_READY -> LabOrderStatusRecord.REPORT_READY;
             case REPORT_GENERATED -> LabOrderStatusRecord.REPORT_GENERATED;
             case DOCTOR_REVIEWED -> LabOrderStatusRecord.DOCTOR_REVIEWED;
+            case DELIVERED -> LabOrderStatusRecord.DELIVERED;
             case CANCELLED -> LabOrderStatusRecord.CANCELLED;
         };
     }
@@ -681,7 +769,7 @@ public class LabService {
                 float y = page.getMediaBox().getHeight() - margin;
                 drawReportBorder(content, page, margin);
                 y = drawReportHeader(document, content, clinicName, clinicAddress, clinicContact, logo, page, margin, y);
-                y = drawMetaBlock(content, record, page, margin, width, y);
+                y = drawMetaBlock(tenantId, content, record, page, margin, width, y);
                 y = drawResultsTable(content, record, margin, width, y);
                 y = drawNotesBlock(content, record, margin, width, y);
                 drawFooter(content, "This laboratory report is system generated and intended for clinical records.", margin, y);
@@ -722,17 +810,21 @@ public class LabService {
         return y - 16;
     }
 
-    private float drawMetaBlock(PDPageContentStream content, LabOrderRecord record, PDPage page, float margin, float width, float y) throws IOException {
+    private float drawMetaBlock(UUID tenantId, PDPageContentStream content, LabOrderRecord record, PDPage page, float margin, float width, float y) throws IOException {
         List<MetaPair> pairs = List.of(
                 new MetaPair("Order No", record.orderNumber()),
                 new MetaPair("Generated", formatDateTime(record.reportGeneratedAt() == null ? OffsetDateTime.now() : record.reportGeneratedAt())),
                 new MetaPair("Patient", record.patientName()),
                 new MetaPair("Patient ID", record.patientNumber()),
                 new MetaPair("Doctor", record.doctorName()),
+                new MetaPair("External Lab", record.externalLabVendor()),
+                new MetaPair("External Ref", record.externalReferenceNumber()),
                 new MetaPair("Sample Type", firstText(record.sampleType(), fallbackSampleType(record))),
                 new MetaPair("Sample By", record.sampleCollectedBy()),
                 new MetaPair("Reviewed By", record.doctorReviewedBy()),
                 new MetaPair("Reviewed At", formatDateTime(record.doctorReviewedAt())),
+                new MetaPair("Delivered By", resolveUserDisplayName(tenantId, record.deliveredByUserId()).orElse(null)),
+                new MetaPair("Delivered At", formatDateTime(record.deliveredAt())),
                 new MetaPair("Status", String.valueOf(record.status()))
         );
         float rowHeight = 20f;
@@ -758,8 +850,8 @@ public class LabService {
     private float drawResultsTable(PDPageContentStream content, LabOrderRecord record, float margin, float width, float y) throws IOException {
         writeSectionHeader(content, "Results", margin, y, width);
         y -= 20;
-        String[] headers = new String[]{"Test / Component", "Result", "Unit", "Reference Range"};
-        float[] columns = new float[]{0.34f, 0.23f, 0.15f, 0.28f};
+        String[] headers = new String[]{"Test / Component", "Result", "Flag", "Unit", "Reference Range"};
+        float[] columns = new float[]{0.30f, 0.18f, 0.12f, 0.12f, 0.28f};
         float headerHeight = 18f;
         float rowHeight = 20f;
         content.setNonStrokingColor(232, 240, 254);
@@ -783,13 +875,25 @@ public class LabService {
         }
         for (LabOrderResultRecord row : record.results()) {
             x = margin;
-            String label = StringUtils.hasText(row.componentName()) ? row.testName() + " / " + row.componentName() : row.testName();
-            String[] values = new String[]{label, safe(row.resultValue()), safe(row.unit()), safe(row.referenceRange())};
+            String label = StringUtils.hasText(row.parameterName()) ? row.testName() + " / " + row.parameterName() : (StringUtils.hasText(row.componentName()) ? row.testName() + " / " + row.componentName() : row.testName());
+            String[] values = new String[]{label, safe(row.resultValue()), safe(row.resultFlag()), safe(row.unit()), safe(row.referenceRange())};
             for (int i = 0; i < values.length; i++) {
                 float colWidth = width * columns[i];
                 content.addRect(x, y - rowHeight, colWidth, rowHeight);
                 content.stroke();
+                if (i == 2 && StringUtils.hasText(values[i])) {
+                    if ("CRITICAL".equalsIgnoreCase(values[i])) {
+                        setFillColor(content, 185, 28, 28);
+                    } else if ("LOW".equalsIgnoreCase(values[i]) || "HIGH".equalsIgnoreCase(values[i])) {
+                        setFillColor(content, 237, 108, 2);
+                    } else {
+                        setFillColor(content, 27, 94, 32);
+                    }
+                }
                 writeWrappedInCell(content, values[i], 8.8f, x + 4, y - 11, colWidth - 8);
+                if (i == 2) {
+                    setFillColor(content, 0, 0, 0);
+                }
                 x += colWidth;
             }
             y -= rowHeight;
@@ -954,6 +1058,15 @@ public class LabService {
     private record MetaPair(String label, String value) {
     }
 
+    private record Range(BigDecimal low, BigDecimal high) {
+        boolean contains(BigDecimal value) {
+            return value != null && value.compareTo(low) >= 0 && value.compareTo(high) <= 0;
+        }
+    }
+
+    private record ResultFlagResolution(LabResultFlag flag, boolean critical) {
+    }
+
     private void ensureSpace(PDPage page, float margin, float y, float needed) {
         if (y - needed < margin) {
             throw new IllegalStateException("Lab report PDF content overflow");
@@ -961,6 +1074,9 @@ public class LabService {
     }
 
     private LabTestRecord toRecord(LabTestMasterEntity entity) {
+        List<LabTestParameterRecord> parameters = labTestParameterRepository.findByTenantIdAndLabTestIdOrderBySortOrderAsc(entity.getTenantId(), entity.getId()).stream()
+                .map(this::toRecord)
+                .toList();
         return new LabTestRecord(
                 entity.getId(),
                 entity.getTenantId(),
@@ -974,6 +1090,21 @@ public class LabService {
                 entity.getTurnaroundTime(),
                 entity.getPrice(),
                 entity.isActive(),
+                parameters,
+                entity.getCreatedAt(),
+                entity.getUpdatedAt()
+        );
+    }
+
+    private LabTestParameterRecord toRecord(LabTestParameterEntity entity) {
+        return new LabTestParameterRecord(
+                entity.getId(),
+                entity.getLabTestId(),
+                entity.getParameterName(),
+                entity.getUnit(),
+                entity.getNormalRange(),
+                entity.getCriticalRange(),
+                entity.getSortOrder(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
@@ -1015,6 +1146,13 @@ public class LabService {
         }
         if (command.price() == null || command.price().compareTo(ZERO) < 0) {
             throw new IllegalArgumentException("price is required");
+        }
+        if (command.parameters() != null) {
+            for (LabTestParameterUpsertCommand parameter : command.parameters()) {
+                if (parameter != null && !StringUtils.hasText(parameter.parameterName())) {
+                    throw new IllegalArgumentException("parameterName is required when parameters are provided");
+                }
+            }
         }
     }
 
@@ -1114,6 +1252,143 @@ public class LabService {
                 throw new IllegalArgumentException("Each result item requires a value or component results");
             }
         }
+    }
+
+    private void saveParameters(UUID tenantId, UUID labTestId, List<LabTestParameterUpsertCommand> commands) {
+        labTestParameterRepository.deleteByTenantIdAndLabTestId(tenantId, labTestId);
+        if (commands == null || commands.isEmpty()) {
+            return;
+        }
+        int sortOrder = 1;
+        List<LabTestParameterEntity> entities = new ArrayList<>();
+        for (LabTestParameterUpsertCommand command : commands) {
+            if (command == null || !StringUtils.hasText(command.parameterName())) {
+                continue;
+            }
+            entities.add(LabTestParameterEntity.create(
+                    tenantId,
+                    labTestId,
+                    normalize(command.parameterName()),
+                    normalizeNullable(command.unit()),
+                    normalizeNullable(command.normalRange()),
+                    normalizeNullable(command.criticalRange()),
+                    command.sortOrder() > 0 ? command.sortOrder() : sortOrder
+            ));
+            sortOrder++;
+        }
+        labTestParameterRepository.saveAll(entities);
+    }
+
+    private List<LabTestParameterRecord> resolveParameters(UUID tenantId, LabOrderItemEntity item) {
+        if (item.getLabTestId() == null) {
+            return List.of();
+        }
+        return labTestParameterRepository.findByTenantIdAndLabTestIdOrderBySortOrderAsc(tenantId, item.getLabTestId()).stream()
+                .map(this::toRecord)
+                .toList();
+    }
+
+    private LabTestParameterEntity findParameter(List<LabTestParameterEntity> parameters, String parameterName, String componentName) {
+        if (parameters == null || parameters.isEmpty()) {
+            return null;
+        }
+        String term = firstText(parameterName, componentName);
+        if (!StringUtils.hasText(term)) {
+            return parameters.get(0);
+        }
+        return parameters.stream()
+                .filter(parameter -> parameter.getParameterName() != null && parameter.getParameterName().equalsIgnoreCase(term))
+                .findFirst()
+                .orElse(parameters.get(0));
+    }
+
+    private LabTestParameterEntity firstParameter(List<LabTestParameterEntity> parameters) {
+        if (parameters == null || parameters.isEmpty()) {
+            return null;
+        }
+        return parameters.get(0);
+    }
+
+    private ResultFlagResolution resolveResultFlag(String value, String normalRange, String criticalRange) {
+        BigDecimal numeric = parseNumeric(value);
+        if (numeric == null) {
+            return new ResultFlagResolution(LabResultFlag.NORMAL, false);
+        }
+        Range critical = parseRange(criticalRange);
+        if (critical != null && !critical.contains(numeric)) {
+            return new ResultFlagResolution(LabResultFlag.CRITICAL, true);
+        }
+        Range normal = parseRange(normalRange);
+        if (normal == null) {
+            return new ResultFlagResolution(LabResultFlag.NORMAL, false);
+        }
+        if (numeric.compareTo(normal.low()) < 0) {
+            return new ResultFlagResolution(LabResultFlag.LOW, false);
+        }
+        if (numeric.compareTo(normal.high()) > 0) {
+            return new ResultFlagResolution(LabResultFlag.HIGH, false);
+        }
+        return new ResultFlagResolution(LabResultFlag.NORMAL, false);
+    }
+
+    private BigDecimal parseNumeric(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim().replaceAll("[^0-9.+\\-]", "");
+        if (normalized.isBlank() || normalized.equals("+") || normalized.equals("-") || normalized.equals(".")) {
+            return null;
+        }
+        try {
+            return new BigDecimal(normalized);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private Range parseRange(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim();
+        if (normalized.contains("-")) {
+            String[] parts = normalized.split("-", 2);
+            BigDecimal low = parseNumeric(parts[0]);
+            BigDecimal high = parseNumeric(parts[1]);
+            if (low != null && high != null) {
+                return new Range(low.min(high), low.max(high));
+            }
+        }
+        if (normalized.startsWith("<")) {
+            BigDecimal high = parseNumeric(normalized.substring(1));
+            if (high != null) {
+                return new Range(ZERO, high);
+            }
+        }
+        if (normalized.startsWith(">")) {
+            BigDecimal low = parseNumeric(normalized.substring(1));
+            if (low != null) {
+                return new Range(low, low.add(BigDecimal.ONE));
+            }
+        }
+        BigDecimal exact = parseNumeric(normalized);
+        return exact == null ? null : new Range(exact, exact);
+    }
+
+    private LabOrderAttachmentRecord toRecord(LabOrderAttachmentEntity entity) {
+        return new LabOrderAttachmentRecord(
+                entity.getId(),
+                entity.getLabOrderId(),
+                entity.getAttachmentType(),
+                entity.getOriginalFilename(),
+                entity.getMediaType(),
+                entity.getStorageKey(),
+                entity.getSizeBytes(),
+                entity.getChecksumSha256(),
+                entity.getDicomMetadataJson(),
+                entity.getUploadedByUserId(),
+                entity.getCreatedAt()
+        );
     }
 
     private String safe(String value) {

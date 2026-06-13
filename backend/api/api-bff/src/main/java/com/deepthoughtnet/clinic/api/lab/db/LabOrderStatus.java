@@ -11,5 +11,6 @@ public enum LabOrderStatus {
     REPORT_READY,
     REPORT_GENERATED,
     DOCTOR_REVIEWED,
+    DELIVERED,
     CANCELLED
 }
