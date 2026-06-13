@@ -11,6 +11,8 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalBillResponse
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDashboardResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabLatestResultResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabOrderResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalMeResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalProfileUpdateRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionResponse;
@@ -105,6 +107,21 @@ public class PatientPortalController {
         return patientPortalService.bills();
     }
 
+    @GetMapping("/lab/orders")
+    public List<PatientPortalLabOrderResponse> labOrders() {
+        return patientPortalService.labOrders();
+    }
+
+    @GetMapping("/lab/reports")
+    public List<PatientPortalLabOrderResponse> labReports() {
+        return patientPortalService.labReports();
+    }
+
+    @GetMapping("/lab/reports/latest")
+    public List<PatientPortalLabLatestResultResponse> latestLabReports(@RequestParam(required = false) String query) {
+        return patientPortalService.latestLabResults(query);
+    }
+
     @GetMapping(value = "/prescriptions/{prescriptionNumber}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
     public ResponseEntity<byte[]> prescriptionPdf(@PathVariable String prescriptionNumber) {
         var pdf = patientPortalService.prescriptionPdf(prescriptionNumber);
@@ -126,6 +143,15 @@ public class PatientPortalController {
     @GetMapping(value = "/bills/{billNumber}/receipt.pdf", produces = MediaType.APPLICATION_PDF_VALUE)
     public ResponseEntity<byte[]> latestReceiptPdf(@PathVariable String billNumber) {
         var pdf = patientPortalService.latestReceiptPdf(billNumber);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline().filename(pdf.filename()).build().toString())
+                .body(pdf.content());
+    }
+
+    @GetMapping(value = "/lab/orders/{orderNumber}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<byte[]> labReportPdf(@PathVariable String orderNumber) {
+        var pdf = patientPortalService.labReportPdf(orderNumber);
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_PDF)
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline().filename(pdf.filename()).build().toString())

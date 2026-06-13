@@ -41,6 +41,7 @@ public class TenantUserManagementController {
             "BILLING_USER",
             "AUDITOR",
             "SERVICE_AGENT",
+            "LAB_TECHNICIAN",
             "LAB_ASSISTANT",
             "PHARMACIST"
     );

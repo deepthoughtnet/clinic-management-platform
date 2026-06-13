@@ -12,6 +12,7 @@ public final class Roles {
     public static final String PHARMA = "PHARMA";
     public static final String PHARMACY = "PHARMACY";
     public static final String PHARMACIST = "PHARMACIST";
+    public static final String LAB_TECHNICIAN = "LAB_TECHNICIAN";
     public static final String LAB_ASSISTANT = "LAB_ASSISTANT";
     public static final String CLINIC_REVIEWER = "CLINIC_REVIEWER";
     public static final String CLINIC_APPROVER = "CLINIC_APPROVER";

@@ -1,0 +1,50 @@
+package com.deepthoughtnet.clinic.api.lab.dto;
+
+import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
+import java.math.BigDecimal;
+import java.time.OffsetDateTime;
+import java.util.List;
+
+public record LabOrderResponse(
+        String id,
+        String tenantId,
+        String orderNumber,
+        String patientId,
+        String patientNumber,
+        String patientName,
+        String doctorUserId,
+        String doctorName,
+        String consultationId,
+        String notes,
+        LabOrderStatusRecord status,
+        OffsetDateTime orderedAt,
+        String billId,
+        String billNumber,
+        BillStatus billStatus,
+        BigDecimal billTotalAmount,
+        BigDecimal billDueAmount,
+        OffsetDateTime paymentCollectedAt,
+        OffsetDateTime readyForCollectionAt,
+        String sampleType,
+        OffsetDateTime sampleCollectedAt,
+        String sampleCollectedByUserId,
+        String sampleCollectedBy,
+        String sampleCollectionNotes,
+        OffsetDateTime processingStartedAt,
+        OffsetDateTime resultEnteredAt,
+        String resultComments,
+        OffsetDateTime reportGeneratedAt,
+        String reportGeneratedByUserId,
+        String reportGeneratedBy,
+        String reportFilename,
+        OffsetDateTime doctorReviewedAt,
+        String doctorReviewedByUserId,
+        String doctorReviewedBy,
+        String doctorComments,
+        List<LabOrderItemResponse> items,
+        List<LabOrderResultResponse> results,
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt
+) {
+}

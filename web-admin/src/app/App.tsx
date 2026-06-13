@@ -40,6 +40,7 @@ import PharmacyOperationsPage from "../pages/pharmacy/PharmacyOperationsPage";
 import PharmacyPosPage from "../pages/pharmacy/PharmacyPosPage";
 import ReportsPage from "../pages/reports/ReportsPage";
 import VaccinationsPage from "../pages/vaccinations/VaccinationsPage";
+import LabPage from "../pages/lab/LabPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
 import TenantsPage from "../pages/platform/TenantsPage";
 import TenantDetailPage from "../pages/platform/TenantDetailPage";
@@ -208,6 +209,7 @@ function AuthedApp() {
         <Route path="/pharmacy/stock-movements" element={<StockMovementsPage />} />
         <Route path="/pharmacy/dispensing" element={<DispensingPage />} />
         <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/lab" element={<LabPage />} />
         <Route path="/platform/tenants" element={<TenantsPage />} />
         <Route path="/platform/tenants/:tenantId" element={<TenantDetailPage />} />
         <Route path="/platform/plans" element={<PlansModulesPage />} />

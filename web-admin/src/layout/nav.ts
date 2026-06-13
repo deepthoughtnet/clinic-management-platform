@@ -27,7 +27,7 @@ export const NAV_GROUPS: NavGroup[] = [
     requiresTenant: true,
     defaultExpanded: true,
     items: [
-      { key: "dashboard", label: "Dashboard", path: "/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_ASSISTANT"] },
+      { key: "dashboard", label: "Dashboard", path: "/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_TECHNICIAN", "LAB_ASSISTANT"] },
       { key: "day-board", label: "Day Board", path: "/appointments/day-board", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"] },
       { key: "appointments", label: "Appointments", path: "/appointments", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"] },
       { key: "notifications", label: "Notifications", path: "/notifications", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN"] },
@@ -46,6 +46,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "consultations", label: "Consultations", path: "/consultations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "AUDITOR"] },
       { key: "prescriptions", label: "Prescriptions", path: "/prescriptions", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"] },
       { key: "vaccinations", label: "Vaccinations", path: "/vaccinations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
+      { key: "laboratory", label: "Laboratory", path: "/lab", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_TECHNICIAN", "LAB_ASSISTANT"] },
     ],
   },
   {

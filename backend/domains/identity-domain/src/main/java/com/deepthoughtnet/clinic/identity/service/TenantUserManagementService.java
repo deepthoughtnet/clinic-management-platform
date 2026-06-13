@@ -32,6 +32,7 @@ public class TenantUserManagementService {
             "PHARMA",
             "PHARMACY",
             "PHARMACIST",
+            "LAB_TECHNICIAN",
             "LAB_ASSISTANT",
             "PLATFORM_ADMIN",
             "CLINIC_REVIEWER",

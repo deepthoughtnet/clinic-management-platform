@@ -34,6 +34,7 @@ public class ClinicSettingsController {
             Roles.RECEPTIONIST,
             Roles.BILLING_USER,
             Roles.PHARMACIST,
+            Roles.LAB_TECHNICIAN,
             Roles.LAB_ASSISTANT,
             Roles.AUDITOR
     );

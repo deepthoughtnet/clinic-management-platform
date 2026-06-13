@@ -36,13 +36,17 @@ import {
 } from "../../api/clinicApi";
 
 const STATUS_OPTIONS: Array<NotificationStatus | ""> = ["", "PENDING", "SENT", "FAILED", "SKIPPED"];
-const CHANNEL_OPTIONS: Array<NotificationChannel | ""> = ["", "EMAIL", "WHATSAPP", "SMS", "PUSH"];
+const CHANNEL_OPTIONS: Array<NotificationChannel | ""> = ["", "EMAIL", "WHATSAPP", "SMS", "PUSH", "IN_APP"];
 const EVENT_OPTIONS: Array<NotificationEventType | ""> = [
   "",
   "PRESCRIPTION_READY",
   "PRESCRIPTION_SENT",
   "BILL_PAID",
   "RECEIPT_SENT",
+  "LAB_ORDER_CREATED",
+  "LAB_SAMPLE_COLLECTED",
+  "LAB_REPORT_READY",
+  "LAB_REPORT_REVIEWED",
   "FOLLOW_UP_REMINDER",
   "VACCINATION_REMINDER",
   "APPOINTMENT_REMINDER",

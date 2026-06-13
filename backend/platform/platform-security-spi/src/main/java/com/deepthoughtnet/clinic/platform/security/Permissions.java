@@ -28,6 +28,15 @@ public final class Permissions {
     public static final String CONSULTATION_READ = "consultation.read";
     public static final String CONSULTATION_UPDATE = "consultation.update";
     public static final String CONSULTATION_COMPLETE = "consultation.complete";
+    public static final String LAB_TEST_READ = "lab.test.read";
+    public static final String LAB_TEST_MANAGE = "lab.test.manage";
+    public static final String LAB_ORDER_CREATE = "lab.order.create";
+    public static final String LAB_ORDER_READ = "lab.order.read";
+    public static final String LAB_ORDER_COLLECT_PAYMENT = "lab.order.collect_payment";
+    public static final String LAB_ORDER_COLLECT_SAMPLE = "lab.order.collect_sample";
+    public static final String LAB_ORDER_RESULT_ENTRY = "lab.order.result_entry";
+    public static final String LAB_ORDER_GENERATE_REPORT = "lab.order.generate_report";
+    public static final String LAB_ORDER_REVIEW = "lab.order.review";
     public static final String PRESCRIPTION_CREATE = "prescription.create";
     public static final String PRESCRIPTION_READ = "prescription.read";
     public static final String PRESCRIPTION_FINALIZE = "prescription.finalize";

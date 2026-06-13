@@ -9,11 +9,17 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalBillResponse
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDashboardResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabLatestResultResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabOrderResponse;
+import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalLabResultResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalMeResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalProfileUpdateRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionMedicineResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionTestResponse;
+import com.deepthoughtnet.clinic.api.lab.service.LabService;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
@@ -76,6 +82,33 @@ public class PatientPortalService {
     private final AppointmentService appointmentService;
     private final PrescriptionService prescriptionService;
     private final BillingService billingService;
+    private final LabService labService;
+
+    public PatientPortalService(
+            AppUserRepository appUserRepository,
+            PatientRepository patientRepository,
+            ClinicProfileService clinicProfileService,
+            TenantUserManagementService tenantUserManagementService,
+            DoctorProfileService doctorProfileService,
+            PatientService patientService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
+            AppointmentService appointmentService,
+            PrescriptionService prescriptionService,
+            BillingService billingService,
+            LabService labService
+    ) {
+        this.appUserRepository = appUserRepository;
+        this.patientRepository = patientRepository;
+        this.clinicProfileService = clinicProfileService;
+        this.tenantUserManagementService = tenantUserManagementService;
+        this.doctorProfileService = doctorProfileService;
+        this.patientService = patientService;
+        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
+        this.appointmentService = appointmentService;
+        this.prescriptionService = prescriptionService;
+        this.billingService = billingService;
+        this.labService = labService;
+    }
 
     public PatientPortalService(
             AppUserRepository appUserRepository,
@@ -89,16 +122,19 @@ public class PatientPortalService {
             PrescriptionService prescriptionService,
             BillingService billingService
     ) {
-        this.appUserRepository = appUserRepository;
-        this.patientRepository = patientRepository;
-        this.clinicProfileService = clinicProfileService;
-        this.tenantUserManagementService = tenantUserManagementService;
-        this.doctorProfileService = doctorProfileService;
-        this.patientService = patientService;
-        this.clinicTimeZoneResolver = clinicTimeZoneResolver;
-        this.appointmentService = appointmentService;
-        this.prescriptionService = prescriptionService;
-        this.billingService = billingService;
+        this(
+                appUserRepository,
+                patientRepository,
+                clinicProfileService,
+                tenantUserManagementService,
+                doctorProfileService,
+                patientService,
+                clinicTimeZoneResolver,
+                appointmentService,
+                prescriptionService,
+                billingService,
+                null
+        );
     }
 
     public PatientPortalDashboardResponse dashboard() {
@@ -411,10 +447,49 @@ public class PatientPortalService {
         return billResponses(access);
     }
 
+    public List<PatientPortalLabOrderResponse> labOrders() {
+        PatientAccess access = requireCurrentPatientAccess();
+        return labOrderResponses(access, false);
+    }
+
+    public List<PatientPortalLabOrderResponse> labReports() {
+        PatientAccess access = requireCurrentPatientAccess();
+        return labOrderResponses(access, true);
+    }
+
+    public List<PatientPortalLabLatestResultResponse> latestLabResults(String query) {
+        PatientAccess access = requireCurrentPatientAccess();
+        String term = summarize(query);
+        List<LabOrderRecord> records = labOrdersForPatient(access);
+        return records.stream()
+                .flatMap(order -> order.results().stream().map(result -> new LatestLabMatch(order, result)))
+                .filter(match -> term == null || matchesLabResult(match, term))
+                .sorted((a, b) -> compareOffsetDescending(a.order().resultEnteredAt(), b.order().resultEnteredAt()))
+                .map(match -> new PatientPortalLabLatestResultResponse(
+                        match.order().orderNumber(),
+                        match.result().testCode(),
+                        match.result().testName(),
+                        match.result().componentName(),
+                        match.result().resultValue(),
+                        match.result().unit(),
+                        match.result().referenceRange(),
+                        match.order().resultEnteredAt(),
+                        match.order().doctorReviewedAt(),
+                        match.order().doctorComments()
+                ))
+                .toList();
+    }
+
     public PrescriptionPdf prescriptionPdf(String prescriptionNumber) {
         PatientAccess access = requireCurrentPatientAccess();
         PrescriptionRecord record = findAccessiblePrescription(access, prescriptionNumber);
         return prescriptionService.generatePdf(access.tenantId(), record.id(), requireActorAppUserId());
+    }
+
+    public com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultPdf labReportPdf(String orderNumber) {
+        PatientAccess access = requireCurrentPatientAccess();
+        LabOrderRecord record = findAccessibleLabOrder(access, orderNumber);
+        return labService.renderReportPdf(access.tenantId(), record.id());
     }
 
     public BillPdf billPdf(String billNumber) {
@@ -430,6 +505,85 @@ public class PatientPortalService {
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Receipt not found"));
         return billingService.generateReceiptPdf(access.tenantId(), receipt.id(), requireActorAppUserId());
+    }
+
+    private List<PatientPortalLabOrderResponse> labOrderResponses(PatientAccess access, boolean reportsOnly) {
+        return labOrdersForPatient(access).stream()
+                .filter(record -> !reportsOnly || isReportStatus(record.status() == null ? null : record.status().name()))
+                .map(this::toLabOrderResponse)
+                .toList();
+    }
+
+    private List<LabOrderRecord> labOrdersForPatient(PatientAccess access) {
+        return labService.listOrders(access.tenantId(), null, access.patient().getId(), null, null, null);
+    }
+
+    private LabOrderRecord findAccessibleLabOrder(PatientAccess access, String orderNumber) {
+        if (!StringUtils.hasText(orderNumber)) {
+            throw new IllegalArgumentException("orderNumber is required");
+        }
+        return labService.findOrderByNumber(access.tenantId(), orderNumber.trim())
+                .filter(record -> access.patient().getId().equals(record.patientId()))
+                .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+    }
+
+    private boolean isReportStatus(String status) {
+        if (!StringUtils.hasText(status)) {
+            return false;
+        }
+        return "REPORT_READY".equalsIgnoreCase(status)
+                || "REPORT_GENERATED".equalsIgnoreCase(status)
+                || "DOCTOR_REVIEWED".equalsIgnoreCase(status);
+    }
+
+    private PatientPortalLabOrderResponse toLabOrderResponse(LabOrderRecord record) {
+        return new PatientPortalLabOrderResponse(
+                record.orderNumber(),
+                record.doctorName(),
+                record.status() == null ? null : record.status().name(),
+                record.orderedAt(),
+                record.sampleCollectedAt(),
+                record.resultEnteredAt(),
+                record.reportGeneratedAt(),
+                record.doctorReviewedAt(),
+                record.doctorComments(),
+                record.results().stream().map(this::toLabResultResponse).toList()
+        );
+    }
+
+    private PatientPortalLabResultResponse toLabResultResponse(LabOrderResultRecord record) {
+        return new PatientPortalLabResultResponse(
+                record.testCode(),
+                record.testName(),
+                record.componentName(),
+                record.resultValue(),
+                record.unit(),
+                record.referenceRange()
+        );
+    }
+
+    private boolean matchesLabResult(LatestLabMatch match, String term) {
+        return contains(match.order().orderNumber(), term)
+                || contains(match.result().testCode(), term)
+                || contains(match.result().testName(), term)
+                || contains(match.result().componentName(), term)
+                || contains(match.result().resultValue(), term);
+    }
+
+    private int compareOffsetDescending(OffsetDateTime left, OffsetDateTime right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return 1;
+        }
+        if (right == null) {
+            return -1;
+        }
+        return right.compareTo(left);
+    }
+
+    private record LatestLabMatch(LabOrderRecord order, LabOrderResultRecord result) {
     }
 
     private PatientAccess requireCurrentPatientAccess() {
@@ -776,6 +930,12 @@ public class PatientPortalService {
         }
         String trimmed = value.trim();
         return trimmed.length() > 220 ? trimmed.substring(0, 217) + "..." : trimmed;
+    }
+
+    private boolean contains(String value, String term) {
+        return StringUtils.hasText(value)
+                && StringUtils.hasText(term)
+                && value.toLowerCase().contains(term.toLowerCase());
     }
 
     private String nullToBlank(String value) {

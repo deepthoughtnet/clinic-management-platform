@@ -33,6 +33,7 @@ import {
   getDailySalesReport,
   getDoctorConsultationsReport,
   getFollowUpsReport,
+  getLabOperationsReport,
   getLowStockReport,
   getMedicineSalesReport,
   getPatientVisitsReport,
@@ -60,6 +61,7 @@ type ReportKey =
   | "vaccinations-due"
   | "follow-ups"
   | "low-stock"
+  | "lab-operations"
   | "prescriptions";
 
 const REPORTS: Array<{ key: ReportKey; label: string }> = [
@@ -74,6 +76,7 @@ const REPORTS: Array<{ key: ReportKey; label: string }> = [
   { key: "vaccinations-due", label: "Vaccinations due" },
   { key: "follow-ups", label: "Follow-ups" },
   { key: "low-stock", label: "Low stock" },
+  { key: "lab-operations", label: "Lab operations" },
   { key: "prescriptions", label: "Prescriptions" },
 ];
 
@@ -237,6 +240,9 @@ export default function ReportsPage() {
           break;
         case "low-stock":
           value = await getLowStockReport(auth.accessToken, auth.tenantId);
+          break;
+        case "lab-operations":
+          value = await getLabOperationsReport(auth.accessToken, auth.tenantId, { from: filters.from || null, to: filters.to || null });
           break;
         case "prescriptions":
           value = await getPrescriptionsReport(auth.accessToken, auth.tenantId, params);

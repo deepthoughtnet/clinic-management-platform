@@ -10,12 +10,16 @@ export type PrescriptionStatus = "DRAFT" | "PREVIEWED" | "FINALIZED" | "CORRECTE
 export type MedicineType = "TABLET" | "SYRUP" | "INJECTION" | "DROP" | "OINTMENT" | "CAPSULE" | "OTHER";
 export type Timing = "BEFORE_FOOD" | "AFTER_FOOD" | "WITH_FOOD" | "ANYTIME";
 export type NotificationStatus = "PENDING" | "SENT" | "FAILED" | "SKIPPED";
-export type NotificationChannel = "EMAIL" | "WHATSAPP" | "SMS" | "PUSH";
+export type NotificationChannel = "EMAIL" | "WHATSAPP" | "SMS" | "PUSH" | "IN_APP";
 export type NotificationEventType =
   | "PRESCRIPTION_READY"
   | "PRESCRIPTION_SENT"
   | "BILL_PAID"
   | "RECEIPT_SENT"
+  | "LAB_ORDER_CREATED"
+  | "LAB_SAMPLE_COLLECTED"
+  | "LAB_REPORT_READY"
+  | "LAB_REPORT_REVIEWED"
   | "FOLLOW_UP_REMINDER"
   | "VACCINATION_REMINDER"
   | "APPOINTMENT_REMINDER"
@@ -1213,6 +1217,114 @@ export type VaccineInput = {
   active: boolean;
 };
 
+export type LabTestCategory = "Hematology" | "Biochemistry" | "Microbiology" | "Pathology" | "Radiology" | "Cardiology" | "Other";
+
+export type LabTestInput = {
+  testCode: string;
+  testName: string;
+  category: LabTestCategory | string;
+  department: string | null;
+  sampleType: string | null;
+  unit: string | null;
+  referenceRange: string | null;
+  turnaroundTime: string | null;
+  price: number;
+  active: boolean;
+};
+
+export type LabTest = LabTestInput & {
+  id: string;
+  tenantId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LabOrderStatus =
+  | "ORDERED"
+  | "PAYMENT_PENDING"
+  | "PAID"
+  | "READY_FOR_COLLECTION"
+  | "SAMPLE_COLLECTED"
+  | "PROCESSING"
+  | "RESULT_ENTERED"
+  | "REPORT_READY"
+  | "REPORT_GENERATED"
+  | "DOCTOR_REVIEWED"
+  | "CANCELLED";
+
+export type LabOrderItem = {
+  id: string;
+  labTestId: string | null;
+  testCode: string;
+  testName: string;
+  category: string;
+  department: string | null;
+  sampleType: string | null;
+  unit: string | null;
+  referenceRange: string | null;
+  turnaroundTime: string | null;
+  price: number;
+  sortOrder: number;
+  createdAt: string;
+};
+
+export type LabOrderResult = {
+  id: string;
+  labOrderId: string;
+  labOrderItemId: string;
+  testCode: string;
+  testName: string;
+  componentName: string | null;
+  resultValue: string | null;
+  unit: string | null;
+  referenceRange: string | null;
+  sortOrder: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LabOrder = {
+  id: string;
+  tenantId: string;
+  orderNumber: string;
+  patientId: string;
+  patientNumber: string | null;
+  patientName: string | null;
+  doctorUserId: string | null;
+  doctorName: string | null;
+  consultationId: string | null;
+  notes: string | null;
+  status: LabOrderStatus;
+  orderedAt: string;
+  billId: string | null;
+  billNumber: string | null;
+  billStatus: BillStatus | null;
+  billTotalAmount: number | null;
+  billDueAmount: number | null;
+  paymentCollectedAt: string | null;
+  readyForCollectionAt: string | null;
+  sampleType: string | null;
+  sampleCollectedAt: string | null;
+  sampleCollectedByUserId: string | null;
+  sampleCollectedBy: string | null;
+  sampleCollectionNotes: string | null;
+  processingStartedAt: string | null;
+  resultEnteredAt: string | null;
+  resultComments: string | null;
+  reportGeneratedAt: string | null;
+  reportGeneratedByUserId: string | null;
+  reportGeneratedBy: string | null;
+  reportFilename: string | null;
+  doctorReviewedAt: string | null;
+  doctorReviewedByUserId: string | null;
+  doctorReviewedBy: string | null;
+  doctorComments: string | null;
+  items: LabOrderItem[];
+  results: LabOrderResult[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type PatientVaccination = {
   id: string;
   tenantId: string;
@@ -2357,6 +2469,147 @@ export async function createVaccine(token: string, tenantId: string, body: Vacci
   return httpPost<VaccineMaster>("/api/vaccines", body, { token, tenantId });
 }
 
+export async function getLabCategories(token: string, tenantId: string) {
+  return httpGet<string[]>("/api/lab/categories", { token, tenantId });
+}
+
+export async function getLabTests(token: string, tenantId: string, params: { search?: string; active?: boolean | null } = {}) {
+  const query = new URLSearchParams();
+  if (params.search) query.set("search", params.search);
+  if (params.active !== undefined && params.active !== null) query.set("active", String(params.active));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<LabTest[]>(`/api/lab/tests${suffix}`, { token, tenantId });
+}
+
+export async function createLabTest(token: string, tenantId: string, body: LabTestInput) {
+  return httpPost<LabTest>("/api/lab/tests", body, { token, tenantId });
+}
+
+export async function updateLabTest(token: string, tenantId: string, id: string, body: LabTestInput) {
+  return httpPut<LabTest>(`/api/lab/tests/${id}`, body, { token, tenantId });
+}
+
+export async function deactivateLabTest(token: string, tenantId: string, id: string) {
+  return httpPatch<LabTest>(`/api/lab/tests/${id}/deactivate`, undefined, { token, tenantId });
+}
+
+export async function getLabOrders(
+  token: string,
+  tenantId: string,
+  params: { consultationId?: string | null; patientId?: string | null; doctorUserId?: string | null; status?: LabOrderStatus | null; search?: string | null } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.consultationId) query.set("consultationId", params.consultationId);
+  if (params.patientId) query.set("patientId", params.patientId);
+  if (params.doctorUserId) query.set("doctorUserId", params.doctorUserId);
+  if (params.status) query.set("status", params.status);
+  if (params.search) query.set("search", params.search);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<LabOrder[]>(`/api/lab/orders${suffix}`, { token, tenantId });
+}
+
+export async function getLabOrder(token: string, tenantId: string, id: string) {
+  return httpGet<LabOrder>(`/api/lab/orders/${id}`, { token, tenantId });
+}
+
+export async function createConsultationLabOrder(token: string, tenantId: string, consultationId: string, body: { testIds: string[]; notes?: string | null }) {
+  return httpPost<LabOrder>(`/api/lab/consultations/${consultationId}/orders`, body, { token, tenantId });
+}
+
+export async function collectLabOrderPayment(token: string, tenantId: string, id: string, body: {
+  paymentDate?: string | null;
+  paymentDateTime?: string | null;
+  amount: number;
+  paymentMode: PaymentMode;
+  referenceNumber?: string | null;
+  notes?: string | null;
+  receivedBy?: string | null;
+}) {
+  return httpPost<LabOrder>(`/api/lab/orders/${id}/payments`, {
+    paymentDate: body.paymentDate ?? null,
+    paymentDateTime: body.paymentDateTime ?? null,
+    amount: body.amount,
+    paymentMode: body.paymentMode,
+    referenceNumber: body.referenceNumber ?? null,
+    notes: body.notes ?? null,
+    receivedBy: body.receivedBy ?? null,
+  }, { token, tenantId });
+}
+
+export async function collectLabOrderSample(token: string, tenantId: string, id: string, body: {
+  sampleType?: string | null;
+  collectedBy?: string | null;
+  collectedAt?: string | null;
+  notes?: string | null;
+}) {
+  return httpPost<LabOrder>(`/api/lab/orders/${id}/sample-collection`, {
+    sampleType: body.sampleType ?? null,
+    collectedBy: body.collectedBy ?? null,
+    collectedAt: body.collectedAt ?? null,
+    notes: body.notes ?? null,
+  }, { token, tenantId });
+}
+
+export async function enterLabOrderResults(token: string, tenantId: string, id: string, body: {
+  comments?: string | null;
+  items: Array<{
+    labOrderItemId: string;
+    resultValue?: string | null;
+    unit?: string | null;
+    referenceRange?: string | null;
+    componentResults?: Array<{
+      componentName?: string | null;
+      resultValue?: string | null;
+      unit?: string | null;
+      referenceRange?: string | null;
+    }>;
+  }>;
+}) {
+  return httpPost<LabOrder>(`/api/lab/orders/${id}/results`, body, { token, tenantId });
+}
+
+export async function reviewLabOrder(token: string, tenantId: string, id: string, body: { comments?: string | null }) {
+  return httpPost<LabOrder>(`/api/lab/orders/${id}/doctor-review`, { comments: body.comments ?? null }, { token, tenantId });
+}
+
+export async function getLabOrderPdf(token: string, tenantId: string, id: string) {
+  const res = await fetch(`${(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "")}/api/lab/orders/${id}/pdf`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Tenant-Id": tenantId,
+      Accept: "application/pdf",
+    },
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}: ${res.statusText}`;
+    const contentType = res.headers.get("content-type") || "";
+    try {
+      if (contentType.includes("application/json")) {
+        const body = await res.json() as { message?: string };
+        if (body?.message) {
+          message = body.message;
+        }
+      } else {
+        const text = (await res.text()).trim();
+        if (text) {
+          message = text;
+        }
+      }
+    } catch {
+      // keep fallback
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  return {
+    blob,
+    filename: match?.[1] || `lab-order-${id}.pdf`,
+  };
+}
+
 export async function updateVaccine(token: string, tenantId: string, id: string, body: VaccineInput) {
   return httpPut<VaccineMaster>(`/api/vaccines/${id}`, body, { token, tenantId });
 }
@@ -2685,6 +2938,14 @@ export async function getFollowUpsReport(token: string, tenantId: string) {
 
 export async function getLowStockReport(token: string, tenantId: string) {
   return httpGet<ReportRow[]>("/api/reports/low-stock", { token, tenantId });
+}
+
+export async function getLabOperationsReport(
+  token: string,
+  tenantId: string,
+  params?: { from?: string | null; to?: string | null },
+) {
+  return httpGet<ReportRow[]>(`/api/reports/lab-operations${buildReportQuery(params)}`, { token, tenantId });
 }
 
 export async function getPrescriptionsReport(

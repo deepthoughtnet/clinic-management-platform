@@ -238,6 +238,15 @@ public class ReportsController {
         return reportingFacade.lowStock(RequestContextHolder.requireTenantId());
     }
 
+    @GetMapping("/lab-operations")
+    @PreAuthorize("@permissionChecker.hasPermission('report.read')")
+    public List<Map<String, Object>> labOperations(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to
+    ) {
+        return reportingFacade.labOperations(RequestContextHolder.requireTenantId(), from, to);
+    }
+
     @GetMapping("/prescriptions")
     @PreAuthorize("@permissionChecker.hasPermission('report.read')")
     public List<Map<String, Object>> prescriptions(

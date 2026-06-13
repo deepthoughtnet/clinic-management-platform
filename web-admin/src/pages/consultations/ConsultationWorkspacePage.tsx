@@ -44,12 +44,15 @@ import {
   completeConsultation,
   createPrescriptionCorrection,
   cancelPrescription,
+  createConsultationLabOrder,
   createPrescription,
   getAiStatus,
   getAppointment,
   finalizePrescription,
   getConsultation,
   getConsultationAiSummary,
+  getLabOrders,
+  getLabTests,
   getConsultationPrescription,
   getMedicines,
   getPatient,
@@ -72,6 +75,8 @@ import {
   type Consultation,
   type ConsultationAiSummary,
   type ConsultationInput,
+  type LabOrder,
+  type LabTest,
   type Medicine,
   type MedicineType,
   type PatientDetail,
@@ -836,6 +841,8 @@ export default function ConsultationWorkspacePage() {
   const [prescriptionHistory, setPrescriptionHistory] = React.useState<Prescription[]>([]);
   const [prescription, setPrescription] = React.useState<Prescription | null>(null);
   const [medicineCatalog, setMedicineCatalog] = React.useState<Medicine[]>([]);
+  const [labTests, setLabTests] = React.useState<LabTest[]>([]);
+  const [labOrders, setLabOrders] = React.useState<LabOrder[]>([]);
 
   const [consultationForm, setConsultationForm] = React.useState<ConsultationFormState>(emptyConsultationForm());
   const [prescriptionForm, setPrescriptionForm] = React.useState<PrescriptionFormState>(emptyPrescriptionForm());
@@ -843,6 +850,10 @@ export default function ConsultationWorkspacePage() {
   const [customSymptom, setCustomSymptom] = React.useState("");
   const [customDiagnosis, setCustomDiagnosis] = React.useState("");
   const [customTest, setCustomTest] = React.useState("");
+  const [labOrderDialogOpen, setLabOrderDialogOpen] = React.useState(false);
+  const [labOrderTestIds, setLabOrderTestIds] = React.useState<string[]>([]);
+  const [labOrderNotes, setLabOrderNotes] = React.useState("");
+  const [labOrderSaving, setLabOrderSaving] = React.useState(false);
   const [medicineSearch, setMedicineSearch] = React.useState("");
   const [correctionReason, setCorrectionReason] = React.useState("Same-day correction");
   const [activeTab, setActiveTab] = React.useState(0);
@@ -972,6 +983,13 @@ export default function ConsultationWorkspacePage() {
 
         setMedicineCatalog(medicines);
         setConsultation(consult);
+        const [labTestRows, labOrderRows] = await Promise.all([
+          getLabTests(auth.accessToken, auth.tenantId, { active: true }).catch(() => [] as LabTest[]),
+          getLabOrders(auth.accessToken, auth.tenantId, { consultationId: consult.id }).catch(() => [] as LabOrder[]),
+        ]);
+        if (cancelled) return;
+        setLabTests(labTestRows);
+        setLabOrders(labOrderRows);
         const persistedSummary = await getConsultationAiSummary(auth.accessToken, auth.tenantId, consult.id).catch(() => null);
         if (!cancelled) {
           setSavedAiSummary(persistedSummary);
@@ -1753,6 +1771,37 @@ export default function ConsultationWorkspacePage() {
     }
   };
 
+  const openLabOrderDialog = () => {
+    if (readOnly) return;
+    setLabOrderTestIds((current) => current.filter((id) => labTests.some((test) => test.id === id)));
+    setLabOrderDialogOpen(true);
+  };
+
+  const submitLabOrder = async () => {
+    if (!auth.accessToken || !auth.tenantId || !consultation) return;
+    if (!labOrderTestIds.length) {
+      setError("Select at least one lab test.");
+      return;
+    }
+    setLabOrderSaving(true);
+    setError(null);
+    try {
+      const created = await createConsultationLabOrder(auth.accessToken, auth.tenantId, consultation.id, {
+        testIds: labOrderTestIds,
+        notes: labOrderNotes.trim() || null,
+      });
+      setLabOrders((current) => [created, ...current.filter((row) => row.id !== created.id)]);
+      setLabOrderDialogOpen(false);
+      setLabOrderTestIds([]);
+      setLabOrderNotes("");
+      setInfo(`Lab order ${created.orderNumber} created`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create lab order");
+    } finally {
+      setLabOrderSaving(false);
+    }
+  };
+
   const runAiAction = async (mode: "diagnosis" | "notes" | "instructions") => {
     if (!auth.accessToken || !auth.tenantId || !consultation || !patient) return;
     setAiBusy(true);
@@ -2131,6 +2180,7 @@ export default function ConsultationWorkspacePage() {
           <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" justifyContent={{ xs: "flex-start", xl: "flex-end" }}>
             <Button type="button" size="small" variant="outlined" onClick={() => void backToQueue()}>Back to Queue</Button>
             {canEditConsultation && !readOnly ? <Button type="button" size="small" disabled={saving} onClick={() => void manualSaveDraft()}>Save Draft</Button> : null}
+            {canEditConsultation && !readOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !labTests.length} onClick={openLabOrderDialog}>Order Lab Tests</Button> : null}
             {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void previewCurrentPrescription()}>Preview Rx</Button> : null}
             {canCompleteConsultation && !readOnly ? <Button type="button" size="small" color="secondary" disabled={saving || !prescriptionReadyForCompletion} onClick={() => setCompleteConsultationDialogOpen(true)}>Complete</Button> : null}
             {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void printCurrentPrescription()}>Print Rx</Button> : null}
@@ -2189,6 +2239,7 @@ export default function ConsultationWorkspacePage() {
             <Tab label="Prescription" />
             <Tab label="History" />
             <Tab label="Investigations" />
+            <Tab label="Lab Orders" />
             {canRunAi ? <Tab label="AI Assist" /> : null}
           </Tabs>
         </CardContent>
@@ -2791,7 +2842,65 @@ export default function ConsultationWorkspacePage() {
         </Grid>
       ) : null}
 
-      {canRunAi && activeTab === 4 ? (
+      {activeTab === 4 ? (
+        <Grid container spacing={1.5}>
+          <Grid size={{ xs: 12, md: 4 }}>
+            <Card>
+              <CardContent>
+                <Stack spacing={1.25}>
+                  <Typography variant="h6">Lab Order</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Select active lab tests for the current consultation.
+                  </Typography>
+                  <Button variant="contained" onClick={openLabOrderDialog} disabled={readOnly || !labTests.length}>
+                    Order Lab Tests
+                  </Button>
+                  <Typography variant="caption" color="text.secondary">
+                    {labTests.length ? `${labTests.length} active tests available` : "No active tests configured."}
+                  </Typography>
+                </Stack>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, md: 8 }}>
+            <Card>
+              <CardContent>
+                <Stack spacing={1.25}>
+                  <Typography variant="h6">Lab Orders</Typography>
+                  {!labOrders.length ? (
+                    <Alert severity="info">No lab orders have been created for this consultation.</Alert>
+                  ) : (
+                    <Stack spacing={1}>
+                      {labOrders.map((order) => (
+                        <Card key={order.id} variant="outlined" sx={{ boxShadow: "none" }}>
+                          <CardContent sx={{ p: 1.25 }}>
+                            <Stack spacing={0.75}>
+                              <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="center" flexWrap="wrap">
+                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                                  {order.orderNumber}
+                                </Typography>
+                                <Chip size="small" variant="outlined" color={order.status === "READY_FOR_COLLECTION" ? "success" : order.status === "PAYMENT_PENDING" ? "warning" : "default"} label={order.status.replaceAll("_", " ")} />
+                              </Stack>
+                              <Typography variant="body2" color="text.secondary">
+                                {order.items.map((item) => item.testName).join(", ")}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Bill: {order.billNumber || "-"} {order.billDueAmount != null ? `• Due ${order.billDueAmount.toFixed(2)}` : ""}
+                              </Typography>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+      ) : null}
+
+      {canRunAi && activeTab === 5 ? (
         <Grid container spacing={1.5}>
           <Grid size={{ xs: 12, md: 6 }}>
             <Stack spacing={1.5}>
@@ -2895,6 +3004,59 @@ export default function ConsultationWorkspacePage() {
           </Grid>
         </Grid>
       ) : null}
+
+      <Dialog open={labOrderDialogOpen} onClose={() => setLabOrderDialogOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>Order Lab Tests</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 0.5 }}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Notes"
+              value={labOrderNotes}
+              onChange={(e) => setLabOrderNotes(e.target.value)}
+              multiline
+              minRows={2}
+              placeholder="Add order notes for the lab team"
+            />
+            <Box sx={{ maxHeight: 360, overflow: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1.5, p: 1.25 }}>
+              <Stack spacing={1}>
+                {labTests.map((test) => {
+                  const selected = labOrderTestIds.includes(test.id);
+                  return (
+                    <Card key={test.id} variant="outlined" sx={{ boxShadow: "none", borderColor: selected ? "primary.main" : "divider" }}>
+                      <CardContent sx={{ p: 1 }}>
+                        <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="flex-start">
+                          <Box>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{test.testName}</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {test.testCode} • {test.category} • {test.sampleType || "Sample not specified"} • {test.turnaroundTime || "TAT not set"}
+                            </Typography>
+                          </Box>
+                          <Button
+                            size="small"
+                            variant={selected ? "contained" : "outlined"}
+                            onClick={() => setLabOrderTestIds((current) => selected ? current.filter((id) => id !== test.id) : [...current, test.id])}
+                          >
+                            {selected ? "Selected" : "Select"}
+                          </Button>
+                        </Stack>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+                {!labTests.length ? <Alert severity="info">No active lab tests found.</Alert> : null}
+              </Stack>
+            </Box>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setLabOrderDialogOpen(false)}>Cancel</Button>
+          <Button variant="contained" disabled={labOrderSaving || !labOrderTestIds.length} onClick={() => void submitLabOrder()}>
+            Create Order
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="flex-end">
         {canEditConsultation ? <Button type="button" variant="outlined" color="error" disabled={saving || readOnly} onClick={() => void cancelCurrentConsultation()}>Cancel Consultation</Button> : null}

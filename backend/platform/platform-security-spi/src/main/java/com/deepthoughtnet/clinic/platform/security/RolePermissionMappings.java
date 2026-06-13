@@ -18,6 +18,12 @@ public final class RolePermissionMappings {
             Permissions.PATIENT_UPDATE,
             Permissions.APPOINTMENT_MANAGE,
             Permissions.CONSULTATION_READ,
+            Permissions.LAB_TEST_READ,
+            Permissions.LAB_TEST_MANAGE,
+            Permissions.LAB_ORDER_CREATE,
+            Permissions.LAB_ORDER_READ,
+            Permissions.LAB_ORDER_COLLECT_PAYMENT,
+            Permissions.LAB_ORDER_REVIEW,
             Permissions.PRESCRIPTION_READ,
             Permissions.BILLING_CREATE,
             Permissions.BILLING_READ,
@@ -208,6 +214,13 @@ public final class RolePermissionMappings {
             Permissions.CONSULTATION_READ,
             Permissions.CONSULTATION_UPDATE,
             Permissions.CONSULTATION_COMPLETE,
+            Permissions.LAB_TEST_READ,
+            Permissions.LAB_ORDER_CREATE,
+            Permissions.LAB_ORDER_READ,
+            Permissions.LAB_ORDER_COLLECT_SAMPLE,
+            Permissions.LAB_ORDER_RESULT_ENTRY,
+            Permissions.LAB_ORDER_GENERATE_REPORT,
+            Permissions.LAB_ORDER_REVIEW,
             Permissions.PRESCRIPTION_CREATE,
             Permissions.PRESCRIPTION_READ,
             Permissions.PRESCRIPTION_FINALIZE,
@@ -235,6 +248,9 @@ public final class RolePermissionMappings {
             Permissions.QUEUE_READ,
             Permissions.QUEUE_UPDATE,
             Permissions.VACCINATION_MANAGE,
+            Permissions.LAB_TEST_READ,
+            Permissions.LAB_ORDER_READ,
+            Permissions.LAB_ORDER_COLLECT_PAYMENT,
             Permissions.BILLING_READ,
             Permissions.BILLING_CREATE,
             Permissions.BILLING_RECEIPT,
@@ -261,6 +277,9 @@ public final class RolePermissionMappings {
             Permissions.CLINIC_READ,
             Permissions.USER_READ,
             Permissions.PATIENT_READ,
+            Permissions.LAB_TEST_READ,
+            Permissions.LAB_ORDER_READ,
+            Permissions.LAB_ORDER_COLLECT_PAYMENT,
             Permissions.BILLING_READ,
             Permissions.BILLING_CREATE,
             Permissions.BILLING_UPDATE,
@@ -285,7 +304,24 @@ public final class RolePermissionMappings {
     private static final Set<String> LAB_ASSISTANT_PERMISSIONS = Set.of(
             Permissions.PATIENT_READ,
             Permissions.CONSULTATION_READ,
-            Permissions.BILLING_CREATE
+            Permissions.LAB_TEST_READ,
+            Permissions.LAB_TEST_MANAGE,
+            Permissions.LAB_ORDER_CREATE,
+            Permissions.LAB_ORDER_READ,
+            Permissions.LAB_ORDER_COLLECT_SAMPLE,
+            Permissions.LAB_ORDER_RESULT_ENTRY,
+            Permissions.LAB_ORDER_GENERATE_REPORT,
+            Permissions.LAB_ORDER_REVIEW
+    );
+
+    private static final Set<String> LAB_TECHNICIAN_PERMISSIONS = Set.of(
+            Permissions.PATIENT_READ,
+            Permissions.CONSULTATION_READ,
+            Permissions.LAB_TEST_READ,
+            Permissions.LAB_ORDER_READ,
+            Permissions.LAB_ORDER_COLLECT_SAMPLE,
+            Permissions.LAB_ORDER_RESULT_ENTRY,
+            Permissions.LAB_ORDER_GENERATE_REPORT
     );
 
     private static final Set<String> VIEWER_PERMISSIONS = Set.of(
@@ -397,6 +433,8 @@ public final class RolePermissionMappings {
             Permissions.PRESCRIPTION_READ,
             Permissions.BILLING_READ,
             Permissions.BILLING_RECEIPT,
+            Permissions.LAB_TEST_READ,
+            Permissions.LAB_ORDER_READ,
             Permissions.VACCINATION_READ,
             Permissions.INVENTORY_READ,
             Permissions.REPORT_READ,
@@ -466,6 +504,7 @@ public final class RolePermissionMappings {
             Map.entry(Roles.PHARMA, PHARMACIST_PERMISSIONS),
             Map.entry(Roles.PHARMACY, PHARMACIST_PERMISSIONS),
             Map.entry(Roles.PHARMACIST, PHARMACIST_PERMISSIONS),
+            Map.entry(Roles.LAB_TECHNICIAN, LAB_TECHNICIAN_PERMISSIONS),
             Map.entry(Roles.LAB_ASSISTANT, LAB_ASSISTANT_PERMISSIONS),
             Map.entry(Roles.CLINIC_REVIEWER, Set.of(
                     Permissions.DASHBOARD_READ,

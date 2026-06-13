@@ -33,6 +33,8 @@ import com.deepthoughtnet.clinic.inventory.service.model.LowStockRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.notification.service.NotificationCenterService;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderRepository;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderStatus;
 import com.deepthoughtnet.clinic.platform.security.Roles;
 import com.deepthoughtnet.clinic.notification.service.NotificationSummary;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
@@ -73,6 +75,43 @@ public class ReportingFacade {
     private final AppUserRepository appUserRepository;
     private final PatientRepository patientRepository;
     private final NotificationCenterService notificationCenterService;
+    private final LabOrderRepository labOrderRepository;
+
+    public ReportingFacade(
+            AppointmentService appointmentService,
+            ConsultationService consultationService,
+            BillingService billingService,
+            VaccinationService vaccinationService,
+            PrescriptionService prescriptionService,
+            InventoryService inventoryService,
+            MedicineRepository medicineRepository,
+            PharmacySaleRepository pharmacySaleRepository,
+            PharmacySaleItemRepository pharmacySaleItemRepository,
+            PharmacySalePaymentRepository pharmacySalePaymentRepository,
+            PharmacySaleReturnRepository pharmacySaleReturnRepository,
+            PharmacyCashierShiftRepository pharmacyCashierShiftRepository,
+            AppUserRepository appUserRepository,
+            PatientRepository patientRepository,
+            NotificationCenterService notificationCenterService,
+            LabOrderRepository labOrderRepository
+    ) {
+        this.appointmentService = appointmentService;
+        this.consultationService = consultationService;
+        this.billingService = billingService;
+        this.vaccinationService = vaccinationService;
+        this.prescriptionService = prescriptionService;
+        this.inventoryService = inventoryService;
+        this.medicineRepository = medicineRepository;
+        this.pharmacySaleRepository = pharmacySaleRepository;
+        this.pharmacySaleItemRepository = pharmacySaleItemRepository;
+        this.pharmacySalePaymentRepository = pharmacySalePaymentRepository;
+        this.pharmacySaleReturnRepository = pharmacySaleReturnRepository;
+        this.pharmacyCashierShiftRepository = pharmacyCashierShiftRepository;
+        this.appUserRepository = appUserRepository;
+        this.patientRepository = patientRepository;
+        this.notificationCenterService = notificationCenterService;
+        this.labOrderRepository = labOrderRepository;
+    }
 
     public ReportingFacade(
             AppointmentService appointmentService,
@@ -91,21 +130,24 @@ public class ReportingFacade {
             PatientRepository patientRepository,
             NotificationCenterService notificationCenterService
     ) {
-        this.appointmentService = appointmentService;
-        this.consultationService = consultationService;
-        this.billingService = billingService;
-        this.vaccinationService = vaccinationService;
-        this.prescriptionService = prescriptionService;
-        this.inventoryService = inventoryService;
-        this.medicineRepository = medicineRepository;
-        this.pharmacySaleRepository = pharmacySaleRepository;
-        this.pharmacySaleItemRepository = pharmacySaleItemRepository;
-        this.pharmacySalePaymentRepository = pharmacySalePaymentRepository;
-        this.pharmacySaleReturnRepository = pharmacySaleReturnRepository;
-        this.pharmacyCashierShiftRepository = pharmacyCashierShiftRepository;
-        this.appUserRepository = appUserRepository;
-        this.patientRepository = patientRepository;
-        this.notificationCenterService = notificationCenterService;
+        this(
+                appointmentService,
+                consultationService,
+                billingService,
+                vaccinationService,
+                prescriptionService,
+                inventoryService,
+                medicineRepository,
+                pharmacySaleRepository,
+                pharmacySaleItemRepository,
+                pharmacySalePaymentRepository,
+                pharmacySaleReturnRepository,
+                pharmacyCashierShiftRepository,
+                appUserRepository,
+                patientRepository,
+                notificationCenterService,
+                null
+        );
     }
 
     public DashboardSummaryResponse dashboardSummary(UUID tenantId) {
@@ -977,6 +1019,37 @@ public class ReportingFacade {
                         "lowStockThreshold", record.lowStockThreshold()
                 ))
                 .toList();
+    }
+
+    public List<Map<String, Object>> labOperations(UUID tenantId, LocalDate from, LocalDate to) {
+        LocalDate start = from == null && to == null ? LocalDate.now().minusDays(13) : (from == null ? to : from);
+        LocalDate end = to == null ? start : to;
+        if (end.isBefore(start)) {
+            LocalDate temp = start;
+            start = end;
+            end = temp;
+        }
+        LocalDate finalStart = start;
+        LocalDate finalEnd = end;
+        Map<LocalDate, List<com.deepthoughtnet.clinic.api.lab.db.LabOrderEntity>> ordersByDate = labOrderRepository.findByTenantIdOrderByOrderedAtDescCreatedAtDesc(tenantId).stream()
+                .filter(order -> order.getOrderedAt() != null && between(order.getOrderedAt().toLocalDate(), finalStart, finalEnd))
+                .collect(java.util.stream.Collectors.groupingBy(order -> order.getOrderedAt().toLocalDate()));
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (LocalDate date = finalStart; !date.isAfter(finalEnd); date = date.plusDays(1)) {
+            List<com.deepthoughtnet.clinic.api.lab.db.LabOrderEntity> dayOrders = ordersByDate.getOrDefault(date, List.of());
+            long dailyLabOrders = dayOrders.size();
+            long pendingCollections = dayOrders.stream().filter(order -> order.getStatus() == LabOrderStatus.READY_FOR_COLLECTION).count();
+            long pendingResults = dayOrders.stream().filter(order -> order.getStatus() == LabOrderStatus.SAMPLE_COLLECTED || order.getStatus() == LabOrderStatus.PROCESSING).count();
+            long reportsGenerated = dayOrders.stream().filter(order -> order.getStatus() == LabOrderStatus.REPORT_READY || order.getStatus() == LabOrderStatus.REPORT_GENERATED || order.getStatus() == LabOrderStatus.DOCTOR_REVIEWED).count();
+            rows.add(row(
+                    "date", date,
+                    "dailyLabOrders", dailyLabOrders,
+                    "pendingCollections", pendingCollections,
+                    "pendingResults", pendingResults,
+                    "reportsGenerated", reportsGenerated
+            ));
+        }
+        return rows;
     }
 
     public List<Map<String, Object>> prescriptions(UUID tenantId, LocalDate from, LocalDate to, UUID doctorUserId, UUID patientId) {

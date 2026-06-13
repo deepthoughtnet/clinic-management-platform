@@ -42,7 +42,7 @@ import {
   type ClinicUser,
 } from "../../api/clinicApi";
 
-const ASSIGNABLE_ROLES = ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "SERVICE_AGENT", "LAB_ASSISTANT", "PHARMACIST"] as const;
+const ASSIGNABLE_ROLES = ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "SERVICE_AGENT", "LAB_TECHNICIAN", "LAB_ASSISTANT", "PHARMACIST"] as const;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type CreateForm = {
