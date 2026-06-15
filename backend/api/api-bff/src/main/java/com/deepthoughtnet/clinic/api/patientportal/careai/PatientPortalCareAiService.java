@@ -355,9 +355,9 @@ public class PatientPortalCareAiService {
                 patientPortalService.currentPatientId(),
                 currentChatExternalSessionId(),
                 CareAiConversationStatus.CANCELLED,
-                "CareAI booking context cleared."
+                "AIVA booking context cleared."
         );
-        return new PatientPortalCareAiResetResponse(true, "CareAI booking context cleared.");
+        return new PatientPortalCareAiResetResponse(true, "AIVA booking context cleared.");
     }
 
     private String routeConversation(CareAiState state, String message) {
@@ -921,7 +921,7 @@ public class PatientPortalCareAiService {
                 );
                 case CANCEL_APPOINTMENT -> patientPortalService.cancelAppointment(
                         UUID.fromString(state.selectedAppointmentId),
-                        "Cancelled via CareAI"
+                        "Cancelled via AIVA"
                 );
                 case APPOINTMENT_STATUS -> throw new IllegalStateException("Status lookups do not require confirmation");
             };

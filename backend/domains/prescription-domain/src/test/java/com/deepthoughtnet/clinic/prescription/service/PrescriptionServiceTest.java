@@ -21,6 +21,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionEntity;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineEntity;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineRepository;
@@ -93,7 +94,8 @@ class PrescriptionServiceTest {
                 tenantUserManagementService,
                 clinicProfileService,
                 auditEventPublisher,
-                new ObjectMapper()
+                new ObjectMapper(),
+                new BrandingProperties()
         );
 
         lenient().when(prescriptionRepository.save(any(PrescriptionEntity.class))).thenAnswer(invocation -> {

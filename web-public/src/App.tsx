@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import {
   PublicCareAiPage,
@@ -27,17 +27,46 @@ import {
   type PatientPortalSession,
   patientPortalHomePath,
 } from "./api/patientPortal";
+import { branding, productAndTagline, productTitle } from "./branding";
 
 const clinicLoginUrl = "http://localhost:5174";
 const patientSessionStorageKey = "clinic-web-public-patient-session";
+const aivaAppUrl = import.meta.env.VITE_AIVA_APP_URL?.trim() || "http://localhost:5176";
 
 const navItems = [
   { to: "/", label: "Home" },
   { to: "/doctors", label: "Doctors" },
   { to: "/clinics", label: "Clinics" },
   { to: "/specialities", label: "Specialities" },
-  { to: "/careai", label: "CareAI" },
+  { to: "/careai", label: "AIVA" },
+  { to: "/aiva", label: "AIVA" },
 ];
+
+const aivaNavItems = [
+  { to: "/aiva", label: "Overview" },
+  { to: "/aiva/demo", label: "Demo" },
+  { to: "/aiva/architecture", label: "Architecture" },
+  { to: "/aiva/roadmap", label: "Roadmap" },
+];
+
+function pageTitleForPath(pathname: string) {
+  if (pathname === "/") return productTitle();
+  if (pathname === "/doctors") return `Doctors | ${branding.productName}`;
+  if (pathname === "/clinics") return `Clinics | ${branding.productName}`;
+  if (pathname === "/specialities") return `Specialities | ${branding.productName}`;
+  if (pathname.startsWith("/patient")) return `Patient Portal | ${branding.productName}`;
+  if (pathname === "/careai") return `AIVA | ${branding.productName}`;
+  if (pathname.startsWith("/aiva")) return `AIVA | ${branding.productName}`;
+  return productTitle();
+}
+
+function descriptionForPath(pathname: string) {
+  if (pathname === "/") return `${branding.productName} is the ${branding.tagline} for clinics and hospitals.`;
+  if (pathname === "/careai") return `${branding.productName} connects patients to guided care navigation powered by ${branding.aiPlatformName}.`;
+  if (pathname.startsWith("/patient")) return `${branding.productName} patient portal for verified appointments, prescriptions, bills, and reports.`;
+  if (pathname.startsWith("/aiva")) return `${branding.productName} AI voice and assistant platform powered by ${branding.aiPlatformName}.`;
+  return `${branding.productName} by ${branding.companyName}.`;
+}
 
 function readStoredPatientSession() {
   if (typeof window === "undefined") {
@@ -82,100 +111,208 @@ function usePatientPortalSession() {
 
 function AppShell({ children, session }: { children: ReactNode; session: PatientPortalSession | null }) {
   const location = useLocation();
+  const isAivaRoute = location.pathname.startsWith("/aiva");
+
+  useEffect(() => {
+    document.title = pageTitleForPath(location.pathname);
+    const description = descriptionForPath(location.pathname);
+    let meta = document.querySelector('meta[name="description"]') as HTMLMetaElement | null;
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.name = "description";
+      document.head.appendChild(meta);
+    }
+    meta.content = description;
+  }, [location.pathname]);
 
   return (
     <div className="site-shell">
-      <header className="site-header">
-        <Link to="/" className="brand">
-          <span className="brand-badge">CP</span>
-          <span className="brand-meta">
-            <strong>CuraPilot</strong>
-            <small>The AI Co-Pilot for Healthcare</small>
-          </span>
-        </Link>
-        <nav className="main-nav" aria-label="Main navigation">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) => `nav-link${isActive || location.pathname === item.to ? " is-active" : ""}`}
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="header-actions">
-          <a className="ghost-button" href={clinicLoginUrl}>
-            Open CuraPilot Admin Console
-          </a>
-          <Link className="primary-button" to={patientPortalHomePath(session)}>
-            {session?.sessionRole === "registration" ? "Continue registration" : session ? "Open CuraPilot Patient Portal" : "CuraPilot Patient Portal"}
+      {isAivaRoute ? (
+        <header className="site-header aiva-header">
+          <Link to="/aiva" className="brand aiva-brand">
+            <span className="brand-badge aiva-brand-badge">AI</span>
+            <span className="brand-meta">
+              <strong>AIVA</strong>
+              <small>{productAndTagline()}</small>
+            </span>
           </Link>
-        </div>
-      </header>
+          <nav className="main-nav" aria-label="AIVA navigation">
+            {aivaNavItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) => `nav-link${isActive || location.pathname === item.to ? " is-active" : ""}`}
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+          <div className="header-actions">
+            <Link className="secondary-button" to="/aiva/architecture">
+              View architecture
+            </Link>
+            <Link className="primary-button" to="/aiva/demo">
+              Talk to AIVA
+            </Link>
+          </div>
+        </header>
+      ) : (
+        <header className="site-header">
+          <Link to="/" className="brand">
+            <span className="brand-badge">AR</span>
+            <span className="brand-meta">
+              <strong>{branding.productName}</strong>
+              <small>{branding.tagline}</small>
+            </span>
+          </Link>
+          <nav className="main-nav" aria-label="Main navigation">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) => `nav-link${isActive || location.pathname === item.to ? " is-active" : ""}`}
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+          <div className="header-actions">
+            <a className="ghost-button" href={clinicLoginUrl}>
+              Open {branding.productName} Admin Console
+            </a>
+            <Link className="primary-button" to={patientPortalHomePath(session)}>
+              {session?.sessionRole === "registration" ? "Continue registration" : session ? `Open ${branding.productName} Patient Portal` : `${branding.productName} Patient Portal`}
+            </Link>
+          </div>
+        </header>
+      )}
       <main>{children}</main>
-      <footer className="site-footer">
-        <div className="footer-grid">
-          <section className="footer-brand-block">
-            <span className="eyebrow">By DeepThoughtNet</span>
-            <strong>CuraPilot</strong>
-            <p className="footer-tagline">The AI Co-Pilot for Healthcare</p>
-            <p>Smarter Care. Powered by AI.</p>
-            <div className="footer-meaning">
-              <p>Cura means care, healing, and wellbeing.</p>
-              <p>क्यूरा = देखभाल, उपचार और स्वास्थ्य का भरोसा</p>
-            </div>
-          </section>
+      {isAivaRoute ? (
+        <footer className="site-footer aiva-footer">
+          <div className="footer-grid">
+            <section className="footer-brand-block">
+              <span className="eyebrow">{branding.aiPlatformName} by {branding.companyName}</span>
+              <strong>{branding.aiPlatformName}</strong>
+              <p className="footer-tagline">{productAndTagline()}</p>
+              <p>Talk. Understand. Act.</p>
+              <div className="footer-meaning">
+                <p>AIVA v1 is the product layer on top of the existing AIVA runtime.</p>
+                <p>Live actions require the verified patient runtime when needed.</p>
+              </div>
+            </section>
+            <section className="footer-column">
+              <strong>Product</strong>
+              <div className="footer-link-list">
+                <Link to="/aiva">Overview</Link>
+                <Link to="/aiva/demo">Demo</Link>
+                <Link to="/aiva/architecture">Architecture</Link>
+                <Link to="/aiva/roadmap">Roadmap</Link>
+              </div>
+            </section>
+            <section className="footer-column">
+              <strong>Runtime</strong>
+              <div className="footer-link-list">
+                <Link to="/careai">Public AIVA</Link>
+                <Link to={patientPortalHomePath(session)}>Patient Portal</Link>
+                <span>STT / LLM / TTS / Workflow engine</span>
+              </div>
+            </section>
+            <section className="footer-column">
+              <strong>Safety</strong>
+              <div className="footer-link-list">
+                <span>No real patient data on AIVA pages</span>
+                <span>Demo-safe prompts only</span>
+                <span>Existing runtime reused, not rebuilt</span>
+              </div>
+            </section>
+          </div>
+          <div className="footer-bottom">
+            <p>© 2026 DeepThoughtNet. AIVA — AI Voice Intelligence &amp; Agentic Workflow Platform.</p>
+            <Link to="/aiva/demo">Talk to AIVA</Link>
+          </div>
+        </footer>
+      ) : (
+        <footer className="site-footer">
+          <div className="footer-grid">
+            <section className="footer-brand-block">
+              <span className="eyebrow">By DeepThoughtNet</span>
+              <strong>Arogia</strong>
+              <p className="footer-tagline">{productAndTagline()}</p>
+              <p>Smarter Care. Powered by {branding.aiPlatformName}.</p>
+              <div className="footer-meaning">
+                <p>Cura means care, healing, and wellbeing.</p>
+                <p>क्यूरा = देखभाल, उपचार और स्वास्थ्य का भरोसा</p>
+              </div>
+            </section>
 
-          <section className="footer-column">
-            <strong>CuraPilot</strong>
-            <div className="footer-link-list">
-              <Link to="/">About</Link>
-              <Link to="/clinics">For Clinics</Link>
-              <span>CuraPilot Doctor Portal</span>
-              <Link to={patientPortalHomePath(session)}>For Patients</Link>
-            </div>
-          </section>
+            <section className="footer-column">
+              <strong>Arogia</strong>
+              <div className="footer-link-list">
+                <Link to="/">About</Link>
+                <Link to="/clinics">For Clinics</Link>
+                <span>Arogia Doctor Portal</span>
+                <Link to={patientPortalHomePath(session)}>For Patients</Link>
+              </div>
+            </section>
 
-          <section className="footer-column">
-            <strong>Platform</strong>
-            <div className="footer-link-list">
-              <Link to="/careai">CareAI</Link>
-              <span>CarePilot</span>
-              <Link to={patientPortalHomePath(session)}>Patient Portal</Link>
-              <span>Doctor Portal</span>
-              <span>Pharmacy</span>
-              <span>Billing</span>
-              <span>Analytics</span>
-            </div>
-          </section>
+            <section className="footer-column">
+              <strong>Platform</strong>
+              <div className="footer-link-list">
+                <Link to="/careai">AIVA</Link>
+                <span>Arogia</span>
+                <Link to={patientPortalHomePath(session)}>Patient Portal</Link>
+                <span>Doctor Portal</span>
+                <span>Pharmacy</span>
+                <span>Billing</span>
+                <span>Analytics</span>
+              </div>
+            </section>
 
-          <section className="footer-column">
-            <strong>Support</strong>
-            <div className="footer-link-list">
-              <span>Contact</span>
-              <span>Help Center</span>
-              <span>Privacy Policy</span>
-              <span>Terms</span>
-            </div>
-          </section>
+            <section className="footer-column">
+              <strong>Support</strong>
+              <div className="footer-link-list">
+                <span>Contact</span>
+                <span>Help Center</span>
+                <span>Privacy Policy</span>
+                <span>Terms</span>
+              </div>
+            </section>
 
-          <section className="footer-column">
-            <strong>DeepThoughtNet</strong>
-            <div className="footer-link-list">
-              <span>AI-powered healthcare operations platform</span>
-              <span>Smarter Care. Powered by AI.</span>
-            </div>
-          </section>
-        </div>
-        <div className="footer-bottom">
-          <p>© 2026 DeepThoughtNet. CuraPilot — The AI Co-Pilot for Healthcare.</p>
-          <Link to={patientPortalHomePath(session)}>
-            {session?.sessionRole === "registration" ? "Continue registration" : session ? "Open CuraPilot Patient Portal" : "Open CuraPilot Patient Portal"}
-          </Link>
-        </div>
-      </footer>
+            <section className="footer-column">
+              <strong>{branding.companyName}</strong>
+              <div className="footer-link-list">
+                <span>{branding.productName} - {branding.tagline}</span>
+                <span>Powered by {branding.aiPlatformName}</span>
+              </div>
+            </section>
+          </div>
+          <div className="footer-bottom">
+            <p>© 2026 {branding.companyName}. {branding.productName} - {branding.tagline}.</p>
+            <Link to={patientPortalHomePath(session)}>
+              {session?.sessionRole === "registration" ? "Continue registration" : session ? `Open ${branding.productName} Patient Portal` : `Open ${branding.productName} Patient Portal`}
+            </Link>
+          </div>
+        </footer>
+      )}
     </div>
+  );
+}
+
+function AivaRedirectPage() {
+  useEffect(() => {
+    window.location.replace(aivaAppUrl);
+  }, []);
+  return (
+    <section className="page-section">
+      <div className="section-heading">
+        <span className="eyebrow">AIVA</span>
+        <h1>AI Voice Intelligence &amp; Agentic Workflow Platform</h1>
+        <p>
+          AIVA has moved to a standalone frontend application. Open the microsite at{" "}
+          <a href={aivaAppUrl}>{aivaAppUrl}</a>.
+        </p>
+      </div>
+    </section>
   );
 }
 
@@ -185,6 +322,7 @@ export function App() {
   return (
     <AppShell session={session}>
       <Routes>
+        <Route path="/aiva/*" element={<AivaRedirectPage />} />
         <Route path="/" element={<PublicHomePage session={session} />} />
         <Route path="/doctors" element={<PublicDoctorsPage session={session} />} />
         <Route path="/doctors/:doctorSlug" element={<PublicDoctorDetailPage session={session} />} />

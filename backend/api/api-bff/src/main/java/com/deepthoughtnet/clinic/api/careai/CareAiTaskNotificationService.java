@@ -32,8 +32,8 @@ public class CareAiTaskNotificationService {
         if (task == null) {
             return;
         }
-        publish(task, "CAREAI_TASK_CREATED", "New CareAI " + task.getTaskType() + " task",
-                buildBody(task, "A new CareAI task needs staff follow-up."),
+        publish(task, "CAREAI_TASK_CREATED", "New AIVA " + task.getTaskType() + " task",
+                buildBody(task, "An AIVA task needs staff follow-up."),
                 "careai-task-created:" + task.getId());
     }
 
@@ -41,8 +41,8 @@ public class CareAiTaskNotificationService {
         if (task == null) {
             return;
         }
-        publish(task, "CAREAI_TASK_SLA_BREACHED", "CareAI task SLA breached",
-                buildBody(task, "A CareAI task has breached its SLA and needs attention."),
+        publish(task, "CAREAI_TASK_SLA_BREACHED", "AIVA task SLA breached",
+                buildBody(task, "An AIVA task has breached its SLA and needs attention."),
                 "careai-task-sla-breached:" + task.getId() + ":" + task.getSlaStatus());
     }
 

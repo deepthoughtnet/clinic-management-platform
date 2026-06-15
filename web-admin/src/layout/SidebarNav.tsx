@@ -49,6 +49,7 @@ import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 import { NAV_GROUPS, type NavGroup, type NavItem } from "./nav";
 import { useAuth } from "../auth/useAuth";
 import { friendlyRoleLabel, hasTenantModule } from "../auth/moduleEntitlements";
+import { branding } from "../branding";
 
 const GROUP_STATE_STORAGE_KEY = "clinic_sidebar_group_state_v1";
 
@@ -295,11 +296,11 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
     >
       <Box sx={{ px: compact ? 1 : 2, py: 1.75 }}>
         {compact ? (
-          <Typography variant="subtitle2" sx={{ fontWeight: 900, textAlign: "center" }}>CP</Typography>
+          <Typography variant="subtitle2" sx={{ fontWeight: 900, textAlign: "center" }}>AR</Typography>
         ) : (
           <>
-            <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>CuraPilot</Typography>
-            <Typography variant="caption" sx={{ opacity: 0.7 }}>AI-powered healthcare operations platform</Typography>
+            <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{branding.productName}</Typography>
+            <Typography variant="caption" sx={{ opacity: 0.7 }}>{branding.tagline}</Typography>
           </>
         )}
       </Box>

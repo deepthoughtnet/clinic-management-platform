@@ -53,6 +53,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -119,6 +120,7 @@ public class LabService {
     private final LabNotificationService labNotificationService;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
+    private final BrandingProperties brandingProperties;
 
     public LabService(
             LabTestMasterRepository labTestMasterRepository,
@@ -136,7 +138,8 @@ public class LabService {
             ObjectStorageService objectStorageService,
             LabNotificationService labNotificationService,
             AuditEventPublisher auditEventPublisher,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            BrandingProperties brandingProperties
     ) {
         this.labTestMasterRepository = labTestMasterRepository;
         this.labTestParameterRepository = labTestParameterRepository;
@@ -154,6 +157,7 @@ public class LabService {
         this.labNotificationService = labNotificationService;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper;
+        this.brandingProperties = brandingProperties;
     }
 
     @Transactional(readOnly = true)
@@ -772,7 +776,7 @@ public class LabService {
                 y = drawMetaBlock(tenantId, content, record, page, margin, width, y);
                 y = drawResultsTable(content, record, margin, width, y);
                 y = drawNotesBlock(content, record, margin, width, y);
-                drawFooter(content, "This laboratory report is system generated and intended for clinical records.", margin, y);
+                drawFooter(content, brandingProperties.footerLine(), margin, y);
             }
             document.save(output);
             return new LabOrderResultPdf(safeFilename(record.orderNumber()) + "-lab-report.pdf", output.toByteArray());

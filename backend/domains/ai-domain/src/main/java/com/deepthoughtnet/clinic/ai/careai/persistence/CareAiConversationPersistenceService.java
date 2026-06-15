@@ -248,7 +248,7 @@ public class CareAiConversationPersistenceService {
     @Transactional(readOnly = true)
     public CareAiConversationEntity getConversation(UUID tenantId, UUID conversationId) {
         return conversationRepository.findByTenantIdAndId(tenantId, conversationId)
-                .orElseThrow(() -> new IllegalArgumentException("CareAI conversation not found"));
+                .orElseThrow(() -> new IllegalArgumentException("AIVA conversation not found"));
     }
 
     @Transactional(readOnly = true)

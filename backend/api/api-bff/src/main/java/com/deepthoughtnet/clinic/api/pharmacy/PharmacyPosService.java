@@ -28,6 +28,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -96,6 +97,7 @@ public class PharmacyPosService {
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectStorageService storageService;
     private final ObjectMapper objectMapper;
+    private final BrandingProperties brandingProperties;
 
     public PharmacyPosService(
             InventoryService inventoryService,
@@ -112,7 +114,8 @@ public class PharmacyPosService {
             AuditEventPublisher auditEventPublisher,
             PharmacySalePrescriptionRepository salePrescriptionRepository,
             ObjectStorageService storageService,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            BrandingProperties brandingProperties
     ) {
         this.inventoryService = inventoryService;
         this.medicineRepository = medicineRepository;
@@ -129,6 +132,7 @@ public class PharmacyPosService {
         this.auditEventPublisher = auditEventPublisher;
         this.storageService = storageService;
         this.objectMapper = objectMapper;
+        this.brandingProperties = brandingProperties;
     }
 
     @Transactional(readOnly = true)
@@ -697,7 +701,7 @@ public class PharmacyPosService {
                 }
                 y -= 10f;
                 drawDivider(content, margin, y, contentWidth);
-                drawText(content, "Printed from CuraPilot Pharmacy POS", 8, margin, y - 14f, false);
+                drawText(content, brandingProperties.footerLine() + " - Pharmacy POS", 8, margin, y - 14f, false);
             }
             document.save(output);
             return new PharmacyPosReceiptPdf(safeFilename(sale.saleNumber()) + "-receipt.pdf", output.toByteArray());

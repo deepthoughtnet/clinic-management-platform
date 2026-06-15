@@ -596,7 +596,7 @@ class PatientPortalCareAiServiceTest {
                 appointment(appointmentA, doctorUserId, "Dr Ashish Shri", date, LocalTime.of(9, 0), "BOOKED"),
                 appointment(appointmentB, doctorUserId, "Dr Neha Mehta", date.plusDays(1), LocalTime.of(10, 0), "BOOKED")
         ));
-        when(patientPortalService.cancelAppointment(appointmentB, "Cancelled via CareAI"))
+        when(patientPortalService.cancelAppointment(appointmentB, "Cancelled via AIVA"))
                 .thenReturn(new PatientPortalAppointmentConfirmationResponse(
                         date.plusDays(1),
                         LocalTime.of(10, 0),
@@ -616,7 +616,7 @@ class PatientPortalCareAiServiceTest {
         assertThat(second.state().selectedAppointment()).contains("Dr Neha Mehta");
 
         var third = service.message(new PatientPortalCareAiMessageRequest("yes", "en"));
-        verify(patientPortalService).cancelAppointment(appointmentB, "Cancelled via CareAI");
+        verify(patientPortalService).cancelAppointment(appointmentB, "Cancelled via AIVA");
         assertThat(third.state().lastAction()).isEqualTo("CANCEL_APPOINTMENT");
         assertThat(third.state().bookingStatus()).isEqualTo("CANCELLED");
     }

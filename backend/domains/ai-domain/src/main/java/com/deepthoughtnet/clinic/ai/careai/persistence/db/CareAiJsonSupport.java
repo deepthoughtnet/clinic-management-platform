@@ -20,7 +20,7 @@ public final class CareAiJsonSupport {
         try {
             return OBJECT_MAPPER.readValue(value, MAP_TYPE);
         } catch (JsonProcessingException ex) {
-            throw new IllegalArgumentException("Invalid CareAI JSON payload", ex);
+            throw new IllegalArgumentException("Invalid AIVA JSON payload", ex);
         }
     }
 
@@ -28,7 +28,7 @@ public final class CareAiJsonSupport {
         try {
             return OBJECT_MAPPER.writeValueAsString(value == null ? new LinkedHashMap<>() : value);
         } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Unable to serialize CareAI JSON payload", ex);
+            throw new IllegalStateException("Unable to serialize AIVA JSON payload", ex);
         }
     }
 }

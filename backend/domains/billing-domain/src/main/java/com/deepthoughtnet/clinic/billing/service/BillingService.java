@@ -46,6 +46,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
@@ -98,6 +99,7 @@ public class BillingService {
     private final TenantUserManagementService tenantUserManagementService;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
+    private final BrandingProperties brandingProperties;
 
     public BillingService(
             BillRepository billRepository,
@@ -113,7 +115,8 @@ public class BillingService {
             InventoryService inventoryService,
             TenantUserManagementService tenantUserManagementService,
             AuditEventPublisher auditEventPublisher,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            BrandingProperties brandingProperties
     ) {
         this.billRepository = billRepository;
         this.billLineRepository = billLineRepository;
@@ -129,6 +132,7 @@ public class BillingService {
         this.tenantUserManagementService = tenantUserManagementService;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper;
+        this.brandingProperties = brandingProperties;
     }
 
     @Transactional(readOnly = true)
@@ -908,7 +912,7 @@ public class BillingService {
                 y -= 8;
                 y = drawSummaryBlock(content, record, margin, width, y);
                 y -= 8;
-                drawFooter(content, "This invoice is system generated and intended for patient records and payment verification.", margin, y);
+                drawFooter(content, brandingProperties.footerLine(), margin, y);
             }
             document.save(output);
             return new BillPdf(safeFilename(record.billNumber()) + ".pdf", output.toByteArray());
@@ -937,7 +941,7 @@ public class BillingService {
                 y -= 8;
                 y = drawReceiptBody(content, record, receipt, payment, margin, width, y);
                 y -= 8;
-                drawFooter(content, "This receipt acknowledges the payment received against the referenced bill.", margin, y);
+                drawFooter(content, brandingProperties.footerLine(), margin, y);
             }
             document.save(output);
             return new ReceiptPdf(safeFilename(receipt.getReceiptNumber()) + ".pdf", output.toByteArray());

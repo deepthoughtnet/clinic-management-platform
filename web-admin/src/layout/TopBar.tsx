@@ -20,6 +20,7 @@ import LocalHospitalRoundedIcon from "@mui/icons-material/LocalHospitalRounded";
 import { useAuth } from "../auth/useAuth";
 import { friendlyRoleLabel } from "../auth/moduleEntitlements";
 import { getPlatformTenants } from "../api/clinicApi";
+import { branding } from "../branding";
 
 function formatPathLabel(pathname: string): string {
   if (pathname === "/") return "Dashboard";
@@ -97,7 +98,7 @@ export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => voi
         <LocalHospitalRoundedIcon fontSize="small" color="primary" />
         <Box>
           <Typography variant="subtitle1" sx={{ fontWeight: 900, lineHeight: 1.2 }}>
-            CuraPilot
+            {branding.productName}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             {formatPathLabel(location.pathname)}

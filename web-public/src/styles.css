@@ -1645,3 +1645,436 @@ input {
     display: none;
   }
 }
+
+/* AIVA microsite */
+.aiva-page {
+  --aiva-bg: #050d16;
+  --aiva-bg-2: #091b2b;
+  --aiva-surface: rgba(11, 25, 39, 0.82);
+  --aiva-surface-strong: rgba(16, 35, 54, 0.96);
+  --aiva-line: rgba(148, 187, 214, 0.16);
+  --aiva-text: #e8f3fb;
+  --aiva-muted: #9cb4c6;
+  --aiva-primary: #55d7c7;
+  --aiva-primary-strong: #8ae4d9;
+  color: var(--aiva-text);
+  position: relative;
+  overflow: hidden;
+  padding: 0.25rem 0 2.5rem;
+}
+
+.aiva-page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top left, rgba(85, 215, 199, 0.22), transparent 26%),
+    radial-gradient(circle at top right, rgba(116, 149, 255, 0.15), transparent 24%),
+    linear-gradient(180deg, var(--aiva-bg) 0%, var(--aiva-bg-2) 100%);
+  z-index: -1;
+}
+
+.aiva-page .eyebrow,
+.aiva-page .aiva-kicker {
+  color: var(--aiva-primary);
+}
+
+.aiva-page .aiva-muted,
+.aiva-page p {
+  color: var(--aiva-muted);
+}
+
+.aiva-page .aiva-shell-card,
+.aiva-page .aiva-card,
+.aiva-page .aiva-meta-card {
+  background: var(--aiva-surface);
+  border: 1px solid var(--aiva-line);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(14px);
+}
+
+.aiva-page .aiva-card,
+.aiva-page .aiva-meta-card {
+  border-radius: var(--radius-md);
+}
+
+.aiva-page .aiva-shell-card {
+  width: min(var(--container-max), 100%);
+  margin: 0 auto;
+  border-radius: clamp(1.35rem, 3vw, 2rem);
+}
+
+.aiva-header .nav-link {
+  color: rgba(232, 243, 251, 0.74);
+}
+
+.aiva-header .nav-link.is-active {
+  color: #04141c;
+  background: linear-gradient(135deg, var(--aiva-primary), #b2fff7);
+}
+
+.aiva-brand .brand-meta small {
+  color: rgba(232, 243, 251, 0.62);
+}
+
+.aiva-brand-badge {
+  background: linear-gradient(135deg, #13273b, #55d7c7);
+  color: #f2fffd;
+}
+
+.aiva-hero {
+  display: grid;
+  gap: 1.25rem;
+  margin: 0 auto;
+  padding: 1.4rem;
+}
+
+.aiva-hero-copy,
+.aiva-page-header,
+.aiva-section,
+.aiva-demo-grid,
+.aiva-architecture-grid,
+.aiva-roadmap-grid {
+  width: min(var(--container-max), 100%);
+  margin: 0 auto;
+}
+
+.aiva-hero h1,
+.aiva-page-header h1,
+.aiva-section-heading h2 {
+  margin: 0;
+  color: #f6fcff;
+  line-height: 1.02;
+}
+
+.aiva-tagline {
+  margin: 0.5rem 0 0.8rem;
+  font-size: clamp(1.35rem, 3.8vw, 2rem);
+  color: var(--aiva-primary-strong);
+  font-weight: 700;
+}
+
+.aiva-hero-description {
+  max-width: 68ch;
+  margin: 0 0 1.1rem;
+  font-size: 1.02rem;
+}
+
+.aiva-hero-panel {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.aiva-signal-card {
+  padding: 1.05rem;
+  border-radius: 1.25rem;
+  background: linear-gradient(145deg, rgba(15, 29, 44, 0.98), rgba(8, 19, 31, 0.82));
+  border: 1px solid rgba(110, 207, 193, 0.18);
+}
+
+.aiva-signal-card h3,
+.aiva-card strong,
+.aiva-page-header strong {
+  color: #f8fdff;
+}
+
+.aiva-signal-grid,
+.aiva-runtime-strip,
+.aiva-feature-grid,
+.aiva-runtime-grid,
+.aiva-demo-grid,
+.aiva-architecture-grid,
+.aiva-roadmap-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.aiva-signal-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.aiva-signal {
+  padding: 0.95rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 187, 214, 0.12);
+  color: #dfeef7;
+  font-weight: 700;
+}
+
+.aiva-runtime-strip {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.aiva-runtime-strip span,
+.aiva-pill,
+.aiva-meta-card span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(148, 187, 214, 0.12);
+  color: #ecf7fb;
+  font-size: 0.92rem;
+}
+
+.aiva-section {
+  margin-top: 1.5rem;
+}
+
+.aiva-section-heading {
+  width: min(var(--container-max), 100%);
+  margin: 0 auto 1rem;
+}
+
+.aiva-feature-grid {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+.aiva-feature-card {
+  min-height: 100%;
+}
+
+.aiva-runtime-grid {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+.aiva-pill-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.aiva-pill {
+  justify-content: flex-start;
+  border-radius: 999px;
+}
+
+.aiva-page-header {
+  display: grid;
+  gap: 1rem;
+  padding: 1.2rem 1.3rem;
+}
+
+.aiva-header-meta {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.aiva-meta-card {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.95rem 1rem;
+}
+
+.aiva-meta-card span {
+  justify-content: flex-start;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--aiva-muted);
+}
+
+.aiva-tall-stat {
+  display: grid;
+  gap: 0.3rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(148, 187, 214, 0.12);
+}
+
+.aiva-chat-stream {
+  display: grid;
+  gap: 0.75rem;
+  max-height: 340px;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.aiva-chat-bubble {
+  padding: 0.9rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(148, 187, 214, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.aiva-chat-bubble.user {
+  background: rgba(85, 215, 199, 0.12);
+}
+
+.aiva-chat-bubble.assistant {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.aiva-chat-bubble-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.35rem;
+  color: var(--aiva-muted);
+  font-size: 0.86rem;
+}
+
+.aiva-input-shell {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.aiva-input-shell input {
+  min-width: 0;
+  padding: 0.9rem 1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 187, 214, 0.18);
+  background: rgba(255, 255, 255, 0.05);
+  color: #f4fbfe;
+}
+
+.aiva-input-shell input::placeholder {
+  color: rgba(180, 205, 216, 0.7);
+}
+
+.aiva-prompt-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.aiva-prompt-chip {
+  padding: 0.75rem 0.95rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 187, 214, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: #ecf7fb;
+  cursor: pointer;
+  text-align: left;
+}
+
+.aiva-timeline,
+.aiva-status-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.aiva-timeline-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.aiva-timeline-item p,
+.aiva-status-item p {
+  margin: 0.15rem 0 0;
+}
+
+.aiva-timeline-dot {
+  width: 0.82rem;
+  height: 0.82rem;
+  margin-top: 0.4rem;
+  border-radius: 999px;
+  background: rgba(156, 180, 198, 0.75);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.04);
+}
+
+.aiva-timeline-dot.done,
+.aiva-status-item.active {
+  background: var(--aiva-primary);
+}
+
+.aiva-timeline-dot.active {
+  background: #8ae4d9;
+}
+
+.aiva-status-item {
+  padding: 0.95rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(148, 187, 214, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.aiva-status-item.active {
+  color: #04141c;
+  background: linear-gradient(135deg, #55d7c7, #b2fff7);
+}
+
+.aiva-status-item.active p {
+  color: rgba(4, 20, 28, 0.72);
+}
+
+.aiva-demo-grid,
+.aiva-architecture-grid,
+.aiva-roadmap-grid {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  margin-top: 1rem;
+}
+
+.aiva-footer .footer-grid {
+  color: #e7f3fa;
+}
+
+.aiva-footer .footer-column span,
+.aiva-footer .footer-link-list a {
+  color: rgba(232, 243, 251, 0.82);
+}
+
+.aiva-footer .footer-link-list a:hover {
+  color: white;
+}
+
+@media (min-width: 760px) {
+  .aiva-hero {
+    grid-template-columns: minmax(0, 1.18fr) minmax(300px, 0.82fr);
+    align-items: center;
+    padding: 1.8rem;
+  }
+
+  .aiva-feature-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .aiva-runtime-grid,
+  .aiva-demo-grid-secondary,
+  .aiva-architecture-grid,
+  .aiva-roadmap-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .aiva-page-header {
+    grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+    align-items: center;
+  }
+}
+
+@media (min-width: 980px) {
+  .aiva-feature-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .aiva-demo-grid {
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  }
+
+  .aiva-demo-grid-secondary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .aiva-architecture-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 759px) {
+  .aiva-input-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .aiva-runtime-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

@@ -13,6 +13,7 @@ import {
   patientBookingPath,
 } from "../../api/publicCatalog";
 import type { PatientPortalSession } from "../../api/patientPortal";
+import { branding } from "../../branding";
 
 type FetchState<T> = {
   data: T;
@@ -92,9 +93,9 @@ const HERO_FEATURES = [
   },
   {
     icon: "🤖",
-    title: "Ask CareAI",
+    title: "Ask AIVA",
     text: "Describe symptoms or care needs in simple language and get guided next steps.",
-    cta: "Ask CareAI",
+    cta: "Ask AIVA",
     to: "/careai",
   },
   {
@@ -462,11 +463,12 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
     <>
       <section className="hero hero-smart">
         <div className="hero-copy">
-          <span className="eyebrow">CuraPilot by DeepThoughtNet</span>
-          <h1>What healthcare help do you need today?</h1>
+          <span className="eyebrow">{branding.productName}</span>
+          <h1>{branding.tagline}</h1>
           <p>
             Discover doctors, clinics, services, and next-step care through an AI-first experience designed for fast, confident patient decisions.
           </p>
+          <p>Smart Healthcare Management Platform for Clinics and Hospitals. Powered by {branding.aiPlatformName}.</p>
           <div className="cta-row public-quick-links">
             <Link className="primary-button" to="/doctors">
               Browse doctors
@@ -475,7 +477,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
               Browse clinics
             </Link>
             <Link className="ghost-button" to="/careai">
-              Ask CareAI
+              Ask AIVA
             </Link>
           </div>
           <div className="hero-feature-grid">
@@ -488,7 +490,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
               </Link>
             ))}
           </div>
-          <div className="trust-strip" aria-label="CuraPilot trust signals">
+          <div className="trust-strip" aria-label="Arogia trust signals">
             {TRUST_SIGNALS.map((item) => (
               <div key={item} className="trust-pill">
                 {item}
@@ -569,7 +571,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
             <div className="careai-cta">
               <div className="careai-cta-copy">
                 <p className="smart-search-label">🤖 ASK CAREAI</p>
-                <h3>Need help finding the right doctor? Ask CareAI.</h3>
+                <h3>Need help finding the right doctor? Ask AIVA.</h3>
               </div>
               <div className="careai-prompt-grid">
                 {CAREAI_PROMPTS.map((prompt) => (
@@ -584,7 +586,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
                 ))}
               </div>
               <button className="secondary-button careai-cta-button" type="button" onClick={() => openCareAi()}>
-                Ask CareAI
+                Ask AIVA
               </button>
             </div>
           </div>
@@ -751,7 +753,7 @@ export function PublicDoctorDetailPage({ session }: { session: PatientPortalSess
                   Book appointment
                 </Link>
                 <Link className="ghost-button" to="/careai">
-                  Ask CareAI
+                  Ask AIVA
                 </Link>
               </div>
             </article>
@@ -900,7 +902,7 @@ export function PublicClinicDetailPage({ session }: { session: PatientPortalSess
                   Book appointment
                 </Link>
                 <Link className="ghost-button" to="/careai">
-                  Ask CareAI
+                  Ask AIVA
                 </Link>
               </div>
             </article>
@@ -1068,9 +1070,9 @@ export function PublicCareAiPage({ session }: { session: PatientPortalSession | 
   return (
     <section className="page-section">
       <div className="section-heading">
-        <span className="eyebrow">Public CareAI</span>
-        <h1>Ask CareAI to narrow down the right in-clinic path.</h1>
-        <p>CareAI can guide you toward a speciality, doctor, clinic, or next availability. It does not diagnose, prescribe, or expose patient/private data.</p>
+        <span className="eyebrow">Public AIVA</span>
+        <h1>Ask AIVA to narrow down the right in-clinic path.</h1>
+        <p>AIVA can guide you toward a speciality, doctor, clinic, or next availability. It does not diagnose, prescribe, or expose patient/private data.</p>
       </div>
       <div className="careai-panel public-careai-panel">
         <article className="info-card accent-card">

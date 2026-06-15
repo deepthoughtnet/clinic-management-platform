@@ -218,7 +218,7 @@ const patientNavItems = [
   { to: "/patient/bills", label: "Bills", shortLabel: "Bills" },
   { to: "/patient/notifications", label: "Notifications", shortLabel: "Notify" },
   { to: "/patient/lab", label: "Lab Reports", shortLabel: "Lab" },
-  { to: "/patient/careai", label: "CareAI", shortLabel: "CareAI" },
+  { to: "/patient/careai", label: "AIVA", shortLabel: "AIVA" },
   { to: "/patient/profile", label: "Profile", shortLabel: "Profile" },
 ];
 
@@ -344,7 +344,7 @@ function PatientPortalShell({
       <div className="patient-portal-shell">
         <aside className="patient-sidebar">
           <div className="patient-sidebar-card">
-            <span className="eyebrow">CuraPilot Patient Portal</span>
+            <span className="eyebrow">Arogia Patient Portal</span>
             <h2>{session.patientLabel}</h2>
             <p>Read-only patient access stays separate from web-admin and staff workflows.</p>
           </div>
@@ -421,7 +421,7 @@ function RegistrationRequiredCard({
     <section className="page-section narrow-page">
         <div className="login-placeholder patient-guard-card">
         <span className="eyebrow">Registration required</span>
-        <h1>Finish quick registration to open CuraPilot Patient Portal.</h1>
+        <h1>Finish quick registration to open Arogia Patient Portal.</h1>
         <p>Your OTP is verified for this clinic, but the portal only unlocks after your tenant-scoped patient profile is linked.</p>
         <div className="cta-row">
           <Link className="primary-button" to={nextPath ? `/patient/register?next=${encodeURIComponent(nextPath)}` : "/patient/register"}>
@@ -454,7 +454,7 @@ function PatientAccessBoundary({
       <section className="page-section narrow-page">
         <div className="login-placeholder patient-guard-card">
           <span className="eyebrow">Patient login required</span>
-          <h1>Sign in with phone OTP to open CuraPilot Patient Portal.</h1>
+          <h1>Sign in with phone OTP to open Arogia Patient Portal.</h1>
           <p>The patient session stays separate from public discovery and from all staff/admin authentication.</p>
           <div className="cta-row">
             <Link className="primary-button" to="/patient/login">
@@ -645,7 +645,7 @@ export function PatientLoginPage({
       <div className="login-placeholder portal-login-card">
         <div className="portal-banner">
           <strong>Read-only patient rollout</strong>
-          <p>OTP sign-in unlocks patient-scoped appointments, prescriptions, bills, profile details, and CareAI entry points.</p>
+          <p>OTP sign-in unlocks patient-scoped appointments, prescriptions, bills, profile details, and AIVA entry points.</p>
         </div>
         <div className="portal-feature-list">
           <article className="feature-card">
@@ -728,7 +728,7 @@ export function PatientLoginPage({
 
         <div className="cta-row">
           <a className="ghost-button" href={clinicLoginUrl}>
-            Open CuraPilot Admin Console
+            Open Arogia Admin Console
           </a>
           {session ? (
             <>
@@ -1082,13 +1082,13 @@ export function PatientDashboardPage({ session, onSignOut }: { session: PatientP
 
         <article className="patient-panel">
           <div className="patient-panel-heading">
-            <h2>CareAI</h2>
-            <Link to="/patient/careai">Open CareAI</Link>
+            <h2>AIVA</h2>
+            <Link to="/patient/careai">Open AIVA</Link>
           </div>
           <div className="patient-highlight-card">
-            <strong>Use CareAI for guided booking and visit prep</strong>
+            <strong>Use AIVA for guided booking and visit prep</strong>
             <span>{dashboard.data?.clinicName ?? "Clinic"} patient view</span>
-            <p>Ask CareAI to help book a clinic visit, summarize medicines, or explain billing totals using only your patient-safe data.</p>
+            <p>Ask AIVA to help book a clinic visit, summarize medicines, or explain billing totals using only your patient-safe data.</p>
           </div>
         </article>
         </div>
@@ -1131,10 +1131,10 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
         {upcomingAppointments.length ? (
           <div className="patient-highlight-card patient-guidance-card">
             <strong>Need to cancel or reschedule?</strong>
-            <p>To cancel or reschedule, please use CareAI or contact receptionist.</p>
+            <p>To cancel or reschedule, please use AIVA or contact receptionist.</p>
             <div className="patient-action-row">
               <Link className="secondary-button" to="/patient/careai">
-                Open CareAI
+                Open AIVA
               </Link>
             </div>
           </div>
@@ -1159,7 +1159,7 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
               (appointment.status ?? "").toUpperCase() !== "NO_SHOW" &&
               (appointment.status ?? "").toUpperCase() !== "COMPLETED" ? (
                 <div className="patient-inline-note">
-                  To cancel or reschedule, please use CareAI or contact receptionist.
+                  To cancel or reschedule, please use AIVA or contact receptionist.
                 </div>
               ) : null}
             </article>
@@ -2304,7 +2304,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       updateVoiceStatus("playing_response");
       setVoiceReplyReadyToPlay(false);
       setVoiceError(null);
-      setVoiceInfo("Playing CareAI response…");
+      setVoiceInfo("Playing AIVA response…");
       await voiceAudioElementRef.current.play();
       voiceAssistantAudioPendingRef.current = false;
       voiceAssistantAudioReadyRef.current = false;
@@ -2323,7 +2323,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       voicePendingAutoPlayRef.current = false;
       updateVoiceStatus("session_started");
       setVoiceReplyReadyToPlay(true);
-      setVoiceInfo("CareAI reply is ready. Tap play to hear it.");
+      setVoiceInfo("AIVA reply is ready. Tap play to hear it.");
       appendVoiceEvent(`AUDIO_PLAY_FAILED ${reason}`);
       appendVoiceEvent(`ASSISTANT_AUDIO_PLAY_BLOCKED ${reason}`);
     }
@@ -2332,7 +2332,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   function bindVoiceSocket(socket: WebSocket) {
     socket.onopen = () => {
       updateVoiceStatus("connecting");
-      setVoiceInfo("Connecting to CareAI voice…");
+      setVoiceInfo("Connecting to AIVA voice…");
       appendVoiceEvent("CONNECTED");
       socket.send(JSON.stringify({
         type: "session.start",
@@ -2427,7 +2427,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         setState(nextState);
       }
       setVoiceProviderTrace(trace);
-      setVoiceInfo("CareAI responded.");
+      setVoiceInfo("AIVA responded.");
       appendVoiceEvent("ASSISTANT_TEXT");
       return;
     }
@@ -2473,7 +2473,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       updateVoiceStatus("playing_response");
       setVoiceReplyReadyToPlay(false);
       replaceVoiceAudioUrl(url);
-      setVoiceInfo("Playing CareAI response…");
+      setVoiceInfo("Playing AIVA response…");
       appendVoiceEvent(`ASSISTANT_AUDIO_READY ${Number(payload.durationMs || 0)}ms`);
       return;
     }
@@ -2523,7 +2523,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     }
     if (type === "error") {
       updateVoiceStatus("error");
-      setVoiceError(String(payload.message || "CareAI voice could not process that request."));
+      setVoiceError(String(payload.message || "AIVA voice could not process that request."));
       setVoiceInfo(null);
       appendVoiceEvent("SERVER_ERROR");
     }
@@ -2559,7 +2559,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
 
   async function ensureVoiceSocket() {
     if (!portalSession) {
-      throw new Error("Patient session is required for CareAI voice.");
+      throw new Error("Patient session is required for AIVA voice.");
     }
     if (voiceSocketRef.current && voiceSocketRef.current.readyState === WebSocket.OPEN) {
       return voiceSocketRef.current;
@@ -2569,7 +2569,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     }
     updateVoiceStatus("connecting");
     setVoiceError(null);
-    setVoiceInfo("Connecting to CareAI voice…");
+    setVoiceInfo("Connecting to AIVA voice…");
     const socketUrl = buildPatientPortalVoiceWebSocketUrl(portalSession);
     appendVoiceEvent("CONNECTING");
     const socket = new WebSocket(socketUrl);
@@ -2688,7 +2688,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         const audioBase64 = await blobToBase64(blob);
         const chunks = splitVoiceBase64Chunks(audioBase64);
         updateVoiceStatus("processing");
-        setVoiceInfo("Uploading audio to CareAI…");
+        setVoiceInfo("Uploading audio to AIVA…");
         chunks.forEach((audioBase64Chunk, index) => {
           socket.send(JSON.stringify({
             type: "audio.chunk",
@@ -2744,7 +2744,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setVoiceProviderTrace(null);
     setVoiceEvents([]);
     setVoiceError(null);
-    setVoiceInfo("Connecting to CareAI voice…");
+    setVoiceInfo("Connecting to AIVA voice…");
     setVoiceTranscript("");
     setVoiceAssistant("");
     setVoiceSessionId(null);
@@ -2848,7 +2848,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         },
       ]);
     } catch (submitError: unknown) {
-      setError(submitError instanceof Error ? submitError.message : "CareAI could not process that request.");
+      setError(submitError instanceof Error ? submitError.message : "AIVA could not process that request.");
     } finally {
       setSubmitting(false);
     }
@@ -2890,7 +2890,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       setState(null);
       setDraft("");
     } catch (resetError: unknown) {
-      setError(resetError instanceof Error ? resetError.message : "CareAI could not reset the booking context.");
+      setError(resetError instanceof Error ? resetError.message : "AIVA could not reset the booking context.");
     } finally {
       setResetting(false);
     }
@@ -2900,13 +2900,13 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     <PatientAccessBoundary
       session={session}
       onSignOut={onSignOut}
-      title="Patient CareAI"
+      title="Arogia Patient Portal"
       subtitle="Chat-based booking uses your verified patient session, asks for explicit confirmation, and stays scoped to your tenant."
     >
       <div className="patient-content-grid">
         <article className="patient-panel patient-panel-wide">
           <div className="patient-panel-heading">
-            <h2>CareAI booking chat</h2>
+            <h2>AIVA booking chat</h2>
             <button className="ghost-button" type="button" disabled={!portalSession || resetting} onClick={handleReset}>
               {resetting ? "Resetting..." : "Reset"}
             </button>
@@ -2919,7 +2919,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                 disabled={!portalSession || submitting || (voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error")}
                 onClick={handleVoiceStart}
               >
-                Talk to CareAI
+                Talk to AIVA
               </button>
               <button
                 className="secondary-button"
@@ -2945,7 +2945,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
             </div>
             <div className="patient-careai-voice-toolbar">
               <span className="patient-inline-note">
-                {voiceInfo || "Start a voice session and CareAI will listen automatically after it connects."}
+                {voiceInfo || "Start a voice session and AIVA will listen automatically after it connects."}
               </span>
               <button
                 className="ghost-button patient-technical-toggle"
@@ -2976,7 +2976,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
             />
             {voiceReplyReadyToPlay ? (
               <button className="ghost-button patient-careai-reply-play" type="button" onClick={() => void handleVoiceReplyPlayback()}>
-                Play CareAI reply
+                Play AIVA reply
               </button>
             ) : null}
             {voiceError ? <div className="patient-inline-empty patient-inline-error">{voiceError}</div> : null}
@@ -3029,7 +3029,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                     <strong>Turn timings</strong>
                     <span>
                       {voiceTurnMetrics
-                        ? `STT ${voiceTurnMetrics.sttDurationMs}ms · CareAI ${voiceTurnMetrics.careAiDurationMs}ms · TTS ${voiceTurnMetrics.ttsDurationMs}ms · Total ${voiceTurnMetrics.totalDurationMs}ms`
+                        ? `STT ${voiceTurnMetrics.sttDurationMs}ms · AIVA ${voiceTurnMetrics.careAiDurationMs}ms · TTS ${voiceTurnMetrics.ttsDurationMs}ms · Total ${voiceTurnMetrics.totalDurationMs}ms`
                         : `VAD start ${voiceConfig.speechStartThreshold.toFixed(3)} · silence ${voiceConfig.silenceTimeoutMs}ms · auto resume ${voiceConfig.autoResumeDelayMs}ms`}
                     </span>
                   </div>
@@ -3057,13 +3057,13 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                   key={message.id}
                   className={`patient-chat-bubble ${message.role === "patient" ? "patient-chat-bubble-self" : "patient-chat-bubble-ai"}`}
                 >
-                  <strong>{message.role === "patient" ? "You" : "CareAI"}</strong>
+                  <strong>{message.role === "patient" ? "You" : "AIVA"}</strong>
                   <p>{message.text}</p>
                 </div>
               ))}
               {submitting ? (
                 <div className="patient-chat-bubble patient-chat-bubble-ai">
-                  <strong>CareAI</strong>
+                  <strong>AIVA</strong>
                   <p>Checking doctors and slots for you...</p>
                 </div>
               ) : null}
@@ -3082,9 +3082,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
               </label>
               <div className="patient-action-row">
                 <button className="primary-button" type="submit" disabled={!portalSession || submitting || !draft.trim()}>
-                  {submitting ? "Sending..." : "Send to CareAI"}
+                  {submitting ? "Sending..." : "Send to AIVA"}
                 </button>
-                <span className="patient-inline-note">CareAI never books, reschedules, or cancels until you explicitly confirm.</span>
+                <span className="patient-inline-note">AIVA never books, reschedules, or cancels until you explicitly confirm.</span>
               </div>
               {error ? <div className="patient-inline-empty patient-inline-error">{error}</div> : null}
             </form>
@@ -3169,13 +3169,13 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                 <div className="patient-highlight-card patient-careai-alert">
                   <strong>Reception follow-up recommended</strong>
                   <span>{state.handoffReason ?? "manual-assist"}</span>
-                  <p>CareAI could not safely finish this request. The clinic team should help complete the booking.</p>
+                  <p>AIVA could not safely finish this request. The clinic team should help complete the booking.</p>
                 </div>
               ) : null}
             </div>
           ) : (
             <div className="patient-empty-card">
-              <strong>CareAI is ready</strong>
+              <strong>AIVA is ready</strong>
               <p>Ask to book, reschedule, cancel, or check an appointment. You can reply in English or Hindi.</p>
             </div>
           )}
@@ -3183,20 +3183,20 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
 
         <article className="patient-panel">
           <div className="patient-panel-heading">
-            <h2>What CareAI can do now</h2>
+            <h2>What AIVA can do now</h2>
           </div>
           <div className="patient-subcard-list">
             <div className="patient-subcard">
               <strong>Book and confirm appointments</strong>
-              <span>CareAI can collect doctor, date, slot, and explicit confirmation before creating the appointment.</span>
+              <span>AIVA can collect doctor, date, slot, and explicit confirmation before creating the appointment.</span>
             </div>
             <div className="patient-subcard">
               <strong>Reschedule and cancel safely</strong>
-              <span>CareAI can list your upcoming appointments, ask you to choose one, and only change it after confirmation.</span>
+              <span>AIVA can list your upcoming appointments, ask you to choose one, and only change it after confirmation.</span>
             </div>
             <div className="patient-subcard">
               <strong>Confirmed patient session only</strong>
-              <span>CareAI uses your verified portal session and never accepts another patient identity from chat.</span>
+              <span>AIVA uses your verified portal session and never accepts another patient identity from chat.</span>
             </div>
             <div className="patient-subcard">
               <strong>Urgent symptoms are handed off</strong>

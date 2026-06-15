@@ -1,13 +1,13 @@
-# CareAI Management Presentation Outline
+# Arogia Management Presentation Outline
 
-## Slide 1 - CareAI Overview
-- Purpose: Introduce CareAI and why it matters.
+## Slide 1 - Arogia Overview
+- Purpose: Introduce Arogia and why it matters.
 - Key points:
   - Patient-facing AI assistant for chat and voice.
   - Solves appointment friction and reduces manual front-desk load.
   - Built with deterministic safety controls.
 - Suggested diagram: `careai-overall.svg`
-- Speaker notes: Position CareAI as a practical operating assistant, not just an AI experiment.
+- Speaker notes: Position Arogia as a practical operating assistant, not just an AI experiment.
 - Business benefits: Better patient experience, lower operational cost.
 - Technical highlights: Shared chat/voice engine, provider fallback, deterministic actions.
 
@@ -22,7 +22,7 @@
 - Business benefits: Reduced wait times and staff effort.
 - Technical highlights: Existing platform already had the domain backbone.
 
-## Slide 3 - What CareAI Does Today
+## Slide 3 - What Arogia Does Today
 - Purpose: Show current capabilities.
 - Key points:
   - OTP login and self-registration.
@@ -36,7 +36,7 @@
 ## Slide 4 - End-to-End Architecture
 - Purpose: Explain the main system shape.
 - Key points:
-  - Web UI -> REST/WebSocket -> CareAI runtime -> orchestration -> business tools.
+  - Web UI -> REST/WebSocket -> Arogia runtime -> orchestration -> business tools.
   - STT and TTS only for voice.
   - Deterministic appointment services remain authoritative.
 - Suggested diagram: `careai-overall.svg`
@@ -133,11 +133,11 @@
 - Business benefits: Clear roadmap and realistic expectations.
 - Technical highlights: Existing modules are already structured for extraction.
 
-## Slide 13 - From CareAI to DeepThoughtNet Agent Platform
+## Slide 13 - From Arogia to DeepThoughtNet Agent Platform
 - Purpose: Introduce the platform vision.
 - Key points:
   - Runtime, planner, memory, tools, workflow, RAG, observability.
-  - CareAI becomes one domain pack.
+  - Arogia becomes one domain pack.
   - Reuse across industries.
 - Suggested diagram: `deepthoughtnet-agent-platform.svg`
 - Speaker notes: Shift the narrative from product feature to reusable capability.
@@ -178,7 +178,7 @@
 ## Slide 17 - Recommended Roadmap
 - Purpose: Close with a practical execution plan.
 - Key points:
-  - Stabilize CareAI operationally.
+  - Stabilize Arogia operationally.
   - Add durable state, callback workflows, RAG, analytics.
   - Extract orchestration/runtime into a platform service.
 - Suggested diagram: `deepthoughtnet-agent-platform.svg`

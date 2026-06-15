@@ -112,7 +112,7 @@ class ClinicTimeZoneResolverTest {
         return new PlatformTenantRecord(
                 TENANT_ID,
                 "curapilot-demo",
-                "CuraPilot Demo Clinic",
+                "Arogia Demo Clinic",
                 "TRIAL",
                 "ACTIVE",
                 true,

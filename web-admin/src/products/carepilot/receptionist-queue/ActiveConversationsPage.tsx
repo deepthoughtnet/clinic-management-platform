@@ -73,10 +73,10 @@ export default function ActiveConversationsPage() {
   }, [load]);
 
   if (!auth.tenantId) {
-    return <Alert severity="info">Select a tenant to view active CareAI conversations.</Alert>;
+    return <Alert severity="info">Select a tenant to view active AIVA conversations.</Alert>;
   }
   if (!canView) {
-    return <Alert severity="error">You do not have access to CareAI operational conversations.</Alert>;
+    return <Alert severity="error">You do not have access to AIVA operational conversations.</Alert>;
   }
 
   return (
@@ -84,7 +84,7 @@ export default function ActiveConversationsPage() {
       <Box>
         <Typography variant="h4" sx={{ fontWeight: 900 }}>AI Receptionist Active Conversations</Typography>
         <Typography variant="body2" color="text.secondary">
-          Review active CareAI conversations across chat and voice before taking over a callback, escalation, or handoff.
+          Review active AIVA conversations across chat and voice before taking over a callback, escalation, or handoff.
         </Typography>
       </Box>
       {error ? <Alert severity="error">{error}</Alert> : null}

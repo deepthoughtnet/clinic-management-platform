@@ -325,6 +325,24 @@ services:
       clinic-management-api:
         condition: service_healthy
 
+  web-aiva:
+    profiles: ["frontend"]
+    build:
+      context: ../web-aiva
+      dockerfile: Dockerfile
+      args:
+        VITE_CAREAI_RUNTIME_URL: ${VITE_CAREAI_RUNTIME_URL:-http://localhost:5175/patient/careai}
+    container_name: clinic-web-aiva
+    restart: unless-stopped
+    ports:
+      - "5176:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
   # Future optional split services (placeholder only; not enabled in v1):
   # stt-service:
   # tts-service:

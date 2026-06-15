@@ -60,6 +60,7 @@ import CallbackQueuePage from "../products/carepilot/receptionist-queue/Callback
 import EscalationQueuePage from "../products/carepilot/receptionist-queue/EscalationQueuePage";
 import ReceptionistQueuePage from "../products/carepilot/receptionist-queue/ReceptionistQueuePage";
 import { hasTenantModule } from "../auth/moduleEntitlements";
+import { branding, productTitle } from "../branding";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const auth = React.useContext(AuthContext);
@@ -104,6 +105,9 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
 function LoginPage() {
   const auth = React.useContext(AuthContext);
+  React.useEffect(() => {
+    document.title = productTitle();
+  }, []);
 
   if (auth?.initialized && auth.authenticated) {
     return <Navigate to="/" replace />;
@@ -132,10 +136,10 @@ function LoginPage() {
         }}
         >
         <Typography variant="h5" sx={{ fontWeight: 900, mb: 1 }}>
-          CuraPilot
+          {branding.productName}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          Sign in to CuraPilot Admin Console to manage patients, appointments,
+          Sign in to {branding.productName} Admin Console to manage patients, appointments,
           prescriptions, billing, and clinic operations.
         </Typography>
         <Button size="large" variant="contained" onClick={() => auth?.login(true)} fullWidth>
@@ -171,7 +175,11 @@ function HomeRedirect() {
 }
 
 function AuthedApp() {
-  const auth = useAuth();
+  const location = useLocation();
+
+  React.useEffect(() => {
+    document.title = `${formatPageTitle(location.pathname)} | ${branding.productName}`;
+  }, [location.pathname]);
 
   return (
     <AppShell>
@@ -245,9 +253,16 @@ function AuthedApp() {
         <Route path="/doctors/:id" element={<DoctorDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      <Box sx={{ display: "none" }}>{auth.username}</Box>
     </AppShell>
   );
+}
+
+function formatPageTitle(pathname: string): string {
+  if (pathname === "/" || pathname === "/dashboard") return branding.productName;
+  if (pathname === "/login") return `${branding.productName} Admin Console`;
+  if (pathname.startsWith("/patient")) return "Patient Portal";
+  const leaf = pathname.split("/").filter(Boolean).at(-1) || "Dashboard";
+  return leaf.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 export default function App() {

@@ -38,6 +38,7 @@ import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
+import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
@@ -99,7 +100,8 @@ class BillingServicePaymentTest {
                 mock(InventoryService.class),
                 mock(TenantUserManagementService.class),
                 auditEventPublisher,
-                new ObjectMapper()
+                new ObjectMapper(),
+                new BrandingProperties()
         );
         when(billRepository.save(any(BillEntity.class))).thenAnswer(invocation -> {
             BillEntity entity = invocation.getArgument(0);

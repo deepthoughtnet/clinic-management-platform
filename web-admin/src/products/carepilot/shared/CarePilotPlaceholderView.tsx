@@ -17,7 +17,7 @@ export default function CarePilotPlaceholderView({ moduleName, summary }: CarePi
     <Stack spacing={2}>
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
         <Typography variant="h5" sx={{ fontWeight: 900 }}>{moduleName}</Typography>
-        <Chip label="CarePilot" size="small" color="primary" variant="outlined" />
+        <Chip label="Arogia" size="small" color="primary" variant="outlined" />
         <Chip label="Coming Soon" size="small" variant="outlined" />
       </Stack>
       <Card>

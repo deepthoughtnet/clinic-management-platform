@@ -34,6 +34,7 @@ import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCom
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -217,7 +218,8 @@ class PharmacyPosServiceTest {
                 auditEventPublisher,
                 salePrescriptionRepository,
                 storageService,
-                new ObjectMapper()
+                new ObjectMapper(),
+                new BrandingProperties()
         );
     }
 

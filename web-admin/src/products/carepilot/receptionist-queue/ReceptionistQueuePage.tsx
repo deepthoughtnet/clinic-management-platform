@@ -79,8 +79,8 @@ type ReceptionistQueuePageProps = {
 };
 
 export default function ReceptionistQueuePage({
-  title = "CareAI Receptionist Queue",
-  description = "Review escalations, callbacks, and human handoffs raised from CareAI chat and voice conversations.",
+  title = "Arogia Receptionist Queue",
+  description = "Review escalations, callbacks, and human handoffs raised from AIVA chat and voice conversations.",
   forcedType,
   hideTypeFilter = false,
 }: ReceptionistQueuePageProps) {
@@ -191,10 +191,10 @@ export default function ReceptionistQueuePage({
         setSuccess("Task marked in progress.");
       } else if (action === "resume") {
         await resumeCareAiReceptionistTask(auth.accessToken, auth.tenantId, taskId);
-        setSuccess("Task resumed with CareAI context.");
+        setSuccess("Task resumed with AIVA context.");
       } else if (action === "return") {
         await returnCareAiReceptionistTaskToAi(auth.accessToken, auth.tenantId, taskId);
-        setSuccess("Conversation returned to CareAI.");
+        setSuccess("Conversation returned to AIVA.");
       } else if (action === "resolve") {
         await resolveCareAiReceptionistTask(auth.accessToken, auth.tenantId, taskId, resolutionNotes);
         setSuccess("Task resolved.");
@@ -374,7 +374,7 @@ export default function ReceptionistQueuePage({
                   <Stack spacing={1}>
                     {canMutate ? <Button variant="outlined" onClick={() => detail && void handleMutation("assign", detail.task.id)} disabled={submitting}>Assign to Me</Button> : null}
                     {canMutate ? <Button variant="outlined" onClick={() => detail && void handleMutation("progress", detail.task.id)} disabled={submitting}>Mark In Progress</Button> : null}
-                    {canMutate ? <Button variant="outlined" onClick={() => detail && void handleMutation("resume", detail.task.id)} disabled={submitting}>Resume With CareAI</Button> : null}
+                    {canMutate ? <Button variant="outlined" onClick={() => detail && void handleMutation("resume", detail.task.id)} disabled={submitting}>Resume With AIVA</Button> : null}
                     {canMutate ? <Button variant="outlined" onClick={() => detail && void handleMutation("return", detail.task.id)} disabled={submitting}>Return To AI</Button> : null}
                   </Stack>
                 </Box>

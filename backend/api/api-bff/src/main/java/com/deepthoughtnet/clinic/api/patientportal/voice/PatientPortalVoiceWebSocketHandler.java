@@ -368,7 +368,7 @@ public class PatientPortalVoiceWebSocketHandler extends TextWebSocketHandler {
                     response.ttsProvider(),
                     response.ttsFallbackReason());
         } catch (Exception ex) {
-            sendError(session, ex.getMessage() == null ? "Patient CareAI voice processing failed." : ex.getMessage());
+            sendError(session, ex.getMessage() == null ? "Patient AIVA voice processing failed." : ex.getMessage());
         } finally {
             RequestContextHolder.clear();
             state.turnInProgress = false;

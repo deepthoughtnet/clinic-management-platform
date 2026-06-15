@@ -10,6 +10,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionEntity;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineEntity;
 import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineRepository;
@@ -68,6 +69,7 @@ public class PrescriptionService {
     private final ClinicProfileService clinicProfileService;
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
+    private final BrandingProperties brandingProperties;
 
     public PrescriptionService(
             PrescriptionRepository prescriptionRepository,
@@ -78,7 +80,8 @@ public class PrescriptionService {
             TenantUserManagementService tenantUserManagementService,
             ClinicProfileService clinicProfileService,
             AuditEventPublisher auditEventPublisher,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            BrandingProperties brandingProperties
     ) {
         this.prescriptionRepository = prescriptionRepository;
         this.medicineRepository = medicineRepository;
@@ -89,6 +92,7 @@ public class PrescriptionService {
         this.clinicProfileService = clinicProfileService;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper;
+        this.brandingProperties = brandingProperties;
     }
 
     @Transactional(readOnly = true)
@@ -1112,6 +1116,7 @@ public class PrescriptionService {
         if (StringUtils.hasText(template.footerText())) {
             writeLine(state.content, cleanText(template.footerText()), 7.8f, state.margin, footerY - 2, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
         }
+        writeLine(state.content, brandingProperties.footerLine(), 7.8f, state.margin, footerY - 23, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
         writeLine(state.content, "Generated: " + OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) + " | Page " + state.pageNumber, 7.8f, state.margin, footerY - 13, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
     }
 

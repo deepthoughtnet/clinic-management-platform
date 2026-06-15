@@ -134,7 +134,7 @@ public class CareAiReceptionistTaskService {
     @Transactional(readOnly = true)
     public CareAiReceptionistTaskEntity getTask(UUID tenantId, UUID taskId) {
         return taskRepository.findByTenantIdAndId(tenantId, taskId)
-                .orElseThrow(() -> new IllegalArgumentException("CareAI receptionist task not found"));
+                .orElseThrow(() -> new IllegalArgumentException("AIVA receptionist task not found"));
     }
 
     @Transactional(readOnly = true)
@@ -356,7 +356,7 @@ public class CareAiReceptionistTaskService {
     private void assertMutable(CareAiReceptionistTaskEntity task) {
         if (CareAiReceptionistTaskStatus.RESOLVED.name().equals(task.getStatus())
                 || CareAiReceptionistTaskStatus.CANCELLED.name().equals(task.getStatus())) {
-            throw new IllegalStateException("CareAI receptionist task is already closed");
+            throw new IllegalStateException("AIVA receptionist task is already closed");
         }
     }
 
@@ -554,9 +554,9 @@ public class CareAiReceptionistTaskService {
             return "Resume the appointment booking, confirm the remaining booking details, and complete the handoff safely.";
         }
         if (task.getTaskType().equals(CareAiReceptionistTaskType.CALLBACK_REQUEST.name())) {
-            return "Confirm the callback window and capture any missing contact details before returning the conversation to CareAI.";
+            return "Confirm the callback window and capture any missing contact details before returning the conversation to AIVA.";
         }
-        return "Review the latest patient message, answer the open question, and decide whether to return the conversation to CareAI.";
+        return "Review the latest patient message, answer the open question, and decide whether to return the conversation to AIVA.";
     }
 
     private String textValue(Object value) {

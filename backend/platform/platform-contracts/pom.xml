@@ -14,7 +14,10 @@
   <packaging>jar</packaging>
 
   <dependencies>
-    <!-- minimal module; add dependencies when implementing -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot</artifactId>
+    </dependency>
   </dependencies>
 
 </project>

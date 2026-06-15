@@ -78,7 +78,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     key: "carepilot",
-    label: "CarePilot",
+    label: "Arogia",
     requiresTenant: true,
     defaultExpanded: false,
     rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"],
