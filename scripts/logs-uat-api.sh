@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${REPO_ROOT}/local/.env.uat-arogia"
+COMPOSE_BASE="${REPO_ROOT}/local/docker-compose.yml"
+COMPOSE_UAT="${REPO_ROOT}/local/docker-compose.uat.yml"
+PROJECT_NAME="arogia_uat"
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    printf 'Required command not found: %s\n' "$1" >&2
+    exit 127
+  fi
+}
+
+compose() {
+  docker compose --env-file "${ENV_FILE}" -p "${PROJECT_NAME}" -f "${COMPOSE_BASE}" -f "${COMPOSE_UAT}" "$@"
+}
+
+show_missing_env_help() {
+  printf 'Missing env file: %s\n' "${ENV_FILE}" >&2
+  printf 'Create it from the example first:\n' >&2
+  printf '  cp local/.env.uat-arogia.example local/.env.uat-arogia\n' >&2
+  printf 'Then edit secrets, SERVER_IP, and port assignments.\n' >&2
+}
+
+require_command docker
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+  show_missing_env_help
+  exit 1
+fi
+
+compose --profile api --profile frontend logs -f --tail=200 clinic-management-api

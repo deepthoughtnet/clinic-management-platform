@@ -1,0 +1,3 @@
+# Arogia UAT overlay placeholder.
+# The base compose file is env-driven for UAT ports, container names, and credentials.
+# Keep this file so deploy scripts can consistently include a UAT overlay layer.

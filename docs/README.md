@@ -24,6 +24,7 @@ This documentation suite is implementation-grounded and generated from the curre
   - [Operations Runbook](./runbooks/operations-runbook.md)
 - Deployment
   - [Deployment Guide](./deployment/deployment-guide.md)
+  - [Arogia UAT Deployment](./deployment/arogia-uat-deployment.md)
 - User Manual
   - [User Manual](./user-manual/user-manual.md)
 - Roadmap
@@ -46,4 +47,3 @@ This documentation suite is implementation-grounded and generated from the curre
 - Migrations: `backend/api/api-bff/src/main/resources/db/migration/V001..V042`
 - Frontend routes/nav: `web-admin/src/app/App.tsx`, `web-admin/src/layout/nav.ts`
 - Environment and local infra: `backend/api/api-bff/src/main/resources/application.yml`, `local/docker-compose.yml`, `local/keycloak/realm-export.json`
-

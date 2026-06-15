@@ -235,14 +235,10 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
         <footer className="site-footer">
           <div className="footer-grid">
             <section className="footer-brand-block">
-              <span className="eyebrow">By DeepThoughtNet</span>
+              <span className="eyebrow">Arogia</span>
               <strong>Arogia</strong>
               <p className="footer-tagline">{productAndTagline()}</p>
-              <p>Smarter Care. Powered by {branding.aiPlatformName}.</p>
-              <div className="footer-meaning">
-                <p>Cura means care, healing, and wellbeing.</p>
-                <p>क्यूरा = देखभाल, उपचार और स्वास्थ्य का भरोसा</p>
-              </div>
+              <p>Smarter Care. Powered by AIVA.</p>
             </section>
 
             <section className="footer-column">
@@ -250,8 +246,8 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
               <div className="footer-link-list">
                 <Link to="/">About</Link>
                 <Link to="/clinics">For Clinics</Link>
-                <span>Arogia Doctor Portal</span>
-                <Link to={patientPortalHomePath(session)}>For Patients</Link>
+                <Link to={patientPortalHomePath(session)}>Patient Portal</Link>
+                <span>Doctor Portal</span>
               </div>
             </section>
 
@@ -259,12 +255,11 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
               <strong>Platform</strong>
               <div className="footer-link-list">
                 <Link to="/careai">AIVA</Link>
-                <span>Arogia</span>
-                <Link to={patientPortalHomePath(session)}>Patient Portal</Link>
-                <span>Doctor Portal</span>
-                <span>Pharmacy</span>
+                <span>Appointments</span>
+                <span>Consultation</span>
+                <span>Lab Reports</span>
                 <span>Billing</span>
-                <span>Analytics</span>
+                <span>Pharmacy</span>
               </div>
             </section>
 
@@ -277,20 +272,10 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
                 <span>Terms</span>
               </div>
             </section>
-
-            <section className="footer-column">
-              <strong>{branding.companyName}</strong>
-              <div className="footer-link-list">
-                <span>{branding.productName} - {branding.tagline}</span>
-                <span>Powered by {branding.aiPlatformName}</span>
-              </div>
-            </section>
           </div>
           <div className="footer-bottom">
-            <p>© 2026 {branding.companyName}. {branding.productName} - {branding.tagline}.</p>
-            <Link to={patientPortalHomePath(session)}>
-              {session?.sessionRole === "registration" ? "Continue registration" : session ? `Open ${branding.productName} Patient Portal` : `Open ${branding.productName} Patient Portal`}
-            </Link>
+            <p>© 2026 DeepThoughtNet. Arogia - Smart Healthcare Management Platform.</p>
+            <Link to={patientPortalHomePath(session)}>Open Arogia Patient Portal</Link>
           </div>
         </footer>
       )}

@@ -11,6 +11,10 @@ Each script resolves the repository root dynamically, so you can run it from any
 - `restart-local.sh` - restarts the full local Docker stack without rebuilding.
 - `logs-api.sh` - tails the backend API container logs.
 - `logs-careai.sh` - tails logs for AI-related containers and lets you choose when more than one matches.
+- `deploy-uat-arogia.sh` - builds and starts the isolated Arogia UAT stack on a VPS.
+- `status-uat-arogia.sh` - shows compose and container status for the Arogia UAT stack.
+- `logs-uat-api.sh` - tails Arogia UAT API logs.
+- `logs-uat-aiva.sh` - tails Arogia UAT AIVA and voice-stack logs.
 - `smoke-test.sh` - checks that the key containers are running and that the API health endpoint responds.
 
 ## Usage
@@ -19,6 +23,10 @@ Each script resolves the repository root dynamically, so you can run it from any
 ./scripts/build-all.sh
 ./scripts/deploy-local.sh
 ./scripts/restart-local.sh
+./scripts/deploy-uat-arogia.sh
+./scripts/status-uat-arogia.sh
+./scripts/logs-uat-api.sh
+./scripts/logs-uat-aiva.sh
 ./scripts/logs-api.sh
 ./scripts/logs-careai.sh
 ./scripts/smoke-test.sh

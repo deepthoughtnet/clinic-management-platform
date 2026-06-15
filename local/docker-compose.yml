@@ -52,61 +52,61 @@ x-clinic-ai-env: &clinic-ai-env
 services:
   postgres:
     image: postgres:15
-    container_name: clinic-postgres
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: clinic_management
-      POSTGRES_USER: clinic
-      POSTGRES_PASSWORD: clinic
+      POSTGRES_DB: ${POSTGRES_DB:-clinic_management}
+      POSTGRES_USER: ${POSTGRES_USER:-clinic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clinic}
     ports:
-      - "5437:5432"
+      - "${POSTGRES_PORT:-5437}:5432"
     volumes:
       - clinic_management_postgres_data:/var/lib/postgresql/data
       - ./init-sql:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U clinic -d clinic_management"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-clinic} -d ${POSTGRES_DB:-clinic_management}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7
-    container_name: clinic-redis
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-redis
     restart: unless-stopped
     ports:
-      - "6383:6379"
+      - "${REDIS_PORT:-6383}:6379"
     volumes:
       - clinic_management_redis_data:/data
 
   minio:
     image: minio/minio:latest
-    container_name: clinic-minio
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio123
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio123}
     ports:
-      - "9005:9000"
-      - "9006:9001"
+      - "${MINIO_API_PORT:-9005}:9000"
+      - "${MINIO_CONSOLE_PORT:-9006}:9001"
     volumes:
       - clinic_management_minio_data:/data
 
   keycloak:
     image: quay.io/keycloak/keycloak:24.0
-    container_name: clinic-keycloak
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-keycloak
     restart: unless-stopped
     command: start-dev --import-realm
     environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_HEALTH_ENABLED: "true"
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: clinic
-      KC_DB_PASSWORD: clinic
+      KC_DB_USERNAME: ${POSTGRES_USER:-clinic}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-clinic}
     ports:
-      - "8182:8080"
+      - "${KEYCLOAK_PORT:-8182}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -126,13 +126,13 @@ services:
 
   whisper-stt:
     image: ghcr.io/ggerganov/whisper.cpp:main
-    container_name: clinic-whisper-stt
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-whisper-stt
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-lc"]
     command:
       - "set -e; if [ ! -f /models/ggml-base.en.bin ]; then curl -fL https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -o /models/ggml-base.en.bin; fi; exec /app/build/bin/whisper-server --host 0.0.0.0 --port 8080 --model /models/ggml-base.en.bin"
     ports:
-      - "8092:8080"
+      - "${WHISPER_STT_PORT:-8092}:8080"
     volumes:
       - whisper_stt_models:/models
     healthcheck:
@@ -146,7 +146,7 @@ services:
     build:
       context: ./voice/faster-whisper
       dockerfile: Dockerfile
-    container_name: clinic-faster-whisper
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-faster-whisper
     restart: unless-stopped
     environment:
       FASTER_WHISPER_MODEL: ${FASTER_WHISPER_MODEL:-base}
@@ -166,7 +166,7 @@ services:
     build:
       context: ./voice/piper
       dockerfile: Dockerfile
-    container_name: clinic-piper-tts
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-piper-tts
     restart: unless-stopped
     environment:
       PIPER_DEFAULT_VOICE: ${PIPER_DEFAULT_VOICE:-en_US-lessac-medium}
@@ -189,7 +189,7 @@ services:
     build:
       context: ../backend/realtime/realtime-voice-runtime-python
       dockerfile: Dockerfile
-    container_name: clinic-realtime-voice-gateway
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-realtime-voice-gateway
     restart: unless-stopped
     environment:
       VOICE_GATEWAY_HOST: 0.0.0.0
@@ -215,7 +215,7 @@ services:
       PIPER_CLI: ${PIPER_CLI:-piper}
       PIPER_MODEL: ${PIPER_MODEL:-/var/lib/voice-models/piper/en_US-lessac-medium.onnx}
     ports:
-      - "8091:8091"
+      - "${REALTIME_VOICE_GATEWAY_PORT:-8091}:8091"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -237,7 +237,7 @@ services:
     build:
       context: ..
       dockerfile: backend/api/api-bff/Dockerfile
-    container_name: clinic-management-api
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-api
     restart: unless-stopped
     environment:
       <<: *clinic-ai-env
@@ -257,7 +257,7 @@ services:
       CLINIC_MAIL_STARTTLS: ${CLINIC_MAIL_STARTTLS:-true}
       CLINIC_MAIL_AUTH: ${CLINIC_MAIL_AUTH:-true}
     ports:
-      - "8089:8089"
+      - "${API_PORT:-8089}:8089"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -290,10 +290,10 @@ services:
         VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://localhost:8182}
         VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM:-clinic-management}
         VITE_KEYCLOAK_CLIENT_ID: ${VITE_KEYCLOAK_CLIENT_ID:-clinic-web-admin}
-    container_name: clinic-web-admin
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-web-admin
     restart: unless-stopped
     ports:
-      - "5174:80"
+      - "${WEB_ADMIN_PORT:-5174}:80"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/"]
       interval: 20s
@@ -311,10 +311,10 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_PUBLIC_API_BASE_URL: ${VITE_PUBLIC_API_BASE_URL:-}
-    container_name: clinic-web-public
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-web-public
     restart: unless-stopped
     ports:
-      - "5175:80"
+      - "${WEB_PUBLIC_PORT:-5175}:80"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/"]
       interval: 20s
@@ -332,10 +332,10 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_CAREAI_RUNTIME_URL: ${VITE_CAREAI_RUNTIME_URL:-http://localhost:5175/patient/careai}
-    container_name: clinic-web-aiva
+    container_name: ${CONTAINER_NAME_PREFIX:-clinic}-web-aiva
     restart: unless-stopped
     ports:
-      - "5176:80"
+      - "${WEB_AIVA_PORT:-5176}:80"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/"]
       interval: 20s

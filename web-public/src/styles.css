@@ -629,11 +629,196 @@ input {
   max-width: var(--container-narrow);
 }
 
-.site-footer {
+.patient-lab-page {
+  padding-top: 3rem;
+  padding-bottom: 4.5rem;
+}
+
+.patient-lab-shell {
   display: grid;
   gap: 1.25rem;
-  margin-top: 1.75rem;
-  padding: 1.4rem 1.2rem 2rem;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.patient-lab-header {
+  display: grid;
+  gap: 1rem;
+}
+
+.patient-lab-heading {
+  max-width: 48rem;
+  margin-bottom: 0;
+}
+
+.patient-lab-actions {
+  justify-content: flex-end;
+}
+
+.portal-dashboard-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+.dashboard-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem 1.05rem;
+  border-radius: 1.2rem;
+  background: linear-gradient(180deg, #ffffff 0%, #eef8f4 100%);
+  border: 1px solid rgba(18, 54, 60, 0.12);
+  box-shadow: var(--shadow);
+}
+
+.dashboard-card span {
+  color: var(--muted);
+  font-size: var(--text-helper);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.dashboard-card strong {
+  font-size: clamp(1.6rem, 4vw, 2.1rem);
+  line-height: 1.05;
+}
+
+.portal-section-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.portal-panel {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.05rem;
+  border-radius: 1.35rem;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(18, 54, 60, 0.12);
+  box-shadow: 0 18px 44px rgba(18, 54, 60, 0.07);
+}
+
+.portal-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.portal-panel-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+}
+
+.portal-empty-state,
+.portal-inline-empty {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem 1.05rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(15, 122, 117, 0.12);
+  background: rgba(15, 122, 117, 0.06);
+}
+
+.portal-empty-state strong,
+.portal-inline-empty strong,
+.portal-alert strong {
+  font-size: 0.98rem;
+}
+
+.portal-empty-state p,
+.portal-inline-empty p,
+.portal-alert p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.portal-alert {
+  border-color: rgba(168, 59, 41, 0.18);
+  background: rgba(168, 59, 41, 0.08);
+}
+
+.portal-loading-state {
+  background: rgba(15, 122, 117, 0.05);
+}
+
+.portal-list {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.portal-list-card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-radius: 1.1rem;
+  border: 1px solid rgba(18, 54, 60, 0.1);
+  background: linear-gradient(180deg, #ffffff 0%, #fbfefe 100%);
+}
+
+.portal-list-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.portal-list-card-header strong {
+  overflow-wrap: anywhere;
+}
+
+.portal-list-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 0.95rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.portal-list-meta span {
+  overflow-wrap: anywhere;
+}
+
+.portal-inline-list {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-inline-list li {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.8rem 0.85rem;
+  border-radius: 0.95rem;
+  border: 1px solid rgba(18, 54, 60, 0.1);
+  background: rgba(244, 250, 248, 0.95);
+}
+
+.portal-inline-list li strong {
+  font-size: 0.94rem;
+}
+
+.portal-inline-list li span {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.portal-help-text {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.site-footer {
+  display: grid;
+  gap: 1rem;
+  margin-top: 3rem;
+  padding: 1.2rem 1.15rem 1.5rem;
   border-radius: 1.75rem;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(237, 248, 246, 0.92) 100%);
   border: 1px solid rgba(15, 122, 117, 0.1);
@@ -642,7 +827,7 @@ input {
 
 .footer-grid {
   display: grid;
-  gap: 1.2rem;
+  gap: 1rem;
 }
 
 .footer-brand-block,
@@ -662,12 +847,7 @@ input {
   font-weight: 800;
 }
 
-.footer-meaning {
-  display: grid;
-  gap: 0.2rem;
-}
-
-.footer-meaning p,
+.footer-brand-block p,
 .footer-column p {
   margin: 0;
 }
@@ -688,12 +868,18 @@ input {
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 0.9rem;
-  padding-top: 1rem;
+  align-items: center;
+  padding-top: 0.95rem;
   border-top: 1px solid rgba(21, 48, 54, 0.1);
 }
 
 .footer-bottom p {
   margin: 0;
+}
+
+.footer-bottom a {
+  color: var(--primary-strong);
+  font-weight: 700;
 }
 
 @media (min-width: 760px) {
@@ -718,7 +904,21 @@ input {
   }
 
   .footer-grid {
-    grid-template-columns: minmax(0, 1.25fr) repeat(4, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1.25fr) repeat(3, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .patient-lab-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+
+  .portal-dashboard-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .portal-section-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
   }
 
