@@ -269,6 +269,9 @@ services:
       CLINIC_MINIO_SECRET_KEY: ${CLINIC_MINIO_SECRET_KEY:-minio123}
       CLINIC_KEYCLOAK_ADMIN_PASSWORD: ${CLINIC_KEYCLOAK_ADMIN_PASSWORD:-admin}
       CLINIC_PATIENT_PORTAL_SESSION_SECRET: ${CLINIC_PATIENT_PORTAL_SESSION_SECRET:-local-patient-portal-session-secret}
+      CLINIC_JWT_ISSUER_URI: ${CLINIC_JWT_ISSUER_URI:-https://arogia.deepthoughtnet.com/auth/realms/clinic-management}
+      CLINIC_JWT_JWK_SET_URI: ${CLINIC_JWT_JWK_SET_URI:-http://keycloak:8080/auth/realms/clinic-management/protocol/openid-connect/certs}
+      CLINIC_KEYCLOAK_SERVER_URL: ${CLINIC_KEYCLOAK_SERVER_URL:-http://keycloak:8080/auth}
     ports:
       - "${API_PORT:-8089}:8089"
     extra_hosts:
