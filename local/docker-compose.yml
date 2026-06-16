@@ -105,6 +105,12 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: ${POSTGRES_USER:-clinic}
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-clinic}
+      KC_PROXY: edge
+      KC_HOSTNAME: arogia.deepthoughtnet.com
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "true"
+      KC_PROXY_HEADERS: xforwarded
     ports:
       - "${KEYCLOAK_PORT:-8182}:8080"
     depends_on:
