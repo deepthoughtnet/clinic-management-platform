@@ -174,6 +174,9 @@ function sanitizeErrorMessage(message: string): string {
   if (!normalized) {
     return "Request failed";
   }
+  if (/invalid cors request/i.test(normalized)) {
+    return "The server blocked this request because the app origin is not allowed.";
+  }
   if (
     normalized.startsWith("org.") ||
     normalized.startsWith("java.") ||
