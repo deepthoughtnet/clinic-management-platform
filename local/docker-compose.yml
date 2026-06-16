@@ -123,7 +123,7 @@ services:
         - CMD-SHELL
         - >
           bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 &&
-          printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 &&
+          printf "GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 &&
           grep "HTTP/1.1 200" <&3'
       interval: 10s
       timeout: 5s
