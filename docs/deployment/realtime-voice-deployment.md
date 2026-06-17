@@ -48,8 +48,23 @@ This mode sets runtime orchestration URL to:
 
 ## Reverse proxy guidance
 - Route `/ws/voice/session/*` to Java API/BFF websocket endpoint.
+- Route `/ws/patient-portal/careai` to the Java API/BFF websocket endpoint for public portal voice sessions.
 - Route runtime internal calls only within private network where possible.
 - Expose runtime externally only if operationally required.
+
+Example nginx websocket proxy block for the public portal:
+```nginx
+location /ws/ {
+  proxy_pass http://clinic-management-api:8089/ws/;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection "upgrade";
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
 
 For local Docker host -> Java backend routing:
 - add `extra_hosts: ["host.docker.internal:host-gateway"]`

@@ -29,9 +29,19 @@ import {
 } from "./api/patientPortal";
 import { branding, productAndTagline, productTitle } from "./branding";
 
-const clinicLoginUrl = "http://localhost:5174";
+function deriveClinicLoginUrl() {
+  const url = new URL(window.location.origin);
+  if (url.hostname === "portal.deepthoughtnet.com") {
+    url.hostname = "arogia.deepthoughtnet.com";
+  } else if (url.port === "5175") {
+    url.port = "5174";
+  }
+  return url.toString().replace(/\/$/, "");
+}
+
+const clinicLoginUrl = import.meta.env.VITE_CLINIC_LOGIN_URL?.trim() || deriveClinicLoginUrl();
 const patientSessionStorageKey = "clinic-web-public-patient-session";
-const aivaAppUrl = import.meta.env.VITE_AIVA_APP_URL?.trim() || "http://localhost:5176";
+const aivaAppUrl = import.meta.env.VITE_AIVA_APP_URL?.trim() || new URL("/careai", window.location.origin).toString();
 
 const navItems = [
   { to: "/", label: "Home" },

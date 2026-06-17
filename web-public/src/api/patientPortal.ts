@@ -298,6 +298,7 @@ export type PatientPortalCareAiResetResponse = {
 };
 
 const apiBaseUrl = import.meta.env.VITE_PUBLIC_API_BASE_URL?.trim() ?? "";
+const careAiRuntimeUrl = import.meta.env.VITE_CAREAI_RUNTIME_URL?.trim() ?? "";
 
 function buildUrl(path: string) {
   return new URL(`${apiBaseUrl}${path}`, window.location.origin).toString();
@@ -336,9 +337,17 @@ export function patientPortalHomePath(session: PatientPortalSession | null | und
 }
 
 export function buildPatientPortalVoiceWebSocketUrl(session: PatientPortalPatientSession) {
-  const url = new URL(window.location.origin);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = "/ws/patient-portal/careai";
+  const url = careAiRuntimeUrl
+    ? new URL(careAiRuntimeUrl, window.location.origin)
+    : new URL(window.location.origin);
+  if (url.protocol === "http:") {
+    url.protocol = "ws:";
+  } else if (url.protocol === "https:") {
+    url.protocol = "wss:";
+  }
+  if (!careAiRuntimeUrl) {
+    url.pathname = "/ws/patient-portal/careai";
+  }
   url.hash = "";
   url.searchParams.set("sessionToken", session.patientSessionToken);
   return url.toString();

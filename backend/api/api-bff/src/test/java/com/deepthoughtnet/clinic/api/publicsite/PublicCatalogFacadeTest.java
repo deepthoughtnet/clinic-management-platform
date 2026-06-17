@@ -149,6 +149,47 @@ class PublicCatalogFacadeTest {
     }
 
     @Test
+    void publicClinicCanAppearWithoutAnyPublishedDoctors() {
+        PlatformTenantManagementService tenantService = mock(PlatformTenantManagementService.class);
+        ClinicProfileService clinicProfileService = mock(ClinicProfileService.class);
+        TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
+        DoctorProfileService doctorProfileService = mock(DoctorProfileService.class);
+        AppointmentService appointmentService = mock(AppointmentService.class);
+        ClinicTimeZoneResolver clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(
+                tenantService,
+                clinicProfileService,
+                tenantUserManagementService,
+                doctorProfileService,
+                appointmentService,
+                clinicTimeZoneResolver
+        );
+
+        UUID tenantId = UUID.randomUUID();
+        when(tenantService.list()).thenReturn(List.of(tenant(tenantId, "sunrise", "ACTIVE", true)));
+        when(clinicProfileService.findByTenantId(tenantId)).thenReturn(Optional.of(clinic(tenantId, "Sunrise Clinic", true, true, "", "Pune", "Baner")));
+        when(tenantUserManagementService.list(tenantId)).thenReturn(List.of(
+                doctorUser(UUID.randomUUID(), tenantId, "Dr. Hidden", "ACTIVE", "ACTIVE")
+        ));
+        when(doctorProfileService.findByDoctorUserId(any(), any())).thenReturn(Optional.of(
+                doctorProfile(tenantId, UUID.randomUUID(), "Dermatology", true, false, "", 5)
+        ));
+        when(clinicTimeZoneResolver.resolve(any())).thenReturn(java.time.ZoneOffset.UTC);
+        when(appointmentService.listSlots(any(), any(), any(), any())).thenReturn(List.of());
+        when(appointmentService.listDoctorAvailabilities(any(), any())).thenReturn(List.of());
+
+        var clinics = facade.listClinics(null, null, null, null, null, 0, 12);
+        var search = facade.search(null, null, null, null, 0, 6);
+
+        assertThat(clinics.items()).hasSize(1);
+        assertThat(clinics.items().get(0).clinicDisplayName()).isEqualTo("Sunrise Clinic");
+        assertThat(clinics.items().get(0).doctorsCount()).isEqualTo(0);
+        assertThat(search.clinics().items()).hasSize(1);
+        assertThat(search.doctors().items()).isEmpty();
+        assertThat(search.specialities()).isEmpty();
+    }
+
+    @Test
     void publicDtosDoNotExposeInternalOrPatientFields() {
         assertThat(componentNames(com.deepthoughtnet.clinic.api.publicsite.dto.PublicClinicSummaryResponse.class))
                 .doesNotContain("id", "tenantId", "patientId", "email", "phone", "registrationNumber", "notes");

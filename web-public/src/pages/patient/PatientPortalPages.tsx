@@ -1818,6 +1818,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const [voiceConfig, setVoiceConfig] = useState<PatientCareAiVoiceConfig>(DEFAULT_PATIENT_VOICE_CONFIG);
   const [voiceTurnMetrics, setVoiceTurnMetrics] = useState<PatientCareAiVoiceTurnMetrics | null>(null);
   const [voiceEvents, setVoiceEvents] = useState<string[]>([]);
+  const [voiceConnectionTargetUrl, setVoiceConnectionTargetUrl] = useState<string | null>(null);
+  const [voiceConnectionCloseCode, setVoiceConnectionCloseCode] = useState<number | null>(null);
+  const [voiceConnectionCloseReason, setVoiceConnectionCloseReason] = useState<string | null>(null);
   const [voiceMicLevel, setVoiceMicLevel] = useState(0);
   const [voiceMicPeak, setVoiceMicPeak] = useState(0);
   const [voiceSpeechDetected, setVoiceSpeechDetected] = useState(false);
@@ -2147,6 +2150,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setVoiceConfig(DEFAULT_PATIENT_VOICE_CONFIG);
     setVoiceTurnMetrics(null);
     setVoiceEvents([]);
+    setVoiceConnectionTargetUrl(null);
+    setVoiceConnectionCloseCode(null);
+    setVoiceConnectionCloseReason(null);
     setVoiceMicLevel(0);
     setVoiceMicPeak(0);
     setVoiceSpeechDetected(false);
@@ -2530,12 +2536,14 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     };
     socket.onerror = () => {
       updateVoiceStatus("error");
-      setVoiceError("Voice connection failed. Please retry.");
+      setVoiceError("Voice connection failed. Open technical details for the websocket target and close status.");
       setVoiceInfo(null);
       appendVoiceEvent("CONNECT_FAILED");
     };
     socket.onclose = (event) => {
       const closedByUser = voiceEndedByUserRef.current;
+      setVoiceConnectionCloseCode(event.code);
+      setVoiceConnectionCloseReason(event.reason || null);
       cleanupVoiceSessionResources();
       if (voiceSocketRef.current === socket) {
         voiceSocketRef.current = null;
@@ -2550,7 +2558,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         updateVoiceStatus("idle");
       }
       if (event.code !== 1000) {
-        setVoiceError("Voice connection failed. Please retry.");
+        setVoiceError("Voice connection failed. Open technical details for the websocket target and close status.");
       }
       setVoiceInfo(null);
       appendVoiceEvent(`DISCONNECTED ${event.code}`);
@@ -2571,6 +2579,9 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     setVoiceError(null);
     setVoiceInfo("Connecting to AIVA voice…");
     const socketUrl = buildPatientPortalVoiceWebSocketUrl(portalSession);
+    setVoiceConnectionTargetUrl(socketUrl);
+    setVoiceConnectionCloseCode(null);
+    setVoiceConnectionCloseReason(null);
     appendVoiceEvent("CONNECTING");
     const socket = new WebSocket(socketUrl);
     voiceSocketRef.current = socket;
@@ -2593,14 +2604,14 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
         previousOnError?.call(socket, event);
         if (!settled) {
           settled = true;
-          reject(new Error("Voice connection failed. Please retry."));
+          reject(new Error("Voice connection failed. See technical details for the websocket target."));
         }
       };
       socket.onclose = (event) => {
         previousOnClose?.call(socket, event);
         if (!settled) {
           settled = true;
-          reject(new Error("Voice connection failed. Please retry."));
+          reject(new Error("Voice connection failed. See technical details for the websocket target."));
         }
       };
     });
@@ -2721,7 +2732,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     } catch (voiceStartError: unknown) {
       stopVoiceStream();
       updateVoiceStatus("error");
-      setVoiceError("Voice connection failed. Please retry.");
+      setVoiceError("Voice connection failed. Open technical details for the websocket target and close status.");
       setVoiceInfo(null);
     } finally {
       voiceStartingMicRef.current = false;
@@ -2755,7 +2766,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       }
     } catch {
       updateVoiceStatus("error");
-      setVoiceError("Voice connection failed. Please retry.");
+      setVoiceError("Voice connection failed. Open technical details for the websocket target and close status.");
       setVoiceInfo(null);
     }
   }
@@ -2769,7 +2780,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       await startVoiceMic();
     } catch {
       updateVoiceStatus("error");
-      setVoiceError("Voice connection failed. Please retry.");
+      setVoiceError("Voice connection failed. Open technical details for the websocket target and close status.");
       setVoiceInfo(null);
     }
   }
@@ -3012,6 +3023,18 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                   <div className="patient-subcard">
                     <strong>Session</strong>
                     <span>{voiceSessionId || "Starts after websocket handshake."}</span>
+                  </div>
+                  <div className="patient-subcard">
+                    <strong>WebSocket target</strong>
+                    <span>{voiceConnectionTargetUrl || "Not connected yet."}</span>
+                  </div>
+                  <div className="patient-subcard">
+                    <strong>Last close</strong>
+                    <span>
+                      {voiceConnectionCloseCode == null
+                        ? "No close event yet."
+                        : `${voiceConnectionCloseCode}${voiceConnectionCloseReason ? ` · ${voiceConnectionCloseReason}` : ""}`}
+                    </span>
                   </div>
                   <div className="patient-subcard">
                     <strong>Providers</strong>

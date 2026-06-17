@@ -281,9 +281,6 @@ public class PublicCatalogFacade {
                 .sorted(Comparator.comparing(snapshot -> snapshot.user().displayName(), String.CASE_INSENSITIVE_ORDER))
                 .toList();
 
-        if (doctors.isEmpty()) {
-            return Optional.empty();
-        }
         return Optional.of(new TenantSnapshot(tenant, clinicProfile.get(), doctors));
     }
 
