@@ -220,6 +220,7 @@ services:
       VOICE_WORKER_THREADS: ${VOICE_WORKER_THREADS:-2}
       PIPER_CLI: ${PIPER_CLI:-piper}
       PIPER_MODEL: ${PIPER_MODEL:-/var/lib/voice-models/piper/en_US-lessac-medium.onnx}
+      CLINIC_PATIENT_PORTAL_SESSION_SECRET: ${CLINIC_PATIENT_PORTAL_SESSION_SECRET:-local-patient-portal-session-secret}
     ports:
       - "${REALTIME_VOICE_GATEWAY_PORT:-8091}:8091"
     extra_hosts:
