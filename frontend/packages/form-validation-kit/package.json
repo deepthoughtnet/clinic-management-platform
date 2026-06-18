@@ -19,7 +19,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "build": "tsc -p tsconfig.build.json",
-    "test": "npm run build && node --test test/tenant-schema.test.mjs"
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "peerDependencies": {
     "@hookform/resolvers": "^3.10.0",

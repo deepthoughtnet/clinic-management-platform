@@ -14,7 +14,15 @@ import {
   Typography,
 } from "@mui/material";
 
+import {
+  clinicProfileSchema,
+  getCitySuggestions,
+  getCountrySuggestions,
+  getIndiaStateSuggestions,
+} from "@deepthoughtnet/form-validation-kit";
+
 import { useAuth } from "../../auth/useAuth";
+import AutocompleteTextInput from "../../components/forms/AutocompleteTextInput";
 import {
   getClinicProfile,
   getPrescriptionTemplate,
@@ -234,6 +242,10 @@ export default function ClinicProfilePage() {
     setForm((current) => ({ ...current, publicListingEnabled: event.target.checked }));
   };
 
+  const countrySuggestions = getCountrySuggestions(form.country);
+  const stateSuggestions = form.country.trim().toLowerCase() === "india" ? getIndiaStateSuggestions(form.state) : [];
+  const citySuggestions = getCitySuggestions(form.city, form.country);
+
   const updateTemplateField =
     (field: Exclude<keyof TemplateFormState, "showQrCode">) =>
     (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -251,7 +263,14 @@ export default function ClinicProfilePage() {
     setError(null);
     setSuccess(null);
     try {
-      const saved = await updateClinicProfile(auth.accessToken, auth.tenantId, toInput(form));
+      const payload = toInput(form);
+      const parsed = clinicProfileSchema.safeParse(payload);
+      if (!parsed.success) {
+        setError(parsed.error.issues[0]?.message || "Please correct the highlighted clinic profile fields.");
+        setSaving(false);
+        return;
+      }
+      const saved = await updateClinicProfile(auth.accessToken, auth.tenantId, payload);
       setForm(toFormState(saved));
       setSuccess("Clinic profile saved");
     } catch (err) {
@@ -336,13 +355,31 @@ export default function ClinicProfilePage() {
                   <TextField fullWidth label="Address line 2" value={form.addressLine2} onChange={updateTextField("addressLine2")} disabled={!canEdit || saving} />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField fullWidth label="City" value={form.city} onChange={updateTextField("city")} disabled={!canEdit || saving} />
+                  <AutocompleteTextInput
+                    label="City"
+                    value={form.city}
+                    onChange={(value) => setForm((current) => ({ ...current, city: value }))}
+                    suggestions={citySuggestions}
+                    disabled={!canEdit || saving}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField fullWidth label="State" value={form.state} onChange={updateTextField("state")} disabled={!canEdit || saving} />
+                  <AutocompleteTextInput
+                    label="State"
+                    value={form.state}
+                    onChange={(value) => setForm((current) => ({ ...current, state: value }))}
+                    suggestions={stateSuggestions}
+                    disabled={!canEdit || saving}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField fullWidth label="Country" value={form.country} onChange={updateTextField("country")} disabled={!canEdit || saving} />
+                  <AutocompleteTextInput
+                    label="Country"
+                    value={form.country}
+                    onChange={(value) => setForm((current) => ({ ...current, country: value }))}
+                    suggestions={countrySuggestions}
+                    disabled={!canEdit || saving}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
                   <TextField fullWidth label="Postal code" value={form.postalCode} onChange={updateTextField("postalCode")} disabled={!canEdit || saving} />

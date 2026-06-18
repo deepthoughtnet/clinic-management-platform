@@ -32,6 +32,9 @@ import StoreRoundedIcon from "@mui/icons-material/StoreRounded";
 import { useNavigate } from "react-router-dom";
 
 import {
+  getCitySuggestions,
+  getCountrySuggestions,
+  getIndiaStateSuggestions,
   createTenantSchema,
   type CreateTenantFormValues,
   zodFormResolver,
@@ -46,6 +49,7 @@ import {
   type PlatformTenant,
   updatePlatformTenantStatus,
 } from "../../api/clinicApi";
+import AutocompleteTextInput from "../../components/forms/AutocompleteTextInput";
 
 const MODULE_CODES = ["APPOINTMENTS", "CONSULTATION", "PRESCRIPTION", "BILLING", "VACCINATION", "INVENTORY", "AI_COPILOT", "CAREPILOT"] as const;
 
@@ -110,6 +114,12 @@ export default function TenantsPage() {
 
   const requiredCreateFields = watch(["clinicName", "tenantCode", "city", "country", "adminEmail"]);
   const canCreateTenant = requiredCreateFields.every((value: string | undefined) => typeof value === "string" ? value.trim().length > 0 : Boolean(value));
+  const countryValue = watch("country") || "";
+  const cityValue = watch("city") || "";
+  const stateValue = watch("state") || "";
+  const countrySuggestions = getCountrySuggestions(countryValue);
+  const stateSuggestions = countryValue.trim().toLowerCase() === "india" ? getIndiaStateSuggestions(stateValue) : [];
+  const citySuggestions = getCitySuggestions(cityValue, countryValue);
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken) return;
@@ -390,22 +400,46 @@ export default function TenantsPage() {
                 </TextField>
               </Stack>
               <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-                <TextField
-                  label="City"
-                  fullWidth
-                  required
-                  error={Boolean(errors.city)}
-                  helperText={errors.city?.message || " "}
-                  {...register("city")}
+                <Controller
+                  control={control}
+                  name="city"
+                  render={({ field }) => (
+                    <AutocompleteTextInput
+                      label="City"
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                      suggestions={citySuggestions}
+                      error={Boolean(errors.city)}
+                      helperText={errors.city?.message || " "}
+                    />
+                  )}
                 />
-                <TextField label="State" fullWidth {...register("state")} />
-                <TextField
-                  label="Country"
-                  fullWidth
-                  required
-                  error={Boolean(errors.country)}
-                  helperText={errors.country?.message || " "}
-                  {...register("country")}
+                <Controller
+                  control={control}
+                  name="state"
+                  render={({ field }) => (
+                    <AutocompleteTextInput
+                      label="State"
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                      suggestions={stateSuggestions}
+                      helperText=" "
+                    />
+                  )}
+                />
+                <Controller
+                  control={control}
+                  name="country"
+                  render={({ field }) => (
+                    <AutocompleteTextInput
+                      label="Country"
+                      value={field.value || ""}
+                      onChange={field.onChange}
+                      suggestions={countrySuggestions}
+                      error={Boolean(errors.country)}
+                      helperText={errors.country?.message || " "}
+                    />
+                  )}
                 />
               </Stack>
               <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
