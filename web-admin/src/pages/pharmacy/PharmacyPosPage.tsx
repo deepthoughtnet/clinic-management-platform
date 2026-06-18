@@ -69,6 +69,7 @@ import {
   type PharmacyPosSale,
   type PharmacyPosShift,
 } from "../../api/clinicApi";
+import { pharmacyPosSaleSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 
 type CartLine = {
@@ -888,6 +889,19 @@ export default function PharmacyPosPage() {
   const executeSale = React.useCallback(async () => {
     if (!token || !tenantId) return;
     if (!beginAction("sale")) return;
+    const parsed = pharmacyPosSaleSchema.safeParse({
+      items: cart.map((line) => ({
+        medicine: line.medicineName,
+        quantity: numeric(line.quantity),
+        unitPrice: numeric(line.unitPrice),
+        discount: numeric(line.discount),
+      })),
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || "Sale could not be completed. Stock was not deducted.");
+      endAction();
+      return;
+    }
     try {
       const sale = await createPharmacyPosSale(token, tenantId, {
         patientId: selectedPatient?.id ?? null,

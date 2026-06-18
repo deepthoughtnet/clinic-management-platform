@@ -33,6 +33,7 @@ import {
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 
+import { consultationSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import {
   aiClinicalSummary,
@@ -1350,6 +1351,16 @@ export default function ConsultationWorkspacePage() {
     const currentConsultation = consultationRef.current;
     const currentForm = consultationFormRef.current;
     if (!auth.accessToken || !auth.tenantId || !currentConsultation || currentConsultation.status !== "DRAFT") return currentConsultation;
+    const parsed = consultationSchema.safeParse({
+      chiefComplaint: currentForm.chiefComplaints,
+      diagnosis: currentForm.diagnosis,
+      followUpDate: currentForm.followUpDate || undefined,
+      notes: currentForm.clinicalNotes,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || "Failed to save consultation draft");
+      return currentConsultation;
+    }
     const saved = await updateConsultation(auth.accessToken, auth.tenantId, currentConsultation.id, toConsultationInput(currentForm, currentConsultation));
     setConsultation(saved);
     savedConsultationSnapshotRef.current = serializeConsultationForm(currentForm);

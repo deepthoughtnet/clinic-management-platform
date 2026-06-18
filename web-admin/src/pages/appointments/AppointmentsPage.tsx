@@ -1,6 +1,11 @@
 import * as React from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
+  appointmentCreateSchema,
+  appointmentRescheduleSchema,
+  patientQuickRegisterSchema,
+} from "@deepthoughtnet/form-validation-kit";
+import {
   Alert,
   Box,
   Button,
@@ -122,10 +127,6 @@ function priorityColor(priority: Appointment["priority"]) {
 
 function normalizeIndianMobile(value: string) {
   return value.replace(/[^0-9]/g, "").slice(0, 10);
-}
-
-function isValidIndianMobile(value: string) {
-  return /^[0-9]{10}$/.test(normalizeIndianMobile(value));
 }
 
 function isUuid(value: string) {
@@ -736,6 +737,21 @@ export default function AppointmentsPage() {
       setError("Select an available slot or enter an appointment time before saving.");
       return;
     }
+    const parsed = appointmentCreateSchema.safeParse({
+      patientId: selectedPatient.id,
+      doctorUserId,
+      appointmentDate,
+      appointmentTime: type === "WALK_IN" ? undefined : appointmentTime || undefined,
+      reason: reason.trim() || undefined,
+      type,
+      status: null,
+      priority,
+      allowAdHocBooking,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || "Failed to save appointment");
+      return;
+    }
 
     setSaving(true);
     setError(null);
@@ -868,6 +884,21 @@ export default function AppointmentsPage() {
       setError("Selected time has already passed. Please choose a current or future slot.");
       return;
     }
+    const parsed = appointmentCreateSchema.safeParse({
+      patientId: entry.patientId,
+      doctorUserId: selectedDoctorId,
+      appointmentDate,
+      appointmentTime,
+      reason: entry.reason || undefined,
+      type: "SCHEDULED",
+      status: null,
+      priority: "NORMAL",
+      allowAdHocBooking: !hasStandardBookableSlots && !matchingSlot,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || "Failed to save appointment");
+      return;
+    }
     try {
       await createAppointment(auth.accessToken, auth.tenantId, {
         patientId: entry.patientId,
@@ -901,12 +932,25 @@ export default function AppointmentsPage() {
       setError("Selected time has already passed. Please choose a current or future slot.");
       return;
     }
+    const parsed = appointmentRescheduleSchema.safeParse({
+      appointmentId: rescheduleTarget.id,
+      appointmentDate: rescheduleDate,
+      appointmentTime: rescheduleTime,
+      reason: "Rescheduled from calendar",
+      doctorUserId: rescheduleDoctorUserId || undefined,
+      type: rescheduleTarget.type || undefined,
+      status: rescheduleTarget.status || undefined,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || "Failed to reschedule appointment");
+      return;
+    }
     try {
       await rescheduleAppointment(auth.accessToken, auth.tenantId, rescheduleTarget.id, {
-        doctorUserId: rescheduleDoctorUserId || null,
-        appointmentDate: rescheduleDate,
-        appointmentTime: rescheduleTime,
-        reason: "Rescheduled from calendar",
+        doctorUserId: parsed.data.doctorUserId || null,
+        appointmentDate: parsed.data.appointmentDate,
+        appointmentTime: parsed.data.appointmentTime,
+        reason: parsed.data.reason || "Rescheduled from calendar",
       });
       setRescheduleOpen(false);
       setRescheduleTarget(null);
@@ -950,14 +994,16 @@ export default function AppointmentsPage() {
 
   const saveQuickPatient = async () => {
     if (!auth.accessToken || !auth.tenantId || !canQuickRegisterPatient) return;
-    if (!isValidIndianMobile(quickRegisterForm.mobile)) {
-      setQuickRegisterError("Enter a valid 10-digit mobile number.");
+    const payload = toPatientInput(quickRegisterForm);
+    const parsed = patientQuickRegisterSchema.safeParse(payload);
+    if (!parsed.success) {
+      setQuickRegisterError(parsed.error.issues[0]?.message || "Unable to create patient");
       return;
     }
     setQuickRegisterSaving(true);
     setQuickRegisterError(null);
     try {
-      const saved = await createPatient(auth.accessToken, auth.tenantId, toPatientInput(quickRegisterForm));
+      const saved = await createPatient(auth.accessToken, auth.tenantId, payload);
       setSelectedPatient(saved);
       setPatientQuery(patientSummary(saved));
       setQuickRegisterOpen(false);

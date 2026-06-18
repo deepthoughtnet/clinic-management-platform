@@ -27,6 +27,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { patientRegistrationSchema } from "@deepthoughtnet/form-validation-kit";
 
 import { useAuth } from "../../auth/useAuth";
 import {
@@ -328,19 +329,12 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
     setForm((current) => ({ ...current, ageYears: value, dateOfBirth: approximateDobFromAge(value) }));
   };
 
-  const validateQuickFields = () => {
-    if (!form.mobile.trim()) return "Mobile number is required.";
-    if (!isValidMobile(form.mobile)) return "Enter a valid 10-digit mobile number.";
-    if (!form.firstName.trim()) return "First name is required.";
-    if (form.emergencyContactMobile.trim() && !isValidMobile(form.emergencyContactMobile)) return "Enter a valid 10-digit mobile number.";
-    return null;
-  };
-
   const savePatient = async (next: "detail" | "appointment" | "queue" = "detail") => {
     if (!auth.accessToken || !auth.tenantId) return;
-    const validationMessage = validateQuickFields();
-    if (validationMessage) {
-      setError(validationMessage);
+    const payload = formToInput({ ...form, mobile: mobileDigits(form.mobile) });
+    const parsed = patientRegistrationSchema.safeParse(payload);
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || "Unable to save patient. Please check the details and try again.");
       return;
     }
 
@@ -348,7 +342,6 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
     setError(null);
     setSuccess(null);
     try {
-      const payload = formToInput({ ...form, mobile: mobileDigits(form.mobile) });
       const saved = mode === "create"
         ? await createPatient(auth.accessToken, auth.tenantId, payload)
         : await updatePatient(auth.accessToken, auth.tenantId, id, payload);

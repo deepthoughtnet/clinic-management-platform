@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
+import { userCreateSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   Alert,
   Box,
@@ -136,24 +137,33 @@ export default function UsersRolesPage() {
       setError("Invalid selected clinic. Please reselect tenant.");
       return;
     }
-    if (!createForm.email.trim()) {
-      setError("Email is required.");
-      return;
-    }
-    if (!ASSIGNABLE_ROLES.includes(createForm.role as (typeof ASSIGNABLE_ROLES)[number])) {
-      setError("Unable to create user. Please verify role and tenant selection.");
+    const parsed = userCreateSchema.safeParse({
+      firstName: createForm.firstName,
+      lastName: createForm.lastName,
+      email: createForm.email,
+      role: createForm.role,
+      tempPassword: createForm.tempPassword,
+      active: createForm.active,
+      mobile: "",
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || "Unable to create user. Please verify role and tenant selection.");
       return;
     }
     setCreateSubmitting(true);
     setError(null);
     try {
+      if (!ASSIGNABLE_ROLES.includes(parsed.data.role as (typeof ASSIGNABLE_ROLES)[number])) {
+        setError("Unable to create user. Please verify role and tenant selection.");
+        return;
+      }
       await createTenantUser(auth.accessToken, auth.tenantId, {
-        email: createForm.email.trim().toLowerCase(),
-        firstName: createForm.firstName.trim() || null,
-        lastName: createForm.lastName.trim() || null,
-        role: createForm.role,
-        temporaryPassword: createForm.tempPassword.trim() || null,
-        active: createForm.active,
+        email: parsed.data.email.trim().toLowerCase(),
+        firstName: parsed.data.firstName.trim() || null,
+        lastName: parsed.data.lastName?.trim() || null,
+        role: parsed.data.role,
+        temporaryPassword: parsed.data.tempPassword?.trim() || null,
+        active: parsed.data.active ?? true,
       });
       setToast("User created successfully.");
       setOpenCreate(false);

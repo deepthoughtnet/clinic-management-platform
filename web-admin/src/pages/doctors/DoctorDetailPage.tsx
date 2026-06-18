@@ -2,6 +2,7 @@ import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Alert, Box, Button, Card, CardContent, Chip, CircularProgress, FormControlLabel, Grid, Stack, Switch, TextField, Typography } from "@mui/material";
 
+import { doctorUpdateSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { getDoctorProfile, updateDoctorProfile, type DoctorProfile } from "../../api/clinicApi";
 
@@ -90,36 +91,38 @@ export default function DoctorDetailPage() {
 
   const save = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
-    const consultationFee = form.consultationFee.trim() === "" ? null : Number(form.consultationFee);
-    const yearsOfExperience = form.yearsOfExperience.trim() === "" ? null : Number(form.yearsOfExperience);
-    const age = form.age.trim() === "" ? null : Number(form.age);
-    if (consultationFee != null && (!Number.isFinite(consultationFee) || consultationFee < 0)) {
-      setError("Consultation fee must be zero or greater.");
-      return;
-    }
-    if (yearsOfExperience != null && (!Number.isInteger(yearsOfExperience) || yearsOfExperience < 0)) {
-      setError("Years of experience must be zero or greater.");
-      return;
-    }
-    if (age != null && (!Number.isInteger(age) || age < 0 || age > 120)) {
-      setError("Age must be between 0 and 120.");
+    const parsed = doctorUpdateSchema.safeParse({
+      mobile: form.mobile,
+      specialization: form.specialization,
+      qualification: form.qualification,
+      registrationNumber: form.registrationNumber,
+      consultationRoom: form.consultationRoom,
+      consultationFee: form.consultationFee,
+      yearsOfExperience: form.yearsOfExperience,
+      age: form.age,
+      active: form.active,
+      publicListingEnabled: form.publicListingEnabled,
+      slug: form.slug,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || "Failed to save doctor profile");
       return;
     }
     setSaving(true);
     setError(null);
     try {
       const saved = await updateDoctorProfile(auth.accessToken, auth.tenantId, profile.doctorUserId, {
-        mobile: form.mobile.trim() || null,
-        specialization: form.specialization.trim() || null,
-        qualification: form.qualification.trim() || null,
-        registrationNumber: form.registrationNumber.trim() || null,
-        consultationRoom: form.consultationRoom.trim() || null,
-        consultationFee,
-        yearsOfExperience,
-        age,
-        active: form.active,
-        publicListingEnabled: form.publicListingEnabled,
-        slug: form.slug.trim() || null,
+        mobile: parsed.data.mobile?.trim() || null,
+        specialization: parsed.data.specialization?.trim() || null,
+        qualification: parsed.data.qualification?.trim() || null,
+        registrationNumber: parsed.data.registrationNumber?.trim() || null,
+        consultationRoom: parsed.data.consultationRoom?.trim() || null,
+        consultationFee: parsed.data.consultationFee == null ? null : Number(parsed.data.consultationFee),
+        yearsOfExperience: parsed.data.yearsOfExperience == null ? null : Number(parsed.data.yearsOfExperience),
+        age: parsed.data.age == null ? null : Number(parsed.data.age),
+        active: parsed.data.active ?? form.active,
+        publicListingEnabled: parsed.data.publicListingEnabled ?? form.publicListingEnabled,
+        slug: parsed.data.slug?.trim() || null,
       });
       setProfile(saved);
       setForm(toForm(saved));

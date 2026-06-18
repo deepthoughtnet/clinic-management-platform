@@ -1,0 +1,12 @@
+.git
+.idea
+**/node_modules
+**/dist
+**/.vite
+**/.turbo
+**/.cache
+**/coverage
+**/*.log
+local/.env*
+local/**/*.pid
+local/data

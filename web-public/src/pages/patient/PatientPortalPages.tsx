@@ -1,6 +1,13 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
+  otpRequestSchema,
+  otpVerifySchema,
+  patientProfileSchema,
+  patientQuickRegisterSchema,
+  bookAppointmentSchema,
+} from "@deepthoughtnet/form-validation-kit";
+import {
   type PatientPortalAppointmentResponse,
   type PatientPortalAppointmentBookingRequest,
   type PatientPortalAppointmentConfirmationResponse,
@@ -572,12 +579,20 @@ export function PatientLoginPage({
 
   async function handleRequestOtp(event: FormEvent) {
     event.preventDefault();
+    const parsed = otpRequestSchema.safeParse({
+      tenantCode,
+      mobile: phone,
+    });
+    if (!parsed.success) {
+      setRequestMessage(parsed.error.issues[0]?.message || "Unable to request OTP.");
+      return;
+    }
     setRequestPending(true);
     setVerifyMessage(null);
     try {
       const response = await postPatientPortalJson<PatientPortalOtpRequestResponse>("/api/patient-portal/auth/otp/request", {
-        tenantCode,
-        phone,
+        tenantCode: parsed.data.tenantCode,
+        phone: parsed.data.mobile,
       });
       setRequestState(response);
       setRequestMessage(response.message);
@@ -591,12 +606,21 @@ export function PatientLoginPage({
 
   async function handleVerifyOtp(event: FormEvent) {
     event.preventDefault();
+    const parsed = otpVerifySchema.safeParse({
+      tenantCode,
+      mobile: phone,
+      otp,
+    });
+    if (!parsed.success) {
+      setVerifyMessage(parsed.error.issues[0]?.message || "Unable to verify OTP.");
+      return;
+    }
     setVerifyPending(true);
     try {
       const response = await postPatientPortalJson<PatientPortalOtpVerifyResponse>("/api/patient-portal/auth/otp/verify", {
-        tenantCode,
-        phone,
-        otp,
+        tenantCode: parsed.data.tenantCode,
+        phone: parsed.data.mobile,
+        otp: parsed.data.otp,
       });
       setVerifyMessage(response.message);
       if (response.verified && response.patientSessionToken && response.tenantId && response.patientDisplayName) {
@@ -811,27 +835,35 @@ export function PatientRegistrationPage({
       setError("Date of birth or age is required.");
       return;
     }
+    const payload: PatientPortalRegistrationRequest = {
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      gender,
+      dateOfBirth: dateOfBirth || null,
+      ageYears: ageYears.trim() ? Number(ageYears.trim()) : null,
+      email: email.trim() || null,
+      addressLine1: addressLine1.trim() || null,
+      addressLine2: addressLine2.trim() || null,
+      city: city.trim(),
+      state: state.trim() || null,
+      country: country.trim() || null,
+      postalCode: postalCode.trim() || null,
+      emergencyContactName: emergencyContactName.trim() || null,
+      emergencyContactMobile: emergencyContactMobile.trim() || null,
+    };
+    const parsed = patientQuickRegisterSchema.safeParse({
+      ...payload,
+      mobile: registrationSession.phone,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || "Unable to complete patient registration.");
+      return;
+    }
 
     setSubmitPending(true);
     setError(null);
     setMessage(null);
     try {
-      const payload: PatientPortalRegistrationRequest = {
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        gender,
-        dateOfBirth: dateOfBirth || null,
-        ageYears: ageYears.trim() ? Number(ageYears.trim()) : null,
-        email: email.trim() || null,
-        addressLine1: addressLine1.trim() || null,
-        addressLine2: addressLine2.trim() || null,
-        city: city.trim(),
-        state: state.trim() || null,
-        country: country.trim() || null,
-        postalCode: postalCode.trim() || null,
-        emergencyContactName: emergencyContactName.trim() || null,
-        emergencyContactMobile: emergencyContactMobile.trim() || null,
-      };
       const response = await postPatientPortalSessionJson<PatientPortalRegistrationResponse>(
         "/api/patient-portal/registration/complete",
         payload,
@@ -1255,6 +1287,17 @@ export function PatientBookAppointmentPage({
     event.preventDefault();
     if (!portalSession || !selectedDoctorId || !selectedDate || !selectedSlotTime) {
       setSubmitError("Choose a doctor, date, and available time slot before confirming.");
+      return;
+    }
+    const parsed = bookAppointmentSchema.safeParse({
+      doctorId: selectedDoctorId,
+      appointmentDate: selectedDate,
+      slot: selectedSlotTime,
+      reason: reason.trim() || undefined,
+      appointmentType: "SCHEDULED",
+    });
+    if (!parsed.success) {
+      setSubmitError(parsed.error.issues[0]?.message || "Unable to confirm the appointment.");
       return;
     }
 
@@ -3278,6 +3321,11 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
   async function handleProfileSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!portalSession || !formState) {
+      return;
+    }
+    const parsed = patientProfileSchema.safeParse(formState);
+    if (!parsed.success) {
+      setSaveError(parsed.error.issues[0]?.message || "Unable to save your profile.");
       return;
     }
     setSaving(true);

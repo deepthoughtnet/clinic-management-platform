@@ -38,6 +38,11 @@ import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 
 import { useNavigate, useSearchParams } from "react-router-dom";
+import {
+  consultationFeeSchema,
+  paymentSchema,
+  refundSchema,
+} from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactTableFrame, compactChipSx } from "../../components/compact/CompactUi";
 import {
@@ -1360,16 +1365,25 @@ export default function BillsPage() {
     const amount = Number(refundForm.amount || "0");
     if (amount <= 0) { setError("Refund amount must be greater than 0."); return; }
     if (amount > refundableAmount) { setError("Refund amount cannot exceed refundable amount."); return; }
-    if (!refundForm.reason.trim()) { setError("Refund reason is required."); return; }
+    const parsed = refundSchema.safeParse({
+      amount,
+      paymentMethod: refundForm.refundMode,
+      reason: refundForm.reason,
+      notes: refundForm.notes,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || "Failed to refund");
+      return;
+    }
     setSaving(true); setError(null); setSuccess(null);
     try {
       await addBillRefund(auth.accessToken, auth.tenantId, selectedBill.id, {
         paymentId: payments[0]?.id || null,
         amount,
-        reason: refundForm.reason.trim(),
-        refundMode: refundForm.refundMode,
+        reason: parsed.data.reason.trim(),
+        refundMode: parsed.data.paymentMethod,
         refundedAt: null,
-        notes: refundForm.notes.trim() || null,
+        notes: parsed.data.notes?.trim() || null,
       });
       setRefundOpen(false);
       setRefundForm(emptyRefundForm());
@@ -1429,17 +1443,28 @@ export default function BillsPage() {
       setError("Payment amount cannot exceed the remaining due amount.");
       return;
     }
-    setSaving(true); setError(null); setSuccess(null);
-    if (paymentForm.paymentMode !== "CASH" && !paymentForm.referenceNumber.trim()) {
-      setSaving(false); setError("Reference number is required for non-cash payments."); return;
+    const parsed = paymentSchema.safeParse({
+      amount,
+      paymentMethod: paymentForm.paymentMode,
+      invoiceNumber: paymentForm.referenceNumber,
+      notes: paymentForm.notes,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message || "Failed to collect payment");
+      return;
     }
+    if (parsed.data.paymentMethod !== "CASH" && !parsed.data.invoiceNumber?.trim()) {
+      setError("Reference number is required for non-cash payments.");
+      return;
+    }
+    setSaving(true); setError(null); setSuccess(null);
     try {
       await addBillPayment(auth.accessToken, auth.tenantId, selectedBill.id, {
         paymentDate: paymentForm.paymentDate,
         amount,
-        paymentMode: paymentForm.paymentMode,
-        referenceNumber: paymentForm.referenceNumber.trim() || null,
-        notes: paymentForm.notes.trim() || null,
+        paymentMode: parsed.data.paymentMethod,
+        referenceNumber: parsed.data.invoiceNumber?.trim() || null,
+        notes: parsed.data.notes?.trim() || null,
       });
       setPaymentOpen(false);
       await refreshSelectedBill(selectedBill.id);
@@ -1460,11 +1485,21 @@ export default function BillsPage() {
     setError(null);
     setSuccess(null);
     try {
+      const parsed = consultationFeeSchema.safeParse({
+        amount: Number(consultationFeeQuickAmount ?? 0),
+        paymentMethod: value.paymentMode,
+        invoiceNumber: value.referenceNumber,
+        notes: value.notes,
+      });
+      if (!parsed.success) {
+        setError(parsed.error.issues[0]?.message || "Unable to create consultation fee bill.");
+        return;
+      }
       const payment = await collectConsultationFee(auth.accessToken, auth.tenantId, {
         appointmentId: consultationAppointmentId,
-        paymentMode: value.paymentMode,
-        referenceNumber: value.referenceNumber || null,
-        notes: value.notes || null,
+        paymentMode: parsed.data.paymentMethod,
+        referenceNumber: parsed.data.invoiceNumber || null,
+        notes: parsed.data.notes || null,
       });
       await loadBills();
       await refreshSelectedBill(payment.billId);
@@ -1485,11 +1520,21 @@ export default function BillsPage() {
     setError(null);
     setSuccess(null);
     try {
+      const parsed = consultationFeeSchema.safeParse({
+        amount: Number(pendingConsultationFeeDialog.dueAmount || 0),
+        paymentMethod: value.paymentMode,
+        invoiceNumber: value.referenceNumber,
+        notes: value.notes,
+      });
+      if (!parsed.success) {
+        setError(parsed.error.issues[0]?.message || "Unable to collect pending consultation fee.");
+        return;
+      }
       const payment = await collectConsultationFee(auth.accessToken, auth.tenantId, {
         appointmentId: pendingConsultationFeeDialog.appointmentId,
-        paymentMode: value.paymentMode,
-        referenceNumber: value.referenceNumber || null,
-        notes: value.notes || null,
+        paymentMode: parsed.data.paymentMethod,
+        referenceNumber: parsed.data.invoiceNumber || null,
+        notes: parsed.data.notes || null,
       });
       await loadBills();
       await loadPatientBills(form.patientId);

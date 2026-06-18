@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { email, password } from "../validators/common.js";
+import { email, password, requiredString } from "../validators/common.js";
 import { indianMobileNumber } from "../validators/india.js";
 
 export const loginSchema = z.object({
@@ -9,12 +9,14 @@ export const loginSchema = z.object({
 });
 
 export const otpRequestSchema = z.object({
+  tenantCode: requiredString("Clinic code is required."),
   mobile: indianMobileNumber(),
 });
 
 export const otpVerifySchema = z.object({
+  tenantCode: requiredString("Clinic code is required."),
   mobile: indianMobileNumber(),
-  otp: z.string().trim().regex(/^\d{4,8}$/, "Enter a valid OTP."),
+  otp: z.string().trim().regex(/^\d{6}$/, "Enter a valid 6-digit OTP."),
 });
 
 export type LoginValues = z.infer<typeof loginSchema>;

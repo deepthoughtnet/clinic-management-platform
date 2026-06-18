@@ -7,12 +7,20 @@ export const appointmentCreateSchema = z.object({
   patientId: requiredString("Patient is required."),
   doctorUserId: requiredString("Doctor is required."),
   appointmentDate: dateString("Appointment date is required."),
-  appointmentTime: timeString("Appointment time is required."),
+  appointmentTime: timeString("Appointment time is required.").optional(),
   reason: optionalString(),
-  type: z.string().optional(),
-  status: appointmentStatusSchema.optional(),
-  priority: z.string().optional(),
+  type: z.enum(["WALK_IN", "SCHEDULED", "FOLLOW_UP", "VACCINATION"]),
+  status: appointmentStatusSchema.optional().nullable(),
+  priority: z.enum(["URGENT", "MANUAL_PRIORITY", "FOLLOW_UP", "CHILD", "ELDERLY", "NORMAL"]).optional(),
   allowAdHocBooking: z.boolean().optional(),
+}).superRefine((value, context) => {
+  if (value.type !== "WALK_IN" && !value.appointmentTime) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["appointmentTime"],
+      message: "Appointment time is required.",
+    });
+  }
 });
 
 export const appointmentRescheduleSchema = z.object({
@@ -20,8 +28,9 @@ export const appointmentRescheduleSchema = z.object({
   appointmentDate: dateString("Appointment date is required."),
   appointmentTime: timeString("Appointment time is required."),
   reason: optionalString(),
-  type: z.string().optional(),
-  status: appointmentStatusSchema.optional(),
+  doctorUserId: optionalString(),
+  type: z.enum(["WALK_IN", "SCHEDULED", "FOLLOW_UP", "VACCINATION"]).optional(),
+  status: appointmentStatusSchema.optional().nullable(),
 });
 
 export type AppointmentCreateValues = z.infer<typeof appointmentCreateSchema>;

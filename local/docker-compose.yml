@@ -105,11 +105,11 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: ${POSTGRES_USER:-clinic}
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-clinic}
+      KC_HOSTNAME_URL: ${KEYCLOAK_HOSTNAME_URL:-http://localhost:8182/auth}
       KC_PROXY: edge
-      KC_HOSTNAME: arogia.deepthoughtnet.com
-      KC_HTTP_RELATIVE_PATH: /auth
-      KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_HTTPS: "true"
+      KC_HTTP_RELATIVE_PATH: ${KEYCLOAK_HTTP_RELATIVE_PATH:-/auth}
+      KC_HOSTNAME_STRICT: ${KEYCLOAK_HOSTNAME_STRICT:-false}
+      KC_HOSTNAME_STRICT_HTTPS: ${KEYCLOAK_HOSTNAME_STRICT_HTTPS:-false}
       KC_PROXY_HEADERS: xforwarded
     ports:
       - "${KEYCLOAK_PORT:-8182}:8080"
@@ -302,11 +302,11 @@ services:
   web-admin:
     profiles: ["frontend"]
     build:
-      context: ../web-admin
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: web-admin/Dockerfile
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
-        VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://localhost:8182}
+        VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://localhost:8182/auth}
         VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM:-clinic-management}
         VITE_KEYCLOAK_CLIENT_ID: ${VITE_KEYCLOAK_CLIENT_ID:-clinic-web-admin}
     container_name: ${CONTAINER_NAME_PREFIX:-clinic}-web-admin
@@ -326,8 +326,8 @@ services:
   web-public:
     profiles: ["frontend"]
     build:
-      context: ../web-public
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: web-public/Dockerfile
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
         VITE_PUBLIC_API_BASE_URL: ${VITE_PUBLIC_API_BASE_URL:-}
