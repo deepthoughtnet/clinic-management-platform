@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import hashlib
+import hmac
 import io
 import json
 import logging
@@ -12,12 +15,15 @@ import uuid
 import wave
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib import error, request
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+import websockets
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 LOG_LEVEL = os.getenv("VOICE_LOG_LEVEL", "INFO").upper()
@@ -47,6 +53,13 @@ class RuntimeConfig(BaseModel):
     model_cache_dir: str = Field(default=os.getenv("VOICE_MODEL_CACHE_DIR", "/var/lib/voice-models"))
     enable_gpu: bool = Field(default=os.getenv("VOICE_ENABLE_GPU", "false").lower() == "true")
     worker_threads: int = Field(default=int(os.getenv("VOICE_WORKER_THREADS", "2")))
+    patient_portal_session_secret: str = Field(default=os.getenv("CLINIC_PATIENT_PORTAL_SESSION_SECRET", ""))
+    patient_portal_upstream_ws_url: str = Field(
+        default=os.getenv(
+            "VOICE_PATIENT_PORTAL_UPSTREAM_WS_URL",
+            "ws://clinic-management-api:8089/ws/patient-portal/careai",
+        )
+    )
 
 
 CONFIG = RuntimeConfig()
@@ -80,6 +93,26 @@ class RuntimeState:
     tts_detail: str = ""
 
 
+@dataclass(slots=True)
+class PatientPortalVoiceSessionContext:
+    subject: str
+    tenant_id: uuid.UUID
+    patient_id: uuid.UUID
+    display_name: str
+    roles: set[str]
+    channel: str = "patient-portal"
+    phone: Optional[str] = None
+    issued_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+
+
+class PatientPortalSessionTokenError(Exception):
+    def __init__(self, log_reason: str, client_reason: str):
+        super().__init__(client_reason)
+        self.log_reason = log_reason
+        self.client_reason = client_reason
+
+
 SESSIONS: Dict[str, SessionBuffer] = defaultdict(SessionBuffer)
 SESSIONS_LOCK = threading.Lock()
 STATE = RuntimeState()
@@ -107,6 +140,8 @@ def _validate_config() -> None:
         STATE.startup_warnings.append("VOICE_SESSION_IDLE_TIMEOUT is very low; expected >= 30 seconds")
     if CONFIG.enable_gpu and CONFIG.stt_device == "cpu":
         STATE.startup_warnings.append("VOICE_ENABLE_GPU=true but VOICE_STT_DEVICE=cpu; CPU fallback active")
+    if not CONFIG.patient_portal_session_secret:
+        STATE.startup_warnings.append("CLINIC_PATIENT_PORTAL_SESSION_SECRET is empty; patient portal websocket auth will fail")
 
 
 def _prepare_cache() -> None:
@@ -118,6 +153,173 @@ def _prepare_cache() -> None:
     tts_dir.mkdir(parents=True, exist_ok=True)
     if not os.access(tts_dir, os.W_OK):
         STATE.startup_errors.append(f"TTS model dir not writable: {tts_dir}")
+
+
+def _base64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _signed_patient_portal_token(payload_b64: str, secret: str) -> str:
+    digest = hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).digest()
+    return _base64url_encode(digest)
+
+
+def _join_query_param(url: str, name: str, value: str) -> str:
+    parts = urlsplit(url)
+    params = parse_qsl(parts.query, keep_blank_values=True)
+    params.append((name, value))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(params), parts.fragment))
+
+
+def _parse_patient_portal_session_token(token: str) -> PatientPortalVoiceSessionContext:
+    if token is None or token.strip() == "":
+        raise PatientPortalSessionTokenError("missing-session-token", "missing sessionToken")
+    if not CONFIG.patient_portal_session_secret:
+        raise PatientPortalSessionTokenError("missing-session-secret", "patient portal session secret is not configured")
+
+    parts = token.strip().split(".")
+    if len(parts) != 2:
+        raise PatientPortalSessionTokenError("invalid-signature", "invalid patient portal session token")
+
+    payload_b64, signature_b64 = parts
+    expected_signature = _signed_patient_portal_token(payload_b64, CONFIG.patient_portal_session_secret)
+    if not hmac.compare_digest(expected_signature, signature_b64):
+        raise PatientPortalSessionTokenError("invalid-signature", "invalid patient portal session token signature")
+
+    try:
+        payload = json.loads(_base64url_decode(payload_b64))
+    except Exception as exc:
+        raise PatientPortalSessionTokenError("invalid-payload", "invalid patient portal session token payload") from exc
+
+    expires_at = _parse_iso_datetime(payload.get("exp"))
+    if expires_at is None:
+        raise PatientPortalSessionTokenError("invalid-payload", "patient portal session token is missing expiry")
+    if expires_at <= datetime.now(timezone.utc):
+        raise PatientPortalSessionTokenError("expired-token", "patient portal session token has expired")
+
+    roles_raw = payload.get("roles")
+    if isinstance(roles_raw, (list, tuple, set)):
+        roles = {str(role) for role in roles_raw}
+    else:
+        roles = set()
+    if "PATIENT" not in roles:
+        raise PatientPortalSessionTokenError("missing-patient-role", "patient portal session token is missing PATIENT role")
+
+    tenant_id_raw = payload.get("tenantId")
+    patient_id_raw = payload.get("patientId")
+    display_name = str(payload.get("displayName") or "").strip()
+    subject = str(payload.get("sub") or "").strip()
+    if not tenant_id_raw or not patient_id_raw or not display_name or not subject:
+        raise PatientPortalSessionTokenError("invalid-payload", "patient portal session token payload is incomplete")
+
+    try:
+        tenant_id = uuid.UUID(str(tenant_id_raw))
+        patient_id = uuid.UUID(str(patient_id_raw))
+    except Exception as exc:
+        raise PatientPortalSessionTokenError("invalid-payload", "patient portal session token contains invalid identifiers") from exc
+
+    return PatientPortalVoiceSessionContext(
+        subject=subject,
+        tenant_id=tenant_id,
+        patient_id=patient_id,
+        display_name=display_name,
+        roles=roles,
+        phone=str(payload.get("phone")) if payload.get("phone") not in (None, "") else None,
+        issued_at=_parse_iso_datetime(payload.get("iat")),
+        expires_at=expires_at,
+    )
+
+
+async def _relay_websocket(client_ws: WebSocket, upstream_ws: Any) -> None:
+    async def client_to_upstream() -> None:
+        while True:
+            try:
+                message = await client_ws.receive()
+            except WebSocketDisconnect:
+                return
+            message_type = message.get("type")
+            if message_type == "websocket.disconnect":
+                return
+            text = message.get("text")
+            if text is not None:
+                await upstream_ws.send(text)
+                continue
+            data = message.get("bytes")
+            if data is not None:
+                await upstream_ws.send(data)
+
+    async def upstream_to_client() -> None:
+        async for message in upstream_ws:
+            if isinstance(message, bytes):
+                await client_ws.send_bytes(message)
+            else:
+                await client_ws.send_text(message)
+
+    client_task = asyncio.create_task(client_to_upstream())
+    upstream_task = asyncio.create_task(upstream_to_client())
+    done, pending = await asyncio.wait(
+        {client_task, upstream_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for task in pending:
+        task.cancel()
+    for task in done:
+        task.result()
+
+
+@app.websocket("/ws/patient-portal/careai")
+async def patient_portal_careai_websocket(websocket: WebSocket) -> None:
+    session_token = websocket.query_params.get("sessionToken")
+    path = websocket.url.path
+    try:
+        context = _parse_patient_portal_session_token(session_token)
+    except PatientPortalSessionTokenError as exc:
+        log.warning("patient.voice.websocket.auth.failed path=%s reason=%s", path, exc.log_reason)
+        await websocket.close(code=1008, reason=exc.client_reason)
+        return
+
+    websocket.state.patient_portal_context = context
+    log.info(
+        "patient.voice.websocket.auth.success path=%s tenantId=%s patientId=%s displayName=%s channel=%s",
+        path,
+        context.tenant_id,
+        context.patient_id,
+        context.display_name,
+        context.channel,
+    )
+
+    upstream_url = _join_query_param(CONFIG.patient_portal_upstream_ws_url, "sessionToken", session_token or "")
+    try:
+        await websocket.accept()
+        async with websockets.connect(upstream_url, open_timeout=10, close_timeout=5, ping_interval=None) as upstream_ws:
+            await _relay_websocket(websocket, upstream_ws)
+    except Exception as exc:
+        log.exception(
+            "patient.voice.websocket.proxy.failed path=%s tenantId=%s patientId=%s upstream=%s",
+            path,
+            context.tenant_id,
+            context.patient_id,
+            CONFIG.patient_portal_upstream_ws_url,
+        )
+        try:
+            await websocket.close(code=1011, reason="patient portal voice upstream unavailable")
+        except Exception:
+            pass
+        return
 
 
 def _decode_pcm_wav(audio_b64: str) -> np.ndarray:

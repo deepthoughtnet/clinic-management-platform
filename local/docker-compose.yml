@@ -218,6 +218,7 @@ services:
       VOICE_MODEL_CACHE_DIR: ${VOICE_MODEL_CACHE_DIR:-/var/lib/voice-models}
       VOICE_ENABLE_GPU: ${VOICE_ENABLE_GPU:-false}
       VOICE_WORKER_THREADS: ${VOICE_WORKER_THREADS:-2}
+      VOICE_PATIENT_PORTAL_UPSTREAM_WS_URL: ${VOICE_PATIENT_PORTAL_UPSTREAM_WS_URL:-ws://clinic-management-api:8089/ws/patient-portal/careai}
       PIPER_CLI: ${PIPER_CLI:-piper}
       PIPER_MODEL: ${PIPER_MODEL:-/var/lib/voice-models/piper/en_US-lessac-medium.onnx}
       CLINIC_PATIENT_PORTAL_SESSION_SECRET: ${CLINIC_PATIENT_PORTAL_SESSION_SECRET:-local-patient-portal-session-secret}

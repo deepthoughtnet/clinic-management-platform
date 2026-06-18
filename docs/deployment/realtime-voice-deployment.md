@@ -47,8 +47,8 @@ This mode sets runtime orchestration URL to:
 - `http://clinic-management-api:8089/actuator/health`
 
 ## Reverse proxy guidance
-- Route `/ws/voice/session/*` to Java API/BFF websocket endpoint.
-- Route `/ws/patient-portal/careai` to the Java API/BFF websocket endpoint for public portal voice sessions.
+- Route `/ws/voice/session/*` to the Java API/BFF websocket endpoint.
+- Route `/ws/patient-portal/careai` to the Python realtime gateway for public portal voice sessions.
 - Route runtime internal calls only within private network where possible.
 - Expose runtime externally only if operationally required.
 
@@ -69,6 +69,18 @@ location /ws/ {
 For local Docker host -> Java backend routing:
 - add `extra_hosts: ["host.docker.internal:host-gateway"]`
 - use `VOICE_AI_ORCHESTRATION_URL=http://host.docker.internal:8089/actuator/health`
+
+## Patient Portal Voice WebSocket
+- External browser clients connect to `/ws/patient-portal/careai?sessionToken=...`.
+- The Python gateway validates the patient portal session token with `CLINIC_PATIENT_PORTAL_SESSION_SECRET`.
+- Valid tokens must include `tenantId`, `patientId`, `displayName`, and the `PATIENT` role.
+- On success, the gateway relays the websocket to the Java patient-portal websocket endpoint.
+- Default upstream target inside Docker: `ws://clinic-management-api:8089/ws/patient-portal/careai`.
+- Override the upstream target with `VOICE_PATIENT_PORTAL_UPSTREAM_WS_URL` if the backend topology changes.
+
+## Security Notes
+- Missing, invalid, expired, or non-`PATIENT` session tokens are rejected before upstream connection.
+- Session secrets must match between the API and the Python gateway.
 
 ## CPU sizing guidance
 - Small clinic: 2 vCPU, 4 GB RAM, `base` model, <= 10 concurrent sessions.
