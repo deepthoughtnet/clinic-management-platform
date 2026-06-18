@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@apollo/client": "^4.1.2",
+    "@deepthoughtnet/form-validation-kit": "file:../frontend/packages/form-validation-kit",
+    "@hookform/resolvers": "^3.10.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.3.7",
@@ -18,9 +20,11 @@
     "@zxing/browser": "^0.1.5",
     "graphql": "^16.12.0",
     "keycloak-js": "^26.2.3",
+    "react-hook-form": "^7.55.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-router-dom": "^7.13.0"
+    "react-router-dom": "^7.13.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

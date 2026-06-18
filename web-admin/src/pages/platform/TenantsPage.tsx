@@ -24,11 +24,18 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { Controller, useForm } from "react-hook-form";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
 import StoreRoundedIcon from "@mui/icons-material/StoreRounded";
 import { useNavigate } from "react-router-dom";
+
+import {
+  createTenantSchema,
+  type CreateTenantFormValues,
+  zodFormResolver,
+} from "@deepthoughtnet/form-validation-kit";
 
 import { useAuth } from "../../auth/useAuth";
 import {
@@ -42,27 +49,7 @@ import {
 
 const MODULE_CODES = ["APPOINTMENTS", "CONSULTATION", "PRESCRIPTION", "BILLING", "VACCINATION", "INVENTORY", "AI_COPILOT", "CAREPILOT"] as const;
 
-type CreateTenantForm = {
-  clinicName: string;
-  tenantCode: string;
-  displayName: string;
-  city: string;
-  state: string;
-  country: string;
-  postalCode: string;
-  phone: string;
-  clinicEmail: string;
-  addressLine1: string;
-  addressLine2: string;
-  planId: string;
-  adminEmail: string;
-  adminFirstName: string;
-  adminLastName: string;
-  tempPassword: string;
-  modules: Record<string, boolean>;
-};
-
-const EMPTY_FORM: CreateTenantForm = {
+const EMPTY_FORM: CreateTenantFormValues = {
   clinicName: "",
   tenantCode: "",
   displayName: "",
@@ -80,6 +67,7 @@ const EMPTY_FORM: CreateTenantForm = {
   adminLastName: "",
   tempPassword: "",
   modules: Object.fromEntries(MODULE_CODES.map((code) => [code, !["AI_COPILOT", "CAREPILOT"].includes(code)])) as Record<string, boolean>,
+  publicListingEnabled: false,
 };
 
 function formatDate(value?: string | null) {
@@ -104,9 +92,24 @@ export default function TenantsPage() {
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("ALL");
   const [openCreate, setOpenCreate] = React.useState(false);
-  const [form, setForm] = React.useState<CreateTenantForm>(EMPTY_FORM);
-  const [submitting, setSubmitting] = React.useState(false);
   const [createFormError, setCreateFormError] = React.useState<string | null>(null);
+
+  const {
+    control,
+    register,
+    handleSubmit,
+    reset,
+    clearErrors,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<CreateTenantFormValues>({
+    resolver: zodFormResolver(createTenantSchema),
+    defaultValues: EMPTY_FORM,
+    mode: "onSubmit",
+  });
+
+  const requiredCreateFields = watch(["clinicName", "tenantCode", "city", "country", "adminEmail"]);
+  const canCreateTenant = requiredCreateFields.every((value: string | undefined) => typeof value === "string" ? value.trim().length > 0 : Boolean(value));
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken) return;
@@ -119,15 +122,12 @@ export default function TenantsPage() {
       ]);
       setRows(tenants);
       setPlans(platformPlans);
-      if (platformPlans.length > 0 && !form.planId) {
-        setForm((prev) => ({ ...prev, planId: platformPlans[0].id }));
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load tenants");
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, form.planId]);
+  }, [auth.accessToken]);
 
   React.useEffect(() => {
     void load();
@@ -151,34 +151,35 @@ export default function TenantsPage() {
     }
   };
 
-  const onCreateTenant = async () => {
-    if (!auth.accessToken) return;
-    const adminEmail = form.adminEmail.trim();
-    if (!adminEmail) {
-      setCreateFormError("Admin email is required to provision clinic admin.");
-      return;
-    }
+  const closeCreateDialog = React.useCallback(() => {
+    setOpenCreate(false);
     setCreateFormError(null);
-    setSubmitting(true);
+    clearErrors();
+    reset(EMPTY_FORM);
+  }, [clearErrors, reset]);
+
+  const onCreateTenant = React.useCallback(async (values: CreateTenantFormValues) => {
+    if (!auth.accessToken) return;
+    setCreateFormError(null);
     try {
       const created = await createPlatformTenant(auth.accessToken, {
-        clinicName: form.clinicName,
-        tenantCode: form.tenantCode,
-        displayName: form.displayName || null,
-        city: form.city,
-        state: form.state || null,
-        country: form.country,
-        postalCode: form.postalCode || null,
-        phone: form.phone || null,
-        clinicEmail: form.clinicEmail || null,
-        addressLine1: form.addressLine1 || null,
-        addressLine2: form.addressLine2 || null,
-        planId: form.planId || null,
-        modules: form.modules,
-        adminEmail,
-        adminFirstName: form.adminFirstName || null,
-        adminLastName: form.adminLastName || null,
-        tempPassword: form.tempPassword || null,
+        clinicName: values.clinicName.trim(),
+        tenantCode: values.tenantCode.trim(),
+        displayName: values.displayName?.trim() || null,
+        city: values.city.trim(),
+        state: values.state?.trim() || null,
+        country: values.country.trim(),
+        postalCode: values.postalCode?.trim() || null,
+        phone: values.phone || null,
+        clinicEmail: values.clinicEmail || null,
+        addressLine1: values.addressLine1?.trim() || null,
+        addressLine2: values.addressLine2?.trim() || null,
+        planId: values.planId?.trim() || null,
+        modules: values.modules,
+        adminEmail: values.adminEmail.trim(),
+        adminFirstName: values.adminFirstName?.trim() || null,
+        adminLastName: values.adminLastName?.trim() || null,
+        tempPassword: values.tempPassword?.trim() || null,
       });
       setError(null);
       setMessage("Tenant created successfully.");
@@ -187,16 +188,14 @@ export default function TenantsPage() {
         code: created.tenant.code,
         name: created.tenant.name,
       });
-      setOpenCreate(false);
-      setForm(EMPTY_FORM);
+      closeCreateDialog();
       await load();
       navigate("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create tenant");
-    } finally {
-      setSubmitting(false);
+      const message = err instanceof Error ? err.message : "Failed to create tenant";
+      setCreateFormError(message);
     }
-  };
+  }, [auth.accessToken, auth.selectTenant, closeCreateDialog, load, navigate]);
 
   if (!auth.rolesUpper.includes("PLATFORM_ADMIN")) {
     return <Alert severity="error">Platform access is restricted to PLATFORM_ADMIN.</Alert>;
@@ -217,7 +216,15 @@ export default function TenantsPage() {
               <RefreshRoundedIcon />
             </IconButton>
           </Tooltip>
-          <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={() => setOpenCreate(true)}>
+          <Button
+            variant="contained"
+            startIcon={<AddRoundedIcon />}
+            onClick={() => {
+              setCreateFormError(null);
+              clearErrors();
+              setOpenCreate(true);
+            }}
+          >
             Create Tenant
           </Button>
         </Stack>
@@ -341,87 +348,145 @@ export default function TenantsPage() {
 
       <Dialog
         open={openCreate}
-        onClose={() => {
-          setOpenCreate(false);
-          setCreateFormError(null);
-        }}
+        onClose={closeCreateDialog}
         maxWidth="md"
         fullWidth
       >
         <DialogTitle>Create Tenant</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ mt: 0.5 }}>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-              <TextField label="Clinic Name" value={form.clinicName} onChange={(e) => setForm((s) => ({ ...s, clinicName: e.target.value }))} fullWidth required />
-              <TextField label="Tenant Code" value={form.tenantCode} onChange={(e) => setForm((s) => ({ ...s, tenantCode: e.target.value.toLowerCase().replace(/\s+/g, "-") }))} fullWidth required />
-            </Stack>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-              <TextField label="Display Name" value={form.displayName} onChange={(e) => setForm((s) => ({ ...s, displayName: e.target.value }))} fullWidth />
-              <TextField label="Plan" select value={form.planId} onChange={(e) => setForm((s) => ({ ...s, planId: e.target.value }))} fullWidth>
-                {plans.map((plan) => <MenuItem key={plan.id} value={plan.id}>{plan.id} - {plan.name}</MenuItem>)}
-              </TextField>
-            </Stack>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-              <TextField label="City" value={form.city} onChange={(e) => setForm((s) => ({ ...s, city: e.target.value }))} fullWidth required />
-              <TextField label="State" value={form.state} onChange={(e) => setForm((s) => ({ ...s, state: e.target.value }))} fullWidth />
-              <TextField label="Country" value={form.country} onChange={(e) => setForm((s) => ({ ...s, country: e.target.value }))} fullWidth required />
-            </Stack>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-              <TextField label="Clinic Email" value={form.clinicEmail} onChange={(e) => setForm((s) => ({ ...s, clinicEmail: e.target.value }))} fullWidth />
-              <TextField label="Phone" value={form.phone} onChange={(e) => setForm((s) => ({ ...s, phone: e.target.value }))} fullWidth />
-              <TextField label="Postal Code" value={form.postalCode} onChange={(e) => setForm((s) => ({ ...s, postalCode: e.target.value }))} fullWidth />
-            </Stack>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-              <TextField label="Address Line 1" value={form.addressLine1} onChange={(e) => setForm((s) => ({ ...s, addressLine1: e.target.value }))} fullWidth />
-              <TextField label="Address Line 2" value={form.addressLine2} onChange={(e) => setForm((s) => ({ ...s, addressLine2: e.target.value }))} fullWidth />
-            </Stack>
-
-            <Stack direction="row" spacing={1} alignItems="center">
-              <StoreRoundedIcon fontSize="small" />
-              <Typography variant="subtitle2">Default Modules</Typography>
-            </Stack>
-            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-              {MODULE_CODES.map((moduleCode) => (
-                <FormControlLabel
-                  key={moduleCode}
-                  control={
-                    <Switch
-                      checked={Boolean(form.modules[moduleCode])}
-                      onChange={(event) => setForm((s) => ({ ...s, modules: { ...s.modules, [moduleCode]: event.target.checked } }))}
-                    />
-                  }
-                  label={moduleCode}
+          <Box component="form" id="create-tenant-form" onSubmit={handleSubmit(onCreateTenant)} noValidate>
+            <Stack spacing={2} sx={{ mt: 0.5 }}>
+              <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+                <TextField
+                  label="Clinic Name"
+                  fullWidth
+                  required
+                  error={Boolean(errors.clinicName)}
+                  helperText={errors.clinicName?.message || " "}
+                  {...register("clinicName")}
                 />
-              ))}
-            </Stack>
+                <TextField
+                  label="Tenant Code"
+                  fullWidth
+                  required
+                  error={Boolean(errors.tenantCode)}
+                  helperText={errors.tenantCode?.message || " "}
+                  {...register("tenantCode", {
+                    setValueAs: (value) => {
+                      if (typeof value !== "string") return value;
+                      return value.toLowerCase().replace(/\s+/g, "-");
+                    },
+                  })}
+                />
+              </Stack>
+              <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+                <TextField label="Display Name" fullWidth {...register("displayName")} />
+                <TextField label="Plan" select fullWidth {...register("planId")}>
+                  {plans.map((plan) => (
+                    <MenuItem key={plan.id} value={plan.id}>
+                      {plan.id} - {plan.name}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Stack>
+              <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+                <TextField
+                  label="City"
+                  fullWidth
+                  required
+                  error={Boolean(errors.city)}
+                  helperText={errors.city?.message || " "}
+                  {...register("city")}
+                />
+                <TextField label="State" fullWidth {...register("state")} />
+                <TextField
+                  label="Country"
+                  fullWidth
+                  required
+                  error={Boolean(errors.country)}
+                  helperText={errors.country?.message || " "}
+                  {...register("country")}
+                />
+              </Stack>
+              <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+                <TextField
+                  label="Clinic Email"
+                  fullWidth
+                  error={Boolean(errors.clinicEmail)}
+                  helperText={errors.clinicEmail?.message || " "}
+                  {...register("clinicEmail")}
+                />
+                <TextField
+                  label="Phone"
+                  fullWidth
+                  error={Boolean(errors.phone)}
+                  helperText={errors.phone?.message || " "}
+                  {...register("phone")}
+                />
+                <TextField label="Postal Code" fullWidth {...register("postalCode")} />
+              </Stack>
+              <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+                <TextField label="Address Line 1" fullWidth {...register("addressLine1")} />
+                <TextField label="Address Line 2" fullWidth {...register("addressLine2")} />
+              </Stack>
 
-            <Typography variant="subtitle2">Clinic Admin</Typography>
-            {createFormError ? <Alert severity="warning">{createFormError}</Alert> : null}
-            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-              <TextField
-                label="Admin Email"
-                value={form.adminEmail}
-                onChange={(e) => {
-                  setCreateFormError(null);
-                  setForm((s) => ({ ...s, adminEmail: e.target.value }));
-                }}
-                fullWidth
-                required
+              <Stack direction="row" spacing={1} alignItems="center">
+                <StoreRoundedIcon fontSize="small" />
+                <Typography variant="subtitle2">Default Modules</Typography>
+              </Stack>
+              <Controller
+                control={control}
+                name="modules"
+                render={({ field }) => (
+                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                    {MODULE_CODES.map((moduleCode) => (
+                      <FormControlLabel
+                        key={moduleCode}
+                        control={
+                          <Switch
+                            checked={Boolean(field.value?.[moduleCode])}
+                            onChange={(event) => {
+                              field.onChange({
+                                ...(field.value || {}),
+                                [moduleCode]: event.target.checked,
+                              });
+                            }}
+                          />
+                        }
+                        label={moduleCode}
+                      />
+                    ))}
+                  </Stack>
+                )}
               />
-              <TextField label="First Name" value={form.adminFirstName} onChange={(e) => setForm((s) => ({ ...s, adminFirstName: e.target.value }))} fullWidth />
-              <TextField label="Last Name" value={form.adminLastName} onChange={(e) => setForm((s) => ({ ...s, adminLastName: e.target.value }))} fullWidth />
+
+              <Typography variant="subtitle2">Clinic Admin</Typography>
+              {createFormError ? <Alert severity="warning">{createFormError}</Alert> : null}
+              <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+                <TextField
+                  label="Admin Email"
+                  fullWidth
+                  required
+                  error={Boolean(errors.adminEmail)}
+                  helperText={errors.adminEmail?.message || " "}
+                  {...register("adminEmail")}
+                />
+                <TextField label="First Name" fullWidth {...register("adminFirstName")} />
+                <TextField label="Last Name" fullWidth {...register("adminLastName")} />
+              </Stack>
+              <TextField label="Temporary Password (optional)" fullWidth {...register("tempPassword")} />
             </Stack>
-            <TextField label="Temporary Password (optional)" value={form.tempPassword} onChange={(e) => setForm((s) => ({ ...s, tempPassword: e.target.value }))} fullWidth />
-          </Stack>
+          </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpenCreate(false)}>Cancel</Button>
+          <Button onClick={closeCreateDialog}>Cancel</Button>
           <Button
+            type="submit"
+            form="create-tenant-form"
             variant="contained"
-            onClick={() => void onCreateTenant()}
-            disabled={submitting || !form.clinicName || !form.tenantCode || !form.city || !form.country || !form.adminEmail.trim()}
+            disabled={isSubmitting || !canCreateTenant}
           >
-            {submitting ? "Creating..." : "Create Tenant"}
+            {isSubmitting ? "Creating..." : "Create Tenant"}
           </Button>
         </DialogActions>
       </Dialog>
