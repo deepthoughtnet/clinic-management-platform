@@ -31,6 +31,7 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../auth/useAuth";
+import { firstZodError, leadCreateSchema, leadFilterSchema, leadImportSchema, leadUpdateSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   addCarePilotLeadNote,
   convertCarePilotLead,
@@ -56,6 +57,7 @@ import {
   type CarePilotLeadStatus,
   type ClinicUser,
 } from "../../../api/clinicApi";
+import RequiredLabel from "../../../components/forms/RequiredLabel";
 
 const STATUSES: CarePilotLeadStatus[] = ["NEW", "CONTACTED", "QUALIFIED", "FOLLOW_UP_REQUIRED", "APPOINTMENT_BOOKED", "CONVERTED", "LOST", "SPAM"];
 const SOURCES: CarePilotLeadSource[] = ["WEBSITE", "WEBINAR", "WALK_IN", "PHONE_CALL", "WHATSAPP", "FACEBOOK", "GOOGLE_ADS", "REFERRAL", "CAMPAIGN", "MANUAL", "AI_RECEPTIONIST", "OTHER"];
@@ -176,14 +178,27 @@ export default function LeadsPage() {
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !canView) { setLoading(false); return; }
+    const parsed = leadFilterSchema.safeParse({
+      search,
+      status: statusFilter || undefined,
+      source: sourceFilter || undefined,
+      priority: priorityFilter || undefined,
+      page: viewMode === "KANBAN" ? 0 : page,
+      size: viewMode === "KANBAN" ? 200 : size,
+    });
+    if (!parsed.success) {
+      setError(firstZodError(parsed.error));
+      setLoading(false);
+      return;
+    }
     setLoading(true); setError(null);
     try {
-      const forcedStatus = tab === "CONVERTED" ? "CONVERTED" : tab === "LOST" ? "LOST" : statusFilter || undefined;
+      const forcedStatus = tab === "CONVERTED" ? "CONVERTED" : tab === "LOST" ? "LOST" : parsed.data.status || undefined;
       const followUpDue = tab === "FOLLOW_UPS";
-      const requestPage = viewMode === "KANBAN" ? 0 : page;
-      const requestSize = viewMode === "KANBAN" ? 200 : size;
+      const requestPage = parsed.data.page ?? 0;
+      const requestSize = parsed.data.size ?? (viewMode === "KANBAN" ? 200 : size);
       const [leadList, summary, campaignRows, userRows] = await Promise.all([
-        listCarePilotLeads(auth.accessToken, auth.tenantId, { status: forcedStatus, source: sourceFilter || undefined, priority: priorityFilter || undefined, search: search || undefined, followUpDue, page: requestPage, size: requestSize }),
+        listCarePilotLeads(auth.accessToken, auth.tenantId, { status: forcedStatus, source: parsed.data.source || undefined, priority: parsed.data.priority || undefined, search: parsed.data.search || undefined, followUpDue, page: requestPage, size: requestSize }),
         getCarePilotLeadAnalyticsSummary(auth.accessToken, auth.tenantId),
         listCarePilotCampaigns(auth.accessToken, auth.tenantId),
         getClinicUsers(auth.accessToken, auth.tenantId),
@@ -253,8 +268,13 @@ export default function LeadsPage() {
       assignedToAppUserId: draft.assignedToAppUserId || null,
       nextFollowUpAt: draft.nextFollowUpAt ? new Date(draft.nextFollowUpAt).toISOString() : null,
     };
+    const parsed = (editorLead ? leadUpdateSchema : leadCreateSchema).safeParse(payload);
+    if (!parsed.success) {
+      setToast(firstZodError(parsed.error));
+      return;
+    }
     try {
-      if (editorLead) await updateCarePilotLead(auth.accessToken, auth.tenantId, editorLead.id, payload); else await createCarePilotLead(auth.accessToken, auth.tenantId, payload);
+      if (editorLead) await updateCarePilotLead(auth.accessToken, auth.tenantId, editorLead.id, parsed.data); else await createCarePilotLead(auth.accessToken, auth.tenantId, parsed.data);
       setToast(editorLead ? "Lead updated" : "Lead created");
       setEditorOpen(false);
       await load();
@@ -348,6 +368,11 @@ export default function LeadsPage() {
     const file = event.target.files?.[0];
     if (!file || !auth.accessToken || !auth.tenantId || !canMutate) return;
     try {
+      const parsed = leadImportSchema.safeParse({ file });
+      if (!parsed.success) {
+        setToast(firstZodError(parsed.error));
+        return;
+      }
       const result = await importCarePilotLeadsCsv(auth.accessToken, auth.tenantId, file);
       setImportResult(result);
       setImportResultOpen(true);
@@ -534,7 +559,7 @@ export default function LeadsPage() {
             <Grid size={{ xs: 12, md: 6 }}>
               <TextField
                 fullWidth
-                label="Phone"
+                label={<RequiredLabel text="Phone" />}
                 value={draft.phone}
                 onChange={(e) => setDraft((d) => ({ ...d, phone: normalizeIndianMobile(e.target.value) }))}
                 inputProps={{ inputMode: "numeric", maxLength: 10, pattern: "[0-9]*" }}

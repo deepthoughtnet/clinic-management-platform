@@ -25,6 +25,14 @@ export const en = {
   invalidPan: "Enter a valid PAN.",
   invalidPositiveNumber: "Enter a number greater than 0.",
   invalidNonNegativeNumber: "Enter a number greater than or equal to 0.",
+  invalidFileType: "The selected file type is not allowed.",
+  invalidFileSize: "The selected file is too large.",
+  invalidSearchQuery: "Enter a shorter search query.",
+  invalidPage: "Enter a valid page number.",
+  invalidPageSize: "Enter a valid page size.",
+  invalidSortDirection: "Choose ASC or DESC.",
+  invalidDateRange: "End date must be on or after start date.",
+  duplicateValue: "This value already exists.",
 } as const;
 
 export type ValidationMessageKey = keyof typeof en;

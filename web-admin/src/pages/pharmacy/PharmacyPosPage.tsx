@@ -46,6 +46,7 @@ import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
 import ShoppingCartCheckoutRoundedIcon from "@mui/icons-material/ShoppingCartCheckoutRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
 import CodeScannerDialog from "../../components/pharmacy/CodeScannerDialog";
+import { fileUploadSchema, firstZodError, pharmacyPosSaleSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   addPharmacyPosPayment,
   closePharmacyPosShift,
@@ -69,7 +70,6 @@ import {
   type PharmacyPosSale,
   type PharmacyPosShift,
 } from "../../api/clinicApi";
-import { pharmacyPosSaleSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 
 type CartLine = {
@@ -109,13 +109,6 @@ const POS_ROLES = new Set(["CLINIC_ADMIN", "PHARMACIST", "PHARMACY", "PHARMA"]);
 const HELD_CART_STORAGE_KEY = "pharmacy-pos-held-cart";
 const STICKY_TOP = 88;
 const PRESCRIPTION_MAX_BYTES = 10 * 1024 * 1024;
-const ALLOWED_PRESCRIPTION_TYPES = new Set([
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-]);
-const ALLOWED_PRESCRIPTION_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".webp"];
 
 const panelSx = {
   border: "1px solid",
@@ -273,15 +266,13 @@ function mapPosError(raw: unknown, fallback: string) {
 }
 
 function validatePrescriptionFile(file: File) {
-  const name = file.name.toLowerCase();
-  const hasAllowedExtension = ALLOWED_PRESCRIPTION_EXTENSIONS.some((extension) => name.endsWith(extension));
-  if (!ALLOWED_PRESCRIPTION_TYPES.has(file.type) && !hasAllowedExtension) {
-    return "Prescription file must be PDF, JPG, JPEG, PNG, or WEBP.";
-  }
-  if (file.size > PRESCRIPTION_MAX_BYTES) {
-    return "Prescription file must be 10MB or smaller.";
-  }
-  return null;
+  const parsed = fileUploadSchema({
+    required: true,
+    allowedMimeTypes: ["application/pdf", "image/jpeg", "image/png", "image/webp"],
+    allowedExtensions: ["pdf", "jpg", "jpeg", "png", "webp"],
+    maxBytes: PRESCRIPTION_MAX_BYTES,
+  }).safeParse(file);
+  return parsed.success ? null : firstZodError(parsed.error);
 }
 
 function scanModeLabel(mode: CodeScanMode) {

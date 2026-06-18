@@ -33,7 +33,7 @@ import {
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 
-import { consultationSchema } from "@deepthoughtnet/form-validation-kit";
+import { consultationSchema, firstZodError, labOrderCreateSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import {
   aiClinicalSummary,
@@ -1790,16 +1790,20 @@ export default function ConsultationWorkspacePage() {
 
   const submitLabOrder = async () => {
     if (!auth.accessToken || !auth.tenantId || !consultation) return;
-    if (!labOrderTestIds.length) {
-      setError("Select at least one lab test.");
+    const parsed = labOrderCreateSchema.safeParse({
+      testIds: labOrderTestIds,
+      notes: labOrderNotes.trim() || undefined,
+    });
+    if (!parsed.success) {
+      setError(firstZodError(parsed.error));
       return;
     }
     setLabOrderSaving(true);
     setError(null);
     try {
       const created = await createConsultationLabOrder(auth.accessToken, auth.tenantId, consultation.id, {
-        testIds: labOrderTestIds,
-        notes: labOrderNotes.trim() || null,
+        testIds: parsed.data.testIds,
+        notes: parsed.data.notes || null,
       });
       setLabOrders((current) => [created, ...current.filter((row) => row.id !== created.id)]);
       setLabOrderDialogOpen(false);

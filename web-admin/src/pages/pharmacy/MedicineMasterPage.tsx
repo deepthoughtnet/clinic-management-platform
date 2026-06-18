@@ -33,6 +33,7 @@ import MoreHorizRounded from "@mui/icons-material/MoreHorizRounded";
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, compactCardContentSx } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
+import { fileUploadSchema, firstZodError } from "@deepthoughtnet/form-validation-kit";
 import {
   activateMedicine,
   createMedicine,
@@ -298,6 +299,18 @@ export default function MedicineMasterPage() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
+      const parsed = fileUploadSchema({
+        required: true,
+        allowedMimeTypes: ["text/csv", "application/csv", "application/vnd.ms-excel"],
+        allowedExtensions: ["csv"],
+        maxBytes: 5 * 1024 * 1024,
+      }).safeParse(file);
+      if (!parsed.success) {
+        setPreviewFile(null);
+        setPreview(null);
+        setError(firstZodError(parsed.error));
+        return;
+      }
       const text = await file.text();
       setPreview(parseMedicineImportPreview(text));
       setPreviewFile(file);

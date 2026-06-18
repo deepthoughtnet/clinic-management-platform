@@ -33,9 +33,11 @@ import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import PaidRoundedIcon from "@mui/icons-material/PaidRounded";
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
+import { firstZodError, labResultEntrySchema, labTestMasterSchema, paymentSchema } from "@deepthoughtnet/form-validation-kit";
 
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactStatCard, compactCardContentSx } from "../../components/compact/CompactUi";
+import RequiredLabel from "../../components/forms/RequiredLabel";
 import {
   collectLabOrderPayment,
   collectLabOrderSample,
@@ -343,13 +345,37 @@ export default function LabPage() {
 
   const saveTest = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
+    const parsed = labTestMasterSchema.safeParse(form);
+    if (!parsed.success) {
+      setError(firstZodError(parsed.error));
+      return;
+    }
+    const payload = {
+      testCode: parsed.data.testCode || "",
+      testName: parsed.data.testName,
+      category: parsed.data.category,
+      department: parsed.data.department || null,
+      sampleType: parsed.data.sampleType || null,
+      unit: parsed.data.unit || null,
+      referenceRange: parsed.data.referenceRange || null,
+      turnaroundTime: parsed.data.turnaroundTime || null,
+      price: parsed.data.price,
+      active: parsed.data.active ?? true,
+      parameters: parsed.data.parameters.map((parameter) => ({
+        parameterName: parameter.parameterName,
+        unit: parameter.unit || null,
+        normalRange: parameter.normalRange || null,
+        criticalRange: parameter.criticalRange || null,
+        sortOrder: parameter.sortOrder ?? 1,
+      })),
+    };
     setSaving(true);
     setError(null);
     try {
       if (editing) {
-        await updateLabTest(auth.accessToken, auth.tenantId, editing.id, form);
+        await updateLabTest(auth.accessToken, auth.tenantId, editing.id, payload);
       } else {
-        await createLabTest(auth.accessToken, auth.tenantId, form);
+        await createLabTest(auth.accessToken, auth.tenantId, payload);
       }
       setEditorOpen(false);
       setEditing(null);
@@ -379,14 +405,24 @@ export default function LabPage() {
 
   const collectPayment = async () => {
     if (!auth.accessToken || !auth.tenantId || !paymentTarget) return;
+    const parsed = paymentSchema.safeParse({
+      amount: paymentTarget.billDueAmount ?? 0,
+      paymentMethod: paymentMode,
+      invoiceNumber: paymentReference.trim() || undefined,
+      notes: paymentNotes.trim() || undefined,
+    });
+    if (!parsed.success) {
+      setError(firstZodError(parsed.error));
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       await collectLabOrderPayment(auth.accessToken, auth.tenantId, paymentTarget.id, {
-        amount: paymentTarget.billDueAmount ?? 0,
-        paymentMode,
-        referenceNumber: paymentReference.trim() || null,
-        notes: paymentNotes.trim() || null,
+        amount: parsed.data.amount,
+        paymentMode: parsed.data.paymentMethod,
+        referenceNumber: parsed.data.invoiceNumber || null,
+        notes: parsed.data.notes || null,
         receivedBy: auth.appUserId || null,
       });
       setPaymentTarget(null);
@@ -437,22 +473,42 @@ export default function LabPage() {
 
   const saveResults = async () => {
     if (!auth.accessToken || !auth.tenantId || !resultTarget) return;
+    const parsed = labResultEntrySchema.safeParse({
+      comments: resultComments.trim() || undefined,
+      items: resultItems.map((item) => ({
+        labOrderItemId: item.labOrderItemId,
+        resultValue: item.resultValue.trim() || undefined,
+        unit: item.unit.trim() || undefined,
+        referenceRange: item.referenceRange.trim() || undefined,
+        componentResults: item.componentResults.map((component) => ({
+          parameterName: component.parameterName.trim() || undefined,
+          componentName: component.componentName.trim() || undefined,
+          resultValue: component.resultValue.trim() || undefined,
+          unit: component.unit.trim() || undefined,
+          referenceRange: component.referenceRange.trim() || undefined,
+        })),
+      })),
+    });
+    if (!parsed.success) {
+      setError(firstZodError(parsed.error));
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       await enterLabOrderResults(auth.accessToken, auth.tenantId, resultTarget.id, {
-        comments: resultComments.trim() || null,
-        items: resultItems.map((item) => ({
+        comments: parsed.data.comments || null,
+        items: parsed.data.items.map((item) => ({
           labOrderItemId: item.labOrderItemId,
-          resultValue: item.resultValue.trim() || null,
-          unit: item.unit.trim() || null,
-          referenceRange: item.referenceRange.trim() || null,
+          resultValue: item.resultValue || null,
+          unit: item.unit || null,
+          referenceRange: item.referenceRange || null,
           componentResults: item.componentResults.map((component) => ({
-            parameterName: component.parameterName.trim() || null,
-            componentName: component.componentName.trim() || null,
-            resultValue: component.resultValue.trim() || null,
-            unit: component.unit.trim() || null,
-            referenceRange: component.referenceRange.trim() || null,
+            parameterName: component.parameterName || null,
+            componentName: component.componentName || null,
+            resultValue: component.resultValue || null,
+            unit: component.unit || null,
+            referenceRange: component.referenceRange || null,
           })),
         })),
       });
@@ -804,7 +860,7 @@ export default function LabPage() {
         <DialogContent dividers>
           <Grid container spacing={2} sx={{ pt: 0.5 }}>
             <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth label="Test Code" value={form.testCode} onChange={(e) => setForm((current) => ({ ...current, testCode: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label="Test Name" value={form.testName} onChange={(e) => setForm((current) => ({ ...current, testName: e.target.value }))} /></Grid>
+            <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label={<RequiredLabel text="Test Name" />} value={form.testName} onChange={(e) => setForm((current) => ({ ...current, testName: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}>
               <FormControl fullWidth>
                 <InputLabel id="lab-category-label">Category</InputLabel>
@@ -818,7 +874,7 @@ export default function LabPage() {
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Unit" value={form.unit || ""} onChange={(e) => setForm((current) => ({ ...current, unit: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Reference Range" value={form.referenceRange || ""} onChange={(e) => setForm((current) => ({ ...current, referenceRange: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Turnaround Time" value={form.turnaroundTime || ""} onChange={(e) => setForm((current) => ({ ...current, turnaroundTime: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth type="number" label="Price" value={form.price} onChange={(e) => setForm((current) => ({ ...current, price: Number(e.target.value) }))} /></Grid>
+            <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth type="number" label={<RequiredLabel text="Price" />} value={form.price} onChange={(e) => setForm((current) => ({ ...current, price: Number(e.target.value) }))} /></Grid>
             <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth label="Status" value={form.active ? "Active" : "Inactive"} disabled /></Grid>
           </Grid>
           <Stack spacing={1.5} sx={{ mt: 3 }}>

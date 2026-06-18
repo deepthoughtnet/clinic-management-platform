@@ -26,6 +26,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
+import { documentUploadSchema, firstZodError } from "@deepthoughtnet/form-validation-kit";
 import {
   getPatient,
   getPatientVaccinations,
@@ -87,18 +88,10 @@ const DOCUMENT_TYPES: Array<{ value: ClinicalDocumentType; label: string }> = [
   { value: "OTHER", label: "Other" },
 ];
 
-const ALLOWED_DOCUMENT_MIME_TYPES = new Set(["application/pdf", "image/jpeg", "image/png"]);
-const ALLOWED_DOCUMENT_EXTENSIONS = new Set(["pdf", "jpg", "jpeg", "png"]);
 const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 
 function documentTypeLabel(value: string | null | undefined): string {
   return DOCUMENT_TYPES.find((type) => type.value === value)?.label || (value || "Document").replaceAll("_", " ");
-}
-
-function documentExtension(name: string): string {
-  const lower = name.toLowerCase();
-  const index = lower.lastIndexOf(".");
-  return index >= 0 ? lower.slice(index + 1) : "";
 }
 
 export default function PatientDetailPage() {
@@ -202,13 +195,14 @@ export default function PatientDetailPage() {
       return;
     }
     if (!auth.accessToken || !auth.tenantId || !id || !documentFile) return;
-    const extension = documentExtension(documentFile.name);
-    if (documentFile.size > MAX_DOCUMENT_BYTES) {
-      setError("Document files must be 25 MB or smaller.");
-      return;
-    }
-    if (!ALLOWED_DOCUMENT_EXTENSIONS.has(extension) || !ALLOWED_DOCUMENT_MIME_TYPES.has(documentFile.type || "")) {
-      setError("Only PDF, JPG, JPEG, and PNG documents are allowed.");
+    const parsed = documentUploadSchema({
+      required: true,
+      allowedMimeTypes: ["application/pdf", "image/jpeg", "image/png"],
+      allowedExtensions: ["pdf", "jpg", "jpeg", "png"],
+      maxBytes: MAX_DOCUMENT_BYTES,
+    }).safeParse(documentFile);
+    if (!parsed.success) {
+      setError(firstZodError(parsed.error));
       return;
     }
     setUploadingDocument(true);

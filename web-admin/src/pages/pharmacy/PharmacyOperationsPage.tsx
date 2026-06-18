@@ -27,6 +27,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useAuth } from "../../auth/useAuth";
+import { fileUploadSchema, firstZodError } from "@deepthoughtnet/form-validation-kit";
 import { CompactEmptyState, CompactFilterCard, CompactStatCard, compactCardContentSx, compactChipSx } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import {
@@ -558,6 +559,27 @@ export default function PharmacyOperationsPage() {
 
   const procurementRecentRows = procurementTab === "po" ? purchaseOrders : procurementTab === "invoice" ? supplierInvoices : goodsReceipts;
 
+  const handleSheetFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] || null;
+    if (!file) {
+      setSheetFile(null);
+      return;
+    }
+    const parsed = fileUploadSchema({
+      required: true,
+      allowedMimeTypes: ["application/pdf", "image/png", "image/jpeg", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/csv", "application/csv"],
+      allowedExtensions: ["pdf", "png", "jpg", "jpeg", "csv", "xls", "xlsx"],
+      maxBytes: 25 * 1024 * 1024,
+    }).safeParse(file);
+    if (!parsed.success) {
+      setSheetFile(null);
+      setError(firstZodError(parsed.error));
+      event.target.value = "";
+      return;
+    }
+    setSheetFile(file);
+  };
+
   if (!auth.tenantId) return <Alert severity="info">Select a tenant to access Pharmacy Operations.</Alert>;
 
   return (
@@ -938,7 +960,7 @@ export default function PharmacyOperationsPage() {
                   <Grid size={12}>
                     <Button size="small" variant="outlined" component="label">
                       Upload vendor sheet / invoice
-                      <input hidden type="file" accept=".pdf,image/*,.csv,.xls,.xlsx" onChange={(e) => setSheetFile(e.target.files?.[0] || null)} />
+                      <input hidden type="file" accept=".pdf,image/*,.csv,.xls,.xlsx" onChange={handleSheetFileChange} />
                     </Button>
                     {sheetFile ? (
                       <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>

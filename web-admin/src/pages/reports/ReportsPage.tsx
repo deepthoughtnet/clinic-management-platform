@@ -26,6 +26,7 @@ import {
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 
+import { firstZodError, reportFilterSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactFilterCard, compactChipSx } from "../../components/compact/CompactUi";
 import {
@@ -194,17 +195,32 @@ export default function ReportsPage() {
     if (!auth.accessToken || !auth.tenantId) {
       return;
     }
+    const parsed = reportFilterSchema.safeParse({
+      ...filters,
+      from: filters.from || undefined,
+      to: filters.to || undefined,
+      doctorUserId: filters.doctorUserId || undefined,
+      patientId: filters.patientId || undefined,
+      status: filters.status || undefined,
+      paymentMode: filters.paymentMode || undefined,
+      source: filters.source || undefined,
+    });
+    if (!parsed.success) {
+      setError(firstZodError(parsed.error));
+      setLoadingReport(false);
+      return;
+    }
     setLoadingReport(true);
     setError(null);
     try {
       const params = {
-        from: filters.from || null,
-        to: filters.to || null,
-        doctorUserId: filters.doctorUserId || null,
-        patientId: filters.patientId || null,
-        status: filters.status || null,
-        paymentMode: filters.paymentMode || null,
-        source: filters.source || null,
+        from: parsed.data.from || null,
+        to: parsed.data.to || null,
+        doctorUserId: parsed.data.doctorUserId || null,
+        patientId: parsed.data.patientId || null,
+        status: parsed.data.status || null,
+        paymentMode: parsed.data.paymentMode || null,
+        source: parsed.data.source || null,
       };
       let value: ReportRow[] = [];
       switch (reportKey) {
