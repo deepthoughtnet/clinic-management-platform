@@ -33,7 +33,11 @@ import MoreHorizRounded from "@mui/icons-material/MoreHorizRounded";
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, compactCardContentSx } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
-import { fileUploadSchema, firstZodError } from "@deepthoughtnet/form-validation-kit";
+import RequiredLabel from "../../components/forms/RequiredLabel";
+import ConfigurableGrid, { type ConfigurableGridColumn } from "../../shared/components/configurable-grid/ConfigurableGrid";
+import ManageColumnsPopover from "../../shared/components/configurable-grid/ManageColumnsPopover";
+import { useColumnVisibility } from "../../shared/components/configurable-grid/useColumnVisibility";
+import { fileUploadSchema, firstZodError, hasDuplicateMedicineMaster, mapZodErrors, medicineMasterSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   activateMedicine,
   createMedicine,
@@ -53,6 +57,8 @@ import {
   parseMedicineImportPreview,
   type MedicineImportPreview,
 } from "./medicineCsv";
+
+const MEDICINE_MASTER_COLUMNS_STORAGE_KEY = "arogia.pharmacy.medicineMaster.visibleColumns";
 
 const medicineTypeOptions: Array<{ value: MedicineType; label: string }> = [
   { value: "TABLET", label: "Tablet" },
@@ -113,6 +119,41 @@ function mapMedicineSaveError(error: unknown): string {
   return message;
 }
 
+const medicineFieldOrder = [
+  "medicineName",
+  "medicineType",
+  "active",
+  "strength",
+  "barcode",
+  "qrCode",
+  "externalCode",
+  "genericName",
+  "brandName",
+  "category",
+  "dosageForm",
+  "unit",
+  "manufacturer",
+  "defaultDosage",
+  "defaultFrequency",
+  "defaultDurationDays",
+  "defaultTiming",
+  "defaultInstructions",
+  "defaultPrice",
+  "taxRate",
+] as const;
+
+function focusFirstMedicineError(fieldErrors: Record<string, string>, fieldRefs: React.MutableRefObject<Record<string, HTMLElement | null>>) {
+  for (const field of medicineFieldOrder) {
+    if (fieldErrors[field]) {
+      const element = fieldRefs.current[field];
+      if (element && typeof element.focus === "function") {
+        element.focus();
+      }
+      break;
+    }
+  }
+}
+
 function formForRow(row: Medicine): MedicineInput {
   return {
     medicineName: row.medicineName,
@@ -159,6 +200,8 @@ export default function MedicineMasterPage() {
   const [categoryFilter, setCategoryFilter] = React.useState<string>("ALL");
   const [actionAnchor, setActionAnchor] = React.useState<HTMLElement | null>(null);
   const [actionRow, setActionRow] = React.useState<Medicine | null>(null);
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
+  const fieldRefs = React.useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null>>({});
 
   const canManage = auth.hasPermission("inventory.manage")
     || auth.hasPermission("vaccination.manage")
@@ -227,37 +270,75 @@ export default function MedicineMasterPage() {
     [rows],
   );
 
-  const openCreate = () => {
+  const openCreate = React.useCallback(() => {
     setEditing(null);
     setForm(emptyForm);
+    setFieldErrors({});
+    setError(null);
     setEditorOpen(true);
-  };
+  }, []);
 
-  const openEdit = (row: Medicine) => {
+  const openEdit = React.useCallback((row: Medicine) => {
     setEditing(row);
     setForm(formForRow(row));
+    setFieldErrors({});
+    setError(null);
     setEditorOpen(true);
-  };
+  }, []);
 
-  const closeEditor = () => {
+  const closeEditor = React.useCallback(() => {
     setEditing(null);
     setForm(emptyForm);
+    setFieldErrors({});
+    setError(null);
     setEditorOpen(rows.length === 0);
-  };
+  }, [rows.length]);
 
-  const resetEditor = () => {
+  const resetEditor = React.useCallback(() => {
     setForm(editing ? formForRow(editing) : emptyForm);
-  };
+    setFieldErrors({});
+    setError(null);
+  }, [editing]);
 
-  const save = async () => {
+  const validateMedicineForm = React.useCallback(() => {
+    const parsed = medicineMasterSchema.safeParse(form);
+    if (!parsed.success) {
+      const errors = mapZodErrors(parsed.error);
+      setFieldErrors(errors);
+      setError(firstZodError(parsed.error));
+      window.setTimeout(() => focusFirstMedicineError(errors, fieldRefs), 0);
+      return null;
+    }
+
+    const duplicate = hasDuplicateMedicineMaster(parsed.data, rows, editing?.id);
+    if (duplicate) {
+      const message = "A medicine with this name, strength, and type already exists.";
+      const errors = {
+        medicineName: message,
+        strength: message,
+        medicineType: message,
+      };
+      setFieldErrors(errors);
+      setError(message);
+      window.setTimeout(() => focusFirstMedicineError(errors, fieldRefs), 0);
+      return null;
+    }
+
+    return parsed.data;
+  }, [editing?.id, form, rows]);
+
+  const save = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;
+    const validated = validateMedicineForm();
+    if (!validated) return;
+
     setSaving(true);
     setError(null);
     try {
       if (editing) {
-        await updateMedicine(auth.accessToken, auth.tenantId, editing.id, form);
+        await updateMedicine(auth.accessToken, auth.tenantId, editing.id, validated);
       } else {
-        await createMedicine(auth.accessToken, auth.tenantId, form);
+        await createMedicine(auth.accessToken, auth.tenantId, validated);
       }
       closeEditor();
       await load();
@@ -266,9 +347,9 @@ export default function MedicineMasterPage() {
     } finally {
       setSaving(false);
     }
-  };
+  }, [auth.accessToken, auth.tenantId, closeEditor, editing, load, validateMedicineForm]);
 
-  const toggleActive = async (row: Medicine) => {
+  const toggleActive = React.useCallback(async (row: Medicine) => {
     if (!auth.accessToken || !auth.tenantId) return;
     setSaving(true);
     setError(null);
@@ -281,7 +362,7 @@ export default function MedicineMasterPage() {
     } finally {
       setSaving(false);
     }
-  };
+  }, [auth.accessToken, auth.tenantId, load]);
 
   const downloadTemplate = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -338,15 +419,149 @@ export default function MedicineMasterPage() {
     }
   };
 
-  const openRowActions = (event: React.MouseEvent<HTMLElement>, row: Medicine) => {
+  const openRowActions = React.useCallback((event: React.MouseEvent<HTMLElement>, row: Medicine) => {
     setActionAnchor(event.currentTarget);
     setActionRow(row);
-  };
+  }, []);
 
-  const closeRowActions = () => {
+  const closeRowActions = React.useCallback(() => {
     setActionAnchor(null);
     setActionRow(null);
-  };
+  }, []);
+
+  const medicineColumns = React.useMemo<ConfigurableGridColumn<Medicine>[]>(() => [
+    {
+      id: "name",
+      label: "Name",
+      mandatory: true,
+      defaultVisible: true,
+      minWidth: 180,
+      render: (row) => (
+        <Stack spacing={0.2}>
+          <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.medicineName}</Typography>
+          <Typography variant="caption" color="text.secondary">{row.strength || row.unit || row.manufacturer || "-"}</Typography>
+        </Stack>
+      ),
+    },
+    {
+      id: "code",
+      label: "Code",
+      defaultVisible: false,
+      minWidth: 150,
+      render: (row) => (
+        <Stack spacing={0.2}>
+          <Typography variant="body2">{row.barcode || row.externalCode || "-"}</Typography>
+          <Typography variant="caption" color="text.secondary">{row.qrCode || "-"}</Typography>
+        </Stack>
+      ),
+    },
+    {
+      id: "genericBrand",
+      label: "Generic / Brand",
+      defaultVisible: false,
+      minWidth: 180,
+      render: (row) => (
+        <Stack spacing={0.2}>
+          <Typography variant="body2">{row.genericName || "-"}</Typography>
+          <Typography variant="caption" color="text.secondary">{row.brandName || "-"}</Typography>
+        </Stack>
+      ),
+    },
+    {
+      id: "category",
+      label: "Category",
+      defaultVisible: false,
+      minWidth: 120,
+      render: (row) => row.category || "-",
+    },
+    {
+      id: "type",
+      label: "Type",
+      defaultVisible: true,
+      minWidth: 100,
+      render: (row) => row.dosageForm || row.medicineType,
+    },
+    {
+      id: "dosageFrequency",
+      label: "Dosage / Frequency",
+      defaultVisible: false,
+      minWidth: 160,
+      render: (row) => (
+        <Stack spacing={0.2}>
+          <Typography variant="body2">{row.defaultDosage || "-"}</Typography>
+          <Typography variant="caption" color="text.secondary">{row.defaultFrequency || "-"}</Typography>
+        </Stack>
+      ),
+    },
+    {
+      id: "durationTiming",
+      label: "Duration / Timing",
+      defaultVisible: false,
+      minWidth: 160,
+      render: (row) => (
+        <Stack spacing={0.2}>
+          <Typography variant="body2">{row.defaultDurationDays != null ? `${row.defaultDurationDays} days` : "-"}</Typography>
+          <Typography variant="caption" color="text.secondary">{row.defaultTiming || "-"}</Typography>
+        </Stack>
+      ),
+    },
+    {
+      id: "instructions",
+      label: "Instructions",
+      defaultVisible: false,
+      minWidth: 220,
+      render: (row) => <Typography variant="caption" color="text.secondary">{row.defaultInstructions || "-"}</Typography>,
+    },
+    {
+      id: "price",
+      label: "Price",
+      defaultVisible: true,
+      align: "right",
+      minWidth: 90,
+      render: (row) => formatPrice(row.defaultPrice),
+    },
+    {
+      id: "taxRate",
+      label: "Tax %",
+      defaultVisible: true,
+      align: "right",
+      minWidth: 70,
+      render: (row) => (row.taxRate != null ? row.taxRate.toFixed(2) : "-"),
+    },
+    {
+      id: "status",
+      label: "Status",
+      defaultVisible: true,
+      minWidth: 90,
+      render: (row) => <Chip size="small" label={row.active ? "Active" : "Inactive"} color={row.active ? "success" : "default"} />,
+    },
+    {
+      id: "actions",
+      label: "Actions",
+      mandatory: true,
+      defaultVisible: true,
+      align: "right",
+      minWidth: 80,
+      render: (row) => (canManage ? (
+        <IconButton size="small" onClick={(event) => openRowActions(event, row)}>
+          <MoreHorizRounded fontSize="small" />
+        </IconButton>
+      ) : null),
+    },
+  ], [canManage, openRowActions]);
+
+  const {
+    visibleColumnIds,
+    toggleVisibleColumnId,
+    resetVisibleColumnIds,
+  } = useColumnVisibility(medicineColumns, MEDICINE_MASTER_COLUMNS_STORAGE_KEY);
+
+  const registerFieldRef = React.useCallback(
+    (field: string) => (element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null) => {
+      fieldRefs.current[field] = element;
+    },
+    [],
+  );
 
   if (!auth.tenantId) return <Alert severity="info">Select a tenant to access Medicine Master.</Alert>;
 
@@ -436,6 +651,12 @@ export default function MedicineMasterPage() {
                     <MenuItem key={option} value={option}>{option}</MenuItem>
                   ))}
                 </TextField>
+                <ManageColumnsPopover
+                  columns={medicineColumns}
+                  visibleColumnIds={visibleColumnIds}
+                  onToggleColumn={toggleVisibleColumnId}
+                  onReset={resetVisibleColumnIds}
+                />
               </Stack>
             </Grid>
           </Grid>
@@ -457,71 +678,266 @@ export default function MedicineMasterPage() {
           <AccordionDetails sx={{ px: 2, pb: 2, pt: 0 }}>
             <Grid container spacing={1.25} sx={{ mt: 0.25 }}>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth size="small" label="Medicine name" value={form.medicineName} onChange={(e) => setForm((v) => ({ ...v, medicineName: e.target.value }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label={<RequiredLabel text="Medicine name" required />}
+                  value={form.medicineName}
+                  error={Boolean(fieldErrors.medicineName)}
+                  helperText={fieldErrors.medicineName || " "}
+                  inputRef={registerFieldRef("medicineName")}
+                  inputProps={{ required: true, "aria-required": true }}
+                  onChange={(e) => setForm((v) => ({ ...v, medicineName: e.target.value }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 3 }}>
-                <TextField fullWidth select size="small" label="Type" value={form.medicineType} onChange={(e) => setForm((v) => ({ ...v, medicineType: e.target.value as MedicineType }))}>
+                <TextField
+                  fullWidth
+                  select
+                  size="small"
+                  label={<RequiredLabel text="Type" required />}
+                  value={form.medicineType}
+                  error={Boolean(fieldErrors.medicineType)}
+                  helperText={fieldErrors.medicineType || " "}
+                  inputRef={registerFieldRef("medicineType")}
+                  inputProps={{ required: true, "aria-required": true }}
+                  onChange={(e) => setForm((v) => ({ ...v, medicineType: e.target.value as MedicineType }))}
+                >
                   {medicineTypeOptions.map((option) => (
                     <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
                   ))}
                 </TextField>
               </Grid>
               <Grid size={{ xs: 12, md: 3 }}>
-                <TextField fullWidth select size="small" label="Status" value={form.active ? "true" : "false"} onChange={(e) => setForm((v) => ({ ...v, active: e.target.value === "true" }))}>
+                <TextField
+                  fullWidth
+                  select
+                  size="small"
+                  label={<RequiredLabel text="Status" required />}
+                  value={form.active ? "true" : "false"}
+                  error={Boolean(fieldErrors.active)}
+                  helperText={fieldErrors.active || " "}
+                  inputRef={registerFieldRef("active")}
+                  inputProps={{ required: true, "aria-required": true }}
+                  onChange={(e) => setForm((v) => ({ ...v, active: e.target.value === "true" }))}
+                >
                   <MenuItem value="true">Active</MenuItem>
                   <MenuItem value="false">Inactive</MenuItem>
                 </TextField>
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
-                <CodeScannerField size="small" label="Barcode" value={form.barcode || ""} onChange={(next) => setForm((v) => ({ ...v, barcode: next || null }))} placeholder="Scan or enter barcode" />
+                <CodeScannerField
+                  size="small"
+                  label="Barcode"
+                  value={form.barcode || ""}
+                  error={Boolean(fieldErrors.barcode)}
+                  helperText={fieldErrors.barcode || " "}
+                  inputRef={registerFieldRef("barcode")}
+                  onChange={(next) => setForm((v) => ({ ...v, barcode: next || null }))}
+                  placeholder="Scan or enter barcode"
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
-                <CodeScannerField size="small" label="QR code" value={form.qrCode || ""} onChange={(next) => setForm((v) => ({ ...v, qrCode: next || null }))} placeholder="Scan or enter QR code" />
+                <CodeScannerField
+                  size="small"
+                  label="QR code"
+                  value={form.qrCode || ""}
+                  error={Boolean(fieldErrors.qrCode)}
+                  helperText={fieldErrors.qrCode || " "}
+                  inputRef={registerFieldRef("qrCode")}
+                  onChange={(next) => setForm((v) => ({ ...v, qrCode: next || null }))}
+                  placeholder="Scan or enter QR code"
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
-                <CodeScannerField size="small" label="External code" value={form.externalCode || ""} onChange={(next) => setForm((v) => ({ ...v, externalCode: next || null }))} placeholder="Scan or enter code" />
+                <CodeScannerField
+                  size="small"
+                  label="External code"
+                  value={form.externalCode || ""}
+                  error={Boolean(fieldErrors.externalCode)}
+                  helperText={fieldErrors.externalCode || " "}
+                  inputRef={registerFieldRef("externalCode")}
+                  onChange={(next) => setForm((v) => ({ ...v, externalCode: next || null }))}
+                  placeholder="Scan or enter code"
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth size="small" label="Generic name" value={form.genericName || ""} onChange={(e) => setForm((v) => ({ ...v, genericName: e.target.value || null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Generic name"
+                  value={form.genericName || ""}
+                  error={Boolean(fieldErrors.genericName)}
+                  helperText={fieldErrors.genericName || " "}
+                  inputRef={registerFieldRef("genericName")}
+                  onChange={(e) => setForm((v) => ({ ...v, genericName: e.target.value || null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth size="small" label="Brand name" value={form.brandName || ""} onChange={(e) => setForm((v) => ({ ...v, brandName: e.target.value || null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Brand name"
+                  value={form.brandName || ""}
+                  error={Boolean(fieldErrors.brandName)}
+                  helperText={fieldErrors.brandName || " "}
+                  inputRef={registerFieldRef("brandName")}
+                  onChange={(e) => setForm((v) => ({ ...v, brandName: e.target.value || null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth size="small" label="Category" value={form.category || ""} onChange={(e) => setForm((v) => ({ ...v, category: e.target.value || null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Category"
+                  value={form.category || ""}
+                  error={Boolean(fieldErrors.category)}
+                  helperText={fieldErrors.category || " "}
+                  inputRef={registerFieldRef("category")}
+                  onChange={(e) => setForm((v) => ({ ...v, category: e.target.value || null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
-                <TextField fullWidth size="small" label="Form" value={form.dosageForm || ""} onChange={(e) => setForm((v) => ({ ...v, dosageForm: e.target.value || null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Form"
+                  value={form.dosageForm || ""}
+                  error={Boolean(fieldErrors.dosageForm)}
+                  helperText={fieldErrors.dosageForm || " "}
+                  inputRef={registerFieldRef("dosageForm")}
+                  onChange={(e) => setForm((v) => ({ ...v, dosageForm: e.target.value || null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
-                <TextField fullWidth size="small" label="Strength" value={form.strength || ""} onChange={(e) => setForm((v) => ({ ...v, strength: e.target.value || null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label={<RequiredLabel text="Strength" required />}
+                  value={form.strength || ""}
+                  error={Boolean(fieldErrors.strength)}
+                  helperText={fieldErrors.strength || " "}
+                  inputRef={registerFieldRef("strength")}
+                  inputProps={{ required: true, "aria-required": true }}
+                  onChange={(e) => setForm((v) => ({ ...v, strength: e.target.value || null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
-                <TextField fullWidth size="small" label="Unit" value={form.unit || ""} onChange={(e) => setForm((v) => ({ ...v, unit: e.target.value || null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Unit"
+                  value={form.unit || ""}
+                  error={Boolean(fieldErrors.unit)}
+                  helperText={fieldErrors.unit || " "}
+                  inputRef={registerFieldRef("unit")}
+                  onChange={(e) => setForm((v) => ({ ...v, unit: e.target.value || null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth size="small" label="Manufacturer" value={form.manufacturer || ""} onChange={(e) => setForm((v) => ({ ...v, manufacturer: e.target.value || null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Manufacturer"
+                  value={form.manufacturer || ""}
+                  error={Boolean(fieldErrors.manufacturer)}
+                  helperText={fieldErrors.manufacturer || " "}
+                  inputRef={registerFieldRef("manufacturer")}
+                  onChange={(e) => setForm((v) => ({ ...v, manufacturer: e.target.value || null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth size="small" label="Default dosage" value={form.defaultDosage || ""} onChange={(e) => setForm((v) => ({ ...v, defaultDosage: e.target.value || null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Default dosage"
+                  value={form.defaultDosage || ""}
+                  error={Boolean(fieldErrors.defaultDosage)}
+                  helperText={fieldErrors.defaultDosage || " "}
+                  inputRef={registerFieldRef("defaultDosage")}
+                  onChange={(e) => setForm((v) => ({ ...v, defaultDosage: e.target.value || null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth size="small" label="Default frequency" value={form.defaultFrequency || ""} onChange={(e) => setForm((v) => ({ ...v, defaultFrequency: e.target.value || null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Default frequency"
+                  value={form.defaultFrequency || ""}
+                  error={Boolean(fieldErrors.defaultFrequency)}
+                  helperText={fieldErrors.defaultFrequency || " "}
+                  inputRef={registerFieldRef("defaultFrequency")}
+                  onChange={(e) => setForm((v) => ({ ...v, defaultFrequency: e.target.value || null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 3 }}>
-                <TextField fullWidth size="small" type="number" label="Default duration (days)" value={form.defaultDurationDays ?? ""} onChange={(e) => setForm((v) => ({ ...v, defaultDurationDays: e.target.value ? Number(e.target.value) : null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="number"
+                  label="Default duration (days)"
+                  value={form.defaultDurationDays ?? ""}
+                  error={Boolean(fieldErrors.defaultDurationDays)}
+                  helperText={fieldErrors.defaultDurationDays || " "}
+                  inputRef={registerFieldRef("defaultDurationDays")}
+                  inputProps={{ min: 1, max: 365, step: 1 }}
+                  onChange={(e) => setForm((v) => ({ ...v, defaultDurationDays: e.target.value ? Number(e.target.value) : null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 3 }}>
-                <TextField fullWidth size="small" label="Default timing" value={form.defaultTiming || ""} onChange={(e) => setForm((v) => ({ ...v, defaultTiming: (e.target.value || null) as MedicineInput["defaultTiming"] }))} placeholder="BEFORE_FOOD / AFTER_FOOD / WITH_FOOD / ANYTIME" />
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Default timing"
+                  value={form.defaultTiming || ""}
+                  error={Boolean(fieldErrors.defaultTiming)}
+                  helperText={fieldErrors.defaultTiming || " "}
+                  inputRef={registerFieldRef("defaultTiming")}
+                  onChange={(e) => setForm((v) => ({ ...v, defaultTiming: (e.target.value || null) as MedicineInput["defaultTiming"] }))}
+                  placeholder="BEFORE_FOOD / AFTER_FOOD / WITH_FOOD / ANYTIME"
+                />
               </Grid>
               <Grid size={12}>
-                <TextField fullWidth size="small" multiline minRows={2} label="Default instructions" value={form.defaultInstructions || ""} onChange={(e) => setForm((v) => ({ ...v, defaultInstructions: e.target.value || null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  multiline
+                  minRows={2}
+                  label="Default instructions"
+                  value={form.defaultInstructions || ""}
+                  error={Boolean(fieldErrors.defaultInstructions)}
+                  helperText={fieldErrors.defaultInstructions || " "}
+                  inputRef={registerFieldRef("defaultInstructions")}
+                  onChange={(e) => setForm((v) => ({ ...v, defaultInstructions: e.target.value || null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 3 }}>
-                <TextField fullWidth size="small" type="number" label="Default price" value={form.defaultPrice ?? ""} onChange={(e) => setForm((v) => ({ ...v, defaultPrice: e.target.value ? Number(e.target.value) : null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="number"
+                  label="Default price"
+                  value={form.defaultPrice ?? ""}
+                  error={Boolean(fieldErrors.defaultPrice)}
+                  helperText={fieldErrors.defaultPrice || " "}
+                  inputRef={registerFieldRef("defaultPrice")}
+                  inputProps={{ min: 0, max: 999999, step: 0.01 }}
+                  onChange={(e) => setForm((v) => ({ ...v, defaultPrice: e.target.value ? Number(e.target.value) : null }))}
+                />
               </Grid>
               <Grid size={{ xs: 12, md: 3 }}>
-                <TextField fullWidth size="small" type="number" label="Tax %" value={form.taxRate ?? ""} onChange={(e) => setForm((v) => ({ ...v, taxRate: e.target.value ? Number(e.target.value) : null }))} />
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="number"
+                  label="Tax %"
+                  value={form.taxRate ?? ""}
+                  error={Boolean(fieldErrors.taxRate)}
+                  helperText={fieldErrors.taxRate || " "}
+                  inputRef={registerFieldRef("taxRate")}
+                  inputProps={{ min: 0, max: 100, step: 0.01 }}
+                  onChange={(e) => setForm((v) => ({ ...v, taxRate: e.target.value ? Number(e.target.value) : null }))}
+                />
               </Grid>
               <Grid size={12}>
                 <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
@@ -544,100 +960,30 @@ export default function MedicineMasterPage() {
       {!loading ? (
         <Card>
           <CardContent sx={compactCardContentSx}>
-            {filtered.length === 0 ? (
-              <CompactEmptyState
-                title={rows.length === 0 ? "No medicines in the catalogue yet." : "No medicines match the current filters."}
-                subtitle={rows.length === 0
-                  ? "Start with Add Medicine for a single entry, or upload the CSV template to seed the catalogue in bulk."
-                  : "Clear or adjust the current search and filter combination to show matching medicine records."}
-                action={canManage ? (
-                  <Stack direction="row" spacing={1}>
-                    <Button size="small" onClick={openCreate}>Add Medicine</Button>
-                    <Button size="small" variant="outlined" onClick={openImportFilePicker}>Upload CSV</Button>
-                  </Stack>
-                ) : undefined}
-              />
-            ) : (
-              <Stack spacing={1.25}>
-                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                    Medicine catalogue
-                  </Typography>
-                  <Chip size="small" variant="outlined" label={`${filtered.length} visible medicines`} />
-                </Box>
-                <TableContainer sx={{ maxHeight: 520, overflowX: "auto" }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ minWidth: 180 }}>Name</TableCell>
-                        <TableCell sx={{ minWidth: 150 }}>Code</TableCell>
-                        <TableCell sx={{ minWidth: 180 }}>Generic / Brand</TableCell>
-                        <TableCell sx={{ minWidth: 120 }}>Category</TableCell>
-                        <TableCell sx={{ minWidth: 100 }}>Type</TableCell>
-                        <TableCell sx={{ minWidth: 160 }}>Dosage / Frequency</TableCell>
-                        <TableCell sx={{ minWidth: 160 }}>Duration / Timing</TableCell>
-                        <TableCell sx={{ minWidth: 220 }}>Instructions</TableCell>
-                        <TableCell align="right" sx={{ minWidth: 90 }}>Price</TableCell>
-                        <TableCell align="right" sx={{ minWidth: 70 }}>Tax %</TableCell>
-                        <TableCell sx={{ minWidth: 90 }}>Status</TableCell>
-                        <TableCell align="right" sx={{ minWidth: 80 }}>Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {filtered.map((row) => (
-                        <TableRow key={row.id} hover sx={{ "& td": { py: 0.8, verticalAlign: "top" } }}>
-                          <TableCell>
-                            <Stack spacing={0.2}>
-                              <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.medicineName}</Typography>
-                              <Typography variant="caption" color="text.secondary">{row.strength || row.unit || row.manufacturer || "-"}</Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell>
-                            <Stack spacing={0.2}>
-                              <Typography variant="body2">{row.barcode || row.externalCode || "-"}</Typography>
-                              <Typography variant="caption" color="text.secondary">{row.qrCode || "-"}</Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell>
-                            <Stack spacing={0.2}>
-                              <Typography variant="body2">{row.genericName || "-"}</Typography>
-                              <Typography variant="caption" color="text.secondary">{row.brandName || "-"}</Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell>{row.category || "-"}</TableCell>
-                          <TableCell>{row.dosageForm || row.medicineType}</TableCell>
-                          <TableCell>
-                            <Stack spacing={0.2}>
-                              <Typography variant="body2">{row.defaultDosage || "-"}</Typography>
-                              <Typography variant="caption" color="text.secondary">{row.defaultFrequency || "-"}</Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell>
-                            <Stack spacing={0.2}>
-                              <Typography variant="body2">{row.defaultDurationDays != null ? `${row.defaultDurationDays} days` : "-"}</Typography>
-                              <Typography variant="caption" color="text.secondary">{row.defaultTiming || "-"}</Typography>
-                            </Stack>
-                          </TableCell>
-                          <TableCell sx={{ maxWidth: 220 }}>
-                            <Typography variant="caption" color="text.secondary">{row.defaultInstructions || "-"}</Typography>
-                          </TableCell>
-                          <TableCell align="right">{formatPrice(row.defaultPrice)}</TableCell>
-                          <TableCell align="right">{row.taxRate?.toFixed(2) ?? "-"}</TableCell>
-                          <TableCell><Chip size="small" label={row.active ? "Active" : "Inactive"} color={row.active ? "success" : "default"} /></TableCell>
-                          <TableCell align="right">
-                            {canManage ? (
-                              <IconButton size="small" onClick={(event) => openRowActions(event, row)}>
-                                <MoreHorizRounded fontSize="small" />
-                              </IconButton>
-                            ) : null}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </Stack>
-            )}
+            <ConfigurableGrid
+              title="Medicine catalogue"
+              subtitle="Configure which catalogue columns you want to keep visible for faster day-to-day use."
+              columns={medicineColumns}
+              visibleColumnIds={visibleColumnIds}
+              rows={filtered}
+              getRowKey={(row) => row.id}
+              toolbar={<Chip size="small" variant="outlined" label={`${filtered.length} visible medicines`} />}
+              emptyState={(
+                <CompactEmptyState
+                  title={rows.length === 0 ? "No medicines in the catalogue yet." : "No medicines match the current filters."}
+                  subtitle={rows.length === 0
+                    ? "Start with Add Medicine for a single entry, or upload the CSV template to seed the catalogue in bulk."
+                    : "Clear or adjust the current search and filter combination to show matching medicine records."}
+                  action={canManage ? (
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" onClick={openCreate}>Add Medicine</Button>
+                      <Button size="small" variant="outlined" onClick={openImportFilePicker}>Upload CSV</Button>
+                    </Stack>
+                  ) : undefined}
+                />
+              )}
+              rowSx={{ "& td": { py: 0.8, verticalAlign: "top" } }}
+            />
           </CardContent>
         </Card>
       ) : null}

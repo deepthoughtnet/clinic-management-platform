@@ -14,6 +14,8 @@ type CodeScannerFieldProps = {
   helperText?: string;
   disabled?: boolean;
   size?: "small" | "medium";
+  error?: boolean;
+  inputRef?: React.Ref<HTMLInputElement>;
 };
 
 export default function CodeScannerField({
@@ -24,6 +26,8 @@ export default function CodeScannerField({
   helperText,
   disabled,
   size = "medium",
+  error,
+  inputRef,
 }: CodeScannerFieldProps) {
   const [open, setOpen] = React.useState(false);
 
@@ -38,6 +42,8 @@ export default function CodeScannerField({
         placeholder={placeholder}
         helperText={helperText}
         disabled={disabled}
+        error={error}
+        inputRef={inputRef}
         InputProps={{
           endAdornment: (
             <InputAdornment position="end">

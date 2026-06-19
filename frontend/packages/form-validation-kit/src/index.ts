@@ -19,6 +19,7 @@ export * from "./schemas/appointment.js";
 export * from "./schemas/publicBooking.js";
 export * from "./schemas/billing.js";
 export * from "./schemas/pharmacy.js";
+export * from "./schemas/dispensing.js";
 export * from "./schemas/consultation.js";
 export * from "./schemas/filters.js";
 export * from "./schemas/fileUpload.js";
