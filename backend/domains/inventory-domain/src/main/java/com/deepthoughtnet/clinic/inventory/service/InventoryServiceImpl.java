@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.Objects;
 import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -45,6 +46,11 @@ public class InventoryServiceImpl implements InventoryService {
     private static final String MEDICINE_ENTITY = "MEDICINE";
     private static final String STOCK_ENTITY = "INVENTORY_STOCK";
     private static final String TRANSACTION_ENTITY = "INVENTORY_TRANSACTION";
+    private static final String ACTIVE_SELLABLE_MEDICINE_TYPES = "TABLET,CAPSULE,SYRUP,INJECTION,DROP,DROPS,OINTMENT,SACHET";
+    private static final String BATCH_NUMBER_REGEX = "^[A-Za-z0-9/_-]{3,30}$";
+    private static final String PURCHASE_REFERENCE_REGEX = "^[A-Za-z0-9/_\\-\\s]{1,60}$";
+    private static final String ALPHANUMERIC_CODE_REGEX = "^[A-Za-z0-9/_-]{1,50}$";
+    private static final String DIGITS_ONLY_REGEX = "^[0-9]{8,20}$";
 
     private final MedicineRepository medicineRepository;
     private final StockRepository stockRepository;
@@ -153,7 +159,7 @@ public class InventoryServiceImpl implements InventoryService {
     @Transactional
     public StockRecord createStock(UUID tenantId, StockUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
-        validateStock(tenantId, command);
+        validateStock(tenantId, command, true, null);
         UUID locationId = resolveLocationId(tenantId, command.locationId());
         ensureUniqueStockBatch(tenantId, command.medicineId(), locationId, command.batchNumber(), null);
         StockEntity entity = StockEntity.create(tenantId, command.medicineId(), locationId);
@@ -175,11 +181,22 @@ public class InventoryServiceImpl implements InventoryService {
     public StockRecord updateStock(UUID tenantId, UUID id, StockUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
         requireId(id, "id");
-        validateStock(tenantId, command);
-        UUID locationId = resolveLocationId(tenantId, command.locationId());
-        ensureUniqueStockBatch(tenantId, command.medicineId(), locationId, command.batchNumber(), id);
         StockEntity entity = stockRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new IllegalArgumentException("Stock not found"));
+        validateStock(tenantId, command, false, entity);
+        UUID locationId = resolveLocationId(tenantId, command.locationId());
+        ensureUniqueStockBatch(tenantId, command.medicineId(), locationId, command.batchNumber(), id);
+        if (transactionRepository.existsByTenantIdAndStockBatchId(tenantId, id)) {
+            if (!entity.getMedicineId().equals(command.medicineId())) {
+                throw new IllegalArgumentException("Medicine cannot be changed after stock movements exist.");
+            }
+            if (!Objects.equals(entity.getLocationId(), locationId)) {
+                throw new IllegalArgumentException("Location cannot be changed after stock movements exist.");
+            }
+            if (!StringUtils.hasText(entity.getBatchNumber()) ? StringUtils.hasText(command.batchNumber()) : !entity.getBatchNumber().trim().equalsIgnoreCase(normalizeNullable(command.batchNumber()))) {
+                throw new IllegalArgumentException("Batch number cannot be changed after stock movements exist.");
+            }
+        }
         int beforeQuantity = entity.getQuantityOnHand();
         applyStock(entity, command);
         StockEntity saved;
@@ -216,6 +233,9 @@ public class InventoryServiceImpl implements InventoryService {
         Integer afterQuantity = null;
         if (stock != null) {
             InventoryTransactionType normalizedType = normalizeTransactionType(command.transactionType());
+            if ((normalizedType == InventoryTransactionType.SALE || normalizedType == InventoryTransactionType.DISPENSED) && !stock.isActive()) {
+                throw new IllegalArgumentException("Inactive batch cannot be sold or dispensed.");
+            }
             if (isExpired(stock) && (normalizedType == InventoryTransactionType.SALE || normalizedType == InventoryTransactionType.DISPENSED)) {
                 throw new IllegalArgumentException("Batch expired and cannot be sold or dispensed.");
             }
@@ -273,6 +293,12 @@ public class InventoryServiceImpl implements InventoryService {
                 .orElseThrow(() -> new IllegalArgumentException("Stock batch not found"));
         if (source == null || !source.getLocationId().equals(fromLocationId)) {
             throw new IllegalArgumentException("Source stock not found in selected location");
+        }
+        if (!source.isActive()) {
+            throw new IllegalArgumentException("Inactive batch cannot be transferred.");
+        }
+        if (isExpired(source)) {
+            throw new IllegalArgumentException("Expired batch cannot be transferred.");
         }
         int quantity = Math.max(0, command.quantity());
         if (quantity <= 0) {
@@ -339,7 +365,7 @@ public class InventoryServiceImpl implements InventoryService {
     public List<LowStockRecord> listLowStock(UUID tenantId) {
         requireTenant(tenantId);
         return stockRepository.findByTenantIdOrderByUpdatedAtDesc(tenantId).stream()
-                .filter(stock -> stock.isActive() && stock.getQuantityOnHand() <= effectiveThreshold(stock))
+                .filter(stock -> stock.isActive() && !isExpired(stock) && stock.getQuantityOnHand() <= effectiveThreshold(stock))
                 .map(stock -> toLowStockRecord(stock, medicineRepository.findByTenantIdAndId(tenantId, stock.getMedicineId()).orElse(null)))
                 .toList();
     }
@@ -518,12 +544,52 @@ public class InventoryServiceImpl implements InventoryService {
         if (!StringUtils.hasText(command.medicineType())) throw new IllegalArgumentException("medicineType is required");
     }
 
-    private void validateStock(UUID tenantId, StockUpsertCommand command) {
+    private void validateStock(UUID tenantId, StockUpsertCommand command, boolean creating, StockEntity currentStock) {
         if (command == null) throw new IllegalArgumentException("command is required");
         requireId(command.medicineId(), "medicineId");
-        if (medicineRepository.findByTenantIdAndId(tenantId, command.medicineId()).isEmpty()) throw new IllegalArgumentException("Medicine not found");
-        if (command.quantityOnHand() < 0) throw new IllegalArgumentException("quantityOnHand cannot be negative");
+        MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, command.medicineId())
+                .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
+        if (!medicine.isActive()) throw new IllegalArgumentException("Cannot add stock for an inactive medicine.");
+        if (creating && command.quantityOnHand() <= 0) throw new IllegalArgumentException("quantityOnHand must be positive");
+        if (!creating && command.quantityOnHand() < 0) throw new IllegalArgumentException("quantityOnHand cannot be negative");
         if (command.quantityReceived() != null && command.quantityReceived() < 0) throw new IllegalArgumentException("quantityReceived cannot be negative");
+        if (!StringUtils.hasText(command.batchNumber())) throw new IllegalArgumentException("batchNumber is required");
+        String batchNumber = normalizeNullable(command.batchNumber());
+        if (batchNumber == null || !batchNumber.matches(BATCH_NUMBER_REGEX)) throw new IllegalArgumentException("Batch number must be 3 to 30 characters using letters, numbers, dashes, underscores, or slashes.");
+        if (StringUtils.hasText(command.purchaseReferenceNumber()) && !normalizeNullable(command.purchaseReferenceNumber()).matches(PURCHASE_REFERENCE_REGEX)) {
+            throw new IllegalArgumentException("Purchase reference must be 60 characters or fewer and can include spaces, letters, numbers, dashes, underscores, and slashes.");
+        }
+        if (StringUtils.hasText(command.barcode()) && !normalizeNullable(command.barcode()).matches(DIGITS_ONLY_REGEX)) {
+            throw new IllegalArgumentException("Barcode must be 8 to 20 digits.");
+        }
+        if (StringUtils.hasText(command.qrCode()) && normalizeNullable(command.qrCode()).length() > 100) {
+            throw new IllegalArgumentException("QR code must be 100 characters or fewer.");
+        }
+        if (StringUtils.hasText(command.externalCode()) && !normalizeNullable(command.externalCode()).matches(ALPHANUMERIC_CODE_REGEX)) {
+            throw new IllegalArgumentException("External code must be 50 characters or fewer and use letters, numbers, dashes, underscores, or slashes.");
+        }
+        if (command.lowStockThreshold() != null && command.lowStockThreshold() < 0) {
+            throw new IllegalArgumentException("Reorder level cannot be negative.");
+        }
+        if (command.unitCost() != null && command.unitCost().signum() < 0) {
+            throw new IllegalArgumentException("Purchase rate cannot be negative.");
+        }
+        if (command.purchasePrice() != null && command.purchasePrice().signum() < 0) {
+            throw new IllegalArgumentException("Purchase rate cannot be negative.");
+        }
+        if (command.sellingPrice() != null && command.sellingPrice().signum() < 0) {
+            throw new IllegalArgumentException("MRP cannot be negative.");
+        }
+        if (command.sellingPrice() != null && command.unitCost() != null && command.sellingPrice().compareTo(command.unitCost()) < 0) {
+            throw new IllegalArgumentException("MRP cannot be less than purchase rate.");
+        }
+        if (isSellableMedicine(medicine.getMedicineType()) && command.expiryDate() == null) {
+            throw new IllegalArgumentException("Expiry date is required for sellable medicines.");
+        }
+        if (command.expiryDate() != null && command.active() && command.expiryDate().isBefore(today())) {
+            throw new IllegalArgumentException("Expiry date cannot be in the past for active stock.");
+        }
+        ensureUniqueStockIdentifiers(tenantId, command, currentStock == null ? null : currentStock.getId());
     }
 
     private void ensureUniqueStockBatch(UUID tenantId, UUID medicineId, UUID locationId, String batchNumber, UUID id) {
@@ -534,7 +600,27 @@ public class InventoryServiceImpl implements InventoryService {
                 ? stockRepository.findByTenantIdAndMedicineIdAndLocationIdAndBatchNumberIgnoreCase(tenantId, medicineId, locationId, batchNumber).isPresent()
                 : stockRepository.existsByTenantIdAndMedicineIdAndLocationIdAndBatchNumberIgnoreCaseAndIdNot(tenantId, medicineId, locationId, batchNumber, id);
         if (duplicate) {
-            throw new IllegalArgumentException("Stock batch already exists for this medicine and location. Edit existing batch or use a different batch number.");
+            String medicineName = medicineRepository.findByTenantIdAndId(tenantId, medicineId).map(MedicineEntity::getMedicineName).orElse("this medicine");
+            String locationName = locationRepository.findByTenantIdAndId(tenantId, locationId).map(InventoryLocationEntity::getLocationName).orElse("this location");
+            throw new IllegalArgumentException("Batch " + batchNumber.trim().toUpperCase(Locale.ROOT) + " already exists for " + medicineName + " at " + locationName + ".");
+        }
+    }
+
+    private void ensureUniqueStockIdentifiers(UUID tenantId, StockUpsertCommand command, UUID currentStockId) {
+        if (StringUtils.hasText(command.barcode())) {
+            stockRepository.findByTenantIdAndBarcodeIgnoreCase(tenantId, normalizeNullable(command.barcode()))
+                    .filter(stock -> currentStockId == null || !stock.getId().equals(currentStockId))
+                    .ifPresent(stock -> { throw new IllegalArgumentException("Stock barcode already exists"); });
+        }
+        if (StringUtils.hasText(command.qrCode())) {
+            stockRepository.findByTenantIdAndQrCodeIgnoreCase(tenantId, normalizeNullable(command.qrCode()))
+                    .filter(stock -> currentStockId == null || !stock.getId().equals(currentStockId))
+                    .ifPresent(stock -> { throw new IllegalArgumentException("Stock QR code already exists"); });
+        }
+        if (StringUtils.hasText(command.externalCode())) {
+            stockRepository.findByTenantIdAndExternalCodeIgnoreCase(tenantId, normalizeNullable(command.externalCode()))
+                    .filter(stock -> currentStockId == null || !stock.getId().equals(currentStockId))
+                    .ifPresent(stock -> { throw new IllegalArgumentException("Stock external code already exists"); });
         }
     }
 
@@ -576,6 +662,17 @@ public class InventoryServiceImpl implements InventoryService {
         if (medicineRepository.existsByTenantIdAndMedicineNameIgnoreCaseAndIdNot(tenantId, command.medicineName(), id)) throw new IllegalArgumentException("Medicine already exists");
         if (StringUtils.hasText(command.barcode()) && medicineRepository.existsByTenantIdAndBarcodeIgnoreCaseAndIdNot(tenantId, command.barcode(), id)) throw new IllegalArgumentException("Medicine barcode already exists");
         if (StringUtils.hasText(command.externalCode()) && medicineRepository.existsByTenantIdAndExternalCodeIgnoreCaseAndIdNot(tenantId, command.externalCode(), id)) throw new IllegalArgumentException("Medicine external code already exists");
+    }
+
+    private boolean isSellableMedicine(String medicineType) {
+        if (!StringUtils.hasText(medicineType)) {
+            return false;
+        }
+        String type = medicineType.trim().toUpperCase(Locale.ROOT);
+        return switch (type) {
+            case "TABLET", "CAPSULE", "SYRUP", "INJECTION", "DROP", "DROPS", "OINTMENT", "SACHET" -> true;
+            default -> false;
+        };
     }
 
     private String normalize(String value) { return value == null ? null : value.trim(); }

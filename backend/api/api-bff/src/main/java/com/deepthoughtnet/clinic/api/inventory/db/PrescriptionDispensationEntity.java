@@ -26,6 +26,12 @@ public class PrescriptionDispensationEntity {
     private String billingStatus;
     @Column(name = "billed_bill_id")
     private UUID billedBillId;
+    @Column(name = "dispensing_status", nullable = false, length = 32)
+    private String dispensingStatus;
+    @Column(name = "closure_reason", length = 60)
+    private String closureReason;
+    @Column(name = "closure_remarks", length = 250)
+    private String closureRemarks;
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
     @Column(name = "updated_at", nullable = false)
@@ -41,6 +47,7 @@ public class PrescriptionDispensationEntity {
         e.prescriptionId = prescriptionId;
         e.patientId = patientId;
         e.billingStatus = "NOT_BILLED";
+        e.dispensingStatus = "NOT_DISPENSED";
         e.createdAt = now;
         e.updatedAt = now;
         return e;
@@ -52,10 +59,20 @@ public class PrescriptionDispensationEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    public void updateDispensingStatus(String status, String reason, String remarks) {
+        this.dispensingStatus = status;
+        this.closureReason = reason;
+        this.closureRemarks = remarks;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public UUID getId() { return id; }
     public UUID getTenantId() { return tenantId; }
     public UUID getPrescriptionId() { return prescriptionId; }
     public UUID getPatientId() { return patientId; }
     public String getBillingStatus() { return billingStatus; }
     public UUID getBilledBillId() { return billedBillId; }
+    public String getDispensingStatus() { return dispensingStatus; }
+    public String getClosureReason() { return closureReason; }
+    public String getClosureRemarks() { return closureRemarks; }
 }

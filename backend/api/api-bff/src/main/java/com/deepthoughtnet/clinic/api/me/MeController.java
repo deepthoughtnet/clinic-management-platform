@@ -9,7 +9,8 @@ import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.List;
 import java.util.Locale;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -17,9 +18,9 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-@Slf4j
 @RestController
 public class MeController {
+    private static final Logger log = LoggerFactory.getLogger(MeController.class);
     private final ActiveTenantMembershipService activeTenantMembershipService;
     private final PlatformTenantManagementService platformTenantManagementService;
     private final PermissionChecker permissionChecker;

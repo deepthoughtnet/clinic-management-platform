@@ -349,6 +349,106 @@ class BillingServicePaymentTest {
     }
 
     @Test
+    void futureBillDateRejected() {
+        assertThatThrownBy(() -> service.createDraft(tenantId, new BillUpsertCommand(
+                patientId,
+                null,
+                null,
+                LocalDate.now().plusDays(1),
+                DiscountType.NONE,
+                BigDecimal.ZERO,
+                null,
+                null,
+                null,
+                BigDecimal.ZERO,
+                null,
+                List.of(new BillLineCommand(BillItemType.CONSULTATION, "Consultation", 1, new BigDecimal("100.00"), null, 1, BigDecimal.ZERO, null, null))
+        ), actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("billDate cannot be in the future");
+        org.mockito.Mockito.verify(paymentRepository, org.mockito.Mockito.never()).save(any(PaymentEntity.class));
+    }
+
+    @Test
+    void emptyBillRejected() {
+        assertThatThrownBy(() -> service.createDraft(tenantId, new BillUpsertCommand(
+                patientId,
+                null,
+                null,
+                LocalDate.now(),
+                DiscountType.NONE,
+                BigDecimal.ZERO,
+                null,
+                null,
+                null,
+                BigDecimal.ZERO,
+                null,
+                List.of()
+        ), actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("At least one bill line is required");
+    }
+
+    @Test
+    void negativeTaxRejected() {
+        assertThatThrownBy(() -> service.createDraft(tenantId, new BillUpsertCommand(
+                patientId,
+                null,
+                null,
+                LocalDate.now(),
+                DiscountType.NONE,
+                BigDecimal.ZERO,
+                null,
+                null,
+                null,
+                new BigDecimal("-1.00"),
+                null,
+                List.of(new BillLineCommand(BillItemType.CONSULTATION, "Consultation", 1, new BigDecimal("100.00"), null, 1, BigDecimal.ZERO, null, null))
+        ), actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("taxAmount");
+    }
+
+    @Test
+    void duplicateBillSubmissionRejected() {
+        when(billRepository.findByTenantIdAndPatientIdOrderByBillDateDescCreatedAtDesc(tenantId, patientId)).thenReturn(List.of());
+        com.deepthoughtnet.clinic.billing.service.model.BillRecord firstRecord = service.createDraft(tenantId, new BillUpsertCommand(
+                patientId,
+                null,
+                null,
+                LocalDate.now(),
+                DiscountType.NONE,
+                BigDecimal.ZERO,
+                null,
+                null,
+                null,
+                BigDecimal.ZERO,
+                null,
+                List.of(new BillLineCommand(BillItemType.CONSULTATION, "Consultation", 1, new BigDecimal("100.00"), null, 1, BigDecimal.ZERO, null, null))
+        ), actorId);
+        BillEntity first = billRepository.findByTenantIdAndId(tenantId, firstRecord.id()).orElseThrow();
+        when(billRepository.findByTenantIdAndPatientIdOrderByBillDateDescCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(first));
+        when(billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, first.getId())).thenReturn(List.of(BillLineEntity.create(tenantId, first.getId(), BillItemType.CONSULTATION, "Consultation", 1, new BigDecimal("100.00"), BigDecimal.ZERO, new BigDecimal("100.00"), null, null, null, 1)));
+
+        assertThatThrownBy(() -> service.createDraft(tenantId, new BillUpsertCommand(
+                patientId,
+                null,
+                null,
+                LocalDate.now(),
+                DiscountType.NONE,
+                BigDecimal.ZERO,
+                null,
+                null,
+                null,
+                BigDecimal.ZERO,
+                null,
+                List.of(new BillLineCommand(BillItemType.CONSULTATION, "Consultation", 1, new BigDecimal("100.00"), null, 1, BigDecimal.ZERO, null, null))
+        ), actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Duplicate bill submission");
+    }
+
+    @Test
     void partialRefundUpdatesStatusToPartiallyRefunded() {
         List<PaymentEntity> payments = new ArrayList<>();
         List<com.deepthoughtnet.clinic.billing.db.BillRefundEntity> refunds = new ArrayList<>();

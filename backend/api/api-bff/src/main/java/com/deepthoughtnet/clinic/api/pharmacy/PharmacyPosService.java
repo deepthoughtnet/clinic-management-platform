@@ -75,8 +75,7 @@ public class PharmacyPosService {
             "pdf", "application/pdf",
             "jpg", "image/jpeg",
             "jpeg", "image/jpeg",
-            "png", "image/png",
-            "webp", "image/webp"
+            "png", "image/png"
     );
     private static final Set<String> BLOCKED_EXTENSIONS = Set.of(
             "exe", "dll", "bat", "cmd", "com", "msi", "ps1", "vbs", "js", "jar", "sh", "php", "pl", "scr", "hta", "apk", "bin"
@@ -328,6 +327,12 @@ public class PharmacyPosService {
             lineTaxTotal = lineTaxTotal.add(plan.taxAmount()).setScale(2, RoundingMode.HALF_UP);
         }
 
+        if (request.discount() != null && request.discount().compareTo(ZERO) < 0) {
+            throw new IllegalArgumentException("discount cannot be negative");
+        }
+        if (request.tax() != null && request.tax().compareTo(ZERO) < 0) {
+            throw new IllegalArgumentException("tax cannot be negative");
+        }
         BigDecimal extraDiscount = money(request.discount());
         BigDecimal extraTax = money(request.tax());
         BigDecimal totalDiscount = lineDiscountTotal.add(extraDiscount).setScale(2, RoundingMode.HALF_UP);
@@ -349,11 +354,11 @@ public class PharmacyPosService {
         if (paidAmount.compareTo(total) > 0) {
             throw new IllegalArgumentException("Paid amount cannot exceed sale total.");
         }
-        if (request.paymentMode() == null) {
-            throw new IllegalArgumentException("Payment mode is required.");
-        }
         if (total.compareTo(ZERO) > 0 && paidAmount.compareTo(ZERO) <= 0) {
             throw new IllegalArgumentException("Full payment is required before completing the pharmacy sale.");
+        }
+        if (paidAmount.compareTo(ZERO) > 0 && request.paymentMode() == null) {
+            throw new IllegalArgumentException("Payment mode is required when payment is entered.");
         }
         PharmacyCashierShiftEntity activeShift = paidAmount.compareTo(ZERO) > 0 ? requireOpenShift(tenantId, actorAppUserId) : null;
         if (request.paymentMode() != null && request.paymentMode() != PaymentMode.CASH && !StringUtils.hasText(request.paymentReference()) && paidAmount.compareTo(ZERO) > 0) {
@@ -468,6 +473,9 @@ public class PharmacyPosService {
         }
         if (request.paymentMode() != PaymentMode.CASH && !StringUtils.hasText(request.referenceNumber())) {
             throw new IllegalArgumentException("referenceNumber is required for non-cash payments");
+        }
+        if (StringUtils.hasText(request.referenceNumber()) && request.referenceNumber().trim().length() > 60) {
+            throw new IllegalArgumentException("referenceNumber must be 60 characters or fewer");
         }
         PharmacyCashierShiftEntity activeShift = requireOpenShift(tenantId, actorAppUserId);
         PharmacySaleEntity sale = saleRepository.findByTenantIdAndId(tenantId, saleId)
@@ -791,6 +799,18 @@ public class PharmacyPosService {
         }
         MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, line.medicineId())
                 .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
+        if (!medicine.isActive()) {
+            throw new IllegalArgumentException("Medicine is inactive and cannot be sold.");
+        }
+        if (line.unitPrice() != null && line.unitPrice().compareTo(ZERO) < 0) {
+            throw new IllegalArgumentException("unitPrice cannot be negative");
+        }
+        if (line.discount() != null && line.discount().compareTo(ZERO) < 0) {
+            throw new IllegalArgumentException("discount cannot be negative");
+        }
+        if (line.tax() != null && line.tax().compareTo(ZERO) < 0) {
+            throw new IllegalArgumentException("tax cannot be negative");
+        }
         List<StockEntity> allBatches = sortForFefo(stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, line.medicineId(), locationId));
         List<StockEntity> batches = stockRepository.findSellableBatchesForUpdate(tenantId, locationId, line.medicineId()).stream()
                 .filter(stock -> !isExpired(stock))
@@ -1037,8 +1057,17 @@ public class PharmacyPosService {
                 throw new IllegalArgumentException("quantity must be positive");
             }
         }
-        if (request.patientId() == null && !StringUtils.hasText(request.customerName())) {
-            throw new IllegalArgumentException("customerName is required for walk-in sales");
+        if (StringUtils.hasText(request.customerName())) {
+            validateOptionalWalkInName(request.customerName());
+        }
+        if (StringUtils.hasText(request.customerMobile())) {
+            validateOptionalIndianMobile(request.customerMobile());
+        }
+        if (StringUtils.hasText(request.paymentReference()) && request.paymentReference().trim().length() > 60) {
+            throw new IllegalArgumentException("paymentReference must be 60 characters or fewer");
+        }
+        if (StringUtils.hasText(request.notes()) && request.notes().trim().length() > 250) {
+            throw new IllegalArgumentException("notes must be 250 characters or fewer");
         }
     }
 
@@ -1074,7 +1103,7 @@ public class PharmacyPosService {
             throw new IllegalArgumentException("Executable files are not allowed");
         }
         if (!PRESCRIPTION_MEDIA_TYPES.containsKey(extension)) {
-            throw new IllegalArgumentException("Only PDF, JPG, JPEG, PNG, and WEBP files are allowed");
+            throw new IllegalArgumentException("Only PDF, JPG, JPEG, and PNG files are allowed");
         }
         if (!PRESCRIPTION_MEDIA_TYPES.get(extension).equals(mediaType)) {
             throw new IllegalArgumentException("Prescription file type does not match the allowed MIME types");
@@ -1228,7 +1257,11 @@ public class PharmacyPosService {
     }
 
     private String normalizeSearch(String value) {
-        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        String normalized = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        if (normalized.length() > 60) {
+            throw new IllegalArgumentException("Search text must be 60 characters or fewer");
+        }
+        return normalized;
     }
 
     private String normalize(String value) {
@@ -1240,6 +1273,23 @@ public class PharmacyPosService {
 
     private String normalizeNullable(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private void validateOptionalWalkInName(String value) {
+        String normalized = value.trim();
+        if (normalized.length() > 60) {
+            throw new IllegalArgumentException("customerName must be 60 characters or fewer");
+        }
+        if (!normalized.matches(".*[A-Za-z0-9].*")) {
+            throw new IllegalArgumentException("customerName must contain at least one letter or number");
+        }
+    }
+
+    private void validateOptionalIndianMobile(String value) {
+        String digits = value.trim().replaceAll("\\D", "");
+        if (!digits.matches("^[6-9]\\d{9}$")) {
+            throw new IllegalArgumentException("customerMobile must be a valid Indian mobile number");
+        }
     }
 
     private boolean contains(String value, String term) {

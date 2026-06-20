@@ -1,4 +1,4 @@
-import { keycloak } from "./keycloak";
+import { assertValidKeycloakClient, keycloak } from "./keycloakClient";
 
 let initPromise: Promise<boolean> | null = null;
 
@@ -9,6 +9,7 @@ export function initKeycloakOnce(timeoutMs = 5000) {
         reject(new Error("Keycloak initialization timed out"));
       }, timeoutMs);
 
+      assertValidKeycloakClient(keycloak);
       Promise.resolve(keycloak.init({
         onLoad: "check-sso",
         pkceMethod: "S256",

@@ -42,6 +42,20 @@ import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactFilterCard, CompactStatCard, compactCardContentSx } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import CodeScannerDialog from "../../components/pharmacy/CodeScannerDialog";
+import RequiredLabel from "../../components/forms/RequiredLabel.js";
+import CommentSuggestions from "../../shared/components/comment-suggestions/CommentSuggestions";
+import { FieldHelpTooltip } from "../../shared/components/help";
+import { getFieldHelpText } from "../../shared/components/help/fieldHelpCatalog";
+import {
+  inventoryBatchCreateSchema,
+  inventoryBatchEditSchema,
+  inventoryCustomerReturnSchema,
+  inventoryPhysicalCountSchema,
+  inventoryTransactionFormSchema,
+  inventoryVendorReturnSchema,
+  inventoryWriteOffSchema,
+  medicineMasterSchema,
+} from "@deepthoughtnet/form-validation-kit";
 import {
   createInventoryTransaction,
   createMedicine,
@@ -101,7 +115,10 @@ type StockCountFormState = {
   stockBatchId: string;
   countedQuantity: string;
   reason: string;
+  remarks: string;
 };
+
+type FormErrorMap = Record<string, string>;
 
 const TABS = [
   { value: "stocks", label: "Stock" },
@@ -170,6 +187,7 @@ function emptyStockCountForm(): StockCountFormState {
     stockBatchId: "",
     countedQuantity: "",
     reason: "",
+    remarks: "",
   };
 }
 
@@ -292,6 +310,25 @@ function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 }
 
+function zodFieldErrors(error: { issues?: Array<{ path?: ReadonlyArray<unknown>; message: string }> } | null | undefined) {
+  return (error?.issues || []).reduce<FormErrorMap>((acc, issue) => {
+    const key = String(issue.path?.[0] ?? "summary");
+    if (!acc[key]) {
+      acc[key] = issue.message;
+    }
+    return acc;
+  }, {});
+}
+
+function focusFirstInventoryField(errorMap: FormErrorMap, idMap: Record<string, string>) {
+  const firstKey = Object.keys(errorMap)[0];
+  if (!firstKey) return;
+  const targetId = idMap[firstKey];
+  if (!targetId || typeof document === "undefined") return;
+  const target = document.getElementById(targetId) as HTMLElement | null;
+  target?.focus?.();
+}
+
 export default function InventoryPage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -325,10 +362,18 @@ export default function InventoryPage() {
   const [customerReturnQuantity, setCustomerReturnQuantity] = React.useState("1");
   const [customerReturnReusable, setCustomerReturnReusable] = React.useState(true);
   const [customerReturnReason, setCustomerReturnReason] = React.useState("");
+  const [customerReturnNotes, setCustomerReturnNotes] = React.useState("");
   const [customerReturnMode, setCustomerReturnMode] = React.useState<PaymentMode>("CASH");
   const [customerReturnReference, setCustomerReturnReference] = React.useState("");
   const [vendorReturnForm, setVendorReturnForm] = React.useState({ medicineId: "", stockBatchId: "", quantity: "", supplierReference: "", reason: "", notes: "" });
   const [writeOffForm, setWriteOffForm] = React.useState({ medicineId: "", stockBatchId: "", quantity: "", reason: "", notes: "" });
+  const [stockFieldErrors, setStockFieldErrors] = React.useState<FormErrorMap>({});
+  const [transactionFieldErrors, setTransactionFieldErrors] = React.useState<FormErrorMap>({});
+  const [countFieldErrors, setCountFieldErrors] = React.useState<FormErrorMap>({});
+  const [customerReturnFieldErrors, setCustomerReturnFieldErrors] = React.useState<FormErrorMap>({});
+  const [vendorReturnFieldErrors, setVendorReturnFieldErrors] = React.useState<FormErrorMap>({});
+  const [writeOffFieldErrors, setWriteOffFieldErrors] = React.useState<FormErrorMap>({});
+  const [quickMedicineFieldErrors, setQuickMedicineFieldErrors] = React.useState<FormErrorMap>({});
 
   const medicineById = React.useMemo(() => new Map(medicines.map((medicine) => [medicine.id, medicine])), [medicines]);
   const medicineAutocompleteOptions = React.useMemo<MedicineAutocompleteOption[]>(
@@ -491,8 +536,16 @@ export default function InventoryPage() {
       setError("Enter a medicine name before saving.");
       return;
     }
+    const parsedMedicine = medicineMasterSchema.safeParse(quickMedicineForm);
+    if (!parsedMedicine.success) {
+      const fieldErrors = zodFieldErrors(parsedMedicine.error);
+      setQuickMedicineFieldErrors(fieldErrors);
+      setError(parsedMedicine.error.issues[0]?.message || "Medicine could not be saved.");
+      return;
+    }
     setSaving(true);
     setError(null);
+    setQuickMedicineFieldErrors({});
     try {
       const created = await createMedicine(auth.accessToken, auth.tenantId, {
         ...quickMedicineForm,
@@ -577,9 +630,46 @@ export default function InventoryPage() {
       setError("Select a medicine before saving stock.");
       return;
     }
+    const parsedStock = (selectedStockId ? inventoryBatchEditSchema : inventoryBatchCreateSchema).safeParse(stockInput(stockForm));
+    if (!parsedStock.success) {
+      const fieldErrors = zodFieldErrors(parsedStock.error);
+      setStockFieldErrors(fieldErrors);
+      setError(parsedStock.error.issues[0]?.message || "Stock could not be saved.");
+      focusFirstInventoryField(fieldErrors, {
+        medicineId: "inventory-stock-medicine",
+        locationId: "inventory-stock-location",
+        batchNumber: "inventory-stock-batch",
+        expiryDate: "inventory-stock-expiry",
+        quantityOnHand: "inventory-stock-quantity",
+        lowStockThreshold: "inventory-stock-reorder",
+        unitCost: "inventory-stock-purchase-rate",
+        sellingPrice: "inventory-stock-mrp",
+        barcode: "inventory-stock-barcode",
+        qrCode: "inventory-stock-qrcode",
+        externalCode: "inventory-stock-external",
+      });
+      return;
+    }
+    if (!selectedMedicineForStock?.active) {
+      setStockFieldErrors({ medicineId: "Cannot add stock for an inactive medicine." });
+      setError("Cannot add stock for an inactive medicine.");
+      return;
+    }
+    if (currentStock && currentStockHasMovements) {
+      if (currentStock.medicineId !== stockForm.medicineId || (stockForm.locationId || null) !== (currentStock.locationId || "") || (stockForm.batchNumber.trim() || null) !== (currentStock.batchNumber || null)) {
+        setStockFieldErrors({
+          medicineId: "Medicine cannot be changed after stock movement exists.",
+          locationId: "Location cannot be changed after stock movement exists.",
+          batchNumber: "Batch number cannot be changed after stock movement exists.",
+        });
+        setError("Medicine, location, and batch number cannot be changed after stock movement exists.");
+        return;
+      }
+    }
     setSaving(true);
     setError(null);
     setSuccess(null);
+    setStockFieldErrors({});
     try {
       const body = stockInput(stockForm);
       if (selectedStockId) {
@@ -594,9 +684,7 @@ export default function InventoryPage() {
       setSuccess("Stock saved");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to save stock";
-      setError(message.includes("Stock batch already exists")
-        ? "Stock batch already exists for this medicine and location. Edit existing batch or use a different batch number."
-        : message);
+      setError(message);
     } finally {
       setSaving(false);
     }
@@ -637,13 +725,25 @@ export default function InventoryPage() {
       setError("Select a medicine and quantity before saving a transaction.");
       return;
     }
-    if (["ADJUSTMENT", "ADJUSTMENT_IN", "ADJUSTMENT_OUT", "CUSTOMER_RETURN_IN", "CUSTOMER_RETURN_NON_SELLABLE", "VENDOR_RETURN_OUT", "WRITE_OFF"].includes(transactionForm.transactionType) && !transactionForm.notes.trim()) {
-      setError("Reason is required for this stock movement.");
+    const parsedTransaction = inventoryTransactionFormSchema.safeParse(transactionForm);
+    if (!parsedTransaction.success) {
+      const fieldErrors = zodFieldErrors(parsedTransaction.error);
+      setTransactionFieldErrors(fieldErrors);
+      setError(parsedTransaction.error.issues[0]?.message || "Stock movement could not be saved.");
+      focusFirstInventoryField(fieldErrors, {
+        medicineId: "inventory-transaction-medicine",
+        stockBatchId: "inventory-transaction-batch",
+        quantity: "inventory-transaction-quantity",
+        referenceType: "inventory-transaction-reference-type",
+        referenceId: "inventory-transaction-reference-id",
+        notes: "inventory-transaction-notes",
+      });
       return;
     }
     setSaving(true);
     setError(null);
     setSuccess(null);
+    setTransactionFieldErrors({});
     try {
       await createInventoryTransaction(auth.accessToken, auth.tenantId, transactionInput(transactionForm));
       setTransactionForm(emptyTransactionForm());
@@ -661,18 +761,35 @@ export default function InventoryPage() {
       setError("Select a sale line before submitting a customer return.");
       return;
     }
-    const quantity = Number(customerReturnQuantity);
     const returnable = selectedCustomerReturnItem.quantity - selectedCustomerReturnItem.returnedQuantity;
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      setError("Return quantity must be positive.");
+    const parsed = inventoryCustomerReturnSchema.safeParse({
+      saleId: selectedCustomerSale.id,
+      saleLineId: selectedCustomerReturnItem.id,
+      returnQuantity: customerReturnQuantity,
+      condition: customerReturnReusable ? "REUSABLE" : "NOT_SELLABLE",
+      refundMode: customerReturnMode,
+      reason: customerReturnReason,
+      referenceNumber: customerReturnReference,
+      notes: customerReturnNotes,
+    });
+    if (!parsed.success) {
+      const fieldErrors = zodFieldErrors(parsed.error);
+      setCustomerReturnFieldErrors(fieldErrors);
+      setError(parsed.error.issues[0]?.message || "Customer return could not be processed.");
+      focusFirstInventoryField(fieldErrors, {
+        saleId: "customer-return-sale",
+        saleLineId: "customer-return-line",
+        returnQuantity: "inventory-customer-return-quantity",
+        reason: "customer-return-reason",
+        notes: "customer-return-notes",
+        referenceNumber: "customer-return-reference",
+        condition: "customer-return-condition",
+      });
       return;
     }
+    const quantity = Number(customerReturnQuantity);
     if (quantity > returnable) {
       setError("Return quantity exceeds the remaining sold quantity.");
-      return;
-    }
-    if (!customerReturnReason.trim()) {
-      setError("Reason is required for customer returns.");
       return;
     }
     if (customerReturnReusable && selectedCustomerReturnItem.expiryDate && new Date(selectedCustomerReturnItem.expiryDate) < new Date()) {
@@ -682,12 +799,13 @@ export default function InventoryPage() {
     setSaving(true);
     setError(null);
     setSuccess(null);
+    setCustomerReturnFieldErrors({});
     try {
       await returnPharmacyPosSale(auth.accessToken, auth.tenantId, selectedCustomerSale.id, {
         reason: customerReturnReason.trim(),
         refundMode: customerReturnMode,
         referenceNumber: customerReturnReference.trim() || null,
-        notes: `Customer return from Inventory: ${customerReturnReusable ? "Reusable" : "Non-sellable"} - ${customerReturnReason.trim()}`,
+        notes: customerReturnNotes.trim() || `Customer return from Inventory: ${customerReturnReusable ? "Reusable" : "Non-sellable"} - ${customerReturnReason.trim()}`,
         items: [{
           saleItemId: selectedCustomerReturnItem.id,
           quantity,
@@ -697,6 +815,7 @@ export default function InventoryPage() {
       await loadAll();
       setCustomerReturnQuantity("1");
       setCustomerReturnReason("");
+      setCustomerReturnNotes("");
       setCustomerReturnReference("");
       setSuccess(selectedCustomerSale.paidAmount > 0
         ? "Customer return processed. Refund can be processed from Billing / Refunds."
@@ -714,26 +833,41 @@ export default function InventoryPage() {
       return;
     }
     const batch = stocks.find((stock) => stock.id === vendorReturnForm.stockBatchId) ?? null;
-    const quantity = Number(vendorReturnForm.quantity);
     if (!batch) {
       setError("Select a valid batch.");
       return;
     }
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      setError("Return quantity must be positive.");
+    const parsed = inventoryVendorReturnSchema.safeParse({
+      medicineId: vendorReturnForm.medicineId,
+      stockBatchId: vendorReturnForm.stockBatchId,
+      returnQuantity: vendorReturnForm.quantity,
+      supplierReference: vendorReturnForm.supplierReference,
+      reason: vendorReturnForm.reason,
+      notes: vendorReturnForm.notes,
+    });
+    if (!parsed.success) {
+      const fieldErrors = zodFieldErrors(parsed.error);
+      setVendorReturnFieldErrors(fieldErrors);
+      setError(parsed.error.issues[0]?.message || "Vendor return could not be processed.");
+      focusFirstInventoryField(fieldErrors, {
+        medicineId: "vendor-return-medicine",
+        stockBatchId: "vendor-return-batch",
+        quantity: "vendor-return-quantity",
+        supplierReference: "vendor-return-supplier",
+        reason: "vendor-return-reason",
+        notes: "vendor-return-notes",
+      });
       return;
     }
+    const quantity = Number(vendorReturnForm.quantity);
     if (quantity > batch.quantityOnHand) {
       setError("Insufficient stock available.");
-      return;
-    }
-    if (!vendorReturnForm.reason.trim()) {
-      setError("Reason is required for vendor returns.");
       return;
     }
     setSaving(true);
     setError(null);
     setSuccess(null);
+    setVendorReturnFieldErrors({});
     try {
       await createInventoryTransaction(auth.accessToken, auth.tenantId, {
         medicineId: batch.medicineId,
@@ -766,26 +900,39 @@ export default function InventoryPage() {
       return;
     }
     const batch = stocks.find((stock) => stock.id === writeOffForm.stockBatchId) ?? null;
-    const quantity = Number(writeOffForm.quantity);
     if (!batch) {
       setError("Select a valid batch.");
       return;
     }
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      setError("Write-off quantity must be positive.");
+    const parsed = inventoryWriteOffSchema.safeParse({
+      medicineId: writeOffForm.medicineId,
+      stockBatchId: writeOffForm.stockBatchId,
+      writeOffQuantity: writeOffForm.quantity,
+      reason: writeOffForm.reason,
+      notes: writeOffForm.notes,
+    });
+    if (!parsed.success) {
+      const fieldErrors = zodFieldErrors(parsed.error);
+      setWriteOffFieldErrors(fieldErrors);
+      setError(parsed.error.issues[0]?.message || "Write-off could not be processed.");
+      focusFirstInventoryField(fieldErrors, {
+        medicineId: "writeoff-medicine",
+        stockBatchId: "writeoff-batch",
+        writeOffQuantity: "writeoff-quantity",
+        reason: "writeoff-reason",
+        notes: "writeoff-notes",
+      });
       return;
     }
+    const quantity = Number(writeOffForm.quantity);
     if (quantity > batch.quantityOnHand) {
       setError("Insufficient stock available.");
-      return;
-    }
-    if (!writeOffForm.reason.trim()) {
-      setError("Reason is required for write-offs.");
       return;
     }
     setSaving(true);
     setError(null);
     setSuccess(null);
+    setWriteOffFieldErrors({});
     try {
       await createInventoryTransaction(auth.accessToken, auth.tenantId, {
         medicineId: batch.medicineId,
@@ -812,6 +959,19 @@ export default function InventoryPage() {
   };
 
   const currentStock = selectedStockId ? stocks.find((stock) => stock.id === selectedStockId) || null : null;
+  const currentStockMovementCount = React.useMemo(
+    () => (selectedStockId ? transactions.filter((transaction) => transaction.stockBatchId === selectedStockId).length : 0),
+    [selectedStockId, transactions],
+  );
+  const currentStockHasMovements = currentStockMovementCount > 0;
+  const selectedMedicineForStock = React.useMemo(
+    () => medicines.find((medicine) => medicine.id === stockForm.medicineId) ?? null,
+    [medicines, stockForm.medicineId],
+  );
+  const stockBatchIsSellable = React.useMemo(
+    () => ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "DROP", "DROPS", "OINTMENT", "SACHET"].includes(selectedMedicineForStock?.medicineType || ""),
+    [selectedMedicineForStock?.medicineType],
+  );
 
   return (
     <Stack spacing={3}>
@@ -997,10 +1157,15 @@ export default function InventoryPage() {
                           renderInput={(params) => (
                             <TextField
                               {...params}
+                              id="inventory-stock-medicine"
                               size="small"
-                              label="Medicine"
+                              label={<FieldHelpTooltip label="Medicine" required helpText={getFieldHelpText("medicine")} />}
                               placeholder="Search by name, brand, generic, barcode, QR, or code"
                               helperText="Search medicine name, generic, brand, barcode, QR code, or external code."
+                              required
+                              error={Boolean(stockFieldErrors.medicineId)}
+                              inputProps={{ ...params.inputProps, "aria-required": true }}
+                              FormHelperTextProps={{ sx: { minHeight: 20 } }}
                             />
                           )}
                         />
@@ -1012,9 +1177,19 @@ export default function InventoryPage() {
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
                         <FormControl fullWidth size="small">
-                          <InputLabel id="stock-location-label">Location</InputLabel>
-                          <Select labelId="stock-location-label" label="Location" value={stockForm.locationId} onChange={(e) => setStockForm((current) => ({ ...current, locationId: String(e.target.value) }))}>
-                            <MenuItem value="">Default location</MenuItem>
+                          <InputLabel id="stock-location-label">
+                            <FieldHelpTooltip label="Location" required helpText={getFieldHelpText("location")} />
+                          </InputLabel>
+                          <Select
+                            labelId="stock-location-label"
+                            label="Location"
+                            value={stockForm.locationId}
+                            onChange={(e) => setStockForm((current) => ({ ...current, locationId: String(e.target.value) }))}
+                            required
+                            error={Boolean(stockFieldErrors.locationId)}
+                            inputProps={{ id: "inventory-stock-location", "aria-required": true }}
+                          >
+                            <MenuItem value="">Select location</MenuItem>
                             {locations.map((location) => (
                               <MenuItem key={location.id} value={location.id}>
                                 {location.locationName}{location.defaultLocation ? " (Default)" : ""}
@@ -1024,7 +1199,18 @@ export default function InventoryPage() {
                         </FormControl>
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField size="small" fullWidth label="Batch number" value={stockForm.batchNumber} onChange={(e) => setStockForm((current) => ({ ...current, batchNumber: e.target.value }))} />
+                        <TextField
+                          id="inventory-stock-batch"
+                          size="small"
+                          fullWidth
+                          label={<FieldHelpTooltip label="Batch number" required helpText={getFieldHelpText("batchNumber")} />}
+                          value={stockForm.batchNumber}
+                          onChange={(e) => setStockForm((current) => ({ ...current, batchNumber: e.target.value }))}
+                          required
+                          error={Boolean(stockFieldErrors.batchNumber)}
+                          helperText={stockFieldErrors.batchNumber || getFieldHelpText("batchNumber")}
+                          inputProps={{ "aria-required": true, maxLength: 30 }}
+                        />
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
                         <TextField size="small" fullWidth label="Purchase reference" value={stockForm.purchaseReferenceNumber} onChange={(e) => setStockForm((current) => ({ ...current, purchaseReferenceNumber: e.target.value }))} />
@@ -1032,39 +1218,93 @@ export default function InventoryPage() {
                       <Grid size={{ xs: 12 }}>
                         <Grid container spacing={1.25}>
                           <Grid size={{ xs: 12, md: 4 }}>
-                            <CodeScannerField label="Barcode" value={stockForm.barcode} onChange={(value) => setStockForm((current) => ({ ...current, barcode: value }))} placeholder="Scan or enter barcode" helperText="Use batch label code if available." />
+                            <CodeScannerField label={<FieldHelpTooltip label="Barcode" helpText={getFieldHelpText("barcode")} />} value={stockForm.barcode} onChange={(value) => setStockForm((current) => ({ ...current, barcode: value }))} placeholder="Scan or enter barcode" helperText={stockFieldErrors.barcode || getFieldHelpText("barcode")} error={Boolean(stockFieldErrors.barcode)} />
                           </Grid>
                           <Grid size={{ xs: 12, md: 4 }}>
-                            <CodeScannerField label="QR code" value={stockForm.qrCode} onChange={(value) => setStockForm((current) => ({ ...current, qrCode: value }))} placeholder="Scan or enter QR code" />
+                            <CodeScannerField label={<FieldHelpTooltip label="QR code" helpText={getFieldHelpText("qrCode")} />} value={stockForm.qrCode} onChange={(value) => setStockForm((current) => ({ ...current, qrCode: value }))} placeholder="Scan or enter QR code" error={Boolean(stockFieldErrors.qrCode)} helperText={stockFieldErrors.qrCode || getFieldHelpText("qrCode")} />
                           </Grid>
                           <Grid size={{ xs: 12, md: 4 }}>
-                            <CodeScannerField label="External code" value={stockForm.externalCode} onChange={(value) => setStockForm((current) => ({ ...current, externalCode: value }))} placeholder="Scan or enter code" />
+                            <CodeScannerField label={<FieldHelpTooltip label="External code" helpText={getFieldHelpText("externalCode")} />} value={stockForm.externalCode} onChange={(value) => setStockForm((current) => ({ ...current, externalCode: value }))} placeholder="Scan or enter code" error={Boolean(stockFieldErrors.externalCode)} helperText={stockFieldErrors.externalCode || getFieldHelpText("externalCode")} />
                           </Grid>
                         </Grid>
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField size="small" fullWidth label="Expiry date" type="date" value={stockForm.expiryDate} onChange={(e) => setStockForm((current) => ({ ...current, expiryDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                        <TextField
+                          id="inventory-stock-expiry"
+                          size="small"
+                          fullWidth
+                          label={<FieldHelpTooltip label="Expiry date" required helpText={getFieldHelpText("expiryDate")} />}
+                          type="date"
+                          value={stockForm.expiryDate}
+                          onChange={(e) => setStockForm((current) => ({ ...current, expiryDate: e.target.value }))}
+                          InputLabelProps={{ shrink: true }}
+                          required
+                          error={Boolean(stockFieldErrors.expiryDate)}
+                          helperText={stockFieldErrors.expiryDate || getFieldHelpText("expiryDate")}
+                          inputProps={{ "aria-required": true }}
+                        />
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField size="small" fullWidth label="Quantity on hand" value={stockForm.quantityOnHand} onChange={(e) => setStockForm((current) => ({ ...current, quantityOnHand: e.target.value }))} />
+                        <TextField
+                          id="inventory-stock-quantity"
+                          size="small"
+                          fullWidth
+                          label={<FieldHelpTooltip label="Quantity on hand" required helpText={getFieldHelpText("quantityOnHand")} />}
+                          value={stockForm.quantityOnHand}
+                          onChange={(e) => setStockForm((current) => ({ ...current, quantityOnHand: e.target.value }))}
+                          required
+                          error={Boolean(stockFieldErrors.quantityOnHand)}
+                          helperText={stockFieldErrors.quantityOnHand || getFieldHelpText("quantityOnHand")}
+                          inputProps={{ "aria-required": true, inputMode: "numeric" }}
+                        />
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField size="small" fullWidth label="Low stock threshold" value={stockForm.lowStockThreshold} onChange={(e) => setStockForm((current) => ({ ...current, lowStockThreshold: e.target.value }))} />
+                        <TextField
+                          id="inventory-stock-reorder"
+                          size="small"
+                          fullWidth
+                          label={<FieldHelpTooltip label="Reorder level" helpText={getFieldHelpText("reorderLevel")} />}
+                          value={stockForm.lowStockThreshold}
+                          onChange={(e) => setStockForm((current) => ({ ...current, lowStockThreshold: e.target.value }))}
+                          error={Boolean(stockFieldErrors.lowStockThreshold)}
+                          helperText={stockFieldErrors.lowStockThreshold || getFieldHelpText("reorderLevel")}
+                          inputProps={{ inputMode: "numeric" }}
+                        />
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
                         <FormControl fullWidth size="small">
-                          <InputLabel id="stock-active-label">Active</InputLabel>
-                          <Select labelId="stock-active-label" label="Active" value={stockForm.active ? "true" : "false"} onChange={(e) => setStockForm((current) => ({ ...current, active: String(e.target.value) === "true" }))}>
+                          <InputLabel id="stock-active-label"><RequiredLabel text="Status" required /></InputLabel>
+                          <Select id="inventory-stock-status" labelId="stock-active-label" label="Status" value={stockForm.active ? "true" : "false"} onChange={(e) => setStockForm((current) => ({ ...current, active: String(e.target.value) === "true" }))} required inputProps={{ "aria-required": true }}>
                             <MenuItem value="true">Active</MenuItem>
                             <MenuItem value="false">Inactive</MenuItem>
                           </Select>
                         </FormControl>
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField size="small" fullWidth label="Unit cost" value={stockForm.unitCost} onChange={(e) => setStockForm((current) => ({ ...current, unitCost: e.target.value }))} />
+                        <TextField
+                          id="inventory-stock-purchase-rate"
+                          size="small"
+                          fullWidth
+                          label={<FieldHelpTooltip label="Purchase rate" helpText={getFieldHelpText("purchaseRate")} />}
+                          value={stockForm.unitCost}
+                          onChange={(e) => setStockForm((current) => ({ ...current, unitCost: e.target.value }))}
+                          error={Boolean(stockFieldErrors.unitCost)}
+                          helperText={stockFieldErrors.unitCost || getFieldHelpText("purchaseRate")}
+                          inputProps={{ inputMode: "decimal" }}
+                        />
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField size="small" fullWidth label="Selling price" value={stockForm.sellingPrice} onChange={(e) => setStockForm((current) => ({ ...current, sellingPrice: e.target.value }))} />
+                        <TextField
+                          id="inventory-stock-mrp"
+                          size="small"
+                          fullWidth
+                          label={<FieldHelpTooltip label="MRP" helpText={getFieldHelpText("mrp")} />}
+                          value={stockForm.sellingPrice}
+                          onChange={(e) => setStockForm((current) => ({ ...current, sellingPrice: e.target.value }))}
+                          error={Boolean(stockFieldErrors.sellingPrice)}
+                          helperText={stockFieldErrors.sellingPrice || getFieldHelpText("mrp")}
+                          inputProps={{ inputMode: "decimal" }}
+                        />
                       </Grid>
                     </Grid>
                     <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
@@ -1107,8 +1347,8 @@ export default function InventoryPage() {
                   <Grid container spacing={1.25}>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <FormControl fullWidth size="small">
-                        <InputLabel id="transaction-medicine-label">Medicine</InputLabel>
-                        <Select labelId="transaction-medicine-label" label="Medicine" value={transactionForm.medicineId} onChange={(e) => setTransactionForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))}>
+                        <InputLabel id="transaction-medicine-label"><RequiredLabel text="Medicine" required /></InputLabel>
+                        <Select id="inventory-transaction-medicine" labelId="transaction-medicine-label" label="Medicine" value={transactionForm.medicineId} onChange={(e) => setTransactionForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))} required error={Boolean(transactionFieldErrors.medicineId)} inputProps={{ "aria-required": true }}>
                           <MenuItem value="">Select medicine</MenuItem>
                           {medicines.map((medicine) => (
                             <MenuItem key={medicine.id} value={medicine.id}>
@@ -1121,7 +1361,7 @@ export default function InventoryPage() {
                     <Grid size={{ xs: 12, md: 6 }}>
                       <FormControl fullWidth size="small">
                         <InputLabel id="transaction-stock-label">Stock batch</InputLabel>
-                        <Select labelId="transaction-stock-label" label="Stock batch" value={transactionForm.stockBatchId} onChange={(e) => setTransactionForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}>
+                        <Select id="inventory-transaction-batch" labelId="transaction-stock-label" label="Stock batch" value={transactionForm.stockBatchId} onChange={(e) => setTransactionForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))} error={Boolean(transactionFieldErrors.stockBatchId)}>
                           <MenuItem value="">Select batch</MenuItem>
                           {filteredTransactionStocks.map((stock) => (
                             <MenuItem key={stock.id} value={stock.id}>
@@ -1129,6 +1369,7 @@ export default function InventoryPage() {
                             </MenuItem>
                           ))}
                         </Select>
+                        {transactionFieldErrors.stockBatchId ? <Typography variant="caption" color="error">{transactionFieldErrors.stockBatchId}</Typography> : null}
                       </FormControl>
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
@@ -1144,16 +1385,16 @@ export default function InventoryPage() {
                       </FormControl>
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField size="small" fullWidth label="Quantity" value={transactionForm.quantity} onChange={(e) => setTransactionForm((current) => ({ ...current, quantity: e.target.value }))} />
+                      <TextField id="inventory-transaction-quantity" size="small" fullWidth label={<RequiredLabel text="Quantity" required />} value={transactionForm.quantity} onChange={(e) => setTransactionForm((current) => ({ ...current, quantity: e.target.value }))} required error={Boolean(transactionFieldErrors.quantity)} helperText={transactionFieldErrors.quantity || "Positive whole number."} inputProps={{ min: 1, step: 1, "aria-required": true }} />
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField size="small" fullWidth label="Reference type" value={transactionForm.referenceType} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceType: e.target.value }))} />
+                      <TextField id="inventory-transaction-reference-type" size="small" fullWidth label="Reference type" value={transactionForm.referenceType} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceType: e.target.value }))} error={Boolean(transactionFieldErrors.referenceType)} helperText={transactionFieldErrors.referenceType || "Optional reference type."} />
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField size="small" fullWidth label="Reference ID" value={transactionForm.referenceId} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceId: e.target.value }))} />
+                      <TextField id="inventory-transaction-reference-id" size="small" fullWidth label="Reference ID" value={transactionForm.referenceId} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceId: e.target.value }))} error={Boolean(transactionFieldErrors.referenceId)} helperText={transactionFieldErrors.referenceId || "Optional UUID reference identifier."} />
                     </Grid>
                     <Grid size={12}>
-                      <TextField size="small" fullWidth label="Notes" value={transactionForm.notes} onChange={(e) => setTransactionForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} />
+                      <TextField id="inventory-transaction-notes" size="small" fullWidth label="Notes" value={transactionForm.notes} onChange={(e) => setTransactionForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} error={Boolean(transactionFieldErrors.notes)} helperText={transactionFieldErrors.notes || "Optional for non-adjustment movements; required for adjustments."} />
                     </Grid>
                     <Grid size={12}>
                       <Button onClick={() => void saveTransaction()} disabled={saving}>
@@ -1178,44 +1419,58 @@ export default function InventoryPage() {
                   <Grid container spacing={1.25}>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <FormControl fullWidth size="small">
-                        <InputLabel id="count-medicine-label">Medicine</InputLabel>
+                        <InputLabel id="count-medicine-label"><RequiredLabel text="Medicine" required /></InputLabel>
                         <Select
+                          id="inventory-count-medicine"
                           labelId="count-medicine-label"
                           label="Medicine"
                           value={stockCountForm.medicineId}
                           onChange={(e) => setStockCountForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))}
+                          required
+                          error={Boolean(countFieldErrors.medicineId)}
+                          inputProps={{ "aria-required": true }}
                         >
                           <MenuItem value="">Select medicine</MenuItem>
                           {medicines.map((medicine) => (
                             <MenuItem key={medicine.id} value={medicine.id}>{medicine.medicineName}</MenuItem>
                           ))}
                         </Select>
+                        {countFieldErrors.medicineId ? <Typography variant="caption" color="error">{countFieldErrors.medicineId}</Typography> : null}
                       </FormControl>
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <FormControl fullWidth size="small">
-                        <InputLabel id="count-location-label">Location</InputLabel>
+                        <InputLabel id="count-location-label"><RequiredLabel text="Location" required /></InputLabel>
                         <Select
+                          id="inventory-count-location"
                           labelId="count-location-label"
                           label="Location"
                           value={stockCountForm.locationId}
                           onChange={(e) => setStockCountForm((current) => ({ ...current, locationId: String(e.target.value), stockBatchId: "" }))}
+                          required
+                          error={Boolean(countFieldErrors.locationId)}
+                          inputProps={{ "aria-required": true }}
                         >
                           <MenuItem value="">All locations</MenuItem>
                           {locations.map((location) => (
                             <MenuItem key={location.id} value={location.id}>{location.locationName}</MenuItem>
                           ))}
                         </Select>
+                        {countFieldErrors.locationId ? <Typography variant="caption" color="error">{countFieldErrors.locationId}</Typography> : null}
                       </FormControl>
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <FormControl fullWidth size="small">
-                        <InputLabel id="count-batch-label">Batch</InputLabel>
+                        <InputLabel id="count-batch-label"><RequiredLabel text="Batch" required /></InputLabel>
                         <Select
+                          id="inventory-count-batch"
                           labelId="count-batch-label"
                           label="Batch"
                           value={stockCountForm.stockBatchId}
                           onChange={(e) => setStockCountForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}
+                          required
+                          error={Boolean(countFieldErrors.stockBatchId)}
+                          inputProps={{ "aria-required": true }}
                         >
                           <MenuItem value="">Select batch</MenuItem>
                           {countableStocks.map((stock) => (
@@ -1224,6 +1479,7 @@ export default function InventoryPage() {
                             </MenuItem>
                           ))}
                         </Select>
+                        {countFieldErrors.stockBatchId ? <Typography variant="caption" color="error">{countFieldErrors.stockBatchId}</Typography> : null}
                       </FormControl>
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
@@ -1238,23 +1494,35 @@ export default function InventoryPage() {
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <TextField
+                        id="inventory-count-quantity"
                         size="small"
                         fullWidth
                         type="number"
-                        label="Counted quantity"
+                        label={<RequiredLabel text="Physical count" required />}
                         value={stockCountForm.countedQuantity}
                         onChange={(e) => setStockCountForm((current) => ({ ...current, countedQuantity: e.target.value }))}
+                        required
+                        error={Boolean(countFieldErrors.physicalQuantity)}
+                        helperText={countFieldErrors.physicalQuantity || "Enter the counted quantity from shelves."}
+                        inputProps={{ min: 0, step: 1, "aria-required": true }}
                       />
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField
-                        size="small"
-                        fullWidth
-                        label="Reason"
-                        value={stockCountForm.reason}
-                        onChange={(e) => setStockCountForm((current) => ({ ...current, reason: e.target.value }))}
-                        helperText="Reason is required for audit trail."
-                      />
+                      <Box id="inventory-count-reason" tabIndex={-1}>
+                        <CommentSuggestions
+                          category="INVENTORY_ADJUSTMENT"
+                          selectedReason={stockCountForm.reason}
+                          remarks={stockCountForm.remarks}
+                          onReasonChange={(value) => setStockCountForm((current) => ({ ...current, reason: value }))}
+                          onRemarksChange={(value) => setStockCountForm((current) => ({ ...current, remarks: value }))}
+                          requiredReason
+                          maxRemarksLength={250}
+                          reasonLabel="Adjustment reason"
+                          remarksLabel="Remarks"
+                          reasonHelperText={countFieldErrors.reason || "Reason is required for audit trail."}
+                          remarksHelperText={countFieldErrors.remarks || `${stockCountForm.remarks.length}/250`}
+                        />
+                      </Box>
                     </Grid>
                     <Grid size={12}>
                       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
@@ -1271,23 +1539,37 @@ export default function InventoryPage() {
                               setError("Select a batch before posting the stock count.");
                               return;
                             }
-                            const counted = Number(stockCountForm.countedQuantity);
-                            if (!Number.isFinite(counted) || counted < 0) {
-                              setError("Enter a valid counted quantity.");
+                            const parsedCount = inventoryPhysicalCountSchema.safeParse({
+                              stockBatchId: selectedCountStock.id,
+                              medicineId: selectedCountStock.medicineId,
+                              locationId: selectedCountStock.locationId || selectedLocationId || "",
+                              physicalQuantity: stockCountForm.countedQuantity,
+                              reason: stockCountForm.reason,
+                              remarks: stockCountForm.remarks,
+                            });
+                            if (!parsedCount.success) {
+                              const fieldErrors = zodFieldErrors(parsedCount.error);
+                              setCountFieldErrors(fieldErrors);
+                              setError(parsedCount.error.issues[0]?.message || "Stock count could not be posted.");
+                              focusFirstInventoryField(fieldErrors, {
+                                medicineId: "inventory-count-medicine",
+                                locationId: "inventory-count-location",
+                                stockBatchId: "inventory-count-batch",
+                                physicalQuantity: "inventory-count-quantity",
+                                reason: "inventory-count-reason",
+                              });
                               return;
                             }
+                            const counted = Number(stockCountForm.countedQuantity);
                             const variance = counted - selectedCountStock.quantityOnHand;
                             if (variance === 0) {
                               setError("No variance to post for this stock count.");
                               return;
                             }
-                            if (!stockCountForm.reason.trim()) {
-                              setError("Reason is required for stock count adjustments.");
-                              return;
-                            }
                             setSaving(true);
                             setError(null);
                             setSuccess(null);
+                            setCountFieldErrors({});
                             try {
                               await createInventoryTransaction(auth.accessToken, auth.tenantId, {
                                 medicineId: selectedCountStock.medicineId,
@@ -1297,7 +1579,7 @@ export default function InventoryPage() {
                                 reason: `Physical stock count: ${stockCountForm.reason.trim()}`,
                                 referenceType: "PHYSICAL_STOCK_COUNT",
                                 referenceId: selectedCountStock.id,
-                                notes: `System ${selectedCountStock.quantityOnHand}, counted ${counted}, variance ${variance > 0 ? "+" : ""}${variance}`,
+                                notes: `System ${selectedCountStock.quantityOnHand}, counted ${counted}, variance ${variance > 0 ? "+" : ""}${variance}${stockCountForm.remarks.trim() ? ` • ${stockCountForm.remarks.trim()}` : ""}`,
                               });
                               await loadAll();
                               setSuccess(`Physical stock count posted. Variance ${variance > 0 ? "+" : ""}${variance}.`);
@@ -1795,13 +2077,14 @@ export default function InventoryPage() {
                   <Chip size="small" label={`${customerReturnHistory.length} return movements`} variant="outlined" />
                 </Box>
                 <Grid container spacing={1.25}>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField size="small" fullWidth label="Search sale / receipt" value={saleSearch} onChange={(e) => setSaleSearch(e.target.value)} />
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel id="customer-return-sale-label">Sale / receipt</InputLabel>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <TextField size="small" fullWidth label="Search sale / receipt" value={saleSearch} onChange={(e) => setSaleSearch(e.target.value)} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <FormControl fullWidth size="small">
+                      <InputLabel id="customer-return-sale-label"><RequiredLabel text="Sale / receipt" required /></InputLabel>
                       <Select
+                        id="customer-return-sale"
                         labelId="customer-return-sale-label"
                         label="Sale / receipt"
                         value={customerReturnSaleId}
@@ -1820,10 +2103,11 @@ export default function InventoryPage() {
                       </Select>
                     </FormControl>
                   </Grid>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <FormControl fullWidth size="small">
-                      <InputLabel id="customer-return-line-label">Medicine line</InputLabel>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <FormControl fullWidth size="small">
+                      <InputLabel id="customer-return-line-label"><RequiredLabel text="Medicine line" required /></InputLabel>
                       <Select
+                        id="customer-return-line"
                         labelId="customer-return-line-label"
                         label="Medicine line"
                         value={customerReturnLineId}
@@ -1842,29 +2126,67 @@ export default function InventoryPage() {
                     </FormControl>
                   </Grid>
                   <Grid size={{ xs: 12, md: 3 }}>
-                    <TextField size="small" fullWidth type="number" label="Return quantity" value={customerReturnQuantity} onChange={(e) => setCustomerReturnQuantity(e.target.value)} />
+                    <TextField
+                      id="inventory-customer-return-quantity"
+                      size="small"
+                      fullWidth
+                      type="number"
+                      label={<RequiredLabel text="Return quantity" required />}
+                      value={customerReturnQuantity}
+                      onChange={(e) => setCustomerReturnQuantity(e.target.value)}
+                      required
+                      error={Boolean(customerReturnFieldErrors.returnQuantity)}
+                      helperText={customerReturnFieldErrors.returnQuantity || "Return quantity must be within the remaining sold quantity."}
+                      inputProps={{ min: 1, step: 1, "aria-required": true }}
+                    />
                   </Grid>
                   <Grid size={{ xs: 12, md: 3 }}>
                     <FormControl fullWidth size="small">
-                      <InputLabel id="customer-return-mode-label">Refund mode</InputLabel>
-                      <Select labelId="customer-return-mode-label" label="Refund mode" value={customerReturnMode} onChange={(e) => setCustomerReturnMode(e.target.value as PaymentMode)}>
+                      <InputLabel id="customer-return-mode-label">
+                        <RequiredLabel text="Refund mode" required />
+                      </InputLabel>
+                      <Select
+                        id="customer-return-mode"
+                        labelId="customer-return-mode-label"
+                        label="Refund mode"
+                        value={customerReturnMode}
+                        onChange={(e) => setCustomerReturnMode(e.target.value as PaymentMode)}
+                        required
+                        error={Boolean(customerReturnFieldErrors.refundMode)}
+                        inputProps={{ "aria-required": true }}
+                      >
                         <MenuItem value="CASH">CASH</MenuItem>
                         <MenuItem value="UPI">UPI</MenuItem>
                         <MenuItem value="CARD">CARD</MenuItem>
-                        <MenuItem value="OTHER">OTHER</MenuItem>
+                        <MenuItem value="NO_REFUND">NO_REFUND</MenuItem>
+                        <MenuItem value="ORIGINAL_PAYMENT_MODE">ORIGINAL_PAYMENT_MODE</MenuItem>
                       </Select>
                     </FormControl>
                   </Grid>
                   <Grid size={{ xs: 12, md: 3 }}>
-                    <TextField size="small" fullWidth label="Reason" value={customerReturnReason} onChange={(e) => setCustomerReturnReason(e.target.value)} />
+                    <Box id="customer-return-reason" tabIndex={-1}>
+                      <CommentSuggestions
+                        category="INVENTORY_CUSTOMER_RETURN"
+                        selectedReason={customerReturnReason}
+                        remarks={customerReturnNotes}
+                        onReasonChange={setCustomerReturnReason}
+                        onRemarksChange={setCustomerReturnNotes}
+                        requiredReason
+                        maxRemarksLength={250}
+                        reasonLabel="Reason"
+                        remarksLabel="Notes"
+                        reasonHelperText={customerReturnFieldErrors.reason || "Required for customer return."}
+                        remarksHelperText={customerReturnFieldErrors.notes || `${customerReturnNotes.length}/250`}
+                      />
+                    </Box>
                   </Grid>
                   <Grid size={{ xs: 12, md: 3 }}>
-                    <TextField size="small" fullWidth label="Reference number" value={customerReturnReference} onChange={(e) => setCustomerReturnReference(e.target.value)} />
+                    <TextField id="customer-return-reference" size="small" fullWidth label="Reference number" value={customerReturnReference} onChange={(e) => setCustomerReturnReference(e.target.value)} error={Boolean(customerReturnFieldErrors.referenceNumber)} helperText={customerReturnFieldErrors.referenceNumber || "Optional reference number."} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 3 }}>
                     <FormControl fullWidth size="small">
-                      <InputLabel id="customer-return-reusable-label">Condition</InputLabel>
-                      <Select labelId="customer-return-reusable-label" label="Condition" value={customerReturnReusable ? "reusable" : "non_sellable"} onChange={(e) => setCustomerReturnReusable(String(e.target.value) === "reusable")}>
+                      <InputLabel id="customer-return-reusable-label"><RequiredLabel text="Condition" required /></InputLabel>
+                      <Select id="customer-return-condition" labelId="customer-return-reusable-label" label="Condition" value={customerReturnReusable ? "reusable" : "non_sellable"} onChange={(e) => setCustomerReturnReusable(String(e.target.value) === "reusable")} error={Boolean(customerReturnFieldErrors.condition)} required inputProps={{ "aria-required": true }}>
                         <MenuItem value="reusable">Reusable</MenuItem>
                         <MenuItem value="non_sellable">Damaged / Expired / Non-sellable</MenuItem>
                       </Select>
@@ -1886,11 +2208,12 @@ export default function InventoryPage() {
                   >
                     Process Customer Return
                   </Button>
-                  <Button variant="outlined" onClick={() => {
+                    <Button variant="outlined" onClick={() => {
                     setCustomerReturnSaleId("");
                     setCustomerReturnLineId("");
                     setCustomerReturnQuantity("1");
                     setCustomerReturnReason("");
+                    setCustomerReturnNotes("");
                     setCustomerReturnReference("");
                     setSaleSearch("");
                     setCustomerReturnReusable(true);
@@ -1945,26 +2268,35 @@ export default function InventoryPage() {
                     <Grid container spacing={1.25}>
                       <Grid size={{ xs: 12, md: 5 }}>
                         <FormControl fullWidth size="small">
-                          <InputLabel id="vendor-return-medicine-label">Medicine</InputLabel>
+                          <InputLabel id="vendor-return-medicine-label"><RequiredLabel text="Medicine" required /></InputLabel>
                           <Select
+                            id="vendor-return-medicine"
                             labelId="vendor-return-medicine-label"
                             label="Medicine"
                             value={vendorReturnForm.medicineId}
                             onChange={(e) => setVendorReturnForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))}
+                            required
+                            error={Boolean(vendorReturnFieldErrors.medicineId)}
+                            inputProps={{ "aria-required": true }}
                           >
                             <MenuItem value="">Select medicine</MenuItem>
                             {medicines.map((medicine) => <MenuItem key={medicine.id} value={medicine.id}>{medicine.medicineName}</MenuItem>)}
                           </Select>
+                          {vendorReturnFieldErrors.medicineId ? <Typography variant="caption" color="error">{vendorReturnFieldErrors.medicineId}</Typography> : null}
                         </FormControl>
                       </Grid>
                       <Grid size={{ xs: 12, md: 7 }}>
                         <FormControl fullWidth size="small">
-                          <InputLabel id="vendor-return-batch-label">Batch</InputLabel>
+                          <InputLabel id="vendor-return-batch-label"><RequiredLabel text="Batch" required /></InputLabel>
                           <Select
+                            id="vendor-return-batch"
                             labelId="vendor-return-batch-label"
                             label="Batch"
                             value={vendorReturnForm.stockBatchId}
                             onChange={(e) => setVendorReturnForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}
+                            required
+                            error={Boolean(vendorReturnFieldErrors.stockBatchId)}
+                            inputProps={{ "aria-required": true }}
                           >
                             <MenuItem value="">Select batch</MenuItem>
                             {vendorReturnBatches.map((stock) => (
@@ -1973,19 +2305,31 @@ export default function InventoryPage() {
                               </MenuItem>
                             ))}
                           </Select>
+                          {vendorReturnFieldErrors.stockBatchId ? <Typography variant="caption" color="error">{vendorReturnFieldErrors.stockBatchId}</Typography> : null}
                         </FormControl>
                       </Grid>
                       <Grid size={{ xs: 12, md: 4 }}>
-                        <TextField size="small" fullWidth type="number" label="Return quantity" value={vendorReturnForm.quantity} onChange={(e) => setVendorReturnForm((current) => ({ ...current, quantity: e.target.value }))} />
+                        <TextField id="vendor-return-quantity" size="small" fullWidth type="number" label={<RequiredLabel text="Return quantity" required />} value={vendorReturnForm.quantity} onChange={(e) => setVendorReturnForm((current) => ({ ...current, quantity: e.target.value }))} required error={Boolean(vendorReturnFieldErrors.returnQuantity)} helperText={vendorReturnFieldErrors.returnQuantity || "Return quantity must be within available stock."} inputProps={{ min: 1, step: 1, "aria-required": true }} />
                       </Grid>
                       <Grid size={{ xs: 12, md: 8 }}>
-                        <TextField size="small" fullWidth label="Supplier / invoice reference" value={vendorReturnForm.supplierReference} onChange={(e) => setVendorReturnForm((current) => ({ ...current, supplierReference: e.target.value }))} />
+                        <TextField id="vendor-return-supplier" size="small" fullWidth label={<RequiredLabel text="Supplier / invoice reference" required />} value={vendorReturnForm.supplierReference} onChange={(e) => setVendorReturnForm((current) => ({ ...current, supplierReference: e.target.value }))} required error={Boolean(vendorReturnFieldErrors.supplierReference)} helperText={vendorReturnFieldErrors.supplierReference || "Required for vendor returns."} inputProps={{ "aria-required": true, maxLength: 60 }} />
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField size="small" fullWidth label="Reason" value={vendorReturnForm.reason} onChange={(e) => setVendorReturnForm((current) => ({ ...current, reason: e.target.value }))} />
-                      </Grid>
-                      <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField size="small" fullWidth label="Notes" value={vendorReturnForm.notes} onChange={(e) => setVendorReturnForm((current) => ({ ...current, notes: e.target.value }))} />
+                        <Box id="vendor-return-reason" tabIndex={-1}>
+                          <CommentSuggestions
+                            category="INVENTORY_VENDOR_RETURN"
+                            selectedReason={vendorReturnForm.reason}
+                            remarks={vendorReturnForm.notes}
+                            onReasonChange={(value) => setVendorReturnForm((current) => ({ ...current, reason: value }))}
+                            onRemarksChange={(value) => setVendorReturnForm((current) => ({ ...current, notes: value }))}
+                            requiredReason
+                            maxRemarksLength={250}
+                            reasonLabel="Reason"
+                            remarksLabel="Notes"
+                            reasonHelperText={vendorReturnFieldErrors.reason || "Reason is required for vendor returns."}
+                            remarksHelperText={vendorReturnFieldErrors.notes || `${vendorReturnForm.notes.length}/250`}
+                          />
+                        </Box>
                       </Grid>
                     </Grid>
                     <Button variant="contained" disabled={saving} onClick={() => void submitVendorReturn()}>Post Vendor Return</Button>
@@ -2032,26 +2376,35 @@ export default function InventoryPage() {
                     <Grid container spacing={1.25}>
                       <Grid size={{ xs: 12, md: 5 }}>
                         <FormControl fullWidth size="small">
-                          <InputLabel id="writeoff-medicine-label">Medicine</InputLabel>
+                          <InputLabel id="writeoff-medicine-label"><RequiredLabel text="Medicine" required /></InputLabel>
                           <Select
+                            id="writeoff-medicine"
                             labelId="writeoff-medicine-label"
                             label="Medicine"
                             value={writeOffForm.medicineId}
                             onChange={(e) => setWriteOffForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))}
+                            required
+                            error={Boolean(writeOffFieldErrors.medicineId)}
+                            inputProps={{ "aria-required": true }}
                           >
                             <MenuItem value="">Select medicine</MenuItem>
                             {medicines.map((medicine) => <MenuItem key={medicine.id} value={medicine.id}>{medicine.medicineName}</MenuItem>)}
                           </Select>
+                          {writeOffFieldErrors.medicineId ? <Typography variant="caption" color="error">{writeOffFieldErrors.medicineId}</Typography> : null}
                         </FormControl>
                       </Grid>
                       <Grid size={{ xs: 12, md: 7 }}>
                         <FormControl fullWidth size="small">
-                          <InputLabel id="writeoff-batch-label">Batch</InputLabel>
+                          <InputLabel id="writeoff-batch-label"><RequiredLabel text="Batch" required /></InputLabel>
                           <Select
+                            id="writeoff-batch"
                             labelId="writeoff-batch-label"
                             label="Batch"
                             value={writeOffForm.stockBatchId}
                             onChange={(e) => setWriteOffForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}
+                            required
+                            error={Boolean(writeOffFieldErrors.stockBatchId)}
+                            inputProps={{ "aria-required": true }}
                           >
                             <MenuItem value="">Select batch</MenuItem>
                             {writeOffBatches.map((stock) => (
@@ -2060,16 +2413,28 @@ export default function InventoryPage() {
                               </MenuItem>
                             ))}
                           </Select>
+                          {writeOffFieldErrors.stockBatchId ? <Typography variant="caption" color="error">{writeOffFieldErrors.stockBatchId}</Typography> : null}
                         </FormControl>
                       </Grid>
                       <Grid size={{ xs: 12, md: 4 }}>
-                        <TextField size="small" fullWidth type="number" label="Write-off quantity" value={writeOffForm.quantity} onChange={(e) => setWriteOffForm((current) => ({ ...current, quantity: e.target.value }))} />
+                        <TextField id="writeoff-quantity" size="small" fullWidth type="number" label={<RequiredLabel text="Write-off quantity" required />} value={writeOffForm.quantity} onChange={(e) => setWriteOffForm((current) => ({ ...current, quantity: e.target.value }))} required error={Boolean(writeOffFieldErrors.writeOffQuantity)} helperText={writeOffFieldErrors.writeOffQuantity || "Enter a quantity within available stock."} inputProps={{ min: 1, step: 1, "aria-required": true }} />
                       </Grid>
                       <Grid size={{ xs: 12, md: 8 }}>
-                        <TextField size="small" fullWidth label="Reason" value={writeOffForm.reason} onChange={(e) => setWriteOffForm((current) => ({ ...current, reason: e.target.value }))} />
-                      </Grid>
-                      <Grid size={{ xs: 12 }}>
-                        <TextField size="small" fullWidth label="Notes" value={writeOffForm.notes} onChange={(e) => setWriteOffForm((current) => ({ ...current, notes: e.target.value }))} />
+                        <Box id="writeoff-reason" tabIndex={-1}>
+                          <CommentSuggestions
+                            category="INVENTORY_WRITE_OFF"
+                            selectedReason={writeOffForm.reason}
+                            remarks={writeOffForm.notes}
+                            onReasonChange={(value) => setWriteOffForm((current) => ({ ...current, reason: value }))}
+                            onRemarksChange={(value) => setWriteOffForm((current) => ({ ...current, notes: value }))}
+                            requiredReason
+                            maxRemarksLength={250}
+                            reasonLabel="Reason"
+                            remarksLabel="Notes"
+                            reasonHelperText={writeOffFieldErrors.reason || "Reason is required for write-offs."}
+                            remarksHelperText={writeOffFieldErrors.notes || `${writeOffForm.notes.length}/250`}
+                          />
+                        </Box>
                       </Grid>
                     </Grid>
                     <Button variant="contained" disabled={saving} onClick={() => void submitWriteOff()}>Post Write-Off</Button>

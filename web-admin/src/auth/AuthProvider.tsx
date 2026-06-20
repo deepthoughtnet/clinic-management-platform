@@ -1,5 +1,5 @@
 import * as React from "react";
-import { keycloak } from "./keycloak";
+import { assertValidKeycloakClient, keycloak } from "./keycloakClient";
 import { initKeycloakOnce, resetKeycloakInit } from "./keycloakInit";
 import { decodeJwtPayload, extractRolesUpper, extractTenantIdClaim, extractUsername } from "./tokenUtils";
 import { AuthContext, type AuthContextValue, type SelectedTenant } from "./AuthContext";
@@ -294,6 +294,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
       try {
         console.info("[auth] keycloak init started");
+        assertValidKeycloakClient(keycloak);
         const ok = await initKeycloakOnce();
         if (cancelled) return;
         console.info("[auth] keycloak init completed", { authenticated: ok });
@@ -487,11 +488,18 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       clearSession,
       hasPermission: (permission: string) => permissions.includes(permission.trim().toLowerCase()),
       login: async () => {
+        assertValidKeycloakClient(keycloak);
         await keycloak.login({ prompt: "login" });
       },
       logout: async () => {
         clearSession();
-        await keycloak.logout({ redirectUri: `${window.location.origin}/login` });
+        if (keycloak && typeof keycloak.logout === "function") {
+          await keycloak.logout({ redirectUri: `${window.location.origin}/login` });
+          return;
+        }
+        if (typeof window !== "undefined") {
+          window.location.href = "/";
+        }
       },
     }),
     [initialized, authenticated, username, rolesUpper, permissions, selectedTenant, activeTenantMemberships, tenantModules, accessToken, initError, appUserId, tenantRole, clearSession, refreshTenantContext]

@@ -16,7 +16,7 @@ public record RefundRequest(
         String reason,
         PaymentMode refundMode,
         OffsetDateTime refundedAt,
-        @Size(max = 4000)
+        @Size(max = 250)
         String notes
 ) {
 }

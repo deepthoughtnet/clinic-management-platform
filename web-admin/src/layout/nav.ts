@@ -128,6 +128,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "platform-health", label: "System Health", disabled: true, future: true, badge: "Coming soon", platformOnly: true },
       { key: "platform-plans", label: "Plans / Modules", path: "/platform/plans", platformOnly: true },
       { key: "platform-users", label: "Users / Admins", path: "/platform/users", platformOnly: true },
+      { key: "platform-help", label: "Help CMS", path: "/platform/help", platformOnly: true },
     ],
   },
 ];

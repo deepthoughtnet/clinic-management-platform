@@ -247,6 +247,7 @@ public class BillingService {
     public BillRecord createDraft(UUID tenantId, BillUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
         validate(command);
+        ensureNotDuplicateSubmission(tenantId, command);
         ensurePatient(tenantId, command.patientId());
         ensureConsultationMatches(tenantId, command.consultationId(), command.patientId());
         ensureAppointmentMatches(tenantId, command.appointmentId(), command.patientId());
@@ -706,6 +707,11 @@ public class BillingService {
     private void validate(BillUpsertCommand command) {
         if (command == null) throw new IllegalArgumentException("command is required");
         requireId(command.patientId(), "patientId");
+        if (command.billDate() != null && command.billDate().isAfter(LocalDate.now())) throw new IllegalArgumentException("billDate cannot be in the future");
+        if (command.discountValue() != null && !hasAtMostTwoDecimals(command.discountValue())) throw new IllegalArgumentException("discountValue can have at most 2 decimal places");
+        if (command.discountValue() != null && command.discountValue().compareTo(ZERO) < 0) throw new IllegalArgumentException("discountValue cannot be negative");
+        if (command.taxAmount() != null && !hasAtMostTwoDecimals(command.taxAmount())) throw new IllegalArgumentException("taxAmount can have at most 2 decimal places");
+        if (command.taxAmount() != null && command.taxAmount().compareTo(ZERO) < 0) throw new IllegalArgumentException("taxAmount cannot be negative");
         if (command.lines() == null || command.lines().isEmpty()) throw new IllegalArgumentException("At least one bill line is required");
         for (BillLineCommand line : command.lines()) validateLine(line);
         validateDiscount(command.discountType(), command.discountValue(), command.discountReason());
@@ -715,16 +721,28 @@ public class BillingService {
         if (line == null) throw new IllegalArgumentException("bill line is required");
         if (line.itemType() == null) throw new IllegalArgumentException("itemType is required");
         if (!StringUtils.hasText(line.itemName())) throw new IllegalArgumentException("itemName is required");
+        if (normalize(line.itemName()).length() > 100) throw new IllegalArgumentException("itemName cannot exceed 100 characters");
+        if (!normalize(line.itemName()).matches(".*[A-Za-z0-9].*")) throw new IllegalArgumentException("itemName must contain at least one letter or number");
         if (line.quantity() == null || line.quantity() < 1) throw new IllegalArgumentException("quantity must be at least 1");
+        if (line.quantity() != null && line.quantity() > 999999) throw new IllegalArgumentException("quantity cannot exceed 999999");
         if (line.unitPrice() == null || line.unitPrice().compareTo(ZERO) < 0) throw new IllegalArgumentException("unitPrice is required");
+        if (!hasAtMostTwoDecimals(line.unitPrice())) throw new IllegalArgumentException("unitPrice can have at most 2 decimal places");
+        if (line.unitPrice().compareTo(new BigDecimal("999999.00")) > 0) throw new IllegalArgumentException("unitPrice cannot exceed 999999");
         if (line.lineDiscountAmount() != null && line.lineDiscountAmount().compareTo(ZERO) < 0) throw new IllegalArgumentException("lineDiscountAmount cannot be negative");
+        if (line.lineDiscountAmount() != null && !hasAtMostTwoDecimals(line.lineDiscountAmount())) throw new IllegalArgumentException("lineDiscountAmount can have at most 2 decimal places");
+        if (line.lineDiscountAmount() != null && line.unitPrice() != null && line.quantity() != null) {
+            BigDecimal gross = normalizeMoney(line.unitPrice()).multiply(BigDecimal.valueOf(line.quantity())).setScale(2, RoundingMode.HALF_UP);
+            if (normalizeMoney(line.lineDiscountAmount()).compareTo(gross) > 0) throw new IllegalArgumentException("lineDiscountAmount cannot exceed line amount");
+        }
     }
 
     private void validate(PaymentCommand command) {
         if (command == null) throw new IllegalArgumentException("command is required");
         if (command.amount() == null || command.amount().compareTo(ZERO) <= 0) throw new IllegalArgumentException("amount is required");
+        if (!hasAtMostTwoDecimals(command.amount())) throw new IllegalArgumentException("amount can have at most 2 decimal places");
         if (command.paymentMode() == null) throw new IllegalArgumentException("paymentMode is required");
         if (command.paymentMode() != PaymentMode.CASH && !StringUtils.hasText(command.referenceNumber())) throw new IllegalArgumentException("referenceNumber is required for non-cash payments");
+        if (StringUtils.hasText(command.referenceNumber()) && normalize(command.referenceNumber()).length() > 60) throw new IllegalArgumentException("referenceNumber cannot exceed 60 characters");
     }
 
     private Optional<BillEntity> findConsultationFeeBill(UUID tenantId, UUID appointmentId) {
@@ -793,17 +811,84 @@ public class BillingService {
     private void validate(RefundCommand command) {
         if (command == null) throw new IllegalArgumentException("command is required");
         if (command.amount() == null || command.amount().compareTo(ZERO) <= 0) throw new IllegalArgumentException("refund amount must be positive");
+        if (!hasAtMostTwoDecimals(command.amount())) throw new IllegalArgumentException("refund amount can have at most 2 decimal places");
         if (!StringUtils.hasText(command.reason())) throw new IllegalArgumentException("refund reason is required");
+        if (normalize(command.reason()).length() > 100) throw new IllegalArgumentException("refund reason cannot exceed 100 characters");
     }
 
     private void validateDiscount(DiscountType discountType, BigDecimal discountValue, String discountReason) {
         DiscountType type = discountType == null ? DiscountType.NONE : discountType;
         BigDecimal value = normalizeMoney(discountValue);
+        if (value.compareTo(ZERO) < 0) {
+            throw new IllegalArgumentException("discount value cannot be negative");
+        }
+        if (type == DiscountType.NONE && value.compareTo(ZERO) > 0) {
+            throw new IllegalArgumentException("discount value must be blank or zero when discount type is NONE");
+        }
         if (type == DiscountType.PERCENTAGE && (value.compareTo(ZERO) < 0 || value.compareTo(new BigDecimal("100.00")) > 0)) {
             throw new IllegalArgumentException("percentage discount must be between 0 and 100");
         }
+        if (type == DiscountType.AMOUNT && value.compareTo(ZERO) > 0 && value.compareTo(new BigDecimal("999999.00")) > 0) {
+            throw new IllegalArgumentException("discount amount cannot exceed 999999");
+        }
         if (type != DiscountType.NONE && value.compareTo(ZERO) > 0 && !StringUtils.hasText(discountReason)) {
             throw new IllegalArgumentException("discount reason is required when discount > 0");
+        }
+        if (StringUtils.hasText(discountReason) && normalize(discountReason).length() > 60) {
+            throw new IllegalArgumentException("discount reason cannot exceed 60 characters");
+        }
+    }
+
+    private void ensureNotDuplicateSubmission(UUID tenantId, BillUpsertCommand command) {
+        List<BillEntity> existingBills = billRepository.findByTenantIdAndPatientIdOrderByBillDateDescCreatedAtDesc(tenantId, command.patientId());
+        for (BillEntity existing : existingBills) {
+            if (!java.util.Objects.equals(existing.getBillDate(), command.billDate())) {
+                continue;
+            }
+            if (!java.util.Objects.equals(existing.getConsultationId(), command.consultationId())) {
+                continue;
+            }
+            if (!java.util.Objects.equals(existing.getAppointmentId(), command.appointmentId())) {
+                continue;
+            }
+            if (!java.util.Objects.equals(existing.getDiscountType(), command.discountType() == null ? DiscountType.NONE : command.discountType())) {
+                continue;
+            }
+            if (normalizeMoney(existing.getDiscountValue()).compareTo(normalizeMoney(command.discountValue())) != 0) {
+                continue;
+            }
+            if (!java.util.Objects.equals(normalize(existing.getDiscountReason()), normalize(command.discountReason()))) {
+                continue;
+            }
+            if (normalizeMoney(existing.getTaxAmount()).compareTo(normalizeMoney(command.taxAmount())) != 0) {
+                continue;
+            }
+            if (!java.util.Objects.equals(normalize(existing.getNotes()), normalize(command.notes()))) {
+                continue;
+            }
+            List<BillLineEntity> existingLines = billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, existing.getId());
+            if (existingLines.size() != command.lines().size()) {
+                continue;
+            }
+            boolean matches = true;
+            for (int i = 0; i < existingLines.size(); i++) {
+                BillLineEntity currentLine = existingLines.get(i);
+                BillLineCommand newLine = command.lines().get(i);
+                if (currentLine.getItemType() != newLine.itemType()
+                        || !normalize(currentLine.getItemName()).equals(normalize(newLine.itemName()))
+                        || !java.util.Objects.equals(currentLine.getQuantity(), newLine.quantity())
+                        || normalizeMoney(currentLine.getUnitPrice()).compareTo(normalizeMoney(newLine.unitPrice())) != 0
+                        || normalizeMoney(currentLine.getLineDiscountAmount()).compareTo(normalizeMoney(newLine.lineDiscountAmount())) != 0
+                        || !java.util.Objects.equals(normalize(currentLine.getBatchNumber()), normalize(newLine.batchNumber()))
+                        || !java.util.Objects.equals(currentLine.getReferenceId(), newLine.referenceId())
+                        || !java.util.Objects.equals(currentLine.getDispensationReferenceId(), newLine.dispensationReferenceId())) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                throw new IllegalArgumentException("Duplicate bill submission");
+            }
         }
     }
 
@@ -828,6 +913,10 @@ public class BillingService {
 
     private void auditReceipt(UUID tenantId, ReceiptEntity receipt, UUID actorAppUserId, String message) {
         auditEventPublisher.record(new AuditEventCommand(tenantId, "RECEIPT", receipt.getId(), "receipt.pdf_generated", actorAppUserId, OffsetDateTime.now(), message, detailsJson(receipt)));
+    }
+
+    private boolean hasAtMostTwoDecimals(BigDecimal value) {
+        return value == null || value.stripTrailingZeros().scale() <= 2;
     }
 
     private String detailsJson(BillEntity entity) {

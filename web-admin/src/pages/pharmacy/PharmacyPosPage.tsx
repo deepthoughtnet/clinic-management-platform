@@ -46,7 +46,15 @@ import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
 import ShoppingCartCheckoutRoundedIcon from "@mui/icons-material/ShoppingCartCheckoutRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
 import CodeScannerDialog from "../../components/pharmacy/CodeScannerDialog";
-import { fileUploadSchema, firstZodError, pharmacyPosSaleSchema } from "@deepthoughtnet/form-validation-kit";
+import RequiredLabel from "../../components/forms/RequiredLabel.js";
+import {
+  fileUploadSchema,
+  firstZodError,
+  mapZodErrors,
+  pharmacyPosCartLineSchema,
+  pharmacyPosCheckoutSchema,
+  pharmacyPosSearchSchema,
+} from "@deepthoughtnet/form-validation-kit";
 import {
   addPharmacyPosPayment,
   closePharmacyPosShift,
@@ -103,8 +111,9 @@ type ReturnLineDraft = {
 };
 
 type CodeScanMode = "BARCODE" | "QR";
+type CartFieldName = "quantity" | "unitPrice" | "discount" | "taxRate";
 
-const PAYMENT_MODES: PaymentMode[] = ["CASH", "UPI", "CARD", "PHONEPE", "GOOGLE_PAY", "PAYTM", "BANK_TRANSFER", "CHEQUE", "OTHER"];
+const PAYMENT_MODES: PaymentMode[] = ["CASH", "UPI", "CARD", "INSURANCE", "PHONEPE", "GOOGLE_PAY", "PAYTM", "BANK_TRANSFER", "CHEQUE", "OTHER"];
 const POS_ROLES = new Set(["CLINIC_ADMIN", "PHARMACIST", "PHARMACY", "PHARMA"]);
 const HELD_CART_STORAGE_KEY = "pharmacy-pos-held-cart";
 const STICKY_TOP = 88;
@@ -262,14 +271,26 @@ function mapPosError(raw: unknown, fallback: string) {
   if (normalized.includes("batch expired and cannot be sold or dispensed")) {
     return "Batch expired and cannot be sold or dispensed.";
   }
+  if (normalized.includes("medicine is inactive and cannot be sold")) {
+    return "Selected medicine is inactive and cannot be sold.";
+  }
+  if (normalized.includes("unitprice cannot be negative")) {
+    return "Rate cannot be negative.";
+  }
+  if (normalized.includes("discount cannot be negative")) {
+    return "Discount cannot be negative.";
+  }
+  if (normalized.includes("tax cannot be negative")) {
+    return "Tax cannot be negative.";
+  }
   return fallback;
 }
 
 function validatePrescriptionFile(file: File) {
   const parsed = fileUploadSchema({
     required: true,
-    allowedMimeTypes: ["application/pdf", "image/jpeg", "image/png", "image/webp"],
-    allowedExtensions: ["pdf", "jpg", "jpeg", "png", "webp"],
+    allowedMimeTypes: ["application/pdf", "image/jpeg", "image/png"],
+    allowedExtensions: ["pdf", "jpg", "jpeg", "png"],
     maxBytes: PRESCRIPTION_MAX_BYTES,
   }).safeParse(file);
   return parsed.success ? null : firstZodError(parsed.error);
@@ -290,11 +311,17 @@ export default function PharmacyPosPage() {
   const canAccessPos = POS_ROLES.has((auth.tenantRole || "").toUpperCase());
 
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
+  const customerNameInputRef = React.useRef<HTMLInputElement | null>(null);
+  const customerMobileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const paidAmountInputRef = React.useRef<HTMLInputElement | null>(null);
+  const paymentModeInputRef = React.useRef<HTMLInputElement | null>(null);
+  const paymentReferenceInputRef = React.useRef<HTMLInputElement | null>(null);
   const prescriptionInputRef = React.useRef<HTMLInputElement | null>(null);
   const cameraVideoRef = React.useRef<HTMLVideoElement | null>(null);
   const cameraCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const cameraStreamRef = React.useRef<MediaStream | null>(null);
   const actionLockRef = React.useRef<string | null>(null);
+  const cartInputRefs = React.useRef<Record<string, Partial<Record<CartFieldName, HTMLInputElement | null>>>>({});
 
   const [loading, setLoading] = React.useState(true);
   const [submitting, setSubmitting] = React.useState(false);
@@ -334,7 +361,6 @@ export default function PharmacyPosPage() {
   const [selectedSale, setSelectedSale] = React.useState<PharmacyPosSale | null>(null);
 
   const [paymentAmount, setPaymentAmount] = React.useState("");
-  const paidAmountInputRef = React.useRef<HTMLInputElement | null>(null);
   const [paymentTopupMode, setPaymentTopupMode] = React.useState<PaymentMode>("CASH");
   const [paymentReferenceTopup, setPaymentReferenceTopup] = React.useState("");
   const [currentShift, setCurrentShift] = React.useState<PharmacyPosShift | null>(null);
@@ -369,7 +395,6 @@ export default function PharmacyPosPage() {
   const taxTotal = React.useMemo(() => cart.reduce((sum, line) => sum + lineTaxAmount(line), 0), [cart]);
   const total = React.useMemo(() => cart.reduce((sum, line) => sum + lineTotal(line), 0), [cart]);
   const duePreview = Math.max(0, total - numeric(paidAmount));
-  const cartHasStockIssue = cart.some((line) => numeric(line.quantity) > line.availableQuantity);
   const filteredSales = React.useMemo(() => {
     const term = saleSearchQuery.trim().toLowerCase();
     if (!term) return sales;
@@ -408,56 +433,100 @@ export default function PharmacyPosPage() {
     if (!name && !mobile) return "No customer selected";
     return `${name || "Walk-in"}${mobile ? ` • ${mobile}` : ""}`;
   }, [customerMobile, customerName, selectedPatient]);
-  const saleValidationMessage = React.useMemo(() => {
-    if (!cart.length) {
-      return "Add at least one medicine to the cart.";
-    }
-    if (!selectedPatient && !customerName.trim()) {
-      return "Choose a patient or enter a walk-in customer name.";
-    }
-    if (cartHasStockIssue) {
-      return "Inventory changed while preparing the sale. Please review the cart.";
-    }
-    if (!paymentMode) {
-      return "Payment mode is required.";
-    }
-    if (total > 0) {
-      if (!paidAmount.trim()) {
-        return "Full payment is required before completing the pharmacy sale.";
-      }
-      const amount = numeric(paidAmount);
-      if (amount < 0) {
-        return "Payment amount cannot be negative.";
-      }
-      if (amount <= 0 || amount < total) {
-        return "Full payment is required before completing the pharmacy sale.";
-      }
-      if (amount > total) {
-        return "Paid amount cannot exceed sale total.";
-      }
-      if (paymentMode !== "CASH" && !paymentReference.trim()) {
-        return "Payment reference is required for non-cash payments.";
-      }
-      if (!currentShift) {
-        return "Payment requires an open cashier shift.";
-      }
-    } else {
-      const amount = numeric(paidAmount);
-      if (amount < 0) {
-        return "Payment amount cannot be negative.";
-      }
-      if (amount > 0) {
-        return "Paid amount cannot exceed sale total.";
-      }
-    }
-    return null;
-  }, [cart.length, cartHasStockIssue, currentShift, customerName, paidAmount, paymentMode, paymentReference, selectedPatient, total]);
   const saleSummary = React.useMemo(() => ({
     itemCount: cart.length,
     totalAmount: money(total),
     paymentMode,
     amountReceived: money(Math.max(0, numeric(paidAmount))),
   }), [cart.length, paidAmount, paymentMode, total]);
+
+  const medicineSearchValidation = React.useMemo(
+    () => pharmacyPosSearchSchema.safeParse(medicineQuery),
+    [medicineQuery],
+  );
+  const recentSalesSearchValidation = React.useMemo(
+    () => pharmacyPosSearchSchema.safeParse(saleSearchQuery),
+    [saleSearchQuery],
+  );
+  const saleSubmissionDraft = React.useMemo(() => ({
+    items: cart.map((line) => ({
+      medicineId: line.medicineId,
+      quantity: numeric(line.quantity),
+      availableQuantity: line.availableQuantity,
+      unitPrice: numeric(line.unitPrice),
+      discount: numeric(line.discount),
+      taxRate: numeric(line.taxRate),
+    })),
+    patientId: selectedPatient?.id ?? null,
+    customerName: selectedPatient ? null : customerName,
+    customerMobile: selectedPatient ? null : customerMobile,
+    grandTotal: total,
+    paidAmount: numeric(paidAmount),
+    paymentMode: paymentMode,
+    paymentReference: paymentReference,
+    prescriptionDocumentId: prescription?.documentId ?? null,
+    notes,
+  }), [cart, customerMobile, customerName, notes, paidAmount, paymentMode, paymentReference, prescription?.documentId, selectedPatient?.id, total]);
+  const saleSubmissionValidation = React.useMemo(
+    () => pharmacyPosCheckoutSchema.safeParse(saleSubmissionDraft),
+    [saleSubmissionDraft],
+  );
+  const saleFieldErrors = React.useMemo(
+    () => (saleSubmissionValidation.success ? {} : mapZodErrors(saleSubmissionValidation.error)),
+    [saleSubmissionValidation],
+  );
+  const saleValidationMessage = React.useMemo(() => {
+    if (!cart.length) {
+      return "Add at least one medicine to the cart.";
+    }
+    if (!saleSubmissionValidation.success) {
+      return firstZodError(saleSubmissionValidation.error);
+    }
+    if (total > 0 && numeric(paidAmount) > 0 && !currentShift) {
+      return "Payment requires an open cashier shift.";
+    }
+    return null;
+  }, [cart.length, currentShift, paidAmount, saleSubmissionValidation, total]);
+  const cartHasStockIssue = React.useMemo(
+    () => cart.some((line, index) => Boolean(saleFieldErrors[`items.${index}.quantity`]) || Boolean(saleFieldErrors[`items.${index}.discount`]) || Boolean(saleFieldErrors[`items.${index}.unitPrice`]) || Boolean(saleFieldErrors[`items.${index}.taxRate`])),
+    [cart, saleFieldErrors],
+  );
+  const focusFirstSaleValidationError = React.useCallback(() => {
+    for (let index = 0; index < cart.length; index += 1) {
+      const medicineId = cart[index]?.medicineId;
+      const refs = medicineId ? cartInputRefs.current[medicineId] : undefined;
+      for (const field of ["quantity", "unitPrice", "discount", "taxRate"] as CartFieldName[]) {
+        if (saleFieldErrors[`items.${index}.${field}`]) {
+          refs?.[field]?.focus?.();
+          return;
+        }
+      }
+    }
+    if (saleFieldErrors.customerName) {
+      customerNameInputRef.current?.focus();
+      return;
+    }
+    if (saleFieldErrors.customerMobile) {
+      customerMobileInputRef.current?.focus();
+      return;
+    }
+    if (saleFieldErrors.paidAmount) {
+      paidAmountInputRef.current?.focus();
+      paidAmountInputRef.current?.select();
+      return;
+    }
+    if (saleFieldErrors.paymentMode) {
+      paymentModeInputRef.current?.focus?.();
+      return;
+    }
+    if (saleFieldErrors.paymentReference) {
+      paymentReferenceInputRef.current?.focus();
+      return;
+    }
+    if (saleFieldErrors.notes) {
+      document.querySelector<HTMLTextAreaElement>('textarea[name="sale-notes"]')?.focus();
+    }
+  }, [cart, saleFieldErrors]);
 
   const beginAction = React.useCallback((name: string) => {
     if (actionLockRef.current) return false;
@@ -513,6 +582,10 @@ export default function PharmacyPosPage() {
 
   const refreshMedicineResults = React.useCallback(async (query: string = medicineQuery) => {
     if (!token || !tenantId || !canAccessPos) return;
+    if (!pharmacyPosSearchSchema.safeParse(query).success) {
+      setMedicineResults([]);
+      return;
+    }
     const rows = await searchPharmacyPosMedicines(token, tenantId, query);
     setMedicineResults(rows);
   }, [canAccessPos, medicineQuery, tenantId, token]);
@@ -648,6 +721,10 @@ export default function PharmacyPosPage() {
 
   React.useEffect(() => {
     if (!token || !tenantId || !canAccessPos) return;
+    if (!medicineSearchValidation.success) {
+      setMedicineResults([]);
+      return;
+    }
     const handle = window.setTimeout(async () => {
       try {
         await refreshMedicineResults(medicineQuery);
@@ -656,7 +733,7 @@ export default function PharmacyPosPage() {
       }
     }, 180);
     return () => window.clearTimeout(handle);
-  }, [canAccessPos, medicineQuery, refreshMedicineResults, tenantId, token]);
+  }, [canAccessPos, medicineQuery, medicineSearchValidation.success, refreshMedicineResults, tenantId, token]);
 
   React.useEffect(() => {
     if (!token || !tenantId || !canAccessPos || patientQuery.trim().length < 2) {
@@ -702,18 +779,41 @@ export default function PharmacyPosPage() {
     setReturnDraft(buildReturnDraft(selectedSale));
   }, [selectedSale]);
 
+  const adjustCartQuantity = React.useCallback((medicineId: string, nextQuantity: number) => {
+    const line = cart.find((item) => item.medicineId === medicineId);
+    if (!line) return false;
+    if (nextQuantity > line.availableQuantity) {
+      setError("Requested quantity exceeds available stock.");
+      return false;
+    }
+    setCart((current) => current.map((item) => (
+      item.medicineId === medicineId
+        ? { ...item, quantity: String(nextQuantity) }
+        : item
+    )));
+    setSelectedCartMedicineId(medicineId);
+    setError(null);
+    return true;
+  }, [cart]);
+
   const addMedicine = React.useCallback(async (medicine: PharmacyPosMedicine) => {
     if (medicine.totalAvailableQuantity <= 0) {
       setError("No inventory available for this medicine.");
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
       return false;
     }
+    let blocked = false;
     setCart((current) => {
       const existing = current.find((line) => line.medicineId === medicine.medicineId);
       if (existing) {
+        const nextQuantity = numeric(existing.quantity) + 1;
+        if (nextQuantity > medicine.totalAvailableQuantity) {
+          blocked = true;
+          return current;
+        }
         return current.map((line) =>
           line.medicineId === medicine.medicineId
-            ? { ...line, quantity: String(numeric(line.quantity) + 1) }
+            ? { ...line, quantity: String(nextQuantity) }
             : line,
         );
       }
@@ -731,9 +831,15 @@ export default function PharmacyPosPage() {
         ...current,
       ];
     });
+    if (blocked) {
+      setError("Requested quantity exceeds available stock.");
+      window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      return false;
+    }
     setSelectedCartMedicineId(medicine.medicineId);
     setMedicineQuery("");
     window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    setError(null);
     if (batchPreview[medicine.medicineId] || !token || !tenantId) return true;
     try {
       const rows = await getPharmacyPosAvailableBatches(token, tenantId, medicine.medicineId);
@@ -755,9 +861,15 @@ export default function PharmacyPosPage() {
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
       return;
     }
+    const validation = pharmacyPosSearchSchema.safeParse(value);
+    if (!validation.success) {
+      setError(firstZodError(validation.error));
+      window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      return;
+    }
     setMedicineQuery(value);
     try {
-      const rows = await searchPharmacyPosMedicines(token, tenantId, value);
+      const rows = await searchPharmacyPosMedicines(token, tenantId, validation.data ?? value);
       setMedicineResults(rows);
       if (!rows.length) {
         setError("No medicine found for this code. If stock exists, only expired stock may be available.");
@@ -880,24 +992,24 @@ export default function PharmacyPosPage() {
   const executeSale = React.useCallback(async () => {
     if (!token || !tenantId) return;
     if (!beginAction("sale")) return;
-    const parsed = pharmacyPosSaleSchema.safeParse({
-      items: cart.map((line) => ({
-        medicine: line.medicineName,
-        quantity: numeric(line.quantity),
-        unitPrice: numeric(line.unitPrice),
-        discount: numeric(line.discount),
-      })),
-    });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message || "Sale could not be completed. Stock was not deducted.");
+    if (!saleSubmissionValidation.success) {
+      setError(firstZodError(saleSubmissionValidation.error) || "Sale could not be completed. Stock was not deducted.");
+      focusFirstSaleValidationError();
+      endAction();
+      return;
+    }
+    if (total > 0 && numeric(paidAmount) > 0 && !currentShift) {
+      setError("Payment requires an open cashier shift.");
+      paidAmountInputRef.current?.focus();
+      paidAmountInputRef.current?.select();
       endAction();
       return;
     }
     try {
       const sale = await createPharmacyPosSale(token, tenantId, {
         patientId: selectedPatient?.id ?? null,
-        customerName: selectedPatient ? null : customerName.trim(),
-        customerMobile: customerMobile.trim() || null,
+        customerName: selectedPatient ? null : customerName.trim() || null,
+        customerMobile: selectedPatient ? null : customerMobile.trim() || null,
         prescriptionDocumentId: prescription?.documentId ?? null,
         paidAmount: numeric(paidAmount),
         paymentMode,
@@ -926,15 +1038,16 @@ export default function PharmacyPosPage() {
       endAction();
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
     }
-  }, [beginAction, cart, clearDraft, customerMobile, customerName, endAction, notes, paidAmount, paymentMode, paymentReference, prescription, refreshMedicineResults, refreshSales, refreshShifts, selectSale, selectedPatient, tenantId, token]);
+  }, [beginAction, cart, clearDraft, currentShift, customerMobile, customerName, endAction, focusFirstSaleValidationError, notes, paidAmount, paymentMode, paymentReference, prescription, refreshMedicineResults, refreshSales, refreshShifts, saleSubmissionValidation, selectSale, selectedPatient, tenantId, token, total]);
 
   const requestSaleConfirmation = React.useCallback(() => {
     if (saleValidationMessage) {
       setError(saleValidationMessage);
+      focusFirstSaleValidationError();
       return;
     }
     setSaleConfirmOpen(true);
-  }, [saleValidationMessage]);
+  }, [focusFirstSaleValidationError, saleValidationMessage]);
 
   const printReceipt = React.useCallback(async (saleId: string) => {
     if (!token || !tenantId) return;
@@ -1101,21 +1214,23 @@ export default function PharmacyPosPage() {
 
       if ((event.key === "+" || event.key === "=") && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
-        setCart((current) => current.map((line) =>
-          line.medicineId === selectedCartMedicineId
-            ? { ...line, quantity: String(numeric(line.quantity) + 1) }
-            : line,
-        ));
+        if (selectedCartMedicineId) {
+          const line = cart.find((item) => item.medicineId === selectedCartMedicineId);
+          if (line) {
+            void adjustCartQuantity(selectedCartMedicineId, numeric(line.quantity) + 1);
+          }
+        }
         return;
       }
 
       if (event.key === "-" && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
-        setCart((current) => current.map((line) =>
-          line.medicineId === selectedCartMedicineId
-            ? { ...line, quantity: String(Math.max(1, numeric(line.quantity) - 1)) }
-            : line,
-        ));
+        if (selectedCartMedicineId) {
+          const line = cart.find((item) => item.medicineId === selectedCartMedicineId);
+          if (line) {
+            void adjustCartQuantity(selectedCartMedicineId, Math.max(1, numeric(line.quantity) - 1));
+          }
+        }
         return;
       }
 
@@ -1127,8 +1242,10 @@ export default function PharmacyPosPage() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
+    cart,
     cart.length,
     cartHasStockIssue,
+    adjustCartQuantity,
     closeCodeScanner,
     codeScanDialogOpen,
     medicineQuery,
@@ -1300,6 +1417,9 @@ export default function PharmacyPosPage() {
               }
             }}
             placeholder="Name, generic, brand, barcode, QR, external code, batch"
+            error={!medicineSearchValidation.success}
+            helperText={medicineSearchValidation.success ? "Search medicine name, generic name, barcode, QR code, external code, or batch." : firstZodError(medicineSearchValidation.error)}
+            inputProps={{ maxLength: 60 }}
           />
         </Stack>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
@@ -1340,7 +1460,7 @@ export default function PharmacyPosPage() {
           ref={prescriptionInputRef}
           type="file"
           hidden
-          accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
+          accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
           onChange={(event) => void uploadPrescription(event.target.files?.[0] ?? null)}
         />
       </Stack>
@@ -1368,7 +1488,7 @@ export default function PharmacyPosPage() {
         </Alert>
       ) : null}
       {saleValidationMessage && cart.length ? <Alert severity="warning">{saleValidationMessage}</Alert> : null}
-      {cartHasStockIssue ? <Alert severity="warning">Some cart quantities exceed available stock. Adjust the highlighted rows before completing the sale.</Alert> : null}
+      {cartHasStockIssue ? <Alert severity="warning">Some cart line values need correction. Review the highlighted fields before completing the sale.</Alert> : null}
       {collectingPaymentWithoutShift ? <Alert severity="warning">Open cashier shift before collecting payment. Unpaid sale checkout remains available.</Alert> : null}
 
       <Grid container spacing={2}>
@@ -1478,7 +1598,7 @@ export default function PharmacyPosPage() {
                         <TableCell>Medicine</TableCell>
                         <TableCell width={140}>Batch</TableCell>
                         <TableCell width={92}>Expiry</TableCell>
-                        <TableCell width={74}>Qty</TableCell>
+                        <TableCell width={74}><RequiredLabel text="Qty" required /></TableCell>
                         <TableCell width={88}>Rate</TableCell>
                         <TableCell width={88}>Disc</TableCell>
                         <TableCell width={84}>Tax</TableCell>
@@ -1487,11 +1607,15 @@ export default function PharmacyPosPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {cart.map((line) => {
+                      {cart.map((line, lineIndex) => {
                         const overLimit = numeric(line.quantity) > line.availableQuantity;
                         const primaryBatch = batchPreview[line.medicineId]?.[0];
                         const splitLikely = Boolean(primaryBatch && numeric(line.quantity) > primaryBatch.availableQuantity && batchPreview[line.medicineId] && batchPreview[line.medicineId]!.length > 1);
                         const nearExpiry = expiryWarning(primaryBatch?.expiryDate ?? line.earliestExpiryDate);
+                        const quantityError = saleFieldErrors[`items.${lineIndex}.quantity`];
+                        const unitPriceError = saleFieldErrors[`items.${lineIndex}.unitPrice`];
+                        const discountError = saleFieldErrors[`items.${lineIndex}.discount`];
+                        const taxError = saleFieldErrors[`items.${lineIndex}.taxRate`];
                         return (
                           <TableRow
                             key={line.medicineId}
@@ -1525,16 +1649,68 @@ export default function PharmacyPosPage() {
                             </TableCell>
                             <TableCell>{primaryBatch?.expiryDate ?? line.earliestExpiryDate ?? "NA"}</TableCell>
                             <TableCell>
-                              <TextField value={line.quantity} onChange={(event) => updateCartLine(line.medicineId, { quantity: event.target.value })} size="small" />
+                              <TextField
+                                value={line.quantity}
+                                onChange={(event) => updateCartLine(line.medicineId, { quantity: event.target.value })}
+                                size="small"
+                                type="number"
+                                inputRef={(node) => {
+                                  const refs = cartInputRefs.current[line.medicineId] ?? {};
+                                  refs.quantity = node;
+                                  cartInputRefs.current[line.medicineId] = refs;
+                                }}
+                                error={Boolean(quantityError)}
+                                helperText={quantityError || "Whole number within available stock."}
+                                inputProps={{ min: 1, step: 1, "aria-required": true }}
+                              />
                             </TableCell>
                             <TableCell>
-                              <TextField value={line.unitPrice} onChange={(event) => updateCartLine(line.medicineId, { unitPrice: event.target.value })} size="small" />
+                              <TextField
+                                value={line.unitPrice}
+                                onChange={(event) => updateCartLine(line.medicineId, { unitPrice: event.target.value })}
+                                size="small"
+                                type="number"
+                                inputRef={(node) => {
+                                  const refs = cartInputRefs.current[line.medicineId] ?? {};
+                                  refs.unitPrice = node;
+                                  cartInputRefs.current[line.medicineId] = refs;
+                                }}
+                                error={Boolean(unitPriceError)}
+                                helperText={unitPriceError || "Rate must be zero or greater."}
+                                inputProps={{ min: 0, step: "0.01" }}
+                              />
                             </TableCell>
                             <TableCell>
-                              <TextField value={line.discount} onChange={(event) => updateCartLine(line.medicineId, { discount: event.target.value })} size="small" />
+                              <TextField
+                                value={line.discount}
+                                onChange={(event) => updateCartLine(line.medicineId, { discount: event.target.value })}
+                                size="small"
+                                type="number"
+                                inputRef={(node) => {
+                                  const refs = cartInputRefs.current[line.medicineId] ?? {};
+                                  refs.discount = node;
+                                  cartInputRefs.current[line.medicineId] = refs;
+                                }}
+                                error={Boolean(discountError)}
+                                helperText={discountError || "Discount must be zero or greater."}
+                                inputProps={{ min: 0, step: "0.01" }}
+                              />
                             </TableCell>
                             <TableCell>
-                              <TextField value={line.taxRate} onChange={(event) => updateCartLine(line.medicineId, { taxRate: event.target.value })} size="small" />
+                              <TextField
+                                value={line.taxRate}
+                                onChange={(event) => updateCartLine(line.medicineId, { taxRate: event.target.value })}
+                                size="small"
+                                type="number"
+                                inputRef={(node) => {
+                                  const refs = cartInputRefs.current[line.medicineId] ?? {};
+                                  refs.taxRate = node;
+                                  cartInputRefs.current[line.medicineId] = refs;
+                                }}
+                                error={Boolean(taxError)}
+                                helperText={taxError || "Tax % must be between 0 and 100."}
+                                inputProps={{ min: 0, max: 100, step: "0.01" }}
+                              />
                             </TableCell>
                             <TableCell>{money(lineTotal(line))}</TableCell>
                             <TableCell align="right">
@@ -1667,19 +1843,27 @@ export default function PharmacyPosPage() {
                   ) : null}
                   <TextField
                     size="small"
-                    label="Walk-in name"
+                    label={<RequiredLabel text="Walk-in name" required={false} />}
                     value={customerName}
+                    inputRef={customerNameInputRef}
                     onFocus={() => setCustomerSectionOpen(true)}
                     onChange={(event) => setCustomerName(event.target.value)}
                     fullWidth
+                    error={Boolean(saleFieldErrors.customerName)}
+                    helperText={saleFieldErrors.customerName || "Optional for OTC sales; include letters or numbers if entered."}
+                    inputProps={{ maxLength: 60 }}
                   />
                   <TextField
                     size="small"
-                    label="Mobile"
+                    label={<RequiredLabel text="Mobile" required={false} />}
                     value={customerMobile}
+                    inputRef={customerMobileInputRef}
                     onFocus={() => setCustomerSectionOpen(true)}
                     onChange={(event) => setCustomerMobile(event.target.value)}
                     fullWidth
+                    error={Boolean(saleFieldErrors.customerMobile)}
+                    helperText={saleFieldErrors.customerMobile || "Optional Indian mobile number."}
+                    inputProps={{ maxLength: 10 }}
                   />
                 </Stack>
               </AccordionDetails>
@@ -1743,15 +1927,49 @@ export default function PharmacyPosPage() {
                 <Typography variant="subtitle1" fontWeight={700}>Payment</Typography>
                 <Grid container spacing={1}>
                   <Grid size={{ xs: 12, sm: 6, lg: 12 }}>
-                    <TextField inputRef={paidAmountInputRef} size="small" label="Paid amount" value={paidAmount} onChange={(event) => setPaidAmount(event.target.value)} fullWidth />
+                    <TextField
+                      inputRef={paidAmountInputRef}
+                      size="small"
+                      label={<RequiredLabel text="Paid amount" required={total > 0} />}
+                      value={paidAmount}
+                      onChange={(event) => setPaidAmount(event.target.value)}
+                      fullWidth
+                      type="number"
+                      error={Boolean(saleFieldErrors.paidAmount)}
+                      helperText={saleFieldErrors.paidAmount || (total > 0 ? "Required when grand total is greater than zero." : "Optional when sale total is zero.")}
+                      inputProps={{ min: 0, step: "0.01", "aria-required": total > 0 }}
+                    />
                   </Grid>
                   <Grid size={{ xs: 12, sm: 6, lg: 12 }}>
-                    <Select size="small" value={paymentMode} onChange={(event) => setPaymentMode(event.target.value as PaymentMode)} fullWidth disabled={collectingPaymentWithoutShift}>
+                    <TextField
+                      select
+                      size="small"
+                      label={<RequiredLabel text="Payment mode" required={numeric(paidAmount) > 0 || total > 0} />}
+                      value={paymentMode}
+                      onChange={(event) => setPaymentMode(event.target.value as PaymentMode)}
+                      fullWidth
+                      disabled={collectingPaymentWithoutShift}
+                      inputRef={paymentModeInputRef}
+                      error={Boolean(saleFieldErrors.paymentMode)}
+                      helperText={saleFieldErrors.paymentMode || ((numeric(paidAmount) > 0 || total > 0) ? "Select the payment method used for checkout." : "Optional until payment is entered.")}
+                      inputProps={{ "aria-required": numeric(paidAmount) > 0 || total > 0 }}
+                    >
                       {PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}
-                    </Select>
+                    </TextField>
                   </Grid>
                   <Grid size={12}>
-                    <TextField size="small" label="Reference" value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} fullWidth disabled={collectingPaymentWithoutShift} />
+                    <TextField
+                      size="small"
+                      label={<RequiredLabel text="Reference" required={numeric(paidAmount) > 0 && paymentMode !== "CASH"} />}
+                      value={paymentReference}
+                      onChange={(event) => setPaymentReference(event.target.value)}
+                      fullWidth
+                      disabled={collectingPaymentWithoutShift}
+                      inputRef={paymentReferenceInputRef}
+                      error={Boolean(saleFieldErrors.paymentReference)}
+                      helperText={saleFieldErrors.paymentReference || (numeric(paidAmount) > 0 && paymentMode !== "CASH" ? "Required for UPI, card, and insurance payments when applicable." : "Optional for cash payments.")}
+                      inputProps={{ maxLength: 60, "aria-required": numeric(paidAmount) > 0 && paymentMode !== "CASH" }}
+                    />
                   </Grid>
                 </Grid>
                 {collectingPaymentWithoutShift ? <Typography variant="caption" color="warning.main">Open cashier shift before collecting payment.</Typography> : null}
@@ -1791,7 +2009,18 @@ export default function PharmacyPosPage() {
                     <Typography variant="body2">{value}</Typography>
                   </Stack>
                 ))}
-                <TextField size="small" label="Notes" value={notes} onChange={(event) => setNotes(event.target.value)} multiline minRows={2} fullWidth />
+                <TextField
+                  size="small"
+                  label="Notes"
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  multiline
+                  minRows={2}
+                  fullWidth
+                  error={Boolean(saleFieldErrors.notes)}
+                  helperText={saleFieldErrors.notes || "Optional notes for the sale. Max 250 characters."}
+                  inputProps={{ maxLength: 250, name: "sale-notes" }}
+                />
               </Stack>
             </Box>
           </Stack>
@@ -1809,6 +2038,9 @@ export default function PharmacyPosPage() {
               onChange={(event) => setSaleSearchQuery(event.target.value)}
               placeholder="Sale no, customer, mobile"
               fullWidth
+              error={!recentSalesSearchValidation.success}
+              helperText={recentSalesSearchValidation.success ? "Search sale number, customer, mobile, or date." : firstZodError(recentSalesSearchValidation.error)}
+              inputProps={{ maxLength: 60 }}
             />
             <List dense sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, py: 0, maxHeight: 280, overflow: "auto" }}>
               {filteredSales.slice(0, 8).map((sale) => (

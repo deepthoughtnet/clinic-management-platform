@@ -17,9 +17,9 @@ public record PaymentRequest(
         BigDecimal amount,
         @NotNull
         PaymentMode paymentMode,
-        @Size(max = 128)
+        @Size(max = 60)
         String referenceNumber,
-        @Size(max = 4000)
+        @Size(max = 250)
         String notes,
         UUID receivedBy
 ) {

@@ -1,19 +1,25 @@
 package com.deepthoughtnet.clinic.api.inventory.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import java.util.UUID;
 
 public record DispenseRequest(
+        UUID medicineLineId,
         @NotBlank
         String prescribedMedicineName,
         UUID medicineId,
-        @PositiveOrZero
+        @Positive
         Integer quantity,
-        UUID batchId,
+        @Size(max = 60)
+        String batchOverride,
         boolean allowBatchOverride,
         @Size(max = 24)
-        String action
+        String action,
+        @Size(max = 60)
+        String reason,
+        @Size(max = 250)
+        String remarks
 ) {
 }

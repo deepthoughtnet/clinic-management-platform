@@ -1,4 +1,5 @@
 import { httpGet, httpGetText, httpPatch, httpPost, httpPostForm, httpPut } from "./restClient";
+import { buildHelpRequestOptions } from "./helpClient";
 
 export type PatientGender = "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
 export type AppointmentStatus = "BOOKED" | "WAITING" | "IN_CONSULTATION" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
@@ -807,7 +808,7 @@ export type Prescription = {
 
 export type BillStatus = "DRAFT" | "UNPAID" | "ISSUED" | "PARTIALLY_PAID" | "PAID" | "REFUND_PENDING" | "PARTIALLY_REFUNDED" | "REFUNDED" | "CANCELLED" | "CANCELLED_REFUNDED";
 export type BillItemType = "CONSULTATION" | "MEDICINE" | "TEST" | "VACCINATION" | "PROCEDURE" | "OTHER";
-export type PaymentMode = "CASH" | "CARD" | "UPI" | "PAYTM" | "PHONEPE" | "GOOGLE_PAY" | "BANK_TRANSFER" | "CHEQUE" | "OTHER";
+export type PaymentMode = "CASH" | "CARD" | "UPI" | "INSURANCE" | "PAYTM" | "PHONEPE" | "GOOGLE_PAY" | "BANK_TRANSFER" | "CHEQUE" | "OTHER";
 export type DiscountType = "NONE" | "AMOUNT" | "PERCENTAGE";
 
 export type BillLine = {
@@ -1893,8 +1894,274 @@ export type PatientSearchParams = {
   active?: boolean | null;
 };
 
+export type HelpPageStatus = "DRAFT" | "PUBLISHED" | "ARCHIVED";
+export type HelpContentStatus = "DRAFT" | "PUBLISHED" | "ARCHIVED";
+export type HelpSectionType =
+  | "DESCRIPTION"
+  | "WORKFLOW"
+  | "FIELD_TABLE"
+  | "VALIDATION_RULES"
+  | "REPORT_TYPES"
+  | "FILTERS"
+  | "EXPORT_CSV"
+  | "PERMISSIONS"
+  | "COMMON_ERRORS"
+  | "COMMON_ISSUES"
+  | "BEST_PRACTICES"
+  | "FAQ"
+  | "RELATED_PAGES"
+  | "VIDEOS"
+  | "IMAGES"
+  | "LINKS"
+  | "AUDIT"
+  | "ROLES"
+  | "TIPS"
+  | "KNOWN_LIMITATIONS";
+
+export type HelpAttachmentRecord = {
+  id: string;
+  type: "IMAGE" | "VIDEO" | "PDF" | "LINK";
+  url: string;
+  displayOrder: number | null;
+};
+
+export type HelpContentRecord = {
+  id: string;
+  languageCode: string;
+  contentJson: string;
+  version: number;
+  status: HelpContentStatus | string;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type HelpSectionRecord = {
+  id: string;
+  sectionKey: string;
+  sectionType: HelpSectionType | string;
+  displayOrder: number;
+  collapsible: boolean;
+  active: boolean;
+  contentJson: string | null;
+  contentLanguageCode: string | null;
+  contentVersion: number | null;
+  contentStatus: string | null;
+  attachments: HelpAttachmentRecord[];
+  contents: HelpContentRecord[];
+};
+
+export type HelpPageRecord = {
+  id: string;
+  moduleKey: string;
+  pageKey: string;
+  title: string;
+  icon: string | null;
+  status: HelpPageStatus | string;
+  version: number;
+  active: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+  availableVersions: number[];
+  sections: HelpSectionRecord[];
+};
+
+export type HelpPageSummary = {
+  id: string;
+  moduleKey: string;
+  pageKey: string;
+  title: string;
+  icon: string | null;
+  status: HelpPageStatus | string;
+  version: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type HelpSearchResult = {
+  pageKey: string;
+  pageTitle: string;
+  moduleKey: string;
+  sectionKey: string;
+  sectionType: string;
+  snippet: string;
+  languageCode: string;
+};
+
+export type HelpSectionUpsertInput = {
+  sectionKey: string;
+  sectionType: string;
+  displayOrder: number | null;
+  collapsible: boolean;
+  active: boolean;
+  contentJson: string;
+};
+
+export type HelpPageUpsertInput = {
+  moduleKey: string;
+  pageKey: string;
+  title: string;
+  icon: string | null;
+  status: HelpPageStatus | string;
+  active: boolean;
+  sections: HelpSectionUpsertInput[];
+};
+
+export type HelpPageLifecycleInput = {
+  pageKey: string;
+  version: number | null;
+};
+
+function isDevHelpLoggingEnabled(): boolean {
+  return import.meta.env?.DEV ?? true;
+}
+
+function logHelpRequest(message: string, details: Record<string, unknown>) {
+  if (isDevHelpLoggingEnabled()) {
+    console.info(message, details);
+  }
+}
+
+function logHelpResponse(message: string, details: Record<string, unknown>) {
+  if (isDevHelpLoggingEnabled()) {
+    console.info(message, details);
+  }
+}
+
 export async function getClinicProfile(token: string, tenantId: string) {
   return httpGet<ClinicProfile>("/api/clinic/profile", { token, tenantId });
+}
+
+export async function listHelpPages(token?: string | null, tenantId?: string | null) {
+  return httpGet<HelpPageSummary[]>("/api/platform/help/pages", {
+    ...buildHelpRequestOptions(token),
+    tenantId: tenantId ?? null,
+  });
+}
+
+async function fetchHelpPage(pageKey: string, lang: string, token?: string | null, tenantId?: string | null) {
+  const endpoint = `/api/help/page/${pageKey}?lang=${encodeURIComponent(lang)}`;
+  const requestOptions = {
+    ...buildHelpRequestOptions(token),
+    tenantId: tenantId ?? null,
+  };
+  logHelpRequest("[help] calling help API endpoint", {
+    endpoint,
+    pageKey,
+    lang,
+    hasToken: Boolean(requestOptions.token),
+    tenantId: tenantId || null,
+  });
+  try {
+    const response = await httpGet<HelpPageRecord>(endpoint, requestOptions);
+    logHelpResponse("[help] help API status", {
+      endpoint,
+      status: 200,
+      pageKey: response.pageKey,
+      sections: response.sections.length,
+      sectionKeys: response.sections.map((section) => section.sectionKey),
+    });
+    return response;
+  } catch (error) {
+    if (isDevHelpLoggingEnabled()) {
+      console.warn("[help] help API request failed", {
+        endpoint,
+        pageKey,
+        lang,
+        error,
+      });
+    }
+    throw error;
+  }
+}
+
+export async function getHelpPage(pageKey: string, lang = "en", token?: string | null, tenantId?: string | null) {
+  if (!pageKey) {
+    throw new Error("Missing help page key.");
+  }
+  return fetchHelpPage(pageKey, lang, token, tenantId);
+}
+
+export async function getHelpPageByKey(pageKey: string, lang = "en", token?: string | null, tenantId?: string | null) {
+  return getHelpPage(pageKey, lang, token, tenantId);
+}
+
+export async function getHelpPageAdmin(token?: string | null, tenantId?: string | null, pageKey?: string) {
+  if (!pageKey) {
+    throw new Error("Missing help page key.");
+  }
+  return httpGet<HelpPageRecord>(`/api/platform/help/page/${pageKey}`, {
+    ...buildHelpRequestOptions(token),
+    tenantId: tenantId ?? null,
+  });
+}
+
+async function fetchHelpSearch(query: string, lang: string, token?: string | null, tenantId?: string | null) {
+  const suffix = query ? `?q=${encodeURIComponent(query)}&lang=${encodeURIComponent(lang)}` : `?lang=${encodeURIComponent(lang)}`;
+  const endpoint = `/api/help/search${suffix}`;
+  const requestOptions = {
+    ...buildHelpRequestOptions(token),
+    tenantId: tenantId ?? null,
+  };
+  logHelpRequest("[help] calling help search endpoint", {
+    endpoint,
+    query: query || "",
+    lang,
+    hasToken: Boolean(requestOptions.token),
+    tenantId: tenantId || null,
+  });
+  try {
+    const response = await httpGet<HelpSearchResult[]>(endpoint, requestOptions);
+    logHelpResponse("[help] help search status", {
+      endpoint,
+      status: 200,
+      results: response.length,
+      pageKeys: Array.from(new Set(response.map((item) => item.pageKey))).slice(0, 5),
+    });
+    return response;
+  } catch (error) {
+    if (isDevHelpLoggingEnabled()) {
+      console.warn("[help] help search failed", {
+        endpoint,
+        query: query || "",
+        lang,
+        error,
+      });
+    }
+    throw error;
+  }
+}
+
+export async function searchHelp(query: string, lang = "en", token?: string | null, tenantId?: string | null) {
+  return fetchHelpSearch(query, lang, token, tenantId);
+}
+
+export async function searchHelpPages(token?: string | null, tenantId?: string | null, query?: string, lang = "en") {
+  return fetchHelpSearch(query || "", lang, token, tenantId);
+}
+
+export async function createHelpPage(token: string, tenantId: string, body: HelpPageUpsertInput) {
+  return httpPost<HelpPageRecord>("/api/platform/help/page", body, { token, tenantId });
+}
+
+export async function updateHelpPage(token: string, tenantId: string, body: HelpPageUpsertInput) {
+  return httpPut<HelpPageRecord>("/api/platform/help/page", body, { token, tenantId });
+}
+
+export async function publishHelpPage(token: string, tenantId: string, body: HelpPageLifecycleInput) {
+  return httpPost<HelpPageRecord>("/api/platform/help/publish", body, { token, tenantId });
+}
+
+export async function archiveHelpPage(token: string, tenantId: string, body: HelpPageLifecycleInput) {
+  return httpPost<HelpPageRecord>("/api/platform/help/archive", body, { token, tenantId });
+}
+
+export async function rollbackHelpPage(token: string, tenantId: string, body: HelpPageLifecycleInput) {
+  return httpPost<HelpPageRecord>("/api/platform/help/rollback", body, { token, tenantId });
 }
 
 export async function updateClinicProfile(token: string, tenantId: string, profile: ClinicProfileInput) {
@@ -3236,18 +3503,22 @@ export type PrescriptionDispense = {
   patientName: string | null;
   doctorName: string | null;
   prescriptionTimestamp: string | null;
+  status: "NOT_DISPENSED" | "READY_FOR_DISPENSE" | "PARTIALLY_DISPENSED" | "FULLY_DISPENSED" | "BOUGHT_EXTERNALLY" | "PATIENT_DECLINED" | "UNAVAILABLE_CLOSED" | "CANCELLED" | "EXPIRED" | string;
   billingStatus: "NOT_BILLED" | "BILLED" | "PAID" | string;
   billedBillId: string | null;
   lines: DispenseLine[];
 };
 
 export type DispenseInput = {
+  medicineLineId: string | null;
   prescribedMedicineName: string;
   medicineId: string | null;
   quantity: number | null;
-  batchId: string | null;
+  batchOverride: string | null;
   allowBatchOverride: boolean;
-  action: "FULL" | "PARTIAL" | "CANCEL" | string | null;
+  action: string | null;
+  reason: string | null;
+  remarks: string | null;
 };
 
 export async function getDispensingQueue(token: string, tenantId: string) {

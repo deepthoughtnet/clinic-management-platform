@@ -412,6 +412,74 @@ class PharmacyPosServiceTest {
     }
 
     @Test
+    void createSaleRejectsInactiveMedicine() {
+        MedicineEntity medicine = medicine("Inactive Medicine");
+        medicine.update(
+                "Inactive Medicine",
+                "TABLET",
+                null,
+                null,
+                null,
+                "Inactive Medicine",
+                null,
+                null,
+                null,
+                null,
+                "strip",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new BigDecimal("10.00"),
+                new BigDecimal("5.00"),
+                false
+        );
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, null, null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("10.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("inactive and cannot be sold");
+    }
+
+    @Test
+    void createSaleRejectsNegativeLineUnitPrice() {
+        MedicineEntity medicine = medicine("Paracetamol");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, null, null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("-1.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unitPrice cannot be negative");
+    }
+
+    @Test
+    void createSaleRejectsNegativeLineDiscount() {
+        MedicineEntity medicine = medicine("Paracetamol");
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, null, null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                PaymentMode.CASH, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("10.00"), new BigDecimal("-1.00"), BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("discount cannot be negative");
+    }
+
+    @Test
+    void searchMedicinesRejectsLongQuery() {
+        assertThatThrownBy(() -> service.searchMedicines(tenantId, "a".repeat(61)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("60 characters or fewer");
+    }
+
+    @Test
     void searchMedicinesIncludesActiveMedicineMasterRecordsWithoutStock() {
         MedicineEntity inStock = medicine("Amoxicillin");
         MedicineEntity noStock = medicine("Azithromycin");

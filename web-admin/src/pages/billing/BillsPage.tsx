@@ -40,8 +40,6 @@ import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   consultationFeeSchema,
-  paymentSchema,
-  refundSchema,
 } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactTableFrame, compactChipSx } from "../../components/compact/CompactUi";
@@ -52,6 +50,15 @@ import {
   type ReceiptPrintData,
 } from "../../components/finance/PrintableBillingDocuments";
 import ConsultationFeeDialog, { type ConsultationFeeDialogValue } from "../../components/ConsultationFeeDialog";
+import RequiredLabel from "../../components/forms/RequiredLabel.js";
+import CommentSuggestions from "../../shared/components/comment-suggestions/CommentSuggestions";
+import {
+  getFirstBillingInvalidField,
+  validateBillingDraft,
+  validateBillingPayment,
+  validateBillingRefund,
+  type FieldErrorMap,
+} from "./billingValidation";
 import {
   addBillPayment,
   addBillRefund,
@@ -208,6 +215,17 @@ function billItemCategoryLabel(value: BillItemCategory) {
     case "OTHER":
     default:
       return "Other";
+  }
+}
+
+function discountTypeLabel(value: DiscountType) {
+  switch (value) {
+    case "AMOUNT":
+      return "FLAT";
+    case "PERCENTAGE":
+      return "PERCENT";
+    default:
+      return value;
   }
 }
 
@@ -553,6 +571,9 @@ export default function BillsPage() {
   const [saving, setSaving] = React.useState(false);
   const [paymentOpen, setPaymentOpen] = React.useState(false);
   const [refundOpen, setRefundOpen] = React.useState(false);
+  const [billFieldErrors, setBillFieldErrors] = React.useState<FieldErrorMap>({});
+  const [paymentFieldErrors, setPaymentFieldErrors] = React.useState<FieldErrorMap>({});
+  const [refundFieldErrors, setRefundFieldErrors] = React.useState<FieldErrorMap>({});
   const [patientScopedBills, setPatientScopedBills] = React.useState<Bill[]>([]);
   const [patientBillingContext, setPatientBillingContext] = React.useState<PatientBillingContext | null>(null);
   const [refundBillSearch, setRefundBillSearch] = React.useState("");
@@ -584,6 +605,9 @@ export default function BillsPage() {
   const [ledgerActionAnchorEl, setLedgerActionAnchorEl] = React.useState<HTMLElement | null>(null);
   const [ledgerCollapsed, setLedgerCollapsed] = React.useState(false);
   const scanInputRef = React.useRef<HTMLInputElement | null>(null);
+  const patientSearchRef = React.useRef<HTMLInputElement | null>(null);
+  const billDateInputRef = React.useRef<HTMLInputElement | null>(null);
+  const discountReasonInputRef = React.useRef<HTMLInputElement | null>(null);
   const consultationSectionRef = React.useRef<HTMLDivElement | null>(null);
   const consultationDoctorSelectRef = React.useRef<HTMLInputElement | null>(null);
 
@@ -756,6 +780,9 @@ export default function BillsPage() {
       .slice(0, 6);
   }, [itemCatalog, medicineCatalog, scanItemType, scanQuery]);
   const currentDraftTotals = React.useMemo(() => draftBillTotals(form), [form]);
+  const isNoDiscount = form.discountType === "NONE";
+  const discountRequired = !isNoDiscount;
+  const discountLabel = form.discountType === "PERCENTAGE" ? "Discount (%)" : "Discount value";
   const consultationDraftReady = React.useMemo(
     () => consultationDraftHasLine && currentDraftTotals.total > 0
       && form.appointmentId === consultationAppointmentId
@@ -1362,26 +1389,25 @@ export default function BillsPage() {
 
   const submitRefund = async () => {
     if (!auth.accessToken || !auth.tenantId || !selectedBill) return;
-    const amount = Number(refundForm.amount || "0");
-    if (amount <= 0) { setError("Refund amount must be greater than 0."); return; }
-    if (amount > refundableAmount) { setError("Refund amount cannot exceed refundable amount."); return; }
-    const parsed = refundSchema.safeParse({
-      amount,
-      paymentMethod: refundForm.refundMode,
-      reason: refundForm.reason,
-      notes: refundForm.notes,
-    });
+    const parsed = validateBillingRefund(refundForm);
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message || "Failed to refund");
+      setRefundFieldErrors(parsed.fieldErrors);
+      setError(Object.values(parsed.fieldErrors)[0] || "Failed to refund");
       return;
     }
+    if (Number(parsed.data.amount) > refundableAmount) {
+      setRefundFieldErrors({ amount: "Refund amount cannot exceed refundable amount." });
+      setError("Refund amount cannot exceed refundable amount.");
+      return;
+    }
+    setRefundFieldErrors({});
     setSaving(true); setError(null); setSuccess(null);
     try {
       await addBillRefund(auth.accessToken, auth.tenantId, selectedBill.id, {
         paymentId: payments[0]?.id || null,
-        amount,
+        amount: parsed.data.amount,
         reason: parsed.data.reason.trim(),
-        refundMode: parsed.data.paymentMethod,
+        refundMode: parsed.data.refundMode,
         refundedAt: null,
         notes: parsed.data.notes?.trim() || null,
       });
@@ -1413,6 +1439,7 @@ export default function BillsPage() {
     setSelectedBill(bill);
     const dueAmount = billEffectiveDueAmount(bill);
     setPaymentForm({ ...emptyPaymentForm(), amount: dueAmount > 0 ? dueAmount.toFixed(2) : bill.totalAmount.toFixed(2) });
+    setPaymentFieldErrors({});
     setPaymentOpen(true);
   };
 
@@ -1427,6 +1454,7 @@ export default function BillsPage() {
       void selectBill(bill);
     }
     setRefundForm(emptyRefundForm());
+    setRefundFieldErrors({});
     setRefundBillSearch("");
     setRefundSearchResults([]);
     setRefundOpen(true);
@@ -1434,36 +1462,25 @@ export default function BillsPage() {
 
   const submitPayment = async () => {
     if (!auth.accessToken || !auth.tenantId || !selectedBill) return;
-    const amount = Number(paymentForm.amount || "0");
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setError("Payment amount must be greater than 0.");
+    const parsed = validateBillingPayment(paymentForm);
+    if (!parsed.success) {
+      setPaymentFieldErrors(parsed.fieldErrors);
+      setError(Object.values(parsed.fieldErrors)[0] || "Failed to collect payment");
       return;
     }
-    if (amount > billEffectiveDueAmount(selectedBill)) {
+    if (parsed.data.paymentAmount > billEffectiveDueAmount(selectedBill)) {
+      setPaymentFieldErrors({ paymentAmount: "Payment amount cannot exceed the remaining due amount." });
       setError("Payment amount cannot exceed the remaining due amount.");
       return;
     }
-    const parsed = paymentSchema.safeParse({
-      amount,
-      paymentMethod: paymentForm.paymentMode,
-      invoiceNumber: paymentForm.referenceNumber,
-      notes: paymentForm.notes,
-    });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message || "Failed to collect payment");
-      return;
-    }
-    if (parsed.data.paymentMethod !== "CASH" && !parsed.data.invoiceNumber?.trim()) {
-      setError("Reference number is required for non-cash payments.");
-      return;
-    }
+    setPaymentFieldErrors({});
     setSaving(true); setError(null); setSuccess(null);
     try {
       await addBillPayment(auth.accessToken, auth.tenantId, selectedBill.id, {
         paymentDate: paymentForm.paymentDate,
-        amount,
-        paymentMode: parsed.data.paymentMethod,
-        referenceNumber: parsed.data.invoiceNumber?.trim() || null,
+        amount: parsed.data.paymentAmount,
+        paymentMode: parsed.data.paymentMode,
+        referenceNumber: parsed.data.referenceNumber?.trim() || null,
         notes: parsed.data.notes?.trim() || null,
       });
       setPaymentOpen(false);
@@ -1709,15 +1726,28 @@ export default function BillsPage() {
   };
 
   const createBillFromDraft = async (collectPayment = false) => {
-    if (!auth.accessToken || !auth.tenantId || !form.patientId) { setError("Select a patient before creating a bill."); return; }
-    if (form.discountType !== "NONE" && !form.discountReason.trim() && Number(form.discountValue || "0") > 0) {
-      setError("Discount reason is required when discount > 0.");
+    if (!auth.accessToken || !auth.tenantId) return;
+    setError(null);
+    setSuccess(null);
+    const source = form.appointmentId.trim()
+      ? "APPOINTMENT"
+      : form.consultationId.trim()
+        ? "CONSULTATION"
+        : "MANUAL_BILLING";
+    const parsed = validateBillingDraft(form, source);
+    if (!parsed.success) {
+      setBillFieldErrors(parsed.fieldErrors);
+      setError(Object.values(parsed.fieldErrors)[0] || "Failed to create bill");
+      window.setTimeout(() => {
+        const firstField = getFirstBillingInvalidField(parsed.fieldErrors);
+        if (firstField === "patientId") patientSearchRef.current?.focus();
+        if (firstField === "billDate") billDateInputRef.current?.focus();
+        if (firstField === "discountReason") discountReasonInputRef.current?.focus();
+        if (firstField && firstField.startsWith("lines.")) scanInputRef.current?.focus();
+      }, 0);
       return;
     }
-    if (form.lines.filter((row) => row.itemName.trim()).length === 0) {
-      setError("Add at least one bill line before creating a bill.");
-      return;
-    }
+    setBillFieldErrors({});
     setSaving(true);
     setError(null);
     setSuccess(null);
@@ -1940,7 +1970,8 @@ export default function BillsPage() {
                   <Grid size={{ xs: 12, md: 6 }}>
                     <TextField
                       {...denseTextFieldProps}
-                      label="Search patient"
+                      inputRef={patientSearchRef}
+                      label={<RequiredLabel text="Patient" required />}
                       value={patientQuery}
                       onChange={(e) => setPatientQuery(e.target.value)}
                       helperText="Search by patient number, mobile, or name"
@@ -1985,36 +2016,57 @@ export default function BillsPage() {
                     )}
                   </Grid>
                   <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField {...denseTextFieldProps} type="date" label="Bill date" value={form.billDate} onChange={(e) => setForm((current) => ({ ...current, billDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                    <TextField
+                      {...denseTextFieldProps}
+                      inputRef={billDateInputRef}
+                      type="date"
+                      label={<RequiredLabel text="Bill date" required />}
+                      value={form.billDate}
+                      onChange={(e) => setForm((current) => ({ ...current, billDate: e.target.value }))}
+                      InputLabelProps={{ shrink: true }}
+                      error={Boolean(billFieldErrors.billDate)}
+                      helperText={billFieldErrors.billDate || "Cannot be future dated."}
+                    />
                   </Grid>
                   <Grid size={{ xs: 12, md: 4 }}>
                     <FormControl {...denseSelectProps}>
-                      <InputLabel id="discount-type-label">Discount type</InputLabel>
+                      <InputLabel id="discount-type-label"><RequiredLabel text="Discount type" required /></InputLabel>
                       <Select labelId="discount-type-label" label="Discount type" value={form.discountType} onChange={(e) => setForm((current) => ({ ...current, discountType: e.target.value as DiscountType }))}>
-                        {DISCOUNT_TYPES.map((d) => <MenuItem key={d} value={d}>{d}</MenuItem>)}
+                        {DISCOUNT_TYPES.map((d) => <MenuItem key={d} value={d}>{discountTypeLabel(d)}</MenuItem>)}
                       </Select>
                     </FormControl>
                   </Grid>
                   <Grid size={{ xs: 12, md: 4 }}>
                     <TextField
                       {...denseTextFieldProps}
-                      label={form.discountType === "PERCENTAGE" ? "Discount (%)" : "Discount value"}
+                      label={<RequiredLabel text={discountLabel} required={discountRequired} />}
                       value={form.discountValue}
                       onChange={(e) => setForm((current) => ({ ...current, discountValue: e.target.value }))}
-                      disabled={form.discountType === "NONE"}
+                      disabled={isNoDiscount}
+                      error={Boolean(billFieldErrors.discountValue)}
+                      helperText={billFieldErrors.discountValue || "Flat amount or percentage, depending on the selected type."}
                     />
                   </Grid>
                   <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField {...denseTextFieldProps} label="Consultation ID" value={form.consultationId} onChange={(e) => setForm((current) => ({ ...current, consultationId: e.target.value }))} />
+                    <TextField {...denseTextFieldProps} label="Consultation ID" value={form.consultationId} onChange={(e) => setForm((current) => ({ ...current, consultationId: e.target.value }))} error={Boolean(billFieldErrors.consultationId)} helperText={billFieldErrors.consultationId || "Optional, max 60 characters."} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField {...denseTextFieldProps} label="Appointment ID" value={form.appointmentId} onChange={(e) => setForm((current) => ({ ...current, appointmentId: e.target.value }))} />
+                    <TextField {...denseTextFieldProps} label="Appointment ID" value={form.appointmentId} onChange={(e) => setForm((current) => ({ ...current, appointmentId: e.target.value }))} error={Boolean(billFieldErrors.appointmentId)} helperText={billFieldErrors.appointmentId || "Optional, max 60 characters."} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField {...denseTextFieldProps} label="Source" value={consultationAppointmentId ? "Appointment billing" : "Manual billing"} InputProps={{ readOnly: true }} />
+                    <TextField {...denseTextFieldProps} label={<RequiredLabel text="Source" required />} value={consultationAppointmentId ? "APPOINTMENT" : "MANUAL_BILLING"} InputProps={{ readOnly: true }} />
                   </Grid>
                   <Grid size={12}>
-                    <TextField {...denseTextFieldProps} label="Discount reason" value={form.discountReason} onChange={(e) => setForm((current) => ({ ...current, discountReason: e.target.value }))} disabled={form.discountType === "NONE"} required={form.discountType !== "NONE" && Number(form.discountValue || "0") > 0} />
+                    <TextField
+                      {...denseTextFieldProps}
+                      inputRef={discountReasonInputRef}
+                      label={<RequiredLabel text="Discount reason" required={discountRequired && Number(form.discountValue || "0") > 0} />}
+                      value={form.discountReason}
+                      onChange={(e) => setForm((current) => ({ ...current, discountReason: e.target.value }))}
+                      disabled={isNoDiscount}
+                      error={Boolean(billFieldErrors.discountReason)}
+                      helperText={billFieldErrors.discountReason || "Required when discount is greater than zero."}
+                    />
                   </Grid>
                   <Grid size={12}>
                     <TextField {...denseTextFieldProps} label="Notes" value={form.notes} onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} />
@@ -2217,29 +2269,40 @@ export default function BillsPage() {
                       <TableBody>
                         {form.lines.map((row, index) => (
                           <TableRow key={`${index}-${row.sortOrder}`} hover>
+                            {(() => {
+                              const itemError = billFieldErrors[`lines.${index}.item`];
+                              const typeError = billFieldErrors[`lines.${index}.type`];
+                              const quantityError = billFieldErrors[`lines.${index}.quantity`];
+                              const unitError = billFieldErrors[`lines.${index}.unit`];
+                              const discountError = billFieldErrors[`lines.${index}.discount`];
+                              const taxError = billFieldErrors[`lines.${index}.tax`];
+                              return (
+                                <>
                             <TableCell>
                               <Stack spacing={0.25}>
-                                <TextField size="small" value={row.itemName} onChange={(e) => patchBillLine(index, { itemName: e.target.value })} fullWidth />
+                                <TextField size="small" label={<RequiredLabel text="Item" required />} value={row.itemName} onChange={(e) => patchBillLine(index, { itemName: e.target.value })} fullWidth error={Boolean(itemError)} helperText={itemError || "Required, max 100 characters."} />
                               </Stack>
                             </TableCell>
                             <TableCell>
                               <FormControl fullWidth size="small">
-                                <Select value={row.itemType} onChange={(e) => patchBillLine(index, { itemType: String(e.target.value) as BillItemCategory })}>
+                                <InputLabel><RequiredLabel text="Type" required /></InputLabel>
+                                <Select label="Type" value={row.itemType} error={Boolean(typeError)} onChange={(e) => patchBillLine(index, { itemType: String(e.target.value) as BillItemCategory })}>
                                   {BILL_ITEM_CATEGORIES.map((option) => <MenuItem key={option} value={option}>{billItemCategoryLabel(option)}</MenuItem>)}
                                 </Select>
+                                {typeError ? <Typography variant="caption" color="error">{typeError}</Typography> : null}
                               </FormControl>
                             </TableCell>
                             <TableCell align="right">
-                              <TextField size="small" fullWidth type="number" value={row.quantity} onChange={(e) => patchBillLine(index, { quantity: e.target.value })} />
+                              <TextField size="small" label={<RequiredLabel text="Qty" required />} fullWidth type="number" value={row.quantity} onChange={(e) => patchBillLine(index, { quantity: e.target.value })} error={Boolean(quantityError)} helperText={quantityError || "Whole number greater than zero."} />
                             </TableCell>
                             <TableCell align="right">
-                              <TextField size="small" fullWidth type="number" value={row.unitPrice} onChange={(e) => patchBillLine(index, { unitPrice: e.target.value })} />
+                              <TextField size="small" label={<RequiredLabel text="Unit" required />} fullWidth type="number" value={row.unitPrice} onChange={(e) => patchBillLine(index, { unitPrice: e.target.value })} error={Boolean(unitError)} helperText={unitError || "Zero or greater, up to 2 decimals."} />
                             </TableCell>
                             <TableCell align="right">
-                              <TextField size="small" fullWidth type="number" value={row.lineDiscountAmount} onChange={(e) => patchBillLine(index, { lineDiscountAmount: e.target.value })} />
+                              <TextField size="small" fullWidth type="number" value={row.lineDiscountAmount} onChange={(e) => patchBillLine(index, { lineDiscountAmount: e.target.value })} error={Boolean(discountError)} helperText={discountError || "Optional discount for this line."} />
                             </TableCell>
                             <TableCell align="right">
-                              <TextField size="small" fullWidth type="number" value={row.taxAmount} onChange={(e) => patchBillLine(index, { taxAmount: e.target.value })} />
+                              <TextField size="small" fullWidth type="number" value={row.taxAmount} onChange={(e) => patchBillLine(index, { taxAmount: e.target.value })} error={Boolean(taxError)} helperText={taxError || "Optional tax for this line."} />
                             </TableCell>
                             <TableCell align="right">
                               <Typography variant="body2" sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>{lineTotal(row)}</Typography>
@@ -2249,6 +2312,9 @@ export default function BillsPage() {
                                 <DeleteOutlineRoundedIcon fontSize="small" />
                               </IconButton>
                             </TableCell>
+                                </>
+                              );
+                            })()}
                           </TableRow>
                         ))}
                       </TableBody>
@@ -2267,7 +2333,7 @@ export default function BillsPage() {
                       <Chip size="small" label={`Due: ${formatAmount(currentDraftTotals.total)}`} color="warning" variant="outlined" sx={compactChipSx} />
                     </Stack>
                     <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap">
-                      <Button variant="outlined" size="small" onClick={() => { setForm(emptyBillForm()); setScanQuery(""); setManualScanPrompt(null); }} disabled={saving}>Reset draft</Button>
+                      <Button variant="outlined" size="small" onClick={() => { setForm(emptyBillForm()); setBillFieldErrors({}); setScanQuery(""); setManualScanPrompt(null); }} disabled={saving}>Reset draft</Button>
                       <Button variant="contained" size="small" onClick={() => void createBillFromDraft(false)} disabled={saving || !canCreateBill || currentDraftTotals.total <= 0}>
                         {saving ? "Saving..." : "Create Bill"}
                       </Button>
@@ -2643,10 +2709,10 @@ export default function BillsPage() {
                 You can record a full or partial payment up to the remaining due amount.
               </Alert>
             ) : null}
-            <TextField fullWidth label="Payment date" type="date" value={paymentForm.paymentDate} onChange={(e) => setPaymentForm((c) => ({ ...c, paymentDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
-            <TextField fullWidth label="Payment amount" helperText="Enter full due amount or any partial amount to keep the balance open." value={paymentForm.amount} onChange={(e) => setPaymentForm((c) => ({ ...c, amount: e.target.value }))} />
-            <FormControl fullWidth><InputLabel id="payment-mode-label">Mode</InputLabel><Select labelId="payment-mode-label" label="Mode" value={paymentForm.paymentMode} onChange={(e) => setPaymentForm((c) => ({ ...c, paymentMode: e.target.value as PaymentMode }))}>{PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}</Select></FormControl>
-            <TextField fullWidth label={paymentForm.paymentMode === "CASH" ? "Reference number (optional)" : "Reference number"} required={paymentForm.paymentMode !== "CASH"} value={paymentForm.referenceNumber} onChange={(e) => setPaymentForm((c) => ({ ...c, referenceNumber: e.target.value }))} />
+            <TextField fullWidth label={<RequiredLabel text="Payment date" required />} type="date" value={paymentForm.paymentDate} onChange={(e) => setPaymentForm((c) => ({ ...c, paymentDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
+            <TextField fullWidth label={<RequiredLabel text="Payment amount" required />} helperText={paymentFieldErrors.paymentAmount || "Enter full due amount or any partial amount to keep the balance open."} error={Boolean(paymentFieldErrors.paymentAmount)} value={paymentForm.amount} onChange={(e) => setPaymentForm((c) => ({ ...c, amount: e.target.value }))} />
+            <FormControl fullWidth error={Boolean(paymentFieldErrors.paymentMode)}><InputLabel id="payment-mode-label"><RequiredLabel text="Mode" required /></InputLabel><Select labelId="payment-mode-label" label="Mode" value={paymentForm.paymentMode} onChange={(e) => setPaymentForm((c) => ({ ...c, paymentMode: e.target.value as PaymentMode }))}>{PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}</Select>{paymentFieldErrors.paymentMode ? <Typography variant="caption" color="error">{paymentFieldErrors.paymentMode}</Typography> : null}</FormControl>
+            <TextField fullWidth label={paymentForm.paymentMode === "CASH" ? "Reference number (optional)" : <RequiredLabel text="Reference number" required />} required={paymentForm.paymentMode !== "CASH"} value={paymentForm.referenceNumber} onChange={(e) => setPaymentForm((c) => ({ ...c, referenceNumber: e.target.value }))} error={Boolean(paymentFieldErrors.referenceNumber)} helperText={paymentFieldErrors.referenceNumber || (paymentForm.paymentMode === "CASH" ? "Optional for cash payments." : "Required for non-cash payments.")} />
             <TextField fullWidth label="Notes" multiline minRows={2} value={paymentForm.notes} onChange={(e) => setPaymentForm((c) => ({ ...c, notes: e.target.value }))} />
           </Stack>
         </DialogContent>
@@ -2691,10 +2757,21 @@ export default function BillsPage() {
             <Alert severity="info">
               {selectedBill ? `Selected bill: ${selectedBill.billNumber} • Refundable amount ${formatAmount(refundableAmount)}` : "Select an existing paid bill to issue a refund."}
             </Alert>
-            <TextField fullWidth label="Amount" value={refundForm.amount} onChange={(e) => setRefundForm((c) => ({ ...c, amount: e.target.value }))} />
-            <FormControl fullWidth><InputLabel id="refund-mode-label">Mode</InputLabel><Select labelId="refund-mode-label" label="Mode" value={refundForm.refundMode} onChange={(e) => setRefundForm((c) => ({ ...c, refundMode: e.target.value as PaymentMode }))}>{PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}</Select></FormControl>
-            <TextField fullWidth label="Reason" required value={refundForm.reason} onChange={(e) => setRefundForm((c) => ({ ...c, reason: e.target.value }))} />
-            <TextField fullWidth label="Notes" multiline minRows={2} value={refundForm.notes} onChange={(e) => setRefundForm((c) => ({ ...c, notes: e.target.value }))} />
+            <TextField fullWidth label={<RequiredLabel text="Amount" required />} value={refundForm.amount} onChange={(e) => setRefundForm((c) => ({ ...c, amount: e.target.value }))} error={Boolean(refundFieldErrors.amount)} helperText={refundFieldErrors.amount || "Enter the amount to refund."} />
+            <FormControl fullWidth error={Boolean(refundFieldErrors.refundMode)}><InputLabel id="refund-mode-label"><RequiredLabel text="Mode" required /></InputLabel><Select labelId="refund-mode-label" label="Mode" value={refundForm.refundMode} onChange={(e) => setRefundForm((c) => ({ ...c, refundMode: e.target.value as PaymentMode }))}>{PAYMENT_MODES.map((mode) => <MenuItem key={mode} value={mode}>{mode}</MenuItem>)}</Select>{refundFieldErrors.refundMode ? <Typography variant="caption" color="error">{refundFieldErrors.refundMode}</Typography> : null}</FormControl>
+            <CommentSuggestions
+              category="REFUND"
+              selectedReason={refundForm.reason}
+              remarks={refundForm.notes}
+              onReasonChange={(value) => setRefundForm((c) => ({ ...c, reason: value }))}
+              onRemarksChange={(value) => setRefundForm((c) => ({ ...c, notes: value }))}
+              requiredReason
+              reasonLabel="Reason"
+              remarksLabel="Notes"
+              reasonError={Boolean(refundFieldErrors.reason)}
+              reasonHelperText={refundFieldErrors.reason || "Select a refund reason."}
+              remarksHelperText={refundFieldErrors.notes || "Optional refund remarks, max 250 characters."}
+            />
           </Stack>
         </DialogContent>
         <DialogActions>

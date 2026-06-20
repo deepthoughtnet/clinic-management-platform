@@ -49,6 +49,46 @@ const COMMENT_SUGGESTION_CONFIG = {
       "Opening balance entered.",
     ],
   },
+  INVENTORY_CUSTOMER_RETURN: {
+    reasons: ["REUSABLE", "DAMAGED", "EXPIRED", "NOT_SELLABLE"],
+    suggestions: [
+      "Reusable customer return restocked.",
+      "Customer return marked damaged.",
+      "Customer return marked expired.",
+      "Customer return not suitable for sale.",
+    ],
+  },
+  INVENTORY_VENDOR_RETURN: {
+    reasons: ["EXPIRED", "DAMAGED", "DEFECTIVE", "SHORT_SUPPLY", "SUPPLIER_REQUEST"],
+    suggestions: [
+      "Vendor returned due to expiry.",
+      "Vendor returned due to damage.",
+      "Vendor returned due to defect.",
+      "Vendor return raised for shortage.",
+      "Supplier requested stock return.",
+    ],
+  },
+  INVENTORY_WRITE_OFF: {
+    reasons: ["EXPIRED_STOCK", "DAMAGED_STOCK", "LOST_STOCK", "SPILLAGE", "THEFT", "DATA_CORRECTION"],
+    suggestions: [
+      "Expired stock written off.",
+      "Damaged stock written off.",
+      "Lost stock written off.",
+      "Spillage written off.",
+      "Theft-related write-off recorded.",
+      "Data correction write-off recorded.",
+    ],
+  },
+  INVENTORY_VENDOR_RECONCILIATION: {
+    reasons: ["MANUAL_REVIEW", "QTY_VARIANCE", "BATCH_MISMATCH", "DUPLICATE_ROW", "OCR_ERROR"],
+    suggestions: [
+      "Vendor sheet uploaded for review.",
+      "Quantity variance requires confirmation.",
+      "Batch mapping needs correction.",
+      "Duplicate vendor row detected.",
+      "OCR extraction needs manual review.",
+    ],
+  },
   BILLING_ADJUSTMENT: {
     reasons: ["DISCOUNT_APPROVED", "BILL_CORRECTION", "ROUNDING_ADJUSTMENT", "PACKAGE_ADJUSTMENT", "DUPLICATE_CHARGE_REMOVED"],
     suggestions: [

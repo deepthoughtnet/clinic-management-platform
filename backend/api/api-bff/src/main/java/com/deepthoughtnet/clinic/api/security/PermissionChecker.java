@@ -63,6 +63,18 @@ public class PermissionChecker {
         return currentRoles().contains(role.trim().toUpperCase(Locale.ROOT));
     }
 
+    public boolean hasAnyRole(String... roles) {
+        if (roles == null || roles.length == 0) {
+            return false;
+        }
+        for (String role : roles) {
+            if (hasRole(role)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public Set<String> currentPermissions() {
         return permissionsForRoles(currentRoles());
     }

@@ -7,7 +7,8 @@ import {
 import CodeScannerDialog from "./CodeScannerDialog";
 
 type CodeScannerFieldProps = {
-  label: string;
+  id?: string;
+  label: React.ReactNode;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
@@ -19,6 +20,7 @@ type CodeScannerFieldProps = {
 };
 
 export default function CodeScannerField({
+  id,
   label,
   value,
   onChange,
@@ -30,10 +32,12 @@ export default function CodeScannerField({
   inputRef,
 }: CodeScannerFieldProps) {
   const [open, setOpen] = React.useState(false);
+  const labelText = typeof label === "string" ? label : "code";
 
   return (
     <>
       <TextField
+        id={id}
         fullWidth
         size={size}
         label={label}
@@ -56,7 +60,7 @@ export default function CodeScannerField({
       />
       <CodeScannerDialog
         open={open}
-        title={`Scan ${label}`}
+        title={`Scan ${labelText}`}
         description="Point the camera at a barcode or QR code. You can also type the code manually below."
         value={value}
         onClose={() => setOpen(false)}

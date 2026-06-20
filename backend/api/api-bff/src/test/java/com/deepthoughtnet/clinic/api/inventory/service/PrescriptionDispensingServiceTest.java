@@ -29,6 +29,8 @@ import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineRepository;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -61,9 +63,12 @@ class PrescriptionDispensingServiceTest {
     private StockRepository stockRepository;
     private InventoryService inventoryService;
     private BillingService billingService;
+    private AuditEventPublisher auditEventPublisher;
+    private ObjectMapper objectMapper;
     private PrescriptionDispensingService service;
     private UUID medicineId;
     private MedicineEntity medicineRow;
+    private PrescriptionMedicineEntity prescriptionLineRow;
 
     @BeforeEach
     void setUp() {
@@ -76,8 +81,11 @@ class PrescriptionDispensingServiceTest {
         stockRepository = mock(StockRepository.class);
         inventoryService = mock(InventoryService.class);
         billingService = mock(BillingService.class);
+        auditEventPublisher = mock(AuditEventPublisher.class);
+        objectMapper = new ObjectMapper();
         medicineRow = medicine();
         medicineId = medicineRow.getId();
+        prescriptionLineRow = prescriptionLine();
         InventoryLocationEntity defaultLocation = defaultLocation();
 
         service = new PrescriptionDispensingService(
@@ -89,13 +97,15 @@ class PrescriptionDispensingServiceTest {
                 locationRepository,
                 stockRepository,
                 inventoryService,
-                billingService
+                billingService,
+                auditEventPublisher,
+                objectMapper
         );
 
         lenient().when(prescriptionService.findById(TENANT_ID, PRESCRIPTION_ID)).thenReturn(Optional.of(prescriptionRecord()));
         lenient().when(prescriptionService.list(TENANT_ID)).thenReturn(List.of(prescriptionRecord()));
         lenient().when(prescriptionMedicineRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(TENANT_ID, PRESCRIPTION_ID))
-                .thenReturn(List.of(prescriptionLine()));
+                .thenReturn(List.of(prescriptionLineRow));
         lenient().when(medicineRepository.findByTenantIdOrderByMedicineNameAsc(TENANT_ID))
                 .thenReturn(List.of(medicineRow));
         lenient().when(medicineRepository.findByTenantIdAndId(TENANT_ID, medicineId)).thenReturn(Optional.of(medicineRow));
@@ -145,11 +155,16 @@ class PrescriptionDispensingServiceTest {
     @Test
     void partialDispenseTracksPendingQuantity() {
         stock(2, LocalDate.now().plusDays(10));
+        PrescriptionDispensationEntity disp = PrescriptionDispensationEntity.create(TENANT_ID, PRESCRIPTION_ID, PATIENT_ID);
+        var line = PrescriptionDispenseItemEntity.create(TENANT_ID, disp.getId(), PRESCRIPTION_ID, prescriptionLineRow.getId(), medicineId, "Amoxicillin", 1, 3);
+        dispenseItems.add(line);
+        when(dispensationRepository.findByTenantIdAndPrescriptionId(TENANT_ID, PRESCRIPTION_ID)).thenReturn(Optional.of(disp));
+        when(dispenseItemRepository.findByTenantIdAndPrescriptionIdOrderByPrescribedSortOrderAsc(TENANT_ID, PRESCRIPTION_ID)).thenReturn(dispenseItems);
 
         var response = service.dispense(
                 TENANT_ID,
                 PRESCRIPTION_ID,
-                new DispenseRequest("Amoxicillin", medicineId, 3, null, false, "PARTIAL"),
+                new DispenseRequest(line.getId(), "Amoxicillin", medicineId, 2, null, false, "PARTIAL_DISPENSE", null, null),
                 ACTOR_ID,
                 false
         );
@@ -168,7 +183,7 @@ class PrescriptionDispensingServiceTest {
         assertThatThrownBy(() -> service.dispense(
                 TENANT_ID,
                 PRESCRIPTION_ID,
-                new DispenseRequest("Amoxicillin", medicineId, 1, null, false, "FULL"),
+                new DispenseRequest(null, "Amoxicillin", medicineId, 1, null, false, "FULL_DISPENSE", null, null),
                 ACTOR_ID,
                 false
         ))
@@ -181,7 +196,7 @@ class PrescriptionDispensingServiceTest {
         assertThatThrownBy(() -> service.dispense(
                 TENANT_ID,
                 PRESCRIPTION_ID,
-                new DispenseRequest("Amoxicillin", medicineId, 1, null, false, "FULL"),
+                new DispenseRequest(null, "Amoxicillin", medicineId, 1, null, false, "FULL_DISPENSE", null, null),
                 ACTOR_ID,
                 false
         ))
@@ -200,7 +215,7 @@ class PrescriptionDispensingServiceTest {
         var response = service.dispense(
                 TENANT_ID,
                 PRESCRIPTION_ID,
-                new DispenseRequest("Amoxicillin", medicineId, 1, null, false, "PARTIAL"),
+                new DispenseRequest(null, "Amoxicillin", medicineId, 1, null, false, "PARTIAL_DISPENSE", null, null),
                 ACTOR_ID,
                 false
         );
@@ -208,6 +223,114 @@ class PrescriptionDispensingServiceTest {
         assertThat(response.lines().getFirst().dispensedQuantity()).isEqualTo(1);
         assertThat(batch.getQuantityOnHand()).isEqualTo(2);
         verify(inventoryService).createTransaction(any(), any(), any());
+    }
+
+    @Test
+    void inactiveBatchIsRejectedWhenOverrideIsUsed() {
+        StockEntity batch = stock(3, LocalDate.now().plusDays(10));
+        batch.update("B1", null, null, "B1", null, LocalDate.now().plusDays(10), null, null, 3, 3, 5, null, null, null, false);
+
+        assertThatThrownBy(() -> service.dispense(
+                TENANT_ID,
+                PRESCRIPTION_ID,
+                new DispenseRequest(null, "Amoxicillin", medicineId, 1, "B1", true, "PARTIAL_DISPENSE", "Manual batch override", null),
+                ACTOR_ID,
+                true
+        ))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> assertThat(((ResponseStatusException) error).getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+    }
+
+    @Test
+    void dispenseQuantityAbovePendingIsRejected() {
+        StockEntity batch = stock(5, LocalDate.now().plusDays(10));
+        PrescriptionDispensationEntity disp = PrescriptionDispensationEntity.create(TENANT_ID, PRESCRIPTION_ID, PATIENT_ID);
+        var line = PrescriptionDispenseItemEntity.create(TENANT_ID, disp.getId(), PRESCRIPTION_ID, prescriptionLineRow.getId(), medicineId, "Amoxicillin", 1, 2);
+        dispenseItems.add(line);
+        when(dispensationRepository.findByTenantIdAndPrescriptionId(TENANT_ID, PRESCRIPTION_ID)).thenReturn(Optional.of(disp));
+        when(dispenseItemRepository.findByTenantIdAndPrescriptionIdOrderByPrescribedSortOrderAsc(TENANT_ID, PRESCRIPTION_ID)).thenReturn(dispenseItems);
+
+        assertThatThrownBy(() -> service.dispense(
+                TENANT_ID,
+                PRESCRIPTION_ID,
+                new DispenseRequest(line.getId(), "Amoxicillin", medicineId, 3, null, false, "PARTIAL_DISPENSE", null, null),
+                ACTOR_ID,
+                false
+        ))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> assertThat(((ResponseStatusException) error).getReason()).contains("pending quantity"));
+    }
+
+    @Test
+    void dispenseQuantityAboveStockIsRejected() {
+        StockEntity batch = stock(2, LocalDate.now().plusDays(10));
+        PrescriptionDispensationEntity disp = PrescriptionDispensationEntity.create(TENANT_ID, PRESCRIPTION_ID, PATIENT_ID);
+        var line = PrescriptionDispenseItemEntity.create(TENANT_ID, disp.getId(), PRESCRIPTION_ID, prescriptionLineRow.getId(), medicineId, "Amoxicillin", 1, 5);
+        dispenseItems.add(line);
+        when(dispensationRepository.findByTenantIdAndPrescriptionId(TENANT_ID, PRESCRIPTION_ID)).thenReturn(Optional.of(disp));
+        when(dispenseItemRepository.findByTenantIdAndPrescriptionIdOrderByPrescribedSortOrderAsc(TENANT_ID, PRESCRIPTION_ID)).thenReturn(dispenseItems);
+
+        assertThatThrownBy(() -> service.dispense(
+                TENANT_ID,
+                PRESCRIPTION_ID,
+                new DispenseRequest(line.getId(), "Amoxicillin", medicineId, 4, null, false, "PARTIAL_DISPENSE", null, null),
+                ACTOR_ID,
+                false
+        ))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> assertThat(((ResponseStatusException) error).getReason()).contains("available stock"));
+    }
+
+    @Test
+    void closureRequiresReason() {
+        stock(2, LocalDate.now().plusDays(10));
+
+        assertThatThrownBy(() -> service.dispense(
+                TENANT_ID,
+                PRESCRIPTION_ID,
+                new DispenseRequest(null, "Amoxicillin", medicineId, null, null, false, "BUY_OUTSIDE", null, null),
+                ACTOR_ID,
+                false
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("closure reason");
+    }
+
+    @Test
+    void prescriptionLevelClosureDoesNotRequireMedicineMasterMapping() {
+        PrescriptionDispensationEntity disp = PrescriptionDispensationEntity.create(TENANT_ID, PRESCRIPTION_ID, PATIENT_ID);
+        when(dispensationRepository.findByTenantIdAndPrescriptionId(TENANT_ID, PRESCRIPTION_ID)).thenReturn(Optional.of(disp));
+        when(medicineRepository.findByTenantIdAndMedicineNameIgnoreCase(TENANT_ID, "RX-001")).thenReturn(Optional.empty());
+
+        var response = service.dispense(
+                TENANT_ID,
+                PRESCRIPTION_ID,
+                new DispenseRequest(null, "RX-001", null, null, null, false, "CANCEL_PRESCRIPTION", "Patient cancelled before pickup", "Final closure"),
+                ACTOR_ID,
+                false
+        );
+
+        assertThat(response.status()).isEqualTo("CANCELLED");
+        assertThat(response.billingStatus()).isEqualTo("NOT_BILLED");
+        org.mockito.Mockito.verifyNoInteractions(inventoryService);
+    }
+
+    @Test
+    void terminalPrescriptionMutationIsBlocked() {
+        stock(2, LocalDate.now().plusDays(10));
+        PrescriptionDispensationEntity disp = PrescriptionDispensationEntity.create(TENANT_ID, PRESCRIPTION_ID, PATIENT_ID);
+        disp.updateDispensingStatus("BOUGHT_EXTERNALLY", "Patient bought outside", "Closed at front desk");
+        when(dispensationRepository.findByTenantIdAndPrescriptionId(TENANT_ID, PRESCRIPTION_ID)).thenReturn(Optional.of(disp));
+
+        assertThatThrownBy(() -> service.dispense(
+                TENANT_ID,
+                PRESCRIPTION_ID,
+                new DispenseRequest(null, "Amoxicillin", medicineId, 1, null, false, "PARTIAL_DISPENSE", null, null),
+                ACTOR_ID,
+                false
+        ))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> assertThat(((ResponseStatusException) error).getReason()).contains("already been closed"));
     }
 
     @Test

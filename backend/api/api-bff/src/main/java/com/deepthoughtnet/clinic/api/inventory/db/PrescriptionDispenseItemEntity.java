@@ -88,6 +88,12 @@ public class PrescriptionDispenseItemEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    public void markTerminal(String terminalStatus) {
+        this.pendingQuantity = 0;
+        this.status = terminalStatus;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public UUID getId() { return id; }
     public UUID getTenantId() { return tenantId; }
     public UUID getDispensationId() { return dispensationId; }

@@ -100,8 +100,8 @@ function buildHeaders(path: string, opts?: ApiOpts, withContentType = true): Hea
   const token = opts?.token ?? getStoredToken();
   const tenantId = resolveTenantId(opts);
   const platformOp = isPlatformOperation(path, opts);
-  const sendTenantHeader = !(platformOp || opts?.requireTenant === false);
-  const headerTenantId = sendTenantHeader ? requireTenantId(tenantId) : null;
+  const shouldSendTenantHeader = !platformOp && (opts?.requireTenant !== false || Boolean(tenantId));
+  const headerTenantId = shouldSendTenantHeader ? (opts?.requireTenant === false ? tenantId : requireTenantId(tenantId)) : null;
 
   console.info("[api] request context", {
     path,

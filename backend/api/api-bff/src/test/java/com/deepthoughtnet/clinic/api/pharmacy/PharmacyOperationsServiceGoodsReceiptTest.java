@@ -91,6 +91,7 @@ class PharmacyOperationsServiceGoodsReceiptTest {
 
         MedicineEntity medicine = mock(MedicineEntity.class);
         when(medicine.getId()).thenReturn(MEDICINE_ID);
+        when(medicine.isActive()).thenReturn(true);
         when(medicineRepository.findByTenantIdAndId(TENANT_ID, MEDICINE_ID)).thenReturn(Optional.of(medicine));
 
         service = new PharmacyOperationsService(

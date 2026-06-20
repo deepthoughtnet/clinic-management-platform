@@ -11,6 +11,7 @@ public record PrescriptionDispenseResponse(
         String patientName,
         String doctorName,
         OffsetDateTime prescriptionTimestamp,
+        String status,
         String billingStatus,
         UUID billedBillId,
         List<PrescriptionDispenseLineResponse> lines

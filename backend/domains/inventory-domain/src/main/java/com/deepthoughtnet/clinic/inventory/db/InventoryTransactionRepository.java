@@ -6,4 +6,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface InventoryTransactionRepository extends JpaRepository<InventoryTransactionEntity, UUID> {
     List<InventoryTransactionEntity> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
+    boolean existsByTenantIdAndStockBatchId(UUID tenantId, UUID stockBatchId);
 }

@@ -53,6 +53,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Stream;
 import java.util.stream.Collectors;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.commons.csv.CSVFormat;
@@ -76,6 +77,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 public class PharmacyOperationsService {
     private static final int EXPIRY_WARNING_DAYS = 30;
     private static final Logger log = LoggerFactory.getLogger(PharmacyOperationsService.class);
+    private static final Pattern SUPPLIER_NAME_PATTERN = Pattern.compile(".*[A-Za-z0-9].*");
+    private static final Pattern GSTIN_PATTERN = Pattern.compile("^\\d{2}[A-Z]{5}\\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]$");
+    private static final Pattern INDIAN_MOBILE_PATTERN = Pattern.compile("^[6-9]\\d{9}$");
+    private static final Pattern LETTER_OR_NUMBER_PATTERN = Pattern.compile(".*[A-Za-z0-9].*");
+    private static final Pattern LETTER_ONLY_PATTERN = Pattern.compile(".*[A-Za-z].*");
+    private static final Pattern INVOICE_REFERENCE_PATTERN = Pattern.compile("^[A-Za-z0-9/ _-]+$");
+    private static final Pattern CODE_PATTERN = Pattern.compile("^[A-Za-z0-9/_-]+$");
+    private static final Pattern BATCH_PATTERN = Pattern.compile("^[A-Za-z0-9/_-]+$");
 
     private final InventoryService inventoryService;
     private final MedicineRepository medicineRepository;
@@ -320,6 +329,7 @@ public class PharmacyOperationsService {
         }
         MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, request.medicineId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Medicine not found"));
+        ensureActiveMedicine(medicine, "Selected medicine is inactive");
         UUID locationId = resolveLocationId(tenantId, request.locationId());
         StockEntity stock = request.stockBatchId() == null ? null : stockRepository.findByTenantIdAndId(tenantId, request.stockBatchId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Stock batch not found"));
@@ -328,6 +338,7 @@ public class PharmacyOperationsService {
         }
         SupplierEntity supplier = request.supplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, request.supplierId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        ensureActiveSupplier(supplier, "Inactive supplier cannot be used for reconciliation");
         int systemQuantity = stock != null ? stock.getQuantityOnHand() : stockRepository.findByTenantIdAndMedicineId(tenantId, medicine.getId()).stream().mapToInt(StockEntity::getQuantityOnHand).sum();
         if (request.physicalQuantity() != null && request.physicalQuantity() < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Physical quantity cannot be negative");
@@ -362,6 +373,7 @@ public class PharmacyOperationsService {
         }
         MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, request.medicineId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Medicine not found"));
+        ensureActiveMedicine(medicine, "Selected medicine is inactive");
         UUID locationId = resolveLocationId(tenantId, request.locationId());
         StockEntity stock = request.stockBatchId() == null ? null : stockRepository.findByTenantIdAndId(tenantId, request.stockBatchId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Stock batch not found"));
@@ -370,6 +382,7 @@ public class PharmacyOperationsService {
         }
         SupplierEntity supplier = request.supplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, request.supplierId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        ensureActiveSupplier(supplier, "Inactive supplier cannot be used for reconciliation");
         int systemQuantity = stock != null ? stock.getQuantityOnHand() : stockRepository.findByTenantIdAndMedicineId(tenantId, medicine.getId()).stream().mapToInt(StockEntity::getQuantityOnHand).sum();
         Integer physicalQuantity = request.physicalQuantity();
         Integer varianceQuantity = physicalQuantity == null ? entity.getVarianceQuantity() : physicalQuantity - systemQuantity;
@@ -526,16 +539,16 @@ public class PharmacyOperationsService {
         }
         MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, request.medicineId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Medicine not found"));
+        ensureActiveMedicine(medicine, "Inactive medicine cannot receive new stock");
         SupplierEntity supplier = request.supplierId() == null ? null : supplierRepository.findByTenantIdAndId(tenantId, request.supplierId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        ensureActiveSupplier(supplier, "Inactive supplier cannot be used for stock inward");
+        validateStockInwardFields(request);
         LocalDate expiryDate = parseDate(request.expiryDate(), "expiryDate");
         LocalDate purchaseDate = parseDate(request.purchaseDate(), "purchaseDate");
         String batchNumber = normalizeNullable(request.batchNumber());
         String purchaseReferenceNumber = normalizeNullable(request.purchaseReferenceNumber());
-        int quantity = Math.max(0, request.quantity());
-        if (quantity <= 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Quantity must be positive");
-        }
+        int quantity = request.quantity();
 
         UUID locationId = resolveLocationId(tenantId, request.locationId());
         StockEntity existing = findStockBatch(tenantId, medicine.getId(), locationId, batchNumber, purchaseReferenceNumber).orElse(null);
@@ -633,6 +646,8 @@ public class PharmacyOperationsService {
         }
         SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, request.supplierId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        ensureActiveSupplier(supplier, "Inactive supplier cannot be used for procurement");
+        validatePurchaseOrder(tenantId, request);
         String itemsJson = serializeItems(request.items());
         PurchaseOrderEntity entity = purchaseOrderRepository.findByTenantIdAndPoNumberIgnoreCase(tenantId, request.poNumber())
                 .orElseGet(() -> PurchaseOrderEntity.create(tenantId, supplier.getId(), normalize(request.poNumber()), parseDate(request.orderDate(), "orderDate"), parseDate(request.expectedDeliveryDate(), "expectedDeliveryDate"), itemsJson, actorAppUserId));
@@ -655,8 +670,10 @@ public class PharmacyOperationsService {
         }
         SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, request.supplierId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        ensureActiveSupplier(supplier, "Inactive supplier cannot be used for procurement");
         PurchaseOrderEntity po = request.purchaseOrderId() == null ? null : purchaseOrderRepository.findByTenantIdAndId(tenantId, request.purchaseOrderId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
+        validateSupplierInvoice(tenantId, request);
         String itemsJson = serializeItems(request.items());
         SupplierInvoiceEntity entity = supplierInvoiceRepository.findByTenantIdAndInvoiceNumberIgnoreCase(tenantId, request.invoiceNumber())
                 .orElseGet(() -> SupplierInvoiceEntity.create(tenantId, supplier.getId(), po == null ? null : po.getId(), normalize(request.invoiceNumber()), parseDate(request.invoiceDate(), "invoiceDate"), request.taxAmount(), request.totalAmount(), itemsJson, actorAppUserId));
@@ -683,12 +700,14 @@ public class PharmacyOperationsService {
         }
         SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, request.supplierId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        ensureActiveSupplier(supplier, "Inactive supplier cannot be used for procurement");
         PurchaseOrderEntity po = request.purchaseOrderId() == null ? null : purchaseOrderRepository.findByTenantIdAndId(tenantId, request.purchaseOrderId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
         SupplierInvoiceEntity invoice = request.supplierInvoiceId() == null ? null : supplierInvoiceRepository.findByTenantIdAndId(tenantId, request.supplierInvoiceId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier invoice not found"));
         InventoryLocationEntity location = locationRepository.findByTenantIdAndId(tenantId, resolveLocationId(tenantId, request.locationId()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Location not found"));
+        validateGoodsReceipt(tenantId, request);
         String itemsJson = serializeItems(request.items());
         GoodsReceiptEntity entity = goodsReceiptRepository.findByTenantIdAndReceiptNumberIgnoreCase(tenantId, request.receiptNumber())
                 .orElseGet(() -> GoodsReceiptEntity.create(tenantId, supplier.getId(), po == null ? null : po.getId(), invoice == null ? null : invoice.getId(), normalize(request.receiptNumber()), parseDateTime(request.receivedAt()), location.getId(), itemsJson, actorAppUserId));
@@ -712,6 +731,8 @@ public class PharmacyOperationsService {
             }
             MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, item.medicineId())
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Medicine not found"));
+            ensureActiveMedicine(medicine, "Inactive medicine cannot receive stock");
+            validateProcurementLine(tenantId, item);
             StockEntity existing = findStockBatch(tenantId, medicine.getId(), location.getId(), item.batchNumber(), entity.getReceiptNumber()).orElse(null);
             StockUpsertCommand command = new StockUpsertCommand(
                     medicine.getId(),
@@ -1124,20 +1145,219 @@ public class PharmacyOperationsService {
     }
 
     private void validateSupplier(SupplierUpsertRequest request) {
-        if (request == null || !StringUtils.hasText(request.supplierName())) {
+        if (request == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier request is required");
+        }
+        String supplierName = normalize(request.supplierName());
+        if (!StringUtils.hasText(supplierName)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier name is required");
+        }
+        if (supplierName.length() < 2 || supplierName.length() > 100 || !SUPPLIER_NAME_PATTERN.matcher(supplierName).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier name must be 2 to 100 characters and include a letter or number");
+        }
+        if (StringUtils.hasText(request.gstNumber()) && !GSTIN_PATTERN.matcher(request.gstNumber().trim().toUpperCase(Locale.ROOT)).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "GSTIN must be a valid 15-character Indian GST number");
+        }
+        if (StringUtils.hasText(request.contactPerson()) && (!LETTER_OR_NUMBER_PATTERN.matcher(request.contactPerson().trim()).matches() || request.contactPerson().trim().length() > 60)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Contact person must be 60 characters or fewer and include a letter or number");
+        }
+        if (StringUtils.hasText(request.phone()) && !INDIAN_MOBILE_PATTERN.matcher(request.phone().trim()).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Mobile must be a valid 10-digit Indian mobile number");
+        }
+        if (StringUtils.hasText(request.email()) && request.email().trim().length() > 120) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email must be 120 characters or fewer");
+        }
+        if (StringUtils.hasText(request.email()) && !request.email().trim().matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a valid email address");
+        }
+        if (StringUtils.hasText(request.address()) && request.address().trim().length() > 250) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Address must be 250 characters or fewer");
         }
     }
 
     private void ensureUniqueSupplier(UUID tenantId, String supplierName, UUID id) {
+        String normalized = normalize(supplierName);
         if (id == null) {
-            if (supplierRepository.findByTenantIdAndSupplierNameIgnoreCase(tenantId, supplierName).isPresent()) {
+            if (supplierRepository.findByTenantIdAndSupplierNameIgnoreCase(tenantId, normalized).isPresent()) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Supplier already exists");
             }
             return;
         }
-        if (supplierRepository.existsByTenantIdAndSupplierNameIgnoreCaseAndIdNot(tenantId, supplierName, id)) {
+        if (supplierRepository.existsByTenantIdAndSupplierNameIgnoreCaseAndIdNot(tenantId, normalized, id)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Supplier already exists");
+        }
+    }
+
+    private void ensureActiveSupplier(SupplierEntity supplier, String message) {
+        if (supplier != null && !supplier.isActive()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
+        }
+    }
+
+    private void ensureActiveMedicine(MedicineEntity medicine, String message) {
+        if (medicine != null && !medicine.isActive()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
+        }
+    }
+
+    private void validateStockInwardFields(StockInwardRequest request) {
+        validateReferenceField(request.purchaseReferenceNumber(), 60, "Invoice number must be 60 characters or fewer and can include letters, numbers, dashes, underscores, slashes, and spaces.", INVOICE_REFERENCE_PATTERN, "invoice number");
+        validateReferenceField(request.batchNumber(), 30, "GRN number must be 3 to 30 characters and use letters, numbers, dashes, underscores, or slashes.", BATCH_PATTERN, "GRN number", 3);
+        if (StringUtils.hasText(request.barcode()) && !request.barcode().trim().matches("^\\d{8,20}$")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Barcode must be 8 to 20 digits");
+        }
+        if (StringUtils.hasText(request.qrCode()) && request.qrCode().trim().length() > 100) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "QR code must be 100 characters or fewer");
+        }
+        if (StringUtils.hasText(request.externalCode()) && (request.externalCode().trim().length() > 50 || !CODE_PATTERN.matcher(request.externalCode().trim()).matches())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "External code must be 50 characters or fewer and use letters, numbers, dashes, underscores, or slashes");
+        }
+        if (request.lowStockThreshold() != null && request.lowStockThreshold() < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Threshold cannot be negative");
+        }
+        if (request.unitCost() != null && request.unitCost().compareTo(BigDecimal.ZERO) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unit cost cannot be negative");
+        }
+        if (request.sellingPrice() != null && request.sellingPrice().compareTo(BigDecimal.ZERO) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selling price cannot be negative");
+        }
+        if (request.unitCost() != null && request.sellingPrice() != null && request.sellingPrice().compareTo(request.unitCost()) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selling price cannot be less than unit cost.");
+        }
+        if (request.quantity() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Quantity must be positive");
+        }
+        LocalDate purchaseDate = parseDate(request.purchaseDate(), "purchaseDate");
+        if (purchaseDate != null && purchaseDate.isAfter(LocalDate.now())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Inward date cannot be in the future");
+        }
+        LocalDate expiryDate = parseDate(request.expiryDate(), "expiryDate");
+        if (expiryDate != null && expiryDate.isBefore(LocalDate.now())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Expiry date cannot be in the past");
+        }
+    }
+
+    private void validateReferenceField(String value, int maxLength, String message, Pattern pattern, String fieldLabel) {
+        if (!StringUtils.hasText(value)) {
+            return;
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() > maxLength || !pattern.matcher(trimmed).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
+        }
+    }
+
+    private void validateReferenceField(String value, int maxLength, String message, Pattern pattern, String fieldLabel, int minLength) {
+        if (!StringUtils.hasText(value)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldLabel + " is required");
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() < minLength || trimmed.length() > maxLength || !pattern.matcher(trimmed).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
+        }
+    }
+
+    private void validatePurchaseOrder(UUID tenantId, PurchaseOrderRequest request) {
+        validateProcurementHeader(request.poNumber(), request.orderDate(), request.expectedDeliveryDate(), "PO number", "order date");
+        if (request.items() == null || request.items().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add at least one procurement line");
+        }
+        for (ProcurementLineRequest item : request.items()) {
+            validateProcurementLine(tenantId, item);
+        }
+    }
+
+    private void validateSupplierInvoice(UUID tenantId, SupplierInvoiceRequest request) {
+        validateProcurementHeader(request.invoiceNumber(), request.invoiceDate(), null, "Invoice number", "invoice date");
+        if (request.taxAmount() != null && request.taxAmount().compareTo(BigDecimal.ZERO) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax amount cannot be negative");
+        }
+        if (request.totalAmount() != null && request.totalAmount().compareTo(BigDecimal.ZERO) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Total amount cannot be negative");
+        }
+        if (request.items() == null || request.items().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add at least one procurement line");
+        }
+        for (ProcurementLineRequest item : request.items()) {
+            validateProcurementLine(tenantId, item);
+        }
+    }
+
+    private void validateGoodsReceipt(UUID tenantId, GoodsReceiptRequest request) {
+        validateProcurementHeader(request.receiptNumber(), request.receivedAt(), null, "Receipt number", "receivedAt");
+        if (request.locationId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Location is required");
+        }
+        if (request.items() == null || request.items().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add at least one procurement line");
+        }
+        for (ProcurementLineRequest item : request.items()) {
+            validateProcurementLine(tenantId, item);
+        }
+    }
+
+    private void validateProcurementHeader(String reference, String date, String expectedDeliveryDate, String referenceLabel, String dateLabel) {
+        if (!StringUtils.hasText(reference)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, referenceLabel + " is required");
+        }
+        if (reference.trim().length() > 60 || !INVOICE_REFERENCE_PATTERN.matcher(reference.trim()).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, referenceLabel + " must be 60 characters or fewer and can include letters, numbers, dashes, slashes, underscores, and spaces");
+        }
+        LocalDate parsedDate = parseDate(date, dateLabel);
+        if (parsedDate != null && parsedDate.isAfter(LocalDate.now())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, dateLabel + " cannot be in the future");
+        }
+        if (StringUtils.hasText(expectedDeliveryDate)) {
+            LocalDate delivery = parseDate(expectedDeliveryDate, "expectedDeliveryDate");
+            if (parsedDate != null && delivery != null && delivery.isBefore(parsedDate)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Expected delivery date must be on or after order date");
+            }
+        }
+    }
+
+    private void validateProcurementLine(UUID tenantId, ProcurementLineRequest item) {
+        if (item == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Procurement line is required");
+        }
+        if (!StringUtils.hasText(item.medicineName()) || item.medicineName().trim().length() > 100 || !LETTER_OR_NUMBER_PATTERN.matcher(item.medicineName().trim()).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Line item name must be 1 to 100 characters and include a letter or number");
+        }
+        if (item.quantity() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Qty must be a whole number greater than zero.");
+        }
+        if (item.quantity() > 999999) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Qty must be 999999 or less");
+        }
+        if (item.expectedUnitCost() != null && item.expectedUnitCost().compareTo(BigDecimal.ZERO) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Expected/unit cost cannot be negative");
+        }
+        if (item.unitCost() != null && item.unitCost().compareTo(BigDecimal.ZERO) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unit cost cannot be negative");
+        }
+        if (item.taxPercent() != null && (item.taxPercent().compareTo(BigDecimal.ZERO) < 0 || item.taxPercent().compareTo(BigDecimal.valueOf(100)) > 0)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax % must be between 0 and 100");
+        }
+        if (item.batchNumber() != null && (item.batchNumber().trim().length() > 30 || !BATCH_PATTERN.matcher(item.batchNumber().trim()).matches())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Batch must be 30 characters or fewer and use letters, numbers, dashes, underscores, or slashes");
+        }
+        if (item.expiryDate() != null) {
+            LocalDate expiryDate = parseDate(item.expiryDate(), "expiryDate");
+            if (expiryDate != null && expiryDate.isBefore(LocalDate.now())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Expiry date must be in the future");
+            }
+        }
+        if (item.sellingPrice() != null && item.sellingPrice().compareTo(BigDecimal.ZERO) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selling price cannot be negative");
+        }
+        if (item.expectedUnitCost() != null && item.sellingPrice() != null && item.sellingPrice().compareTo(item.expectedUnitCost()) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selling price cannot be less than expected/unit cost.");
+        }
+        if (item.unitCost() != null && item.sellingPrice() != null && item.sellingPrice().compareTo(item.unitCost()) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selling price cannot be less than unit cost.");
+        }
+        if (item.medicineId() != null && tenantId != null) {
+            MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, item.medicineId()).orElse(null);
+            ensureActiveMedicine(medicine, "Inactive medicine cannot be used");
         }
     }
 

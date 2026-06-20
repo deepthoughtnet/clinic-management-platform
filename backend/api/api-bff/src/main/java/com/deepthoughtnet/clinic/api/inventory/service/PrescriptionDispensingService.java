@@ -27,10 +27,16 @@ import com.deepthoughtnet.clinic.prescription.db.PrescriptionMedicineRepository;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -44,9 +50,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class PrescriptionDispensingService {
-    private static final String ACTION_FULL = "FULL";
-    private static final String ACTION_PARTIAL = "PARTIAL";
-    private static final String ACTION_CANCEL = "CANCEL";
+    private static final String ACTION_FULL = "FULL_DISPENSE";
+    private static final String ACTION_PARTIAL = "PARTIAL_DISPENSE";
     private static final int EXPIRY_WARNING_DAYS = 30;
 
     private final PrescriptionService prescriptionService;
@@ -58,6 +63,8 @@ public class PrescriptionDispensingService {
     private final StockRepository stockRepository;
     private final InventoryService inventoryService;
     private final BillingService billingService;
+    private final AuditEventPublisher auditEventPublisher;
+    private final ObjectMapper objectMapper;
 
     public PrescriptionDispensingService(
             PrescriptionService prescriptionService,
@@ -68,7 +75,9 @@ public class PrescriptionDispensingService {
             InventoryLocationRepository locationRepository,
             StockRepository stockRepository,
             InventoryService inventoryService,
-            BillingService billingService
+            BillingService billingService,
+            AuditEventPublisher auditEventPublisher,
+            ObjectMapper objectMapper
     ) {
         this.prescriptionService = prescriptionService;
         this.prescriptionMedicineRepository = prescriptionMedicineRepository;
@@ -79,6 +88,8 @@ public class PrescriptionDispensingService {
         this.stockRepository = stockRepository;
         this.inventoryService = inventoryService;
         this.billingService = billingService;
+        this.auditEventPublisher = auditEventPublisher;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional(readOnly = true)
@@ -129,6 +140,7 @@ public class PrescriptionDispensingService {
                     item == null ? null : item.getLastBatchId()
             ));
         }
+        String dispensingStatus = resolvePrescriptionDispensingStatusFromLines(disp, responseLines);
 
         return new PrescriptionDispenseResponse(
                 prescription.id(),
@@ -137,6 +149,7 @@ public class PrescriptionDispensingService {
                 prescription.patientName(),
                 prescription.doctorName(),
                 prescription.finalizedAt() == null ? prescription.createdAt() : prescription.finalizedAt(),
+                dispensingStatus,
                 disp == null ? "NOT_BILLED" : disp.getBillingStatus(),
                 disp == null ? null : disp.getBilledBillId(),
                 responseLines
@@ -151,53 +164,70 @@ public class PrescriptionDispensingService {
             throw new IllegalArgumentException("Only finalized prescriptions can be dispensed");
         }
 
-        MedicineEntity medicine = resolveMedicine(tenantId, request);
+        String action = normalizeAction(request.action());
+        boolean closureAction = isClosureAction(action);
         PrescriptionDispensationEntity disp = dispensationRepository.findByTenantIdAndPrescriptionId(tenantId, prescriptionId)
                 .orElseGet(() -> dispensationRepository.save(PrescriptionDispensationEntity.create(tenantId, prescriptionId, prescription.patientId())));
-
-        List<PrescriptionMedicineEntity> prescriptionLines = prescriptionMedicineRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(tenantId, prescriptionId);
-        PrescriptionMedicineEntity matched = prescriptionLines.stream()
-                .filter(l -> normalize(l.getMedicineName()).equals(normalize(request.prescribedMedicineName())))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Prescribed medicine line not found"));
-
-        PrescriptionDispenseItemEntity item = dispenseItemRepository.findByTenantIdAndPrescriptionIdOrderByPrescribedSortOrderAsc(tenantId, prescriptionId).stream()
-                .filter(i -> normalize(i.getPrescribedMedicineName()).equals(normalize(request.prescribedMedicineName())))
-                .findFirst()
-                .orElse(null);
-
-        String action = normalizeAction(request.action());
-        if (item != null && isClosedStatus(item.getStatus())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "This medicine line has already been closed.");
+        if (isTerminalDispensingStatus(disp.getDispensingStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This prescription has already been closed.");
         }
 
-        if (ACTION_CANCEL.equals(action)) {
-            PrescriptionDispenseItemEntity target = item == null
-                    ? dispenseItemRepository.save(PrescriptionDispenseItemEntity.create(
-                            tenantId,
-                            disp.getId(),
-                            prescriptionId,
-                            matched.getId(),
-                            medicine.getId(),
-                            matched.getMedicineName(),
-                            matched.getSortOrder(),
-                            Math.max(1, request.quantity() == null ? 1 : request.quantity())
-                    ))
-                    : item;
-            target.markUnavailable();
-            dispenseItemRepository.save(target);
+        List<PrescriptionMedicineEntity> prescriptionLines = prescriptionMedicineRepository.findByTenantIdAndPrescriptionIdOrderBySortOrderAsc(tenantId, prescriptionId);
+        List<PrescriptionDispenseItemEntity> items = new ArrayList<>(dispenseItemRepository.findByTenantIdAndPrescriptionIdOrderByPrescribedSortOrderAsc(tenantId, prescriptionId));
+
+        if (closureAction) {
+            String closureStatus = terminalStatusForAction(action);
+            String reason = normalizeNullable(request.reason());
+            String remarks = normalizeNullable(request.remarks());
+            if (reason == null) {
+                throw new IllegalArgumentException("closure reason is required");
+            }
+            if (request.medicineLineId() != null) {
+                PrescriptionDispenseItemEntity target = items.stream()
+                        .filter(item -> request.medicineLineId().equals(item.getId()))
+                        .findFirst()
+                        .orElse(null);
+                if (target != null) {
+                    if (isTerminalDispensingStatus(target.getStatus()) || "DISPENSED".equalsIgnoreCase(target.getStatus())) {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT, "This medicine line has already been closed.");
+                    }
+                    target.markTerminal(closureStatus);
+                    dispenseItemRepository.save(target);
+                }
+            }
+            disp.updateDispensingStatus(closureStatus, reason, remarks);
+            dispensationRepository.save(disp);
+            audit(tenantId, prescriptionId, action, actorAppUserId, null, closureStatus, reason, remarks, Map.of("prescriptionNumber", prescription.prescriptionNumber()));
             return view(tenantId, prescriptionId);
         }
 
-        int requestedQuantity = request.quantity() == null ? 0 : request.quantity();
-        if (requestedQuantity <= 0) {
-            throw new IllegalArgumentException("quantity must be positive");
+        MedicineEntity medicine = resolveMedicine(tenantId, request);
+        PrescriptionMedicineEntity matched = resolvePrescriptionLine(prescriptionLines, items, request);
+        PrescriptionDispenseItemEntity item = resolveTargetItem(tenantId, disp, prescriptionId, prescriptionLines, items, request);
+        if (item != null && (isTerminalDispensingStatus(item.getStatus()) || "DISPENSED".equalsIgnoreCase(item.getStatus()))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This medicine line has already been fully dispensed.");
+        }
+        if (item == null) {
+            item = dispenseItemRepository.save(PrescriptionDispenseItemEntity.create(
+                    tenantId,
+                    disp.getId(),
+                    prescriptionId,
+                    matched.getId(),
+                    medicine.getId(),
+                    matched.getMedicineName(),
+                    matched.getSortOrder(),
+                    Math.max(1, resolvePrescribedQuantity(matched))
+            ));
+            items.add(item);
         }
 
-        int prescribedQuantity = item == null ? requestedQuantity : Math.max(1, item.getPrescribedQuantity());
-        int remainingQuantity = item == null ? prescribedQuantity : Math.max(0, item.getPendingQuantity());
-        if (remainingQuantity <= 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "This medicine line has already been fully dispensed.");
+        int pendingQuantity = Math.max(1, item.getPendingQuantity() > 0 ? item.getPendingQuantity() : resolvePrescribedQuantity(matched));
+        int requestedQuantity = ACTION_FULL.equals(action) ? pendingQuantity : normalizeQuantity(request.quantity());
+        if (requestedQuantity <= 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "quantity must be positive");
+        }
+        if (requestedQuantity > pendingQuantity) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Requested quantity exceeds pending quantity.");
         }
 
         List<StockEntity> activeStockRows = allStockBatches(tenantId, medicine.getId());
@@ -205,66 +235,41 @@ public class PrescriptionDispensingService {
                 .filter(stock -> stock.getQuantityOnHand() > 0)
                 .filter(stock -> !isExpired(stock))
                 .toList();
-        int availableQuantity = fefo.stream().mapToInt(StockEntity::getQuantityOnHand).sum();
-        if (request.batchId() != null) {
-            if (!(canOverrideBatch && request.allowBatchOverride())) {
-                throw new IllegalArgumentException("Manual batch override is not allowed for this role");
-            }
-            fefo = fefo.stream().filter(b -> b.getId().equals(request.batchId())).toList();
-            if (fefo.isEmpty()) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Selected batch is unavailable or expired.");
-            }
-            availableQuantity = fefo.stream().mapToInt(StockEntity::getQuantityOnHand).sum();
-        }
-
-        if (availableQuantity <= 0) {
+        if (fefo.isEmpty()) {
             if (activeStockRows.isEmpty()) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "No inventory batch exists for this medicine. The prescription is still valid; add stock before dispensing.");
             }
-            boolean hasExpired = activeStockRows.stream().anyMatch(this::isExpired);
-            if (hasExpired) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Only expired stock exists for this medicine. The prescription is still valid; replenish with a non-expired batch before dispensing.");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This medicine has no sellable stock. The prescription is still valid; replenish stock before dispensing.");
+        }
+
+        List<StockEntity> targetBatches = fefo;
+        if (request.batchOverride() != null && !request.batchOverride().isBlank()) {
+            if (!(canOverrideBatch && request.allowBatchOverride())) {
+                throw new IllegalArgumentException("Manual batch override is not allowed for this role");
             }
+            if (normalizeNullable(request.reason()) == null) {
+                throw new IllegalArgumentException("batch override reason is required");
+            }
+            StockEntity selectedBatch = resolveBatchOverride(tenantId, medicine.getId(), request.batchOverride());
+            if (selectedBatch == null || !selectedBatch.isActive() || selectedBatch.getQuantityOnHand() <= 0 || isExpired(selectedBatch)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Selected batch is unavailable or expired.");
+            }
+            targetBatches = List.of(selectedBatch);
+        }
+
+        int availableQuantity = targetBatches.stream().mapToInt(StockEntity::getQuantityOnHand).sum();
+        if (availableQuantity <= 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This medicine has no quantity on hand for dispensing. The prescription is still valid; replenish stock before dispensing.");
         }
-
-        int targetQuantity;
-        if (ACTION_FULL.equals(action)) {
-            if (availableQuantity < remainingQuantity) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Insufficient non-expired stock for full dispense. Use partial dispense or mark unavailable.");
-            }
-            targetQuantity = remainingQuantity;
-        } else {
-            targetQuantity = Math.min(requestedQuantity, remainingQuantity);
-            if (targetQuantity <= 0) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "No quantity can be dispensed for this line.");
-            }
-            if (availableQuantity < targetQuantity) {
-                targetQuantity = availableQuantity;
-            }
+        if (requestedQuantity > availableQuantity) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Requested quantity exceeds available stock.");
         }
 
-        PrescriptionDispenseItemEntity target = item == null
-                ? dispenseItemRepository.save(PrescriptionDispenseItemEntity.create(
-                        tenantId,
-                        disp.getId(),
-                        prescriptionId,
-                        matched.getId(),
-                        medicine.getId(),
-                        matched.getMedicineName(),
-                        matched.getSortOrder(),
-                        prescribedQuantity
-                ))
-                : item;
-
-        int remaining = targetQuantity;
+        int remaining = requestedQuantity;
         UUID lastBatch = null;
-        for (StockEntity batch : fefo) {
+        for (StockEntity batch : targetBatches) {
             if (remaining <= 0) {
                 break;
-            }
-            if (isExpired(batch)) {
-                continue;
             }
             int use = Math.min(remaining, batch.getQuantityOnHand());
             if (use <= 0) {
@@ -291,13 +296,26 @@ public class PrescriptionDispensingService {
             lastBatch = batch.getId();
         }
 
-        int dispensed = targetQuantity - remaining;
+        int dispensed = requestedQuantity - remaining;
         if (dispensed <= 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "No quantity could be dispensed");
         }
 
-        target.addDispense(dispensed, lastBatch);
-        dispenseItemRepository.save(target);
+        item.addDispense(dispensed, lastBatch);
+        dispenseItemRepository.save(item);
+        disp.updateDispensingStatus(resolvePrescriptionDispensingStatusFromItems(disp, items), null, null);
+        dispensationRepository.save(disp);
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("prescriptionNumber", prescription.prescriptionNumber());
+        details.put("medicineLineId", item.getId().toString());
+        details.put("medicineName", item.getPrescribedMedicineName());
+        if (normalizeNullable(request.batchOverride()) != null) {
+            details.put("batchOverride", normalizeNullable(request.batchOverride()));
+        }
+        if (normalizeNullable(request.reason()) != null) {
+            details.put("reason", normalizeNullable(request.reason()));
+        }
+        audit(tenantId, prescriptionId, action, actorAppUserId, dispensed, null, null, null, details);
         return view(tenantId, prescriptionId);
     }
 
@@ -346,12 +364,245 @@ public class PrescriptionDispensingService {
     }
 
     private MedicineEntity resolveMedicine(UUID tenantId, DispenseRequest request) {
-        if (request.medicineId() != null) {
-            return medicineRepository.findByTenantIdAndId(tenantId, request.medicineId())
+        UUID medicineId = request.medicineId();
+        if (medicineId != null) {
+            return medicineRepository.findByTenantIdAndId(tenantId, medicineId)
                     .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
         }
         return medicineRepository.findByTenantIdAndMedicineNameIgnoreCase(tenantId, request.prescribedMedicineName())
                 .orElseThrow(() -> new IllegalArgumentException("Mapped medicine not found in master"));
+    }
+
+    private PrescriptionMedicineEntity resolvePrescriptionLine(List<PrescriptionMedicineEntity> prescriptionLines, List<PrescriptionDispenseItemEntity> items, DispenseRequest request) {
+        if (request.medicineLineId() != null) {
+            PrescriptionDispenseItemEntity current = items.stream()
+                    .filter(item -> request.medicineLineId().equals(item.getId()))
+                    .findFirst()
+                    .orElse(null);
+            if (current != null) {
+                return prescriptionLines.stream()
+                        .filter(line -> current.getPrescriptionMedicineId() != null && current.getPrescriptionMedicineId().equals(line.getId()))
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalArgumentException("Prescribed medicine line not found"));
+            }
+            return prescriptionLines.stream()
+                    .filter(line -> request.medicineLineId().equals(line.getId()))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Prescribed medicine line not found"));
+        }
+        return prescriptionLines.stream()
+                .filter(line -> normalize(line.getMedicineName()).equals(normalize(request.prescribedMedicineName())))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Prescribed medicine line not found"));
+    }
+
+    private PrescriptionDispenseItemEntity resolveTargetItem(UUID tenantId, PrescriptionDispensationEntity disp, UUID prescriptionId, List<PrescriptionMedicineEntity> prescriptionLines, List<PrescriptionDispenseItemEntity> items, DispenseRequest request) {
+        if (request.medicineLineId() != null) {
+            return items.stream()
+                    .filter(item -> request.medicineLineId().equals(item.getId()))
+                    .findFirst()
+                    .orElseGet(() -> {
+                        PrescriptionMedicineEntity line = prescriptionLines.stream()
+                                .filter(candidate -> request.medicineLineId().equals(candidate.getId()))
+                                .findFirst()
+                                .orElseThrow(() -> new IllegalArgumentException("Prescribed medicine line not found"));
+                        return dispenseItemRepository.save(PrescriptionDispenseItemEntity.create(
+                                tenantId,
+                                disp.getId(),
+                                prescriptionId,
+                                line.getId(),
+                                resolveMedicineIdForLine(tenantId, request, line),
+                                line.getMedicineName(),
+                                line.getSortOrder(),
+                                Math.max(1, resolvePrescribedQuantity(line))
+                        ));
+                    });
+        }
+        return items.stream()
+                .filter(item -> normalize(item.getPrescribedMedicineName()).equals(normalize(request.prescribedMedicineName())))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private PrescriptionDispenseItemEntity resolveLineItem(UUID tenantId, PrescriptionDispensationEntity disp, UUID prescriptionId, PrescriptionMedicineEntity line, List<PrescriptionDispenseItemEntity> items) {
+        return items.stream()
+                .filter(item -> line.getId().equals(item.getPrescriptionMedicineId()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private UUID resolveMedicineIdForLine(UUID tenantId, DispenseRequest request, PrescriptionMedicineEntity line) {
+        if (request.medicineId() != null) {
+            return request.medicineId();
+        }
+        return medicineRepository.findByTenantIdAndMedicineNameIgnoreCase(tenantId, line.getMedicineName())
+                .map(MedicineEntity::getId)
+                .orElseThrow(() -> new IllegalArgumentException("Mapped medicine not found in master"));
+    }
+
+    private int resolvePrescribedQuantity(PrescriptionMedicineEntity line) {
+        return 1;
+    }
+
+    private int normalizeQuantity(Integer quantity) {
+        return quantity == null ? 0 : quantity;
+    }
+
+    private StockEntity resolveBatchOverride(UUID tenantId, UUID medicineId, String batchOverride) {
+        UUID locationId = resolveDefaultLocationId(tenantId);
+        return stockRepository.findByTenantIdAndLocationIdAndBatchNumberIgnoreCase(tenantId, locationId, batchOverride.trim())
+                .filter(stock -> stock.getMedicineId().equals(medicineId))
+                .orElse(null);
+    }
+
+    private String resolvePrescriptionDispensingStatusFromLines(PrescriptionDispensationEntity disp, List<PrescriptionDispenseLineResponse> responseLines) {
+        if (disp != null && isTerminalDispensingStatus(disp.getDispensingStatus())) {
+            return disp.getDispensingStatus();
+        }
+        if (responseLines.isEmpty()) {
+            return "NOT_DISPENSED";
+        }
+        boolean anyDispensed = responseLines.stream().anyMatch(line -> line.dispensedQuantity() > 0);
+        boolean allDispensed = responseLines.stream().allMatch(line -> line.dispensedQuantity() > 0 && "DISPENSED".equalsIgnoreCase(line.status()));
+        boolean anyTerminal = responseLines.stream().anyMatch(line -> isTerminalDispensingStatus(line.status()));
+        boolean anyActive = responseLines.stream().anyMatch(line -> isActiveDispensingStatus(line.status()));
+        boolean anyAvailable = responseLines.stream().anyMatch(line -> (line.availableQuantity() != null && line.availableQuantity() > 0) && !isTerminalDispensingStatus(line.status()));
+        if (allDispensed && anyDispensed) {
+            return "FULLY_DISPENSED";
+        }
+        if (anyTerminal && !anyActive) {
+            return responseLines.stream()
+                    .map(PrescriptionDispenseLineResponse::status)
+                    .filter(this::isTerminalDispensingStatus)
+                    .findFirst()
+                    .orElse("NOT_DISPENSED");
+        }
+        if (anyDispensed || anyTerminal) {
+            return "PARTIALLY_DISPENSED";
+        }
+        if (anyAvailable) {
+            return "READY_FOR_DISPENSE";
+        }
+        return "NOT_DISPENSED";
+    }
+
+    private String resolvePrescriptionDispensingStatusFromItems(PrescriptionDispensationEntity disp, List<PrescriptionDispenseItemEntity> items) {
+        if (disp != null && isTerminalDispensingStatus(disp.getDispensingStatus())) {
+            return disp.getDispensingStatus();
+        }
+        if (items.isEmpty()) {
+            return "NOT_DISPENSED";
+        }
+        boolean allDispensed = items.stream().allMatch(item -> "DISPENSED".equalsIgnoreCase(item.getStatus()) && item.getDispensedQuantity() > 0);
+        if (allDispensed) {
+            return "FULLY_DISPENSED";
+        }
+        boolean anyTerminal = items.stream().anyMatch(item -> isTerminalDispensingStatus(item.getStatus()));
+        boolean anyDispensed = items.stream().anyMatch(item -> item.getDispensedQuantity() > 0);
+        boolean anyActive = items.stream().anyMatch(item -> isActiveDispensingStatus(item.getStatus()));
+        if (anyTerminal && !anyActive) {
+            return items.stream()
+                    .map(PrescriptionDispenseItemEntity::getStatus)
+                    .filter(this::isTerminalDispensingStatus)
+                    .findFirst()
+                    .orElse("NOT_DISPENSED");
+        }
+        if (anyDispensed || anyTerminal) {
+            return "PARTIALLY_DISPENSED";
+        }
+        return "NOT_DISPENSED";
+    }
+
+    private void audit(UUID tenantId, UUID entityId, String action, UUID actorAppUserId, Integer quantity, String terminalStatus, String reason, String remarks, Map<String, Object> details) {
+        Map<String, Object> payload = new LinkedHashMap<>(details == null ? Map.of() : details);
+        if (quantity != null) {
+            payload.put("quantity", quantity);
+        }
+        if (terminalStatus != null) {
+            payload.put("status", terminalStatus);
+        }
+        if (reason != null) {
+            payload.put("reason", reason);
+        }
+        if (remarks != null) {
+            payload.put("remarks", remarks);
+        }
+        try {
+            auditEventPublisher.record(new AuditEventCommand(
+                    tenantId,
+                    "PRESCRIPTION_DISPENSING",
+                    entityId,
+                    action,
+                    actorAppUserId,
+                    OffsetDateTime.now(),
+                    "Processed prescription dispensing action",
+                    objectMapper.writeValueAsString(payload)
+            ));
+        } catch (JsonProcessingException ex) {
+            auditEventPublisher.record(new AuditEventCommand(
+                    tenantId,
+                    "PRESCRIPTION_DISPENSING",
+                    entityId,
+                    action,
+                    actorAppUserId,
+                    OffsetDateTime.now(),
+                    "Processed prescription dispensing action",
+                    "{}"
+            ));
+        }
+    }
+
+    private boolean isTerminalDispensingStatus(String status) {
+        if (status == null) {
+            return false;
+        }
+        return switch (status.toUpperCase(Locale.ROOT)) {
+            case "FULLY_DISPENSED", "BOUGHT_EXTERNALLY", "PATIENT_DECLINED", "UNAVAILABLE_CLOSED", "CANCELLED", "EXPIRED" -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isActiveDispensingStatus(String status) {
+        if (status == null) {
+            return false;
+        }
+        return switch (status.toUpperCase(Locale.ROOT)) {
+            case "NOT_DISPENSED", "READY_FOR_DISPENSE", "PARTIALLY_DISPENSED" -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isClosureAction(String action) {
+        return switch (action) {
+            case "BUY_OUTSIDE", "PATIENT_DECLINED", "UNAVAILABLE_CLOSED", "MARK_UNAVAILABLE", "CANCEL_PRESCRIPTION", "EXPIRED" -> true;
+            default -> false;
+        };
+    }
+
+    private String terminalStatusForAction(String action) {
+        return switch (action) {
+            case "BUY_OUTSIDE" -> "BOUGHT_EXTERNALLY";
+            case "PATIENT_DECLINED" -> "PATIENT_DECLINED";
+            case "UNAVAILABLE_CLOSED", "MARK_UNAVAILABLE" -> "UNAVAILABLE_CLOSED";
+            case "CANCEL_PRESCRIPTION" -> "CANCELLED";
+            case "EXPIRED" -> "EXPIRED";
+            default -> "UNAVAILABLE_CLOSED";
+        };
+    }
+
+    private String normalizeAction(String action) {
+        if (action == null || action.isBlank()) {
+            return "PARTIAL_DISPENSE";
+        }
+        return action.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String normalizeNullable(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private StockAvailability stockAvailability(UUID tenantId, MedicineEntity medicine) {
@@ -384,14 +635,6 @@ public class PrescriptionDispensingService {
         return new StockAvailability(availableQuantity, status, expiryStatus, nearestExpiryDate);
     }
 
-    private List<StockEntity> availableBatches(UUID tenantId, UUID medicineId) {
-        UUID locationId = resolveDefaultLocationId(tenantId);
-        return stockRepository.findByTenantIdAndLocationIdAndMedicineIdAndActiveTrueAndQuantityOnHandGreaterThanOrderByExpiryDateAscUpdatedAtAsc(tenantId, locationId, medicineId, 0)
-                .stream()
-                .filter(stock -> !isExpired(stock))
-                .toList();
-    }
-
     private List<StockEntity> allStockBatches(UUID tenantId, UUID medicineId) {
         UUID locationId = resolveDefaultLocationId(tenantId);
         return stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, medicineId, locationId).stream()
@@ -421,23 +664,6 @@ public class PrescriptionDispensingService {
 
     private boolean isExpired(StockEntity stock) {
         return stock != null && stock.getExpiryDate() != null && stock.getExpiryDate().isBefore(LocalDate.now());
-    }
-
-    private boolean isClosedStatus(String status) {
-        if (status == null) {
-            return false;
-        }
-        return switch (status.toUpperCase(Locale.ROOT)) {
-            case "DISPENSED", "UNAVAILABLE", "CANCELLED" -> true;
-            default -> false;
-        };
-    }
-
-    private String normalizeAction(String action) {
-        if (action == null || action.isBlank()) {
-            return ACTION_PARTIAL;
-        }
-        return action.trim().toUpperCase(Locale.ROOT);
     }
 
     private String normalize(String v) {

@@ -28,10 +28,6 @@ import CommentSuggestions from "../../shared/components/comment-suggestions/Comm
 import {
   appendDispensingAuditEntry,
   readDispensingAuditEntries,
-  readDispensingState,
-  setPrescriptionDispensingState,
-  isTerminalDispensingState,
-  shouldHideFromActiveQueue,
 } from "../../shared/components/comment-suggestions/dispensingAuditStore.js";
 import {
   dispensePrescriptionMedicine,
@@ -43,7 +39,18 @@ import {
   type PrescriptionDispense,
   type SubstituteSuggestion,
 } from "../../api/clinicApi";
-import { createDispenseActionInputSchema, firstZodError, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
+import {
+  createDispenseActionInputSchema,
+  dispensingQueueSearchSchema,
+  firstZodError,
+  mapZodErrors,
+} from "@deepthoughtnet/form-validation-kit";
+import {
+  QUEUE_FILTER_OPTIONS,
+  matchesDispensingSearch,
+  normalizeDispensingSearch,
+  queueRowMatchesFilter,
+} from "./dispensingPageUtils.js";
 
 function availabilityColor(status: string) {
   switch (status) {
@@ -104,21 +111,6 @@ function aggregateAvailability(lines: DispenseLine[]) {
   return "AVAILABLE";
 }
 
-function aggregateDispense(lines: DispenseLine[]) {
-  const statuses = lines.map((line) => line.status);
-  if (statuses.length > 0 && statuses.every((status) => status === "DISPENSED")) return "FULLY_DISPENSED";
-  if (statuses.some((status) => status === "PARTIALLY_DISPENSED")) return "PARTIALLY_DISPENSED";
-  if (statuses.some((status) => status === "DISPENSED") && statuses.some((status) => status === "NOT_DISPENSED" || status === "READY_FOR_DISPENSE")) {
-    return "PARTIALLY_DISPENSED";
-  }
-  if (statuses.some((status) => status === "UNAVAILABLE" || status === "CANCELLED")) {
-    if (!statuses.some((status) => status === "NOT_DISPENSED" || status === "READY_FOR_DISPENSE" || status === "PARTIALLY_DISPENSED")) {
-      return "UNAVAILABLE_CLOSED";
-    }
-  }
-  return "NOT_DISPENSED";
-}
-
 function formatTimestamp(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString() : "-";
 }
@@ -163,49 +155,8 @@ type QueueFilter =
   | "CANCELLED"
   | "EXPIRED";
 
-const QUEUE_FILTER_OPTIONS: Array<{ value: QueueFilter; label: string }> = [
-  { value: "ACTIVE", label: "Active" },
-  { value: "ALL", label: "All" },
-  { value: "PENDING", label: "Pending" },
-  { value: "PARTIAL", label: "Partial" },
-  { value: "FULLY_DISPENSED", label: "Fully Dispensed" },
-  { value: "BOUGHT_EXTERNALLY", label: "Bought Outside" },
-  { value: "PATIENT_DECLINED", label: "Patient Declined" },
-  { value: "UNAVAILABLE_CLOSED", label: "Unavailable Closed" },
-  { value: "CANCELLED", label: "Cancelled" },
-  { value: "EXPIRED", label: "Expired" },
-];
-
 function lineKey(line: DispenseLine) {
   return line.itemId || line.prescribedMedicineName;
-}
-
-function isClosedWorkflowStatus(status: string) {
-  return ["FULLY_DISPENSED", "BOUGHT_EXTERNALLY", "PATIENT_DECLINED", "UNAVAILABLE_CLOSED", "CANCELLED", "EXPIRED"].includes(status);
-}
-
-function isExpiredPrescription(prescription: PrescriptionDispense, expiryDays = 30) {
-  const source = prescription.prescriptionTimestamp;
-  if (!source) return false;
-  const date = new Date(source);
-  if (Number.isNaN(date.getTime())) return false;
-  const ageDays = (Date.now() - date.getTime()) / (1000 * 60 * 60 * 24);
-  return ageDays > expiryDays;
-}
-
-function prescriptionStatusWithOverlay(
-  prescription: PrescriptionDispense,
-  overlay?: { status: string; lineStates?: Record<string, string> | null } | null,
-) {
-  const lines = prescription.lines.map((line) => {
-    const nextStatus = overlay?.lineStates?.[lineKey(line)];
-    return nextStatus ? { ...line, status: nextStatus } : line;
-  });
-  return {
-    ...prescription,
-    lines,
-    status: overlay?.status || (isExpiredPrescription(prescription) ? "EXPIRED" : aggregateDispense(lines)),
-  };
 }
 
 function actionLabel(action: DispenseWorkflowAction) {
@@ -221,18 +172,10 @@ function actionLabel(action: DispenseWorkflowAction) {
   }
 }
 
-function terminalStatusForAction(action: DispenseWorkflowAction) {
-  switch (action) {
-    case "BUY_OUTSIDE": return "BOUGHT_EXTERNALLY";
-    case "PATIENT_DECLINED": return "PATIENT_DECLINED";
-    case "UNAVAILABLE_CLOSED":
-    case "MARK_UNAVAILABLE":
-      return "UNAVAILABLE_CLOSED";
-    case "CANCEL_PRESCRIPTION": return "CANCELLED";
-    case "EXPIRED": return "EXPIRED";
-    default:
-      return null;
-  }
+const TERMINAL_QUEUE_STATUSES = new Set(["FULLY_DISPENSED", "BOUGHT_EXTERNALLY", "PATIENT_DECLINED", "UNAVAILABLE_CLOSED", "CANCELLED", "EXPIRED"]);
+
+function isClosedWorkflowStatus(status: string) {
+  return TERMINAL_QUEUE_STATUSES.has(String(status || "").trim().toUpperCase());
 }
 
 function categoryForAction(action: DispenseWorkflowAction): DispenseActionTarget["category"] {
@@ -271,6 +214,7 @@ export default function DispensingPage() {
   const [workflowRemarks, setWorkflowRemarks] = React.useState("");
   const [workflowError, setWorkflowError] = React.useState<string | null>(null);
   const [workflowFieldErrors, setWorkflowFieldErrors] = React.useState<Record<string, string>>({});
+  const [searchError, setSearchError] = React.useState<string | null>(null);
   const [auditTick, setAuditTick] = React.useState(0);
   const quantityInputRef = React.useRef<HTMLInputElement | null>(null);
   const batchInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -297,24 +241,9 @@ export default function DispensingPage() {
     void load();
   }, [load]);
 
-  const dispensingState = React.useMemo(() => {
-    if (!browserStorage) {
-      return {} as Record<string, { status: string; lineStates?: Record<string, string> | null }>;
-    }
-    return readDispensingState(browserStorage);
-  }, [auditTick, browserStorage]);
+  const decoratedRows = React.useMemo(() => rows.map((row) => ({ row, status: row.status })), [rows]);
 
-  const decoratedRows = React.useMemo(() => rows.map((row) => {
-    const overlay = dispensingState[row.prescriptionId];
-    const decorated = prescriptionStatusWithOverlay(row, overlay);
-    return { row: decorated, overlay, status: decorated.status };
-  }), [dispensingState, rows]);
-
-  const selectedOverlay = selected ? dispensingState[selected.prescriptionId] : null;
-  const selectedView = React.useMemo(() => {
-    if (!selected) return null;
-    return prescriptionStatusWithOverlay(selected, selectedOverlay);
-  }, [selected, selectedOverlay]);
+  const selectedView = selected;
 
   const selectedAuditEntries = React.useMemo(() => {
     if (!browserStorage || !selected) return [];
@@ -325,29 +254,14 @@ export default function DispensingPage() {
   }, [auditTick, browserStorage, selected]);
 
   const filtered = React.useMemo(() => {
-    const term = search.trim().toLowerCase();
+    const term = normalizeDispensingSearch(search);
     return decoratedRows
       .filter(({ row, status }) => {
-        const hidden = browserStorage ? shouldHideFromActiveQueue(browserStorage, row.prescriptionId, status) : isTerminalDispensingState(status);
-        if (queueFilter === "ACTIVE") return !hidden && (status === "NOT_DISPENSED" || status === "PARTIALLY_DISPENSED" || status === "READY_FOR_DISPENSE");
-        if (queueFilter === "ALL") return true;
-        if (queueFilter === "PENDING") return !hidden && (status === "NOT_DISPENSED" || status === "READY_FOR_DISPENSE");
-        if (queueFilter === "PARTIAL") return status === "PARTIALLY_DISPENSED";
-        if (queueFilter === "FULLY_DISPENSED") return status === "FULLY_DISPENSED" || status === "DISPENSED";
-        if (queueFilter === "BOUGHT_EXTERNALLY") return status === "BOUGHT_EXTERNALLY";
-        if (queueFilter === "PATIENT_DECLINED") return status === "PATIENT_DECLINED";
-        if (queueFilter === "UNAVAILABLE_CLOSED") return status === "UNAVAILABLE_CLOSED";
-        if (queueFilter === "CANCELLED") return status === "CANCELLED";
-        if (queueFilter === "EXPIRED") return status === "EXPIRED";
-        return true;
+        return queueRowMatchesFilter(status, queueFilter);
       })
-      .filter(({ row }) =>
-        !term || [row.prescriptionNumber, row.patientName, row.doctorName, row.prescriptionTimestamp]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(term)),
-      )
+      .filter(({ row }) => matchesDispensingSearch(row, term))
       .map(({ row }) => row);
-  }, [browserStorage, decoratedRows, queueFilter, search]);
+  }, [decoratedRows, queueFilter, search]);
 
   const summary = React.useMemo(() => {
     const statuses = decoratedRows.map(({ status }) => status);
@@ -399,7 +313,7 @@ export default function DispensingPage() {
     setWorkflowQuantity(target.action === "PARTIAL_DISPENSE"
       ? String(lineQty[key || ""] || Math.max(1, target.line?.pendingQuantity || target.line?.prescribedQuantity || 1))
       : "");
-    setWorkflowBatch((key && lineBatch[key]) || target.line?.lastBatchId || "");
+    setWorkflowBatch((key && lineBatch[key]) || "");
     setWorkflowReason("");
     setWorkflowRemarks("");
     setWorkflowError(null);
@@ -462,84 +376,48 @@ export default function DispensingPage() {
       focusWorkflowField(Object.keys(mapped)[0] || "quantity");
       return;
     }
+    if (workflowTarget.line && workflowBatch.trim() && !workflowReason.trim()) {
+      setWorkflowError("Batch override reason is required.");
+      setWorkflowFieldErrors((current) => ({ ...current, reason: "Batch override reason is required." }));
+      focusWorkflowField("reason");
+      return;
+    }
     setWorkflowFieldErrors({});
     setSaving(true);
     setError(null);
     setWorkflowError(null);
     try {
-      const isPrescriptionClosure = !workflowTarget.line && workflowTarget.action !== "FULL_DISPENSE" && workflowTarget.action !== "PARTIAL_DISPENSE";
       const storage = browserStorage;
-      if (isPrescriptionClosure) {
-        const terminalStatus = terminalStatusForAction(workflowTarget.action);
-        if (!terminalStatus) {
-          throw new Error("Unsupported dispensing action");
-        }
-        if (!workflowReason.trim()) {
-          setWorkflowError("Closure reason is required.");
-          focusWorkflowField("reason");
-          return;
-        }
-        const lineStates = Object.fromEntries(workflowTarget.prescription.lines.map((prescriptionLine) => [lineKey(prescriptionLine), terminalStatus]));
-        if (storage) {
-          setPrescriptionDispensingState(storage, workflowTarget.prescription.prescriptionId, {
-            status: terminalStatus,
-            lineStates,
-          });
-          appendDispensingAuditEntry(storage, {
-            prescriptionId: workflowTarget.prescription.prescriptionId,
-            medicineLineId: null,
-            action: workflowTarget.action,
-            previousStatus: selectedView?.status || aggregateDispense(workflowTarget.prescription.lines),
-            newStatus: terminalStatus,
-            quantity: null,
-            batch: null,
-            reason: workflowReason.trim() || null,
-            remarks: workflowRemarks.trim() || null,
-            user: auth.username || auth.appUserId || "Unknown",
-            timestamp: new Date().toISOString(),
-          });
-        }
-        setAuditTick((tick) => tick + 1);
-        closeWorkflowAction();
-        await load();
-        return;
-      }
-
       const quantity = workflowTarget.action === "FULL_DISPENSE"
         ? pendingQuantity
         : workflowTarget.action === "PARTIAL_DISPENSE"
           ? Number(workflowQuantity)
           : null;
       const updated = await dispensePrescriptionMedicine(auth.accessToken, auth.tenantId, workflowTarget.prescription.prescriptionId, {
+        medicineLineId: line?.itemId || null,
         prescribedMedicineName: line?.prescribedMedicineName || workflowTarget.prescription.lines[0]?.prescribedMedicineName || workflowTarget.prescription.prescriptionNumber,
         medicineId: line?.medicineId ?? workflowTarget.prescription.lines[0]?.medicineId ?? null,
         quantity,
-        batchId: workflowBatch || null,
+        batchOverride: workflowBatch || null,
         allowBatchOverride: Boolean(workflowBatch),
-        action: workflowTarget.backendAction,
-      });
-      setSelected(updated);
-      const nextStatus = aggregateDispense(updated.lines);
-      const terminalStatus = nextStatus === "FULLY_DISPENSED" || nextStatus === "UNAVAILABLE_CLOSED" ? nextStatus : null;
-      if (terminalStatus && storage) {
-        setPrescriptionDispensingState(storage, workflowTarget.prescription.prescriptionId, {
-          status: terminalStatus,
-          lineStates: Object.fromEntries(updated.lines.map((prescriptionLine) => [lineKey(prescriptionLine), prescriptionLine.status])),
-        });
-      }
-      if (storage) {
-        appendDispensingAuditEntry(storage, {
-        prescriptionId: workflowTarget.prescription.prescriptionId,
-        medicineLineId: line?.itemId || null,
         action: workflowTarget.action,
-        previousStatus: line?.status || aggregateDispense(workflowTarget.prescription.lines),
-        newStatus: terminalStatus || nextStatus || (line?.status || "NOT_DISPENSED"),
-        quantity: quantity ?? null,
-        batch: workflowBatch || null,
         reason: workflowReason.trim() || null,
         remarks: workflowRemarks.trim() || null,
-        user: auth.username || auth.appUserId || "Unknown",
-        timestamp: new Date().toISOString(),
+      });
+      setSelected(updated);
+      if (storage) {
+        appendDispensingAuditEntry(storage, {
+          prescriptionId: workflowTarget.prescription.prescriptionId,
+          medicineLineId: line?.itemId || null,
+          action: workflowTarget.action,
+          previousStatus: line?.status || workflowTarget.prescription.status || "NOT_DISPENSED",
+          newStatus: updated.status || (line?.status || "NOT_DISPENSED"),
+          quantity: quantity ?? null,
+          batch: workflowBatch || null,
+          reason: workflowReason.trim() || null,
+          remarks: workflowRemarks.trim() || null,
+          user: auth.username || auth.appUserId || "Unknown",
+          timestamp: new Date().toISOString(),
         });
       }
       setAuditTick((tick) => tick + 1);
@@ -550,7 +428,7 @@ export default function DispensingPage() {
     } finally {
       setSaving(false);
     }
-  }, [auth.accessToken, auth.appUserId, auth.tenantId, auth.username, canDispense, closeWorkflowAction, load, workflowBatch, workflowQuantity, workflowReason, workflowRemarks, workflowTarget]);
+  }, [auth.accessToken, auth.appUserId, auth.tenantId, auth.username, browserStorage, canDispense, closeWorkflowAction, load, workflowBatch, workflowQuantity, workflowReason, workflowRemarks, workflowTarget]);
 
   const generateBill = async () => {
     if (!selectedView || !auth.accessToken || !auth.tenantId || !canBill) return;
@@ -613,7 +491,22 @@ export default function DispensingPage() {
         <CardContent>
           <Grid container spacing={1.5}>
             <Grid size={{ xs: 12, md: 4 }}>
-              <TextField size="small" fullWidth label="Search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="prescription / patient / doctor" />
+              <TextField
+                size="small"
+                fullWidth
+                label="Search"
+                value={search}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setSearch(next);
+                  const parsed = dispensingQueueSearchSchema.safeParse(next);
+                  setSearchError(parsed.success ? null : "Search must be 60 characters or fewer.");
+                }}
+                placeholder="prescription / patient / doctor / medicine"
+                error={Boolean(searchError)}
+                helperText={searchError || "Search by prescription number, patient, doctor, or medicine."}
+                inputProps={{ maxLength: 60 }}
+              />
             </Grid>
           </Grid>
         </CardContent>
@@ -625,7 +518,7 @@ export default function DispensingPage() {
         <Card>
           <CardContent>
             {filtered.length === 0 ? (
-              <Alert severity="info">No finalized prescriptions are waiting for pharmacy dispensing.</Alert>
+              <Alert severity="info">No prescriptions match the current queue filter.</Alert>
             ) : (
               <Box sx={{ overflowX: "auto" }}>
                 <Table size="small" sx={{ minWidth: 980 }}>
@@ -703,7 +596,13 @@ export default function DispensingPage() {
                 <Grid size={{ xs: 12, md: 4 }}><Typography variant="body2">Prescription: <strong>{formatTimestamp(selectedView.prescriptionTimestamp)}</strong></Typography></Grid>
                 <Grid size={{ xs: 12, md: 4 }}><Typography variant="body2">Billing: <strong>{selectedView.billingStatus}</strong></Typography></Grid>
                 <Grid size={{ xs: 12, md: 4 }}><Typography variant="body2">Dispense status: <strong>{selectedView.status}</strong></Typography></Grid>
-                <Grid size={{ xs: 12, md: 4 }}>{selectedView.billedBillId ? <Typography variant="body2">Bill: <strong>Generated</strong></Typography> : null}</Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  {selectedView.billedBillId ? (
+                    <Typography variant="body2">
+                      Bill: <strong>{selectedView.billingStatus}</strong> · <strong>{selectedView.billedBillId}</strong>
+                    </Typography>
+                  ) : null}
+                </Grid>
               </Grid>
               <Box>
                 <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>Prescription actions</Typography>
@@ -795,7 +694,8 @@ export default function DispensingPage() {
                 </TableHead>
                 <TableBody>
                   {selectedView.lines.map((line) => {
-                    const closed = line.status === "DISPENSED" || line.status === "UNAVAILABLE" || line.status === "CANCELLED" || isClosedWorkflowStatus(selectedView.status);
+                    const closed = line.status === "DISPENSED" || line.status === "UNAVAILABLE" || line.status === "CANCELLED" || isClosedWorkflowStatus(line.status) || isClosedWorkflowStatus(selectedView.status);
+                    const outOfStock = (line.availableQuantity ?? 0) <= 0 || line.availabilityStatus === "NO_INVENTORY" || line.availabilityStatus === "OUT_OF_STOCK";
                     const rowKey = lineKey(line);
                     return (
                       <TableRow key={rowKey}>
@@ -807,9 +707,9 @@ export default function DispensingPage() {
                         <Typography variant="caption" display="block" color="text.secondary">
                           Available: {line.availableQuantity ?? 0}
                         </Typography>
-                        {line.availabilityStatus === "NO_INVENTORY" ? (
+                        {outOfStock ? (
                           <Typography variant="caption" display="block" color="error.main">
-                            No inventory batch exists yet. Prescription remains valid; add stock before dispensing.
+                            Medicine is out of stock. You can mark unavailable, bought outside, or keep pending.
                           </Typography>
                         ) : null}
                         {substitutes[rowKey]?.length ? (
@@ -858,7 +758,7 @@ export default function DispensingPage() {
                                   <Button
                                     size="small"
                                     variant="contained"
-                                    disabled={saving || closed || line.availabilityStatus === "NO_INVENTORY"}
+                                    disabled={saving || closed || outOfStock}
                                     onClick={() => openWorkflowAction({
                                       prescription: selectedView,
                                       line,
@@ -873,7 +773,7 @@ export default function DispensingPage() {
                                   </Button>
                                   <Button
                                     size="small"
-                                    disabled={saving || closed || line.availabilityStatus === "NO_INVENTORY"}
+                                    disabled={saving || closed || outOfStock}
                                     onClick={() => openWorkflowAction({
                                       prescription: selectedView,
                                       line,
@@ -982,7 +882,7 @@ export default function DispensingPage() {
                             />
                           </Grid>
                         ) : null}
-                        {workflowTarget.reasonRequired ? (
+                        {workflowTarget.reasonRequired || Boolean(workflowBatch.trim()) ? (
                           <Grid size={{ xs: 12 }}>
                             <CommentSuggestions
                               category={workflowTarget ? categoryForAction(workflowTarget.action) : "DISPENSING_UNAVAILABLE"}
@@ -990,13 +890,13 @@ export default function DispensingPage() {
                               remarks={workflowRemarks}
                               onReasonChange={setWorkflowReason}
                               onRemarksChange={setWorkflowRemarks}
-                              requiredReason={workflowTarget?.reasonRequired}
+                              requiredReason={workflowTarget?.reasonRequired || Boolean(workflowBatch.trim())}
                               maxRemarksLength={250}
                               disabled={saving}
                               reasonLabel="Reason"
                               remarksLabel="Remarks"
                               reasonError={Boolean(workflowFieldErrors.reason)}
-                              reasonHelperText={workflowFieldErrors.reason || "Select a reason and keep it under 60 characters."}
+                              reasonHelperText={workflowFieldErrors.reason || (workflowBatch.trim() ? "Select a reason when using a manual batch override." : "Select a reason and keep it under 60 characters.")}
                               remarksError={Boolean(workflowFieldErrors.remarks)}
                               remarksHelperText={workflowFieldErrors.remarks || `${workflowRemarks.length}/250`}
                               remarksInputRef={remarksInputRef}

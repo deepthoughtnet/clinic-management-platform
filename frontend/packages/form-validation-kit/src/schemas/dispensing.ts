@@ -52,6 +52,10 @@ export const closureReasonSchema = z.preprocess(
 );
 export const remarksSchema = z.preprocess(toOptionalTrimmedString, z.string().max(250, "Remarks must be 250 characters or fewer.").nullable());
 export const batchOverrideSchema = z.preprocess(toOptionalTrimmedString, z.string().max(60, "Batch override must be 60 characters or fewer.").nullable());
+export const dispensingQueueSearchSchema = z.preprocess(
+  toOptionalTrimmedString,
+  z.string().max(60, "Search must be 60 characters or fewer.").nullable(),
+);
 
 export function createDispenseActionInputSchema(options: {
   pendingQuantity: number;

@@ -10,17 +10,22 @@ import {
   IconButton,
   MenuItem,
   Select,
+  Stack,
   Toolbar,
   Tooltip,
   Typography,
 } from "@mui/material";
+import NotificationsNoneRoundedIcon from "@mui/icons-material/NotificationsNoneRounded";
 import MenuIcon from "@mui/icons-material/Menu";
 import LocalHospitalRoundedIcon from "@mui/icons-material/LocalHospitalRounded";
+import HelpCenterRoundedIcon from "@mui/icons-material/HelpCenterRounded";
 
 import { useAuth } from "../auth/useAuth";
+import { HelpContext } from "../shared/components/help/HelpProvider";
 import { friendlyRoleLabel } from "../auth/moduleEntitlements";
 import { getPlatformTenants } from "../api/clinicApi";
 import { branding } from "../branding";
+import { openGlobalHelp } from "../shared/components/help/helpEvents";
 
 function formatPathLabel(pathname: string): string {
   if (pathname === "/") return "Dashboard";
@@ -44,6 +49,7 @@ export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => voi
   const auth = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const helpContext = React.useContext(HelpContext);
   const isPlatformAdmin = auth.rolesUpper.includes("PLATFORM_ADMIN");
   const primaryRole = friendlyRoleLabel(auth);
   const [platformTenantOptions, setPlatformTenantOptions] = React.useState<Array<{ tenantId: string; tenantCode?: string | null; tenantName?: string | null }>>([]);
@@ -100,9 +106,11 @@ export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => voi
           <Typography variant="subtitle1" sx={{ fontWeight: 900, lineHeight: 1.2 }}>
             {branding.productName}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {formatPathLabel(location.pathname)}
-          </Typography>
+          <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+            <Typography variant="caption" color="text.secondary">
+              {formatPathLabel(location.pathname)}
+            </Typography>
+          </Stack>
         </Box>
 
         <Box sx={{ flex: 1 }} />
@@ -157,14 +165,34 @@ export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => voi
           </Tooltip>
         </Box>
 
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, mr: 2 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mr: 2 }}>
+          <Tooltip title="Notifications">
+            <IconButton color="inherit" onClick={() => navigate("/notifications")} aria-label="Open notifications">
+              <NotificationsNoneRoundedIcon />
+            </IconButton>
+          </Tooltip>
+          <Button
+            type="button"
+            size="small"
+            variant="outlined"
+            startIcon={<HelpCenterRoundedIcon fontSize="small" />}
+            onClick={() => {
+              if (import.meta.env?.DEV) {
+                console.log("Help clicked");
+              }
+              helpContext?.openHelp();
+              openGlobalHelp({ source: "topbar" });
+            }}
+            aria-label="Open help"
+          >
+            Help
+          </Button>
           <Avatar sx={{ width: 28, height: 28 }}>{(auth.username || "U").slice(0, 1).toUpperCase()}</Avatar>
           <Typography variant="body2">{auth.username}</Typography>
+          <Button color="inherit" onClick={() => auth.logout()}>
+            Logout
+          </Button>
         </Box>
-
-        <Button color="inherit" onClick={() => auth.logout()}>
-          Logout
-        </Button>
       </Toolbar>
     </AppBar>
   );

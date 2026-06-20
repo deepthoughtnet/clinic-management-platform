@@ -5,6 +5,7 @@ import { Box, Button, Paper, Typography } from "@mui/material";
 import AppShell from "../layout/AppShell";
 import { AuthContext } from "../auth/AuthContext";
 import { useAuth } from "../auth/useAuth";
+import HelpProvider from "../shared/components/help/HelpProvider";
 import DashboardPage from "../pages/DashboardPage";
 import ClinicProfilePage from "../pages/settings/ClinicProfilePage";
 import UsersRolesPage from "../pages/settings/UsersRolesPage";
@@ -13,6 +14,7 @@ import NotificationSettingsPage from "../pages/admin/NotificationSettingsPage";
 import IntegrationsPage from "../pages/admin/IntegrationsPage";
 import AiOpsPage from "../pages/admin/AiOpsPage";
 import PlatformOpsPage from "../pages/admin/PlatformOpsPage";
+import HelpCmsPage from "../pages/admin/HelpCmsPage";
 import RealtimeAiPage from "../pages/admin/RealtimeAiPage";
 import VoiceTestPage from "../pages/ai/VoiceTestPage";
 import DoctorDetailPage from "../pages/doctors/DoctorDetailPage";
@@ -167,6 +169,14 @@ function TenantRoleGate({ rolesAny, children }: { rolesAny: string[]; children: 
   return <>{children}</>;
 }
 
+function PlatformAdminGate({ children }: { children: React.ReactNode }) {
+  const auth = useAuth();
+  if (!auth.rolesUpper.includes("PLATFORM_ADMIN")) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return <>{children}</>;
+}
+
 function HomeRedirect() {
   const auth = useAuth();
   const tenantRole = (auth.tenantRole || "").toUpperCase();
@@ -182,8 +192,9 @@ function AuthedApp() {
   }, [location.pathname]);
 
   return (
-    <AppShell>
-      <Routes>
+    <HelpProvider>
+      <AppShell>
+        <Routes>
         <Route path="/" element={<HomeRedirect />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/pharmacy/dashboard" element={<PharmacyDashboardPage />} />
@@ -211,14 +222,17 @@ function AuthedApp() {
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/vaccinations" element={<VaccinationsPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/pharmacy/inventory" element={<InventoryPage />} />
         <Route path="/pharmacy/operations" element={<PharmacyOperationsPage />} />
         <Route path="/pharmacy/pos" element={<PharmacyPosPage />} />
+        <Route path="/pharmacy/medicine-master" element={<MedicineMasterPage />} />
         <Route path="/pharmacy/medicines" element={<MedicineMasterPage />} />
         <Route path="/pharmacy/stock-movements" element={<StockMovementsPage />} />
         <Route path="/pharmacy/dispensing" element={<DispensingPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/lab" element={<LabPage />} />
-        <Route path="/platform/tenants" element={<TenantsPage />} />
+        <Route path="/platform/tenants" element={<PlatformAdminGate><TenantsPage /></PlatformAdminGate>} />
+        <Route path="/platform/help" element={<PlatformAdminGate><HelpCmsPage /></PlatformAdminGate>} />
         <Route path="/platform/tenants/:tenantId" element={<TenantDetailPage />} />
         <Route path="/platform/plans" element={<PlansModulesPage />} />
         <Route path="/carepilot/campaigns" element={<ModuleGate moduleKey="carePilot"><CampaignsPage /></ModuleGate>} />
@@ -252,8 +266,9 @@ function AuthedApp() {
         <Route path="/doctors/availability" element={<DoctorAvailabilityPage />} />
         <Route path="/doctors/:id" element={<DoctorDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </AppShell>
+        </Routes>
+      </AppShell>
+    </HelpProvider>
   );
 }
 

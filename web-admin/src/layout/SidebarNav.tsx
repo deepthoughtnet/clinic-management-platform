@@ -71,6 +71,7 @@ function iconFor(key: string): React.ReactNode {
     "platform-tenants": <ApartmentRoundedIcon fontSize="small" />,
     "platform-plans": <AutoAwesomeMotionRoundedIcon fontSize="small" />,
     "platform-users": <GroupRoundedIcon fontSize="small" />,
+    "platform-help": <DescriptionRoundedIcon fontSize="small" />,
     "platform-subscriptions": <ReceiptLongRoundedIcon fontSize="small" />,
     "platform-analytics": <BarChartRoundedIcon fontSize="small" />,
     "platform-health": <MonitorHeartRoundedIcon fontSize="small" />,

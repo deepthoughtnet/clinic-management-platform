@@ -54,4 +54,3 @@ create index if not exists ix_prescription_dispense_items_tenant_disp
     on prescription_dispense_items (tenant_id, dispensation_id);
 create index if not exists ix_prescription_dispense_items_tenant_presc
     on prescription_dispense_items (tenant_id, prescription_id);
-
