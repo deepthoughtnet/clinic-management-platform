@@ -7,6 +7,6 @@ import jakarta.validation.constraints.Size;
 
 public record LabOrderCreateRequest(
         @NotEmpty List<UUID> testIds,
-        @Size(max = 4000) String notes
+        @Size(max = 250) String notes
 ) {
 }

@@ -77,7 +77,7 @@ const CAREAI_RUNTIME_TODAY = [
   "Human Handoff",
 ] as const;
 
-const BUSINESS_SYSTEMS = ["Arogia", "Future Finance Automation", "Future HRMS", "Future CRM"] as const;
+const BUSINESS_SYSTEMS = ["Jeevanam Healthcare", "Future Finance Automation", "Future HRMS", "Future CRM"] as const;
 
 const AVAILABLE_TODAY = [
   "Voice assistant",
@@ -262,7 +262,7 @@ export function AivaLandingPage({ session }: { session: PatientPortalSession | n
       <AivaSection
         eyebrow="Runtime"
         title="Powered by AIVA"
-        subtitle="The launch point is a reusable engine that can be extended into new products without destabilizing Arogia R2."
+        subtitle="The launch point is a reusable engine that can be extended into new products without destabilizing the clinic platform."
       >
         <div className="aiva-runtime-grid">
           <article className="aiva-card">

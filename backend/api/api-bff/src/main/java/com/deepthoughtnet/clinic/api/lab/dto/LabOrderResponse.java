@@ -45,6 +45,8 @@ public record LabOrderResponse(
         OffsetDateTime doctorReviewedAt,
         String doctorReviewedByUserId,
         String doctorReviewedBy,
+        String doctorReviewDecision,
+        String doctorReviewReason,
         String doctorComments,
         List<LabOrderAttachmentResponse> attachments,
         List<LabOrderItemResponse> items,

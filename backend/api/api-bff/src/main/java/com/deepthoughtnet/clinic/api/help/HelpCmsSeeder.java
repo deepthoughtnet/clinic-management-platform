@@ -92,7 +92,7 @@ public class HelpCmsSeeder {
                 if ("BILLING".equalsIgnoreCase(seed.pageKey())) {
                     deactivateObsoleteBillingSections(page, seed);
                 }
-                if ("PHARMACY_INVENTORY".equalsIgnoreCase(seed.pageKey()) || "PHARMACY_DISPENSING".equalsIgnoreCase(seed.pageKey()) || "PHARMACY_DASHBOARD".equalsIgnoreCase(seed.pageKey()) || "REPORTS".equalsIgnoreCase(seed.pageKey()) || "BILLING".equalsIgnoreCase(seed.pageKey())) {
+                if ("PHARMACY_INVENTORY".equalsIgnoreCase(seed.pageKey()) || "PHARMACY_DISPENSING".equalsIgnoreCase(seed.pageKey()) || "PHARMACY_DASHBOARD".equalsIgnoreCase(seed.pageKey()) || "REPORTS".equalsIgnoreCase(seed.pageKey()) || "BILLING".equalsIgnoreCase(seed.pageKey()) || "LABORATORY".equalsIgnoreCase(seed.pageKey())) {
                     boolean refreshed = refreshSeedContent(page, seed);
                     if (refreshed) {
                         page.setVersion(page.getVersion() + 1);
@@ -988,7 +988,7 @@ public class HelpCmsSeeder {
                                                 relatedItem("Refunds", "REFUNDS", "Refunds and reversals are handled separately."),
                                                 relatedItem("Reports", "REPORTS", "Billing totals feed finance reports."),
                                                 relatedItem("Pharmacy POS", "PHARMACY_POS", "Pharmacy sales may contribute to billing."),
-                                                relatedItem("Laboratory", "LAB", "Lab charges and orders may generate bill items.")
+                                                relatedItem("Laboratory", "LABORATORY", "Lab charges and orders may generate bill items.")
                                         )
                                 )),
                                 section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of(
@@ -1013,45 +1013,113 @@ public class HelpCmsSeeder {
                                 ))
                         )
                 ),
-                page(
-                        "CLINIC", "LAB", "Lab", "science",
-                        "Lab manages tests, orders, samples, results, and review workflows.",
-                        roles("LAB_TECHNICIAN", "LAB_MANAGER", "CLINIC_ADMIN"),
-                        steps(
-                                step("Test master", "Maintain tests and parameters."),
-                                step("Create orders", "Order tests for a patient or consultation."),
-                                step("Collect sample", "Track sample collection and sample IDs."),
-                                step("Enter results", "Record result values and comments."),
-                                step("Review", "Doctor reviews and finalizes results.")
-                        ),
-                        fields(
-                                field("Test name", true, "Lab test name.", "CBC", 120, "Required", "Text"),
-                                field("Result value", false, "Observed result value.", "13.4", 80, "Optional depending on workflow", "Text"),
-                                field("Sample ID", false, "Sample identifier.", "SMP-001", 60, "Optional", "Text"),
-                                field("Payment mode", false, "Payment method for lab charges.", "Cash", 20, "Optional", "Enum")
-                        ),
-                        validations(
-                                validation("Test name", "Required.", true, "Text", 120, "CBC"),
-                                validation("Result value", "Optional unless workflow requires it.", false, "Text", 80, "13.4")
-                        ),
-                        errors(
-                                error("Invalid result", "Result entry is not complete or not in range.", "Review values before saving."),
-                                error("Missing sample", "Sample ID is not available.", "Collect the sample before marking results.")
-                        ),
-                        bestPractices(
-                                note("Capture samples consistently", "Use the same sample naming pattern across orders.")
-                        ),
-                        faq(
-                                faqItem("Why is a test rejected?", "The sample may be insufficient or rejected for quality reasons.")
-                        ),
-                        related(
-                                relatedItem("Reports", "REPORTS", "Lab reports can be reviewed here."),
-                                relatedItem("Patients", "PATIENTS", "Lab orders are patient-based.")
-                        ),
-                        tips(List.of()),
-                        limitations(List.of()),
-                        links(List.of()),
-                        audit(List.of())
+                new HelpPageSeed(
+                        "CLINIC",
+                        "LABORATORY",
+                        "Laboratory",
+                        "science",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of(
+                                        "title", "Laboratory",
+                                        "description", "Laboratory manages lab test catalog, lab orders, sample collection, result entry, doctor review, report generation, and delivery tracking.",
+                                        "searchTags", List.of("lab", "laboratory", "lab operations", "lab test catalog", "sample collection", "result entry", "doctor review", "report generation")
+                                )),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of(
+                                        "steps", steps(
+                                                step("Create lab test catalog entries.", "Create and maintain active lab tests with prices and parameters."),
+                                                step("Order lab tests from consultation or lab workflow.", "Choose the required tests for the patient."),
+                                                step("Collect payment if required.", "Collect due amounts before sample collection when the workflow requires it."),
+                                                step("Collect sample and record collection details.", "Capture sample type, barcode, collector, and time."),
+                                                step("Enter test results.", "Record measured values and component results."),
+                                                step("Send results for doctor review when required.", "Approve or send back incomplete results."),
+                                                step("Generate or upload report.", "Create the final report after approval."),
+                                                step("Deliver report to patient.", "Mark the report delivered after final handoff."),
+                                                step("Track lab activity in reports.", "Use reports to monitor lab throughput and revenue.")
+                                        )
+                                )),
+                                section("TAB_GUIDE", "TAB_GUIDE", 3, true, true, Map.of(
+                                        "items", List.of(
+                                                note("Catalog", "Manage lab test master data."),
+                                                note("Pending Sample Collection", "Shows paid or ready orders awaiting sample collection."),
+                                                note("Pending Results", "Shows samples collected and awaiting result entry."),
+                                                note("Pending Doctor Review", "Shows results requiring clinical review."),
+                                                note("Orders", "Shows all lab orders with status filters.")
+                                        )
+                                )),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 4, true, true, Map.of(
+                                        "rules", List.of(
+                                                validation("Test name", "Required and unique within the tenant or clinic.", true, "Text", 100, "CBC"),
+                                                validation("Price", "Numeric and cannot be negative.", true, "Amount", null, "250.00"),
+                                                validation("Patient", "Required for lab orders.", true, "Identifier", null, "Patient must exist"),
+                                                validation("Lab test", "At least one active lab test is required.", true, "Identifier", null, "CBC"),
+                                                validation("Sample collection", "Cannot happen twice.", true, "Workflow", null, "One collection per sample"),
+                                                validation("Result entry", "Requires sample collection first.", true, "Workflow", null, "Collect sample before results"),
+                                                validation("Final result", "Requires mandatory values.", true, "Workflow", null, "Populate all required results"),
+                                                validation("Report", "Can be generated only after result finalization and review.", true, "Workflow", null, "Approved results only"),
+                                                validation("Review remarks", "Rejection or send-back requires reason.", true, "Text", 250, "Reason required"),
+                                                validation("File upload", "Uploads must use a valid file type and size.", false, "File", 10, "pdf, jpg, jpeg, png")
+                                        )
+                                )),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 5, true, true, Map.of(
+                                        "items", List.of(
+                                                error("No lab tests found", "Catalog is empty or the search filter does not match.", "Create a test or clear the search."),
+                                                error("Pending payment", "Lab order is not paid.", "Complete billing before sample collection if the policy requires it."),
+                                                error("Result entry blocked", "Sample is not collected.", "Collect the sample first."),
+                                                error("Report not available", "Result is not finalized or the report is not generated.", "Complete result entry and review workflow."),
+                                                error("Duplicate test", "Same test name or code already exists.", "Use the existing test or change the name or code.")
+                                        )
+                                )),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 6, true, true, Map.of(
+                                        "items", List.of(
+                                                note("Keep lab catalog clean and active/inactive correctly.", "Deactivate tests instead of deleting historical records."),
+                                                note("Use standard sample types.", "Keep sample collection consistent across the clinic."),
+                                                note("Capture sample barcode where available.", "Barcode capture reduces manual entry errors."),
+                                                note("Do not finalize results with missing values.", "Review all required parameters before approval."),
+                                                note("Use doctor review for clinically sensitive reports.", "Approved review flow reduces accidental release."),
+                                                note("Generate PDF only after review.", "Issue the report after the clinical review step."),
+                                                note("Track turnaround time from collection to report generation.", "Use turnaround metrics to monitor lab throughput.")
+                                        )
+                                )),
+                                section("FAQ", "FAQ", 7, true, true, Map.of(
+                                        "items", List.of(
+                                                faqItem("Can I create lab order without catalog test?", "No. Create an active catalog test first."),
+                                                faqItem("Can result be entered before sample collection?", "No, unless the test does not require a sample."),
+                                                faqItem("Can report be downloaded before result is finalized?", "No."),
+                                                faqItem("Can inactive tests be ordered?", "No."),
+                                                faqItem("Where does lab revenue appear?", "Billing and Reports.")
+                                        )
+                                )),
+                                section("RELATED_PAGES", "RELATED_PAGES", 8, true, true, Map.of(
+                                        "items", List.of(
+                                                relatedItem("Patients", "PATIENTS", "Patient records are the source for lab orders."),
+                                                relatedItem("Consultations", "CONSULTATION", "Consultations can create lab orders."),
+                                                relatedItem("Billing", "BILLING", "Lab charges flow into billing."),
+                                                relatedItem("Payments", "PAYMENTS", "Lab payment collection appears here."),
+                                                relatedItem("Reports", "REPORTS", "Lab summaries appear in reports."),
+                                                relatedItem("Prescriptions", "PRESCRIPTIONS", "Lab orders may be linked to prescriptions.")
+                                        )
+                                )),
+                                section("TIPS", "TIPS", 9, true, true, Map.of(
+                                        "items", List.of(
+                                                note("Start by creating test catalog.", "A clean catalog improves downstream ordering."),
+                                                note("Use Pending Sample Collection daily.", "This queue keeps the team focused on uncollected samples."),
+                                                note("Use Orders tab for full status tracking.", "The Orders tab is the operational history."),
+                                                note("Keep rejection remarks clear.", "A short and specific note helps clinical follow-up."),
+                                                note("Use Reports to monitor lab turnaround.", "Turnaround tracking helps with service quality.")
+                                        )
+                                )),
+                                section("PERMISSIONS", "PERMISSIONS", 10, true, true, Map.of(
+                                        "permissions", roles("CLINIC_ADMIN", "LAB_TECHNICIAN", "LAB_ADMIN", "DOCTOR", "AUDITOR")
+                                )),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 11, true, true, Map.of(
+                                        "items", List.of(
+                                                note("Advanced LIS integration is planned later.", "External system integration is not part of the current workflow."),
+                                                note("Barcode printer integration may be added later.", "Current barcode support is manual or device assisted."),
+                                                note("Multi-language report templates are planned.", "Report templates currently use the active language."),
+                                                note("AIVA lab help is planned.", "Automated lab explanation is not yet available.")
+                                        )
+                                ))
+                        )
                 ),
                 new HelpPageSeed(
                         "CLINIC",
@@ -1172,7 +1240,7 @@ public class HelpCmsSeeder {
                                                 relatedItem("Refunds", "REFUNDS", "Refunds affect revenue and daily sales reporting."),
                                                 relatedItem("Pharmacy POS", "PHARMACY_POS", "Retail sales feed pharmacy reports."),
                                                 relatedItem("Inventory", "PHARMACY_INVENTORY", "Inventory values affect low stock and stock-related reports."),
-                                                relatedItem("Laboratory", "LAB", "Lab activity feeds lab reporting."),
+                                                relatedItem("Laboratory", "LABORATORY", "Lab activity feeds lab reporting."),
                                                 relatedItem("Prescriptions", "PRESCRIPTIONS", "Prescription activity feeds clinical and pharmacy reporting.")
                                         )
                                 )),
@@ -1336,6 +1404,509 @@ public class HelpCmsSeeder {
                         limitations(List.of()),
                         links(List.of()),
                         audit(List.of())
+                ),
+                new HelpPageSeed(
+                        "CLINIC", "CLINIC_DASHBOARD", "Clinic Dashboard", "dashboard",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of("title", "Clinic Dashboard", "description", "Clinic Dashboard provides an operational overview of appointments, queue, consultations, follow-ups, and billing for the current tenant.", "searchTags", List.of("clinic dashboard", "dashboard overview", "queue summary", "follow ups", "billing summary"))),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of("steps", steps(
+                                        step("Review KPI cards.", "Start with today's operational totals."),
+                                        step("Open a source module.", "Navigate into appointments, queue, consultations, or billing when action is needed."),
+                                        step("Use the date filters.", "Switch between preset windows or a custom range."),
+                                        step("Refresh after source updates.", "Reload to see the latest operational numbers.")
+                                ))),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 3, true, true, Map.of("rules", List.of(
+                                        validation("Start date", "Required.", true, "Date", null, "2026-06-20"),
+                                        validation("End date", "Required.", true, "Date", null, "2026-06-20"),
+                                        validation("Date range", "End date must be on or after start date.", true, "Date range", null, "Today to today"),
+                                        validation("Doctor filter", "Must reference a valid doctor.", false, "Lookup", null, "Dr Meera"),
+                                        validation("Refresh", "Reloads the dashboard without changing source data.", true, "Action", null, "Refresh")
+                                ))),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 4, true, true, Map.of("items", List.of(
+                                        error("No dashboard data", "No matching records exist for the selected date range and filters.", "Widen the date range or clear the doctor filter."),
+                                        error("Invalid date range", "End date is earlier than the start date.", "Choose a valid range."),
+                                        error("No source data", "One or more operational modules have not posted activity yet.", "Open the source module and complete the workflow.")
+                                ))),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 5, true, true, Map.of("items", List.of(
+                                        note("Start here each shift.", "Use the dashboard as the first operational checkpoint."),
+                                        note("Refresh after critical actions.", "Reload after check-in, billing, or prescription changes."),
+                                        note("Use source modules for corrections.", "Update the originating page instead of editing dashboard numbers.")
+                                ))),
+                                section("FAQ", "FAQ", 6, true, true, Map.of("items", List.of(
+                                        faqItem("Can I edit dashboard numbers?", "No. The dashboard is read-only."),
+                                        faqItem("Can I jump to appointments?", "Yes. Use the action cards to open source pages.")
+                                ))),
+                                section("RELATED_PAGES", "RELATED_PAGES", 7, true, true, Map.of("items", List.of(
+                                        relatedItem("Appointments", "APPOINTMENTS", "Open booking and appointment details."),
+                                        relatedItem("Day Board", "DAY_BOARD", "Review same-day operational flow."),
+                                        relatedItem("Consultation Workspace", "CONSULTATION_WORKSPACE", "Open patient consultation work."),
+                                        relatedItem("Billing", "BILLING", "Review finance activity."),
+                                        relatedItem("Reports", "REPORTS", "Use reporting for deeper analysis.")
+                                ))),
+                                section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of("permissions", roles("CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR"))),
+                                section("TIPS", "TIPS", 9, true, true, Map.of("items", List.of(
+                                        note("Check the current date window.", "Avoid reading stale counts from an outdated range."),
+                                        note("Use source drill-downs.", "KPI cards are entry points, not correction tools.")
+                                ))),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 10, true, true, Map.of("items", List.of(
+                                        note("Trend charts are limited.", "The current dashboard is KPI-first."),
+                                        note("Language switching is planned.", "Help content currently follows the active help language.")
+                                )))
+                        )
+                ),
+                new HelpPageSeed(
+                        "CLINIC", "DAY_BOARD", "Day Board", "today",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of("title", "Day Board", "description", "Day Board shows the day's operational view of appointments, check-ins, slots, queues, and consultation flow.", "searchTags", List.of("day board", "same day appointments", "queue", "check in", "consultation flow"))),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of("steps", steps(
+                                        step("Search or select the patient.", "Choose the patient to place on the board."),
+                                        step("Pick a doctor and time.", "Use a slot, manual time, or waitlist action."),
+                                        step("Check in or reschedule.", "Move the appointment into the appropriate state."),
+                                        step("Open consultation.", "Jump into consultation when the patient is ready.")
+                                ))),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 3, true, true, Map.of("rules", List.of(
+                                        validation("Patient", "Required for booking or waitlist actions.", true, "Lookup", null, "Rahul Sharma"),
+                                        validation("Doctor", "Required for booking actions.", true, "Lookup", null, "Dr Meera"),
+                                        validation("Date", "Must be a valid working date.", true, "Date", null, "2026-06-20"),
+                                        validation("Time", "Must be a valid time and not in the past for new bookings.", false, "Time", null, "09:30"),
+                                        validation("Reason", "Optional note for waitlist or manual actions.", false, "Text", 250, "Patient requested early slot")
+                                ))),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 4, true, true, Map.of("items", List.of(
+                                        error("Slot unavailable", "The selected slot is already booked or blocked.", "Choose a different slot."),
+                                        error("Patient required", "The quick action needs a patient before booking or waitlist creation.", "Search and select a patient first."),
+                                        error("Past time", "The chosen time has already passed.", "Choose a current or future slot.")
+                                ))),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 5, true, true, Map.of("items", List.of(
+                                        note("Start from today's board.", "Use the board for same-day operational handling."),
+                                        note("Keep the patient selected.", "This avoids mixing booking actions between patients."),
+                                        note("Refresh after status changes.", "Reload the board after check-in or consultation.")
+                                ))),
+                                section("FAQ", "FAQ", 6, true, true, Map.of("items", List.of(
+                                        faqItem("Can I book from Day Board?", "Yes, when an available slot exists."),
+                                        faqItem("Can I edit a completed appointment?", "No. Use the source module that owns the record.")
+                                ))),
+                                section("RELATED_PAGES", "RELATED_PAGES", 7, true, true, Map.of("items", List.of(
+                                        relatedItem("Appointments", "APPOINTMENTS", "Full booking and rescheduling."),
+                                        relatedItem("Queue", "QUEUE", "Queue management for same-day flow."),
+                                        relatedItem("Consultation Workspace", "CONSULTATION_WORKSPACE", "Open the clinical workspace."),
+                                        relatedItem("Doctor Availability", "DOCTOR_AVAILABILITY", "Manage available slots.")
+                                ))),
+                                section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of("permissions", roles("CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"))),
+                                section("TIPS", "TIPS", 9, true, true, Map.of("items", List.of(
+                                        note("Use the patient search first.", "This reduces accidental booking into the wrong queue."),
+                                        note("Watch slot status colors.", "They show whether the booking is safe to place.")
+                                ))),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 10, true, true, Map.of("items", List.of(
+                                        note("Day Board is operational only.", "Use source modules for edits to underlying records.")
+                                )))
+                        )
+                ),
+                new HelpPageSeed(
+                        "CLINIC", "NOTIFICATIONS", "Notifications & Reminders", "notifications",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of("title", "Notifications & Reminders", "description", "Notifications and reminders provide tenant-scoped operational message history, retry visibility, and reminder tracking for appointments, billing, prescriptions, lab, and vaccination events.", "searchTags", List.of("notifications", "reminders", "retry", "message history", "appointment reminder", "vaccination reminder"))),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of("steps", steps(
+                                        step("Review the inbox.", "Check sent, pending, failed, and skipped items."),
+                                        step("Filter by event or channel.", "Narrow the list to the operational category you need."),
+                                        step("Open a message.", "Review message content and delivery metadata."),
+                                        step("Retry when configuration is ready.", "Only retry after the provider or template issue is resolved.")
+                                ))),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 3, true, true, Map.of("rules", List.of(
+                                        validation("Search", "Trimmed and limited to 60 characters.", false, "Text", 60, "Appointment reminder"),
+                                        validation("Status", "Must be a valid reminder status.", false, "Enum", null, "PENDING"),
+                                        validation("Event", "Must be a valid notification event.", false, "Enum", null, "APPOINTMENT_REMINDER"),
+                                        validation("Channel", "Must be a valid notification channel.", false, "Enum", null, "SMS"),
+                                        validation("Date range", "From date cannot be after To date.", false, "Date range", null, "2026-06-01 to 2026-06-30")
+                                ))),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 4, true, true, Map.of("items", List.of(
+                                        error("No notifications found", "No matching notifications exist for the selected filters.", "Widen the date range or clear filters."),
+                                        error("Retry failed", "Provider configuration is missing or the message has already been processed.", "Fix the provider issue before retrying."),
+                                        error("Invalid filter", "One of the chosen filter values is not available.", "Reset filters and select valid values.")
+                                ))),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 5, true, true, Map.of("items", List.of(
+                                        note("Use filters first.", "Filter by event or channel before scanning the table."),
+                                        note("Retry only after fixing the root cause.", "Do not requeue failures blindly."),
+                                        note("Keep reminders concise.", "Reminder content should be short and action oriented.")
+                                ))),
+                                section("FAQ", "FAQ", 6, true, true, Map.of("items", List.of(
+                                        faqItem("Can I edit an existing notification?", "No. Review and retry are allowed; source records own the data."),
+                                        faqItem("Can I use this for patient portal messages?", "Only if the tenant has the relevant notification channel enabled.")
+                                ))),
+                                section("RELATED_PAGES", "RELATED_PAGES", 7, true, true, Map.of("items", List.of(
+                                        relatedItem("Appointments", "APPOINTMENTS", "Appointment events are common notification sources."),
+                                        relatedItem("Billing", "BILLING", "Bills and receipts can trigger notifications."),
+                                        relatedItem("Vaccinations", "VACCINATIONS", "Vaccination reminders appear here."),
+                                        relatedItem("Consultation Workspace", "CONSULTATION_WORKSPACE", "Prescription and follow-up events can notify from consultations.")
+                                ))),
+                                section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of("permissions", roles("CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN"))),
+                                section("TIPS", "TIPS", 9, true, true, Map.of("items", List.of(
+                                        note("Check failed items after provider changes.", "Provider fixes often clear a backlog of failed notifications."),
+                                        note("Use patient filters for support calls.", "Patient-specific history is easier to inspect.")
+                                ))),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 10, true, true, Map.of("items", List.of(
+                                        note("Retry workflow depends on provider readiness.", "The UI cannot override provider-side failures."),
+                                        note("Language switching is planned.", "Help content currently follows the active help language.")
+                                )))
+                        )
+                ),
+                new HelpPageSeed(
+                        "CLINIC", "VACCINATIONS", "Vaccinations", "vaccines",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of("title", "Vaccinations", "description", "Vaccinations manages vaccine master data, patient dose recording, and follow-up tracking for due and overdue doses.", "searchTags", List.of("vaccinations", "vaccine master", "dose recording", "due vaccinations", "overdue vaccinations"))),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of("steps", steps(
+                                        step("Create vaccine master data.", "Add active vaccines with prices and follow-up gap days."),
+                                        step("Search the patient.", "Choose the patient before recording a dose."),
+                                        step("Record the dose.", "Capture dose number, given date, batch, and notes."),
+                                        step("Review due lists.", "Monitor upcoming and overdue vaccinations.")
+                                ))),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 3, true, true, Map.of("rules", List.of(
+                                        validation("Vaccine name", "Required and must contain a letter or number.", true, "Text", 60, "COVID-19"),
+                                        validation("Default price", "Numeric and cannot be negative.", false, "Amount", null, "250.00"),
+                                        validation("Patient", "Required before recording a vaccination.", true, "Lookup", null, "Rahul Sharma"),
+                                        validation("Vaccine", "Required before recording a vaccination.", true, "Lookup", null, "COVID-19"),
+                                        validation("Given date", "Required for a recorded dose.", true, "Date", null, "2026-06-20"),
+                                        validation("Notes", "Optional and max 250 characters.", false, "Text", 250, "Observed for 15 minutes"),
+                                        validation("Batch number", "Optional and max 60 characters.", false, "Text", 60, "BATCH-001"),
+                                        validation("Bill item price", "Optional numeric price with up to 2 decimals.", false, "Amount", null, "250.00")
+                                ))),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 4, true, true, Map.of("items", List.of(
+                                        error("Patient required", "A patient must be selected before recording a dose.", "Search and choose the patient first."),
+                                        error("Vaccine required", "The vaccine master entry is missing.", "Create or select the vaccine first."),
+                                        error("Invalid price", "The default or bill item price is negative or malformed.", "Enter a non-negative amount."),
+                                        error("Duplicate vaccine", "A vaccine with the same normalized name already exists.", "Use the existing record or change the name.")
+                                ))),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 5, true, true, Map.of("items", List.of(
+                                        note("Record doses promptly.", "Keep dose history current for due-date calculations."),
+                                        note("Use a consistent batch format.", "Batch numbers should match the label printed on the vial."),
+                                        note("Review overdue doses daily.", "Follow up on missed vaccines early.")
+                                ))),
+                                section("FAQ", "FAQ", 6, true, true, Map.of("items", List.of(
+                                        faqItem("Can I record a vaccination without a patient?", "No. Patient selection is required."),
+                                        faqItem("Can vaccine prices be negative?", "No. Vaccine prices must be zero or greater.")
+                                ))),
+                                section("RELATED_PAGES", "RELATED_PAGES", 7, true, true, Map.of("items", List.of(
+                                        relatedItem("Patients", "PATIENTS", "Vaccination history is patient-centric."),
+                                        relatedItem("Reports", "REPORTS", "Use reporting to review vaccination activity."),
+                                        relatedItem("Notifications & Reminders", "NOTIFICATIONS", "Vaccination reminders are tracked here.")
+                                ))),
+                                section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of("permissions", roles("CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"))),
+                                section("TIPS", "TIPS", 9, true, true, Map.of("items", List.of(
+                                        note("Search by patient number or mobile.", "This reduces lookup time during busy clinics."),
+                                        note("Keep default prices aligned.", "Match the vaccine price to the current clinic policy.")
+                                ))),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 10, true, true, Map.of("items", List.of(
+                                        note("Dose schedules are manual.", "Future releases may add tighter schedule automation."),
+                                        note("Language switching is planned.", "Help content currently follows the active help language.")
+                                )))
+                        )
+                ),
+                new HelpPageSeed(
+                        "CLINIC", "DOCTOR_AVAILABILITY", "Doctor Availability", "event_available",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of("title", "Doctor Availability", "description", "Doctor Availability manages scheduling windows, slot capacity, leave blocks, and waitlist support for clinic doctors.", "searchTags", List.of("doctor availability", "slots", "leave block", "waitlist", "schedule"))),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of("steps", steps(
+                                        step("Choose the doctor.", "Pick the doctor whose schedule you want to manage."),
+                                        step("Set working windows.", "Create availability with start, end, duration, and capacity."),
+                                        step("Add leave or blocks.", "Mark holidays, leave, unavailable, or emergency blocks."),
+                                        step("Review the calendar.", "Use the daily and weekly views to inspect coverage.")
+                                ))),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 3, true, true, Map.of("rules", List.of(
+                                        validation("Start time", "Required and must be before end time.", true, "Time", null, "09:00"),
+                                        validation("End time", "Required and must be after start time.", true, "Time", null, "12:00"),
+                                        validation("Duration", "Must be a positive integer.", true, "Integer", null, "30"),
+                                        validation("Capacity", "Must be a positive integer.", true, "Integer", null, "2"),
+                                        validation("Break", "Break start and end must be set together and remain in order.", false, "Time range", null, "10:30 to 10:45"),
+                                        validation("Leave reason", "Optional and max 60 characters.", false, "Text", 60, "Clinic meeting")
+                                ))),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 4, true, true, Map.of("items", List.of(
+                                        error("Invalid time range", "The end time is not after the start time.", "Choose a valid window."),
+                                        error("Missing doctor", "A doctor must be selected before creating availability.", "Select the doctor first."),
+                                        error("Invalid leave block", "The block start and end times are missing or reversed.", "Correct the datetime range.")
+                                ))),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 5, true, true, Map.of("items", List.of(
+                                        note("Keep slot duration consistent.", "Use the same duration across a session when possible."),
+                                        note("Review conflicts before saving.", "Conflicted slots should be fixed before opening booking."),
+                                        note("Add leave blocks early.", "Block out non-clinical time as soon as it is known.")
+                                ))),
+                                section("FAQ", "FAQ", 6, true, true, Map.of("items", List.of(
+                                        faqItem("Can I set availability without a doctor?", "No. A doctor must be selected."),
+                                        faqItem("Can break time overlap the session?", "No. Break time must stay inside the working window.")
+                                ))),
+                                section("RELATED_PAGES", "RELATED_PAGES", 7, true, true, Map.of("items", List.of(
+                                        relatedItem("Appointments", "APPOINTMENTS", "Availability feeds booking."),
+                                        relatedItem("Day Board", "DAY_BOARD", "Same-day flow depends on the calendar."),
+                                        relatedItem("Consultation Workspace", "CONSULTATION_WORKSPACE", "Consultation starts when a slot is taken.")
+                                ))),
+                                section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of("permissions", roles("DOCTOR", "CLINIC_ADMIN", "RECEPTIONIST"))),
+                                section("TIPS", "TIPS", 9, true, true, Map.of("items", List.of(
+                                        note("Keep the current doctor in view.", "Use the doctor filter before editing sessions."),
+                                        note("Use leave blocks instead of deleting.", "Historical availability should remain traceable.")
+                                ))),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 10, true, true, Map.of("items", List.of(
+                                        note("Advanced schedule templates are planned later.", "Current scheduling is session based."),
+                                        note("Language switching is planned.", "Help content currently follows the active help language.")
+                                )))
+                        )
+                ),
+                new HelpPageSeed(
+                        "CLINIC", "CONSULTATION_WORKSPACE", "Consultation Workspace", "medical_services",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of("title", "Consultation Workspace", "description", "Consultation Workspace brings together consultation notes, prescriptions, history, investigations, lab orders, and AI assistance for the active visit.", "searchTags", List.of("consultation workspace", "consultation", "prescription", "history", "investigations", "lab orders", "ai assist"))),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of("steps", steps(
+                                        step("Review the patient context.", "Open the current visit and confirm the patient summary."),
+                                        step("Document the consultation.", "Capture complaint, diagnosis, notes, and advice."),
+                                        step("Create or correct the prescription.", "Use the active draft or same-day correction workflow."),
+                                        step("Review history and investigations.", "Check previous context and results before finalizing."),
+                                        step("Generate lab orders or AI assistance.", "Use assistive tools only after doctor review.")
+                                ))),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 3, true, true, Map.of("rules", List.of(
+                                        validation("Chief complaint", "Optional but should be concise.", false, "Text", 120, "Fever"),
+                                        validation("Diagnosis", "Optional but should contain a meaningful clinical note.", false, "Text", 250, "Viral fever"),
+                                        validation("Prescription content", "A medicine or note is required before saving a prescription draft.", true, "Workflow", null, "Draft content"),
+                                        validation("Same-day correction", "Only the latest prescription version can be corrected.", true, "Workflow", null, "Latest version"),
+                                        validation("Lab order", "Requires active tests and a valid patient context.", true, "Workflow", null, "Selected lab tests")
+                                ))),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 4, true, true, Map.of("items", List.of(
+                                        error("Read-only visit", "The consultation has already been completed or the role cannot edit it.", "Create a correction draft where allowed."),
+                                        error("No active draft", "The prescription draft has not been created or loaded.", "Open the active draft or create a correction version."),
+                                        error("Missing content", "A medicine or meaningful note is still required.", "Add prescription content before saving.")
+                                ))),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 5, true, true, Map.of("items", List.of(
+                                        note("Keep the draft current.", "Save or autosave changes before navigating away."),
+                                        note("Use correction drafts for finalized prescriptions.", "Do not edit printed or finalized versions directly."),
+                                        note("Verify AI output.", "AI suggestions must always be reviewed before use.")
+                                ))),
+                                section("FAQ", "FAQ", 6, true, true, Map.of("items", List.of(
+                                        faqItem("Can I edit a finalized prescription?", "No. Create a correction draft instead."),
+                                        faqItem("Does same-day correction create a new version?", "Yes. Finalizing the correction creates a new version with history.")
+                                ))),
+                                section("RELATED_PAGES", "RELATED_PAGES", 7, true, true, Map.of("items", List.of(
+                                        relatedItem("Consultation Prescription", "CONSULTATION_PRESCRIPTION", "Prescriptions and medicine draft handling."),
+                                        relatedItem("Consultation History", "CONSULTATION_HISTORY", "Review prior visits and medico-legal trail."),
+                                        relatedItem("Consultation Investigations", "CONSULTATION_INVESTIGATIONS", "Review test recommendations and uploads."),
+                                        relatedItem("Consultation Lab Orders", "CONSULTATION_LAB_ORDERS", "Place and track lab orders."),
+                                        relatedItem("Consultation AI Assist", "CONSULTATION_AI_ASSIST", "Use AI suggestions safely.")
+                                ))),
+                                section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of("permissions", roles("DOCTOR", "CLINIC_ADMIN"))),
+                                section("TIPS", "TIPS", 9, true, true, Map.of("items", List.of(
+                                        note("Switch tabs freely.", "The URL tracks the active consultation section."),
+                                        note("Keep the original print read-only.", "Corrections should only edit the active draft.")
+                                ))),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 10, true, true, Map.of("items", List.of(
+                                        note("Section-specific help is tab driven.", "The workspace shares one route and switches via query string."),
+                                        note("Language switching is planned.", "Help content currently follows the active help language.")
+                                )))
+                        )
+                ),
+                new HelpPageSeed(
+                        "CLINIC", "CONSULTATION_PRESCRIPTION", "Prescription", "description",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of("title", "Prescription", "description", "Prescription captures active medicines, tests, dosage, advice, and same-day correction handling.", "searchTags", List.of("prescription", "medicine", "dosage", "correction draft", "finalize prescription"))),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of("steps", steps(
+                                        step("Build the draft.", "Add medicines, dosage, and follow-up instructions."),
+                                        step("Preview or save.", "Preview the prescription before finalizing."),
+                                        step("Use correction draft if needed.", "Switch to same-day correction only for the latest version."),
+                                        step("Finalize and print.", "Lock the prescription after verification.")
+                                ))),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 3, true, true, Map.of("rules", List.of(
+                                        validation("Medicine name", "Required for active medicine rows.", true, "Text", 100, "Paracetamol"),
+                                        validation("Dosage", "Required for active medicine rows.", true, "Text", 60, "1 tab"),
+                                        validation("Frequency", "Required for active medicine rows.", true, "Text", 60, "1-0-1"),
+                                        validation("Duration", "Required for active medicine rows.", true, "Text", 60, "5 days"),
+                                        validation("Correction reason", "Required when creating a correction draft.", true, "Text", 250, "Same-day correction")
+                                ))),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 4, true, true, Map.of("items", List.of(
+                                        error("Invalid medicine row", "A row is missing medicine name, dosage, frequency, or duration.", "Complete the highlighted row."),
+                                        error("Duplicate correction", "A correction draft is already in progress.", "Continue the active draft before starting another."),
+                                        error("Finalized prescription", "The version is immutable.", "Create a correction version instead.")
+                                ))),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 5, true, true, Map.of("items", List.of(
+                                        note("Keep instructions clear.", "Medicine directions should be short and unambiguous."),
+                                        note("Do not edit printed versions.", "Only the active correction draft should be editable."),
+                                        note("Finalize before closing the visit.", "A finalized prescription keeps the audit trail complete.")
+                                ))),
+                                section("FAQ", "FAQ", 6, true, true, Map.of("items", List.of(
+                                        faqItem("Can I edit a printed prescription?", "No. Use a correction draft."),
+                                        faqItem("What happens when I finalize a correction?", "A new version is created and the audit trail is preserved.")
+                                ))),
+                                section("RELATED_PAGES", "RELATED_PAGES", 7, true, true, Map.of("items", List.of(
+                                        relatedItem("Consultation Workspace", "CONSULTATION_WORKSPACE", "Return to the full visit context."),
+                                        relatedItem("Consultation History", "CONSULTATION_HISTORY", "Review the version trail."),
+                                        relatedItem("Consultation Lab Orders", "CONSULTATION_LAB_ORDERS", "Create related lab requests.")
+                                ))),
+                                section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of("permissions", roles("DOCTOR", "CLINIC_ADMIN"))),
+                                section("TIPS", "TIPS", 9, true, true, Map.of("items", List.of(
+                                        note("Use the latest version only.", "Corrections should branch from the latest non-cancelled version."),
+                                        note("Save before finalizing.", "Review the draft once before locking it.")
+                                ))),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 10, true, true, Map.of("items", List.of(
+                                        note("Printed prescription remains read-only.", "This is intentional for medico-legal traceability.")
+                                )))
+                        )
+                ),
+                new HelpPageSeed(
+                        "CLINIC", "CONSULTATION_HISTORY", "History", "history",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of("title", "History", "description", "History shows previous consultations, prior prescriptions, and the medico-legal version trail for the current patient.", "searchTags", List.of("history", "previous consultations", "prescription version history"))),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of("steps", steps(
+                                        step("Review previous visits.", "Scan diagnoses, notes, and follow-up patterns."),
+                                        step("Open a prior prescription.", "Inspect the medico-legal trail and version notes."),
+                                        step("Compare current findings.", "Use history to inform the active consultation.")
+                                ))),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 3, true, true, Map.of("rules", List.of(
+                                        validation("History section", "Read-only review only.", true, "Access", null, "View only"),
+                                        validation("Version trail", "Finalized versions stay immutable and traceable.", true, "Audit", null, "Version history")
+                                ))),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 4, true, true, Map.of("items", List.of(
+                                        error("No history entries", "The patient has no previous consultations recorded.", "Open another patient or create a consultation."),
+                                        error("Read-only history", "History cannot be edited from this screen.", "Use the current consultation workspace instead.")
+                                ))),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 5, true, true, Map.of("items", List.of(
+                                        note("Review allergies and chronic conditions.", "History is the safest place to confirm recurring risks."),
+                                        note("Use previous prescriptions as context.", "Do not copy blindly; verify the current visit.")
+                                ))),
+                                section("FAQ", "FAQ", 6, true, true, Map.of("items", List.of(
+                                        faqItem("Can I edit a prior consultation here?", "No. History is read-only."),
+                                        faqItem("Does the prescription trail include corrections?", "Yes. The version trail is preserved.")
+                                ))),
+                                section("RELATED_PAGES", "RELATED_PAGES", 7, true, true, Map.of("items", List.of(
+                                        relatedItem("Consultation Workspace", "CONSULTATION_WORKSPACE", "Return to the active visit."),
+                                        relatedItem("Consultation Prescription", "CONSULTATION_PRESCRIPTION", "Review the active prescription draft.")
+                                ))),
+                                section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of("permissions", roles("DOCTOR", "CLINIC_ADMIN", "AUDITOR"))),
+                                section("TIPS", "TIPS", 9, true, true, Map.of("items", List.of(
+                                        note("Use history for continuity.", "Prior medicine and diagnosis patterns reduce repetition."),
+                                        note("Keep it read-only.", "Editing belongs in the active visit.")
+                                ))),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 10, true, true, Map.of("items", List.of(
+                                        note("Older records may be sparse.", "Historical data quality depends on what was captured earlier.")
+                                )))
+                        )
+                ),
+                new HelpPageSeed(
+                        "CLINIC", "CONSULTATION_INVESTIGATIONS", "Investigations", "search",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of("title", "Investigations", "description", "Investigations covers recommended tests, supporting reports, and related clinical evidence linked to the current consultation.", "searchTags", List.of("investigations", "tests", "reports", "clinical evidence"))),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of("steps", steps(
+                                        step("Review suggested tests.", "Check the recommended investigations."),
+                                        step("Open uploaded reports.", "Inspect supporting documents and imaging."),
+                                        step("Add or update test guidance.", "Use the consultation context to refine what is needed.")
+                                ))),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 3, true, true, Map.of("rules", List.of(
+                                        validation("Test name", "Must contain a meaningful label.", true, "Text", 100, "CBC"),
+                                        validation("Report attachment", "Should be a valid clinical document when uploaded.", false, "File", 10, "pdf, jpg, png")
+                                ))),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 4, true, true, Map.of("items", List.of(
+                                        error("No investigations", "No tests or reports have been linked yet.", "Add a recommendation or upload the evidence."),
+                                        error("Invalid upload", "The file type or size is not allowed.", "Upload a supported clinical file.")
+                                ))),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 5, true, true, Map.of("items", List.of(
+                                        note("Keep investigations targeted.", "Only recommend tests that support the current diagnosis."),
+                                        note("Review uploaded evidence.", "Confirm report relevance before using it in the plan.")
+                                ))),
+                                section("FAQ", "FAQ", 6, true, true, Map.of("items", List.of(
+                                        faqItem("Can I use investigations to order tests?", "Yes. Link the recommendation to the consultation."),
+                                        faqItem("Can I attach a report file?", "Yes, when the file type and size are valid.")
+                                ))),
+                                section("RELATED_PAGES", "RELATED_PAGES", 7, true, true, Map.of("items", List.of(
+                                        relatedItem("Consultation Workspace", "CONSULTATION_WORKSPACE", "Return to the active visit."),
+                                        relatedItem("Consultation Lab Orders", "CONSULTATION_LAB_ORDERS", "Place lab orders from the same patient context."),
+                                        relatedItem("Laboratory", "LABORATORY", "Lab workflow handles the test execution.")
+                                ))),
+                                section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of("permissions", roles("DOCTOR", "CLINIC_ADMIN"))),
+                                section("TIPS", "TIPS", 9, true, true, Map.of("items", List.of(
+                                        note("Use investigations sparingly.", "Add only clinically justified tests."),
+                                        note("Keep report notes concise.", "Attach only the useful evidence.")
+                                ))),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 10, true, true, Map.of("items", List.of(
+                                        note("Advanced imaging integration is limited.", "Full LIS/PACS integration is not yet available.")
+                                )))
+                        )
+                ),
+                new HelpPageSeed(
+                        "CLINIC", "CONSULTATION_LAB_ORDERS", "Lab Orders", "science",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of("title", "Lab Orders", "description", "Lab Orders lets clinicians request tests from the consultation workspace and track the resulting lab workflow.", "searchTags", List.of("lab orders", "consultation lab", "sample collection", "result entry"))),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of("steps", steps(
+                                        step("Choose active tests.", "Select tests from the current consultation."),
+                                        step("Confirm the order.", "Submit the lab request for the patient."),
+                                        step("Track the order.", "Follow sample collection, results, review, and report generation.")
+                                ))),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 3, true, true, Map.of("rules", List.of(
+                                        validation("Patient", "Required for lab orders.", true, "Lookup", null, "Rahul Sharma"),
+                                        validation("Lab test", "At least one active lab test is required.", true, "Lookup", null, "CBC"),
+                                        validation("Sample collection", "Result collection cannot begin before the workflow allows it.", true, "Workflow", null, "Collected first"),
+                                        validation("Report", "Can be generated only after final result approval.", true, "Workflow", null, "Approved result")
+                                ))),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 4, true, true, Map.of("items", List.of(
+                                        error("Inactive test", "A test is inactive or not available for ordering.", "Choose an active test."),
+                                        error("Duplicate test", "The same test is already in the order.", "Use the existing line or explicitly repeat if allowed."),
+                                        error("Report not ready", "The result has not been finalized yet.", "Complete the lab workflow first.")
+                                ))),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 5, true, true, Map.of("items", List.of(
+                                        note("Order from the active visit.", "Link the request to the correct consultation."),
+                                        note("Keep sample details complete.", "Barcode and collection time help downstream processing.")
+                                ))),
+                                section("FAQ", "FAQ", 6, true, true, Map.of("items", List.of(
+                                        faqItem("Can I order inactive tests?", "No. Only active lab tests can be ordered."),
+                                        faqItem("Can I generate a report immediately?", "No. Result finalization and review must happen first.")
+                                ))),
+                                section("RELATED_PAGES", "RELATED_PAGES", 7, true, true, Map.of("items", List.of(
+                                        relatedItem("Laboratory", "LABORATORY", "The lab team processes the order."),
+                                        relatedItem("Consultation Workspace", "CONSULTATION_WORKSPACE", "Return to the current visit."),
+                                        relatedItem("Reports", "REPORTS", "Use the reports page for summaries.")
+                                ))),
+                                section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of("permissions", roles("DOCTOR", "CLINIC_ADMIN"))),
+                                section("TIPS", "TIPS", 9, true, true, Map.of("items", List.of(
+                                        note("Confirm the patient before ordering.", "The order should always match the current consultation."),
+                                        note("Track result readiness.", "Follow up when the sample or report is pending.")
+                                ))),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 10, true, true, Map.of("items", List.of(
+                                        note("The lab workflow still relies on the lab module.", "Consultation only places the order.")
+                                )))
+                        )
+                ),
+                new HelpPageSeed(
+                        "CLINIC", "CONSULTATION_AI_ASSIST", "AI Assist", "smart_toy",
+                        List.of(
+                                section("DESCRIPTION", "DESCRIPTION", 1, true, true, Map.of("title", "AI Assist", "description", "AI Assist offers draft suggestions for diagnosis, notes, and patient instructions. Doctors must review and approve every suggestion before use.", "searchTags", List.of("ai assist", "ai diagnosis", "ai notes", "ai prescription"))),
+                                section("WORKFLOW", "WORKFLOW", 2, true, true, Map.of("steps", steps(
+                                        step("Request an AI draft.", "Generate a suggestion from the current patient context."),
+                                        step("Review the response.", "Check the draft for accuracy and safety."),
+                                        step("Apply only verified text.", "Move approved content into the consultation or prescription draft.")
+                                ))),
+                                section("VALIDATION_RULES", "VALIDATION_RULES", 3, true, true, Map.of("rules", List.of(
+                                        validation("AI provider", "Must be configured and available.", true, "Access", null, "Ready"),
+                                        validation("Draft text", "Must not contain unstructured prompt leakage.", true, "Quality", null, "Human reviewed"),
+                                        validation("Use", "Doctor verification is required before applying AI content.", true, "Workflow", null, "Approved")
+                                ))),
+                                section("COMMON_ERRORS", "COMMON_ERRORS", 4, true, true, Map.of("items", List.of(
+                                        error("AI unavailable", "The provider is disabled or misconfigured.", "Check AI settings before retrying."),
+                                        error("Invalid response", "The model returned unstructured or incomplete text.", "Retry or rewrite manually."),
+                                        error("Not verified", "The AI draft has not been reviewed by a doctor.", "Verify before applying to the record.")
+                                ))),
+                                section("BEST_PRACTICES", "BEST_PRACTICES", 5, true, true, Map.of("items", List.of(
+                                        note("Treat AI as assistive only.", "Doctors must own the final clinical decision."),
+                                        note("Review safety and allergies.", "Check red flags before applying suggestions.")
+                                ))),
+                                section("FAQ", "FAQ", 6, true, true, Map.of("items", List.of(
+                                        faqItem("Can AI write the final prescription?", "No. It can only draft text for review."),
+                                        faqItem("Can I use AI when the provider is offline?", "No. Wait until the provider is ready.")
+                                ))),
+                                section("RELATED_PAGES", "RELATED_PAGES", 7, true, true, Map.of("items", List.of(
+                                        relatedItem("Consultation Workspace", "CONSULTATION_WORKSPACE", "Return to the active visit."),
+                                        relatedItem("Consultation Prescription", "CONSULTATION_PRESCRIPTION", "Apply reviewed medicine suggestions.")
+                                ))),
+                                section("PERMISSIONS", "PERMISSIONS", 8, true, true, Map.of("permissions", roles("DOCTOR", "CLINIC_ADMIN"))),
+                                section("TIPS", "TIPS", 9, true, true, Map.of("items", List.of(
+                                        note("Use AI for drafting only.", "Clinical ownership remains with the doctor."),
+                                        note("Verify output against history.", "Use patient context to catch obvious mismatches.")
+                                ))),
+                                section("KNOWN_LIMITATIONS", "KNOWN_LIMITATIONS", 10, true, true, Map.of("items", List.of(
+                                        note("AI quality depends on provider availability.", "Responses can vary when the backend model changes."),
+                                        note("Language switching is planned.", "Help content currently follows the active help language.")
+                                )))
+                        )
                 )
         );
     }

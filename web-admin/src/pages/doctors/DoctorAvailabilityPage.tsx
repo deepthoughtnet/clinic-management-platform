@@ -29,8 +29,10 @@ import {
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { alpha, type Theme } from "@mui/material/styles";
 import { useNavigate } from "react-router-dom";
+import { doctorAvailabilitySchema, doctorUnavailabilitySchema, firstZodError, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState } from "../../components/compact/CompactUi";
+import RequiredLabel from "../../components/forms/RequiredLabel";
 import {
   createDoctorAvailability,
   createDoctorUnavailability,
@@ -410,6 +412,8 @@ export default function DoctorAvailabilityPage() {
   const [availabilityForm, setAvailabilityForm] = React.useState<DoctorAvailabilityInput>(EMPTY_AVAILABILITY_FORM);
   const [selectedDays, setSelectedDays] = React.useState<string[]>([EMPTY_AVAILABILITY_FORM.dayOfWeek]);
   const [unavailabilityForm, setUnavailabilityForm] = React.useState<DoctorUnavailabilityInput>(EMPTY_UNAVAILABILITY_FORM);
+  const [availabilityFieldErrors, setAvailabilityFieldErrors] = React.useState<Record<string, string>>({});
+  const [unavailabilityFieldErrors, setUnavailabilityFieldErrors] = React.useState<Record<string, string>>({});
   const [waitlistPatientId, setWaitlistPatientId] = React.useState("");
   const [waitlistReason, setWaitlistReason] = React.useState("");
   const [expandedAction, setExpandedAction] = React.useState<"availability" | "leave" | "waitlist" | null>("availability");
@@ -783,6 +787,17 @@ export default function DoctorAvailabilityPage() {
 
   const quickCreateAvailability = async () => {
     if (!auth.accessToken || !auth.tenantId || !effectiveDoctorIds.length) return;
+    const parsed = doctorAvailabilitySchema.safeParse(availabilityForm);
+    if (!parsed.success) {
+      const errors = mapZodErrors(parsed.error);
+      setAvailabilityFieldErrors(errors);
+      setError(firstZodError(parsed.error));
+      window.setTimeout(() => {
+        const firstField = ["startTime", "endTime", "consultationDurationMinutes", "maxPatientsPerSlot", "breakStartTime", "breakEndTime"].find((field) => errors[field]);
+        document.getElementById(firstField ? `availability-${firstField}` : "availability-startTime")?.focus();
+      }, 0);
+      return;
+    }
     try {
       const days = selectedDays.length > 0 ? selectedDays : [availabilityForm.dayOfWeek];
       const doctorUserId = isDoctor ? auth.appUserId : selectedDoctorId;
@@ -791,7 +806,12 @@ export default function DoctorAvailabilityPage() {
         return;
       }
       const results = await Promise.allSettled(
-        days.map((dayOfWeek) => createDoctorAvailability(auth.accessToken!, auth.tenantId!, doctorUserId, { ...availabilityForm, dayOfWeek })),
+        days.map((dayOfWeek) => createDoctorAvailability(auth.accessToken!, auth.tenantId!, doctorUserId, {
+          ...parsed.data,
+          dayOfWeek,
+          breakStartTime: parsed.data.breakStartTime ?? null,
+          breakEndTime: parsed.data.breakEndTime ?? null,
+        })),
       );
       const successDays = results
         .map((result, index) => (result.status === "fulfilled" ? days[index] : null))
@@ -801,6 +821,7 @@ export default function DoctorAvailabilityPage() {
         .filter((message): message is string => Boolean(message));
       if (successDays.length > 0) {
         setInfo(`Availability added for ${successDays.join(", ")}`);
+        setAvailabilityFieldErrors({});
       }
       if (failureMessages.length > 0) {
         setError(failureMessages.join(" "));
@@ -836,9 +857,24 @@ export default function DoctorAvailabilityPage() {
   const quickCreateUnavailability = async () => {
     const doctorUserId = isDoctor ? auth.appUserId : selectedDoctorId;
     if (!auth.accessToken || !auth.tenantId || !doctorUserId) return;
+    const parsed = doctorUnavailabilitySchema.safeParse(unavailabilityForm);
+    if (!parsed.success) {
+      const errors = mapZodErrors(parsed.error);
+      setUnavailabilityFieldErrors(errors);
+      setError(firstZodError(parsed.error));
+      window.setTimeout(() => {
+        const firstField = ["startAt", "endAt", "type", "reason"].find((field) => errors[field]);
+        document.getElementById(firstField ? `unavailability-${firstField}` : "unavailability-startAt")?.focus();
+      }, 0);
+      return;
+    }
     try {
-      await createDoctorUnavailability(auth.accessToken, auth.tenantId, doctorUserId, unavailabilityForm);
+      await createDoctorUnavailability(auth.accessToken, auth.tenantId, doctorUserId, {
+        ...parsed.data,
+        reason: parsed.data.reason ?? null,
+      });
       setInfo("Leave/unavailable block added");
+      setUnavailabilityFieldErrors({});
       await loadDynamic();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add leave/unavailable block");
@@ -1048,12 +1084,12 @@ export default function DoctorAvailabilityPage() {
                           </Typography>
                         </Stack>
                         <Grid container spacing={1}>
-                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth type="time" label="Start" value={availabilityForm.startTime} onChange={(e) => setAvailabilityForm((current) => ({ ...current, startTime: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
-                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth type="time" label="End" value={availabilityForm.endTime} onChange={(e) => setAvailabilityForm((current) => ({ ...current, endTime: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
-                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth type="number" label="Duration" value={availabilityForm.consultationDurationMinutes} onChange={(e) => setAvailabilityForm((current) => ({ ...current, consultationDurationMinutes: Number(e.target.value) }))} /></Grid>
-                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth type="number" label="Capacity" value={availabilityForm.maxPatientsPerSlot || 1} onChange={(e) => setAvailabilityForm((current) => ({ ...current, maxPatientsPerSlot: Number(e.target.value) }))} /></Grid>
-                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth type="time" label="Break start" value={availabilityForm.breakStartTime || ""} onChange={(e) => setAvailabilityForm((current) => ({ ...current, breakStartTime: e.target.value || null }))} InputLabelProps={{ shrink: true }} /></Grid>
-                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth type="time" label="Break end" value={availabilityForm.breakEndTime || ""} onChange={(e) => setAvailabilityForm((current) => ({ ...current, breakEndTime: e.target.value || null }))} InputLabelProps={{ shrink: true }} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField id="availability-startTime" size="small" fullWidth type="time" label={<RequiredLabel text="Start" required />} value={availabilityForm.startTime} onChange={(e) => setAvailabilityForm((current) => ({ ...current, startTime: e.target.value }))} InputLabelProps={{ shrink: true }} required error={Boolean(availabilityFieldErrors.startTime)} helperText={availabilityFieldErrors.startTime || "Required."} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField id="availability-endTime" size="small" fullWidth type="time" label={<RequiredLabel text="End" required />} value={availabilityForm.endTime} onChange={(e) => setAvailabilityForm((current) => ({ ...current, endTime: e.target.value }))} InputLabelProps={{ shrink: true }} required error={Boolean(availabilityFieldErrors.endTime)} helperText={availabilityFieldErrors.endTime || "Must be after start."} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField id="availability-consultationDurationMinutes" size="small" fullWidth type="number" label={<RequiredLabel text="Duration" required />} value={availabilityForm.consultationDurationMinutes} onChange={(e) => setAvailabilityForm((current) => ({ ...current, consultationDurationMinutes: Number(e.target.value) }))} required error={Boolean(availabilityFieldErrors.consultationDurationMinutes)} helperText={availabilityFieldErrors.consultationDurationMinutes || "Positive integer."} inputProps={{ min: 1, step: 1 }} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField id="availability-maxPatientsPerSlot" size="small" fullWidth type="number" label={<RequiredLabel text="Capacity" required />} value={availabilityForm.maxPatientsPerSlot || 1} onChange={(e) => setAvailabilityForm((current) => ({ ...current, maxPatientsPerSlot: Number(e.target.value) }))} required error={Boolean(availabilityFieldErrors.maxPatientsPerSlot)} helperText={availabilityFieldErrors.maxPatientsPerSlot || "Positive integer."} inputProps={{ min: 1, step: 1 }} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField id="availability-breakStartTime" size="small" fullWidth type="time" label="Break start" value={availabilityForm.breakStartTime || ""} onChange={(e) => setAvailabilityForm((current) => ({ ...current, breakStartTime: e.target.value || null }))} InputLabelProps={{ shrink: true }} error={Boolean(availabilityFieldErrors.breakStartTime)} helperText={availabilityFieldErrors.breakStartTime} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField id="availability-breakEndTime" size="small" fullWidth type="time" label="Break end" value={availabilityForm.breakEndTime || ""} onChange={(e) => setAvailabilityForm((current) => ({ ...current, breakEndTime: e.target.value || null }))} InputLabelProps={{ shrink: true }} error={Boolean(availabilityFieldErrors.breakEndTime)} helperText={availabilityFieldErrors.breakEndTime} /></Grid>
                         </Grid>
                         <Button onClick={() => void quickCreateAvailability()} disabled={!canMutateSchedule} variant="contained">
                           Add availability
@@ -1074,30 +1110,40 @@ export default function DoctorAvailabilityPage() {
                     <AccordionDetails>
                       <Stack spacing={1.25}>
                         <TextField
+                          id="unavailability-startAt"
                           size="small"
                           fullWidth
                           type="datetime-local"
-                          label="Start"
+                          label={<RequiredLabel text="Start" required />}
                           value={unavailabilityForm.startAt.slice(0, 16)}
                           onChange={(e) => setUnavailabilityForm((current) => ({ ...current, startAt: e.target.value ? `${e.target.value}:00` : "" }))}
                           InputLabelProps={{ shrink: true }}
+                          required
+                          error={Boolean(unavailabilityFieldErrors.startAt)}
+                          helperText={unavailabilityFieldErrors.startAt || "Required."}
                         />
                         <TextField
+                          id="unavailability-endAt"
                           size="small"
                           fullWidth
                           type="datetime-local"
-                          label="End"
+                          label={<RequiredLabel text="End" required />}
                           value={unavailabilityForm.endAt.slice(0, 16)}
                           onChange={(e) => setUnavailabilityForm((current) => ({ ...current, endAt: e.target.value ? `${e.target.value}:00` : "" }))}
                           InputLabelProps={{ shrink: true }}
+                          required
+                          error={Boolean(unavailabilityFieldErrors.endAt)}
+                          helperText={unavailabilityFieldErrors.endAt || "Must be after start."}
                         />
                         <FormControl fullWidth size="small">
-                          <InputLabel id="quick-unavail-type">Type</InputLabel>
+                          <InputLabel id="quick-unavail-type"><RequiredLabel text="Type" required /></InputLabel>
                           <Select
+                            id="unavailability-type"
                             labelId="quick-unavail-type"
                             label="Type"
                             value={unavailabilityForm.type}
                             onChange={(e) => setUnavailabilityForm((current) => ({ ...current, type: e.target.value as DoctorUnavailabilityType }))}
+                            error={Boolean(unavailabilityFieldErrors.type)}
                           >
                             <MenuItem value="LEAVE">Leave</MenuItem>
                             <MenuItem value="HOLIDAY">Holiday</MenuItem>
@@ -1105,7 +1151,7 @@ export default function DoctorAvailabilityPage() {
                             <MenuItem value="EMERGENCY_BLOCK">Emergency block</MenuItem>
                           </Select>
                         </FormControl>
-                        <TextField size="small" fullWidth label="Reason" value={unavailabilityForm.reason || ""} onChange={(e) => setUnavailabilityForm((current) => ({ ...current, reason: e.target.value || null }))} />
+                        <TextField id="unavailability-reason" size="small" fullWidth label="Reason" value={unavailabilityForm.reason || ""} onChange={(e) => setUnavailabilityForm((current) => ({ ...current, reason: e.target.value || null }))} error={Boolean(unavailabilityFieldErrors.reason)} helperText={unavailabilityFieldErrors.reason || "Optional, max 250 characters."} />
                         <Stack direction="row" spacing={1} flexWrap="wrap">
                           <Button
                           variant="outlined"

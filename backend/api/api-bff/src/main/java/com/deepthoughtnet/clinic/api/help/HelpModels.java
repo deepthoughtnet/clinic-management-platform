@@ -28,6 +28,7 @@ public final class HelpModels {
         REPORT_TYPES,
         FILTERS,
         EXPORT_CSV,
+        TAB_GUIDE,
         QUICK_ACTIONS,
         DASHBOARD_CARDS,
         PERMISSIONS,

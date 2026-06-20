@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
-import { userCreateSchema } from "@deepthoughtnet/form-validation-kit";
+import { firstZodError, mapZodErrors, userCreateSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   Alert,
   Box,
@@ -32,6 +32,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
+import RequiredLabel from "../../components/forms/RequiredLabel";
 import {
   assignTenantUserRole,
   createTenantUser,
@@ -96,6 +97,7 @@ export default function UsersRolesPage() {
   const [openCreate, setOpenCreate] = React.useState(false);
   const [createSubmitting, setCreateSubmitting] = React.useState(false);
   const [createForm, setCreateForm] = React.useState<CreateForm>(EMPTY_CREATE_FORM);
+  const [createFieldErrors, setCreateFieldErrors] = React.useState<Record<string, string>>({});
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || invalidSelectedClinic) {
@@ -147,9 +149,16 @@ export default function UsersRolesPage() {
       mobile: "",
     });
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message || "Unable to create user. Please verify role and tenant selection.");
+      const fieldErrors = mapZodErrors(parsed.error);
+      setCreateFieldErrors(fieldErrors);
+      setError(firstZodError(parsed.error) || "Unable to create user. Please verify role and tenant selection.");
+      const firstInvalidField = Object.keys(fieldErrors)[0];
+      if (firstInvalidField) {
+        window.setTimeout(() => document.getElementById(`create-user-${firstInvalidField}`)?.focus(), 0);
+      }
       return;
     }
+    setCreateFieldErrors({});
     setCreateSubmitting(true);
     setError(null);
     try {
@@ -168,6 +177,7 @@ export default function UsersRolesPage() {
       setToast("User created successfully.");
       setOpenCreate(false);
       setCreateForm(EMPTY_CREATE_FORM);
+      setCreateFieldErrors({});
       await load();
     } catch (err) {
       console.error("Tenant user creation failed", err);
@@ -352,22 +362,49 @@ export default function UsersRolesPage() {
         <DialogContent>
           <Stack spacing={1.5} sx={{ mt: 0.5 }}>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
-              <TextField label="First Name" value={createForm.firstName} onChange={(e) => setCreateForm((s) => ({ ...s, firstName: e.target.value }))} fullWidth />
-              <TextField label="Last Name" value={createForm.lastName} onChange={(e) => setCreateForm((s) => ({ ...s, lastName: e.target.value }))} fullWidth />
+              <TextField
+                id="create-user-firstName"
+                label={<RequiredLabel text="First Name" required />}
+                value={createForm.firstName}
+                onChange={(e) => setCreateForm((s) => ({ ...s, firstName: e.target.value }))}
+                error={Boolean(createFieldErrors.firstName)}
+                helperText={createFieldErrors.firstName || "Required."}
+                fullWidth
+                required
+              />
+              <TextField
+                id="create-user-lastName"
+                label="Last Name"
+                value={createForm.lastName}
+                onChange={(e) => setCreateForm((s) => ({ ...s, lastName: e.target.value }))}
+                fullWidth
+              />
             </Stack>
-            <TextField label="Email" type="email" value={createForm.email} onChange={(e) => setCreateForm((s) => ({ ...s, email: e.target.value }))} required fullWidth />
+            <TextField
+              id="create-user-email"
+              label={<RequiredLabel text="Email" required />}
+              type="email"
+              value={createForm.email}
+              onChange={(e) => setCreateForm((s) => ({ ...s, email: e.target.value }))}
+              required
+              fullWidth
+              error={Boolean(createFieldErrors.email)}
+              helperText={createFieldErrors.email || "Required, valid email."}
+            />
             <FormControl fullWidth>
-              <InputLabel id="create-role-label">Role</InputLabel>
+              <InputLabel id="create-role-label"><RequiredLabel text="Role" required /></InputLabel>
               <Select
                 labelId="create-role-label"
                 label="Role"
                 value={createForm.role}
                 onChange={(e) => setCreateForm((s) => ({ ...s, role: String(e.target.value) }))}
+                error={Boolean(createFieldErrors.role)}
               >
                 {ASSIGNABLE_ROLES.map((role) => (
                   <MenuItem key={role} value={role}>{roleLabel(role)}</MenuItem>
                 ))}
               </Select>
+              {createFieldErrors.role ? <Typography variant="caption" color="error">{createFieldErrors.role}</Typography> : null}
             </FormControl>
             <TextField
               label="Temporary Password (optional)"
@@ -383,8 +420,11 @@ export default function UsersRolesPage() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpenCreate(false)}>Cancel</Button>
-          <Button variant="contained" onClick={() => void createUser()} disabled={createSubmitting || !createForm.email.trim()}>
+          <Button onClick={() => {
+            setOpenCreate(false);
+            setCreateFieldErrors({});
+          }}>Cancel</Button>
+          <Button variant="contained" onClick={() => void createUser()} disabled={createSubmitting || !createForm.email.trim() || !createForm.firstName.trim() || !createForm.role.trim()}>
             {createSubmitting ? "Creating..." : "Create User"}
           </Button>
         </DialogActions>

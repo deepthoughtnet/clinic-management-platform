@@ -24,6 +24,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
+import { firstZodError, notificationsFilterSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   getNotifications,
   markNotificationRead,
@@ -99,6 +100,7 @@ export default function NotificationsPage() {
     from: "",
     to: "",
   });
+  const [filterFieldErrors, setFilterFieldErrors] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [workingId, setWorkingId] = React.useState<string | null>(null);
@@ -130,6 +132,20 @@ export default function NotificationsPage() {
     if (!auth.accessToken || !auth.tenantId || !canView) {
       return;
     }
+    const parsed = notificationsFilterSchema.safeParse(filters);
+    if (!parsed.success) {
+      setFilterFieldErrors({
+        from: parsed.error.issues.find((issue) => issue.path.join(".") === "from")?.message || "",
+        to: parsed.error.issues.find((issue) => issue.path.join(".") === "to")?.message || "",
+        search: parsed.error.issues.find((issue) => issue.path.join(".") === "search")?.message || "",
+        status: parsed.error.issues.find((issue) => issue.path.join(".") === "status")?.message || "",
+        eventType: parsed.error.issues.find((issue) => issue.path.join(".") === "eventType")?.message || "",
+        channel: parsed.error.issues.find((issue) => issue.path.join(".") === "channel")?.message || "",
+      });
+      setError(firstZodError(parsed.error));
+      return;
+    }
+    setFilterFieldErrors({});
     setLoading(true);
     setError(null);
     try {
@@ -358,10 +374,10 @@ export default function NotificationsPage() {
                 </FormControl>
               </Grid>
               <Grid size={{ xs: 12, md: 3 }}>
-                <TextField fullWidth label="From" type="date" value={filters.from} onChange={(e) => setFilters((current) => ({ ...current, from: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                <TextField fullWidth id="notifications-from" label="From" type="date" value={filters.from} onChange={(e) => setFilters((current) => ({ ...current, from: e.target.value }))} InputLabelProps={{ shrink: true }} error={Boolean(filterFieldErrors.from)} helperText={filterFieldErrors.from || "Optional."} />
               </Grid>
               <Grid size={{ xs: 12, md: 3 }}>
-                <TextField fullWidth label="To" type="date" value={filters.to} onChange={(e) => setFilters((current) => ({ ...current, to: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                <TextField fullWidth id="notifications-to" label="To" type="date" value={filters.to} onChange={(e) => setFilters((current) => ({ ...current, to: e.target.value }))} InputLabelProps={{ shrink: true }} error={Boolean(filterFieldErrors.to)} helperText={filterFieldErrors.to || "Optional."} />
               </Grid>
             </Grid>
             <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>

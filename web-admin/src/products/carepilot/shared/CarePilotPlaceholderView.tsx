@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Alert, Card, CardContent, Chip, Stack, Typography } from "@mui/material";
+import { branding } from "../../../branding";
 
 export type CarePilotPlaceholderViewProps = {
   moduleName: string;
@@ -17,7 +18,7 @@ export default function CarePilotPlaceholderView({ moduleName, summary }: CarePi
     <Stack spacing={2}>
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
         <Typography variant="h5" sx={{ fontWeight: 900 }}>{moduleName}</Typography>
-        <Chip label="Arogia" size="small" color="primary" variant="outlined" />
+        <Chip label={branding.productName} size="small" color="primary" variant="outlined" />
         <Chip label="Coming Soon" size="small" variant="outlined" />
       </Stack>
       <Card>

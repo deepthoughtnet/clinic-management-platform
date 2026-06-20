@@ -5,16 +5,19 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 public record LabOrderPaymentRequest(
         LocalDate paymentDate,
         OffsetDateTime paymentDateTime,
-        @NotNull BigDecimal amount,
+        @NotNull @DecimalMin(value = "0.00", inclusive = false) @DecimalMax(value = "999999.00", inclusive = true) @Digits(integer = 6, fraction = 2) BigDecimal amount,
         @NotNull PaymentMode paymentMode,
-        @Size(max = 128) String referenceNumber,
-        @Size(max = 1000) String notes,
+        @Size(max = 60) String referenceNumber,
+        @Size(max = 250) String notes,
         UUID receivedBy
 ) {
 }

@@ -158,6 +158,11 @@ export function HelpExportCsv({ items }: { items: Array<Record<string, unknown>>
   return renderRichListItems(items, "No export guidance configured.");
 }
 
+export function HelpTabGuide({ items }: { items: Array<Record<string, unknown>> }) {
+  if (!items.length) return null;
+  return renderRichListItems(items, "No tab guidance configured.");
+}
+
 function renderRichListItems(items: Array<Record<string, unknown>>, emptyLabel: string) {
   if (!items.length) {
     return <Typography variant="body2" color="text.secondary">{emptyLabel}</Typography>;

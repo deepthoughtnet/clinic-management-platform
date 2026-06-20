@@ -73,6 +73,7 @@ const HELP_SECTION_PRESENTATION: Record<string, HelpSectionPresentation> = {
   REPORT_TYPES: { label: "Report Types", iconKey: "table", defaultExpanded: false, visible: true },
   FILTERS: { label: "Filters", iconKey: "validation", defaultExpanded: false, visible: true },
   EXPORT_CSV: { label: "Export CSV", iconKey: "download", defaultExpanded: false, visible: true },
+  TAB_GUIDE: { label: "Tab Guide", iconKey: "table", defaultExpanded: false, visible: true },
   QUICK_ACTIONS: { label: "Quick Actions", iconKey: "links", defaultExpanded: false, visible: true },
   DASHBOARD_CARDS: { label: "Dashboard Cards", iconKey: "dashboardCards", defaultExpanded: false, visible: true },
   PERMISSIONS: { label: "Permissions", iconKey: "permissions", defaultExpanded: false, visible: true },

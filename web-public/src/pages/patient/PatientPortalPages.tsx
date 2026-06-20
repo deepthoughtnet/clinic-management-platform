@@ -41,6 +41,7 @@ import {
   postPatientPortalSessionJson,
   putPatientPortalSessionJson,
 } from "../../api/patientPortal";
+import { branding } from "../../branding";
 
 type FetchState<T> = {
   data: T;
@@ -351,7 +352,7 @@ function PatientPortalShell({
       <div className="patient-portal-shell">
         <aside className="patient-sidebar">
           <div className="patient-sidebar-card">
-            <span className="eyebrow">Arogia Patient Portal</span>
+            <span className="eyebrow">{branding.productName} Patient Portal</span>
             <h2>{session.patientLabel}</h2>
             <p>Read-only patient access stays separate from web-admin and staff workflows.</p>
           </div>
@@ -428,7 +429,7 @@ function RegistrationRequiredCard({
     <section className="page-section narrow-page">
         <div className="login-placeholder patient-guard-card">
         <span className="eyebrow">Registration required</span>
-        <h1>Finish quick registration to open Arogia Patient Portal.</h1>
+        <h1>Finish quick registration to open {branding.productName} Patient Portal.</h1>
         <p>Your OTP is verified for this clinic, but the portal only unlocks after your tenant-scoped patient profile is linked.</p>
         <div className="cta-row">
           <Link className="primary-button" to={nextPath ? `/patient/register?next=${encodeURIComponent(nextPath)}` : "/patient/register"}>
@@ -461,7 +462,7 @@ function PatientAccessBoundary({
       <section className="page-section narrow-page">
         <div className="login-placeholder patient-guard-card">
           <span className="eyebrow">Patient login required</span>
-          <h1>Sign in with phone OTP to open Arogia Patient Portal.</h1>
+          <h1>Sign in with phone OTP to open {branding.productName} Patient Portal.</h1>
           <p>The patient session stays separate from public discovery and from all staff/admin authentication.</p>
           <div className="cta-row">
             <Link className="primary-button" to="/patient/login">
@@ -752,7 +753,7 @@ export function PatientLoginPage({
 
         <div className="cta-row">
           <a className="ghost-button" href={clinicLoginUrl}>
-            Open Arogia Admin Console
+            Open {branding.productName} Admin Console
           </a>
           {session ? (
             <>
@@ -2954,7 +2955,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     <PatientAccessBoundary
       session={session}
       onSignOut={onSignOut}
-      title="Arogia Patient Portal"
+      title={`${branding.productName} Patient Portal`}
       subtitle="Chat-based booking uses your verified patient session, asks for explicit confirmation, and stays scoped to your tenant."
     >
       <div className="patient-content-grid">

@@ -119,6 +119,12 @@ public class LabOrderEntity {
     @Column(name = "doctor_reviewed_by", length = 256)
     private String doctorReviewedBy;
 
+    @Column(name = "doctor_review_decision", length = 32)
+    private String doctorReviewDecision;
+
+    @Column(name = "doctor_review_reason", length = 128)
+    private String doctorReviewReason;
+
     @Column(name = "doctor_comments", columnDefinition = "text")
     private String doctorComments;
 
@@ -226,11 +232,24 @@ public class LabOrderEntity {
         this.updatedAt = this.reportGeneratedAt;
     }
 
-    public void markDoctorReviewed(UUID doctorReviewedByUserId, String doctorReviewedBy, String doctorComments) {
+    public void markDoctorReviewed(UUID doctorReviewedByUserId, String doctorReviewedBy, String doctorReviewDecision, String doctorReviewReason, String doctorComments) {
         this.status = LabOrderStatus.DOCTOR_REVIEWED;
         this.doctorReviewedAt = OffsetDateTime.now();
         this.doctorReviewedByUserId = doctorReviewedByUserId;
         this.doctorReviewedBy = doctorReviewedBy;
+        this.doctorReviewDecision = doctorReviewDecision;
+        this.doctorReviewReason = doctorReviewReason;
+        this.doctorComments = doctorComments;
+        this.updatedAt = this.doctorReviewedAt;
+    }
+
+    public void markResultReturned(UUID doctorReviewedByUserId, String doctorReviewedBy, String doctorReviewDecision, String doctorReviewReason, String doctorComments) {
+        this.status = LabOrderStatus.RESULT_ENTERED;
+        this.doctorReviewedAt = OffsetDateTime.now();
+        this.doctorReviewedByUserId = doctorReviewedByUserId;
+        this.doctorReviewedBy = doctorReviewedBy;
+        this.doctorReviewDecision = doctorReviewDecision;
+        this.doctorReviewReason = doctorReviewReason;
         this.doctorComments = doctorComments;
         this.updatedAt = this.doctorReviewedAt;
     }
@@ -273,6 +292,8 @@ public class LabOrderEntity {
     public OffsetDateTime getDoctorReviewedAt() { return doctorReviewedAt; }
     public UUID getDoctorReviewedByUserId() { return doctorReviewedByUserId; }
     public String getDoctorReviewedBy() { return doctorReviewedBy; }
+    public String getDoctorReviewDecision() { return doctorReviewDecision; }
+    public String getDoctorReviewReason() { return doctorReviewReason; }
     public String getDoctorComments() { return doctorComments; }
     public OffsetDateTime getDeliveredAt() { return deliveredAt; }
     public UUID getDeliveredByUserId() { return deliveredByUserId; }

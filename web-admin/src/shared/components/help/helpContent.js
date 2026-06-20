@@ -19,6 +19,7 @@ const HELP_SECTION_PRESENTATION = {
   REPORT_TYPES: { label: "Report Types", defaultExpanded: false, visible: true },
   FILTERS: { label: "Filters", defaultExpanded: false, visible: true },
   EXPORT_CSV: { label: "Export CSV", defaultExpanded: false, visible: true },
+  TAB_GUIDE: { label: "Tab Guide", defaultExpanded: false, visible: true },
   QUICK_ACTIONS: { label: "Quick Actions", defaultExpanded: false, visible: true },
   DASHBOARD_CARDS: { label: "Dashboard Cards", defaultExpanded: false, visible: true },
   PERMISSIONS: { label: "Permissions", defaultExpanded: false, visible: true },

@@ -1373,6 +1373,8 @@ export type LabOrder = {
   doctorReviewedAt: string | null;
   doctorReviewedByUserId: string | null;
   doctorReviewedBy: string | null;
+  doctorReviewDecision: string | null;
+  doctorReviewReason: string | null;
   doctorComments: string | null;
   attachments: LabOrderAttachment[];
   items: LabOrderItem[];
@@ -2891,8 +2893,8 @@ export async function enterLabOrderResults(token: string, tenantId: string, id: 
   return httpPost<LabOrder>(`/api/lab/orders/${id}/results`, body, { token, tenantId });
 }
 
-export async function reviewLabOrder(token: string, tenantId: string, id: string, body: { comments?: string | null }) {
-  return httpPost<LabOrder>(`/api/lab/orders/${id}/doctor-review`, { comments: body.comments ?? null }, { token, tenantId });
+export async function reviewLabOrder(token: string, tenantId: string, id: string, body: { decision: "APPROVE" | "SEND_BACK"; reason?: string | null; comments?: string | null }) {
+  return httpPost<LabOrder>(`/api/lab/orders/${id}/doctor-review`, { decision: body.decision, reason: body.reason ?? null, comments: body.comments ?? null }, { token, tenantId });
 }
 
 export async function getLabOrderPdf(token: string, tenantId: string, id: string) {

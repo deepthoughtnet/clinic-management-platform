@@ -1,3 +1,5 @@
+import { branding } from "../branding";
+
 export type NavItem = {
   key: string;
   label: string;
@@ -78,7 +80,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     key: "carepilot",
-    label: "Arogia",
+    label: branding.productName,
     requiresTenant: true,
     defaultExpanded: false,
     rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"],

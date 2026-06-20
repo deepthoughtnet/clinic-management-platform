@@ -95,13 +95,13 @@ public class LabService {
     private static final String ORDER_ENTITY_TYPE = "LAB_ORDER";
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final List<String> LAB_CATEGORIES = List.of(
-            "Hematology",
-            "Biochemistry",
-            "Microbiology",
-            "Pathology",
-            "Radiology",
-            "Cardiology",
-            "Other"
+            "HEMATOLOGY",
+            "BIOCHEMISTRY",
+            "MICROBIOLOGY",
+            "PATHOLOGY",
+            "RADIOLOGY",
+            "CARDIOLOGY",
+            "OTHER"
     );
 
     private final LabTestMasterRepository labTestMasterRepository;
@@ -191,9 +191,9 @@ public class LabService {
         validateTest(command);
         ensureUniqueTestCode(tenantId, command.testCode(), null);
         ensureUniqueTestName(tenantId, command.testName(), null);
-        LabTestMasterEntity entity = LabTestMasterEntity.create(tenantId, normalize(command.testCode()), normalize(command.testName()));
+        LabTestMasterEntity entity = LabTestMasterEntity.create(tenantId, normalizeNullable(command.testCode()), normalize(command.testName()));
         entity.update(
-                normalize(command.testCode()),
+                normalizeNullable(command.testCode()),
                 normalize(command.testName()),
                 normalizeCategory(command.category()),
                 normalizeNullable(command.department()),
@@ -220,7 +220,7 @@ public class LabService {
         ensureUniqueTestCode(tenantId, command.testCode(), id);
         ensureUniqueTestName(tenantId, command.testName(), id);
         entity.update(
-                normalize(command.testCode()),
+                normalizeNullable(command.testCode()),
                 normalize(command.testName()),
                 normalizeCategory(command.category()),
                 normalizeNullable(command.department()),
@@ -270,7 +270,7 @@ public class LabService {
                 .filter(order -> patientId == null || patientId.equals(order.getPatientId()))
                 .filter(order -> doctorUserId == null || doctorUserId.equals(order.getDoctorUserId()))
                 .filter(order -> status == null || status.equals(order.getStatus()))
-                .filter(order -> term == null || matches(order, term))
+                .filter(order -> term == null || matches(tenantId, order, term))
                 .toList());
     }
 
@@ -391,7 +391,7 @@ public class LabService {
         if (order.getBillId() == null) {
             throw new IllegalArgumentException("Lab order has no linked bill");
         }
-        if (order.getStatus() == LabOrderStatus.CANCELLED || order.getStatus() == LabOrderStatus.READY_FOR_COLLECTION) {
+        if (order.getStatus() == LabOrderStatus.CANCELLED || order.getStatus() == LabOrderStatus.DELIVERED) {
             throw new IllegalArgumentException("Lab order cannot collect payment in its current state");
         }
         PaymentRecord payment = billingService.recordPayment(tenantId, order.getBillId(), new PaymentCommand(
@@ -420,6 +420,9 @@ public class LabService {
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
         if (order.getStatus() != LabOrderStatus.READY_FOR_COLLECTION) {
             throw new IllegalArgumentException("Lab order is not ready for sample collection");
+        }
+        if (order.getSampleCollectedAt() != null) {
+            throw new IllegalArgumentException("Sample collection has already been recorded");
         }
         String collectedBy = normalizeNullable(command.collectedBy());
         if (!StringUtils.hasText(collectedBy)) {
@@ -455,8 +458,12 @@ public class LabService {
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
         if (order.getStatus() != LabOrderStatus.SAMPLE_COLLECTED
                 && order.getStatus() != LabOrderStatus.PROCESSING
-                && order.getStatus() != LabOrderStatus.RESULT_ENTERED) {
+                && order.getStatus() != LabOrderStatus.RESULT_ENTERED
+                && order.getStatus() != LabOrderStatus.DOCTOR_REVIEWED) {
             throw new IllegalArgumentException("Lab order is not ready for result entry");
+        }
+        if (order.getStatus() == LabOrderStatus.DOCTOR_REVIEWED) {
+            throw new IllegalArgumentException("Lab order has already been reviewed and cannot be edited");
         }
         Map<UUID, LabOrderItemEntity> orderItems = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, orderId).stream()
                 .collect(Collectors.toMap(LabOrderItemEntity::getId, Function.identity(), (a, b) -> a, LinkedHashMap::new));
@@ -528,11 +535,7 @@ public class LabService {
             }
         }
         labOrderResultRepository.saveAll(persistedResults);
-        if (order.getStatus() == LabOrderStatus.SAMPLE_COLLECTED) {
-            order.markProcessingStarted();
-        } else if (order.getStatus() == LabOrderStatus.RESULT_ENTERED) {
-            order.markProcessingStarted();
-        }
+        order.markProcessingStarted();
         order.markResultsEntered(normalizeNullable(command.comments()));
         LabOrderEntity saved = labOrderRepository.save(order);
         auditOrder(tenantId, saved, "lab_order.results_entered", actorAppUserId, "Entered lab results");
@@ -556,8 +559,14 @@ public class LabService {
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
         LabOrderStatus currentStatus = order.getStatus();
+        if (currentStatus != LabOrderStatus.DOCTOR_REVIEWED
+                && currentStatus != LabOrderStatus.REPORT_READY
+                && currentStatus != LabOrderStatus.REPORT_GENERATED
+                && currentStatus != LabOrderStatus.DELIVERED) {
+            throw new IllegalArgumentException("Lab order results are not approved for report generation");
+        }
         LabOrderResultPdf pdf = renderReportPdf(tenantId, orderId);
-        if (currentStatus == LabOrderStatus.RESULT_ENTERED) {
+        if (currentStatus == LabOrderStatus.DOCTOR_REVIEWED) {
             order.markReportGenerated(actorAppUserId, pdf.filename());
             LabOrderEntity saved = labOrderRepository.save(order);
             auditOrder(tenantId, saved, "lab_order.report_generated", actorAppUserId, "Generated lab report PDF");
@@ -582,10 +591,9 @@ public class LabService {
         requireId(orderId, "orderId");
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
-        if (order.getStatus() != LabOrderStatus.RESULT_ENTERED
+        if (order.getStatus() != LabOrderStatus.DOCTOR_REVIEWED
                 && order.getStatus() != LabOrderStatus.REPORT_READY
                 && order.getStatus() != LabOrderStatus.REPORT_GENERATED
-                && order.getStatus() != LabOrderStatus.DOCTOR_REVIEWED
                 && order.getStatus() != LabOrderStatus.DELIVERED) {
             throw new IllegalArgumentException("Lab order results are not ready for report generation");
         }
@@ -596,13 +604,19 @@ public class LabService {
     public LabOrderRecord reviewReport(UUID tenantId, UUID orderId, LabOrderDoctorReviewCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
         requireId(orderId, "orderId");
+        validateReview(command);
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
-        if (order.getStatus() != LabOrderStatus.REPORT_READY && order.getStatus() != LabOrderStatus.REPORT_GENERATED) {
+        if (order.getStatus() != LabOrderStatus.RESULT_ENTERED) {
             throw new IllegalArgumentException("Lab order report is not ready for review");
         }
         String reviewer = resolveUserDisplayName(tenantId, actorAppUserId).orElse(null);
-        order.markDoctorReviewed(actorAppUserId, reviewer, normalizeNullable(command == null ? null : command.doctorComments()));
+        String decision = normalizeReviewDecision(command.decision());
+        if ("SEND_BACK".equals(decision)) {
+            order.markResultReturned(actorAppUserId, reviewer, decision, normalizeNullable(command.reason()), normalizeNullable(command.doctorComments()));
+        } else {
+            order.markDoctorReviewed(actorAppUserId, reviewer, decision, normalizeNullable(command.reason()), normalizeNullable(command.doctorComments()));
+        }
         LabOrderEntity saved = labOrderRepository.save(order);
         auditOrder(tenantId, saved, "lab_order.doctor_reviewed", actorAppUserId, "Doctor reviewed lab report");
         labNotificationService.notifyDoctorReviewed(
@@ -724,6 +738,8 @@ public class LabService {
                 order.getDoctorReviewedAt(),
                 order.getDoctorReviewedByUserId(),
                 order.getDoctorReviewedBy(),
+                order.getDoctorReviewDecision(),
+                order.getDoctorReviewReason(),
                 order.getDoctorComments(),
                 attachments,
                 items,
@@ -1118,6 +1134,9 @@ public class LabService {
         if (testIds == null || testIds.isEmpty()) {
             throw new IllegalArgumentException("At least one test is required");
         }
+        if (testIds.size() != testIds.stream().distinct().count()) {
+            throw new IllegalArgumentException("Duplicate lab test selection is not allowed");
+        }
         List<LabTestMasterEntity> rows = labTestMasterRepository.findAllById(testIds);
         Map<UUID, LabTestMasterEntity> byId = rows.stream().collect(Collectors.toMap(LabTestMasterEntity::getId, Function.identity(), (a, b) -> a, LinkedHashMap::new));
         if (byId.size() != testIds.stream().distinct().count()) {
@@ -1139,22 +1158,46 @@ public class LabService {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
         }
-        if (!StringUtils.hasText(command.testCode())) {
-            throw new IllegalArgumentException("testCode is required");
+        String testCode = normalizeNullable(command.testCode());
+        if (StringUtils.hasText(testCode) && !testCode.matches("^[A-Za-z0-9/_-]+$")) {
+            throw new IllegalArgumentException("testCode contains invalid characters");
         }
         if (!StringUtils.hasText(command.testName())) {
             throw new IllegalArgumentException("testName is required");
         }
+        if (normalize(command.testName()).length() > 100) {
+            throw new IllegalArgumentException("testName must be 100 characters or fewer");
+        }
+        if (!hasLetterOrNumber(command.testName())) {
+            throw new IllegalArgumentException("testName must contain letters or numbers");
+        }
         if (!StringUtils.hasText(command.category())) {
             throw new IllegalArgumentException("category is required");
+        }
+        if (normalize(command.category()).length() > 30) {
+            throw new IllegalArgumentException("category must be 30 characters or fewer");
         }
         if (command.price() == null || command.price().compareTo(ZERO) < 0) {
             throw new IllegalArgumentException("price is required");
         }
+        if (command.price().compareTo(new BigDecimal("999999.00")) > 0) {
+            throw new IllegalArgumentException("price exceeds the allowed maximum");
+        }
         if (command.parameters() != null) {
+            List<String> seen = new ArrayList<>();
             for (LabTestParameterUpsertCommand parameter : command.parameters()) {
                 if (parameter != null && !StringUtils.hasText(parameter.parameterName())) {
                     throw new IllegalArgumentException("parameterName is required when parameters are provided");
+                }
+                if (parameter != null) {
+                    String name = normalize(parameter.parameterName());
+                    if (name.length() > 60) {
+                        throw new IllegalArgumentException("parameterName must be 60 characters or fewer");
+                    }
+                    if (seen.stream().anyMatch(existing -> existing.equalsIgnoreCase(name))) {
+                        throw new IllegalArgumentException("parameter names must be unique within a test");
+                    }
+                    seen.add(name);
                 }
             }
         }
@@ -1167,6 +1210,9 @@ public class LabService {
         if (command.testIds() == null || command.testIds().isEmpty()) {
             throw new IllegalArgumentException("At least one test is required");
         }
+        if (StringUtils.hasText(command.notes()) && command.notes().trim().length() > 250) {
+            throw new IllegalArgumentException("notes must be 250 characters or fewer");
+        }
     }
 
     private void validatePayment(LabOrderPaymentCommand command) {
@@ -1176,15 +1222,27 @@ public class LabService {
         if (command.amount() == null || command.amount().compareTo(ZERO) <= 0) {
             throw new IllegalArgumentException("amount is required");
         }
+        if (command.amount().compareTo(new BigDecimal("999999.00")) > 0) {
+            throw new IllegalArgumentException("amount exceeds the allowed maximum");
+        }
         if (command.paymentMode() == null) {
             throw new IllegalArgumentException("paymentMode is required");
         }
         if (command.paymentMode() != PaymentMode.CASH && !StringUtils.hasText(command.referenceNumber())) {
             throw new IllegalArgumentException("referenceNumber is required for non-cash payments");
         }
+        if (StringUtils.hasText(command.referenceNumber()) && command.referenceNumber().trim().length() > 60) {
+            throw new IllegalArgumentException("referenceNumber must be 60 characters or fewer");
+        }
+        if (StringUtils.hasText(command.notes()) && command.notes().trim().length() > 250) {
+            throw new IllegalArgumentException("notes must be 250 characters or fewer");
+        }
     }
 
     private void ensureUniqueTestCode(UUID tenantId, String testCode, UUID currentId) {
+        if (!StringUtils.hasText(testCode)) {
+            return;
+        }
         labTestMasterRepository.findByTenantIdAndTestCodeIgnoreCase(tenantId, normalize(testCode))
                 .filter(entity -> currentId == null || !currentId.equals(entity.getId()))
                 .ifPresent(entity -> {
@@ -1209,12 +1267,14 @@ public class LabService {
                 || contains(entity.getTurnaroundTime(), term);
     }
 
-    private boolean matches(LabOrderEntity entity, String term) {
+    private boolean matches(UUID tenantId, LabOrderEntity entity, String term) {
         return contains(entity.getOrderNumber(), term)
                 || contains(entity.getPatientNumber(), term)
                 || contains(entity.getPatientName(), term)
                 || contains(entity.getDoctorName(), term)
-                || contains(entity.getNotes(), term);
+                || contains(entity.getNotes(), term)
+                || labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, entity.getId()).stream()
+                        .anyMatch(item -> contains(item.getTestCode(), term) || contains(item.getTestName(), term) || contains(item.getCategory(), term));
     }
 
     private boolean contains(String value, String term) {
@@ -1237,6 +1297,21 @@ public class LabService {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
         }
+        if (command.collectedAt() == null) {
+            throw new IllegalArgumentException("collectedAt is required");
+        }
+        if (command.collectedAt().isAfter(OffsetDateTime.now())) {
+            throw new IllegalArgumentException("collection date cannot be in the future");
+        }
+        if (StringUtils.hasText(command.sampleType()) && command.sampleType().trim().length() > 60) {
+            throw new IllegalArgumentException("sampleType must be 60 characters or fewer");
+        }
+        if (StringUtils.hasText(command.collectedBy()) && command.collectedBy().trim().length() > 60) {
+            throw new IllegalArgumentException("collectedBy must be 60 characters or fewer");
+        }
+        if (StringUtils.hasText(command.notes()) && command.notes().trim().length() > 250) {
+            throw new IllegalArgumentException("notes must be 250 characters or fewer");
+        }
     }
 
     private void validateResults(LabOrderResultEntryCommand command) {
@@ -1255,6 +1330,70 @@ public class LabService {
             if (!hasValue && !hasComponents) {
                 throw new IllegalArgumentException("Each result item requires a value or component results");
             }
+            if (hasValue && item.resultValue().trim().length() > 120) {
+                throw new IllegalArgumentException("resultValue must be 120 characters or fewer");
+            }
+            if (StringUtils.hasText(item.unit()) && item.unit().trim().length() > 30) {
+                throw new IllegalArgumentException("unit must be 30 characters or fewer");
+            }
+            if (StringUtils.hasText(item.referenceRange()) && item.referenceRange().trim().length() > 120) {
+                throw new IllegalArgumentException("referenceRange must be 120 characters or fewer");
+            }
+            if (hasComponents) {
+                for (LabOrderResultComponentCommand component : item.componentResults()) {
+                    if (component == null) {
+                        continue;
+                    }
+                    if (!StringUtils.hasText(component.resultValue())) {
+                        throw new IllegalArgumentException("Each component result requires a value");
+                    }
+                    if (StringUtils.hasText(component.resultValue()) && component.resultValue().trim().length() > 120) {
+                        throw new IllegalArgumentException("component resultValue must be 120 characters or fewer");
+                    }
+                    if (StringUtils.hasText(component.parameterName()) && component.parameterName().trim().length() > 60) {
+                        throw new IllegalArgumentException("parameterName must be 60 characters or fewer");
+                    }
+                    if (StringUtils.hasText(component.componentName()) && component.componentName().trim().length() > 60) {
+                        throw new IllegalArgumentException("componentName must be 60 characters or fewer");
+                    }
+                    if (StringUtils.hasText(component.unit()) && component.unit().trim().length() > 30) {
+                        throw new IllegalArgumentException("unit must be 30 characters or fewer");
+                    }
+                    if (StringUtils.hasText(component.referenceRange()) && component.referenceRange().trim().length() > 120) {
+                        throw new IllegalArgumentException("referenceRange must be 120 characters or fewer");
+                    }
+                }
+            }
+        }
+        if (StringUtils.hasText(command.comments()) && command.comments().trim().length() > 250) {
+            throw new IllegalArgumentException("comments must be 250 characters or fewer");
+        }
+    }
+
+    private void validateReview(LabOrderDoctorReviewCommand command) {
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        if (!StringUtils.hasText(command.decision())) {
+            throw new IllegalArgumentException("decision is required");
+        }
+        String decision = normalizeReviewDecision(command.decision());
+        if (!"APPROVE".equals(decision) && !"SEND_BACK".equals(decision)) {
+            throw new IllegalArgumentException("decision must be APPROVE or SEND_BACK");
+        }
+        if ("SEND_BACK".equals(decision)) {
+            if (!StringUtils.hasText(command.reason())) {
+                throw new IllegalArgumentException("reason is required when sending back a result");
+            }
+            if (!StringUtils.hasText(command.doctorComments())) {
+                throw new IllegalArgumentException("remarks are required when sending back a result");
+            }
+        }
+        if (StringUtils.hasText(command.reason()) && command.reason().trim().length() > 60) {
+            throw new IllegalArgumentException("reason must be 60 characters or fewer");
+        }
+        if (StringUtils.hasText(command.doctorComments()) && command.doctorComments().trim().length() > 250) {
+            throw new IllegalArgumentException("remarks must be 250 characters or fewer");
         }
     }
 
@@ -1415,6 +1554,15 @@ public class LabService {
             }
         }
         throw new IllegalArgumentException("Unsupported category");
+    }
+
+    private String normalizeReviewDecision(String value) {
+        String normalized = normalize(value);
+        return normalized == null ? null : normalized.toUpperCase();
+    }
+
+    private boolean hasLetterOrNumber(String value) {
+        return StringUtils.hasText(value) && value.chars().anyMatch(Character::isLetterOrDigit);
     }
 
     private BigDecimal normalizeMoney(BigDecimal value) {

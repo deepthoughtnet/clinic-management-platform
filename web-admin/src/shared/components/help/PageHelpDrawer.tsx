@@ -58,6 +58,7 @@ import {
   HelpReportFilters,
   HelpReportTypes,
   HelpExportCsv,
+  HelpTabGuide,
   HelpQuickActions,
   HelpValidationRules,
   HelpAudit,
@@ -139,6 +140,8 @@ function renderSectionContent(section: HelpSectionRecord) {
       return <HelpReportFilters items={Array.isArray(content?.items) ? (content.items as any[]) : []} />;
     case "EXPORT_CSV":
       return <HelpExportCsv items={Array.isArray(content?.items) ? (content.items as any[]) : []} />;
+    case "TAB_GUIDE":
+      return <HelpTabGuide items={Array.isArray(content?.items) ? (content.items as any[]) : []} />;
     case "QUICK_ACTIONS":
       return <HelpQuickActions items={Array.isArray(content?.items) ? (content.items as any[]) : []} />;
     case "DASHBOARD_CARDS":

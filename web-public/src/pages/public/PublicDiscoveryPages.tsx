@@ -468,7 +468,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
           <p>
             Discover doctors, clinics, services, and next-step care through an AI-first experience designed for fast, confident patient decisions.
           </p>
-          <p>Smart Healthcare Management Platform for Clinics and Hospitals. Powered by {branding.aiPlatformName}.</p>
+          <p>{branding.tagline} for Clinics and Hospitals. Powered by {branding.aiPlatformName}.</p>
           <div className="cta-row public-quick-links">
             <Link className="primary-button" to="/doctors">
               Browse doctors
@@ -490,7 +490,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
               </Link>
             ))}
           </div>
-          <div className="trust-strip" aria-label="Arogia trust signals">
+          <div className="trust-strip" aria-label={`${branding.productName} trust signals`}>
             {TRUST_SIGNALS.map((item) => (
               <div key={item} className="trust-pill">
                 {item}

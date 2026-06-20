@@ -111,6 +111,28 @@ test("pharmacy dashboard route resolves to the dashboard help page", () => {
   assert.equal(resolveHelpRouteByPageKey("PHARMACY")?.pageKey, "PHARMACY_DASHBOARD");
 });
 
+test("clinic dashboard route resolves to the clinic dashboard help page", () => {
+  const meta = resolveHelpPageMeta("/dashboard");
+  assert.equal(meta.pageKey, "CLINIC_DASHBOARD");
+  assert.equal(meta.cmsPageKey, "CLINIC_DASHBOARD");
+  assert.equal(meta.title, "Clinic Dashboard");
+  assert.equal(resolveHelpRouteByPageKey("CLINIC_DASHBOARD")?.path, "/dashboard");
+});
+
+test("consultation route resolves tab-specific help pages", () => {
+  assert.equal(resolveHelpPageMeta("/consultations/123?tab=prescription").pageKey, "CONSULTATION_PRESCRIPTION");
+  assert.equal(resolveHelpPageMeta("/consultations/123?tab=history").pageKey, "CONSULTATION_HISTORY");
+  assert.equal(resolveHelpPageMeta("/consultations/123?tab=investigations").pageKey, "CONSULTATION_INVESTIGATIONS");
+  assert.equal(resolveHelpPageMeta("/consultations/123?tab=lab-orders").pageKey, "CONSULTATION_LAB_ORDERS");
+  assert.equal(resolveHelpPageMeta("/consultations/123?tab=ai-assist").pageKey, "CONSULTATION_AI_ASSIST");
+});
+
+test("clinic operations routes resolve to the seeded help pages", () => {
+  assert.equal(resolveHelpPageMeta("/appointments/day-board").pageKey, "DAY_BOARD");
+  assert.equal(resolveHelpPageMeta("/notifications").pageKey, "NOTIFICATIONS");
+  assert.equal(resolveHelpPageMeta("/vaccinations").pageKey, "VACCINATIONS");
+});
+
 test("reports route resolves to the reports help page", () => {
   const meta = resolveHelpPageMeta("/reports");
   assert.equal(meta.pageKey, "REPORTS");
@@ -129,6 +151,32 @@ test("billing route resolves to the billing help page", () => {
   assert.equal(resolveHelpRouteByPageKey("BILLING")?.path, "/billing");
   assert.equal(resolveHelpRouteByPageKey("FINANCE_BILLING")?.path, "/billing");
   assert.equal(resolveHelpRouteByPageKey("BILL_BUILDER")?.path, "/billing");
+});
+
+test("laboratory route resolves to the laboratory help page", () => {
+  const meta = resolveHelpPageMeta("/laboratory");
+  assert.equal(meta.pageKey, "LABORATORY");
+  assert.equal(meta.cmsPageKey, "LABORATORY");
+  assert.equal(meta.title, "Laboratory");
+  assert.equal(resolveHelpRouteByPageKey("LABORATORY")?.path, "/laboratory");
+  assert.equal(resolveHelpRouteByPageKey("LAB")?.path, "/laboratory");
+  assert.equal(resolveHelpRouteByPageKey("LAB_OPERATIONS")?.path, "/laboratory");
+});
+
+test("laboratory help is seeded in the db-backed help cms", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "..", "backend", "api", "api-bff", "src", "main", "java", "com", "deepthoughtnet", "clinic", "api", "help", "HelpCmsSeeder.java"), "utf8");
+  assert.ok(source.includes('"LABORATORY"'));
+  assert.ok(source.includes("Laboratory manages lab test catalog"));
+});
+
+test("clinic help pages are seeded in the db-backed help cms", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "..", "backend", "api", "api-bff", "src", "main", "java", "com", "deepthoughtnet", "clinic", "api", "help", "HelpCmsSeeder.java"), "utf8");
+  assert.ok(source.includes('"CLINIC_DASHBOARD"'));
+  assert.ok(source.includes('"DAY_BOARD"'));
+  assert.ok(source.includes('"NOTIFICATIONS"'));
+  assert.ok(source.includes('"VACCINATIONS"'));
+  assert.ok(source.includes('"CONSULTATION_WORKSPACE"'));
+  assert.ok(source.includes('"CONSULTATION_PRESCRIPTION"'));
 });
 
 test("common issues help section uses the expected label", () => {
@@ -634,12 +682,17 @@ test("help route registry resolves exact and fallback routes", () => {
   assert.equal(resolveHelpPageMeta("/pharmacy/medicine-master").pageKey, "PHARMACY_MEDICINE_MASTER");
   assert.equal(resolveHelpPageMeta("/dispensing").pageKey, "PHARMACY_DISPENSING");
   assert.equal(resolveHelpPageMeta("/reports").pageKey, "REPORTS");
+  assert.equal(resolveHelpPageMeta("/settings/clinic-profile").pageKey, "CLINIC_PROFILE");
+  assert.equal(resolveHelpPageMeta("/settings/users-roles").pageKey, "USERS");
+  assert.equal(resolveHelpPageMeta("/admin/templates").pageKey, "PLATFORM_ADMIN");
   assert.equal(resolveHelpPageMeta("/patients").pageKey, "PATIENT_MASTER");
   assert.equal(resolveHelpPageMeta("/patients/123/edit").pageKey, "PATIENT_DETAILS");
   assert.equal(resolveHelpPageMeta("/custom/route").pageKey, "UNKNOWN_PAGE");
   assert.equal(resolveHelpRouteByPageKey("PHARMACY_MEDICINE_MASTER")?.path, "/pharmacy/medicine-master");
   assert.equal(resolveHelpRouteByPageKey("DISPENSING")?.path, "/pharmacy/dispensing");
   assert.equal(resolveHelpRouteByPageKey("REPORTS")?.path, "/reports");
+  assert.equal(resolveHelpRouteByPageKey("CLINIC_PROFILE")?.path, "/settings/clinic-profile");
+  assert.equal(resolveHelpRouteByPageKey("USERS")?.path, "/platform/users");
 });
 
 test("help shortcut helper detects ctrl slash", () => {

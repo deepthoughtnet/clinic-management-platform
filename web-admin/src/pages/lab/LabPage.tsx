@@ -33,11 +33,12 @@ import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import PaidRoundedIcon from "@mui/icons-material/PaidRounded";
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
-import { firstZodError, labResultEntrySchema, labTestMasterSchema, paymentSchema } from "@deepthoughtnet/form-validation-kit";
+import { firstZodError, labDoctorReviewSchema, labPaymentSchema, labResultEntrySchema, labSampleCollectionSchema, labTestMasterSchema } from "@deepthoughtnet/form-validation-kit";
 
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactStatCard, compactCardContentSx } from "../../components/compact/CompactUi";
 import RequiredLabel from "../../components/forms/RequiredLabel";
+import CommentSuggestions from "../../shared/components/comment-suggestions/CommentSuggestions";
 import {
   collectLabOrderPayment,
   collectLabOrderSample,
@@ -62,7 +63,7 @@ import {
 const emptyTestForm: LabTestInput = {
   testCode: "",
   testName: "",
-  category: "Hematology",
+  category: "HEMATOLOGY",
   department: "",
   sampleType: "",
   unit: "",
@@ -228,6 +229,7 @@ export default function LabPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [tab, setTab] = React.useState(0);
   const [search, setSearch] = React.useState("");
+  const [orderSearch, setOrderSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<"ALL" | LabOrderStatus>("ALL");
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<LabTest | null>(null);
@@ -246,6 +248,8 @@ export default function LabPage() {
   const [resultComments, setResultComments] = React.useState("");
   const [resultItems, setResultItems] = React.useState<ResultItemForm[]>([]);
   const [reviewComments, setReviewComments] = React.useState("");
+  const [reviewDecision, setReviewDecision] = React.useState<"APPROVE" | "SEND_BACK">("APPROVE");
+  const [reviewReason, setReviewReason] = React.useState("");
 
   const canManageTests = auth.hasPermission("lab.test.manage") || auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("PLATFORM_ADMIN");
   const canViewOrders = auth.hasPermission("lab.order.read")
@@ -303,10 +307,17 @@ export default function LabPage() {
 
   const pendingSampleOrders = React.useMemo(() => orders.filter((row) => row.status === "READY_FOR_COLLECTION"), [orders]);
   const pendingResultsOrders = React.useMemo(() => orders.filter((row) => row.status === "SAMPLE_COLLECTED" || row.status === "PROCESSING" || row.status === "RESULT_ENTERED"), [orders]);
-  const pendingReviewOrders = React.useMemo(() => orders.filter((row) => row.status === "REPORT_READY" || row.status === "REPORT_GENERATED"), [orders]);
+  const pendingReviewOrders = React.useMemo(() => orders.filter((row) => row.status === "RESULT_ENTERED"), [orders]);
   const filteredOrders = React.useMemo(
-    () => orders.filter((row) => statusFilter === "ALL" || row.status === statusFilter),
-    [orders, statusFilter],
+    () => orders.filter((row) => {
+      if (statusFilter !== "ALL" && row.status !== statusFilter) return false;
+      const term = orderSearch.trim().toLowerCase();
+      if (!term) return true;
+      return [row.orderNumber, row.patientNumber, row.patientName, row.doctorName, row.notes, row.items.map((item) => `${item.testCode} ${item.testName}`).join(" ")]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term));
+    }),
+    [orders, orderSearch, statusFilter],
   );
 
   const activeTestCount = tests.filter((row) => row.active).length;
@@ -405,10 +416,10 @@ export default function LabPage() {
 
   const collectPayment = async () => {
     if (!auth.accessToken || !auth.tenantId || !paymentTarget) return;
-    const parsed = paymentSchema.safeParse({
+    const parsed = labPaymentSchema.safeParse({
       amount: paymentTarget.billDueAmount ?? 0,
-      paymentMethod: paymentMode,
-      invoiceNumber: paymentReference.trim() || undefined,
+      paymentMode,
+      referenceNumber: paymentReference.trim() || undefined,
       notes: paymentNotes.trim() || undefined,
     });
     if (!parsed.success) {
@@ -420,8 +431,8 @@ export default function LabPage() {
     try {
       await collectLabOrderPayment(auth.accessToken, auth.tenantId, paymentTarget.id, {
         amount: parsed.data.amount,
-        paymentMode: parsed.data.paymentMethod,
-        referenceNumber: parsed.data.invoiceNumber || null,
+        paymentMode: parsed.data.paymentMode,
+        referenceNumber: parsed.data.referenceNumber || null,
         notes: parsed.data.notes || null,
         receivedBy: auth.appUserId || null,
       });
@@ -438,14 +449,24 @@ export default function LabPage() {
 
   const collectSample = async () => {
     if (!auth.accessToken || !auth.tenantId || !sampleTarget) return;
+    const parsed = labSampleCollectionSchema.safeParse({
+      sampleType: sampleType.trim() || undefined,
+      collectedBy: sampleCollectedBy.trim() || undefined,
+      collectedAt: sampleCollectedAt,
+      notes: sampleNotes.trim() || undefined,
+    });
+    if (!parsed.success) {
+      setError(firstZodError(parsed.error));
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       await collectLabOrderSample(auth.accessToken, auth.tenantId, sampleTarget.id, {
-        sampleType: sampleType.trim() || null,
-        collectedBy: sampleCollectedBy.trim() || null,
-        collectedAt: toIsoFromDatetimeLocal(sampleCollectedAt),
-        notes: sampleNotes.trim() || null,
+        sampleType: parsed.data.sampleType || null,
+        collectedBy: parsed.data.collectedBy || null,
+        collectedAt: toIsoFromDatetimeLocal(parsed.data.collectedAt),
+        notes: parsed.data.notes || null,
       });
       setSampleTarget(null);
       setSampleType("");
@@ -468,6 +489,8 @@ export default function LabPage() {
 
   const openReviewDialog = (row: LabOrder) => {
     setReviewTarget(row);
+    setReviewDecision((row.doctorReviewDecision as "APPROVE" | "SEND_BACK" | null) || "APPROVE");
+    setReviewReason(row.doctorReviewReason || "");
     setReviewComments(row.doctorComments || "");
   };
 
@@ -525,13 +548,26 @@ export default function LabPage() {
 
   const saveReview = async () => {
     if (!auth.accessToken || !auth.tenantId || !reviewTarget) return;
+    const parsed = labDoctorReviewSchema.safeParse({
+      decision: reviewDecision,
+      reason: reviewReason.trim() || undefined,
+      remarks: reviewComments.trim() || undefined,
+    });
+    if (!parsed.success) {
+      setError(firstZodError(parsed.error));
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       await reviewLabOrder(auth.accessToken, auth.tenantId, reviewTarget.id, {
-        comments: reviewComments.trim() || null,
+        decision: parsed.data.decision,
+        reason: parsed.data.reason || null,
+        comments: parsed.data.remarks || null,
       });
       setReviewTarget(null);
+      setReviewDecision("APPROVE");
+      setReviewReason("");
       setReviewComments("");
       await load();
     } catch (err) {
@@ -610,7 +646,7 @@ export default function LabPage() {
           {tab === 0 ? (
             <Stack spacing={2}>
               <Stack direction={{ xs: "column", md: "row" }} spacing={1} sx={{ alignItems: { xs: "stretch", md: "center" } }}>
-                <TextField fullWidth size="small" label="Search tests" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <TextField fullWidth size="small" label="Search tests" value={search} onChange={(e) => setSearch(e.target.value.slice(0, 60))} inputProps={{ maxLength: 60 }} />
                 <Button variant="outlined" onClick={openCreate} disabled={!canManageTests} startIcon={<AddRoundedIcon />}>Add test</Button>
               </Stack>
               <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
@@ -736,6 +772,15 @@ export default function LabPage() {
             />
           ) : (
             <Stack spacing={2}>
+              <TextField
+                fullWidth
+                size="small"
+                label="Search orders"
+                value={orderSearch}
+                onChange={(e) => setOrderSearch(e.target.value.slice(0, 60))}
+                helperText="Search by order number, patient, doctor, or test."
+                inputProps={{ maxLength: 60 }}
+              />
               <Stack direction="row" spacing={1} flexWrap="wrap">
                 {(["ALL", "ORDERED", "PAYMENT_PENDING", "PAID", "READY_FOR_COLLECTION", "SAMPLE_COLLECTED", "PROCESSING", "RESULT_ENTERED", "REPORT_READY", "REPORT_GENERATED", "DOCTOR_REVIEWED", "DELIVERED"] as const).map((status) => (
                   <Chip
@@ -832,12 +877,12 @@ export default function LabPage() {
                               {canEnterResults && (row.status === "SAMPLE_COLLECTED" || row.status === "PROCESSING" || row.status === "RESULT_ENTERED") ? (
                                 <Button size="small" variant="outlined" onClick={() => openResultsDialog(row)}>Enter results</Button>
                               ) : null}
-                              {canGenerateReport && (row.status === "RESULT_ENTERED" || row.status === "REPORT_READY" || row.status === "REPORT_GENERATED" || row.status === "DOCTOR_REVIEWED") ? (
+                              {canGenerateReport && (row.status === "DOCTOR_REVIEWED" || row.status === "REPORT_READY" || row.status === "REPORT_GENERATED") ? (
                                 <Button size="small" variant="outlined" startIcon={<DownloadRoundedIcon />} onClick={() => void generateReport(row)}>
                                   PDF
                                 </Button>
                               ) : null}
-                              {canReviewReport && row.status === "REPORT_READY" ? (
+                              {canReviewReport && row.status === "RESULT_ENTERED" ? (
                                 <Button size="small" variant="outlined" onClick={() => openReviewDialog(row)}>
                                   Review
                                 </Button>
@@ -860,12 +905,12 @@ export default function LabPage() {
         <DialogContent dividers>
           <Grid container spacing={2} sx={{ pt: 0.5 }}>
             <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth label="Test Code" value={form.testCode} onChange={(e) => setForm((current) => ({ ...current, testCode: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label={<RequiredLabel text="Test Name" />} value={form.testName} onChange={(e) => setForm((current) => ({ ...current, testName: e.target.value }))} /></Grid>
+            <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label={<RequiredLabel text="Test Name" required />} value={form.testName} onChange={(e) => setForm((current) => ({ ...current, testName: e.target.value }))} required /></Grid>
             <Grid size={{ xs: 12, md: 4 }}>
               <FormControl fullWidth>
-                <InputLabel id="lab-category-label">Category</InputLabel>
+                <InputLabel id="lab-category-label"><RequiredLabel text="Category" required /></InputLabel>
                 <Select labelId="lab-category-label" label="Category" value={form.category} onChange={(e) => setForm((current) => ({ ...current, category: String(e.target.value) }))}>
-                  {categories.length ? categories.map((category) => <MenuItem key={category} value={category}>{category}</MenuItem>) : ["Hematology", "Biochemistry", "Microbiology", "Pathology", "Radiology", "Cardiology", "Other"].map((category) => <MenuItem key={category} value={category}>{category}</MenuItem>)}
+                  {categories.length ? categories.map((category) => <MenuItem key={category} value={category}>{category}</MenuItem>) : ["HEMATOLOGY", "BIOCHEMISTRY", "MICROBIOLOGY", "PATHOLOGY", "RADIOLOGY", "CARDIOLOGY", "OTHER"].map((category) => <MenuItem key={category} value={category}>{category}</MenuItem>)}
                 </Select>
               </FormControl>
             </Grid>
@@ -874,7 +919,7 @@ export default function LabPage() {
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Unit" value={form.unit || ""} onChange={(e) => setForm((current) => ({ ...current, unit: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Reference Range" value={form.referenceRange || ""} onChange={(e) => setForm((current) => ({ ...current, referenceRange: e.target.value }))} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth label="Turnaround Time" value={form.turnaroundTime || ""} onChange={(e) => setForm((current) => ({ ...current, turnaroundTime: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth type="number" label={<RequiredLabel text="Price" />} value={form.price} onChange={(e) => setForm((current) => ({ ...current, price: Number(e.target.value) }))} /></Grid>
+            <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth type="number" label={<RequiredLabel text="Price" required />} value={form.price} onChange={(e) => setForm((current) => ({ ...current, price: Number(e.target.value) }))} required /></Grid>
             <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth label="Status" value={form.active ? "Active" : "Inactive"} disabled /></Grid>
           </Grid>
           <Stack spacing={1.5} sx={{ mt: 3 }}>
@@ -950,17 +995,18 @@ export default function LabPage() {
             </Alert>
             <FormControl fullWidth>
               <InputLabel id="payment-mode-label">Payment Mode</InputLabel>
-              <Select labelId="payment-mode-label" label="Payment Mode" value={paymentMode} onChange={(e) => setPaymentMode(e.target.value as PaymentMode)}>
-                <MenuItem value="CASH">Cash</MenuItem>
-                <MenuItem value="UPI">UPI</MenuItem>
-                <MenuItem value="CARD">Card</MenuItem>
-                <MenuItem value="CHEQUE">Cheque</MenuItem>
-                <MenuItem value="BANK_TRANSFER">Bank Transfer</MenuItem>
-                <MenuItem value="OTHER">Other</MenuItem>
-              </Select>
+                <Select labelId="payment-mode-label" label="Payment Mode" value={paymentMode} onChange={(e) => setPaymentMode(e.target.value as PaymentMode)}>
+                  <MenuItem value="CASH">Cash</MenuItem>
+                  <MenuItem value="UPI">UPI</MenuItem>
+                  <MenuItem value="CARD">Card</MenuItem>
+                  <MenuItem value="INSURANCE">Insurance</MenuItem>
+                  <MenuItem value="CHEQUE">Cheque</MenuItem>
+                  <MenuItem value="BANK_TRANSFER">Bank Transfer</MenuItem>
+                  <MenuItem value="OTHER">Other</MenuItem>
+                </Select>
             </FormControl>
-            <TextField label="Reference Number" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} />
-            <TextField label="Notes" value={paymentNotes} onChange={(e) => setPaymentNotes(e.target.value)} multiline minRows={2} />
+            <TextField label="Reference Number" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value.slice(0, 60))} inputProps={{ maxLength: 60 }} />
+            <TextField label="Notes" value={paymentNotes} onChange={(e) => setPaymentNotes(e.target.value.slice(0, 250))} multiline minRows={2} inputProps={{ maxLength: 250 }} />
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -974,8 +1020,8 @@ export default function LabPage() {
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
             <Alert severity="info">{sampleTarget ? `${sampleTarget.orderNumber} • ${sampleTarget.patientName || "-"}` : ""}</Alert>
-            <TextField label="Sample Type" value={sampleType} onChange={(e) => setSampleType(e.target.value)} />
-            <TextField label="Collected By" value={sampleCollectedBy} onChange={(e) => setSampleCollectedBy(e.target.value)} />
+            <TextField label="Sample Type" value={sampleType} onChange={(e) => setSampleType(e.target.value.slice(0, 60))} inputProps={{ maxLength: 60 }} />
+            <TextField label="Collected By" value={sampleCollectedBy} onChange={(e) => setSampleCollectedBy(e.target.value.slice(0, 60))} inputProps={{ maxLength: 60 }} />
             <TextField
               label="Collected At"
               type="datetime-local"
@@ -983,7 +1029,7 @@ export default function LabPage() {
               onChange={(e) => setSampleCollectedAt(e.target.value)}
               InputLabelProps={{ shrink: true }}
             />
-            <TextField label="Notes" value={sampleNotes} onChange={(e) => setSampleNotes(e.target.value)} multiline minRows={2} />
+            <TextField label="Notes" value={sampleNotes} onChange={(e) => setSampleNotes(e.target.value.slice(0, 250))} multiline minRows={2} inputProps={{ maxLength: 250 }} />
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -1075,12 +1121,38 @@ export default function LabPage() {
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
             <Alert severity="info">{reviewTarget ? `${reviewTarget.orderNumber} • ${reviewTarget.patientName || "-"}` : ""}</Alert>
-            <TextField label="Comments" value={reviewComments} onChange={(e) => setReviewComments(e.target.value)} multiline minRows={3} />
+            <FormControl fullWidth>
+              <InputLabel id="lab-review-decision-label">
+                <RequiredLabel text="Review decision" required />
+              </InputLabel>
+              <Select
+                labelId="lab-review-decision-label"
+                label="Review decision"
+                value={reviewDecision}
+                onChange={(e) => setReviewDecision(e.target.value as "APPROVE" | "SEND_BACK")}
+              >
+                <MenuItem value="APPROVE">Approve</MenuItem>
+                <MenuItem value="SEND_BACK">Send back</MenuItem>
+              </Select>
+            </FormControl>
+            <CommentSuggestions
+              category="LAB_REJECTION"
+              selectedReason={reviewReason}
+              remarks={reviewComments}
+              onReasonChange={setReviewReason}
+              onRemarksChange={setReviewComments}
+              requiredReason={reviewDecision === "SEND_BACK"}
+              reasonLabel="Reason"
+              remarksLabel="Remarks"
+              maxRemarksLength={250}
+              reasonHelperText={reviewDecision === "SEND_BACK" ? "Select a reason before sending the result back." : "Reason is optional when approving."}
+              remarksHelperText={reviewDecision === "SEND_BACK" ? "Add remarks for the doctor or lab tech." : "Optional remarks for the reviewer."}
+            />
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setReviewTarget(null)}>Cancel</Button>
-          <Button variant="contained" onClick={() => void saveReview()} disabled={saving || !reviewTarget}>Approve & Review</Button>
+          <Button variant="contained" onClick={() => void saveReview()} disabled={saving || !reviewTarget}>{reviewDecision === "SEND_BACK" ? "Send Back" : "Approve & Review"}</Button>
         </DialogActions>
       </Dialog>
     </Stack>
@@ -1177,7 +1249,7 @@ function OrderQueue(props: {
                   {canEnterResults && (row.status === "SAMPLE_COLLECTED" || row.status === "PROCESSING" || row.status === "RESULT_ENTERED") ? (
                     <Button size="small" variant="outlined" onClick={() => onEnterResults(row)}>Enter results</Button>
                   ) : null}
-                  {canGenerateReport && (row.status === "RESULT_ENTERED" || row.status === "REPORT_READY" || row.status === "REPORT_GENERATED" || row.status === "DOCTOR_REVIEWED") ? (
+                  {canGenerateReport && (row.status === "DOCTOR_REVIEWED" || row.status === "REPORT_READY" || row.status === "REPORT_GENERATED") ? (
                     <Button size="small" variant="outlined" startIcon={<DownloadRoundedIcon />} onClick={() => onGenerateReport(row)}>
                       PDF
                     </Button>

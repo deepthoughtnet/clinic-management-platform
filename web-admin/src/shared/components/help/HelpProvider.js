@@ -22,7 +22,7 @@ export function useHelp() {
 
 export default function HelpProvider({ children }) {
   const location = useLocation();
-  const route = React.useMemo(() => resolveHelpPageMeta(location.pathname), [location.pathname]);
+  const route = React.useMemo(() => resolveHelpPageMeta(`${location.pathname}${location.search}`), [location.pathname, location.search]);
   const [isOpen, setIsOpen] = React.useState(false);
   const [activePageKey, setActivePageKey] = React.useState(route.pageKey);
   const [activePageTitle, setActivePageTitle] = React.useState(route.title);

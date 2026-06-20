@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.DoctorUnavailabilityT
 import java.time.LocalDateTime;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.AssertTrue;
 
 public record DoctorUnavailabilityRequest(
         @NotNull
@@ -12,8 +13,15 @@ public record DoctorUnavailabilityRequest(
         LocalDateTime endAt,
         @NotNull
         DoctorUnavailabilityType type,
-        @Size(max = 512)
+        @Size(max = 250)
         String reason,
         boolean active
 ) {
+        @AssertTrue(message = "End date/time must be after start date/time.")
+        public boolean isValidTimeRange() {
+                if (startAt == null || endAt == null) {
+                        return true;
+                }
+                return endAt.isAfter(startAt);
+        }
 }

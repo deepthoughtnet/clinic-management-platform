@@ -149,6 +149,7 @@ type AutosaveStatus = "idle" | "dirty" | "saving" | "saved" | "failed" | "readon
 const CONSULTATION_COMPLETION_BLOCKED_MESSAGE = "Please complete/finalize prescription before completing consultation.";
 const VALID_MEDICINE_TYPES: MedicineType[] = ["TABLET", "SYRUP", "INJECTION", "DROP", "OINTMENT", "CAPSULE", "OTHER"];
 const VALID_TIMINGS: Timing[] = ["BEFORE_FOOD", "AFTER_FOOD", "WITH_FOOD", "ANYTIME"];
+const CONSULTATION_TAB_KEYS = ["consultation", "prescription", "history", "investigations", "lab-orders", "ai-assist"] as const;
 
 class PrescriptionPayloadValidationError extends Error {
   invalidMedicineRowIds: string[];
@@ -475,6 +476,16 @@ function emptyPrescriptionForm(record?: Prescription | null, consultation?: Cons
       ? record.recommendedTests.map((item, index) => ({ ...item, localId: `${index}-${item.sortOrder ?? index}` }))
       : [],
   };
+}
+
+function consultationTabIndexToKey(tabIndex: number): string {
+  return CONSULTATION_TAB_KEYS[tabIndex] || "consultation";
+}
+
+function consultationTabKeyToIndex(tabKey: string | null | undefined): number {
+  const normalized = (tabKey || "").trim().toLowerCase();
+  const index = CONSULTATION_TAB_KEYS.indexOf(normalized as (typeof CONSULTATION_TAB_KEYS)[number]);
+  return index >= 0 ? index : 0;
 }
 
 function toConsultationInput(form: ConsultationFormState, consultation: Consultation): ConsultationInput {
@@ -829,7 +840,7 @@ export default function ConsultationWorkspacePage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const params = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const consultationId = params.id || "";
   const appointmentId = searchParams.get("appointmentId") || "";
 
@@ -857,7 +868,7 @@ export default function ConsultationWorkspacePage() {
   const [labOrderSaving, setLabOrderSaving] = React.useState(false);
   const [medicineSearch, setMedicineSearch] = React.useState("");
   const [correctionReason, setCorrectionReason] = React.useState("Same-day correction");
-  const [activeTab, setActiveTab] = React.useState(0);
+  const [activeTab, setActiveTab] = React.useState(() => consultationTabKeyToIndex(searchParams.get("tab")));
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({
     complaint: true,
     symptoms: true,
@@ -923,6 +934,10 @@ export default function ConsultationWorkspacePage() {
   React.useEffect(() => {
     prescriptionFormRef.current = prescriptionForm;
   }, [prescriptionForm]);
+
+  React.useEffect(() => {
+    setActiveTab(consultationTabKeyToIndex(searchParams.get("tab")));
+  }, [searchParams]);
 
   const clearAutosaveTimers = React.useCallback(() => {
     if (autosaveTimerRef.current) {
@@ -1088,13 +1103,20 @@ export default function ConsultationWorkspacePage() {
   }, [auth, auth.accessToken, auth.tenantId]);
 
   React.useEffect(() => {
-    if (!consultation || consultation.status !== "DRAFT" || hydratedConsultationIdRef.current !== consultation.id) {
-      setAutosaveStatus(consultation && consultation.status !== "DRAFT" ? "readonly" : "idle");
+    const consultationEditable = consultation ? consultation.status === "DRAFT" : false;
+    const prescriptionEditable = Boolean(prescription && isEditablePrescriptionStatus(prescription.status));
+    if (hydratedConsultationIdRef.current !== consultation?.id) {
+      setAutosaveStatus(consultation && !consultationEditable && !prescriptionEditable ? "readonly" : "idle");
       return;
     }
 
-    const consultationDirty = serializeConsultationForm(consultationForm) !== savedConsultationSnapshotRef.current;
-    const prescriptionDirty = serializePrescriptionForm(prescriptionForm) !== savedPrescriptionSnapshotRef.current;
+    if (!consultationEditable && !prescriptionEditable) {
+      setAutosaveStatus("readonly");
+      return;
+    }
+
+    const consultationDirty = consultationEditable && serializeConsultationForm(consultationForm) !== savedConsultationSnapshotRef.current;
+    const prescriptionDirty = prescriptionEditable && serializePrescriptionForm(prescriptionForm) !== savedPrescriptionSnapshotRef.current;
     if (!consultationDirty && !prescriptionDirty) {
       return;
     }
@@ -1111,7 +1133,7 @@ export default function ConsultationWorkspacePage() {
         autosaveTimerRef.current = null;
       }
     };
-  }, [consultation, consultationForm, prescriptionForm]);
+  }, [consultation, consultationForm, prescription, prescriptionForm]);
 
   React.useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -1133,8 +1155,9 @@ export default function ConsultationWorkspacePage() {
   const canFinalizePrescription = auth.hasPermission("prescription.finalize");
   const canPrintPrescription = auth.hasPermission("prescription.print");
   const canRunAi = auth.hasPermission("ai_copilot.run") || auth.hasPermission("ai_copilot.clinic.run");
-  const readOnly = consultation ? consultation.status !== "DRAFT" || !canEditConsultation : !canEditConsultation;
-  const prescriptionReadOnly = readOnly || (prescription ? !isEditablePrescriptionStatus(prescription.status) : false);
+  const consultationReadOnly = consultation ? consultation.status !== "DRAFT" || !canEditConsultation : !canEditConsultation;
+  const prescriptionReadOnly = prescription ? !isEditablePrescriptionStatus(prescription.status) : !canEditConsultation;
+  const readOnly = consultationReadOnly;
   const prescriptionReadyForCompletion = isPrescriptionReadyForConsultationCompletion(prescription);
   const patientRow = patient?.patient;
   const currentAppointment = appointment;
@@ -1373,14 +1396,19 @@ export default function ConsultationWorkspacePage() {
 
     const promise = (async () => {
       const currentConsultation = consultationRef.current;
-      if (!currentConsultation || currentConsultation.status !== "DRAFT") {
+      const currentPrescription = prescriptionRef.current;
+      if (!currentConsultation) {
+        setAutosaveStatus("readonly");
+        return null;
+      }
+      if (currentConsultation.status !== "DRAFT" && (!currentPrescription || !isEditablePrescriptionStatus(currentPrescription.status))) {
         setAutosaveStatus("readonly");
         return currentConsultation;
       }
       if (autosaveInFlightRef.current) return currentConsultation;
 
-      const consultationDirty = serializeConsultationForm(consultationFormRef.current) !== savedConsultationSnapshotRef.current;
-      const prescriptionDirty = serializePrescriptionForm(prescriptionFormRef.current) !== savedPrescriptionSnapshotRef.current;
+      const consultationDirty = currentConsultation.status === "DRAFT" && serializeConsultationForm(consultationFormRef.current) !== savedConsultationSnapshotRef.current;
+      const prescriptionDirty = currentPrescription != null && isEditablePrescriptionStatus(currentPrescription.status) && serializePrescriptionForm(prescriptionFormRef.current) !== savedPrescriptionSnapshotRef.current;
       if (!consultationDirty && !prescriptionDirty) {
         setAutosaveStatus("saved");
         return currentConsultation;
@@ -1453,7 +1481,7 @@ export default function ConsultationWorkspacePage() {
 
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && canEditConsultation && !readOnly) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && canEditConsultation && (!consultationReadOnly || !prescriptionReadOnly)) {
         event.preventDefault();
         void manualSaveDraft();
         return;
@@ -1471,7 +1499,7 @@ export default function ConsultationWorkspacePage() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [canEditConsultation, manualSaveDraft, prescriptionForm, prescriptionReadOnly, readOnly, viewerDocument]);
+  }, [canEditConsultation, manualSaveDraft, prescriptionForm, prescriptionReadOnly, consultationReadOnly, viewerDocument]);
 
   const completeCurrentConsultation = async () => {
     if (!auth.accessToken || !auth.tenantId || !consultation) return;
@@ -1496,7 +1524,10 @@ export default function ConsultationWorkspacePage() {
 
   const continueActivePrescriptionDraft = () => {
     if (!prescription) return;
+    const activeForm = emptyPrescriptionForm(prescription, consultation || undefined);
     setSelectedPrescriptionVersionId(prescription.id);
+    setPrescriptionForm(activeForm);
+    savedPrescriptionSnapshotRef.current = serializePrescriptionForm(activeForm);
     setInfo("Continuing the active correction draft");
   };
 
@@ -1545,7 +1576,8 @@ export default function ConsultationWorkspacePage() {
     const currentConsultation = consultationRef.current;
     const currentPrescription = prescriptionRef.current;
     const currentForm = prescriptionFormRef.current;
-    if (!auth.accessToken || !auth.tenantId || !currentConsultation || currentConsultation.status !== "DRAFT") return currentPrescription;
+    if (!auth.accessToken || !auth.tenantId || !currentConsultation) return currentPrescription;
+    if (!currentPrescription && currentConsultation.status !== "DRAFT") return null;
     if (currentPrescription && currentPrescription.status !== "DRAFT" && currentPrescription.status !== "PREVIEWED") return currentPrescription;
     if (!currentPrescription && !hasPrescriptionContent(currentForm)) return null;
     const body = buildPrescriptionInput(currentForm, currentConsultation);
@@ -1658,11 +1690,13 @@ export default function ConsultationWorkspacePage() {
       });
       setPrescription(corrected);
       prescriptionRef.current = corrected;
-      savedPrescriptionSnapshotRef.current = serializePrescriptionForm(prescriptionForm);
+      const correctedForm = emptyPrescriptionForm(corrected, consultation);
+      setPrescriptionForm(correctedForm);
+      savedPrescriptionSnapshotRef.current = serializePrescriptionForm(correctedForm);
       setInvalidMedicineRowIds([]);
       const historyRows = await getPrescriptionHistory(auth.accessToken, auth.tenantId, corrected.id).catch(() => [corrected]);
       setPrescriptionHistory(historyRows);
-      setSelectedPrescriptionVersionId(historyRows[historyRows.length - 1]?.id || corrected.id);
+      setSelectedPrescriptionVersionId(corrected.id);
       setInfo(flowType === "FOLLOW_UP" ? "Follow-up prescription draft created" : "Correction draft created");
     } catch (err) {
       if (err instanceof PrescriptionPayloadValidationError) {
@@ -1791,6 +1825,7 @@ export default function ConsultationWorkspacePage() {
   const submitLabOrder = async () => {
     if (!auth.accessToken || !auth.tenantId || !consultation) return;
     const parsed = labOrderCreateSchema.safeParse({
+      patientId: consultation.patientId,
       testIds: labOrderTestIds,
       notes: labOrderNotes.trim() || undefined,
     });
@@ -2249,7 +2284,17 @@ export default function ConsultationWorkspacePage() {
 
       <Card sx={{ boxShadow: "none" }}>
         <CardContent sx={{ py: 0.5, "&:last-child": { pb: 0.5 } }}>
-          <Tabs value={activeTab} onChange={(_, value) => setActiveTab(value)} variant="scrollable" scrollButtons="auto">
+          <Tabs
+            value={activeTab}
+            onChange={(_, value) => {
+              setActiveTab(value);
+              const nextParams = new URLSearchParams(searchParams);
+              nextParams.set("tab", consultationTabIndexToKey(value));
+              setSearchParams(nextParams, { replace: true });
+            }}
+            variant="scrollable"
+            scrollButtons="auto"
+          >
             <Tab label="Consultation" />
             <Tab label="Prescription" />
             <Tab label="History" />

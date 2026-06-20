@@ -196,7 +196,11 @@ public class LabController {
     public LabOrderResponse reviewOrder(@PathVariable UUID id, @Valid @RequestBody LabOrderDoctorReviewRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return toResponse(labService.reviewReport(tenantId, id, new LabOrderDoctorReviewCommand(request.comments()), actorAppUserId));
+        return toResponse(labService.reviewReport(tenantId, id, new LabOrderDoctorReviewCommand(
+                request.decision() == null ? null : request.decision().name(),
+                request.reason(),
+                request.comments()
+        ), actorAppUserId));
     }
 
     private LabTestUpsertCommand toCommand(LabTestRequest request) {
@@ -310,6 +314,8 @@ public class LabController {
                 record.doctorReviewedAt(),
                 record.doctorReviewedByUserId() == null ? null : record.doctorReviewedByUserId().toString(),
                 record.doctorReviewedBy(),
+                record.doctorReviewDecision(),
+                record.doctorReviewReason(),
                 record.doctorComments(),
                 record.attachments().stream()
                         .map(attachment -> new LabOrderResponse.LabOrderAttachmentResponse(

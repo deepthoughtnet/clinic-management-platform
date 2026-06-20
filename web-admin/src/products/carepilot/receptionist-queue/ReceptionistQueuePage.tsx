@@ -21,6 +21,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { branding } from "../../../branding";
 import { useAuth } from "../../../auth/useAuth";
 import {
   addCareAiReceptionistStaffNote,
@@ -79,7 +80,7 @@ type ReceptionistQueuePageProps = {
 };
 
 export default function ReceptionistQueuePage({
-  title = "Arogia Receptionist Queue",
+  title = `${branding.productName} Receptionist Queue`,
   description = "Review escalations, callbacks, and human handoffs raised from AIVA chat and voice conversations.",
   forcedType,
   hideTypeFilter = false,

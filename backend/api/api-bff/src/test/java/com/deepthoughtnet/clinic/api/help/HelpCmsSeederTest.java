@@ -43,7 +43,7 @@ class HelpCmsSeederTest {
     }
 
     @Test
-    void seedCreatesReportsHelpPageWithDbBackedContent() {
+    void seedCreatesLaboratoryHelpPageWithDbBackedContent() {
         when(pageRepository.findByPageKeyIgnoreCase(anyString())).thenReturn(Optional.empty());
         when(pageRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(sectionRepository.findByPage_IdAndSectionKeyIgnoreCase(any(), anyString())).thenReturn(Optional.empty());
@@ -54,39 +54,37 @@ class HelpCmsSeederTest {
 
         ArgumentCaptor<HelpPageEntity> pageCaptor = ArgumentCaptor.forClass(HelpPageEntity.class);
         verify(pageRepository, atLeastOnce()).save(pageCaptor.capture());
-        HelpPageEntity reportsPage = pageCaptor.getAllValues().stream()
-                .filter(page -> "REPORTS".equals(page.getPageKey()))
+        HelpPageEntity labPage = pageCaptor.getAllValues().stream()
+                .filter(page -> "LABORATORY".equals(page.getPageKey()))
                 .findFirst()
                 .orElseThrow();
-        assertThat(reportsPage.getTitle()).isEqualTo("Reports");
-        assertThat(reportsPage.getIcon()).isEqualTo("assessment");
+        assertThat(labPage.getTitle()).isEqualTo("Laboratory");
+        assertThat(labPage.getIcon()).isEqualTo("science");
 
         ArgumentCaptor<HelpSectionEntity> sectionCaptor = ArgumentCaptor.forClass(HelpSectionEntity.class);
         verify(sectionRepository, atLeastOnce()).save(sectionCaptor.capture());
         List<HelpSectionEntity> reportSections = sectionCaptor.getAllValues().stream()
-                .filter(section -> section.getPage() != null && "REPORTS".equals(section.getPage().getPageKey()))
+                .filter(section -> section.getPage() != null && "LABORATORY".equals(section.getPage().getPageKey()))
                 .toList();
 
         assertThat(reportSections).extracting(HelpSectionEntity::getSectionType).containsExactly(
                 "DESCRIPTION",
                 "WORKFLOW",
-                "REPORT_TYPES",
-                "FILTERS",
-                "EXPORT_CSV",
+                "TAB_GUIDE",
                 "VALIDATION_RULES",
                 "COMMON_ERRORS",
                 "BEST_PRACTICES",
                 "FAQ",
                 "RELATED_PAGES",
-                "PERMISSIONS",
                 "TIPS",
+                "PERMISSIONS",
                 "KNOWN_LIMITATIONS"
         );
 
         ArgumentCaptor<HelpContentEntity> contentCaptor = ArgumentCaptor.forClass(HelpContentEntity.class);
         verify(contentRepository, atLeastOnce()).save(contentCaptor.capture());
         assertThat(contentCaptor.getAllValues().stream().map(HelpContentEntity::getContentJson))
-                .anyMatch(json -> json.contains("csv export") && json.contains("lab operations") && json.contains("tenant-scoped"));
+                .anyMatch(json -> json.contains("lab test catalog") && json.contains("doctor review") && json.contains("report generation"));
     }
 
     @Test
@@ -137,5 +135,35 @@ class HelpCmsSeederTest {
                 .contains("search and select patient")
                 .contains("payment reference")
                 .contains("refund");
+    }
+
+    @Test
+    void seedCreatesClinicHelpPagesWithDbBackedContent() {
+        when(pageRepository.findByPageKeyIgnoreCase(anyString())).thenReturn(Optional.empty());
+        when(pageRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(sectionRepository.findByPage_IdAndSectionKeyIgnoreCase(any(), anyString())).thenReturn(Optional.empty());
+        when(sectionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(contentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        seeder.seed();
+
+        ArgumentCaptor<HelpPageEntity> pageCaptor = ArgumentCaptor.forClass(HelpPageEntity.class);
+        verify(pageRepository, atLeastOnce()).save(pageCaptor.capture());
+        List<String> pageKeys = pageCaptor.getAllValues().stream().map(HelpPageEntity::getPageKey).toList();
+        assertThat(pageKeys).contains(
+                "CLINIC_DASHBOARD",
+                "DAY_BOARD",
+                "NOTIFICATIONS",
+                "VACCINATIONS",
+                "DOCTOR_AVAILABILITY",
+                "CLINIC_PROFILE",
+                "USERS",
+                "CONSULTATION_WORKSPACE",
+                "CONSULTATION_PRESCRIPTION",
+                "CONSULTATION_HISTORY",
+                "CONSULTATION_INVESTIGATIONS",
+                "CONSULTATION_LAB_ORDERS",
+                "CONSULTATION_AI_ASSIST"
+        );
     }
 }

@@ -27,7 +27,7 @@ import {
   type PatientPortalSession,
   patientPortalHomePath,
 } from "./api/patientPortal";
-import { branding, productAndTagline, productTitle } from "./branding";
+import { branding, footerBrandingLine, productAndTagline, productTitle } from "./branding";
 
 function deriveClinicLoginUrl() {
   const url = new URL(window.location.origin);
@@ -245,14 +245,14 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
         <footer className="site-footer">
           <div className="footer-grid">
             <section className="footer-brand-block">
-              <span className="eyebrow">Arogia</span>
-              <strong>Arogia</strong>
-              <p className="footer-tagline">{productAndTagline()}</p>
-              <p>Smarter Care. Powered by AIVA.</p>
+              <span className="eyebrow">{branding.productName}</span>
+              <strong>{branding.productName}</strong>
+              <p className="footer-tagline">{footerBrandingLine()}</p>
+              <p>{branding.tagline} for clinics, patients, and teams.</p>
             </section>
 
             <section className="footer-column">
-              <strong>Arogia</strong>
+              <strong>{branding.productName}</strong>
               <div className="footer-link-list">
                 <Link to="/">About</Link>
                 <Link to="/clinics">For Clinics</Link>
@@ -284,8 +284,8 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
             </section>
           </div>
           <div className="footer-bottom">
-            <p>© 2026 DeepThoughtNet. Arogia - Smart Healthcare Management Platform.</p>
-            <Link to={patientPortalHomePath(session)}>Open Arogia Patient Portal</Link>
+            <p>© 2026 DeepThoughtNet.</p>
+            <Link to={patientPortalHomePath(session)}>Open {branding.productName} Patient Portal</Link>
           </div>
         </footer>
       )}

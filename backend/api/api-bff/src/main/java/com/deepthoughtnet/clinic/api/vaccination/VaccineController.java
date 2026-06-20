@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/api/vaccines")
@@ -39,7 +40,7 @@ public class VaccineController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('vaccination.manage')")
-    public VaccineResponse create(@RequestBody VaccineRequest request) {
+    public VaccineResponse create(@Valid @RequestBody VaccineRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(vaccinationService.createVaccine(tenantId, toCommand(request), actorAppUserId));
@@ -47,7 +48,7 @@ public class VaccineController {
 
     @PutMapping("/{id}")
     @PreAuthorize("@permissionChecker.hasPermission('vaccination.manage')")
-    public VaccineResponse update(@PathVariable UUID id, @RequestBody VaccineRequest request) {
+    public VaccineResponse update(@PathVariable UUID id, @Valid @RequestBody VaccineRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(vaccinationService.updateVaccine(tenantId, id, toCommand(request), actorAppUserId));

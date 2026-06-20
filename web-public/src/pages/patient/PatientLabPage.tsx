@@ -10,6 +10,7 @@ import {
   type PatientPortalLabOrderResponse,
   type PatientPortalSession,
 } from "../../api/patientPortal";
+import { branding } from "../../branding";
 
 function statusLabel(status: string | null | undefined) {
   return (status || "PENDING").replaceAll("_", " ");
@@ -109,7 +110,7 @@ export default function PatientLabPage({
       <div className="patient-lab-shell">
         <header className="patient-lab-header">
           <div className="section-heading patient-lab-heading">
-            <span className="eyebrow">Arogia Patient Portal</span>
+            <span className="eyebrow">{branding.productName} Patient Portal</span>
             <h1>Laboratory Reports</h1>
             <p>View your lab orders, track report status, and download PDFs securely from your own tenant session.</p>
           </div>

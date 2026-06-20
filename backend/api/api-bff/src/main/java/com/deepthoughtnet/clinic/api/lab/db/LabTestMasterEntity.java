@@ -30,7 +30,7 @@ public class LabTestMasterEntity {
     @Column(name = "tenant_id", nullable = false)
     private UUID tenantId;
 
-    @Column(name = "test_code", nullable = false, length = 64)
+    @Column(name = "test_code", length = 64)
     private String testCode;
 
     @Column(name = "test_name", nullable = false, length = 256)

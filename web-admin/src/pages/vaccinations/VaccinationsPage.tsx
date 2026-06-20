@@ -30,8 +30,10 @@ import {
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 
+import { firstZodError, mapZodErrors, vaccinationMasterSchema, vaccinationRecordSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactTableFrame, compactChipSx } from "../../components/compact/CompactUi";
+import RequiredLabel from "../../components/forms/RequiredLabel";
 import {
   createVaccine,
   deactivateVaccine,
@@ -110,6 +112,8 @@ export default function VaccinationsPage() {
   const [selectedPatient, setSelectedPatient] = React.useState<Patient | null>(null);
   const [vaccineForm, setVaccineForm] = React.useState<VaccineFormState>(emptyVaccineForm());
   const [vaccinationForm, setVaccinationForm] = React.useState<VaccinationFormState>(emptyVaccinationForm());
+  const [vaccineFieldErrors, setVaccineFieldErrors] = React.useState<Record<string, string>>({});
+  const [vaccinationFieldErrors, setVaccinationFieldErrors] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -195,21 +199,39 @@ export default function VaccinationsPage() {
   }
 
   const saveVaccine = async () => {
-    if (!auth.accessToken || !auth.tenantId || !vaccineForm.vaccineName.trim()) {
-      setError("Enter a vaccine name.");
+    if (!auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    const parsed = vaccinationMasterSchema.safeParse({
+      vaccineName: vaccineForm.vaccineName,
+      description: vaccineForm.description,
+      ageGroup: vaccineForm.ageGroup,
+      recommendedGapDays: vaccineForm.recommendedGapDays,
+      defaultPrice: vaccineForm.defaultPrice,
+      active: vaccineForm.active,
+    });
+    if (!parsed.success) {
+      const errors = mapZodErrors(parsed.error);
+      setVaccineFieldErrors(errors);
+      setError(firstZodError(parsed.error));
+      window.setTimeout(() => {
+        const firstField = ["vaccineName", "defaultPrice", "recommendedGapDays", "ageGroup", "description"].find((field) => errors[field]);
+        document.getElementById(firstField ? `vaccine-${firstField}` : "vaccine-vaccineName")?.focus();
+      }, 0);
       return;
     }
     setSaving(true);
     setError(null);
     setSuccess(null);
+    setVaccineFieldErrors({});
       try {
         await createVaccine(auth.accessToken, auth.tenantId, {
-          vaccineName: vaccineForm.vaccineName.trim(),
-          description: (vaccineForm.description ?? "").trim() || null,
-          ageGroup: (vaccineForm.ageGroup ?? "").trim() || null,
-          recommendedGapDays: vaccineForm.recommendedGapDays,
-          defaultPrice: vaccineForm.defaultPrice,
-          active: vaccineForm.active,
+          vaccineName: parsed.data.vaccineName,
+          description: parsed.data.description ?? null,
+          ageGroup: parsed.data.ageGroup ?? null,
+          recommendedGapDays: parsed.data.recommendedGapDays ?? null,
+          defaultPrice: parsed.data.defaultPrice ?? null,
+          active: parsed.data.active,
         });
       setVaccineForm(emptyVaccineForm());
       await loadAll();
@@ -222,25 +244,48 @@ export default function VaccinationsPage() {
   };
 
   const recordVaccination = async () => {
-    if (!auth.accessToken || !auth.tenantId || !selectedPatient || !vaccinationForm.vaccineId) {
-      setError("Select a patient and vaccine before recording.");
+    if (!auth.accessToken || !auth.tenantId || !selectedPatient) {
+      return;
+    }
+    const parsed = vaccinationRecordSchema.safeParse({
+      patientId: selectedPatient.id,
+      vaccineId: vaccinationForm.vaccineId,
+      doseNumber: vaccinationForm.doseNumber.trim() ? Number(vaccinationForm.doseNumber) : null,
+      givenDate: vaccinationForm.givenDate || null,
+      nextDueDate: vaccinationForm.nextDueDate || null,
+      batchNumber: vaccinationForm.batchNumber,
+      notes: vaccinationForm.notes,
+      administeredByUserId: vaccinationForm.administeredByUserId || null,
+      billId: vaccinationForm.addToBill && vaccinationForm.billId.trim() ? vaccinationForm.billId.trim() : null,
+      addToBill: vaccinationForm.addToBill,
+      billItemUnitPrice: vaccinationForm.billItemUnitPrice.trim() ? Number(vaccinationForm.billItemUnitPrice) : null,
+    });
+    if (!parsed.success) {
+      const errors = mapZodErrors(parsed.error);
+      setVaccinationFieldErrors(errors);
+      setError(firstZodError(parsed.error));
+      window.setTimeout(() => {
+        const firstField = ["vaccineId", "givenDate", "patientId", "billItemUnitPrice", "batchNumber", "notes"].find((field) => errors[field]);
+        document.getElementById(firstField ? `vaccination-${firstField}` : "vaccination-vaccineId")?.focus();
+      }, 0);
       return;
     }
     setSaving(true);
     setError(null);
     setSuccess(null);
+    setVaccinationFieldErrors({});
     try {
       await recordPatientVaccination(auth.accessToken, auth.tenantId, selectedPatient.id, {
-        vaccineId: vaccinationForm.vaccineId,
-        doseNumber: vaccinationForm.doseNumber.trim() ? Number(vaccinationForm.doseNumber) : null,
-        givenDate: vaccinationForm.givenDate || null,
-        nextDueDate: vaccinationForm.nextDueDate || null,
-        batchNumber: vaccinationForm.batchNumber.trim() || null,
-        notes: vaccinationForm.notes.trim() || null,
-        administeredByUserId: vaccinationForm.administeredByUserId.trim() || null,
-        billId: vaccinationForm.addToBill && vaccinationForm.billId.trim() ? vaccinationForm.billId.trim() : null,
-        addToBill: vaccinationForm.addToBill,
-        billItemUnitPrice: vaccinationForm.billItemUnitPrice.trim() ? Number(vaccinationForm.billItemUnitPrice) : null,
+        vaccineId: parsed.data.vaccineId,
+        doseNumber: parsed.data.doseNumber ?? null,
+        givenDate: parsed.data.givenDate ?? null,
+        nextDueDate: parsed.data.nextDueDate ?? null,
+        batchNumber: parsed.data.batchNumber ?? null,
+        notes: parsed.data.notes ?? null,
+        administeredByUserId: parsed.data.administeredByUserId ?? null,
+        billId: parsed.data.billId ?? null,
+        addToBill: parsed.data.addToBill ?? false,
+        billItemUnitPrice: parsed.data.billItemUnitPrice ?? null,
       });
       setVaccinationForm(emptyVaccinationForm());
       setPatientQuery("");
@@ -318,12 +363,14 @@ export default function VaccinationsPage() {
                 ) : null}
 
                 <FormControl fullWidth size="small">
-                  <InputLabel id="vaccination-vaccine-label">Vaccine</InputLabel>
+                  <InputLabel id="vaccination-vaccine-label"><RequiredLabel text="Vaccine" required /></InputLabel>
                   <Select
+                    id="vaccination-vaccineId"
                     labelId="vaccination-vaccine-label"
                     label="Vaccine"
                     value={vaccinationForm.vaccineId}
                     onChange={(e) => setVaccinationForm((current) => ({ ...current, vaccineId: String(e.target.value) }))}
+                    error={Boolean(vaccinationFieldErrors.vaccineId)}
                   >
                     {vaccines.map((vaccine) => (
                       <MenuItem key={vaccine.id} value={vaccine.id}>
@@ -331,23 +378,24 @@ export default function VaccinationsPage() {
                       </MenuItem>
                     ))}
                   </Select>
+                  {vaccinationFieldErrors.vaccineId ? <Typography variant="caption" color="error">{vaccinationFieldErrors.vaccineId}</Typography> : null}
                 </FormControl>
 
                 <Grid container spacing={1}>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField size="small" fullWidth label="Dose number" value={vaccinationForm.doseNumber} onChange={(e) => setVaccinationForm((current) => ({ ...current, doseNumber: e.target.value }))} />
+                    <TextField size="small" fullWidth id="vaccination-doseNumber" label="Dose number" value={vaccinationForm.doseNumber} onChange={(e) => setVaccinationForm((current) => ({ ...current, doseNumber: e.target.value }))} error={Boolean(vaccinationFieldErrors.doseNumber)} helperText={vaccinationFieldErrors.doseNumber || "Optional positive whole number."} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField size="small" fullWidth label="Given date" type="date" value={vaccinationForm.givenDate} onChange={(e) => setVaccinationForm((current) => ({ ...current, givenDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                    <TextField size="small" fullWidth id="vaccination-givenDate" label={<RequiredLabel text="Given date" required />} type="date" value={vaccinationForm.givenDate} onChange={(e) => setVaccinationForm((current) => ({ ...current, givenDate: e.target.value }))} InputLabelProps={{ shrink: true }} required error={Boolean(vaccinationFieldErrors.givenDate)} helperText={vaccinationFieldErrors.givenDate || "Required."} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField size="small" fullWidth label="Next due date" type="date" value={vaccinationForm.nextDueDate} onChange={(e) => setVaccinationForm((current) => ({ ...current, nextDueDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                    <TextField size="small" fullWidth id="vaccination-nextDueDate" label="Next due date" type="date" value={vaccinationForm.nextDueDate} onChange={(e) => setVaccinationForm((current) => ({ ...current, nextDueDate: e.target.value }))} InputLabelProps={{ shrink: true }} error={Boolean(vaccinationFieldErrors.nextDueDate)} helperText={vaccinationFieldErrors.nextDueDate} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField size="small" fullWidth label="Batch number" value={vaccinationForm.batchNumber} onChange={(e) => setVaccinationForm((current) => ({ ...current, batchNumber: e.target.value }))} />
+                    <TextField size="small" fullWidth id="vaccination-batchNumber" label="Batch number" value={vaccinationForm.batchNumber} onChange={(e) => setVaccinationForm((current) => ({ ...current, batchNumber: e.target.value }))} error={Boolean(vaccinationFieldErrors.batchNumber)} helperText={vaccinationFieldErrors.batchNumber || "Optional, max 60 characters."} />
                   </Grid>
                   <Grid size={12}>
-                    <TextField size="small" fullWidth label="Notes" value={vaccinationForm.notes} onChange={(e) => setVaccinationForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} />
+                    <TextField size="small" fullWidth id="vaccination-notes" label="Notes" value={vaccinationForm.notes} onChange={(e) => setVaccinationForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} error={Boolean(vaccinationFieldErrors.notes)} helperText={vaccinationFieldErrors.notes || "Optional, max 250 characters."} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
                     <FormControl fullWidth size="small">
@@ -368,10 +416,10 @@ export default function VaccinationsPage() {
                     </FormControl>
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField size="small" fullWidth label="Bill ID" value={vaccinationForm.billId} onChange={(e) => setVaccinationForm((current) => ({ ...current, billId: e.target.value }))} disabled={!vaccinationForm.addToBill} />
+                    <TextField size="small" fullWidth id="vaccination-billId" label="Bill ID" value={vaccinationForm.billId} onChange={(e) => setVaccinationForm((current) => ({ ...current, billId: e.target.value }))} disabled={!vaccinationForm.addToBill} error={Boolean(vaccinationFieldErrors.billId)} helperText={vaccinationForm.addToBill ? (vaccinationFieldErrors.billId || "Optional when bill linking is enabled.") : ""} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField size="small" fullWidth label="Bill item unit price" value={vaccinationForm.billItemUnitPrice} onChange={(e) => setVaccinationForm((current) => ({ ...current, billItemUnitPrice: e.target.value }))} disabled={!vaccinationForm.addToBill} />
+                    <TextField size="small" fullWidth id="vaccination-billItemUnitPrice" label={<RequiredLabel text="Bill item unit price" required={vaccinationForm.addToBill} />} value={vaccinationForm.billItemUnitPrice} onChange={(e) => setVaccinationForm((current) => ({ ...current, billItemUnitPrice: e.target.value }))} disabled={!vaccinationForm.addToBill} error={Boolean(vaccinationFieldErrors.billItemUnitPrice)} helperText={vaccinationForm.addToBill ? (vaccinationFieldErrors.billItemUnitPrice || "Required when adding to bill.") : ""} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
                     <FormControlLabel
@@ -406,30 +454,36 @@ export default function VaccinationsPage() {
                 </Box>
                 <Grid container spacing={1}>
                   <Grid size={12}>
-                    <TextField size="small" fullWidth label="Vaccine name" value={vaccineForm.vaccineName} onChange={(e) => setVaccineForm((current) => ({ ...current, vaccineName: e.target.value }))} />
+                    <TextField size="small" fullWidth id="vaccine-vaccineName" label={<RequiredLabel text="Vaccine name" required />} value={vaccineForm.vaccineName} onChange={(e) => setVaccineForm((current) => ({ ...current, vaccineName: e.target.value }))} required error={Boolean(vaccineFieldErrors.vaccineName)} helperText={vaccineFieldErrors.vaccineName || "Required, max 100 characters."} />
                   </Grid>
                   <Grid size={12}>
-                    <TextField size="small" fullWidth label="Description" value={vaccineForm.description ?? ""} onChange={(e) => setVaccineForm((current) => ({ ...current, description: e.target.value }))} multiline minRows={2} />
+                    <TextField size="small" fullWidth id="vaccine-description" label="Description" value={vaccineForm.description ?? ""} onChange={(e) => setVaccineForm((current) => ({ ...current, description: e.target.value }))} multiline minRows={2} error={Boolean(vaccineFieldErrors.description)} helperText={vaccineFieldErrors.description || "Optional, max 250 characters."} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField size="small" fullWidth label="Age group" value={vaccineForm.ageGroup ?? ""} onChange={(e) => setVaccineForm((current) => ({ ...current, ageGroup: e.target.value }))} />
+                    <TextField size="small" fullWidth id="vaccine-ageGroup" label="Age group" value={vaccineForm.ageGroup ?? ""} onChange={(e) => setVaccineForm((current) => ({ ...current, ageGroup: e.target.value }))} error={Boolean(vaccineFieldErrors.ageGroup)} helperText={vaccineFieldErrors.ageGroup || "Optional, max 60 characters."} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 3 }}>
                     <TextField
                       size="small"
                       fullWidth
+                      id="vaccine-recommendedGapDays"
                       label="Gap days"
                       value={vaccineForm.recommendedGapDays ?? ""}
                       onChange={(e) => setVaccineForm((current) => ({ ...current, recommendedGapDays: e.target.value ? Number(e.target.value) : null }))}
+                      error={Boolean(vaccineFieldErrors.recommendedGapDays)}
+                      helperText={vaccineFieldErrors.recommendedGapDays || "Optional, zero or greater."}
                     />
                   </Grid>
                   <Grid size={{ xs: 12, md: 3 }}>
                     <TextField
                       size="small"
                       fullWidth
+                      id="vaccine-defaultPrice"
                       label="Default price"
                       value={vaccineForm.defaultPrice ?? ""}
                       onChange={(e) => setVaccineForm((current) => ({ ...current, defaultPrice: e.target.value ? Number(e.target.value) : null }))}
+                      error={Boolean(vaccineFieldErrors.defaultPrice)}
+                      helperText={vaccineFieldErrors.defaultPrice || "Required, zero or greater, up to 2 decimals."}
                     />
                   </Grid>
                   <Grid size={12}>

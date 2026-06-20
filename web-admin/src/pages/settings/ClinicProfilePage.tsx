@@ -15,14 +15,17 @@ import {
 } from "@mui/material";
 
 import {
+  firstZodError,
   clinicProfileSchema,
   getCitySuggestions,
   getCountrySuggestions,
   getIndiaStateSuggestions,
+  mapZodErrors,
 } from "@deepthoughtnet/form-validation-kit";
 
 import { useAuth } from "../../auth/useAuth";
 import AutocompleteTextInput from "../../components/forms/AutocompleteTextInput";
+import RequiredLabel from "../../components/forms/RequiredLabel";
 import {
   getClinicProfile,
   getPrescriptionTemplate,
@@ -181,6 +184,7 @@ export default function ClinicProfilePage() {
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
 
   React.useEffect(() => {
     let cancelled = false;
@@ -266,10 +270,17 @@ export default function ClinicProfilePage() {
       const payload = toInput(form);
       const parsed = clinicProfileSchema.safeParse(payload);
       if (!parsed.success) {
-        setError(parsed.error.issues[0]?.message || "Please correct the highlighted clinic profile fields.");
+        const nextFieldErrors = mapZodErrors(parsed.error);
+        setFieldErrors(nextFieldErrors);
+        setError(firstZodError(parsed.error) || "Please correct the highlighted clinic profile fields.");
+        const firstInvalidField = Object.keys(nextFieldErrors)[0];
+        if (firstInvalidField) {
+          window.setTimeout(() => document.getElementById(`clinic-profile-${firstInvalidField}`)?.focus(), 0);
+        }
         setSaving(false);
         return;
       }
+      setFieldErrors({});
       const saved = await updateClinicProfile(auth.accessToken, auth.tenantId, payload);
       setForm(toFormState(saved));
       setSuccess("Clinic profile saved");
@@ -337,7 +348,17 @@ export default function ClinicProfilePage() {
             <Stack spacing={3}>
               <Grid container spacing={2}>
                 <Grid size={{ xs: 12, md: 6 }}>
-                  <TextField fullWidth label="Clinic name" value={form.clinicName} onChange={updateTextField("clinicName")} disabled={!canEdit || saving} />
+                  <TextField
+                    id="clinic-profile-clinicName"
+                    fullWidth
+                    label={<RequiredLabel text="Clinic name" required />}
+                    value={form.clinicName}
+                    onChange={updateTextField("clinicName")}
+                    disabled={!canEdit || saving}
+                    required
+                    error={Boolean(fieldErrors.clinicName)}
+                    helperText={fieldErrors.clinicName || "Required."}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
                   <TextField fullWidth label="Display name" value={form.displayName} onChange={updateTextField("displayName")} disabled={!canEdit || saving} />

@@ -24,6 +24,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../auth/useAuth";
+import { dashboardFilterSchema, firstZodError } from "@deepthoughtnet/form-validation-kit";
 import {
   getClinicDashboard,
   getClinicUsers,
@@ -182,6 +183,7 @@ export default function DashboardPage() {
   const initialRange = dateRangeForPreset("TODAY");
   const [startDate, setStartDate] = React.useState(initialRange.startDate);
   const [endDate, setEndDate] = React.useState(initialRange.endDate);
+  const [dateFieldErrors, setDateFieldErrors] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -255,6 +257,24 @@ export default function DashboardPage() {
       setLoading(false);
       return;
     }
+    const parsed = dashboardFilterSchema.safeParse({
+      startDate,
+      endDate,
+      doctorUserId: isDoctor ? undefined : (doctorUserId || undefined),
+    });
+    if (!parsed.success) {
+      setDateFieldErrors({
+        startDate: parsed.error.issues.find((issue) => issue.path.join(".") === "startDate")?.message || "",
+        endDate: parsed.error.issues.find((issue) => issue.path.join(".") === "endDate")?.message || "",
+        doctorUserId: parsed.error.issues.find((issue) => issue.path.join(".") === "doctorUserId")?.message || "",
+      });
+      setError(firstZodError(parsed.error));
+      window.setTimeout(() => {
+        document.getElementById(parsed.error.issues[0]?.path[0] === "endDate" ? "dashboard-endDate" : "dashboard-startDate")?.focus();
+      }, 0);
+      return;
+    }
+    setDateFieldErrors({});
     setLoading(true);
     setError(null);
     try {
@@ -409,8 +429,8 @@ export default function DashboardPage() {
                 <MenuItem value="CUSTOM">Custom Range</MenuItem>
               </Select>
             </FormControl>
-            <TextField size="small" sx={{ minWidth: 150 }} type="date" label="Start" value={startDate} onChange={(e) => { setPreset("CUSTOM"); setStartDate(e.target.value); }} InputLabelProps={{ shrink: true }} />
-            <TextField size="small" sx={{ minWidth: 150 }} type="date" label="End" value={endDate} onChange={(e) => { setPreset("CUSTOM"); setEndDate(e.target.value); }} InputLabelProps={{ shrink: true }} />
+            <TextField id="dashboard-startDate" size="small" sx={{ minWidth: 150 }} type="date" label="Start" value={startDate} onChange={(e) => { setPreset("CUSTOM"); setStartDate(e.target.value); }} InputLabelProps={{ shrink: true }} error={Boolean(dateFieldErrors.startDate)} helperText={dateFieldErrors.startDate || "Required."} />
+            <TextField id="dashboard-endDate" size="small" sx={{ minWidth: 150 }} type="date" label="End" value={endDate} onChange={(e) => { setPreset("CUSTOM"); setEndDate(e.target.value); }} InputLabelProps={{ shrink: true }} error={Boolean(dateFieldErrors.endDate)} helperText={dateFieldErrors.endDate || "Must be on or after start."} />
             {!isDoctor && !isBillingUser ? (
               <FormControl size="small" sx={{ minWidth: 200 }}>
                 <InputLabel id="dashboard-doctor">Doctor</InputLabel>

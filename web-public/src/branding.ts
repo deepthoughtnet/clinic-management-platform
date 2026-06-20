@@ -1,8 +1,8 @@
 const env = import.meta.env;
 
 export const branding = {
-  productName: env.VITE_PRODUCT_NAME?.trim() || "Arogia",
-  tagline: env.VITE_PRODUCT_TAGLINE?.trim() || "Smart Healthcare Management Platform",
+  productName: env.VITE_PRODUCT_NAME?.trim() || "Jeevanam Healthcare",
+  tagline: env.VITE_PRODUCT_TAGLINE?.trim() || "Intelligent Healthcare Platform",
   companyName: env.VITE_COMPANY_NAME?.trim() || "DeepThoughtNet",
   aiPlatformName: env.VITE_AI_PLATFORM_NAME?.trim() || "AIVA",
 };
@@ -13,4 +13,8 @@ export function productTitle() {
 
 export function productAndTagline() {
   return `${branding.productName} — ${branding.tagline}`;
+}
+
+export function footerBrandingLine() {
+  return `${branding.productName} · ${branding.tagline} · Powered by ${branding.aiPlatformName}`;
 }
