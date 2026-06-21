@@ -43,8 +43,20 @@ export const HELP_PAGE_ROUTES: HelpPageRoute[] = [
   { path: "/platform/help", pageKey: "PLATFORM_ADMIN", cmsPageKey: "PLATFORM_ADMIN", title: "Platform Admin" },
   { path: "/settings/clinic-profile", pageKey: "CLINIC_PROFILE", cmsPageKey: "CLINIC_PROFILE", title: "Clinic Profile" },
   { path: "/settings/users-roles", pageKey: "USERS", cmsPageKey: "USERS", title: "Users / Admins" },
-  { path: "/carepilot/campaigns", pageKey: "CAMPAIGNS", cmsPageKey: "CAMPAIGNS", title: "Campaigns" },
-  { path: "/carepilot/leads", pageKey: "LEADS", cmsPageKey: "LEADS", title: "Leads" },
+  { path: "/carepilot/campaigns", pageKey: "JEEVANAM_ENGAGE_CAMPAIGNS", cmsPageKey: "CAMPAIGNS", title: "Jeevanam Engage Campaigns" },
+  { path: "/carepilot/leads", pageKey: "ENGAGE_LEADS", cmsPageKey: "ENGAGE_LEADS", title: "Jeevanam Engage Leads" },
+  { path: "/carepilot/analytics", pageKey: "ENGAGE_ANALYTICS", cmsPageKey: "ENGAGE_ANALYTICS", title: "Jeevanam Engage Analytics" },
+  { path: "/carepilot/ops", pageKey: "ENGAGE_OPS_CONSOLE", cmsPageKey: "ENGAGE_OPS_CONSOLE", title: "Jeevanam Engage Ops Console" },
+  { path: "/carepilot/messaging", pageKey: "ENGAGE_MESSAGING", cmsPageKey: "ENGAGE_MESSAGING", title: "Jeevanam Engage Messaging" },
+  { path: "/carepilot/reminders", pageKey: "ENGAGE_REMINDERS", cmsPageKey: "ENGAGE_REMINDERS", title: "Jeevanam Engage Reminders" },
+  { path: "/carepilot/engagement", pageKey: "ENGAGE_PATIENT_ENGAGEMENT", cmsPageKey: "ENGAGE_PATIENT_ENGAGEMENT", title: "Jeevanam Engage Patient Engagement" },
+  { path: "/carepilot/webinars", pageKey: "ENGAGE_WEBINAR_AUTOMATION", cmsPageKey: "ENGAGE_WEBINAR_AUTOMATION", title: "Jeevanam Engage Webinar Automation" },
+  { path: "/carepilot/ai-calls", pageKey: "ENGAGE_AI_CALLS", cmsPageKey: "ENGAGE_AI_CALLS", title: "Jeevanam Engage AI Calls" },
+  { path: "/carepilot/ai-receptionist/active-conversations", pageKey: "ENGAGE_AI_RECEPTIONIST_ACTIVE", cmsPageKey: "ENGAGE_AI_RECEPTIONIST_ACTIVE", title: "Jeevanam Engage AI Receptionist Active Conversations" },
+  { path: "/carepilot/ai-receptionist/callback-queue", pageKey: "ENGAGE_AI_RECEPTIONIST_CALLBACK", cmsPageKey: "ENGAGE_AI_RECEPTIONIST_CALLBACK", title: "Jeevanam Engage AI Receptionist Callback Queue" },
+  { path: "/carepilot/ai-receptionist/escalation-queue", pageKey: "ENGAGE_AI_RECEPTIONIST_ESCALATION", cmsPageKey: "ENGAGE_AI_RECEPTIONIST_ESCALATION", title: "Jeevanam Engage AI Receptionist Escalation Queue" },
+  { path: "/carepilot/ai-receptionist/appointment-handoffs", pageKey: "ENGAGE_AI_RECEPTIONIST_APPOINTMENT_HANDOFF", cmsPageKey: "ENGAGE_AI_RECEPTIONIST_APPOINTMENT_HANDOFF", title: "Jeevanam Engage AI Receptionist Appointment Handoff" },
+  { path: "/carepilot/receptionist-queue", pageKey: "ENGAGE_RECEPTIONIST_QUEUE", cmsPageKey: "ENGAGE_RECEPTIONIST_QUEUE", title: "Jeevanam Engage Receptionist Queue" },
   { path: "/admin/templates", pageKey: "PLATFORM_ADMIN", cmsPageKey: "PLATFORM_ADMIN", title: "Platform Admin" },
   { path: "/admin/notification-settings", pageKey: "PLATFORM_ADMIN", cmsPageKey: "PLATFORM_ADMIN", title: "Platform Admin" },
   { path: "/admin/integrations", pageKey: "PLATFORM_ADMIN", cmsPageKey: "PLATFORM_ADMIN", title: "Platform Admin" },
@@ -81,6 +93,48 @@ export function resolveHelpPageMeta(pathname: string): HelpPageRoute {
 
 export function resolveHelpRouteByPageKey(pageKey: string): HelpPageRoute | null {
   const normalized = pageKey.trim().toUpperCase();
+  if (normalized === "CAMPAIGNS" || normalized === "JEEVANAM_ENGAGE_CAMPAIGNS") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/campaigns") || null;
+  }
+  if (normalized === "LEADS") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/leads") || null;
+  }
+  if (normalized === "ANALYTICS") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/analytics") || null;
+  }
+  if (normalized === "OPS_CONSOLE" || normalized === "OPS") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ops") || null;
+  }
+  if (normalized === "MESSAGING") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/messaging") || null;
+  }
+  if (normalized === "REMINDERS") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/reminders") || null;
+  }
+  if (normalized === "PATIENT_ENGAGEMENT" || normalized === "ENGAGEMENT") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/engagement") || null;
+  }
+  if (normalized === "WEBINAR_AUTOMATION" || normalized === "WEBINARS") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/webinars") || null;
+  }
+  if (normalized === "AI_CALLS") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ai-calls") || null;
+  }
+  if (normalized === "AI_RECEPTIONIST_ACTIVE") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ai-receptionist/active-conversations") || null;
+  }
+  if (normalized === "AI_RECEPTIONIST_CALLBACK") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ai-receptionist/callback-queue") || null;
+  }
+  if (normalized === "AI_RECEPTIONIST_ESCALATION") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ai-receptionist/escalation-queue") || null;
+  }
+  if (normalized === "AI_RECEPTIONIST_APPOINTMENT_HANDOFF") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/ai-receptionist/appointment-handoffs") || null;
+  }
+  if (normalized === "RECEPTIONIST_QUEUE") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/carepilot/receptionist-queue") || null;
+  }
   if (normalized === "PHARMACY") {
     return HELP_PAGE_ROUTES.find((route) => route.path === "/pharmacy/dashboard") || null;
   }

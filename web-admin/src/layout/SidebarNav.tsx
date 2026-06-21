@@ -50,6 +50,7 @@ import { NAV_GROUPS, type NavGroup, type NavItem } from "./nav";
 import { useAuth } from "../auth/useAuth";
 import { friendlyRoleLabel, hasTenantModule } from "../auth/moduleEntitlements";
 import { branding } from "../branding";
+import BrandMark from "../shared/components/branding/BrandMark";
 
 const GROUP_STATE_STORAGE_KEY = "clinic_sidebar_group_state_v1";
 
@@ -297,12 +298,11 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
     >
       <Box sx={{ px: compact ? 1 : 2, py: 1.75 }}>
         {compact ? (
-          <Typography variant="subtitle2" sx={{ fontWeight: 900, textAlign: "center" }}>AR</Typography>
+          <Box sx={{ display: "grid", placeItems: "center", py: 0.25 }}>
+            <BrandMark compact size={34} showCopy={false} title={branding.productName} />
+          </Box>
         ) : (
-          <>
-            <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{branding.productName}</Typography>
-            <Typography variant="caption" sx={{ opacity: 0.7 }}>{branding.tagline}</Typography>
-          </>
+          <BrandMark size={38} />
         )}
       </Box>
 

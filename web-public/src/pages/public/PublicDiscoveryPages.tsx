@@ -10,10 +10,10 @@ import {
   type PublicSpecialityDetailResponse,
   type PublicSpecialitySummaryResponse,
   fetchPublicJson,
-  patientBookingPath,
 } from "../../api/publicCatalog";
 import type { PatientPortalSession } from "../../api/patientPortal";
 import { branding } from "../../branding";
+import { patientPortalBookingPath } from "../patient/patientPortalClinicContext";
 
 type FetchState<T> = {
   data: T;
@@ -113,6 +113,31 @@ const TRUST_SIGNALS = [
   "AI-guided care navigation",
   "Secure patient experience",
 ] as const;
+
+const PUBLIC_LOCATION_STORAGE_KEY = "clinic-web-public-location";
+const PUBLIC_LOCATION_OPTIONS = ["Pune", "Mumbai", "Bangalore", "Delhi", "Hyderabad", "Chennai"] as const;
+
+function readStoredPublicLocation() {
+  if (typeof window === "undefined") {
+    return "Pune";
+  }
+  const stored = window.localStorage.getItem(PUBLIC_LOCATION_STORAGE_KEY)?.trim();
+  if (stored) {
+    return stored;
+  }
+  return "Pune";
+}
+
+function normalizePublicLocation(value: string) {
+  return value.trim().slice(0, 60);
+}
+
+function savePublicLocation(value: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(PUBLIC_LOCATION_STORAGE_KEY, value);
+}
 
 function usePublicResource<T>(path: string, params: Record<string, string | number | undefined | null>, initialValue: T): FetchState<T> {
   const [state, setState] = useState<FetchState<T>>({
@@ -295,7 +320,13 @@ function DoctorCard({ doctor, session }: { doctor: PublicDoctorSummaryResponse; 
         <Link className="secondary-button" to={`/doctors/${doctor.doctorSlug}`}>
           View profile
         </Link>
-        <Link className="ghost-button" to={patientBookingPath(session)}>
+        <Link
+          className="ghost-button"
+          to={patientPortalBookingPath(session, {
+            doctorSlug: doctor.doctorSlug,
+            doctorName: doctor.doctorDisplayName,
+          })}
+        >
           Book appointment
         </Link>
       </div>
@@ -304,6 +335,11 @@ function DoctorCard({ doctor, session }: { doctor: PublicDoctorSummaryResponse; 
 }
 
 function ClinicCard({ clinic, session }: { clinic: PublicClinicSummaryResponse; session: PatientPortalSession | null }) {
+  const bookingPath = patientPortalBookingPath(session, {
+    clinicCode: clinic.clinicSlug,
+    clinicName: clinic.clinicDisplayName,
+  });
+
   return (
     <article className="public-directory-card clinic-directory-card">
       <div className="directory-card-top">
@@ -331,7 +367,7 @@ function ClinicCard({ clinic, session }: { clinic: PublicClinicSummaryResponse; 
         <Link className="secondary-button" to={`/clinics/${clinic.clinicSlug}`}>
           View clinic
         </Link>
-        <Link className="ghost-button" to={patientBookingPath(session)}>
+        <Link className="ghost-button" to={bookingPath}>
           Book appointment
         </Link>
       </div>
@@ -423,6 +459,10 @@ function useDirectoryFilters(defaultSize = 12) {
 export function PublicHomePage({ session }: { session: PatientPortalSession | null }) {
   const filters = useDirectoryFilters(6);
   const navigate = useNavigate();
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState(() =>
+    normalizePublicLocation(filters.searchParams.get("city")?.trim() || readStoredPublicLocation()),
+  );
   const hasQuery = Boolean(
     filters.searchParams.get("q") || filters.searchParams.get("city") || filters.searchParams.get("area"),
   );
@@ -437,7 +477,19 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
     },
     emptySearchResponse,
   );
-  const displayLocation = filters.city.trim() || "Pune";
+  const displayLocation = selectedLocation || "Pune";
+
+  useEffect(() => {
+    const nextLocation = normalizePublicLocation(filters.searchParams.get("city")?.trim() || selectedLocation || readStoredPublicLocation());
+    if (nextLocation && nextLocation !== selectedLocation) {
+      setSelectedLocation(nextLocation);
+    }
+  }, [filters.searchParams, selectedLocation]);
+
+  useEffect(() => {
+    const nextLocation = selectedLocation || "Pune";
+    savePublicLocation(nextLocation);
+  }, [selectedLocation]);
 
   function submitHeroSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -511,7 +563,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
                   <button
                     className="smart-location-button"
                     type="button"
-                    onClick={() => filters.setCity("")}
+                    onClick={() => setLocationPickerOpen((current) => !current)}
                   >
                     Change
                   </button>
@@ -528,16 +580,30 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
                 />
               </label>
 
-              <div className="smart-location-editor">
-                <label className="smart-location-field">
-                  <span>Location</span>
-                  <input
-                    value={filters.city}
-                    onChange={(event) => filters.setCity(event.target.value)}
-                    placeholder="Pune"
-                  />
-                </label>
-              </div>
+              {locationPickerOpen ? (
+                <div className="smart-location-selector" role="dialog" aria-label="Select location">
+                  <label className="smart-location-field">
+                    <span>City or locality</span>
+                    <input
+                      value={selectedLocation}
+                      onChange={(event) => setSelectedLocation(normalizePublicLocation(event.target.value))}
+                      placeholder="Pune"
+                    />
+                  </label>
+                  <div className="smart-location-options" role="list" aria-label="Popular locations">
+                    {PUBLIC_LOCATION_OPTIONS.map((location) => (
+                      <button
+                        key={location}
+                        className={`smart-location-option${displayLocation === location ? " is-active" : ""}`}
+                        type="button"
+                        onClick={() => setSelectedLocation(location)}
+                      >
+                        {location}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="smart-chip-section">
                 <span className="smart-search-label">Popular searches</span>
@@ -749,7 +815,13 @@ export function PublicDoctorDetailPage({ session }: { session: PatientPortalSess
                 {detail.data.languages.length ? <span className="chip">Languages: {detail.data.languages.join(", ")}</span> : null}
               </div>
               <div className="directory-action-row">
-                <Link className="primary-button" to={patientBookingPath(session)}>
+                <Link
+                  className="primary-button"
+                  to={patientPortalBookingPath(session, {
+                    doctorSlug: detail.data.doctorSlug,
+                    doctorName: detail.data.doctorDisplayName,
+                  })}
+                >
                   Book appointment
                 </Link>
                 <Link className="ghost-button" to="/careai">
@@ -867,6 +939,12 @@ export function PublicClinicsPage({ session }: { session: PatientPortalSession |
 export function PublicClinicDetailPage({ session }: { session: PatientPortalSession | null }) {
   const { clinicSlug = "" } = useParams();
   const detail = usePublicResource<PublicClinicDetailResponse | null>(`/api/public/clinics/${clinicSlug}`, {}, null);
+  const bookingPath = detail.data
+    ? patientPortalBookingPath(session, {
+        clinicCode: detail.data.clinicSlug,
+        clinicName: detail.data.clinicDisplayName,
+      })
+    : patientPortalBookingPath(session);
 
   return (
     <section className="page-section">
@@ -898,7 +976,7 @@ export function PublicClinicDetailPage({ session }: { session: PatientPortalSess
                 ))}
               </div>
               <div className="directory-action-row">
-                <Link className="primary-button" to={patientBookingPath(session)}>
+                <Link className="primary-button" to={bookingPath}>
                   Book appointment
                 </Link>
                 <Link className="ghost-button" to="/careai">
@@ -1096,7 +1174,7 @@ export function PublicCareAiPage({ session }: { session: PatientPortalSession | 
             <Link className="primary-button" to="/doctors">
               Browse doctors
             </Link>
-            <Link className="ghost-button" to={patientBookingPath(session)}>
+            <Link className="ghost-button" to={patientPortalBookingPath(session)}>
               Book through patient portal
             </Link>
           </div>

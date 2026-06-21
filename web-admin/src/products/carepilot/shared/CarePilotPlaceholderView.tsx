@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Alert, Card, CardContent, Chip, Stack, Typography } from "@mui/material";
-import { branding } from "../../../branding";
+import { ENGAGE_PRODUCT_NAME } from "./engageBranding";
 
 export type CarePilotPlaceholderViewProps = {
   moduleName: string;
@@ -8,7 +8,7 @@ export type CarePilotPlaceholderViewProps = {
 };
 
 /**
- * Reusable placeholder shell for future CarePilot modules.
+ * Reusable placeholder shell for future Jeevanam Engage modules.
  *
  * This keeps route/page scaffolding intentionally lightweight while making
  * module intent visible to product and engineering teams.
@@ -18,7 +18,7 @@ export default function CarePilotPlaceholderView({ moduleName, summary }: CarePi
     <Stack spacing={2}>
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
         <Typography variant="h5" sx={{ fontWeight: 900 }}>{moduleName}</Typography>
-        <Chip label={branding.productName} size="small" color="primary" variant="outlined" />
+        <Chip label={ENGAGE_PRODUCT_NAME} size="small" color="primary" variant="outlined" />
         <Chip label="Coming Soon" size="small" variant="outlined" />
       </Stack>
       <Card>

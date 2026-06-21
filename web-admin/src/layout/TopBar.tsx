@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
   AppBar,
-  Avatar,
   Box,
   Button,
   Chip,
@@ -17,15 +16,14 @@ import {
 } from "@mui/material";
 import NotificationsNoneRoundedIcon from "@mui/icons-material/NotificationsNoneRounded";
 import MenuIcon from "@mui/icons-material/Menu";
-import LocalHospitalRoundedIcon from "@mui/icons-material/LocalHospitalRounded";
 import HelpCenterRoundedIcon from "@mui/icons-material/HelpCenterRounded";
 
 import { useAuth } from "../auth/useAuth";
 import { HelpContext } from "../shared/components/help/HelpProvider";
 import { friendlyRoleLabel } from "../auth/moduleEntitlements";
 import { getPlatformTenants } from "../api/clinicApi";
-import { branding } from "../branding";
 import { openGlobalHelp } from "../shared/components/help/helpEvents";
+import BrandMark from "../shared/components/branding/BrandMark";
 
 function formatPathLabel(pathname: string): string {
   if (pathname === "/") return "Dashboard";
@@ -45,7 +43,7 @@ function isSystemTenantOption(tenant: { tenantId: string; tenantCode?: string | 
   return values.some((value) => value.startsWith("DEFAULT-ROLES") || value.includes("DEFAULT-ROLES-"));
 }
 
-export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onToggleSidebar: () => void; drawerWidth: number; isMobile: boolean }) {
   const auth = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -85,33 +83,60 @@ export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => voi
 
   return (
     <AppBar
-      position="sticky"
+      position="fixed"
       color="inherit"
       elevation={0}
       sx={{
         top: 0,
-        zIndex: (theme) => theme.zIndex.drawer - 1,
+        left: isMobile ? 0 : `${drawerWidth}px`,
+        width: isMobile ? "100%" : `calc(100% - ${drawerWidth}px)`,
+        zIndex: (theme) => theme.zIndex.drawer + 2,
+        backgroundColor: "#ffffff",
+        backgroundImage: "none",
         borderBottom: "1px solid",
         borderColor: "divider",
-        bgcolor: alpha("#ffffff", 0.95),
         backdropFilter: "blur(8px)",
+        boxShadow: "0 1px 0 rgba(15, 23, 42, 0.04)",
+        "&::before": {
+          content: '""',
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          background: "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(255,255,255,0.9))",
+        },
       }}
     >
-      <Toolbar sx={{ gap: 1.25, minHeight: 72 }}>
+      <Toolbar
+        sx={{
+          position: "relative",
+          zIndex: 1,
+          gap: 1.25,
+          minHeight: 84,
+          px: { xs: 1, md: 2 },
+          py: 1,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
         <IconButton color="inherit" onClick={onToggleSidebar}>
           <MenuIcon />
         </IconButton>
-        <LocalHospitalRoundedIcon fontSize="small" color="primary" />
-        <Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 900, lineHeight: 1.2 }}>
-            {branding.productName}
-          </Typography>
-          <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
-            <Typography variant="caption" color="text.secondary">
-              {formatPathLabel(location.pathname)}
-            </Typography>
-          </Stack>
-        </Box>
+        <Stack direction="row" spacing={1.25} alignItems="center" sx={{ minWidth: 0, flex: "1 1 280px" }}>
+          <BrandMark compact size={40} showCopy={false} title="Jeevanam Healthcare" />
+          <Chip
+            size="small"
+            variant="outlined"
+            label={formatPathLabel(location.pathname)}
+            sx={{
+              maxWidth: "100%",
+              "& .MuiChip-label": {
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              },
+            }}
+          />
+        </Stack>
 
         <Box sx={{ flex: 1 }} />
 
@@ -165,7 +190,7 @@ export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => voi
           </Tooltip>
         </Box>
 
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mr: 2 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mr: 2, flexWrap: "wrap", justifyContent: "flex-end" }}>
           <Tooltip title="Notifications">
             <IconButton color="inherit" onClick={() => navigate("/notifications")} aria-label="Open notifications">
               <NotificationsNoneRoundedIcon />
@@ -184,10 +209,24 @@ export default function TopBar({ onToggleSidebar }: { onToggleSidebar: () => voi
               openGlobalHelp({ source: "topbar" });
             }}
             aria-label="Open help"
-          >
+            >
             Help
           </Button>
-          <Avatar sx={{ width: 28, height: 28 }}>{(auth.username || "U").slice(0, 1).toUpperCase()}</Avatar>
+          <Box
+            sx={{
+              width: 30,
+              height: 30,
+              borderRadius: "50%",
+              display: "grid",
+              placeItems: "center",
+              bgcolor: alpha("#0f766e", 0.1),
+              color: "primary.main",
+              fontWeight: 900,
+              fontSize: 13,
+            }}
+          >
+            {(auth.username || "U").slice(0, 1).toUpperCase()}
+          </Box>
           <Typography variant="body2">{auth.username}</Typography>
           <Button color="inherit" onClick={() => auth.logout()}>
             Logout

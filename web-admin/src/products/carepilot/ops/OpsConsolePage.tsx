@@ -26,6 +26,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useAuth } from "../../../auth/useAuth";
+import { engageOpsConsoleFilterSchema, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
 import {
   getCarePilotExecutionTimeline,
   getCarePilotLeadAnalyticsSummary,
@@ -69,6 +70,7 @@ export default function OpsConsolePage() {
   const [providerName, setProviderName] = React.useState("");
   const [reminderWindow, setReminderWindow] = React.useState<"" | "H24" | "H2">("");
   const [retryableOnly, setRetryableOnly] = React.useState(false);
+  const [filterErrors, setFilterErrors] = React.useState<Record<string, string>>({});
 
   const [timelineOpen, setTimelineOpen] = React.useState(false);
   const [timelineLoading, setTimelineLoading] = React.useState(false);
@@ -89,6 +91,13 @@ export default function OpsConsolePage() {
     setLoading(true);
     setError(null);
     try {
+      const parsed = engageOpsConsoleFilterSchema.safeParse({ startDate, endDate, providerName });
+      if (!parsed.success) {
+        setFilterErrors(mapZodErrors(parsed.error));
+        setLoading(false);
+        return;
+      }
+      setFilterErrors({});
       const [campaignRows, failedRows, highRisk, inactive, leadSummary, webinarSummary] = await Promise.all([
         listCarePilotCampaigns(auth.accessToken, auth.tenantId),
         listCarePilotOpsFailedExecutions(auth.accessToken, auth.tenantId, {
@@ -152,14 +161,14 @@ export default function OpsConsolePage() {
 
   const campaignById = React.useMemo(() => new Map(campaigns.map((c) => [c.id, c])), [campaigns]);
 
-  if (!auth.tenantId) return <Alert severity="info">Select a tenant to use CarePilot ops console.</Alert>;
-  if (!canView) return <Alert severity="error">You do not have access to CarePilot ops console.</Alert>;
+  if (!auth.tenantId) return <Alert severity="info">Select a tenant to use Jeevanam Engage ops console.</Alert>;
+  if (!canView) return <Alert severity="error">You do not have access to Jeevanam Engage ops console.</Alert>;
 
   return (
     <Stack spacing={2}>
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1.5 }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900 }}>CarePilot Ops Console</Typography>
+          <Typography variant="h4" sx={{ fontWeight: 900 }}>Jeevanam Engage Ops Console</Typography>
           <Typography variant="body2" color="text.secondary">Failed execution queue, retries, resends, and delivery attempt drill-down.</Typography>
         </Box>
         <Button variant="outlined" onClick={() => void load()}>Refresh</Button>
@@ -169,8 +178,8 @@ export default function OpsConsolePage() {
 
       <Card><CardContent>
         <Grid container spacing={2}>
-          <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="Start" value={startDate} onChange={(e) => setStartDate(e.target.value)} InputLabelProps={{ shrink: true }} /></Grid>
-          <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="End" value={endDate} onChange={(e) => setEndDate(e.target.value)} InputLabelProps={{ shrink: true }} /></Grid>
+          <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="Start" value={startDate} onChange={(e) => setStartDate(e.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(filterErrors.startDate)} helperText={filterErrors.startDate || ""} /></Grid>
+          <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="End" value={endDate} onChange={(e) => setEndDate(e.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(filterErrors.endDate)} helperText={filterErrors.endDate || ""} /></Grid>
           <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Campaign</InputLabel><Select value={campaignId} label="Campaign" onChange={(e) => setCampaignId(String(e.target.value))}><MenuItem value="">All</MenuItem>{campaigns.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</Select></FormControl></Grid>
           <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Channel</InputLabel><Select value={channel} label="Channel" onChange={(e) => setChannel(String(e.target.value) as CarePilotChannelType | "")}><MenuItem value="">All</MenuItem><MenuItem value="EMAIL">EMAIL</MenuItem><MenuItem value="SMS">SMS</MenuItem><MenuItem value="WHATSAPP">WHATSAPP</MenuItem><MenuItem value="IN_APP">IN_APP</MenuItem><MenuItem value="APP_NOTIFICATION">APP_NOTIFICATION</MenuItem></Select></FormControl></Grid>
           <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={status} label="Status" onChange={(e) => setStatus(String(e.target.value) as CarePilotExecutionStatus | "")}><MenuItem value="">All</MenuItem><MenuItem value="FAILED">FAILED</MenuItem><MenuItem value="DEAD_LETTER">DEAD_LETTER</MenuItem></Select></FormControl></Grid>

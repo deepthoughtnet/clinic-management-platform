@@ -411,8 +411,8 @@ export default function LeadsPage() {
     } catch (err) { setToast(err instanceof Error ? err.message : "Conversion failed"); }
   };
 
-  if (!auth.tenantId) return <Alert severity="info">Select a tenant to use CarePilot leads.</Alert>;
-  if (!canView) return <Alert severity="error">You do not have access to CarePilot leads.</Alert>;
+  if (!auth.tenantId) return <Alert severity="info">Select a tenant to use Jeevanam Engage leads.</Alert>;
+  if (!canView) return <Alert severity="error">You do not have access to Jeevanam Engage leads.</Alert>;
 
   const userName = (id?: string | null) => users.find((u) => u.appUserId === id)?.displayName || id || "-";
   const campaignName = (id?: string | null) => campaigns.find((c) => c.id === id)?.name || "-";
@@ -430,7 +430,7 @@ export default function LeadsPage() {
   return (
     <Stack spacing={2}>
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}>
-        <Box><Typography variant="h4" sx={{ fontWeight: 900 }}>CarePilot Leads</Typography><Typography variant="body2" color="text.secondary">Lead intake, timeline, follow-up, and conversion workflow.</Typography></Box>
+        <Box><Typography variant="h4" sx={{ fontWeight: 900 }}>Jeevanam Engage Leads</Typography><Typography variant="body2" color="text.secondary">Lead intake, timeline, follow-up, and conversion workflow.</Typography></Box>
         <Stack direction="row" spacing={1} flexWrap="wrap">
           <Button variant="outlined" onClick={() => void load()}>Refresh</Button>
           <Button variant="outlined" onClick={() => void exportCsv()}>Export CSV</Button>
@@ -554,8 +554,8 @@ export default function LeadsPage() {
         <DialogTitle>{editorLead ? "Lead Detail" : "Create Lead"}</DialogTitle>
         <DialogContent>
           <Grid container spacing={1.5} sx={{ pt: 0.5 }}>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="First name" value={draft.firstName} onChange={(e) => setDraft((d) => ({ ...d, firstName: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Last name" value={draft.lastName} onChange={(e) => setDraft((d) => ({ ...d, lastName: e.target.value }))} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="First name" value={draft.firstName} onChange={(e) => setDraft((d) => ({ ...d, firstName: e.target.value }))} inputProps={{ maxLength: 60 }} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Last name" value={draft.lastName} onChange={(e) => setDraft((d) => ({ ...d, lastName: e.target.value }))} inputProps={{ maxLength: 60 }} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}>
               <TextField
                 fullWidth
@@ -567,16 +567,16 @@ export default function LeadsPage() {
                 helperText={Boolean(draft.phone) && !isValidIndianMobile(draft.phone) ? "Enter a valid 10-digit mobile number." : ""}
               />
             </Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Email" value={draft.email} onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Email" value={draft.email} onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))} inputProps={{ maxLength: 120 }} /></Grid>
             <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Source</InputLabel><Select value={draft.source} label="Source" onChange={(e) => setDraft((d) => ({ ...d, source: String(e.target.value) as CarePilotLeadSource }))}>{SOURCES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
             <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={draft.status} label="Status" onChange={(e) => setDraft((d) => ({ ...d, status: String(e.target.value) as CarePilotLeadStatus }))}>{STATUSES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
             <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Priority</InputLabel><Select value={draft.priority} label="Priority" onChange={(e) => setDraft((d) => ({ ...d, priority: String(e.target.value) as CarePilotLeadPriority }))}>{PRIORITIES.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
             <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Campaign</InputLabel><Select value={draft.campaignId} label="Campaign" onChange={(e) => setDraft((d) => ({ ...d, campaignId: String(e.target.value) }))}><MenuItem value="">None</MenuItem>{campaigns.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</Select></FormControl></Grid>
             <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Assigned To</InputLabel><Select value={draft.assignedToAppUserId} label="Assigned To" onChange={(e) => setDraft((d) => ({ ...d, assignedToAppUserId: String(e.target.value) }))}><MenuItem value="">Unassigned</MenuItem>{users.map((u) => <MenuItem key={u.appUserId} value={u.appUserId}>{u.displayName || u.appUserId}</MenuItem>)}</Select></FormControl></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Source details" value={draft.sourceDetails} onChange={(e) => setDraft((d) => ({ ...d, sourceDetails: e.target.value }))} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Source details" value={draft.sourceDetails} onChange={(e) => setDraft((d) => ({ ...d, sourceDetails: e.target.value }))} inputProps={{ maxLength: 120 }} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth type="datetime-local" label="Next follow-up" value={draft.nextFollowUpAt} onChange={(e) => setDraft((d) => ({ ...d, nextFollowUpAt: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Tags" value={draft.tags} onChange={(e) => setDraft((d) => ({ ...d, tags: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth multiline minRows={3} label="Notes" value={draft.notes} onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Tags" value={draft.tags} onChange={(e) => setDraft((d) => ({ ...d, tags: e.target.value }))} inputProps={{ maxLength: 120 }} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth multiline minRows={3} label="Notes" value={draft.notes} onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))} inputProps={{ maxLength: 250 }} /></Grid>
           </Grid>
 
           {editorLead ? (
@@ -603,8 +603,8 @@ export default function LeadsPage() {
                 <Grid size={{ xs: 12, md: 6 }}><FormControl fullWidth><InputLabel>Doctor</InputLabel><Select value={convertDraft.doctorUserId} label="Doctor" onChange={(e) => setConvertDraft((d) => ({ ...d, doctorUserId: String(e.target.value) }))}>{users.filter((u) => (u.membershipRole || "").includes("DOCTOR")).map((u) => <MenuItem key={u.appUserId} value={u.appUserId}>{u.displayName || u.appUserId}</MenuItem>)}</Select></FormControl></Grid>
                 <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth type="date" label="Date" value={convertDraft.appointmentDate} onChange={(e) => setConvertDraft((d) => ({ ...d, appointmentDate: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
                 <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth type="time" label="Time" value={convertDraft.appointmentTime} onChange={(e) => setConvertDraft((d) => ({ ...d, appointmentTime: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
-                <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Reason" value={convertDraft.reason} onChange={(e) => setConvertDraft((d) => ({ ...d, reason: e.target.value }))} /></Grid>
-                <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Notes" value={convertDraft.notes} onChange={(e) => setConvertDraft((d) => ({ ...d, notes: e.target.value }))} /></Grid>
+                <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Reason" value={convertDraft.reason} onChange={(e) => setConvertDraft((d) => ({ ...d, reason: e.target.value }))} inputProps={{ maxLength: 250 }} /></Grid>
+                <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Notes" value={convertDraft.notes} onChange={(e) => setConvertDraft((d) => ({ ...d, notes: e.target.value }))} inputProps={{ maxLength: 250 }} /></Grid>
               </Grid>
             ) : null}
           </Stack>

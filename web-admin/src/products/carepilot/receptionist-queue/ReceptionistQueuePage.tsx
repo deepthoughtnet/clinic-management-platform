@@ -21,8 +21,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { branding } from "../../../branding";
 import { useAuth } from "../../../auth/useAuth";
+import { ENGAGE_PRODUCT_NAME } from "../shared/engageBranding";
 import {
   addCareAiReceptionistStaffNote,
   assignCareAiReceptionistTaskToMe,
@@ -80,7 +80,7 @@ type ReceptionistQueuePageProps = {
 };
 
 export default function ReceptionistQueuePage({
-  title = `${branding.productName} Receptionist Queue`,
+  title = `${ENGAGE_PRODUCT_NAME} Receptionist Queue`,
   description = "Review escalations, callbacks, and human handoffs raised from AIVA chat and voice conversations.",
   forcedType,
   hideTypeFilter = false,

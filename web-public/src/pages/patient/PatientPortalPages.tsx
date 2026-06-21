@@ -41,7 +41,14 @@ import {
   postPatientPortalSessionJson,
   putPatientPortalSessionJson,
 } from "../../api/patientPortal";
+import { type PublicDoctorDetailResponse, fetchPublicJson } from "../../api/publicCatalog";
 import { branding } from "../../branding";
+import { DoctorClinicSelector } from "./DoctorClinicSelector";
+import {
+  MISSING_CLINIC_CODE_MESSAGE,
+  normalizeClinicCodeFallback,
+  resolvePatientPortalClinicContext,
+} from "./patientPortalClinicContext";
 
 type FetchState<T> = {
   data: T;
@@ -276,6 +283,12 @@ function formatStatusLabel(value: string | null | undefined) {
     .split("_")
     .map((item) => item.charAt(0).toUpperCase() + item.slice(1))
     .join(" ");
+}
+
+function formatDoctorDisplayName(value: string | null | undefined) {
+  const normalized = value?.trim() ?? "";
+  const withoutTitle = normalized.replace(/^dr\.?\s+/i, "").trim();
+  return withoutTitle || normalized;
 }
 
 function usePatientPortalResource<T>(
@@ -560,8 +573,10 @@ export function PatientLoginPage({
   clinicLoginUrl: string;
 }) {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const [tenantCode, setTenantCode] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const portalClinicContext = useMemo(() => resolvePatientPortalClinicContext(searchParams), [searchParams]);
+  const [tenantCode, setTenantCode] = useState(portalClinicContext.clinicCode);
+  const [clinicName, setClinicName] = useState(portalClinicContext.clinicName);
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [requestState, setRequestState] = useState<PatientPortalOtpRequestResponse | null>(null);
@@ -569,19 +584,143 @@ export function PatientLoginPage({
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
   const [requestPending, setRequestPending] = useState(false);
   const [verifyPending, setVerifyPending] = useState(false);
+  const [showClinicFallback, setShowClinicFallback] = useState(false);
+  const doctorSlug = portalClinicContext.doctorSlug;
+  const [doctorDetail, setDoctorDetail] = useState<FetchState<PublicDoctorDetailResponse | null>>({
+    data: null,
+    loading: Boolean(doctorSlug),
+    error: null,
+  });
+
+  useEffect(() => {
+    if (!doctorSlug) {
+      setDoctorDetail({
+        data: null,
+        loading: false,
+        error: null,
+      });
+      return;
+    }
+
+    const abortController = new AbortController();
+    setDoctorDetail((current) => ({
+      data: current.data,
+      loading: true,
+      error: null,
+    }));
+
+    fetchPublicJson<PublicDoctorDetailResponse>(`/api/public/doctors/${doctorSlug}`, {}, abortController.signal)
+      .then((result) => {
+        setDoctorDetail({
+          data: result,
+          loading: false,
+          error: null,
+        });
+      })
+      .catch((error: unknown) => {
+        if (abortController.signal.aborted) {
+          return;
+        }
+        setDoctorDetail({
+          data: null,
+          loading: false,
+          error: error instanceof Error ? error.message : "Unable to load clinic options.",
+        });
+      });
+
+    return () => abortController.abort();
+  }, [doctorSlug]);
 
   useEffect(() => {
     if (!session) {
+      setTenantCode(portalClinicContext.clinicCode);
+      setClinicName(portalClinicContext.clinicName);
       return;
     }
     setTenantCode(session.tenantCode);
     setPhone(session.phone);
-  }, [session]);
+    setClinicName(portalClinicContext.clinicName);
+  }, [session, portalClinicContext.clinicCode, portalClinicContext.clinicName]);
+
+  useEffect(() => {
+    if (!doctorDetail.data || session || doctorDetail.data.clinics.length !== 1) {
+      return;
+    }
+    const onlyClinic = doctorDetail.data.clinics[0];
+    if (tenantCode.trim() === onlyClinic.clinicSlug && clinicName === onlyClinic.clinicDisplayName) {
+      return;
+    }
+    setTenantCode(onlyClinic.clinicSlug);
+    setClinicName(onlyClinic.clinicDisplayName);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("clinicCode", onlyClinic.clinicSlug);
+    nextParams.set("clinicName", onlyClinic.clinicDisplayName);
+    if (portalClinicContext.doctorSlug) {
+      nextParams.set("doctorSlug", portalClinicContext.doctorSlug);
+    }
+    if (portalClinicContext.doctorName) {
+      nextParams.set("doctorName", portalClinicContext.doctorName);
+    }
+    if (portalClinicContext.nextPath) {
+      nextParams.set("next", portalClinicContext.nextPath);
+    }
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    clinicName,
+    doctorDetail.data,
+    portalClinicContext.doctorName,
+    portalClinicContext.doctorSlug,
+    portalClinicContext.nextPath,
+    searchParams,
+    session,
+    setSearchParams,
+    tenantCode,
+  ]);
+
+  function syncClinicContext(nextClinicCode: string, nextClinicName: string | null) {
+    setTenantCode(nextClinicCode);
+    setClinicName(nextClinicName);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("clinicCode", nextClinicCode);
+    if (nextClinicName) {
+      nextParams.set("clinicName", nextClinicName);
+    } else {
+      nextParams.delete("clinicName");
+    }
+    if (portalClinicContext.doctorSlug) {
+      nextParams.set("doctorSlug", portalClinicContext.doctorSlug);
+    }
+    if (portalClinicContext.doctorName) {
+      nextParams.set("doctorName", portalClinicContext.doctorName);
+    }
+    if (portalClinicContext.nextPath) {
+      nextParams.set("next", portalClinicContext.nextPath);
+    }
+    setSearchParams(nextParams, { replace: true });
+  }
+
+  const resolvedClinicCode = tenantCode.trim();
+  const resolvedClinicName = clinicName || portalClinicContext.clinicName || null;
+  const hasClinicContext = Boolean(resolvedClinicCode);
+  const doctorSelectionRequired =
+    Boolean(doctorDetail.data?.clinics.length && doctorDetail.data.clinics.length > 1) && !hasClinicContext;
+  const showFallbackClinicField = !hasClinicContext && !session;
+  const bookingContextLine = hasClinicContext && resolvedClinicName
+    ? portalClinicContext.doctorName
+      ? `Booking appointment with Dr ${portalClinicContext.doctorName} at ${resolvedClinicName}`
+      : `Accessing patient portal for ${resolvedClinicName}`
+    : null;
+  const clinicFallbackValue = normalizeClinicCodeFallback(tenantCode);
 
   async function handleRequestOtp(event: FormEvent) {
     event.preventDefault();
+    const normalizedClinicCode = clinicFallbackValue;
+    if (!normalizedClinicCode) {
+      setRequestMessage(MISSING_CLINIC_CODE_MESSAGE);
+      return;
+    }
     const parsed = otpRequestSchema.safeParse({
-      tenantCode,
+      tenantCode: normalizedClinicCode,
       mobile: phone,
     });
     if (!parsed.success) {
@@ -607,8 +746,13 @@ export function PatientLoginPage({
 
   async function handleVerifyOtp(event: FormEvent) {
     event.preventDefault();
+    const normalizedClinicCode = clinicFallbackValue;
+    if (!normalizedClinicCode) {
+      setVerifyMessage(MISSING_CLINIC_CODE_MESSAGE);
+      return;
+    }
     const parsed = otpVerifySchema.safeParse({
-      tenantCode,
+      tenantCode: normalizedClinicCode,
       mobile: phone,
       otp,
     });
@@ -628,30 +772,32 @@ export function PatientLoginPage({
         onSaveSession({
           mode: "otp",
           sessionRole: "patient",
-          tenantCode: tenantCode.trim(),
+          tenantCode: normalizedClinicCode,
           tenantId: response.tenantId,
           phone: phone.trim(),
           patientLabel: response.patientDisplayName,
           createdAt: new Date().toISOString(),
           patientSessionToken: response.patientSessionToken,
         });
-        const nextPath = searchParams.get("next");
-        navigate(nextPath?.startsWith("/patient/") ? nextPath : "/patient/dashboard");
+        navigate(portalClinicContext.nextPath?.startsWith("/patient/") ? portalClinicContext.nextPath : "/patient/dashboard");
         return;
       }
       if (response.verified && response.registrationRequired && response.registrationSessionToken && response.tenantId) {
         onSaveSession({
           mode: "otp",
           sessionRole: "registration",
-          tenantCode: tenantCode.trim(),
+          tenantCode: normalizedClinicCode,
           tenantId: response.tenantId,
           phone: phone.trim(),
           patientLabel: "New patient",
           createdAt: new Date().toISOString(),
           patientSessionToken: response.registrationSessionToken,
         });
-        const nextPath = searchParams.get("next");
-        navigate(nextPath?.startsWith("/patient/") ? `/patient/register?next=${encodeURIComponent(nextPath)}` : "/patient/register");
+        if (portalClinicContext.nextPath?.startsWith("/patient/")) {
+          navigate(`/patient/register?next=${encodeURIComponent(portalClinicContext.nextPath)}`);
+          return;
+        }
+        navigate("/patient/register");
       }
     } catch (error) {
       setVerifyMessage(error instanceof Error ? error.message : "Unable to verify OTP.");
@@ -664,39 +810,33 @@ export function PatientLoginPage({
     <section className="page-section narrow-page">
       <div className="section-heading">
         <span className="eyebrow">Patient portal access</span>
-        <h1>Sign in with clinic code, phone number, and OTP.</h1>
-        <p>This stays separate from staff/admin access and uses the patient-only session boundary.</p>
+        <h1>Sign in with phone number and OTP.</h1>
+        <p>Access appointments, prescriptions, bills, reports, and care updates securely.</p>
       </div>
       <div className="login-placeholder portal-login-card">
-        <div className="portal-banner">
-          <strong>Read-only patient rollout</strong>
-          <p>OTP sign-in unlocks patient-scoped appointments, prescriptions, bills, profile details, and AIVA entry points.</p>
-        </div>
-        <div className="portal-feature-list">
-          <article className="feature-card">
-            <strong>Tenant-aware session</strong>
-            <p>The backend resolves the patient from the verified session, not from arbitrary patient IDs.</p>
-          </article>
-          <article className="feature-card">
-            <strong>Patient-safe cards</strong>
-            <p>Mobile-first cards show only safe fields, with clear empty and error states.</p>
-          </article>
-          <article className="feature-card">
-            <strong>Separate from admin</strong>
-            <p>Patient access remains isolated from receptionist, doctor, and billing workflows.</p>
-          </article>
-        </div>
+        {doctorDetail.loading ? <div className="patient-inline-empty">Loading clinic options...</div> : null}
+        {doctorDetail.error ? (
+          <div className="patient-inline-empty">
+            <strong>Clinic options unavailable</strong>
+            <p>{doctorDetail.error}</p>
+          </div>
+        ) : null}
+        {doctorSelectionRequired && doctorDetail.data ? (
+          <DoctorClinicSelector
+            doctorName={portalClinicContext.doctorName || doctorDetail.data.doctorDisplayName}
+            clinics={doctorDetail.data.clinics}
+            selectedClinicCode={resolvedClinicCode}
+            nextAvailableSlot={doctorDetail.data.nextAvailableSlots[0] ?? null}
+            onSelect={(clinic) => syncClinicContext(clinic.clinicSlug, clinic.clinicDisplayName)}
+          />
+        ) : null}
+        {bookingContextLine ? (
+          <div className="patient-inline-empty">
+            <strong>{bookingContextLine}</strong>
+          </div>
+        ) : null}
 
         <form className="patient-login-form" onSubmit={handleRequestOtp}>
-          <label>
-            <span>Clinic code</span>
-            <input
-              value={tenantCode}
-              onChange={(event) => setTenantCode(event.target.value)}
-              placeholder="clinic-demo"
-              autoComplete="organization"
-            />
-          </label>
           <label>
             <span>Phone number</span>
             <input
@@ -706,9 +846,41 @@ export function PatientLoginPage({
               autoComplete="tel"
             />
           </label>
-          <button className="primary-button wide-button" type="submit" disabled={requestPending}>
-            {requestPending ? "Requesting OTP..." : "Request OTP"}
-          </button>
+          <div className="patient-login-actions">
+            <button className="primary-button wide-button" type="submit" disabled={requestPending || !clinicFallbackValue}>
+              {requestPending ? "Requesting OTP..." : "Request OTP"}
+            </button>
+            {!showFallbackClinicField ? null : showClinicFallback ? (
+              <label className="patient-login-fallback">
+                <span>Clinic code or clinic link</span>
+                <input
+                  value={tenantCode}
+                  onChange={(event) => {
+                    setTenantCode(event.target.value.slice(0, 60));
+                    if (clinicName) {
+                      setClinicName(null);
+                    }
+                  }}
+                  placeholder="clinic-demo"
+                  autoComplete="organization"
+                  maxLength={60}
+                  pattern="^[A-Za-z0-9-]{1,60}$"
+                />
+                <p className="patient-field-hint">Please select a clinic first or use a clinic link.</p>
+              </label>
+            ) : (
+              <button
+                className="ghost-button wide-button patient-fallback-toggle"
+                type="button"
+                onClick={() => setShowClinicFallback(true)}
+              >
+                Have a clinic code?
+              </button>
+            )}
+            {!clinicFallbackValue && showFallbackClinicField ? (
+              <p className="patient-field-hint">Please select a clinic first or use a clinic link.</p>
+            ) : null}
+          </div>
         </form>
 
         {requestMessage ? (
@@ -739,7 +911,7 @@ export function PatientLoginPage({
               autoComplete="one-time-code"
             />
           </label>
-          <button className="secondary-button wide-button" type="submit" disabled={verifyPending}>
+          <button className="secondary-button wide-button" type="submit" disabled={verifyPending || !clinicFallbackValue}>
             {verifyPending ? "Verifying..." : "Verify and continue"}
           </button>
         </form>
@@ -1210,6 +1382,7 @@ export function PatientBookAppointmentPage({
   session: PatientPortalSession | null;
   onSignOut: () => void;
 }) {
+  const [searchParams] = useSearchParams();
   const portalSession = isPatientPortalPatientSession(session) ? session : null;
   const doctorsState = usePatientPortalResource<PatientPortalDoctorResponse[]>(portalSession, "/api/patient-portal/doctors", []);
   const [selectedSpeciality, setSelectedSpeciality] = useState("All");
@@ -1240,6 +1413,15 @@ export function PatientBookAppointmentPage({
     });
     return ["All", ...Array.from(values).sort((left, right) => left.localeCompare(right))];
   }, [doctorsState.data]);
+  const bookingClinicName = searchParams.get("clinicName")?.trim() || null;
+  const bookingDoctorName = formatDoctorDisplayName(searchParams.get("doctorName"));
+  const bookingContextLine = bookingClinicName
+    ? bookingDoctorName
+      ? `Booking appointment with Dr ${bookingDoctorName} at ${bookingClinicName}`
+      : `Booking with ${bookingClinicName}`
+    : bookingDoctorName
+      ? `Booking appointment with Dr ${bookingDoctorName}`
+      : null;
 
   useEffect(() => {
     if (!doctorOptions.some((doctor) => doctor.publicDoctorId === selectedDoctorId)) {
@@ -1337,6 +1519,12 @@ export function PatientBookAppointmentPage({
       title="Book an in-clinic appointment"
       subtitle="Pick a tenant-scoped doctor, choose an available slot, and book the visit for your verified patient profile only."
     >
+      {bookingContextLine ? (
+        <div className="portal-banner">
+          <strong>{bookingContextLine}</strong>
+          <p>Discovery context is preserved in the booking URL so the public handoff stays clinic-aware.</p>
+        </div>
+      ) : null}
       <PatientPortalApiState
         loading={doctorsState.loading}
         error={doctorsState.error}

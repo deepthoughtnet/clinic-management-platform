@@ -143,6 +143,67 @@ test("reports route resolves to the reports help page", () => {
   assert.equal(resolveHelpRouteByPageKey("TENANT_REPORTS")?.path, "/reports");
 });
 
+test("left navigation labels the Engage section as ENGAGE", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "src", "layout", "nav.ts"), "utf8");
+  assert.ok(source.includes('label: "ENGAGE"'));
+});
+
+test("top bar uses a branded lockup and sticky shell", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "src", "layout", "TopBar.tsx"), "utf8");
+  assert.ok(source.includes('position="fixed"'));
+  assert.ok(source.includes("zIndex: (theme) => theme.zIndex.drawer + 2"));
+  assert.ok(source.includes("minHeight: 84"));
+  assert.ok(source.includes("drawerWidth"));
+  assert.ok(source.includes("BrandMark"));
+  assert.ok(source.includes('showCopy={false}'));
+  assert.ok(!source.includes("branding.productName"));
+  assert.ok(!source.includes("branding.tagline"));
+});
+
+test("app shell offsets the main content below the fixed header", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "src", "layout", "AppShell.tsx"), "utf8");
+  assert.ok(source.includes('height: 84'));
+  assert.ok(source.includes("drawerWidth={drawerWidth}"));
+  assert.ok(source.includes("isMobile={isMobile}"));
+});
+
+test("sidebar header reuses the branded lockup", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "src", "layout", "SidebarNav.tsx"), "utf8");
+  assert.ok(source.includes("BrandMark"));
+});
+
+test("footer layout keeps version text and centered branding", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "src", "layout", "Footer.tsx"), "utf8");
+  assert.ok(source.includes("versionLabel"));
+  assert.ok(source.includes("footerBrandingLine()"));
+  assert.ok(source.includes('textAlign: "center"'));
+});
+
+test("engage routes resolve to the Engage help pages", () => {
+  const expectations = [
+    ["/carepilot/campaigns", "JEEVANAM_ENGAGE_CAMPAIGNS", "CAMPAIGNS"],
+    ["/carepilot/analytics", "ENGAGE_ANALYTICS", "ENGAGE_ANALYTICS"],
+    ["/carepilot/ops", "ENGAGE_OPS_CONSOLE", "ENGAGE_OPS_CONSOLE"],
+    ["/carepilot/messaging", "ENGAGE_MESSAGING", "ENGAGE_MESSAGING"],
+    ["/carepilot/reminders", "ENGAGE_REMINDERS", "ENGAGE_REMINDERS"],
+    ["/carepilot/engagement", "ENGAGE_PATIENT_ENGAGEMENT", "ENGAGE_PATIENT_ENGAGEMENT"],
+    ["/carepilot/leads", "ENGAGE_LEADS", "ENGAGE_LEADS"],
+    ["/carepilot/webinars", "ENGAGE_WEBINAR_AUTOMATION", "ENGAGE_WEBINAR_AUTOMATION"],
+    ["/carepilot/ai-calls", "ENGAGE_AI_CALLS", "ENGAGE_AI_CALLS"],
+    ["/carepilot/ai-receptionist/active-conversations", "ENGAGE_AI_RECEPTIONIST_ACTIVE", "ENGAGE_AI_RECEPTIONIST_ACTIVE"],
+    ["/carepilot/ai-receptionist/callback-queue", "ENGAGE_AI_RECEPTIONIST_CALLBACK", "ENGAGE_AI_RECEPTIONIST_CALLBACK"],
+    ["/carepilot/ai-receptionist/escalation-queue", "ENGAGE_AI_RECEPTIONIST_ESCALATION", "ENGAGE_AI_RECEPTIONIST_ESCALATION"],
+    ["/carepilot/ai-receptionist/appointment-handoffs", "ENGAGE_AI_RECEPTIONIST_APPOINTMENT_HANDOFF", "ENGAGE_AI_RECEPTIONIST_APPOINTMENT_HANDOFF"],
+    ["/carepilot/receptionist-queue", "ENGAGE_RECEPTIONIST_QUEUE", "ENGAGE_RECEPTIONIST_QUEUE"],
+  ];
+  for (const [path, pageKey, cmsPageKey] of expectations) {
+    const meta = resolveHelpPageMeta(path);
+    assert.equal(meta.pageKey, pageKey);
+    assert.equal(meta.cmsPageKey, cmsPageKey);
+    assert.equal(resolveHelpRouteByPageKey(pageKey)?.path, path);
+  }
+});
+
 test("billing route resolves to the billing help page", () => {
   const meta = resolveHelpPageMeta("/billing");
   assert.equal(meta.pageKey, "BILLING");
@@ -177,6 +238,48 @@ test("clinic help pages are seeded in the db-backed help cms", () => {
   assert.ok(source.includes('"VACCINATIONS"'));
   assert.ok(source.includes('"CONSULTATION_WORKSPACE"'));
   assert.ok(source.includes('"CONSULTATION_PRESCRIPTION"'));
+});
+
+test("engage help pages are seeded in the db-backed help cms", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "..", "backend", "api", "api-bff", "src", "main", "java", "com", "deepthoughtnet", "clinic", "api", "help", "HelpCmsSeeder.java"), "utf8");
+  assert.ok(source.includes('"CAMPAIGNS"'));
+  assert.ok(source.includes('"ENGAGE_ANALYTICS"'));
+  assert.ok(source.includes('"ENGAGE_OPS_CONSOLE"'));
+  assert.ok(source.includes('"ENGAGE_MESSAGING"'));
+  assert.ok(source.includes('"ENGAGE_REMINDERS"'));
+  assert.ok(source.includes('"ENGAGE_PATIENT_ENGAGEMENT"'));
+  assert.ok(source.includes('"ENGAGE_LEADS"'));
+  assert.ok(source.includes('"ENGAGE_WEBINAR_AUTOMATION"'));
+  assert.ok(source.includes('"ENGAGE_AI_CALLS"'));
+  assert.ok(source.includes('"ENGAGE_RECEPTIONIST_QUEUE"'));
+});
+
+test("engage pages do not retain visible CarePilot branding", () => {
+  const files = [
+    "web-admin/src/products/carepilot/campaigns/CampaignsPage.tsx",
+    "web-admin/src/products/carepilot/messaging/MessagingPage.tsx",
+    "web-admin/src/products/carepilot/ops/OpsConsolePage.tsx",
+    "web-admin/src/products/carepilot/reminders/RemindersPage.tsx",
+    "web-admin/src/products/carepilot/leads/LeadsPage.tsx",
+    "web-admin/src/products/carepilot/ai-calls/AiCallsPage.tsx",
+    "web-admin/src/products/carepilot/webinars/WebinarsPage.tsx",
+  ];
+  const banned = [
+    "CarePilot Campaigns",
+    "CarePilot Leads",
+    "CarePilot Reminders",
+    "CarePilot Ops Console",
+    "CarePilot AI Calls",
+    "CarePilot messaging provider status",
+    "CarePilot provider readiness",
+    "CarePilot data",
+  ];
+  for (const file of files) {
+    const source = fs.readFileSync(path.join(process.cwd(), "..", file), "utf8");
+    for (const token of banned) {
+      assert.ok(!source.includes(token), `${file} still includes ${token}`);
+    }
+  }
 });
 
 test("common issues help section uses the expected label", () => {

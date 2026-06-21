@@ -1270,8 +1270,8 @@ public class HelpCmsSeeder {
                         )
                 ),
                 page(
-                        "CLINIC", "LEADS", "Leads", "lead",
-                        "Leads manages incoming prospects, follow-up, and conversion tracking.",
+                        "CLINIC", "ENGAGE_LEADS", "Jeevanam Engage Leads", "lead",
+                        "Jeevanam Engage Leads manages incoming prospects, follow-up, and conversion tracking.",
                         roles("SALES", "CLINIC_ADMIN", "RECEPTIONIST"),
                         steps(
                                 step("Capture lead", "Add lead source, mobile, and contact details."),
@@ -1297,6 +1297,323 @@ public class HelpCmsSeeder {
                         ),
                         related(
                                 relatedItem("Campaigns", "CAMPAIGNS", "Campaigns often feed new leads.")
+                        ),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "CAMPAIGNS", "Jeevanam Engage Campaigns", "campaign",
+                        "Jeevanam Engage Campaigns manages campaign setup, delivery channels, templates, and execution monitoring.",
+                        roles("CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"),
+                        steps(
+                                step("Create a campaign", "Choose the audience, trigger, channel, and template."),
+                                step("Review templates", "Validate subject, body, and channel readiness."),
+                                step("Monitor execution", "Track delivery attempts, retries, and failures.")
+                        ),
+                        fields(
+                                field("Campaign name", true, "Display name for the campaign.", "Appointment Recall", 60, "Required, max 60 characters", "Text"),
+                                field("Description", false, "Optional campaign description.", "Recall patients due this week.", 250, "Optional, max 250 characters", "Text"),
+                                field("Channel", true, "Delivery channel for the campaign.", "SMS", 30, "Required enum", "Enum")
+                        ),
+                        validations(
+                                validation("Campaign name", "Required and max 60 characters.", true, "Text", 60, "Appointment Recall"),
+                                validation("Description", "Optional and max 250 characters.", false, "Text", 250, "Recall patients due this week."),
+                                validation("Channel", "Required where workflow needs it.", true, "Enum", null, "SMS")
+                        ),
+                        errors(List.of(
+                                error("Campaign name is required.", "Enter a campaign name before saving.", "Check the name field and try again.")
+                        )),
+                        bestPractices(
+                                note("Use clear audience names", "Keep campaign names specific to the workflow or segment.")
+                        ),
+                        faq(
+                                faqItem("Can I reuse templates?", "Yes, existing templates can be selected or copied into new campaigns.")
+                        ),
+                        related(
+                                relatedItem("Analytics", "ENGAGE_ANALYTICS", "Review campaign reach and performance."),
+                                relatedItem("Ops Console", "ENGAGE_OPS_CONSOLE", "Investigate failed executions and retries.")
+                        ),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_ANALYTICS", "Jeevanam Engage Analytics", "analytics",
+                        "Jeevanam Engage Analytics summarizes campaign, lead, reminder, and reception activity.",
+                        roles("CLINIC_ADMIN", "AUDITOR"),
+                        steps(
+                                step("Choose a report slice", "Select the relevant filters and route."),
+                                step("Review metrics", "Check the totals, trends, and conversion ratios."),
+                                step("Open related pages", "Use drill-downs to inspect the operational source.")
+                        ),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(
+                                note("Use a consistent date range", "Compare like-for-like periods when reviewing trends.")
+                        ),
+                        faq(
+                                faqItem("Does analytics change data?", "No, it only summarizes existing operational records.")
+                        ),
+                        related(
+                                relatedItem("Campaigns", "CAMPAIGNS", "Campaign execution drives the analytics totals."),
+                                relatedItem("Leads", "LEADS", "Lead activity feeds conversion reporting.")
+                        ),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_OPS_CONSOLE", "Jeevanam Engage Ops Console", "settings",
+                        "Jeevanam Engage Ops Console tracks failed execution queues, retries, and delivery attempts.",
+                        roles("CLINIC_ADMIN", "AUDITOR"),
+                        steps(
+                                step("Filter failed work", "Narrow the queue by date, channel, and provider."),
+                                step("Inspect attempts", "Open the timeline for delivery attempt detail."),
+                                step("Retry or resend", "Escalate only after reviewing the failure reason.")
+                        ),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(
+                                note("Confirm the failure reason", "Check provider readiness before retrying.")
+                        ),
+                        faq(
+                                faqItem("Can I retry everything?", "No, only eligible records should be retried after review.")
+                        ),
+                        related(
+                                relatedItem("Campaigns", "CAMPAIGNS", "Operations are sourced from campaign executions."),
+                                relatedItem("Reminders", "ENGAGE_REMINDERS", "Reminder failures are also monitored here.")
+                        ),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_MESSAGING", "Jeevanam Engage Messaging", "message",
+                        "Jeevanam Engage Messaging shows provider readiness and test send behavior for email, SMS, and WhatsApp.",
+                        roles("CLINIC_ADMIN", "AUDITOR"),
+                        steps(
+                                step("Review provider status", "Check readiness and missing configuration keys."),
+                                step("Send a test message", "Validate recipient, subject, and body before sending."),
+                                step("Confirm delivery", "Use provider responses to validate the channel.")
+                        ),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(
+                                note("Test before rollout", "Verify provider readiness before enabling a campaign channel.")
+                        ),
+                        faq(
+                                faqItem("Why is a provider disabled?", "The provider configuration or environment may be incomplete.")
+                        ),
+                        related(
+                                relatedItem("Campaigns", "CAMPAIGNS", "Campaigns use the same provider stack."),
+                                relatedItem("Reminders", "ENGAGE_REMINDERS", "Reminder sends depend on channel readiness.")
+                        ),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_REMINDERS", "Jeevanam Engage Reminders", "notifications",
+                        "Jeevanam Engage Reminders tracks scheduled reminders, retries, and delivery outcomes.",
+                        roles("CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"),
+                        steps(
+                                step("Filter the queue", "Use dates, campaign type, and channel to narrow reminders."),
+                                step("Open the timeline", "Inspect delivery attempts and errors."),
+                                step("Reschedule or resend", "Use the action controls for eligible items.")
+                        ),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(
+                                note("Keep the date range tight", "Smaller slices are easier to review and audit.")
+                        ),
+                        faq(
+                                faqItem("Can a reminder be resent?", "Yes, if the delivery status allows it.")
+                        ),
+                        related(
+                                relatedItem("Ops Console", "ENGAGE_OPS_CONSOLE", "Failed reminder work also appears in operations."),
+                                relatedItem("Campaigns", "CAMPAIGNS", "Campaign setup defines reminder behavior.")
+                        ),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_PATIENT_ENGAGEMENT", "Jeevanam Engage Patient Engagement", "groups",
+                        "Jeevanam Engage Patient Engagement summarizes patient risk cohorts and outreach opportunities.",
+                        roles("CLINIC_ADMIN", "AUDITOR", "RECEPTIONIST"),
+                        steps(
+                                step("Pick a cohort", "Choose the risk cohort that needs review."),
+                                step("Inspect score drivers", "Read the risk reasons and prior activity."),
+                                step("Plan outreach", "Use the suggested campaign as the starting point.")
+                        ),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(
+                                note("Review risk drivers", "Use the score and the reasons together, not in isolation.")
+                        ),
+                        faq(
+                                faqItem("Is engagement score editable?", "No, it is derived from patient activity and risk rules.")
+                        ),
+                        related(
+                                relatedItem("Leads", "LEADS", "Some cohorts can feed lead management workflows."),
+                                relatedItem("Campaigns", "CAMPAIGNS", "Suggested outreach often maps to campaigns.")
+                        ),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_WEBINAR_AUTOMATION", "Jeevanam Engage Webinar Automation", "event",
+                        "Jeevanam Engage Webinar Automation manages webinars, registrations, attendance, and follow-up workflows.",
+                        roles("CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"),
+                        steps(
+                                step("Create the webinar", "Provide the schedule, organizer, and campaign linkage."),
+                                step("Track registrations", "Review attendee signups and attendance updates."),
+                                step("Send follow-up", "Use reminder and follow-up automation after the event.")
+                        ),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(
+                                note("Keep schedules accurate", "Timezone and date/time fields must be correct for reminders.")
+                        ),
+                        faq(
+                                faqItem("Can webinar registrations open leads?", "Yes, attendee data can be used in lead follow-up flows.")
+                        ),
+                        related(
+                                relatedItem("Leads", "LEADS", "Attendee follow-up may become a lead workflow."),
+                                relatedItem("Campaigns", "CAMPAIGNS", "Webinar reminders can reuse campaign templates.")
+                        ),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_AI_CALLS", "Jeevanam Engage AI Calls", "call",
+                        "Jeevanam Engage AI Calls covers outbound AI call campaigns, manual calls, triggers, and rescheduling.",
+                        roles("CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"),
+                        steps(
+                                step("Configure a campaign", "Choose the call type, retries, and template."),
+                                step("Queue calls", "Trigger campaigns or schedule manual calls."),
+                                step("Review outcomes", "Inspect the execution timeline and escalate as needed.")
+                        ),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(
+                                note("Validate the phone number", "Use a valid Indian mobile number before queuing calls.")
+                        ),
+                        faq(
+                                faqItem("Can calls be rescheduled?", "Yes, queued or retryable executions can be rescheduled when workflow allows.")
+                        ),
+                        related(
+                                relatedItem("Ops Console", "ENGAGE_OPS_CONSOLE", "AI call failures appear in the ops queue."),
+                                relatedItem("Receptionist Queue", "ENGAGE_RECEPTIONIST_QUEUE", "Escalated calls can become human handoffs.")
+                        ),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_AI_RECEPTIONIST_ACTIVE", "Jeevanam Engage AI Receptionist - Active Conversations", "record_voice_over",
+                        "Jeevanam Engage AI Receptionist active conversations show live handoffs and in-progress voice/chat interactions.",
+                        roles("CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"),
+                        steps(List.of()),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(List.of()),
+                        faq(List.of()),
+                        related(relatedItem("Receptionist Queue", "ENGAGE_RECEPTIONIST_QUEUE", "Handed-off tasks continue in the queue.")),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_AI_RECEPTIONIST_CALLBACK", "Jeevanam Engage AI Receptionist - Callback Queue", "call_made",
+                        "Jeevanam Engage AI Receptionist callback queue manages follow-up calls and callback scheduling.",
+                        roles("CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"),
+                        steps(List.of()),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(List.of()),
+                        faq(List.of()),
+                        related(relatedItem("Receptionist Queue", "ENGAGE_RECEPTIONIST_QUEUE", "Callbacks can be resolved from the same queue.")),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_AI_RECEPTIONIST_ESCALATION", "Jeevanam Engage AI Receptionist - Escalation Queue", "priority_high",
+                        "Jeevanam Engage AI Receptionist escalation queue tracks conversations that require staff intervention.",
+                        roles("CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"),
+                        steps(List.of()),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(List.of()),
+                        faq(List.of()),
+                        related(relatedItem("Receptionist Queue", "ENGAGE_RECEPTIONIST_QUEUE", "Escalations are resolved here.")),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_AI_RECEPTIONIST_APPOINTMENT_HANDOFF", "Jeevanam Engage AI Receptionist - Appointment Handoff", "handshake",
+                        "Jeevanam Engage AI Receptionist appointment handoff tracks tasks moved from AI to human scheduling.",
+                        roles("CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"),
+                        steps(List.of()),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(List.of()),
+                        faq(List.of()),
+                        related(relatedItem("Receptionist Queue", "ENGAGE_RECEPTIONIST_QUEUE", "Appointment handoffs are processed in the same queue.")),
+                        tips(List.of()),
+                        limitations(List.of()),
+                        links(List.of()),
+                        audit(List.of())
+                ),
+                page(
+                        "CLINIC", "ENGAGE_RECEPTIONIST_QUEUE", "Jeevanam Engage Receptionist Queue", "support_agent",
+                        "Jeevanam Engage Receptionist Queue manages callbacks, escalations, and appointment handoffs for staff follow-up.",
+                        roles("CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"),
+                        steps(
+                                step("Review tasks", "Open the active queue and inspect status."),
+                                step("Assign or resolve", "Take ownership, add notes, or complete the task."),
+                                step("Audit the trail", "Review the event history for the selected task.")
+                        ),
+                        fields(List.of()),
+                        validations(List.of()),
+                        errors(List.of()),
+                        bestPractices(
+                                note("Add clear notes", "Keep callback and resolution notes concise and actionable.")
+                        ),
+                        faq(
+                                faqItem("Are notes required?", "Use notes whenever the workflow requires a handoff or resolution summary.")
+                        ),
+                        related(
+                                relatedItem("AI Calls", "ENGAGE_AI_CALLS", "AI call escalations can become receptionist tasks."),
+                                relatedItem("Patient Engagement", "ENGAGE_PATIENT_ENGAGEMENT", "Risk cohorts can feed follow-up tasks.")
                         ),
                         tips(List.of()),
                         limitations(List.of()),

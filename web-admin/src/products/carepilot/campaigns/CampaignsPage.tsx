@@ -31,6 +31,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../../auth/useAuth";
+import { engageCampaignSchema, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
 import {
   activateCarePilotCampaign,
   createCarePilotCampaign,
@@ -244,6 +245,7 @@ export default function CampaignsPage() {
 
   const [createCampaignOpen, setCreateCampaignOpen] = React.useState(false);
   const [campaignForm, setCampaignForm] = React.useState<CreateCampaignForm>(emptyCampaignForm());
+  const [campaignErrors, setCampaignErrors] = React.useState<Record<string, string>>({});
   const [campaignTemplateSource, setCampaignTemplateSource] = React.useState<TemplateSource>("EXISTING");
   const [campaignPresetKey, setCampaignPresetKey] = React.useState("");
   const [campaignPresetSubject, setCampaignPresetSubject] = React.useState("");
@@ -253,6 +255,7 @@ export default function CampaignsPage() {
   const [selectedPreset, setSelectedPreset] = React.useState<CampaignPreset | null>(null);
   const [presetForm, setPresetForm] = React.useState<PresetCreateForm | null>(null);
   const [templateForm, setTemplateForm] = React.useState<TemplateForm>(emptyTemplateForm());
+  const [templateErrors, setTemplateErrors] = React.useState<Record<string, string>>({});
   const [templatePresetKey, setTemplatePresetKey] = React.useState("");
   const [editingTemplateId, setEditingTemplateId] = React.useState<string | null>(null);
 
@@ -335,7 +338,7 @@ export default function CampaignsPage() {
         setSelectedCampaign((current) => campaignRows.find((x) => x.id === current?.id) || campaignRows[0] || null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load CarePilot data");
+      setError(err instanceof Error ? err.message : "Failed to load Jeevanam Engage data");
     } finally {
       setLoading(false);
     }
@@ -382,10 +385,21 @@ export default function CampaignsPage() {
 
   const onCreateCampaign = async () => {
     if (!auth.accessToken || !auth.tenantId || !canManage) return;
-    if (!campaignForm.name.trim()) {
-      setToast({ type: "error", text: "Campaign name is required." });
+    const parsed = engageCampaignSchema.safeParse({
+      name: campaignForm.name,
+      description: campaignForm.notes,
+      callType: campaignForm.campaignType === "CUSTOM" ? "IN_APP" : "SMS",
+      status: "DRAFT",
+      templateId: campaignForm.templateId || undefined,
+      retryEnabled: true,
+      maxAttempts: 3,
+      escalationEnabled: false,
+    });
+    if (!parsed.success) {
+      setCampaignErrors(mapZodErrors(parsed.error));
       return;
     }
+    setCampaignErrors({});
     const normalizedTemplateId = campaignForm.templateId.trim();
     if (campaignTemplateSource === "EXISTING" && normalizedTemplateId && !UUID_RE.test(normalizedTemplateId)) {
       setToast({ type: "error", text: "Invalid template selection. Please choose a valid template." });
@@ -470,10 +484,21 @@ export default function CampaignsPage() {
   const onCreateFromPreset = async () => {
     if (!auth.accessToken || !auth.tenantId || !canManage || !selectedPreset || !presetForm) return;
     if (selectedPreset.implementationStatus === "FUTURE") return;
-    if (!presetForm.name.trim()) {
-      setToast({ type: "error", text: "Campaign name is required." });
+    const parsed = engageCampaignSchema.safeParse({
+      name: presetForm.name,
+      description: presetForm.notes,
+      callType: selectedPreset.defaultChannel,
+      status: "DRAFT",
+      templateId: undefined,
+      retryEnabled: true,
+      maxAttempts: 3,
+      escalationEnabled: false,
+    });
+    if (!parsed.success) {
+      setCampaignErrors(mapZodErrors(parsed.error));
       return;
     }
+    setCampaignErrors({});
     setWorkingId("campaign-preset-create");
     try {
       const notes = `${presetForm.notes.trim() || ""}\n\n[Trigger Config]\n${presetForm.triggerConfigText}`.trim();
@@ -554,9 +579,13 @@ export default function CampaignsPage() {
   const onSubmitTemplate = async () => {
     if (!auth.accessToken || !auth.tenantId || !canManage) return;
     if (!templateForm.name.trim() || !templateForm.bodyTemplate.trim()) {
-      setToast({ type: "error", text: "Template name and body are required." });
+      setTemplateErrors({
+        name: templateForm.name.trim() ? "" : "Template name is required.",
+        bodyTemplate: templateForm.bodyTemplate.trim() ? "" : "Template body is required.",
+      });
       return;
     }
+    setTemplateErrors({});
     setWorkingId("template-save");
     try {
       if (editingTemplateId) {
@@ -625,19 +654,19 @@ export default function CampaignsPage() {
   };
 
   if (!auth.tenantId) {
-    return <Alert severity="info">Select a tenant from the top selector to manage CarePilot campaigns.</Alert>;
+    return <Alert severity="info">Select a tenant from the top selector to manage Jeevanam Engage campaigns.</Alert>;
   }
 
   if (!canView) {
-    return <Alert severity="error">You do not have access to CarePilot.</Alert>;
+    return <Alert severity="error">You do not have access to Jeevanam Engage.</Alert>;
   }
 
   return (
     <Stack spacing={3}>
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 2, flexWrap: "wrap" }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900, mb: 1 }}>CarePilot Campaigns</Typography>
-          <Typography variant="body2" color="text.secondary">Manage campaign setup, templates, and delivery execution reliability.</Typography>
+          <Typography variant="h4" sx={{ fontWeight: 900, mb: 1 }}>Jeevanam Engage Campaigns</Typography>
+          <Typography variant="body2" color="text.secondary">Campaigns, lead management, patient engagement, reminders, and AI outreach.</Typography>
         </Box>
         {canManage ? (
           <Stack direction="row" spacing={1}>
@@ -672,7 +701,7 @@ export default function CampaignsPage() {
       </Box>
 
       {error ? <Alert severity="error">{error}</Alert> : null}
-      {!canManage ? <Alert severity="info">You have read-only access to CarePilot.</Alert> : null}
+      {!canManage ? <Alert severity="info">You have read-only access to Jeevanam Engage.</Alert> : null}
 
       <Card>
         <CardContent sx={{ pb: 1 }}>
@@ -1029,10 +1058,14 @@ export default function CampaignsPage() {
                     </FormControl>
                   ) : null}
                   <TextField
-                    label="Name"
+                    label="Name *"
                     value={templateForm.name}
                     onChange={(e) => setTemplateForm((c) => ({ ...c, name: e.target.value }))}
                     disabled={!canManage}
+                    required
+                    inputProps={{ maxLength: 60 }}
+                    error={Boolean(templateErrors.name)}
+                    helperText={templateErrors.name || "Template name must be 60 characters or fewer."}
                   />
                   <FormControl fullWidth>
                     <InputLabel>Channel</InputLabel>
@@ -1055,14 +1088,19 @@ export default function CampaignsPage() {
                     value={templateForm.subjectLine}
                     onChange={(e) => setTemplateForm((c) => ({ ...c, subjectLine: e.target.value }))}
                     disabled={!canManage}
+                    inputProps={{ maxLength: 60 }}
                   />
                   <TextField
-                    label="Body"
+                    label="Body *"
                     multiline
                     minRows={6}
                     value={templateForm.bodyTemplate}
                     onChange={(e) => setTemplateForm((c) => ({ ...c, bodyTemplate: e.target.value }))}
                     disabled={!canManage}
+                    required
+                    inputProps={{ maxLength: 250 }}
+                    error={Boolean(templateErrors.bodyTemplate)}
+                    helperText={templateErrors.bodyTemplate || "Template body is required and must be 250 characters or fewer."}
                   />
                   <FormControl fullWidth>
                     <InputLabel>Active</InputLabel>
@@ -1270,8 +1308,8 @@ export default function CampaignsPage() {
           ) : null}
           {presetStep === 2 && selectedPreset && presetForm ? (
             <Stack spacing={1.5} sx={{ mt: 0.5 }}>
-              <TextField label="Campaign Name" value={presetForm.name} onChange={(e) => setPresetForm((c) => c ? ({ ...c, name: e.target.value }) : c)} />
-              <TextField label="Description" multiline minRows={2} value={presetForm.notes} onChange={(e) => setPresetForm((c) => c ? ({ ...c, notes: e.target.value }) : c)} />
+              <TextField label="Campaign Name *" value={presetForm.name} onChange={(e) => setPresetForm((c) => c ? ({ ...c, name: e.target.value }) : c)} required error={Boolean(campaignErrors.name)} helperText={campaignErrors.name || "Campaign name must be 60 characters or fewer."} inputProps={{ maxLength: 60 }} />
+              <TextField label="Description" multiline minRows={2} value={presetForm.notes} onChange={(e) => setPresetForm((c) => c ? ({ ...c, notes: e.target.value }) : c)} inputProps={{ maxLength: 250 }} error={Boolean(campaignErrors.description)} helperText={campaignErrors.description || "Description must be 250 characters or fewer."} />
               <TextField label="Trigger" value={selectedPreset.triggerLabel} disabled />
               <FormControl fullWidth>
                 <InputLabel>Audience</InputLabel>
@@ -1291,8 +1329,8 @@ export default function CampaignsPage() {
           ) : null}
           {presetStep === 3 && selectedPreset && presetForm ? (
             <Stack spacing={1.5} sx={{ mt: 0.5 }}>
-              <TextField label="Template Subject" value={presetForm.templateSubject} onChange={(e) => setPresetForm((c) => c ? ({ ...c, templateSubject: e.target.value }) : c)} />
-              <TextField label="Template Body" multiline minRows={8} value={presetForm.templateBody} onChange={(e) => setPresetForm((c) => c ? ({ ...c, templateBody: e.target.value }) : c)} />
+              <TextField label="Template Subject" value={presetForm.templateSubject} onChange={(e) => setPresetForm((c) => c ? ({ ...c, templateSubject: e.target.value }) : c)} inputProps={{ maxLength: 60 }} />
+              <TextField label="Template Body" multiline minRows={8} value={presetForm.templateBody} onChange={(e) => setPresetForm((c) => c ? ({ ...c, templateBody: e.target.value }) : c)} inputProps={{ maxLength: 250 }} />
               <Alert severity="info">
                 Supported placeholders: {selectedPreset.supportedPlaceholders.join(", ")}
               </Alert>
@@ -1348,22 +1386,22 @@ export default function CampaignsPage() {
                 <MenuItem value="NONE">No Template</MenuItem>
               </Select>
             </FormControl>
-            <TextField label="Name" value={campaignForm.name} onChange={(e) => setCampaignForm((c) => ({ ...c, name: e.target.value }))} />
+            <TextField label="Name *" value={campaignForm.name} onChange={(e) => setCampaignForm((c) => ({ ...c, name: e.target.value }))} required error={Boolean(campaignErrors.name)} helperText={campaignErrors.name || "Campaign name must be 60 characters or fewer."} inputProps={{ maxLength: 60 }} />
             <FormControl fullWidth>
               <InputLabel>Campaign Type</InputLabel>
-              <Select label="Campaign Type" value={campaignForm.campaignType} onChange={(e) => setCampaignForm((c) => ({ ...c, campaignType: String(e.target.value) as CarePilotCampaignType }))}>
+              <Select label="Campaign Type *" value={campaignForm.campaignType} onChange={(e) => setCampaignForm((c) => ({ ...c, campaignType: String(e.target.value) as CarePilotCampaignType }))}>
                 {CAMPAIGN_TYPES.map((type) => <MenuItem key={type} value={type}>{type}</MenuItem>)}
               </Select>
             </FormControl>
             <FormControl fullWidth>
               <InputLabel>Trigger Type</InputLabel>
-              <Select label="Trigger Type" value={campaignForm.triggerType} onChange={(e) => setCampaignForm((c) => ({ ...c, triggerType: String(e.target.value) as CarePilotTriggerType }))}>
+              <Select label="Trigger Type *" value={campaignForm.triggerType} onChange={(e) => setCampaignForm((c) => ({ ...c, triggerType: String(e.target.value) as CarePilotTriggerType }))}>
                 {TRIGGER_TYPES.map((type) => <MenuItem key={type} value={type}>{type}</MenuItem>)}
               </Select>
             </FormControl>
             <FormControl fullWidth>
               <InputLabel>Audience Type</InputLabel>
-              <Select label="Audience Type" value={campaignForm.audienceType} onChange={(e) => setCampaignForm((c) => ({ ...c, audienceType: String(e.target.value) as CarePilotAudienceType }))}>
+              <Select label="Audience Type *" value={campaignForm.audienceType} onChange={(e) => setCampaignForm((c) => ({ ...c, audienceType: String(e.target.value) as CarePilotAudienceType }))}>
                 {AUDIENCE_TYPES.map((type) => <MenuItem key={type} value={type}>{type}</MenuItem>)}
               </Select>
             </FormControl>

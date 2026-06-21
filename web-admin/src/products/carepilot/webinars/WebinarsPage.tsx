@@ -29,6 +29,7 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../auth/useAuth";
+import { mapZodErrors, engageWebinarRegistrationSchema, engageWebinarSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   createCarePilotWebinar,
   getCarePilotWebinarAnalyticsSummary,
@@ -92,11 +93,13 @@ export default function WebinarsPage() {
     followupEnabled: true,
     tags: "",
   });
+  const [formErrors, setFormErrors] = React.useState<Record<string, string>>({});
 
   const [regOpen, setRegOpen] = React.useState(false);
   const [regWebinar, setRegWebinar] = React.useState<CarePilotWebinar | null>(null);
   const [registrations, setRegistrations] = React.useState<CarePilotWebinarRegistration[]>([]);
   const [regForm, setRegForm] = React.useState({ attendeeName: "", attendeeEmail: "", attendeePhone: "", patientId: "", leadId: "" });
+  const [regFormErrors, setRegFormErrors] = React.useState<Record<string, string>>({});
   const [regLoading, setRegLoading] = React.useState(false);
   const [regSaving, setRegSaving] = React.useState(false);
   const [regError, setRegError] = React.useState<string | null>(null);
@@ -204,6 +207,12 @@ export default function WebinarsPage() {
         tags: form.tags || null,
         status: editing?.status || "DRAFT",
       };
+      const parsed = engageWebinarSchema.safeParse(payload);
+      if (!parsed.success) {
+        setFormErrors(mapZodErrors(parsed.error));
+        return;
+      }
+      setFormErrors({});
       if (editing) await updateCarePilotWebinar(auth.accessToken, auth.tenantId, editing.id, payload);
       else await createCarePilotWebinar(auth.accessToken, auth.tenantId, payload);
       setEditorOpen(false);
@@ -237,6 +246,12 @@ export default function WebinarsPage() {
     setRegError(null);
     setRegSaving(true);
     try {
+      const parsed = engageWebinarRegistrationSchema.safeParse(regForm);
+      if (!parsed.success) {
+        setRegFormErrors(mapZodErrors(parsed.error));
+        return;
+      }
+      setRegFormErrors({});
       await registerCarePilotWebinarAttendee(auth.accessToken, auth.tenantId, regWebinar.id, {
         attendeeName: regForm.attendeeName,
         attendeeEmail: regForm.attendeeEmail || null,
@@ -338,18 +353,18 @@ export default function WebinarsPage() {
         <DialogTitle>{editing ? "Edit Webinar" : "Create Webinar"}</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 0.5 }}>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Title" value={form.title} onChange={(e) => setForm((v) => ({ ...v, title: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><FormControl fullWidth><InputLabel>Type</InputLabel><Select value={form.webinarType} label="Type" onChange={(e) => setForm((v) => ({ ...v, webinarType: e.target.value as CarePilotWebinarType }))}>{WEBINAR_TYPES.map((t) => <MenuItem key={t} value={t}>{t}</MenuItem>)}</Select></FormControl></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth required inputProps={{ maxLength: 60 }} label="Title *" value={form.title} onChange={(e) => setForm((v) => ({ ...v, title: e.target.value }))} error={Boolean(formErrors.title)} helperText={formErrors.title || "Title must be 60 characters or fewer."} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><FormControl fullWidth><InputLabel>Type *</InputLabel><Select value={form.webinarType} label="Type *" onChange={(e) => setForm((v) => ({ ...v, webinarType: e.target.value as CarePilotWebinarType }))}>{WEBINAR_TYPES.map((t) => <MenuItem key={t} value={t}>{t}</MenuItem>)}</Select></FormControl></Grid>
             <Grid size={{ xs: 12, md: 6 }}><FormControl fullWidth><InputLabel>Campaign</InputLabel><Select value={form.campaignId} label="Campaign" onChange={(e) => setForm((v) => ({ ...v, campaignId: e.target.value }))}><MenuItem value="">None</MenuItem>{campaigns.map((campaign) => <MenuItem key={campaign.id} value={campaign.id}>{campaign.name}</MenuItem>)}</Select></FormControl></Grid>
-            <Grid size={{ xs: 12 }}><TextField fullWidth multiline minRows={2} label="Description" value={form.description} onChange={(e) => setForm((v) => ({ ...v, description: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth type="datetime-local" label="Start" value={form.scheduledStartAt} onChange={(e) => setForm((v) => ({ ...v, scheduledStartAt: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth type="datetime-local" label="End" value={form.scheduledEndAt} onChange={(e) => setForm((v) => ({ ...v, scheduledEndAt: e.target.value }))} InputLabelProps={{ shrink: true }} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Webinar URL" value={form.webinarUrl} onChange={(e) => setForm((v) => ({ ...v, webinarUrl: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth label="Organizer" value={form.organizerName} onChange={(e) => setForm((v) => ({ ...v, organizerName: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth label="Organizer Email" value={form.organizerEmail} onChange={(e) => setForm((v) => ({ ...v, organizerEmail: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth label="Timezone" value={form.timezone} onChange={(e) => setForm((v) => ({ ...v, timezone: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth type="number" label="Capacity" value={form.capacity} onChange={(e) => setForm((v) => ({ ...v, capacity: e.target.value }))} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Tags" value={form.tags} onChange={(e) => setForm((v) => ({ ...v, tags: e.target.value }))} /></Grid>
+            <Grid size={{ xs: 12 }}><TextField fullWidth multiline minRows={2} inputProps={{ maxLength: 250 }} label="Description" value={form.description} onChange={(e) => setForm((v) => ({ ...v, description: e.target.value }))} error={Boolean(formErrors.description)} helperText={formErrors.description || "Description must be 250 characters or fewer."} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth required type="datetime-local" label="Start *" value={form.scheduledStartAt} onChange={(e) => setForm((v) => ({ ...v, scheduledStartAt: e.target.value }))} InputLabelProps={{ shrink: true }} error={Boolean(formErrors.scheduledStartAt)} helperText={formErrors.scheduledStartAt || "Start date/time is required."} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth required type="datetime-local" label="End *" value={form.scheduledEndAt} onChange={(e) => setForm((v) => ({ ...v, scheduledEndAt: e.target.value }))} InputLabelProps={{ shrink: true }} error={Boolean(formErrors.scheduledEndAt)} helperText={formErrors.scheduledEndAt || "End date/time is required and must be on or after start."} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth inputProps={{ maxLength: 250 }} label="Webinar URL" value={form.webinarUrl} onChange={(e) => setForm((v) => ({ ...v, webinarUrl: e.target.value }))} error={Boolean(formErrors.webinarUrl)} helperText={formErrors.webinarUrl || "Optional webinar URL."} /></Grid>
+            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth inputProps={{ maxLength: 60 }} label="Organizer" value={form.organizerName} onChange={(e) => setForm((v) => ({ ...v, organizerName: e.target.value }))} error={Boolean(formErrors.organizerName)} helperText={formErrors.organizerName || "Optional organizer name."} /></Grid>
+            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth label="Organizer Email" value={form.organizerEmail} onChange={(e) => setForm((v) => ({ ...v, organizerEmail: e.target.value }))} error={Boolean(formErrors.organizerEmail)} helperText={formErrors.organizerEmail || "Enter a valid email address if provided."} /></Grid>
+            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth required inputProps={{ maxLength: 60 }} label="Timezone *" value={form.timezone} onChange={(e) => setForm((v) => ({ ...v, timezone: e.target.value }))} error={Boolean(formErrors.timezone)} helperText={formErrors.timezone || "Timezone is required."} /></Grid>
+            <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth type="number" label="Capacity" value={form.capacity} onChange={(e) => setForm((v) => ({ ...v, capacity: e.target.value }))} inputProps={{ min: 0 }} error={Boolean(formErrors.capacity)} helperText={formErrors.capacity || "Capacity must be zero or greater."} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth inputProps={{ maxLength: 250 }} label="Tags" value={form.tags} onChange={(e) => setForm((v) => ({ ...v, tags: e.target.value }))} error={Boolean(formErrors.tags)} helperText={formErrors.tags || "Optional tags, comma separated."} /></Grid>
           </Grid>
         </DialogContent>
         <DialogActions><Button onClick={() => setEditorOpen(false)}>Close</Button><Button variant="contained" onClick={() => void saveWebinar()} disabled={saving}>{saving ? "Saving..." : "Save"}</Button></DialogActions>
@@ -361,9 +376,9 @@ export default function WebinarsPage() {
           {regError ? <Alert severity="error" sx={{ mb: 2 }}>{regError}</Alert> : null}
           {canMutate ? (
             <Grid container spacing={1.5} sx={{ mb: 2, mt: 0.5 }}>
-              <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" label="Attendee" value={regForm.attendeeName} onChange={(e) => setRegForm((v) => ({ ...v, attendeeName: e.target.value }))} /></Grid>
-              <Grid size={{ xs: 12, md: 2.5 }}><TextField fullWidth size="small" label="Email" value={regForm.attendeeEmail} onChange={(e) => setRegForm((v) => ({ ...v, attendeeEmail: e.target.value }))} /></Grid>
-              <Grid size={{ xs: 12, md: 2.5 }}><TextField fullWidth size="small" label="Phone" value={regForm.attendeePhone} onChange={(e) => setRegForm((v) => ({ ...v, attendeePhone: e.target.value }))} /></Grid>
+              <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" required label="Attendee *" value={regForm.attendeeName} onChange={(e) => setRegForm((v) => ({ ...v, attendeeName: e.target.value }))} error={Boolean(regFormErrors.attendeeName)} helperText={regFormErrors.attendeeName || "Attendee name is required."} /></Grid>
+              <Grid size={{ xs: 12, md: 2.5 }}><TextField fullWidth size="small" label="Email" value={regForm.attendeeEmail} onChange={(e) => setRegForm((v) => ({ ...v, attendeeEmail: e.target.value }))} error={Boolean(regFormErrors.attendeeEmail)} helperText={regFormErrors.attendeeEmail || "Enter a valid email address if provided."} /></Grid>
+              <Grid size={{ xs: 12, md: 2.5 }}><TextField fullWidth size="small" label="Phone" value={regForm.attendeePhone} onChange={(e) => setRegForm((v) => ({ ...v, attendeePhone: e.target.value }))} error={Boolean(regFormErrors.attendeePhone)} helperText={regFormErrors.attendeePhone || "Enter a valid Indian mobile number if provided."} /></Grid>
               <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Patient Id" value={regForm.patientId} onChange={(e) => setRegForm((v) => ({ ...v, patientId: e.target.value }))} /></Grid>
               <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Lead Id" value={regForm.leadId} onChange={(e) => setRegForm((v) => ({ ...v, leadId: e.target.value }))} /></Grid>
               <Grid size={{ xs: 12, md: 12 }}><Button variant="contained" onClick={() => void addRegistration()} disabled={regSaving}>{regSaving ? "Registering..." : "Register Attendee"}</Button></Grid>

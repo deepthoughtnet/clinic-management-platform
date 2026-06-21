@@ -48,7 +48,7 @@ const navItems = [
   { to: "/doctors", label: "Doctors" },
   { to: "/clinics", label: "Clinics" },
   { to: "/specialities", label: "Specialities" },
-  { to: "/careai", label: "AIVA" },
+  { to: "/careai", label: "AI Assistant" },
   { to: "/aiva", label: "AIVA" },
 ];
 
@@ -169,7 +169,7 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
       ) : (
         <header className="site-header">
           <Link to="/" className="brand">
-            <span className="brand-badge">AR</span>
+            <span className="brand-badge">JH</span>
             <span className="brand-meta">
               <strong>{branding.productName}</strong>
               <small>{branding.tagline}</small>
@@ -245,10 +245,8 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
         <footer className="site-footer">
           <div className="footer-grid">
             <section className="footer-brand-block">
-              <span className="eyebrow">{branding.productName}</span>
               <strong>{branding.productName}</strong>
-              <p className="footer-tagline">{footerBrandingLine()}</p>
-              <p>{branding.tagline} for clinics, patients, and teams.</p>
+              <p>Intelligent Healthcare Platform for clinics, patients, and teams.</p>
             </section>
 
             <section className="footer-column">
@@ -283,9 +281,9 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
               </div>
             </section>
           </div>
+          <div className="footer-brand-line">{footerBrandingLine()}</div>
           <div className="footer-bottom">
             <p>© 2026 DeepThoughtNet.</p>
-            <Link to={patientPortalHomePath(session)}>Open {branding.productName} Patient Portal</Link>
           </div>
         </footer>
       )}

@@ -18,6 +18,7 @@ import {
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import { useAuth } from "../../../auth/useAuth";
+import { mapZodErrors, engageMessagingTestSendSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   listCarePilotMessagingProviderStatuses,
   sendCarePilotProviderTestMessage,
@@ -25,6 +26,7 @@ import {
   type CarePilotProviderReadinessStatus,
 } from "../../../api/clinicApi";
 import { ApiClientError } from "../../../api/restClient";
+import { ENGAGE_PRODUCT_NAME } from "../shared/engageBranding";
 
 function statusColor(status: CarePilotProviderReadinessStatus) {
   if (status === "READY") return "success" as const;
@@ -36,27 +38,27 @@ function statusColor(status: CarePilotProviderReadinessStatus) {
 function guidance(channel: CarePilotMessagingProviderStatus["channel"]): string[] {
   if (channel === "EMAIL") {
     return [
-      "CLINIC_CAREPILOT_MESSAGING_EMAIL_ENABLED=true",
-      "CLINIC_CAREPILOT_MESSAGING_EMAIL_PROVIDER=mock",
-      "CLINIC_CAREPILOT_MESSAGING_EMAIL_FROM_ADDRESS=carepilot@your-clinic.com",
-      "# Real SMTP mode: CLINIC_CAREPILOT_MESSAGING_EMAIL_PROVIDER=smtp",
+      "CLINIC_ENGAGE_MESSAGING_EMAIL_ENABLED=true",
+      "CLINIC_ENGAGE_MESSAGING_EMAIL_PROVIDER=mock",
+      "CLINIC_ENGAGE_MESSAGING_EMAIL_FROM_ADDRESS=engage@your-clinic.com",
+      "# Real SMTP mode: CLINIC_ENGAGE_MESSAGING_EMAIL_PROVIDER=smtp",
       "# Real SMTP mode also requires CLINIC_MAIL_PROVIDER=smtp and CLINIC_MAIL_ENABLED=true",
     ];
   }
   if (channel === "SMS") {
     return [
-      "CLINIC_CAREPILOT_MESSAGING_SMS_ENABLED=true",
-      "CLINIC_CAREPILOT_MESSAGING_SMS_PROVIDER=mock",
-      "CLINIC_CAREPILOT_MESSAGING_SMS_FROM_NUMBER=CLINIC or CLINIC_CAREPILOT_MESSAGING_SMS_SENDER_ID=CLINIC",
-      "# Real HTTP mode: CLINIC_CAREPILOT_MESSAGING_SMS_PROVIDER=generic-http",
-      "# Real HTTP mode also requires CLINIC_CAREPILOT_MESSAGING_SMS_API_URL and ...API_KEY",
+      "CLINIC_ENGAGE_MESSAGING_SMS_ENABLED=true",
+      "CLINIC_ENGAGE_MESSAGING_SMS_PROVIDER=mock",
+      "CLINIC_ENGAGE_MESSAGING_SMS_FROM_NUMBER=CLINIC or CLINIC_ENGAGE_MESSAGING_SMS_SENDER_ID=CLINIC",
+      "# Real HTTP mode: CLINIC_ENGAGE_MESSAGING_SMS_PROVIDER=generic-http",
+      "# Real HTTP mode also requires CLINIC_ENGAGE_MESSAGING_SMS_API_URL and ...API_KEY",
     ];
   }
   return [
-    "CLINIC_CAREPILOT_MESSAGING_WHATSAPP_ENABLED=true",
-    "CLINIC_CAREPILOT_MESSAGING_WHATSAPP_PROVIDER=mock",
-    "CLINIC_CAREPILOT_MESSAGING_WHATSAPP_FROM_NUMBER=CLINIC",
-    "# Real Meta mode: CLINIC_CAREPILOT_MESSAGING_WHATSAPP_PROVIDER=meta-cloud-api",
+    "CLINIC_ENGAGE_MESSAGING_WHATSAPP_ENABLED=true",
+    "CLINIC_ENGAGE_MESSAGING_WHATSAPP_PROVIDER=mock",
+    "CLINIC_ENGAGE_MESSAGING_WHATSAPP_FROM_NUMBER=CLINIC",
+    "# Real Meta mode: CLINIC_ENGAGE_MESSAGING_WHATSAPP_PROVIDER=meta-cloud-api",
     "# Real Meta mode also requires ...API_URL, ...PHONE_NUMBER_ID, and ...ACCESS_TOKEN",
   ];
 }
@@ -76,12 +78,20 @@ export default function MessagingPage() {
   const [testOpen, setTestOpen] = React.useState(false);
   const [testChannel, setTestChannel] = React.useState<"EMAIL" | "SMS" | "WHATSAPP">("EMAIL");
   const [recipient, setRecipient] = React.useState("");
-  const [subject, setSubject] = React.useState("CarePilot test message");
-  const [body, setBody] = React.useState("This is a CarePilot provider test message.");
+  const [subject, setSubject] = React.useState("Jeevanam Engage test message");
+  const [body, setBody] = React.useState("This is a Jeevanam Engage provider test message.");
   const [sending, setSending] = React.useState(false);
   const [sendResult, setSendResult] = React.useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const selectedProvider = providers.find((provider) => provider.channel === testChannel);
   const selectedProviderDisabled = selectedProvider?.status === "DISABLED";
+
+  const validateRecipient = (value: string) => {
+    if (testChannel === "EMAIL") {
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) ? "" : "Enter a valid email address.";
+    }
+    return /^[6-9]\d{9}$/.test(value.replace(/[^0-9]/g, "").slice(0, 10)) ? "" : "Enter a valid 10-digit Indian mobile number.";
+  };
 
   const load = React.useCallback(async (isRefresh = false) => {
     if (!auth.accessToken || !auth.tenantId || !canView) {
@@ -109,9 +119,25 @@ export default function MessagingPage() {
 
   async function submitTestSend() {
     if (!auth.accessToken || !auth.tenantId) return;
+    const parsed = engageMessagingTestSendSchema.safeParse({
+      channel: testChannel,
+      recipient,
+      subject: testChannel === "EMAIL" ? subject : undefined,
+      body,
+    });
+    if (!parsed.success) {
+      setFieldErrors(mapZodErrors(parsed.error));
+      return;
+    }
+    const recipientError = validateRecipient(recipient);
+    if (recipientError) {
+      setFieldErrors({ recipient: recipientError });
+      return;
+    }
     try {
       setSending(true);
       setSendResult(null);
+      setFieldErrors({});
       const result = await sendCarePilotProviderTestMessage(auth.accessToken, auth.tenantId, testChannel, {
         recipient,
         subject: testChannel === "EMAIL" ? subject : null,
@@ -130,14 +156,14 @@ export default function MessagingPage() {
     }
   }
 
-  if (!canView) return <Alert severity="error">You do not have access to CarePilot messaging provider status.</Alert>;
+  if (!canView) return <Alert severity="error">You do not have access to Jeevanam Engage messaging provider status.</Alert>;
 
   return (
     <Stack spacing={2.5}>
       <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" gap={1}>
         <Box>
-          <Typography variant="h5" sx={{ fontWeight: 800 }}>Messaging Providers</Typography>
-          <Typography variant="body2" color="text.secondary">Visibility for CarePilot provider readiness across EMAIL, SMS, and WhatsApp.</Typography>
+          <Typography variant="h5" sx={{ fontWeight: 800 }}>{ENGAGE_PRODUCT_NAME} Messaging Providers</Typography>
+          <Typography variant="body2" color="text.secondary">Visibility for provider readiness across EMAIL, SMS, and WhatsApp.</Typography>
         </Box>
         <Stack direction="row" spacing={1}>
           <Button variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={() => void load(true)} disabled={refreshing || loading}>
@@ -206,7 +232,7 @@ export default function MessagingPage() {
           <Stack spacing={1.5} sx={{ mt: 0.5 }}>
             <TextField
               select
-              label="Channel"
+              label="Channel *"
               value={testChannel}
               onChange={(e) => setTestChannel(e.target.value as "EMAIL" | "SMS" | "WHATSAPP")}
               SelectProps={{ native: true }}
@@ -216,15 +242,38 @@ export default function MessagingPage() {
               <option value="WHATSAPP">WHATSAPP</option>
             </TextField>
             <TextField
-              label={testChannel === "EMAIL" ? "Recipient Email" : "Recipient Phone"}
+              label={testChannel === "EMAIL" ? "Recipient Email *" : "Recipient Phone *"}
               value={recipient}
               onChange={(e) => setRecipient(e.target.value)}
               fullWidth
+              required
+              error={Boolean(fieldErrors.recipient)}
+              helperText={fieldErrors.recipient || (testChannel === "EMAIL" ? "Enter a valid email address." : "Enter a 10-digit Indian mobile number.")}
             />
             {testChannel === "EMAIL" ? (
-              <TextField label="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} fullWidth />
+              <TextField
+                label="Subject *"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                fullWidth
+                required
+                inputProps={{ maxLength: 60 }}
+                error={Boolean(fieldErrors.subject)}
+                helperText={fieldErrors.subject || "Subject must be 60 characters or fewer."}
+              />
             ) : null}
-            <TextField label="Body" value={body} onChange={(e) => setBody(e.target.value)} fullWidth multiline minRows={3} />
+            <TextField
+              label="Body *"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              fullWidth
+              multiline
+              minRows={3}
+              required
+              inputProps={{ maxLength: 250 }}
+              error={Boolean(fieldErrors.body)}
+              helperText={fieldErrors.body || "Message body must be 250 characters or fewer."}
+            />
             {sendResult ? <Alert severity={sendResult.startsWith("Success") ? "success" : "warning"}>{sendResult}</Alert> : null}
           </Stack>
         </DialogContent>

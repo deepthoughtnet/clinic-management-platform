@@ -31,6 +31,7 @@ export * from "./schemas/filters.js";
 export * from "./schemas/fileUpload.js";
 export * from "./schemas/lab.js";
 export * from "./schemas/leads.js";
+export * from "./schemas/engage.js";
 export * from "./schemas/reports.js";
 export * from "./schemas/auth.js";
 export * from "./schemas/careai.js";

@@ -27,6 +27,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useAuth } from "../../../auth/useAuth";
+import { mapZodErrors, engageAiCallCampaignSchema, engageAiCallManualCallSchema, engageAiCallRescheduleSchema } from "@deepthoughtnet/form-validation-kit";
 import {
   cancelCarePilotAiCallExecution,
   createCarePilotAiCallCampaign,
@@ -225,11 +226,14 @@ export default function AiCallsPage() {
   const [executionDetailOpen, setExecutionDetailOpen] = React.useState(false);
   const [campaignDialogOpen, setCampaignDialogOpen] = React.useState(false);
   const [campaignForm, setCampaignForm] = React.useState<CampaignFormState>(emptyCampaignForm);
+  const [campaignErrors, setCampaignErrors] = React.useState<Record<string, string>>({});
   const [manualCallOpen, setManualCallOpen] = React.useState(false);
   const [manualCallForm, setManualCallForm] = React.useState<ManualCallFormState>(emptyManualCallForm);
+  const [manualCallErrors, setManualCallErrors] = React.useState<Record<string, string>>({});
   const [triggerOpen, setTriggerOpen] = React.useState(false);
   const [triggerCampaignId, setTriggerCampaignId] = React.useState<string | null>(null);
   const [triggerTargets, setTriggerTargets] = React.useState<TriggerTargetState[]>([emptyTriggerTarget()]);
+  const [triggerErrors, setTriggerErrors] = React.useState<Record<string, string>>({});
   const [transcriptOpen, setTranscriptOpen] = React.useState(false);
   const [transcript, setTranscript] = React.useState<CarePilotAiCallTranscript | null>(null);
   const [eventsOpen, setEventsOpen] = React.useState(false);
@@ -237,6 +241,7 @@ export default function AiCallsPage() {
   const [rescheduleOpen, setRescheduleOpen] = React.useState(false);
   const [rescheduleExecutionId, setRescheduleExecutionId] = React.useState<string | null>(null);
   const [rescheduleForm, setRescheduleForm] = React.useState<RescheduleState>(emptyRescheduleState);
+  const [rescheduleErrors, setRescheduleErrors] = React.useState<Record<string, string>>({});
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || !canView) {
@@ -354,10 +359,12 @@ export default function AiCallsPage() {
       maxAttempts: campaignForm.retryEnabled ? Math.max(1, campaignForm.maxAttempts) : 1,
       escalationEnabled: campaignForm.escalationEnabled,
     };
-    if (!body.name) {
-      setError("Campaign name is required.");
+    const parsed = engageAiCallCampaignSchema.safeParse(body);
+    if (!parsed.success) {
+      setCampaignErrors(mapZodErrors(parsed.error));
       return;
     }
+    setCampaignErrors({});
     await handleAction(async () => {
       if (campaignForm.id) {
         await updateCarePilotAiCallCampaign(token, tenantId, campaignForm.id, body);
@@ -381,7 +388,7 @@ export default function AiCallsPage() {
     if (!token || !tenantId || !triggerCampaignId) {
       return;
     }
-    const targets: CarePilotAiCallTriggerTargetInput[] = triggerTargets
+    const normalizedTargets: CarePilotAiCallTriggerTargetInput[] = triggerTargets
       .map((target) => ({
         patientId: target.patientId.trim() || null,
         leadId: target.leadId.trim() || null,
@@ -390,17 +397,17 @@ export default function AiCallsPage() {
         scheduledAt: toIsoOrNull(target.scheduledAt),
       }))
       .filter((target) => target.patientId || target.leadId || target.phoneNumber);
-    if (targets.length === 0) {
-      setError("Add at least one trigger target.");
+    if (normalizedTargets.length === 0) {
+      setTriggerErrors({ _form: "Add at least one trigger target." });
       return;
     }
-    const missingPhone = targets.some((target) => !target.patientId && !target.leadId && !target.phoneNumber);
-    if (missingPhone) {
-      setError("Phone number is required when patientId and leadId are empty.");
+    if (normalizedTargets.some((target) => !target.patientId && !target.leadId && !target.phoneNumber)) {
+      setTriggerErrors({ _form: "Phone number is required when patientId and leadId are empty." });
       return;
     }
+    setTriggerErrors({});
     await handleAction(async () => {
-      await triggerCarePilotAiCallCampaign(token, tenantId, triggerCampaignId, { targets });
+      await triggerCarePilotAiCallCampaign(token, tenantId, triggerCampaignId, { targets: normalizedTargets });
       setTriggerOpen(false);
       setTriggerTargets([emptyTriggerTarget()]);
     }, "Campaign trigger queued.");
@@ -421,10 +428,12 @@ export default function AiCallsPage() {
       script: manualCallForm.script.trim() || null,
       scheduledAt: toIsoOrNull(manualCallForm.scheduledAt),
     };
-    if (!body.phoneNumber) {
-      setError("Phone number is required for manual calls.");
+    const parsed = engageAiCallManualCallSchema.safeParse(body);
+    if (!parsed.success) {
+      setManualCallErrors(mapZodErrors(parsed.error));
       return;
     }
+    setManualCallErrors({});
     await handleAction(async () => {
       await createCarePilotAiCallManualCall(token, tenantId, body);
       setManualCallOpen(false);
@@ -499,10 +508,15 @@ export default function AiCallsPage() {
       return;
     }
     const scheduledAt = toIsoOrNull(rescheduleForm.scheduledAt);
-    if (!scheduledAt) {
-      setError("Reschedule time is required.");
+    const parsed = engageAiCallRescheduleSchema.safeParse({
+      scheduledAt: rescheduleForm.scheduledAt,
+      reason: rescheduleForm.reason,
+    });
+    if (!parsed.success || !scheduledAt) {
+      setRescheduleErrors(parsed.success ? { scheduledAt: "Reschedule time is required." } : mapZodErrors(parsed.error));
       return;
     }
+    setRescheduleErrors({});
     await handleAction(async () => {
       await rescheduleCarePilotAiCallExecution(token, tenantId, rescheduleExecutionId, {
         scheduledAt,
@@ -534,17 +548,17 @@ export default function AiCallsPage() {
   }, [auth.accessToken, auth.tenantId, load]);
 
   if (!auth.tenantId) {
-    return <Alert severity="info">Select a tenant to use CarePilot AI calls.</Alert>;
+    return <Alert severity="info">Select a tenant to use Jeevanam Engage AI calls.</Alert>;
   }
   if (!canView) {
-    return <Alert severity="error">You do not have access to CarePilot AI calls.</Alert>;
+    return <Alert severity="error">You do not have access to Jeevanam Engage AI calls.</Alert>;
   }
 
   return (
     <Stack spacing={2}>
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900 }}>CarePilot AI Calls</Typography>
+          <Typography variant="h4" sx={{ fontWeight: 900 }}>Jeevanam Engage AI Calls</Typography>
           <Typography variant="body2" color="text.secondary">
             Mock-provider friendly voice orchestration with campaigns, manual queueing, dispatch, transcripts, events, escalations, and analytics.
           </Typography>
@@ -825,12 +839,12 @@ export default function AiCallsPage() {
         <DialogTitle>{campaignForm.id ? "Edit AI Call Campaign" : "New AI Call Campaign"}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            <TextField label="Name" value={campaignForm.name} onChange={(event) => setCampaignForm((current) => ({ ...current, name: event.target.value }))} required />
-            <TextField label="Description" value={campaignForm.description} onChange={(event) => setCampaignForm((current) => ({ ...current, description: event.target.value }))} multiline minRows={2} />
-            <TextField select label="Call Type" value={campaignForm.callType} onChange={(event) => setCampaignForm((current) => ({ ...current, callType: event.target.value as CarePilotAiCallType }))}>
+            <TextField label="Name *" value={campaignForm.name} onChange={(event) => setCampaignForm((current) => ({ ...current, name: event.target.value }))} required error={Boolean(campaignErrors.name)} helperText={campaignErrors.name || "Campaign name must be 60 characters or fewer."} inputProps={{ maxLength: 60 }} />
+            <TextField label="Description" value={campaignForm.description} onChange={(event) => setCampaignForm((current) => ({ ...current, description: event.target.value }))} multiline minRows={2} inputProps={{ maxLength: 250 }} error={Boolean(campaignErrors.description)} helperText={campaignErrors.description || "Description must be 250 characters or fewer."} />
+            <TextField select label="Call Type *" value={campaignForm.callType} onChange={(event) => setCampaignForm((current) => ({ ...current, callType: event.target.value as CarePilotAiCallType }))}>
               {callTypes.map((callType) => <MenuItem key={callType} value={callType}>{callType}</MenuItem>)}
             </TextField>
-            <TextField select label="Status" value={campaignForm.status} onChange={(event) => setCampaignForm((current) => ({ ...current, status: event.target.value as CarePilotAiCallCampaignStatus }))}>
+            <TextField select label="Status *" value={campaignForm.status} onChange={(event) => setCampaignForm((current) => ({ ...current, status: event.target.value as CarePilotAiCallCampaignStatus }))}>
               {campaignStatuses.map((status) => <MenuItem key={status} value={status}>{status}</MenuItem>)}
             </TextField>
             <TextField
@@ -854,6 +868,8 @@ export default function AiCallsPage() {
               onChange={(event) => setCampaignForm((current) => ({ ...current, maxAttempts: Number(event.target.value) || 1 }))}
               disabled={!campaignForm.retryEnabled}
               inputProps={{ min: 1, max: 10 }}
+              error={Boolean(campaignErrors.maxAttempts)}
+              helperText={campaignErrors.maxAttempts || "Max attempts must be 1 or greater."}
             />
             <FormControlLabel
               control={<Checkbox checked={campaignForm.escalationEnabled} onChange={(event) => setCampaignForm((current) => ({ ...current, escalationEnabled: event.target.checked }))} />}
@@ -871,8 +887,8 @@ export default function AiCallsPage() {
         <DialogTitle>Queue Manual Call</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            <TextField label="Phone" value={manualCallForm.phoneNumber} onChange={(event) => setManualCallForm((current) => ({ ...current, phoneNumber: event.target.value }))} required />
-            <TextField select label="Call Type" value={manualCallForm.callType} onChange={(event) => setManualCallForm((current) => ({ ...current, callType: event.target.value as CarePilotAiCallType }))}>
+            <TextField label="Phone *" value={manualCallForm.phoneNumber} onChange={(event) => setManualCallForm((current) => ({ ...current, phoneNumber: event.target.value }))} required error={Boolean(manualCallErrors.phoneNumber)} helperText={manualCallErrors.phoneNumber || "Enter a valid 10-digit Indian mobile number."} />
+            <TextField select label="Call Type *" value={manualCallForm.callType} onChange={(event) => setManualCallForm((current) => ({ ...current, callType: event.target.value as CarePilotAiCallType }))}>
               {callTypes.map((callType) => <MenuItem key={callType} value={callType}>{callType}</MenuItem>)}
             </TextField>
             <TextField label="Patient ID" value={manualCallForm.patientId} onChange={(event) => setManualCallForm((current) => ({ ...current, patientId: event.target.value }))} />
@@ -881,8 +897,8 @@ export default function AiCallsPage() {
               <MenuItem value="">None</MenuItem>
               {voiceTemplates.map((template) => <MenuItem key={template.id} value={template.id}>{template.name}</MenuItem>)}
             </TextField>
-            <TextField label="Script" value={manualCallForm.script} onChange={(event) => setManualCallForm((current) => ({ ...current, script: event.target.value }))} multiline minRows={3} helperText="Optional script override." />
-            <TextField label="Schedule For" type="datetime-local" value={manualCallForm.scheduledAt} onChange={(event) => setManualCallForm((current) => ({ ...current, scheduledAt: event.target.value }))} InputLabelProps={{ shrink: true }} helperText="Leave empty to queue immediately." />
+            <TextField label="Script" value={manualCallForm.script} onChange={(event) => setManualCallForm((current) => ({ ...current, script: event.target.value }))} multiline minRows={3} inputProps={{ maxLength: 250 }} helperText={manualCallErrors.script || "Optional script override. Max 250 characters."} error={Boolean(manualCallErrors.script)} />
+            <TextField label="Schedule For" type="datetime-local" value={manualCallForm.scheduledAt} onChange={(event) => setManualCallForm((current) => ({ ...current, scheduledAt: event.target.value }))} InputLabelProps={{ shrink: true }} helperText={manualCallErrors.scheduledAt || "Leave empty to queue immediately."} error={Boolean(manualCallErrors.scheduledAt)} />
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -895,6 +911,7 @@ export default function AiCallsPage() {
         <DialogTitle>Trigger {selectedCampaignName}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
+            {triggerErrors._form ? <Alert severity="error">{triggerErrors._form}</Alert> : null}
             <Alert severity="info">Add one or more targets. Phone is required only when patientId and leadId are both empty.</Alert>
             {triggerTargets.map((target, index) => (
               <Card key={index} variant="outlined">
@@ -906,10 +923,10 @@ export default function AiCallsPage() {
                     </Box>
                     <Grid container spacing={2}>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField fullWidth label="Phone" value={target.phoneNumber} onChange={(event) => setTriggerTargets((current) => current.map((row, currentIndex) => currentIndex === index ? { ...row, phoneNumber: event.target.value } : row))} />
+                        <TextField fullWidth label="Phone" value={target.phoneNumber} onChange={(event) => setTriggerTargets((current) => current.map((row, currentIndex) => currentIndex === index ? { ...row, phoneNumber: event.target.value } : row))} error={Boolean(triggerErrors[`targets.${index}.phoneNumber`])} helperText={triggerErrors[`targets.${index}.phoneNumber`] || "Optional unless patient and lead IDs are empty."} />
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField fullWidth label="Schedule For" type="datetime-local" value={target.scheduledAt} onChange={(event) => setTriggerTargets((current) => current.map((row, currentIndex) => currentIndex === index ? { ...row, scheduledAt: event.target.value } : row))} InputLabelProps={{ shrink: true }} />
+                        <TextField fullWidth label="Schedule For" type="datetime-local" value={target.scheduledAt} onChange={(event) => setTriggerTargets((current) => current.map((row, currentIndex) => currentIndex === index ? { ...row, scheduledAt: event.target.value } : row))} InputLabelProps={{ shrink: true }} error={Boolean(triggerErrors[`targets.${index}.scheduledAt`])} helperText={triggerErrors[`targets.${index}.scheduledAt`] || "Optional scheduled time."} />
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
                         <TextField fullWidth label="Patient ID" value={target.patientId} onChange={(event) => setTriggerTargets((current) => current.map((row, currentIndex) => currentIndex === index ? { ...row, patientId: event.target.value } : row))} />
@@ -918,7 +935,7 @@ export default function AiCallsPage() {
                         <TextField fullWidth label="Lead ID" value={target.leadId} onChange={(event) => setTriggerTargets((current) => current.map((row, currentIndex) => currentIndex === index ? { ...row, leadId: event.target.value } : row))} />
                       </Grid>
                       <Grid size={{ xs: 12 }}>
-                        <TextField fullWidth label="Script" value={target.script} onChange={(event) => setTriggerTargets((current) => current.map((row, currentIndex) => currentIndex === index ? { ...row, script: event.target.value } : row))} multiline minRows={2} />
+                        <TextField fullWidth label="Script" value={target.script} onChange={(event) => setTriggerTargets((current) => current.map((row, currentIndex) => currentIndex === index ? { ...row, script: event.target.value } : row))} multiline minRows={2} inputProps={{ maxLength: 250 }} helperText={triggerErrors[`targets.${index}.script`] || "Optional script override."} error={Boolean(triggerErrors[`targets.${index}.script`])} />
                       </Grid>
                     </Grid>
                   </Stack>
@@ -1036,8 +1053,8 @@ export default function AiCallsPage() {
         <DialogTitle>Reschedule Execution</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            <TextField label="New Scheduled Time" type="datetime-local" value={rescheduleForm.scheduledAt} onChange={(event) => setRescheduleForm((current) => ({ ...current, scheduledAt: event.target.value }))} InputLabelProps={{ shrink: true }} required />
-            <TextField label="Reason" value={rescheduleForm.reason} onChange={(event) => setRescheduleForm((current) => ({ ...current, reason: event.target.value }))} multiline minRows={2} />
+            <TextField label="New Scheduled Time *" type="datetime-local" value={rescheduleForm.scheduledAt} onChange={(event) => setRescheduleForm((current) => ({ ...current, scheduledAt: event.target.value }))} InputLabelProps={{ shrink: true }} required error={Boolean(rescheduleErrors.scheduledAt)} helperText={rescheduleErrors.scheduledAt || "Reschedule time is required."} />
+            <TextField label="Reason" value={rescheduleForm.reason} onChange={(event) => setRescheduleForm((current) => ({ ...current, reason: event.target.value }))} multiline minRows={2} inputProps={{ maxLength: 250 }} error={Boolean(rescheduleErrors.reason)} helperText={rescheduleErrors.reason || "Optional reason, max 250 characters."} />
           </Stack>
         </DialogContent>
         <DialogActions>

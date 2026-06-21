@@ -28,6 +28,7 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../auth/useAuth";
+import { engageAiCallRescheduleSchema, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
 import {
   cancelCarePilotReminder,
   getCarePilotReminder,
@@ -123,6 +124,8 @@ export default function RemindersPage() {
   const [rescheduleTarget, setRescheduleTarget] = React.useState<CarePilotReminderRow | null>(null);
   const [rescheduleAt, setRescheduleAt] = React.useState("");
   const [rescheduleReason, setRescheduleReason] = React.useState("");
+  const [filterErrors, setFilterErrors] = React.useState<Record<string, string>>({});
+  const [rescheduleErrors, setRescheduleErrors] = React.useState<Record<string, string>>({});
 
   const [detail, setDetail] = React.useState<CarePilotReminderDetail | null>(null);
   const [detailOpen, setDetailOpen] = React.useState(false);
@@ -135,6 +138,12 @@ export default function RemindersPage() {
     setLoading(true);
     setError(null);
     try {
+      if (startDate && endDate && startDate > endDate) {
+        setFilterErrors({ endDate: "End date must be on or after start date." });
+        setLoading(false);
+        return;
+      }
+      setFilterErrors({});
       const [campaignRows, reminderRes] = await Promise.all([
         listCarePilotCampaigns(auth.accessToken, auth.tenantId),
         listCarePilotReminders(auth.accessToken, auth.tenantId, {
@@ -206,9 +215,15 @@ export default function RemindersPage() {
   const submitReschedule = async () => {
     if (!auth.accessToken || !auth.tenantId || !rescheduleTarget) return;
     if (!rescheduleAt) {
-      setError("Select a future date/time for reschedule.");
+      setRescheduleErrors({ scheduledAt: "Select a future date/time for reschedule." });
       return;
     }
+    const parsed = engageAiCallRescheduleSchema.safeParse({ scheduledAt: rescheduleAt, reason: rescheduleReason });
+    if (!parsed.success) {
+      setRescheduleErrors(mapZodErrors(parsed.error));
+      return;
+    }
+    setRescheduleErrors({});
     const iso = new Date(rescheduleAt).toISOString();
     try {
       await rescheduleCarePilotReminder(auth.accessToken, auth.tenantId, rescheduleTarget.executionId, {
@@ -236,14 +251,14 @@ export default function RemindersPage() {
     skipped: rows.filter((r) => isRowInTab(r, "Skipped")).length,
   }), [rows]);
 
-  if (!auth.tenantId) return <Alert severity="info">Select a tenant to view CarePilot reminders.</Alert>;
-  if (!canView) return <Alert severity="error">You do not have access to CarePilot reminders.</Alert>;
+  if (!auth.tenantId) return <Alert severity="info">Select a tenant to view Jeevanam Engage reminders.</Alert>;
+  if (!canView) return <Alert severity="error">You do not have access to Jeevanam Engage reminders.</Alert>;
 
   return (
     <Stack spacing={2}>
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900 }}>CarePilot Reminders</Typography>
+          <Typography variant="h4" sx={{ fontWeight: 900 }}>Jeevanam Engage Reminders</Typography>
           <Typography variant="body2" color="text.secondary">Operational view of scheduled, sent, failed, and retrying patient reminders.</Typography>
         </Box>
         <Button variant="outlined" onClick={() => void load()}>Refresh</Button>
@@ -254,8 +269,8 @@ export default function RemindersPage() {
 
       <Card><CardContent>
         <Grid container spacing={1.5}>
-          <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="From" value={startDate} onChange={(e) => setStartDate(e.target.value)} InputLabelProps={{ shrink: true }} /></Grid>
-          <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="To" value={endDate} onChange={(e) => setEndDate(e.target.value)} InputLabelProps={{ shrink: true }} /></Grid>
+          <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="From" value={startDate} onChange={(e) => setStartDate(e.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(filterErrors.startDate)} helperText={filterErrors.startDate || ""} /></Grid>
+          <Grid size={{ xs: 6, md: 2 }}><TextField fullWidth type="date" label="To" value={endDate} onChange={(e) => setEndDate(e.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(filterErrors.endDate)} helperText={filterErrors.endDate || ""} /></Grid>
           <Grid size={{ xs: 12, md: 3 }}><FormControl fullWidth><InputLabel>Campaign</InputLabel><Select value={campaignId} label="Campaign" onChange={(e) => setCampaignId(String(e.target.value))}><MenuItem value="">All</MenuItem>{campaigns.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}</Select></FormControl></Grid>
           <Grid size={{ xs: 6, md: 2 }}><FormControl fullWidth><InputLabel>Campaign Type</InputLabel><Select value={campaignType} label="Campaign Type" onChange={(e) => setCampaignType(String(e.target.value) as CarePilotCampaignType | "")}><MenuItem value="">All</MenuItem>{["APPOINTMENT_REMINDER","MISSED_APPOINTMENT_FOLLOW_UP","FOLLOW_UP_REMINDER","REFILL_REMINDER","VACCINATION_REMINDER","BILLING_REMINDER","WELLNESS_MESSAGE","CUSTOM"].map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}</Select></FormControl></Grid>
           <Grid size={{ xs: 6, md: 1.5 }}><FormControl fullWidth><InputLabel>Channel</InputLabel><Select value={channel} label="Channel" onChange={(e) => setChannel(String(e.target.value) as CarePilotChannelType | "")}><MenuItem value="">All</MenuItem><MenuItem value="EMAIL">EMAIL</MenuItem><MenuItem value="SMS">SMS</MenuItem><MenuItem value="WHATSAPP">WHATSAPP</MenuItem></Select></FormControl></Grid>
@@ -377,11 +392,13 @@ export default function RemindersPage() {
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <TextField
-              label="New Scheduled Time"
+              label="New Scheduled Time *"
               type="datetime-local"
               value={rescheduleAt}
               onChange={(e) => setRescheduleAt(e.target.value)}
               InputLabelProps={{ shrink: true }}
+              error={Boolean(rescheduleErrors.scheduledAt)}
+              helperText={rescheduleErrors.scheduledAt || "Select a future date/time."}
             />
             <TextField
               label="Reason (optional)"
@@ -389,6 +406,9 @@ export default function RemindersPage() {
               onChange={(e) => setRescheduleReason(e.target.value)}
               multiline
               minRows={2}
+              inputProps={{ maxLength: 250 }}
+              error={Boolean(rescheduleErrors.reason)}
+              helperText={rescheduleErrors.reason || "Optional reason, max 250 characters."}
             />
             <Stack direction="row" spacing={1} justifyContent="flex-end">
               <Button onClick={() => setRescheduleTarget(null)}>Close</Button>
