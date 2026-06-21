@@ -7,13 +7,14 @@ const stripNonDigits = (value: unknown) => {
   return value.replace(/[^\d+]/g, "");
 };
 
-const normalizeIndianMobile = (value: unknown) => {
+export function normalizeIndianMobileInput(value: unknown) {
   if (typeof value !== "string") return value;
-  let digits = value.replace(/[^\d]/g, "");
-  if (digits.startsWith("91") && digits.length === 12) digits = digits.slice(2);
-  if (digits.startsWith("0") && digits.length === 11) digits = digits.slice(1);
+  const digits = value.replace(/[^\d]/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) {
+    return digits.slice(2);
+  }
   return digits;
-};
+}
 
 const toUpperTrimmed = (value: unknown) => {
   if (typeof value !== "string") return value;
@@ -22,7 +23,7 @@ const toUpperTrimmed = (value: unknown) => {
 
 export function indianMobileNumber(message: string = en.invalidIndianMobile) {
   return z.preprocess(
-    normalizeIndianMobile,
+    normalizeIndianMobileInput,
     z.string().regex(/^[6-9]\d{9}$/, message),
   );
 }
@@ -31,7 +32,7 @@ export function optionalIndianMobileNumber(message: string = en.invalidIndianMob
   return z.preprocess(
     (value) => {
       if (value == null || value === "") return undefined;
-      return normalizeIndianMobile(value);
+      return normalizeIndianMobileInput(value);
     },
     z.string().regex(/^[6-9]\d{9}$/, message).optional(),
   );
@@ -62,6 +63,7 @@ export function optionalPan(message: string = en.invalidPan) {
 }
 
 export const indiaValidators = {
+  normalizeIndianMobileInput,
   indianMobileNumber,
   optionalIndianMobileNumber,
   indianPincode,

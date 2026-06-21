@@ -20,6 +20,7 @@ import {
   getCitySuggestions,
   getCountrySuggestions,
   getIndiaStateSuggestions,
+  normalizeIndianMobileInput,
   mapZodErrors,
 } from "@deepthoughtnet/form-validation-kit";
 
@@ -157,7 +158,7 @@ function toInput(form: ClinicProfileFormState): ClinicProfileInput {
   return {
     clinicName: form.clinicName.trim(),
     displayName: form.displayName.trim(),
-    phone: form.phone.trim(),
+    phone: form.phone.trim() ? (normalizeIndianMobileInput(form.phone) as string) : null,
     email: form.email.trim(),
     addressLine1: form.addressLine1.trim(),
     addressLine2: form.addressLine2.trim() || null,
@@ -324,7 +325,7 @@ export default function ClinicProfilePage() {
   }
 
   return (
-    <Stack spacing={3} component="form" onSubmit={onSubmit}>
+    <Stack spacing={3} component="form" onSubmit={onSubmit} noValidate>
       <Box>
         <Typography variant="h4" sx={{ fontWeight: 900, mb: 1 }}>
           Clinic Profile
@@ -364,7 +365,7 @@ export default function ClinicProfilePage() {
                   <TextField fullWidth label="Display name" value={form.displayName} onChange={updateTextField("displayName")} disabled={!canEdit || saving} />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
-                  <TextField fullWidth label="Phone" value={form.phone} onChange={updateTextField("phone")} disabled={!canEdit || saving} />
+                  <TextField fullWidth label="Phone" value={form.phone} onChange={updateTextField("phone")} disabled={!canEdit || saving} inputProps={{ inputMode: "tel" }} />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
                   <TextField fullWidth label="Email" value={form.email} onChange={updateTextField("email")} disabled={!canEdit || saving} />

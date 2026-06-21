@@ -27,7 +27,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useAuth } from "../../../auth/useAuth";
-import { mapZodErrors, engageAiCallCampaignSchema, engageAiCallManualCallSchema, engageAiCallRescheduleSchema } from "@deepthoughtnet/form-validation-kit";
+import { mapZodErrors, engageAiCallCampaignSchema, engageAiCallManualCallSchema, engageAiCallRescheduleSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
 import {
   cancelCarePilotAiCallExecution,
   createCarePilotAiCallCampaign,
@@ -392,7 +392,7 @@ export default function AiCallsPage() {
       .map((target) => ({
         patientId: target.patientId.trim() || null,
         leadId: target.leadId.trim() || null,
-        phoneNumber: target.phoneNumber.trim() || null,
+        phoneNumber: target.phoneNumber.trim() ? (normalizeIndianMobileInput(target.phoneNumber) as string) : null,
         script: target.script.trim() || null,
         scheduledAt: toIsoOrNull(target.scheduledAt),
       }))
@@ -420,7 +420,7 @@ export default function AiCallsPage() {
       return;
     }
     const body: CarePilotAiCallManualCallInput = {
-      phoneNumber: manualCallForm.phoneNumber.trim(),
+      phoneNumber: normalizeIndianMobileInput(manualCallForm.phoneNumber) as string,
       patientId: manualCallForm.patientId.trim() || null,
       leadId: manualCallForm.leadId.trim() || null,
       templateId: manualCallForm.templateId.trim() || null,
@@ -887,7 +887,7 @@ export default function AiCallsPage() {
         <DialogTitle>Queue Manual Call</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            <TextField label="Phone *" value={manualCallForm.phoneNumber} onChange={(event) => setManualCallForm((current) => ({ ...current, phoneNumber: event.target.value }))} required error={Boolean(manualCallErrors.phoneNumber)} helperText={manualCallErrors.phoneNumber || "Enter a valid 10-digit Indian mobile number."} />
+            <TextField label="Phone *" value={manualCallForm.phoneNumber} onChange={(event) => setManualCallForm((current) => ({ ...current, phoneNumber: event.target.value }))} required inputProps={{ inputMode: "tel" }} error={Boolean(manualCallErrors.phoneNumber)} helperText={manualCallErrors.phoneNumber || "Enter a valid 10-digit Indian mobile number."} />
             <TextField select label="Call Type *" value={manualCallForm.callType} onChange={(event) => setManualCallForm((current) => ({ ...current, callType: event.target.value as CarePilotAiCallType }))}>
               {callTypes.map((callType) => <MenuItem key={callType} value={callType}>{callType}</MenuItem>)}
             </TextField>
@@ -923,7 +923,7 @@ export default function AiCallsPage() {
                     </Box>
                     <Grid container spacing={2}>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField fullWidth label="Phone" value={target.phoneNumber} onChange={(event) => setTriggerTargets((current) => current.map((row, currentIndex) => currentIndex === index ? { ...row, phoneNumber: event.target.value } : row))} error={Boolean(triggerErrors[`targets.${index}.phoneNumber`])} helperText={triggerErrors[`targets.${index}.phoneNumber`] || "Optional unless patient and lead IDs are empty."} />
+                        <TextField fullWidth label="Phone" value={target.phoneNumber} onChange={(event) => setTriggerTargets((current) => current.map((row, currentIndex) => currentIndex === index ? { ...row, phoneNumber: event.target.value } : row))} inputProps={{ inputMode: "tel" }} error={Boolean(triggerErrors[`targets.${index}.phoneNumber`])} helperText={triggerErrors[`targets.${index}.phoneNumber`] || "Optional unless patient and lead IDs are empty."} />
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
                         <TextField fullWidth label="Schedule For" type="datetime-local" value={target.scheduledAt} onChange={(event) => setTriggerTargets((current) => current.map((row, currentIndex) => currentIndex === index ? { ...row, scheduledAt: event.target.value } : row))} InputLabelProps={{ shrink: true }} error={Boolean(triggerErrors[`targets.${index}.scheduledAt`])} helperText={triggerErrors[`targets.${index}.scheduledAt`] || "Optional scheduled time."} />

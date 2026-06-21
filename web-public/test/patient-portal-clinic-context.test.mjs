@@ -29,7 +29,6 @@ test("patient login is simplified", () => {
 test("patient login blocks otp actions when no clinic context is available", () => {
   const source = readSource("pages/patient/PatientPortalPages.tsx");
   assert.ok(source.includes("MISSING_CLINIC_CODE_MESSAGE"));
-  assert.ok(source.includes("sanitizePatientPhoneInput"));
   assert.ok(source.includes("sanitizePatientOtpInput"));
   assert.ok(source.includes("sanitizePatientPortalErrorMessage"));
   assert.ok(source.includes("isPatientPortalLocalDev"));

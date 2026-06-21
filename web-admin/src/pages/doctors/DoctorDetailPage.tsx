@@ -2,7 +2,7 @@ import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Alert, Box, Button, Card, CardContent, Chip, CircularProgress, FormControlLabel, Grid, Stack, Switch, TextField, Typography } from "@mui/material";
 
-import { doctorUpdateSchema } from "@deepthoughtnet/form-validation-kit";
+import { doctorUpdateSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { getDoctorProfile, updateDoctorProfile, type DoctorProfile } from "../../api/clinicApi";
 
@@ -112,7 +112,7 @@ export default function DoctorDetailPage() {
     setError(null);
     try {
       const saved = await updateDoctorProfile(auth.accessToken, auth.tenantId, profile.doctorUserId, {
-        mobile: parsed.data.mobile?.trim() || null,
+        mobile: parsed.data.mobile ? (normalizeIndianMobileInput(parsed.data.mobile) as string) : null,
         specialization: parsed.data.specialization?.trim() || null,
         qualification: parsed.data.qualification?.trim() || null,
         registrationNumber: parsed.data.registrationNumber?.trim() || null,
@@ -155,7 +155,7 @@ export default function DoctorDetailPage() {
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Name" value={profile.doctorName || ""} disabled /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Email" value={profile.email || ""} disabled /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Mobile" value={form.mobile} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, mobile: e.target.value } : c)} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Mobile" value={form.mobile} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, mobile: e.target.value } : c)} inputProps={{ inputMode: "tel" }} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Specialization" value={form.specialization} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, specialization: e.target.value } : c)} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Qualification" value={form.qualification} disabled={formReadOnly || receptionistReadOnlyFields} onChange={(e) => setForm((c) => c ? { ...c, qualification: e.target.value } : c)} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Registration Number" value={form.registrationNumber} disabled={formReadOnly || receptionistReadOnlyFields} onChange={(e) => setForm((c) => c ? { ...c, registrationNumber: e.target.value } : c)} /></Grid>

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { optionalEmail, optionalString } from "../validators/common.js";
+import { optionalIndianMobileNumber } from "../validators/india.js";
 import { fileUploadSchema } from "./fileUpload.js";
 import { validationMessages } from "../helpers/errorMessages.js";
 
@@ -24,11 +25,7 @@ const toOptionalDateTimeLocal = (value: unknown) => {
 const leadCoreSchema = z.object({
   firstName: optionalString(),
   lastName: optionalString(),
-  phone: z.preprocess((value) => {
-    if (value == null || value === "") return undefined;
-    if (typeof value !== "string") return value;
-    return value.replace(/[^0-9]/g, "").slice(0, 10);
-  }, z.string().regex(/^[6-9]\d{9}$/, validationMessages.invalidIndianMobile).optional()),
+  phone: optionalIndianMobileNumber(validationMessages.invalidIndianMobile),
   email: optionalEmail(),
   source: z.enum(LEAD_SOURCES).optional(),
   sourceDetails: optionalString(),

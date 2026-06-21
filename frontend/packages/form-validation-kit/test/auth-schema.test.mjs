@@ -19,6 +19,17 @@ test("otp request schema accepts a valid payload", () => {
   assert.equal(result.success, true);
 });
 
+test("otp request schema normalizes indian mobile prefixes", () => {
+  const result = otpRequestSchema.safeParse({
+    tenantCode: "clinic-demo",
+    mobile: "+91 98765 43210",
+  });
+  assert.equal(result.success, true);
+  if (result.success) {
+    assert.equal(result.data.mobile, "9876543210");
+  }
+});
+
 test("otp verify schema accepts a valid payload", () => {
   const result = otpVerifySchema.safeParse({
     tenantCode: "clinic-demo",

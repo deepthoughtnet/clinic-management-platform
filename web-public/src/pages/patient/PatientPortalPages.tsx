@@ -46,7 +46,6 @@ import { branding } from "../../branding";
 import { DoctorClinicSelector } from "./DoctorClinicSelector";
 import {
   sanitizePatientOtpInput,
-  sanitizePatientPhoneInput,
 } from "./patientLoginInput.js";
 import {
   MISSING_CLINIC_CODE_MESSAGE,
@@ -766,7 +765,6 @@ export function PatientLoginPage({
     showFallbackClinicField && (clinicFallbackTouched || requestAttempted || verifyAttempted) && !clinicFallbackValue
       ? MISSING_CLINIC_CODE_MESSAGE
       : null;
-  const phoneDigits = sanitizePatientPhoneInput(phone);
   const otpDigits = sanitizePatientOtpInput(otp);
 
   function clearOtpFlowMessages() {
@@ -917,13 +915,13 @@ export function PatientLoginPage({
             <input
               value={phone}
               onChange={(event) => {
-                setPhone(sanitizePatientPhoneInput(event.target.value));
+                setPhone(event.target.value);
                 clearOtpFlowMessages();
               }}
               onBlur={() => setPhoneTouched(true)}
               placeholder="Enter 10-digit mobile number"
               autoComplete="tel"
-              inputMode="numeric"
+              inputMode="tel"
               aria-invalid={Boolean(phoneError)}
               aria-describedby={phoneError ? "patient-login-phone-error" : undefined}
             />
@@ -1008,6 +1006,7 @@ export function PatientLoginPage({
               placeholder="6-digit code"
               inputMode="numeric"
               autoComplete="one-time-code"
+              maxLength={6}
               aria-invalid={Boolean(otpError)}
               aria-describedby={otpError ? "patient-login-otp-error" : undefined}
             />

@@ -29,7 +29,7 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../auth/useAuth";
-import { mapZodErrors, engageWebinarRegistrationSchema, engageWebinarSchema } from "@deepthoughtnet/form-validation-kit";
+import { mapZodErrors, engageWebinarRegistrationSchema, engageWebinarSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
 import {
   createCarePilotWebinar,
   getCarePilotWebinarAnalyticsSummary,
@@ -255,7 +255,7 @@ export default function WebinarsPage() {
       await registerCarePilotWebinarAttendee(auth.accessToken, auth.tenantId, regWebinar.id, {
         attendeeName: regForm.attendeeName,
         attendeeEmail: regForm.attendeeEmail || null,
-        attendeePhone: regForm.attendeePhone || null,
+        attendeePhone: regForm.attendeePhone ? (normalizeIndianMobileInput(regForm.attendeePhone) as string) : null,
         patientId: regForm.patientId || null,
         leadId: regForm.leadId || null,
       });
@@ -378,7 +378,7 @@ export default function WebinarsPage() {
             <Grid container spacing={1.5} sx={{ mb: 2, mt: 0.5 }}>
               <Grid size={{ xs: 12, md: 3 }}><TextField fullWidth size="small" required label="Attendee *" value={regForm.attendeeName} onChange={(e) => setRegForm((v) => ({ ...v, attendeeName: e.target.value }))} error={Boolean(regFormErrors.attendeeName)} helperText={regFormErrors.attendeeName || "Attendee name is required."} /></Grid>
               <Grid size={{ xs: 12, md: 2.5 }}><TextField fullWidth size="small" label="Email" value={regForm.attendeeEmail} onChange={(e) => setRegForm((v) => ({ ...v, attendeeEmail: e.target.value }))} error={Boolean(regFormErrors.attendeeEmail)} helperText={regFormErrors.attendeeEmail || "Enter a valid email address if provided."} /></Grid>
-              <Grid size={{ xs: 12, md: 2.5 }}><TextField fullWidth size="small" label="Phone" value={regForm.attendeePhone} onChange={(e) => setRegForm((v) => ({ ...v, attendeePhone: e.target.value }))} error={Boolean(regFormErrors.attendeePhone)} helperText={regFormErrors.attendeePhone || "Enter a valid Indian mobile number if provided."} /></Grid>
+              <Grid size={{ xs: 12, md: 2.5 }}><TextField fullWidth size="small" label="Phone" value={regForm.attendeePhone} onChange={(e) => setRegForm((v) => ({ ...v, attendeePhone: e.target.value }))} inputProps={{ inputMode: "tel" }} error={Boolean(regFormErrors.attendeePhone)} helperText={regFormErrors.attendeePhone || "Enter a valid Indian mobile number if provided."} /></Grid>
               <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Patient Id" value={regForm.patientId} onChange={(e) => setRegForm((v) => ({ ...v, patientId: e.target.value }))} /></Grid>
               <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Lead Id" value={regForm.leadId} onChange={(e) => setRegForm((v) => ({ ...v, leadId: e.target.value }))} /></Grid>
               <Grid size={{ xs: 12, md: 12 }}><Button variant="contained" onClick={() => void addRegistration()} disabled={regSaving}>{regSaving ? "Registering..." : "Register Attendee"}</Button></Grid>

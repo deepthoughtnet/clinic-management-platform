@@ -51,6 +51,7 @@ import {
   fileUploadSchema,
   firstZodError,
   mapZodErrors,
+  normalizeIndianMobileInput,
   pharmacyPosCartLineSchema,
   pharmacyPosCheckoutSchema,
   pharmacyPosSearchSchema,
@@ -459,7 +460,7 @@ export default function PharmacyPosPage() {
     })),
     patientId: selectedPatient?.id ?? null,
     customerName: selectedPatient ? null : customerName,
-    customerMobile: selectedPatient ? null : customerMobile,
+    customerMobile: selectedPatient ? null : (customerMobile.trim() ? (normalizeIndianMobileInput(customerMobile) as string) : null),
     grandTotal: total,
     paidAmount: numeric(paidAmount),
     paymentMode: paymentMode,
@@ -1009,7 +1010,7 @@ export default function PharmacyPosPage() {
       const sale = await createPharmacyPosSale(token, tenantId, {
         patientId: selectedPatient?.id ?? null,
         customerName: selectedPatient ? null : customerName.trim() || null,
-        customerMobile: selectedPatient ? null : customerMobile.trim() || null,
+        customerMobile: selectedPatient ? null : (customerMobile.trim() ? (normalizeIndianMobileInput(customerMobile) as string) : null),
         prescriptionDocumentId: prescription?.documentId ?? null,
         paidAmount: numeric(paidAmount),
         paymentMode,
@@ -1863,7 +1864,7 @@ export default function PharmacyPosPage() {
                     fullWidth
                     error={Boolean(saleFieldErrors.customerMobile)}
                     helperText={saleFieldErrors.customerMobile || "Optional Indian mobile number."}
-                    inputProps={{ maxLength: 10 }}
+                    inputProps={{ inputMode: "tel" }}
                   />
                 </Stack>
               </AccordionDetails>

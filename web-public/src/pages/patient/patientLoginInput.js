@@ -1,9 +1,9 @@
 export function sanitizePatientPhoneInput(value) {
   const digits = `${value}`.replace(/[^\d]/g, "");
-  if (digits.length > 10 && digits.startsWith("91")) {
-    return digits.slice(2, 12).slice(0, 10);
+  if (digits.length === 12 && digits.startsWith("91")) {
+    return digits.slice(2);
   }
-  return digits.slice(0, 10);
+  return digits;
 }
 
 export function sanitizePatientOtpInput(value) {
@@ -11,7 +11,7 @@ export function sanitizePatientOtpInput(value) {
 }
 
 export function isValidPatientPhoneInput(value) {
-  return /^[6-9]\d{9}$/.test(`${value}`);
+  return /^[6-9]\d{9}$/.test(sanitizePatientPhoneInput(value));
 }
 
 export function isValidPatientOtpInput(value) {

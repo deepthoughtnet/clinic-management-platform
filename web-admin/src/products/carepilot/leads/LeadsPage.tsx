@@ -31,7 +31,7 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../../auth/useAuth";
-import { firstZodError, leadCreateSchema, leadFilterSchema, leadImportSchema, leadUpdateSchema } from "@deepthoughtnet/form-validation-kit";
+import { firstZodError, leadCreateSchema, leadFilterSchema, leadImportSchema, leadUpdateSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
 import {
   addCarePilotLeadNote,
   convertCarePilotLead,
@@ -98,14 +98,6 @@ type FollowUpDraft = {
 const emptyDraft = (): LeadDraft => ({ firstName: "", lastName: "", phone: "", email: "", source: "MANUAL", sourceDetails: "", status: "NEW", priority: "MEDIUM", notes: "", tags: "", nextFollowUpAt: "", campaignId: "", assignedToAppUserId: "" });
 const emptyConvertDraft = (): ConvertDraft => ({ bookAppointment: false, doctorUserId: "", appointmentDate: "", appointmentTime: "", reason: "", notes: "", priority: "NORMAL" });
 const emptyFollowUpDraft = (): FollowUpDraft => ({ date: "", time: "" });
-
-function normalizeIndianMobile(value: string) {
-  return value.replace(/[^0-9]/g, "").slice(0, 10);
-}
-
-function isValidIndianMobile(value: string) {
-  return /^[0-9]{10}$/.test(normalizeIndianMobile(value));
-}
 
 function toDateTimeInputParts(value?: string | null): FollowUpDraft {
   if (!value) return emptyFollowUpDraft();
@@ -231,7 +223,7 @@ export default function LeadsPage() {
     setDraft({
       firstName: lead.firstName,
       lastName: lead.lastName || "",
-      phone: normalizeIndianMobile(lead.phone),
+      phone: lead.phone,
       email: lead.email || "",
       source: lead.source,
       sourceDetails: lead.sourceDetails || "",
@@ -249,14 +241,15 @@ export default function LeadsPage() {
 
   const save = async () => {
     if (!auth.accessToken || !auth.tenantId || !canMutate) return;
-    if (!isValidIndianMobile(draft.phone)) {
-      setToast("Enter a valid 10-digit mobile number.");
+    const normalizedPhone = normalizeIndianMobileInput(draft.phone) as string;
+    if (!/^[6-9]\d{9}$/.test(normalizedPhone)) {
+      setToast("Enter a valid 10-digit Indian mobile number.");
       return;
     }
     const payload = {
       firstName: draft.firstName,
       lastName: draft.lastName || null,
-      phone: normalizeIndianMobile(draft.phone),
+      phone: normalizedPhone,
       email: draft.email || null,
       source: draft.source,
       sourceDetails: draft.sourceDetails || null,
@@ -561,10 +554,10 @@ export default function LeadsPage() {
                 fullWidth
                 label={<RequiredLabel text="Phone" />}
                 value={draft.phone}
-                onChange={(e) => setDraft((d) => ({ ...d, phone: normalizeIndianMobile(e.target.value) }))}
-                inputProps={{ inputMode: "numeric", maxLength: 10, pattern: "[0-9]*" }}
-                error={Boolean(draft.phone) && !isValidIndianMobile(draft.phone)}
-                helperText={Boolean(draft.phone) && !isValidIndianMobile(draft.phone) ? "Enter a valid 10-digit mobile number." : ""}
+                onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
+                inputProps={{ inputMode: "tel" }}
+                error={Boolean(draft.phone) && !leadCreateSchema.shape.phone.safeParse(draft.phone).success}
+                helperText={Boolean(draft.phone) && !leadCreateSchema.shape.phone.safeParse(draft.phone).success ? "Enter a valid 10-digit Indian mobile number." : ""}
               />
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Email" value={draft.email} onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))} inputProps={{ maxLength: 120 }} /></Grid>

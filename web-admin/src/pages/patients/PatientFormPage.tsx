@@ -15,6 +15,7 @@ import {
   Divider,
   FormControl,
   FormControlLabel,
+  FormHelperText,
   Grid,
   InputLabel,
   List,
@@ -27,7 +28,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { patientRegistrationSchema } from "@deepthoughtnet/form-validation-kit";
+import { mapZodErrors, normalizeIndianMobileInput, patientRegistrationSchema } from "@deepthoughtnet/form-validation-kit";
 
 import { useAuth } from "../../auth/useAuth";
 import {
@@ -125,7 +126,7 @@ function formToInput(form: FormState): PatientInput {
     gender: form.gender,
     dateOfBirth: form.dateOfBirth || null,
     ageYears: form.ageYears === null || form.ageYears === undefined || Number.isNaN(Number(form.ageYears)) ? null : Number(form.ageYears),
-    mobile: mobileDigits(form.mobile),
+    mobile: normalizeIndianMobileInput(form.mobile) as string,
     email: form.email.trim() || null,
     addressLine1: form.addressLine1.trim() || null,
     addressLine2: form.addressLine2.trim() || null,
@@ -134,7 +135,7 @@ function formToInput(form: FormState): PatientInput {
     country: form.country.trim() || null,
     postalCode: form.postalCode.trim() || null,
     emergencyContactName: form.emergencyContactName.trim() || null,
-    emergencyContactMobile: form.emergencyContactMobile.trim() ? mobileDigits(form.emergencyContactMobile) : null,
+    emergencyContactMobile: form.emergencyContactMobile.trim() ? (normalizeIndianMobileInput(form.emergencyContactMobile) as string) : null,
     bloodGroup: form.bloodGroup.trim() || null,
     allergies: form.allergies.trim() || null,
     existingConditions: form.existingConditions.trim() || null,
@@ -175,29 +176,22 @@ function calculateAge(dateOfBirth: string) {
   if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
     age -= 1;
   }
-  return age >= 0 && age <= 130 ? age : null;
+  return age >= 0 && age <= 120 ? age : null;
 }
 
 function approximateDobFromAge(age: number | null) {
-  if (age === null || Number.isNaN(age) || age < 0 || age > 130) return "";
+  if (age === null || Number.isNaN(age) || age < 0 || age > 120) return "";
   const year = new Date().getFullYear() - age;
   return `${year}-01-01`;
-}
-
-function mobileDigits(value: string) {
-  return value.replace(/[^0-9]/g, "").slice(0, 10);
-}
-
-function isValidMobile(value: string) {
-  return /^[0-9]{10}$/.test(mobileDigits(value));
 }
 
 function friendlyError(err: unknown) {
   const message = err instanceof Error ? err.message : "Unable to save patient. Please check the details and try again.";
   if (message.includes("mobile is required")) return "Mobile number is required.";
-  if (message.includes("Enter a valid 10-digit mobile number.")) return "Enter a valid 10-digit mobile number.";
-  if (message.includes("mobile must be")) return "Enter a valid 10-digit mobile number.";
-  if (message.includes("emergencyContactMobile must be")) return "Enter a valid 10-digit mobile number.";
+  if (message.includes("Enter a valid 10-digit Indian mobile number.")) return "Enter a valid 10-digit Indian mobile number.";
+  if (message.includes("Enter a valid 10-digit mobile number.")) return "Enter a valid 10-digit Indian mobile number.";
+  if (message.includes("mobile must be")) return "Enter a valid 10-digit Indian mobile number.";
+  if (message.includes("emergencyContactMobile must be")) return "Enter a valid 10-digit Indian mobile number.";
   if (message.includes("same mobile")) return "Possible duplicate patient found. Open the existing patient or confirm that this is a new patient.";
   if (message.includes("firstName")) return "First name is required.";
   if (message.includes("Patient details can be edited by Clinic Admin after registration day.")) return "Patient details can be edited by Clinic Admin after registration day.";
@@ -220,11 +214,21 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const [duplicates, setDuplicates] = React.useState<Patient[]>([]);
   const [checkingDuplicates, setCheckingDuplicates] = React.useState(false);
   const [continueNew, setContinueNew] = React.useState(false);
   const [loadedPatient, setLoadedPatient] = React.useState<Patient | null>(null);
   const mobileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const clearFieldError = (field: string) => {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
 
   React.useEffect(() => {
     if (mode === "create") {
@@ -265,7 +269,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   React.useEffect(() => {
     let cancelled = false;
     const handle = window.setTimeout(async () => {
-      const mobile = mobileDigits(form.mobile);
+      const mobile = normalizeIndianMobileInput(form.mobile) as string;
       const name = `${form.firstName} ${form.lastName}`.trim();
       if (mode !== "create" || continueNew || !auth.accessToken || !auth.tenantId) {
         setDuplicates([]);
@@ -311,36 +315,47 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
 
   const updateField = (field: Exclude<keyof FormState, "ageYears" | "active" | "gender" | "dateOfBirth" | "mobile">) =>
     (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      clearFieldError(field);
+      setError(null);
       setForm((current) => ({ ...current, [field]: event.target.value }));
     };
 
   const updateMobile = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setContinueNew(false);
-    setForm((current) => ({ ...current, mobile: mobileDigits(event.target.value) }));
+    clearFieldError("mobile");
+    setError(null);
+    setForm((current) => ({ ...current, mobile: event.target.value }));
   };
 
   const updateDateOfBirth = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const dateOfBirth = event.target.value;
+    clearFieldError("dateOfBirth");
+    setError(null);
     setForm((current) => ({ ...current, dateOfBirth, ageYears: calculateAge(dateOfBirth) }));
   };
 
   const updateAge = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const value = event.target.value === "" ? null : Number(event.target.value);
+    clearFieldError("ageYears");
+    setError(null);
     setForm((current) => ({ ...current, ageYears: value, dateOfBirth: approximateDobFromAge(value) }));
   };
 
   const savePatient = async (next: "detail" | "appointment" | "queue" = "detail") => {
     if (!auth.accessToken || !auth.tenantId) return;
-    const payload = formToInput({ ...form, mobile: mobileDigits(form.mobile) });
+    const payload = formToInput({ ...form, mobile: normalizeIndianMobileInput(form.mobile) as string });
     const parsed = patientRegistrationSchema.safeParse(payload);
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message || "Unable to save patient. Please check the details and try again.");
+      setSuccess(null);
+      setFieldErrors(mapZodErrors(parsed.error));
+      setError("Please correct the highlighted fields.");
       return;
     }
 
     setSaving(true);
     setError(null);
     setSuccess(null);
+    setFieldErrors({});
     try {
       const saved = mode === "create"
         ? await createPatient(auth.accessToken, auth.tenantId, payload)
@@ -354,7 +369,12 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
         navigate(`/patients/${saved.id}`);
       }
     } catch (err) {
-      setError(friendlyError(err));
+      const message = err instanceof Error ? err.message.toLowerCase() : "";
+      if (message.includes("invalid input") || message.includes("validation") || message.includes("required") || message.includes("must be")) {
+        setError("Please correct the highlighted fields.");
+      } else {
+        setError(friendlyError(err));
+      }
     } finally {
       setSaving(false);
     }
@@ -384,7 +404,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   const disabled = !canEditRecord || saving;
 
   return (
-    <Stack spacing={2.5} component="form" onSubmit={onSave}>
+    <Stack spacing={2.5} component="form" onSubmit={onSave} noValidate>
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 900, mb: 0.5 }}>
@@ -433,38 +453,73 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     value={form.mobile}
                     onChange={updateMobile}
                     disabled={disabled}
-                    error={Boolean(form.mobile) && !isValidMobile(form.mobile)}
-                    helperText={Boolean(form.mobile) && !isValidMobile(form.mobile)
-                      ? "Enter a valid 10-digit mobile number."
-                      : "Primary lookup and duplicate check"}
-                    inputProps={{ inputMode: "numeric", autoComplete: "tel", maxLength: 10, pattern: "[0-9]*" }}
+                    error={Boolean(fieldErrors.mobile) || (Boolean(form.mobile) && !patientRegistrationSchema.shape.mobile.safeParse(form.mobile).success)}
+                    helperText={fieldErrors.mobile || (Boolean(form.mobile) && !patientRegistrationSchema.shape.mobile.safeParse(form.mobile).success
+                      ? "Enter a valid 10-digit Indian mobile number."
+                      : "Primary lookup and duplicate check")}
+                    inputProps={{ inputMode: "tel", autoComplete: "tel" }}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField fullWidth required label="First name" value={form.firstName} onChange={updateField("firstName")} disabled={disabled} inputProps={{ autoComplete: "given-name" }} />
+                  <TextField
+                    fullWidth
+                    required
+                    label="First name"
+                    value={form.firstName}
+                    onChange={updateField("firstName")}
+                    disabled={disabled}
+                    error={Boolean(fieldErrors.firstName)}
+                    helperText={fieldErrors.firstName || ""}
+                    inputProps={{ autoComplete: "given-name" }}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
                   <TextField fullWidth label="Last name" value={form.lastName} onChange={updateField("lastName")} disabled={disabled} inputProps={{ autoComplete: "family-name" }} />
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }}>
-                  <FormControl fullWidth>
+                  <FormControl fullWidth error={Boolean(fieldErrors.gender)}>
                     <InputLabel id="patient-gender-label">Gender</InputLabel>
                     <Select
                       labelId="patient-gender-label"
                       label="Gender"
                       value={form.gender}
-                      onChange={(event) => setForm((current) => ({ ...current, gender: event.target.value as PatientGender }))}
+                      onChange={(event) => {
+                        clearFieldError("gender");
+                        setError(null);
+                        setForm((current) => ({ ...current, gender: event.target.value as PatientGender }));
+                      }}
                       disabled={disabled}
                     >
                       {genderOptions.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
                     </Select>
+                    <FormHelperText>{fieldErrors.gender || ""}</FormHelperText>
                   </FormControl>
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }}>
-                  <TextField fullWidth type="number" label="Age" value={form.ageYears ?? ""} onChange={updateAge} disabled={disabled} inputProps={{ min: 0, max: 130 }} helperText="DOB auto-filled approximately" />
+                  <TextField
+                    fullWidth
+                    type="number"
+                    label="Age"
+                    value={form.ageYears ?? ""}
+                    onChange={updateAge}
+                    disabled={disabled}
+                    error={Boolean(fieldErrors.ageYears)}
+                    helperText={fieldErrors.ageYears || "DOB auto-filled approximately"}
+                    inputProps={{ min: 0, max: 120 }}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }}>
-                  <TextField fullWidth type="date" label="Date of birth" value={form.dateOfBirth} onChange={updateDateOfBirth} disabled={disabled} InputLabelProps={{ shrink: true }} helperText="Age updates automatically" />
+                  <TextField
+                    fullWidth
+                    type="date"
+                    label="Date of birth"
+                    value={form.dateOfBirth}
+                    onChange={updateDateOfBirth}
+                    disabled={disabled}
+                    error={Boolean(fieldErrors.dateOfBirth)}
+                    helperText={fieldErrors.dateOfBirth || "Age updates automatically"}
+                    InputLabelProps={{ shrink: true }}
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }} sx={{ display: "flex", alignItems: "center", justifyContent: { xs: "stretch", md: "flex-end" }, gap: 1 }}>
                   <Button type="submit" fullWidth variant="contained" size="large" disabled={disabled || checkingDuplicates}>
@@ -529,9 +584,18 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     fullWidth
                     label="Emergency contact mobile"
                     value={form.emergencyContactMobile}
-                    onChange={(event) => setForm((current) => ({ ...current, emergencyContactMobile: mobileDigits(event.target.value) }))}
+                    onChange={(event) => {
+                      clearFieldError("emergencyContactMobile");
+                      setError(null);
+                      setForm((current) => ({ ...current, emergencyContactMobile: event.target.value }));
+                    }}
                     disabled={disabled}
-                    inputProps={{ inputMode: "numeric", maxLength: 10, pattern: "[0-9]*" }}
+                    error={Boolean(fieldErrors.emergencyContactMobile) || (Boolean(form.emergencyContactMobile) && !patientRegistrationSchema.shape.emergencyContactMobile.safeParse(form.emergencyContactMobile).success)}
+                    helperText={fieldErrors.emergencyContactMobile || (Boolean(form.emergencyContactMobile) && !patientRegistrationSchema.shape.emergencyContactMobile.safeParse(form.emergencyContactMobile).success
+                      ? "Enter a valid 10-digit Indian mobile number."
+                      : "")
+                    }
+                    inputProps={{ inputMode: "tel" }}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Emergency contact name" value={form.emergencyContactName} onChange={updateField("emergencyContactName")} disabled={disabled} /></Grid>
@@ -555,12 +619,23 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
             <AccordionDetails>
               <Grid container spacing={1.5}>
                 <Grid size={{ xs: 12, md: 3 }}>
-                  <FormControl fullWidth>
+                  <FormControl fullWidth error={Boolean(fieldErrors.bloodGroup)}>
                     <InputLabel id="patient-blood-group-label">Blood group</InputLabel>
-                    <Select labelId="patient-blood-group-label" label="Blood group" value={form.bloodGroup} onChange={(event) => setForm((current) => ({ ...current, bloodGroup: event.target.value }))} disabled={disabled}>
+                    <Select
+                      labelId="patient-blood-group-label"
+                      label="Blood group"
+                      value={form.bloodGroup}
+                      onChange={(event) => {
+                        clearFieldError("bloodGroup");
+                        setError(null);
+                        setForm((current) => ({ ...current, bloodGroup: event.target.value }));
+                      }}
+                      disabled={disabled}
+                    >
                       <MenuItem value="">Unknown</MenuItem>
                       {bloodGroups.map((group) => <MenuItem key={group} value={group}>{group}</MenuItem>)}
                     </Select>
+                    <FormHelperText>{fieldErrors.bloodGroup || ""}</FormHelperText>
                   </FormControl>
                 </Grid>
                 <Grid size={{ xs: 12, md: 9 }}>

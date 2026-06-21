@@ -36,6 +36,7 @@ import {
   getCountrySuggestions,
   getIndiaStateSuggestions,
   createTenantSchema,
+  normalizeIndianMobileInput,
   type CreateTenantFormValues,
   zodFormResolver,
 } from "@deepthoughtnet/form-validation-kit";
@@ -180,7 +181,7 @@ export default function TenantsPage() {
         state: values.state?.trim() || null,
         country: values.country.trim(),
         postalCode: values.postalCode?.trim() || null,
-        phone: values.phone || null,
+        phone: values.phone ? (normalizeIndianMobileInput(values.phone) as string) : null,
         clinicEmail: values.clinicEmail || null,
         addressLine1: values.addressLine1?.trim() || null,
         addressLine2: values.addressLine2?.trim() || null,
@@ -455,6 +456,7 @@ export default function TenantsPage() {
                   fullWidth
                   error={Boolean(errors.phone)}
                   helperText={errors.phone?.message || " "}
+                  inputProps={{ inputMode: "tel" }}
                   {...register("phone")}
                 />
                 <TextField label="Postal Code" fullWidth {...register("postalCode")} />

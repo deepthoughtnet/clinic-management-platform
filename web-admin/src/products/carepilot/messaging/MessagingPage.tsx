@@ -18,7 +18,7 @@ import {
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import { useAuth } from "../../../auth/useAuth";
-import { mapZodErrors, engageMessagingTestSendSchema } from "@deepthoughtnet/form-validation-kit";
+import { mapZodErrors, engageMessagingTestSendSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
 import {
   listCarePilotMessagingProviderStatuses,
   sendCarePilotProviderTestMessage,
@@ -90,7 +90,8 @@ export default function MessagingPage() {
     if (testChannel === "EMAIL") {
       return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) ? "" : "Enter a valid email address.";
     }
-    return /^[6-9]\d{9}$/.test(value.replace(/[^0-9]/g, "").slice(0, 10)) ? "" : "Enter a valid 10-digit Indian mobile number.";
+    const normalized = normalizeIndianMobileInput(value) as string;
+    return /^[6-9]\d{9}$/.test(normalized) ? "" : "Enter a valid 10-digit Indian mobile number.";
   };
 
   const load = React.useCallback(async (isRefresh = false) => {
@@ -139,7 +140,7 @@ export default function MessagingPage() {
       setSendResult(null);
       setFieldErrors({});
       const result = await sendCarePilotProviderTestMessage(auth.accessToken, auth.tenantId, testChannel, {
-        recipient,
+        recipient: testChannel === "EMAIL" ? recipient : (normalizeIndianMobileInput(recipient) as string),
         subject: testChannel === "EMAIL" ? subject : null,
         body,
       });
@@ -247,6 +248,7 @@ export default function MessagingPage() {
               onChange={(e) => setRecipient(e.target.value)}
               fullWidth
               required
+              inputProps={testChannel === "EMAIL" ? {} : { inputMode: "tel" }}
               error={Boolean(fieldErrors.recipient)}
               helperText={fieldErrors.recipient || (testChannel === "EMAIL" ? "Enter a valid email address." : "Enter a 10-digit Indian mobile number.")}
             />

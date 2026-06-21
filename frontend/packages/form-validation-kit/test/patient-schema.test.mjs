@@ -27,6 +27,52 @@ test("patient schema accepts a valid payload", () => {
   assert.equal(result.success, true);
 });
 
+test("patient schema accepts a patient payload with a blank blood group", () => {
+  const result = patientRegistrationSchema.safeParse({
+    ...validPatientPayload,
+    bloodGroup: null,
+  });
+  assert.equal(result.success, true);
+});
+
+test("patient schema accepts the sample new patient payload", () => {
+  const result = patientRegistrationSchema.safeParse({
+    firstName: "temp",
+    lastName: "one",
+    mobile: "9678000023",
+    email: "riya@example.com",
+    gender: "MALE",
+    dateOfBirth: "1961-01-01",
+    ageYears: 65,
+    bloodGroup: null,
+    addressLine1: "12 Main Road",
+    city: "Pune",
+    state: "Maharashtra",
+    country: "India",
+    postalCode: "411001",
+    emergencyContactName: "Amit Shah",
+    emergencyContactMobile: "9876501234",
+    active: true,
+  });
+  assert.equal(result.success, true);
+  if (result.success) {
+    assert.equal(result.data.mobile, "9678000023");
+  }
+});
+
+test("patient schema normalizes indian mobile prefixes", () => {
+  const result = patientRegistrationSchema.safeParse({
+    ...validPatientPayload,
+    mobile: "+91 98765 43210",
+    emergencyContactMobile: "919876543210",
+  });
+  assert.equal(result.success, true);
+  if (result.success) {
+    assert.equal(result.data.mobile, "9876543210");
+    assert.equal(result.data.emergencyContactMobile, "9876543210");
+  }
+});
+
 test("patient schema rejects a missing name", () => {
   const result = patientRegistrationSchema.safeParse({
     ...validPatientPayload,
@@ -49,6 +95,39 @@ test("patient schema rejects an invalid Indian mobile", () => {
     mobile: "12345",
   });
   assert.equal(result.success, false);
+});
+
+test("patient schema rejects an invalid first name", () => {
+  const result = patientRegistrationSchema.safeParse({
+    ...validPatientPayload,
+    firstName: "temp-1",
+  });
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.equal(result.error.issues[0]?.path[0], "firstName");
+  }
+});
+
+test("patient schema rejects a future date of birth", () => {
+  const result = patientRegistrationSchema.safeParse({
+    ...validPatientPayload,
+    dateOfBirth: "2999-01-01",
+  });
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.equal(result.error.issues[0]?.path[0], "dateOfBirth");
+  }
+});
+
+test("patient schema rejects an age above 120", () => {
+  const result = patientRegistrationSchema.safeParse({
+    ...validPatientPayload,
+    ageYears: 121,
+  });
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.equal(result.error.issues[0]?.path[0], "ageYears");
+  }
 });
 
 test("patient schema allows optional fields to be omitted", () => {

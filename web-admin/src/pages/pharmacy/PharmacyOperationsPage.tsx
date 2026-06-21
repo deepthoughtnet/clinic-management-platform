@@ -34,6 +34,7 @@ import {
   firstZodError,
   hasDuplicatePurchaseOrderNumber,
   hasDuplicateSupplierName,
+  normalizeIndianMobileInput,
   mapZodErrors,
   purchaseOrderSchema,
   goodsReceiptSchema,
@@ -219,7 +220,7 @@ function normalizeSupplierPayload(values: SupplierValues): SupplierInput {
   return {
     supplierName: values.supplierName,
     contactPerson: values.contactPerson ?? null,
-    phone: values.phone ?? null,
+    phone: values.phone ? (normalizeIndianMobileInput(values.phone) as string) : null,
     email: values.email ?? null,
     gstNumber: values.gstNumber ?? null,
     address: values.address ?? null,
@@ -925,7 +926,7 @@ export default function PharmacyOperationsPage() {
                   <TextField id="supplier-contact-person" size="small" fullWidth label="Contact person" value={supplierForm.contactPerson || ""} onChange={(e) => setSupplierForm((s) => ({ ...s, contactPerson: e.target.value || null }))} error={Boolean(supplierFieldErrors.contactPerson)} helperText={supplierFieldErrors.contactPerson || "Optional. Must include a letter or number if entered."} inputProps={{ maxLength: 60 }} />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
-                  <TextField id="supplier-phone" size="small" fullWidth label="Mobile" value={supplierForm.phone || ""} onChange={(e) => setSupplierForm((s) => ({ ...s, phone: e.target.value || null }))} error={Boolean(supplierFieldErrors.phone)} helperText={supplierFieldErrors.phone || "Optional Indian mobile."} inputProps={{ maxLength: 10 }} />
+                  <TextField id="supplier-phone" size="small" fullWidth label="Mobile" value={supplierForm.phone || ""} onChange={(e) => setSupplierForm((s) => ({ ...s, phone: e.target.value || null }))} error={Boolean(supplierFieldErrors.phone)} helperText={supplierFieldErrors.phone || "Optional Indian mobile."} inputProps={{ inputMode: "tel" }} />
                 </Grid>
                 <Grid size={{ xs: 12, md: 6 }}>
                   <TextField id="supplier-email" size="small" fullWidth label="Email" value={supplierForm.email || ""} onChange={(e) => setSupplierForm((s) => ({ ...s, email: e.target.value || null }))} error={Boolean(supplierFieldErrors.email)} helperText={supplierFieldErrors.email || "Optional valid email."} inputProps={{ maxLength: 120 }} />

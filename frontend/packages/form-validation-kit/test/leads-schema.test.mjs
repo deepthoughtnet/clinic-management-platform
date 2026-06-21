@@ -20,6 +20,18 @@ test("lead schema accepts a valid payload", () => {
   assert.equal(result.success, true);
 });
 
+test("lead schema normalizes indian mobile prefixes", () => {
+  const result = leadCreateSchema.safeParse({
+    firstName: "Asha",
+    phone: "+91 98765 43210",
+  });
+
+  assert.equal(result.success, true);
+  if (result.success) {
+    assert.equal(result.data.phone, "9876543210");
+  }
+});
+
 test("lead schema rejects an invalid email", () => {
   const result = leadUpdateSchema.safeParse({
     firstName: "Asha",

@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   appointmentCreateSchema,
   appointmentRescheduleSchema,
+  normalizeIndianMobileInput,
   patientQuickRegisterSchema,
 } from "@deepthoughtnet/form-validation-kit";
 import {
@@ -125,10 +126,6 @@ function priorityColor(priority: Appointment["priority"]) {
   }
 }
 
-function normalizeIndianMobile(value: string) {
-  return value.replace(/[^0-9]/g, "").slice(0, 10);
-}
-
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -244,7 +241,7 @@ function toPatientInput(form: QuickRegisterForm): PatientInput {
     gender: form.gender,
     dateOfBirth: form.dateOfBirth || null,
     ageYears: form.ageYears ? Number(form.ageYears) : null,
-    mobile: normalizeIndianMobile(form.mobile),
+    mobile: normalizeIndianMobileInput(form.mobile) as string,
     email: null,
     addressLine1: null,
     addressLine2: null,
@@ -614,16 +611,17 @@ export default function AppointmentsPage() {
           return;
         }
 
+        const normalizedMobile = normalizeIndianMobileInput(term) as string;
         const rows = await searchPatients(auth.accessToken, auth.tenantId, {
           patientNumber: term.toUpperCase().startsWith("PAT-") ? term : undefined,
-          mobile: /^\+?[0-9\s-]{6,}$/.test(term) ? normalizeIndianMobile(term) || undefined : undefined,
-          name: term.toUpperCase().startsWith("PAT-") || /^\+?[0-9\s-]{6,}$/.test(term) ? undefined : term,
+          mobile: /^[6-9]\d{9}$/.test(normalizedMobile) ? normalizedMobile : undefined,
+          name: term.toUpperCase().startsWith("PAT-") || /^[6-9]\d{9}$/.test(normalizedMobile) ? undefined : term,
           active: true,
         });
         if (!cancelled) {
           setPatientResults(rows);
-          if (canQuickRegisterPatient && rows.length === 0 && /^\+?[0-9\s-]{6,}$/.test(term)) {
-            setQuickRegisterForm((current) => ({ ...current, mobile: normalizeIndianMobile(term) }));
+          if (canQuickRegisterPatient && rows.length === 0 && /^[6-9]\d{9}$/.test(normalizedMobile)) {
+            setQuickRegisterForm((current) => ({ ...current, mobile: normalizedMobile }));
             setQuickRegisterError(null);
             setQuickRegisterOpen(true);
           }
@@ -1018,9 +1016,10 @@ export default function AppointmentsPage() {
   const openQuickRegister = () => {
     if (!canQuickRegisterPatient) return;
     const term = patientQuery.trim();
+    const normalizedMobile = normalizeIndianMobileInput(term) as string;
     setQuickRegisterForm((current) => ({
       ...current,
-      mobile: current.mobile || (term && /^\+?[0-9\s-]{6,}$/.test(term) ? normalizeIndianMobile(term) : ""),
+      mobile: current.mobile || (/^[6-9]\d{9}$/.test(normalizedMobile) ? normalizedMobile : ""),
     }));
     setQuickRegisterError(null);
     setQuickRegisterOpen(true);
@@ -1503,8 +1502,8 @@ export default function AppointmentsPage() {
               fullWidth
               label="Mobile"
               value={quickRegisterForm.mobile}
-              onChange={(event) => setQuickRegisterForm((current) => ({ ...current, mobile: normalizeIndianMobile(event.target.value) }))}
-              inputProps={{ inputMode: "numeric", maxLength: 10, pattern: "[0-9]*" }}
+              onChange={(event) => setQuickRegisterForm((current) => ({ ...current, mobile: event.target.value }))}
+              inputProps={{ inputMode: "tel" }}
             />
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, md: 6 }}>
