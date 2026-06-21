@@ -157,7 +157,7 @@ test("top bar uses a branded lockup and sticky shell", () => {
   assert.ok(source.includes("BrandMark"));
   assert.ok(source.includes('showCopy'));
   assert.ok(source.includes('subtitle="Intelligent Healthcare Platform"'));
-  assert.ok(source.includes('label="DEMO / UAT"'));
+  assert.equal(source.split('label="DEMO / UAT"').length - 1, 1);
 });
 
 test("app shell offsets the main content below the fixed header", () => {
@@ -165,6 +165,7 @@ test("app shell offsets the main content below the fixed header", () => {
   assert.ok(source.includes('height: 84'));
   assert.ok(source.includes("drawerWidth={drawerWidth}"));
   assert.ok(source.includes("isMobile={isMobile}"));
+  assert.ok(!source.includes('label="DEMO / UAT"'));
 });
 
 test("sidebar header reuses the branded lockup", () => {

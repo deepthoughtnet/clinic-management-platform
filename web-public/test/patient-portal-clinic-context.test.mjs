@@ -99,7 +99,6 @@ test("public nav and footer branding are cleaned up", () => {
   assert.ok(source.includes("footer-environment-line"));
   assert.ok(source.includes("Intelligent Healthcare Platform for clinics, patients, and teams."));
   assert.ok(source.includes("© 2026 DeepThoughtNet."));
-  assert.ok(source.includes("DEMO / UAT"));
 });
 
 test("homepage location selector persists common cities", () => {

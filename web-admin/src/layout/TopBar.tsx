@@ -106,58 +106,81 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
         },
       }}
     >
-      <Chip
-        label="DEMO / UAT"
-        color="warning"
-        size="small"
-        sx={{
-          position: "fixed",
-          top: { xs: 8, md: 12 },
-          right: { xs: 8, md: 12 },
-          zIndex: (theme) => theme.zIndex.modal + 1,
-          fontWeight: 800,
-          letterSpacing: 0.4,
-          pointerEvents: "none",
-        }}
-      />
       <Toolbar
         sx={{
           position: "relative",
           zIndex: 1,
-          gap: 1.25,
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) auto minmax(0, 1fr)" },
+          gridTemplateAreas: {
+            xs: `"left" "center" "right"`,
+            md: `"left center right"`,
+          },
+          rowGap: { xs: 1, md: 0 },
+          columnGap: 1.25,
           minHeight: 84,
           px: { xs: 1, md: 2 },
           py: 1,
-          flexWrap: "wrap",
           alignItems: "center",
         }}
+      >
+        <Box sx={{ gridArea: "left", display: "flex", alignItems: "center", gap: 1.25, minWidth: 0 }}>
+          <IconButton color="inherit" onClick={onToggleSidebar}>
+            <MenuIcon />
+          </IconButton>
+          <Stack direction="row" spacing={1.25} alignItems="center" sx={{ minWidth: 0, flex: "1 1 280px" }}>
+            <BrandMark size={42} showCopy title="Jeevanam Healthcare" subtitle="Intelligent Healthcare Platform" />
+            <Chip
+              size="small"
+              variant="outlined"
+              label={formatPathLabel(location.pathname)}
+              sx={{
+                maxWidth: "100%",
+                "& .MuiChip-label": {
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                },
+              }}
+            />
+          </Stack>
+        </Box>
+
+        <Box
+          sx={{
+            gridArea: "center",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            minWidth: 0,
+          }}
         >
-        <IconButton color="inherit" onClick={onToggleSidebar}>
-          <MenuIcon />
-        </IconButton>
-        <Stack direction="row" spacing={1.25} alignItems="center" sx={{ minWidth: 0, flex: "1 1 280px" }}>
-          <BrandMark size={42} showCopy title="Jeevanam Healthcare" subtitle="Intelligent Healthcare Platform" />
           <Chip
+            label="DEMO / UAT"
+            color="warning"
             size="small"
-            variant="outlined"
-            label={formatPathLabel(location.pathname)}
             sx={{
-              maxWidth: "100%",
-              "& .MuiChip-label": {
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              },
+              fontWeight: 800,
+              letterSpacing: 0.4,
+              pointerEvents: "none",
+              whiteSpace: "nowrap",
             }}
           />
-        </Stack>
+        </Box>
 
-        <Box sx={{ flex: 1 }} />
-
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mr: 1.5, flexWrap: "wrap" }}>
+        <Box
+          sx={{
+            gridArea: "right",
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            flexWrap: "wrap",
+            justifyContent: { xs: "flex-start", md: "flex-end" },
+            minWidth: 0,
+          }}
+        >
           {isPlatformAdmin ? <Chip size="small" color="primary" label="Platform" /> : null}
           <Chip size="small" variant="outlined" label={primaryRole} />
-          <Chip size="small" color="warning" label="DEMO / UAT" sx={{ fontWeight: 800 }} />
           {showTenantDropdown ? (
             <>
               <Select
@@ -203,9 +226,6 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
               variant="outlined"
             />
           </Tooltip>
-        </Box>
-
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mr: 2, flexWrap: "wrap", justifyContent: "flex-end" }}>
           <Tooltip title="Notifications">
             <IconButton color="inherit" onClick={() => navigate("/notifications")} aria-label="Open notifications">
               <NotificationsNoneRoundedIcon />
