@@ -1,3 +1,364 @@
-# Arogia UAT overlay placeholder.
-# The base compose file is env-driven for UAT ports, container names, and credentials.
-# Keep this file so deploy scripts can consistently include a UAT overlay layer.
+services:
+  postgres:
+    image: postgres:15
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-clinic_management}
+      POSTGRES_USER: ${POSTGRES_USER:-clinic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5437}:5432"
+    volumes:
+      - clinic_management_postgres_data:/var/lib/postgresql/data
+      - ./init-sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-clinic} -d ${POSTGRES_DB:-clinic_management}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - clinic_management_redis_data:/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_API_PORT:-9001}:9000"
+      - "${MINIO_CONSOLE_PORT:-9002}:9001"
+    volumes:
+      - clinic_management_minio_data:/data
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-clinic}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      KC_HOSTNAME_URL: ${KEYCLOAK_URL}
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "true"
+      KC_PROXY_HEADERS: xforwarded
+
+    ports:
+      - "${KEYCLOAK_PORT:-8090}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 &&
+          printf "GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 &&
+          grep "HTTP/1.1 200" <&3'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  clinic-management-api:
+    profiles: ["api"]
+    build:
+      context: ..
+      dockerfile: backend/api/api-bff/Dockerfile
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-api
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+
+      CLINIC_JWT_ISSUER_URI: ${CLINIC_JWT_ISSUER_URI}
+      CLINIC_JWT_JWK_SET_URI: ${CLINIC_JWT_JWK_SET_URI}
+      CLINIC_KEYCLOAK_SERVER_URL: ${CLINIC_KEYCLOAK_SERVER_URL}
+      CLINIC_KEYCLOAK_ADMIN_USERNAME: ${CLINIC_KEYCLOAK_ADMIN_USERNAME}
+      CLINIC_KEYCLOAK_ADMIN_PASSWORD: ${CLINIC_KEYCLOAK_ADMIN_PASSWORD}
+
+      CLINIC_MINIO_ENDPOINT: ${CLINIC_MINIO_ENDPOINT}
+      CLINIC_MINIO_ACCESS_KEY: ${CLINIC_MINIO_ACCESS_KEY}
+      CLINIC_MINIO_SECRET_KEY: ${CLINIC_MINIO_SECRET_KEY}
+      CLINIC_MINIO_BUCKET: ${CLINIC_MINIO_BUCKET:-clinic-documents}
+      CLINIC_MINIO_AUTO_CREATE_BUCKET: ${CLINIC_MINIO_AUTO_CREATE_BUCKET:-true}
+
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+
+      CLINIC_PATIENT_PORTAL_SESSION_SECRET: ${CLINIC_PATIENT_PORTAL_SESSION_SECRET}
+      CLINIC_PATIENT_PORTAL_EXPOSE_DEV_OTP: ${CLINIC_PATIENT_PORTAL_EXPOSE_DEV_OTP:-true}
+      CLINIC_PATIENT_PORTAL_SESSION_TTL: ${CLINIC_PATIENT_PORTAL_SESSION_TTL:-PT12H}
+
+      CLINIC_CORS_ALLOWED_ORIGINS: ${CLINIC_CORS_ALLOWED_ORIGINS}
+
+      CLINIC_AI_ENABLED: ${CLINIC_AI_ENABLED:-true}
+      CLINIC_AI_PROVIDER: ${CLINIC_AI_PROVIDER:-GEMINI}
+      AI_PROVIDER_CHAIN: ${AI_PROVIDER_CHAIN:-GEMINI,GROQ,MOCK}
+
+      CLINIC_GEMINI_ENABLED: ${CLINIC_GEMINI_ENABLED:-true}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+
+      CLINIC_GROQ_ENABLED: ${CLINIC_GROQ_ENABLED:-true}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
+      GROQ_BASE_URL: ${GROQ_BASE_URL:-https://api.groq.com/openai/v1}
+
+      AI_MOCK_ENABLED: ${AI_MOCK_ENABLED:-true}
+
+      CLINIC_OCR_ENABLED: ${CLINIC_OCR_ENABLED:-true}
+      CLINIC_OCR_PROVIDER: ${CLINIC_OCR_PROVIDER:-TESSERACT}
+      TESSERACT_EXECUTABLE_PATH: ${TESSERACT_EXECUTABLE_PATH:-/usr/bin/tesseract}
+      TESSERACT_LANGUAGE: ${TESSERACT_LANGUAGE:-eng}
+
+      VOICE_RUNTIME_SUMMARY_ENDPOINT: ${VOICE_RUNTIME_SUMMARY_ENDPOINT:-http://realtime-voice-gateway:8091/metrics/summary}
+      VOICE_AI_ORCHESTRATION_URL: ${VOICE_AI_ORCHESTRATION_URL:-http://clinic-management-api:8089/actuator/health}
+
+      CLINIC_MAIL_ENABLED: ${CLINIC_MAIL_ENABLED:-false}
+      CLINIC_MAIL_PROVIDER: ${CLINIC_MAIL_PROVIDER:-smtp}
+      CLINIC_MAIL_HOST: ${CLINIC_MAIL_HOST}
+      CLINIC_MAIL_PORT: ${CLINIC_MAIL_PORT:-587}
+      CLINIC_MAIL_USERNAME: ${CLINIC_MAIL_USERNAME}
+      CLINIC_MAIL_PASSWORD: ${CLINIC_MAIL_PASSWORD}
+      CLINIC_MAIL_FROM_EMAIL: ${CLINIC_MAIL_FROM_EMAIL}
+      CLINIC_MAIL_FROM_NAME: ${CLINIC_MAIL_FROM_NAME:-Jeevanam Healthcare}
+      CLINIC_MAIL_STARTTLS: ${CLINIC_MAIL_STARTTLS:-true}
+      CLINIC_MAIL_AUTH: ${CLINIC_MAIL_AUTH:-true}
+
+      CLINIC_NOTIFICATIONS_ENABLED: ${CLINIC_NOTIFICATIONS_ENABLED:-true}
+      CLINIC_NOTIFICATIONS_CHANNEL: ${CLINIC_NOTIFICATIONS_CHANNEL:-email}
+      CLINIC_NOTIFICATIONS_DISPATCHER_ENABLED: ${CLINIC_NOTIFICATIONS_DISPATCHER_ENABLED:-true}
+
+    ports:
+      - "${API_PORT:-8089}:8089"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8089/actuator/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      faster-whisper:
+        condition: service_healthy
+      piper-tts:
+        condition: service_healthy
+
+  web-admin:
+    profiles: ["frontend"]
+    build:
+      context: ..
+      dockerfile: web-admin/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL}
+        VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM:-clinic-management}
+        VITE_KEYCLOAK_CLIENT_ID: ${VITE_KEYCLOAK_CLIENT_ID:-clinic-web-admin}
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-web-admin
+    restart: unless-stopped
+    ports:
+      - "${WEB_ADMIN_PORT:-5175}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    depends_on:
+      clinic-management-api:
+        condition: service_healthy
+
+  web-public:
+    profiles: ["frontend"]
+    build:
+      context: ..
+      dockerfile: web-public/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        VITE_PUBLIC_API_BASE_URL: ${VITE_PUBLIC_API_BASE_URL}
+        VITE_CLINIC_LOGIN_URL: ${VITE_CLINIC_LOGIN_URL:-}
+        VITE_AIVA_APP_URL: ${VITE_AIVA_APP_URL}
+        VITE_CAREAI_RUNTIME_URL: ${VITE_CAREAI_RUNTIME_URL}
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-web-public
+    restart: unless-stopped
+    ports:
+      - "${WEB_PUBLIC_PORT:-5176}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    depends_on:
+      clinic-management-api:
+        condition: service_healthy
+
+  web-aiva:
+    profiles: ["frontend"]
+    build:
+      context: ../web-aiva
+      dockerfile: Dockerfile
+      args:
+        VITE_CAREAI_RUNTIME_URL: ${VITE_CAREAI_RUNTIME_URL}
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-web-aiva
+    restart: unless-stopped
+    ports:
+      - "${WEB_AIVA_PORT:-5177}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+  whisper-stt:
+    image: ghcr.io/ggerganov/whisper.cpp:main
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-whisper-stt
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - "set -e; if [ ! -f /models/ggml-base.en.bin ]; then curl -fL https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -o /models/ggml-base.en.bin; fi; exec /app/build/bin/whisper-server --host 0.0.0.0 --port 8080 --model /models/ggml-base.en.bin"
+    ports:
+      - "${WHISPER_STT_PORT:-8092}:8080"
+    volumes:
+      - whisper_stt_models:/models
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -fsS http://127.0.0.1:8080/health || curl -fsS http://127.0.0.1:8080/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+  faster-whisper:
+    build:
+      context: ./voice/faster-whisper
+      dockerfile: Dockerfile
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-faster-whisper
+    restart: unless-stopped
+    environment:
+      FASTER_WHISPER_MODEL: ${FASTER_WHISPER_MODEL:-base}
+      FASTER_WHISPER_LANGUAGE: ${FASTER_WHISPER_LANGUAGE:-en}
+      FASTER_WHISPER_DEVICE: ${FASTER_WHISPER_DEVICE:-cpu}
+      FASTER_WHISPER_COMPUTE_TYPE: ${FASTER_WHISPER_COMPUTE_TYPE:-int8}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    volumes:
+      - faster_whisper_models:/models
+
+  piper-tts:
+    build:
+      context: ./voice/piper
+      dockerfile: Dockerfile
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-piper-tts
+    restart: unless-stopped
+    environment:
+      PIPER_DEFAULT_VOICE: ${PIPER_DEFAULT_VOICE:-en_US-lessac-medium}
+      PIPER_ENGLISH_VOICE: ${PIPER_ENGLISH_VOICE:-en_US-lessac-medium}
+      PIPER_HINDI_VOICE: ${PIPER_HINDI_VOICE:-hi_IN-rohan-medium}
+      PIPER_ALLOW_FALLBACK_VOICE: ${PIPER_ALLOW_FALLBACK_VOICE:-true}
+      PIPER_VOICE: ${PIPER_DEFAULT_VOICE:-en_US-lessac-medium}
+      PIPER_MODEL_DIR: ${PIPER_MODEL_DIR:-/models/piper}
+      PIPER_VOICE_DOWNLOAD_BASE: ${PIPER_VOICE_DOWNLOAD_BASE:-https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8001/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    volumes:
+      - ${PIPER_MODEL_HOST_DIR:-./voice/piper/models}:/models/piper
+
+  realtime-voice-gateway:
+    build:
+      context: ../backend/realtime/realtime-voice-runtime-python
+      dockerfile: Dockerfile
+    container_name: ${CONTAINER_NAME_PREFIX:-jeevanam-uat}-realtime-voice-gateway
+    restart: unless-stopped
+    environment:
+      VOICE_GATEWAY_HOST: 0.0.0.0
+      VOICE_GATEWAY_PORT: 8091
+      VOICE_STT_PROVIDER: ${VOICE_STT_PROVIDER:-whisper-cpp-server}
+      VOICE_STT_URL: ${VOICE_STT_URL:-http://whisper-stt:8080}
+      VOICE_STT_MODEL: ${VOICE_STT_MODEL:-base.en}
+      VOICE_STT_LANGUAGE: ${VOICE_STT_LANGUAGE:-en}
+      VOICE_STT_DEVICE: ${VOICE_STT_DEVICE:-cpu}
+      VOICE_STT_TIMEOUT_SECONDS: ${VOICE_STT_TIMEOUT_SECONDS:-30}
+      VOICE_TTS_PROVIDER: ${VOICE_TTS_PROVIDER:-piper}
+      VOICE_TTS_VOICE: ${VOICE_TTS_VOICE:-en_US-lessac-medium}
+      VOICE_TTS_MODEL_DIR: ${VOICE_TTS_MODEL_DIR:-/var/lib/voice-models/piper}
+      VOICE_TTS_AUTO_DOWNLOAD: ${VOICE_TTS_AUTO_DOWNLOAD:-true}
+      VOICE_AI_ORCHESTRATION_URL: ${VOICE_AI_ORCHESTRATION_URL:-http://clinic-management-api:8089/actuator/health}
+      VOICE_WS_MAX_SESSIONS: ${VOICE_WS_MAX_SESSIONS:-200}
+      VOICE_MAX_ACTIVE_SESSIONS: ${VOICE_MAX_ACTIVE_SESSIONS:-100}
+      VOICE_MAX_TRANSCRIPT_BUFFER: ${VOICE_MAX_TRANSCRIPT_BUFFER:-96}
+      VOICE_SESSION_IDLE_TIMEOUT: ${VOICE_SESSION_IDLE_TIMEOUT:-300}
+      VOICE_MODEL_CACHE_DIR: ${VOICE_MODEL_CACHE_DIR:-/var/lib/voice-models}
+      VOICE_ENABLE_GPU: ${VOICE_ENABLE_GPU:-false}
+      VOICE_WORKER_THREADS: ${VOICE_WORKER_THREADS:-2}
+      VOICE_PATIENT_PORTAL_UPSTREAM_WS_URL: ${VOICE_PATIENT_PORTAL_UPSTREAM_WS_URL:-ws://clinic-management-api:8089/ws/patient-portal/careai}
+      PIPER_CLI: ${PIPER_CLI:-piper}
+      PIPER_MODEL: ${PIPER_MODEL:-/var/lib/voice-models/piper/en_US-lessac-medium.onnx}
+      CLINIC_PATIENT_PORTAL_SESSION_SECRET: ${CLINIC_PATIENT_PORTAL_SESSION_SECRET}
+    ports:
+      - "${REALTIME_VOICE_GATEWAY_PORT:-8091}:8091"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    volumes:
+      - realtime_voice_model_cache:/var/lib/voice-models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      whisper-stt:
+        condition: service_healthy
+
+volumes:
+  clinic_management_postgres_data:
+  clinic_management_redis_data:
+  clinic_management_minio_data:
+  realtime_voice_model_cache:
+  whisper_stt_models:
+  faster_whisper_models:
