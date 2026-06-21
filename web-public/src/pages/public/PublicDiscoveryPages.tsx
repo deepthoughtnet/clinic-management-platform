@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   type PublicClinicDetailResponse,
@@ -13,7 +13,7 @@ import {
 } from "../../api/publicCatalog";
 import type { PatientPortalSession } from "../../api/patientPortal";
 import { branding } from "../../branding";
-import { patientPortalBookingPath } from "../patient/patientPortalClinicContext";
+import { patientPortalBookingPath, patientPortalBookingTo } from "../patient/patientPortalClinicContext";
 
 type FetchState<T> = {
   data: T;
@@ -115,28 +115,89 @@ const TRUST_SIGNALS = [
 ] as const;
 
 const PUBLIC_LOCATION_STORAGE_KEY = "clinic-web-public-location";
-const PUBLIC_LOCATION_OPTIONS = ["Pune", "Mumbai", "Bangalore", "Delhi", "Hyderabad", "Chennai"] as const;
+const PUBLIC_LOCATION_COORDS_STORAGE_KEY = "clinic-web-public-location-coordinates";
+const PUBLIC_LOCATION_SOURCE_STORAGE_KEY = "clinic-web-public-location-source";
+const PUBLIC_LOCATION_OPTIONS = [
+  "Pune",
+  "Mumbai",
+  "Bangalore",
+  "Delhi",
+  "Hyderabad",
+  "Chennai",
+  "Bhopal",
+] as const;
+const PUBLIC_CURRENT_LOCATION_LABEL = "Current location selected";
+const PUBLIC_DEFAULT_LOCATION = "Pune";
 
-function readStoredPublicLocation() {
+type PublicLocationCoordinates = {
+  latitude: number;
+  longitude: number;
+};
+
+type PublicLocationSource = "default" | "manual" | "browser";
+
+type PublicLocationState = {
+  location: string;
+  coordinates: PublicLocationCoordinates | null;
+  source: PublicLocationSource;
+};
+
+function readStoredPublicLocation(): PublicLocationState {
   if (typeof window === "undefined") {
-    return "Pune";
+    return { location: PUBLIC_DEFAULT_LOCATION, coordinates: null, source: "default" };
   }
   const stored = window.localStorage.getItem(PUBLIC_LOCATION_STORAGE_KEY)?.trim();
+  const storedCoordinates = window.localStorage.getItem(PUBLIC_LOCATION_COORDS_STORAGE_KEY)?.trim();
+  const storedSource = window.localStorage.getItem(PUBLIC_LOCATION_SOURCE_STORAGE_KEY)?.trim() as PublicLocationSource | null;
   if (stored) {
-    return stored;
+    return {
+      location: stored,
+      coordinates: storedCoordinates ? readStoredPublicCoordinates(storedCoordinates) : null,
+      source: storedCoordinates ? "browser" : storedSource === "browser" ? "browser" : "manual",
+    };
   }
-  return "Pune";
+  if (storedCoordinates) {
+    return {
+      location: PUBLIC_CURRENT_LOCATION_LABEL,
+      coordinates: readStoredPublicCoordinates(storedCoordinates),
+      source: "browser",
+    };
+  }
+  return { location: PUBLIC_DEFAULT_LOCATION, coordinates: null, source: "default" };
 }
 
 function normalizePublicLocation(value: string) {
   return value.trim().slice(0, 60);
 }
 
-function savePublicLocation(value: string) {
+function readStoredPublicCoordinates(value: string): PublicLocationCoordinates | null {
+  try {
+    const parsed = JSON.parse(value) as { latitude?: unknown; longitude?: unknown };
+    const latitude = typeof parsed.latitude === "number" ? parsed.latitude : Number(parsed.latitude);
+    const longitude = typeof parsed.longitude === "number" ? parsed.longitude : Number(parsed.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return null;
+    }
+    return { latitude, longitude };
+  } catch {
+    return null;
+  }
+}
+
+function savePublicLocation(state: PublicLocationState) {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(PUBLIC_LOCATION_STORAGE_KEY, value);
+  window.localStorage.setItem(PUBLIC_LOCATION_STORAGE_KEY, state.location);
+  window.localStorage.setItem(
+    PUBLIC_LOCATION_SOURCE_STORAGE_KEY,
+    state.coordinates ? "browser" : "manual",
+  );
+  if (state.coordinates) {
+    window.localStorage.setItem(PUBLIC_LOCATION_COORDS_STORAGE_KEY, JSON.stringify(state.coordinates));
+  } else {
+    window.localStorage.removeItem(PUBLIC_LOCATION_COORDS_STORAGE_KEY);
+  }
 }
 
 function usePublicResource<T>(path: string, params: Record<string, string | number | undefined | null>, initialValue: T): FetchState<T> {
@@ -322,7 +383,7 @@ function DoctorCard({ doctor, session }: { doctor: PublicDoctorSummaryResponse; 
         </Link>
         <Link
           className="ghost-button"
-          to={patientPortalBookingPath(session, {
+          to={patientPortalBookingTo(session, {
             doctorSlug: doctor.doctorSlug,
             doctorName: doctor.doctorDisplayName,
           })}
@@ -335,11 +396,6 @@ function DoctorCard({ doctor, session }: { doctor: PublicDoctorSummaryResponse; 
 }
 
 function ClinicCard({ clinic, session }: { clinic: PublicClinicSummaryResponse; session: PatientPortalSession | null }) {
-  const bookingPath = patientPortalBookingPath(session, {
-    clinicCode: clinic.clinicSlug,
-    clinicName: clinic.clinicDisplayName,
-  });
-
   return (
     <article className="public-directory-card clinic-directory-card">
       <div className="directory-card-top">
@@ -367,7 +423,10 @@ function ClinicCard({ clinic, session }: { clinic: PublicClinicSummaryResponse; 
         <Link className="secondary-button" to={`/clinics/${clinic.clinicSlug}`}>
           View clinic
         </Link>
-        <Link className="ghost-button" to={bookingPath}>
+        <Link className="ghost-button" to={patientPortalBookingTo(session, {
+          clinicCode: clinic.clinicSlug,
+          clinicName: clinic.clinicDisplayName,
+        })}>
           Book appointment
         </Link>
       </div>
@@ -460,9 +519,19 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
   const filters = useDirectoryFilters(6);
   const navigate = useNavigate();
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
+  const storedLocation = useMemo(() => readStoredPublicLocation(), []);
+  const hasSavedPublicLocation = storedLocation.source !== "default";
+  const queryLocation = normalizePublicLocation(filters.searchParams.get("city")?.trim() || "");
   const [selectedLocation, setSelectedLocation] = useState(() =>
-    normalizePublicLocation(filters.searchParams.get("city")?.trim() || readStoredPublicLocation()),
+    hasSavedPublicLocation ? storedLocation.location : queryLocation || storedLocation.location,
   );
+  const [selectedCoordinates, setSelectedCoordinates] = useState<PublicLocationCoordinates | null>(() =>
+    hasSavedPublicLocation ? storedLocation.coordinates : null,
+  );
+  const [locationDraft, setLocationDraft] = useState(() => selectedLocation);
+  const [locationMessage, setLocationMessage] = useState<string | null>(null);
+  const [locationBusy, setLocationBusy] = useState(false);
+  const hasHydratedLocation = useRef(false);
   const hasQuery = Boolean(
     filters.searchParams.get("q") || filters.searchParams.get("city") || filters.searchParams.get("area"),
   );
@@ -477,19 +546,59 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
     },
     emptySearchResponse,
   );
-  const displayLocation = selectedLocation || "Pune";
+  const displayLocation = selectedLocation;
 
   useEffect(() => {
-    const nextLocation = normalizePublicLocation(filters.searchParams.get("city")?.trim() || selectedLocation || readStoredPublicLocation());
-    if (nextLocation && nextLocation !== selectedLocation) {
-      setSelectedLocation(nextLocation);
-    }
-  }, [filters.searchParams, selectedLocation]);
-
-  useEffect(() => {
-    const nextLocation = selectedLocation || "Pune";
-    savePublicLocation(nextLocation);
+    setLocationDraft(selectedLocation);
   }, [selectedLocation]);
+
+  useEffect(() => {
+    if (!hasHydratedLocation.current) {
+      hasHydratedLocation.current = true;
+      return;
+    }
+    savePublicLocation({ location: selectedLocation, coordinates: selectedCoordinates, source: selectedCoordinates ? "browser" : "manual" });
+  }, [selectedCoordinates, selectedLocation]);
+
+  function commitSelectedLocation(nextLocation: string, nextCoordinates: PublicLocationCoordinates | null = null) {
+    const normalizedLocation = normalizePublicLocation(nextLocation) || PUBLIC_DEFAULT_LOCATION;
+    setSelectedLocation(normalizedLocation);
+    setSelectedCoordinates(nextCoordinates);
+    setLocationDraft(normalizedLocation);
+    setLocationMessage(null);
+    setLocationPickerOpen(false);
+  }
+
+  function handleApplyLocationDraft() {
+    commitSelectedLocation(locationDraft);
+  }
+
+  function handleCurrentLocation() {
+    setLocationMessage(null);
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setLocationMessage("Location services are not available in this browser. Please select your city manually.");
+      return;
+    }
+    setLocationBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        commitSelectedLocation(PUBLIC_CURRENT_LOCATION_LABEL, {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        setLocationBusy(false);
+      },
+      () => {
+        setLocationBusy(false);
+        setLocationMessage("Location permission was not allowed. Please select your city manually.");
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 10000,
+        maximumAge: 300000,
+      },
+    );
+  }
 
   function submitHeroSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -499,6 +608,12 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
       area: filters.area,
       page: 0,
       size: 6,
+      extra: selectedCoordinates
+        ? {
+            lat: `${selectedCoordinates.latitude}`,
+            lng: `${selectedCoordinates.longitude}`,
+          }
+        : undefined,
     });
     navigate(`/?${params.toString()}`);
   }
@@ -585,8 +700,8 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
                   <label className="smart-location-field">
                     <span>City or locality</span>
                     <input
-                      value={selectedLocation}
-                      onChange={(event) => setSelectedLocation(normalizePublicLocation(event.target.value))}
+                      value={locationDraft}
+                      onChange={(event) => setLocationDraft(normalizePublicLocation(event.target.value))}
                       placeholder="Pune"
                     />
                   </label>
@@ -596,12 +711,37 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
                         key={location}
                         className={`smart-location-option${displayLocation === location ? " is-active" : ""}`}
                         type="button"
-                        onClick={() => setSelectedLocation(location)}
+                        onClick={() => commitSelectedLocation(location)}
                       >
                         {location}
                       </button>
                     ))}
                   </div>
+                  <div className="smart-location-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={handleApplyLocationDraft}
+                      disabled={!normalizePublicLocation(locationDraft)}
+                    >
+                      Save location
+                    </button>
+                    <button className="ghost-button" type="button" onClick={handleCurrentLocation} disabled={locationBusy}>
+                      {locationBusy ? "Detecting..." : "Use my current location"}
+                    </button>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => {
+                        setLocationDraft(selectedLocation);
+                        setLocationMessage(null);
+                        setLocationPickerOpen(false);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {locationMessage ? <p className="patient-field-hint">{locationMessage}</p> : null}
                 </div>
               ) : null}
 
@@ -817,7 +957,7 @@ export function PublicDoctorDetailPage({ session }: { session: PatientPortalSess
               <div className="directory-action-row">
                 <Link
                   className="primary-button"
-                  to={patientPortalBookingPath(session, {
+                  to={patientPortalBookingTo(session, {
                     doctorSlug: detail.data.doctorSlug,
                     doctorName: detail.data.doctorDisplayName,
                   })}
@@ -940,7 +1080,7 @@ export function PublicClinicDetailPage({ session }: { session: PatientPortalSess
   const { clinicSlug = "" } = useParams();
   const detail = usePublicResource<PublicClinicDetailResponse | null>(`/api/public/clinics/${clinicSlug}`, {}, null);
   const bookingPath = detail.data
-    ? patientPortalBookingPath(session, {
+    ? patientPortalBookingTo(session, {
         clinicCode: detail.data.clinicSlug,
         clinicName: detail.data.clinicDisplayName,
       })

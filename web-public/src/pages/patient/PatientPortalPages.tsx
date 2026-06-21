@@ -45,6 +45,10 @@ import { type PublicDoctorDetailResponse, fetchPublicJson } from "../../api/publ
 import { branding } from "../../branding";
 import { DoctorClinicSelector } from "./DoctorClinicSelector";
 import {
+  sanitizePatientOtpInput,
+  sanitizePatientPhoneInput,
+} from "./patientLoginInput.js";
+import {
   MISSING_CLINIC_CODE_MESSAGE,
   normalizeClinicCodeFallback,
   resolvePatientPortalClinicContext,
@@ -158,6 +162,28 @@ function splitVoiceBase64Chunks(base64: string, chunkSize = PATIENT_VOICE_AUDIO_
 function formatPatientVoiceProvider(value: string | null | undefined) {
   if (!value) return "Not used";
   return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function isPatientPortalLocalDev() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+}
+
+function sanitizePatientPortalErrorMessage(value: string) {
+  const normalized = value.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "[redacted]");
+  const lower = normalized.toLowerCase();
+  if (lower.includes("invalid tenant code") || lower.includes("tenant code is required") || lower.includes("clinic context")) {
+    return "Please select a clinic or doctor before requesting OTP.";
+  }
+  if (lower.includes("phone is required") || lower.includes("mobile") || lower.includes("patient mobile")) {
+    return "Patient mobile number is invalid.";
+  }
+  if (lower.includes("sms") || lower.includes("provider") || lower.includes("not available") || lower.includes("disabled")) {
+    return "OTP is not available in this environment. Use dev OTP mode or check mock OTP config.";
+  }
+  return normalized;
 }
 
 function patientVoiceStatusLabel(status: PatientCareAiVoiceStatus) {
@@ -573,8 +599,12 @@ export function PatientLoginPage({
   clinicLoginUrl: string;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const portalClinicContext = useMemo(() => resolvePatientPortalClinicContext(searchParams), [searchParams]);
+  const portalClinicContext = useMemo(
+    () => resolvePatientPortalClinicContext(searchParams, location.state),
+    [location.state, searchParams],
+  );
   const [tenantCode, setTenantCode] = useState(portalClinicContext.clinicCode);
   const [clinicName, setClinicName] = useState(portalClinicContext.clinicName);
   const [phone, setPhone] = useState("");
@@ -585,6 +615,11 @@ export function PatientLoginPage({
   const [requestPending, setRequestPending] = useState(false);
   const [verifyPending, setVerifyPending] = useState(false);
   const [showClinicFallback, setShowClinicFallback] = useState(false);
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  const [otpTouched, setOtpTouched] = useState(false);
+  const [clinicFallbackTouched, setClinicFallbackTouched] = useState(false);
+  const [requestAttempted, setRequestAttempted] = useState(false);
+  const [verifyAttempted, setVerifyAttempted] = useState(false);
   const doctorSlug = portalClinicContext.doctorSlug;
   const [doctorDetail, setDoctorDetail] = useState<FetchState<PublicDoctorDetailResponse | null>>({
     data: null,
@@ -711,34 +746,68 @@ export function PatientLoginPage({
       : `Accessing patient portal for ${resolvedClinicName}`
     : null;
   const clinicFallbackValue = normalizeClinicCodeFallback(tenantCode);
+  const phoneValidation = otpRequestSchema.shape.mobile.safeParse(phone);
+  const otpValidation = otpVerifySchema.shape.otp.safeParse(otp);
+  const normalizedPhone = phoneValidation.success ? phoneValidation.data : "";
+  const normalizedClinicCode = hasClinicContext ? resolvedClinicCode : clinicFallbackValue;
+  const canRequestOtp = Boolean(phoneValidation.success && normalizedClinicCode) && !requestPending;
+  const canVerifyOtp =
+    Boolean(phoneValidation.success && otpValidation.success && requestState?.accepted && normalizedClinicCode) &&
+    !verifyPending;
+  const phoneError =
+    (phoneTouched || requestAttempted || verifyAttempted) && !phoneValidation.success
+      ? "Enter a valid 10-digit Indian mobile number."
+      : null;
+  const otpError =
+    (otpTouched || verifyAttempted) && !otpValidation.success
+      ? "Enter a valid 6-digit OTP."
+      : null;
+  const clinicFallbackError =
+    showFallbackClinicField && (clinicFallbackTouched || requestAttempted || verifyAttempted) && !clinicFallbackValue
+      ? MISSING_CLINIC_CODE_MESSAGE
+      : null;
+  const phoneDigits = sanitizePatientPhoneInput(phone);
+  const otpDigits = sanitizePatientOtpInput(otp);
+
+  function clearOtpFlowMessages() {
+    setRequestMessage(null);
+    setVerifyMessage(null);
+    setRequestState(null);
+  }
 
   async function handleRequestOtp(event: FormEvent) {
     event.preventDefault();
-    const normalizedClinicCode = clinicFallbackValue;
-    if (!normalizedClinicCode) {
-      setRequestMessage(MISSING_CLINIC_CODE_MESSAGE);
+    setRequestAttempted(true);
+    setPhoneTouched(true);
+    if (showFallbackClinicField) {
+      setClinicFallbackTouched(true);
+    }
+    if (!phoneValidation.success) {
+      setRequestMessage(null);
+      setVerifyMessage(null);
       return;
     }
-    const parsed = otpRequestSchema.safeParse({
-      tenantCode: normalizedClinicCode,
-      mobile: phone,
-    });
-    if (!parsed.success) {
-      setRequestMessage(parsed.error.issues[0]?.message || "Unable to request OTP.");
+    if (!normalizedClinicCode) {
+      setRequestMessage(MISSING_CLINIC_CODE_MESSAGE);
+      setVerifyMessage(null);
       return;
     }
     setRequestPending(true);
-    setVerifyMessage(null);
+    clearOtpFlowMessages();
     try {
       const response = await postPatientPortalJson<PatientPortalOtpRequestResponse>("/api/patient-portal/auth/otp/request", {
-        tenantCode: parsed.data.tenantCode,
-        phone: parsed.data.mobile,
+        tenantCode: normalizedClinicCode,
+        phone: normalizedPhone,
       });
       setRequestState(response);
-      setRequestMessage(response.message);
+      setRequestMessage(response.message || "OTP sent successfully.");
     } catch (error) {
       setRequestState(null);
-      setRequestMessage(error instanceof Error ? error.message : "Unable to request OTP.");
+      setRequestMessage(
+        error instanceof Error
+          ? sanitizePatientPortalErrorMessage(error.message)
+          : "OTP is not available in this environment. Use dev OTP mode or check mock OTP config.",
+      );
     } finally {
       setRequestPending(false);
     }
@@ -746,35 +815,39 @@ export function PatientLoginPage({
 
   async function handleVerifyOtp(event: FormEvent) {
     event.preventDefault();
-    const normalizedClinicCode = clinicFallbackValue;
-    if (!normalizedClinicCode) {
-      setVerifyMessage(MISSING_CLINIC_CODE_MESSAGE);
+    setVerifyAttempted(true);
+    setPhoneTouched(true);
+    setOtpTouched(true);
+    if (showFallbackClinicField) {
+      setClinicFallbackTouched(true);
+    }
+    if (!phoneValidation.success || !otpValidation.success) {
+      setVerifyMessage(null);
       return;
     }
-    const parsed = otpVerifySchema.safeParse({
-      tenantCode: normalizedClinicCode,
-      mobile: phone,
-      otp,
-    });
-    if (!parsed.success) {
-      setVerifyMessage(parsed.error.issues[0]?.message || "Unable to verify OTP.");
+    if (!requestState?.accepted) {
+      setVerifyMessage("Request an OTP first.");
+      return;
+    }
+    if (!normalizedClinicCode) {
+      setVerifyMessage(MISSING_CLINIC_CODE_MESSAGE);
       return;
     }
     setVerifyPending(true);
     try {
       const response = await postPatientPortalJson<PatientPortalOtpVerifyResponse>("/api/patient-portal/auth/otp/verify", {
-        tenantCode: parsed.data.tenantCode,
-        phone: parsed.data.mobile,
-        otp: parsed.data.otp,
+        tenantCode: normalizedClinicCode,
+        phone: normalizedPhone,
+        otp: otpDigits,
       });
-      setVerifyMessage(response.message);
+      setVerifyMessage(response.message || "OTP verified successfully.");
       if (response.verified && response.patientSessionToken && response.tenantId && response.patientDisplayName) {
         onSaveSession({
           mode: "otp",
           sessionRole: "patient",
           tenantCode: normalizedClinicCode,
           tenantId: response.tenantId,
-          phone: phone.trim(),
+          phone: normalizedPhone,
           patientLabel: response.patientDisplayName,
           createdAt: new Date().toISOString(),
           patientSessionToken: response.patientSessionToken,
@@ -788,7 +861,7 @@ export function PatientLoginPage({
           sessionRole: "registration",
           tenantCode: normalizedClinicCode,
           tenantId: response.tenantId,
-          phone: phone.trim(),
+          phone: normalizedPhone,
           patientLabel: "New patient",
           createdAt: new Date().toISOString(),
           patientSessionToken: response.registrationSessionToken,
@@ -800,7 +873,9 @@ export function PatientLoginPage({
         navigate("/patient/register");
       }
     } catch (error) {
-      setVerifyMessage(error instanceof Error ? error.message : "Unable to verify OTP.");
+      setVerifyMessage(
+        error instanceof Error ? sanitizePatientPortalErrorMessage(error.message) : "Unable to verify OTP right now. Please try again.",
+      );
     } finally {
       setVerifyPending(false);
     }
@@ -818,7 +893,7 @@ export function PatientLoginPage({
         {doctorDetail.error ? (
           <div className="patient-inline-empty">
             <strong>Clinic options unavailable</strong>
-            <p>{doctorDetail.error}</p>
+            <p>Unable to load clinic options right now. Please try again.</p>
           </div>
         ) : null}
         {doctorSelectionRequired && doctorDetail.data ? (
@@ -836,18 +911,30 @@ export function PatientLoginPage({
           </div>
         ) : null}
 
-        <form className="patient-login-form" onSubmit={handleRequestOtp}>
+        <form className="patient-login-form" onSubmit={handleRequestOtp} noValidate>
           <label>
             <span>Phone number</span>
             <input
               value={phone}
-              onChange={(event) => setPhone(event.target.value)}
-              placeholder="+91 98765 43210"
+              onChange={(event) => {
+                setPhone(sanitizePatientPhoneInput(event.target.value));
+                clearOtpFlowMessages();
+              }}
+              onBlur={() => setPhoneTouched(true)}
+              placeholder="Enter 10-digit mobile number"
               autoComplete="tel"
+              inputMode="numeric"
+              aria-invalid={Boolean(phoneError)}
+              aria-describedby={phoneError ? "patient-login-phone-error" : undefined}
             />
+            {phoneError ? (
+              <p id="patient-login-phone-error" className="patient-field-error">
+                {phoneError}
+              </p>
+            ) : null}
           </label>
           <div className="patient-login-actions">
-            <button className="primary-button wide-button" type="submit" disabled={requestPending || !clinicFallbackValue}>
+            <button className="primary-button wide-button" type="submit" disabled={requestPending || !canRequestOtp}>
               {requestPending ? "Requesting OTP..." : "Request OTP"}
             </button>
             {!showFallbackClinicField ? null : showClinicFallback ? (
@@ -860,26 +947,34 @@ export function PatientLoginPage({
                     if (clinicName) {
                       setClinicName(null);
                     }
+                    clearOtpFlowMessages();
                   }}
+                  onBlur={() => setClinicFallbackTouched(true)}
                   placeholder="clinic-demo"
                   autoComplete="organization"
-                  maxLength={60}
-                  pattern="^[A-Za-z0-9-]{1,60}$"
+                  aria-invalid={Boolean(clinicFallbackError)}
+                  aria-describedby={clinicFallbackError ? "patient-login-clinic-error" : undefined}
                 />
-                <p className="patient-field-hint">Please select a clinic first or use a clinic link.</p>
+                <p className="patient-field-hint">{MISSING_CLINIC_CODE_MESSAGE}</p>
+                {clinicFallbackError ? (
+                  <p id="patient-login-clinic-error" className="patient-field-error">
+                    {clinicFallbackError}
+                  </p>
+                ) : null}
               </label>
             ) : (
               <button
                 className="ghost-button wide-button patient-fallback-toggle"
                 type="button"
-                onClick={() => setShowClinicFallback(true)}
+                onClick={() => {
+                  setShowClinicFallback(true);
+                  setClinicFallbackTouched(true);
+                }}
               >
                 Have a clinic code?
               </button>
             )}
-            {!clinicFallbackValue && showFallbackClinicField ? (
-              <p className="patient-field-hint">Please select a clinic first or use a clinic link.</p>
-            ) : null}
+            {!clinicFallbackValue && showFallbackClinicField ? <p className="patient-field-hint">{MISSING_CLINIC_CODE_MESSAGE}</p> : null}
           </div>
         </form>
 
@@ -892,26 +987,37 @@ export function PatientLoginPage({
                 Code expires in {requestState.expiresInSeconds}s. Resend available in {requestState.resendAvailableInSeconds}s.
               </span>
             ) : null}
-            {requestState?.devOtp ? (
+            {isPatientPortalLocalDev() && requestState?.accepted ? (
               <span>
-                Dev OTP: <strong>{requestState.devOtp}</strong>
+                Dev OTP: <strong>{requestState.devOtp || "123456"}</strong>
               </span>
             ) : null}
           </div>
         ) : null}
 
-        <form className="patient-login-form" onSubmit={handleVerifyOtp}>
+        <form className="patient-login-form" onSubmit={handleVerifyOtp} noValidate>
           <label>
             <span>OTP code</span>
             <input
               value={otp}
-              onChange={(event) => setOtp(event.target.value)}
+              onChange={(event) => {
+                setOtp(sanitizePatientOtpInput(event.target.value));
+                setVerifyMessage(null);
+              }}
+              onBlur={() => setOtpTouched(true)}
               placeholder="6-digit code"
               inputMode="numeric"
               autoComplete="one-time-code"
+              aria-invalid={Boolean(otpError)}
+              aria-describedby={otpError ? "patient-login-otp-error" : undefined}
             />
+            {otpError ? (
+              <p id="patient-login-otp-error" className="patient-field-error">
+                {otpError}
+              </p>
+            ) : null}
           </label>
-          <button className="secondary-button wide-button" type="submit" disabled={verifyPending || !clinicFallbackValue}>
+          <button className="secondary-button wide-button" type="submit" disabled={verifyPending || !canVerifyOtp}>
             {verifyPending ? "Verifying..." : "Verify and continue"}
           </button>
         </form>
