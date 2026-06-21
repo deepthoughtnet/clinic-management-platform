@@ -155,9 +155,9 @@ test("top bar uses a branded lockup and sticky shell", () => {
   assert.ok(source.includes("minHeight: 84"));
   assert.ok(source.includes("drawerWidth"));
   assert.ok(source.includes("BrandMark"));
-  assert.ok(source.includes('showCopy={false}'));
-  assert.ok(!source.includes("branding.productName"));
-  assert.ok(!source.includes("branding.tagline"));
+  assert.ok(source.includes('showCopy'));
+  assert.ok(source.includes('subtitle="Intelligent Healthcare Platform"'));
+  assert.ok(source.includes('label="DEMO / UAT"'));
 });
 
 test("app shell offsets the main content below the fixed header", () => {
@@ -177,6 +177,7 @@ test("footer layout keeps version text and centered branding", () => {
   assert.ok(source.includes("versionLabel"));
   assert.ok(source.includes("footerBrandingLine()"));
   assert.ok(source.includes('textAlign: "center"'));
+  assert.ok(source.includes("Demo / UAT Environment"));
 });
 
 test("engage routes resolve to the Engage help pages", () => {

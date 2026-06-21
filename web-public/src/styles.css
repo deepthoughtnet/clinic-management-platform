@@ -70,6 +70,17 @@ textarea {
   padding: 1rem;
 }
 
+.environment-watermark {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 40;
+  pointer-events: none;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  box-shadow: 0 10px 24px rgba(18, 54, 60, 0.16);
+}
+
 .site-header,
 .site-footer,
 .hero,
@@ -224,6 +235,65 @@ textarea {
   display: grid;
   gap: var(--space-5);
   padding: 1rem 0 var(--space-3);
+}
+
+.launch-banner-card {
+  display: grid;
+  gap: 0.85rem;
+  justify-items: center;
+  text-align: center;
+  margin: 0 auto 1.5rem;
+  padding: 1.4rem 1.25rem 1.5rem;
+  width: min(var(--container-max), 100%);
+  border-radius: 1.6rem;
+  border: 1px solid rgba(15, 122, 117, 0.14);
+  background:
+    radial-gradient(circle at top, rgba(15, 122, 117, 0.08), transparent 38%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 247, 245, 0.9));
+  box-shadow: 0 18px 42px rgba(18, 54, 60, 0.08);
+}
+
+.launch-banner-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: 0 0.85rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #9a5a00;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.launch-banner-card h2 {
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  font-size: clamp(2rem, 5vw, 3rem);
+  letter-spacing: -0.03em;
+}
+
+.launch-banner-card p {
+  margin: 0;
+  max-width: 48rem;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.launch-banner-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.6rem 1rem;
+  width: 100%;
+  max-width: 58rem;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.launch-banner-footer {
+  font-size: 0.93rem;
 }
 
 .hero.hero-smart {
@@ -902,6 +972,15 @@ input {
   color: var(--primary-strong);
   font-size: 0.95rem;
   font-weight: 700;
+  text-align: center;
+}
+
+.footer-environment-line {
+  color: #9a5a00;
+  font-size: 0.9rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-align: center;
 }
 
 .footer-brand-block p,
@@ -954,6 +1033,10 @@ input {
     grid-template-columns: minmax(0, 1.02fr) minmax(340px, 1fr);
     align-items: stretch;
     min-height: auto;
+  }
+
+  .launch-banner-card {
+    padding: 1.6rem 1.5rem 1.7rem;
   }
 
   .hero-feature-grid {

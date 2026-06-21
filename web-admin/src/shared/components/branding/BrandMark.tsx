@@ -61,7 +61,7 @@ export default function BrandMark({
         <Typography
           variant="subtitle1"
           sx={{
-            fontWeight: 900,
+            fontWeight: 700,
             lineHeight: 1.1,
             letterSpacing: -0.2,
             whiteSpace: "nowrap",
@@ -77,6 +77,7 @@ export default function BrandMark({
           sx={{
             display: "block",
             lineHeight: 1.15,
+            fontWeight: 500,
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",

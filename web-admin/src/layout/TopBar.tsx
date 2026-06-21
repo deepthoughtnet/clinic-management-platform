@@ -106,6 +106,20 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
         },
       }}
     >
+      <Chip
+        label="DEMO / UAT"
+        color="warning"
+        size="small"
+        sx={{
+          position: "fixed",
+          top: { xs: 8, md: 12 },
+          right: { xs: 8, md: 12 },
+          zIndex: (theme) => theme.zIndex.modal + 1,
+          fontWeight: 800,
+          letterSpacing: 0.4,
+          pointerEvents: "none",
+        }}
+      />
       <Toolbar
         sx={{
           position: "relative",
@@ -117,12 +131,12 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
           flexWrap: "wrap",
           alignItems: "center",
         }}
-      >
+        >
         <IconButton color="inherit" onClick={onToggleSidebar}>
           <MenuIcon />
         </IconButton>
         <Stack direction="row" spacing={1.25} alignItems="center" sx={{ minWidth: 0, flex: "1 1 280px" }}>
-          <BrandMark compact size={40} showCopy={false} title="Jeevanam Healthcare" />
+          <BrandMark size={42} showCopy title="Jeevanam Healthcare" subtitle="Intelligent Healthcare Platform" />
           <Chip
             size="small"
             variant="outlined"
@@ -143,6 +157,7 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mr: 1.5, flexWrap: "wrap" }}>
           {isPlatformAdmin ? <Chip size="small" color="primary" label="Platform" /> : null}
           <Chip size="small" variant="outlined" label={primaryRole} />
+          <Chip size="small" color="warning" label="DEMO / UAT" sx={{ fontWeight: 800 }} />
           {showTenantDropdown ? (
             <>
               <Select
@@ -209,7 +224,7 @@ export default function TopBar({ onToggleSidebar, drawerWidth, isMobile }: { onT
               openGlobalHelp({ source: "topbar" });
             }}
             aria-label="Open help"
-            >
+          >
             Help
           </Button>
           <Box

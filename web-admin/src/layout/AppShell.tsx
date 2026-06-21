@@ -7,6 +7,7 @@ import {
   Drawer,
   GlobalStyles,
   useMediaQuery,
+  Chip,
 } from "@mui/material";
 
 import { useAuth } from "../auth/useAuth";
@@ -44,6 +45,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             body: { backgroundColor: "#fff !important" },
             "@page": { size: "A4", margin: "12mm" },
           },
+        }}
+      />
+      <Chip
+        label="DEMO / UAT"
+        color="warning"
+        size="small"
+        sx={{
+          position: "fixed",
+          top: { xs: 8, md: 12 },
+          right: { xs: 8, md: 12 },
+          zIndex: (theme) => theme.zIndex.modal + 1,
+          fontWeight: 800,
+          letterSpacing: 0.4,
+          pointerEvents: "none",
         }}
       />
 

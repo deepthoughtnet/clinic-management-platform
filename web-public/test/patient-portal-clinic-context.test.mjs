@@ -96,12 +96,17 @@ test("public nav and footer branding are cleaned up", () => {
   assert.ok(source.includes('brand-badge">JH</span>'));
   assert.ok(!source.includes('brand-badge">AR</span>'));
   assert.ok(source.includes("footer-brand-line"));
+  assert.ok(source.includes("footer-environment-line"));
   assert.ok(source.includes("Intelligent Healthcare Platform for clinics, patients, and teams."));
   assert.ok(source.includes("© 2026 DeepThoughtNet."));
+  assert.ok(source.includes("DEMO / UAT"));
 });
 
 test("homepage location selector persists common cities", () => {
   const source = readSource("pages/public/PublicDiscoveryPages.tsx");
+  assert.ok(source.includes("COMING SOON"));
+  assert.ok(source.includes("DEMO / UAT ENVIRONMENT"));
+  assert.ok(source.includes("Currently available for invited clinics, demonstrations and UAT testing."));
   assert.ok(source.includes("PUBLIC_LOCATION_STORAGE_KEY"));
   assert.ok(source.includes("PUBLIC_LOCATION_COORDS_STORAGE_KEY"));
   assert.ok(source.includes("PUBLIC_LOCATION_SOURCE_STORAGE_KEY"));

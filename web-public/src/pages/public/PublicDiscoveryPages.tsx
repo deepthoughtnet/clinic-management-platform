@@ -1,5 +1,6 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Paper } from "@mui/material";
 import {
   type PublicClinicDetailResponse,
   type PublicClinicSummaryResponse,
@@ -628,6 +629,20 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
 
   return (
     <>
+      <Paper component="section" elevation={0} className="launch-banner-card" aria-label="Demo UAT environment notice">
+        <div className="launch-banner-badge">DEMO / UAT ENVIRONMENT</div>
+        <h2>COMING SOON</h2>
+        <p>Jeevanam Healthcare Patient Portal is currently being prepared for public launch.</p>
+        <div className="launch-banner-list">
+          <span>✓ Doctor Discovery</span>
+          <span>✓ Online Appointment Booking</span>
+          <span>✓ Patient Login with OTP</span>
+          <span>✓ Consultation History</span>
+          <span>✓ Prescriptions &amp; Lab Reports</span>
+          <span>✓ AI Health Assistant powered by AIVA</span>
+        </div>
+        <p className="launch-banner-footer">Currently available for invited clinics, demonstrations and UAT testing.</p>
+      </Paper>
       <section className="hero hero-smart">
         <div className="hero-copy">
           <span className="eyebrow">{branding.productName}</span>

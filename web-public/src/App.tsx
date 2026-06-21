@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { Chip } from "@mui/material";
 import {
   PublicCareAiPage,
   PublicClinicDetailPage,
@@ -137,6 +138,12 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
 
   return (
     <div className="site-shell">
+      <Chip
+        className="environment-watermark no-print"
+        label="DEMO / UAT"
+        color="warning"
+        size="small"
+      />
       {isAivaRoute ? (
         <header className="site-header aiva-header">
           <Link to="/aiva" className="brand aiva-brand">
@@ -282,6 +289,7 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
             </section>
           </div>
           <div className="footer-brand-line">{footerBrandingLine()}</div>
+          <div className="footer-environment-line">Demo / UAT Environment</div>
           <div className="footer-bottom">
             <p>© 2026 DeepThoughtNet.</p>
           </div>
