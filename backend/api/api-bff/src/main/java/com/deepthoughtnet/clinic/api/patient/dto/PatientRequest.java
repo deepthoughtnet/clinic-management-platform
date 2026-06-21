@@ -14,7 +14,7 @@ import jakarta.validation.constraints.Size;
 public record PatientRequest(
         @NotBlank @Size(max = 128)
         String firstName,
-        @NotBlank @Size(max = 128)
+        @Size(max = 128)
         String lastName,
         @NotNull
         PatientGender gender,

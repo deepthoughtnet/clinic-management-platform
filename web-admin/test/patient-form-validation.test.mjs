@@ -9,6 +9,7 @@ function readSource(relPath) {
 
 test("patient form maps validation issues to field errors", () => {
   const source = readSource("pages/patients/PatientFormPage.tsx");
+  assert.ok(source.includes("patientQuickRegisterSchema"));
   assert.ok(source.includes("mapZodErrors(parsed.error)"));
   assert.ok(source.includes("setFieldErrors(mapZodErrors(parsed.error))"));
   assert.ok(source.includes("Please correct the highlighted fields."));

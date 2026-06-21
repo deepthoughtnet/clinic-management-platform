@@ -28,7 +28,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { mapZodErrors, normalizeIndianMobileInput, patientRegistrationSchema } from "@deepthoughtnet/form-validation-kit";
+import { mapZodErrors, normalizeIndianMobileInput, patientQuickRegisterSchema, patientRegistrationSchema } from "@deepthoughtnet/form-validation-kit";
 
 import { useAuth } from "../../auth/useAuth";
 import {
@@ -220,6 +220,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   const [continueNew, setContinueNew] = React.useState(false);
   const [loadedPatient, setLoadedPatient] = React.useState<Patient | null>(null);
   const mobileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const validationSchema = mode === "create" ? patientQuickRegisterSchema : patientRegistrationSchema;
 
   const clearFieldError = (field: string) => {
     setFieldErrors((current) => {
@@ -344,11 +345,15 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   const savePatient = async (next: "detail" | "appointment" | "queue" = "detail") => {
     if (!auth.accessToken || !auth.tenantId) return;
     const payload = formToInput({ ...form, mobile: normalizeIndianMobileInput(form.mobile) as string });
-    const parsed = patientRegistrationSchema.safeParse(payload);
+    const parsed = validationSchema.safeParse(payload);
     if (!parsed.success) {
       setSuccess(null);
       setFieldErrors(mapZodErrors(parsed.error));
       setError("Please correct the highlighted fields.");
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.debug("Patient form validation errors", mapZodErrors(parsed.error));
+      }
       return;
     }
 
@@ -449,12 +454,12 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     fullWidth
                     required
                     inputRef={mobileInputRef}
-                    label="Mobile number"
+                    label="Mobile number *"
                     value={form.mobile}
                     onChange={updateMobile}
                     disabled={disabled}
-                    error={Boolean(fieldErrors.mobile) || (Boolean(form.mobile) && !patientRegistrationSchema.shape.mobile.safeParse(form.mobile).success)}
-                    helperText={fieldErrors.mobile || (Boolean(form.mobile) && !patientRegistrationSchema.shape.mobile.safeParse(form.mobile).success
+                    error={Boolean(fieldErrors.mobile) || (Boolean(form.mobile) && !validationSchema.shape.mobile.safeParse(form.mobile).success)}
+                    helperText={fieldErrors.mobile || (Boolean(form.mobile) && !validationSchema.shape.mobile.safeParse(form.mobile).success
                       ? "Enter a valid 10-digit Indian mobile number."
                       : "Primary lookup and duplicate check")}
                     inputProps={{ inputMode: "tel", autoComplete: "tel" }}
@@ -464,7 +469,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                   <TextField
                     fullWidth
                     required
-                    label="First name"
+                    label="First name *"
                     value={form.firstName}
                     onChange={updateField("firstName")}
                     disabled={disabled}
@@ -477,11 +482,11 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                   <TextField fullWidth label="Last name" value={form.lastName} onChange={updateField("lastName")} disabled={disabled} inputProps={{ autoComplete: "family-name" }} />
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }}>
-                  <FormControl fullWidth error={Boolean(fieldErrors.gender)}>
-                    <InputLabel id="patient-gender-label">Gender</InputLabel>
+                  <FormControl fullWidth required error={Boolean(fieldErrors.gender)}>
+                    <InputLabel id="patient-gender-label">Gender *</InputLabel>
                     <Select
                       labelId="patient-gender-label"
-                      label="Gender"
+                      label="Gender *"
                       value={form.gender}
                       onChange={(event) => {
                         clearFieldError("gender");
@@ -499,7 +504,8 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                   <TextField
                     fullWidth
                     type="number"
-                    label="Age"
+                    required
+                    label="Age *"
                     value={form.ageYears ?? ""}
                     onChange={updateAge}
                     disabled={disabled}
@@ -512,7 +518,8 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                   <TextField
                     fullWidth
                     type="date"
-                    label="Date of birth"
+                    required
+                    label="Date of birth *"
                     value={form.dateOfBirth}
                     onChange={updateDateOfBirth}
                     disabled={disabled}
@@ -590,8 +597,8 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                       setForm((current) => ({ ...current, emergencyContactMobile: event.target.value }));
                     }}
                     disabled={disabled}
-                    error={Boolean(fieldErrors.emergencyContactMobile) || (Boolean(form.emergencyContactMobile) && !patientRegistrationSchema.shape.emergencyContactMobile.safeParse(form.emergencyContactMobile).success)}
-                    helperText={fieldErrors.emergencyContactMobile || (Boolean(form.emergencyContactMobile) && !patientRegistrationSchema.shape.emergencyContactMobile.safeParse(form.emergencyContactMobile).success
+                    error={Boolean(fieldErrors.emergencyContactMobile) || (Boolean(form.emergencyContactMobile) && !validationSchema.shape.emergencyContactMobile.safeParse(form.emergencyContactMobile).success)}
+                    helperText={fieldErrors.emergencyContactMobile || (Boolean(form.emergencyContactMobile) && !validationSchema.shape.emergencyContactMobile.safeParse(form.emergencyContactMobile).success
                       ? "Enter a valid 10-digit Indian mobile number."
                       : "")
                     }
