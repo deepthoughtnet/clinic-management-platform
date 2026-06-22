@@ -45,6 +45,7 @@ body,
 
 body {
   margin: 0;
+  overflow-x: clip;
   background:
     radial-gradient(circle at top left, rgba(15, 122, 117, 0.14), transparent 30%),
     radial-gradient(circle at top right, rgba(32, 162, 151, 0.08), transparent 28%),
@@ -67,7 +68,8 @@ textarea {
 
 .site-shell {
   min-height: 100vh;
-  padding: 1rem;
+  padding: clamp(0.75rem, 1.6vw, 1rem);
+  overflow-x: clip;
 }
 
 .environment-watermark {
@@ -88,21 +90,25 @@ textarea {
 .page-section {
   width: min(var(--container-max), 100%);
   margin: 0 auto;
+  min-width: 0;
 }
 
 .site-header {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 0 1.5rem;
+  justify-items: center;
+  gap: 0.9rem;
+  padding: 0.9rem 0 1.25rem;
+  text-align: center;
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 0.85rem;
+  min-width: 0;
+  justify-content: center;
 }
 
 .brand strong,
@@ -117,11 +123,13 @@ textarea {
 .brand-meta {
   display: grid;
   gap: 0.15rem;
+  min-width: 0;
 }
 
 .brand small {
   display: block;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .brand-badge {
@@ -141,6 +149,8 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  justify-content: center;
+  min-width: 0;
 }
 
 .nav-link {
@@ -162,6 +172,8 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
+  justify-content: center;
+  min-width: 0;
 }
 
 .primary-button,
@@ -233,8 +245,8 @@ textarea {
 
 .hero {
   display: grid;
-  gap: var(--space-5);
-  padding: 1rem 0 var(--space-3);
+  gap: clamp(1.25rem, 3vw, 1.75rem);
+  padding: 0.85rem 0 var(--space-3);
 }
 
 .launch-banner-card {
@@ -243,7 +255,7 @@ textarea {
   justify-items: center;
   text-align: center;
   margin: 0 auto 1.5rem;
-  padding: 1.4rem 1.25rem 1.5rem;
+  padding: clamp(1rem, 2vw, 1.4rem);
   width: min(var(--container-max), 100%);
   border-radius: 1.6rem;
   border: 1px solid rgba(15, 122, 117, 0.14);
@@ -284,7 +296,7 @@ textarea {
 
 .launch-banner-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
   gap: 0.6rem 1rem;
   width: 100%;
   max-width: 58rem;
@@ -297,11 +309,11 @@ textarea {
 }
 
 .hero.hero-smart {
-  gap: 1.5rem;
+  gap: 1.25rem;
 }
 
 .hero-copy {
-  padding: var(--space-4) 0;
+  padding: clamp(0.35rem, 1vw, 1rem) 0;
 }
 
 .eyebrow {
@@ -404,6 +416,7 @@ input {
 .hero-feature-grid {
   display: grid;
   gap: 0.9rem;
+  min-width: 0;
 }
 
 .hero-feature-card {
@@ -478,6 +491,7 @@ input {
 .smart-search-header {
   display: grid;
   gap: 0.9rem;
+  min-width: 0;
 }
 
 .smart-search-header h2,
@@ -592,6 +606,7 @@ input {
   display: flex;
   flex-wrap: wrap;
   gap: 0.7rem;
+  min-width: 0;
 }
 
 .smart-chip,
@@ -942,7 +957,7 @@ input {
   display: grid;
   gap: 1rem;
   margin-top: 3rem;
-  padding: 1.2rem 1.15rem 1.5rem;
+  padding: clamp(1rem, 2vw, 1.25rem);
   border-radius: 1.75rem;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(237, 248, 246, 0.92) 100%);
   border: 1px solid rgba(15, 122, 117, 0.1);
@@ -952,12 +967,14 @@ input {
 .footer-grid {
   display: grid;
   gap: 1rem;
+  grid-template-columns: 1fr;
 }
 
 .footer-brand-block,
 .footer-column {
   display: grid;
   gap: 0.55rem;
+  min-width: 0;
 }
 
 .footer-brand-block strong,
@@ -1001,12 +1018,14 @@ input {
 
 .footer-bottom {
   display: flex;
+  flex-direction: column;
   flex-wrap: wrap;
-  justify-content: space-between;
+  justify-content: center;
   gap: 0.9rem;
   align-items: center;
   padding-top: 0.95rem;
   border-top: 1px solid rgba(21, 48, 54, 0.1);
+  text-align: center;
 }
 
 .footer-bottom p {
@@ -1046,6 +1065,12 @@ input {
   .footer-grid {
     grid-template-columns: minmax(0, 1.25fr) repeat(3, minmax(0, 1fr));
     align-items: start;
+  }
+
+  .footer-bottom {
+    flex-direction: row;
+    justify-content: space-between;
+    text-align: left;
   }
 
   .patient-lab-header {
@@ -1808,6 +1833,7 @@ input {
 .public-detail-grid {
   display: grid;
   gap: 1rem;
+  min-width: 0;
 }
 
 .public-card-stack {
@@ -1830,6 +1856,7 @@ input {
   display: flex;
   align-items: flex-start;
   gap: 0.9rem;
+  min-width: 0;
 }
 
 .directory-avatar {
@@ -1891,6 +1918,7 @@ input {
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: center;
+  min-width: 0;
 }
 
 .directory-action-row .primary-button,
@@ -2458,5 +2486,439 @@ input {
 
   .aiva-runtime-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 600px) and (max-width: 900px) {
+  .site-header {
+    padding-bottom: 1.05rem;
+  }
+
+  .hero {
+    grid-template-columns: 1fr;
+    min-height: auto;
+    align-items: start;
+  }
+
+  .hero.hero-smart {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .hero-search-card {
+    max-width: 100%;
+  }
+
+  .launch-banner-card {
+    max-width: min(100%, 50rem);
+  }
+
+  .launch-banner-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .footer-grid,
+  .public-preview-grid,
+  .public-directory-grid,
+  .public-detail-grid,
+  .public-careai-panel,
+  .card-grid,
+  .spotlight-grid,
+  .careai-panel,
+  .hero-feature-grid,
+  .portal-feature-list,
+  .patient-summary-grid,
+  .patient-form-grid,
+  .patient-careai-voice-output,
+  .patient-content-grid,
+  .patient-prescription-grid,
+  .patient-booking-grid,
+  .aiva-signal-grid,
+  .aiva-runtime-strip,
+  .aiva-feature-grid,
+  .aiva-runtime-grid,
+  .aiva-demo-grid,
+  .aiva-demo-grid-secondary,
+  .aiva-architecture-grid,
+  .aiva-roadmap-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .public-toolbar-card {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+  }
+
+  .patient-topbar {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .patient-form-span-2 {
+    grid-column: span 2;
+  }
+}
+
+@media (min-width: 901px) {
+  .site-shell {
+    padding: 1.4rem 2rem;
+  }
+
+  .site-header {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    justify-items: stretch;
+    text-align: left;
+  }
+
+  .brand {
+    justify-content: flex-start;
+  }
+
+  .main-nav {
+    justify-self: center;
+  }
+
+  .header-actions {
+    justify-self: end;
+    justify-content: flex-end;
+  }
+
+  .hero {
+    grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.95fr);
+    align-items: center;
+    min-height: 34rem;
+  }
+
+  .hero.hero-smart {
+    grid-template-columns: minmax(0, 1.02fr) minmax(340px, 1fr);
+    align-items: stretch;
+    min-height: auto;
+  }
+
+  .launch-banner-card {
+    padding: 1.6rem 1.5rem 1.7rem;
+  }
+
+  .hero-feature-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .footer-grid {
+    grid-template-columns: minmax(0, 1.25fr) repeat(3, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .patient-lab-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+
+  .portal-dashboard-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .portal-section-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .spotlight-grid,
+  .card-grid,
+  .careai-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .toolbar-card {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr) auto;
+    align-items: center;
+  }
+
+  .smart-search-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .smart-search-submit,
+  .careai-cta-button {
+    width: fit-content;
+    min-width: 11rem;
+  }
+
+  .portal-feature-list,
+  .patient-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .patient-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .patient-careai-voice-output {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .public-preview-grid,
+  .public-detail-grid,
+  .public-careai-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .public-directory-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .public-toolbar-card {
+    grid-template-columns: minmax(0, 1.25fr) repeat(2, minmax(0, 0.75fr)) auto;
+    align-items: end;
+  }
+
+  .patient-content-grid,
+  .patient-prescription-grid,
+  .patient-booking-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .patient-topbar {
+    grid-template-columns: minmax(0, 1.5fr) minmax(240px, 0.7fr);
+    align-items: start;
+  }
+
+  .aiva-feature-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .aiva-runtime-grid,
+  .aiva-demo-grid-secondary,
+  .aiva-architecture-grid,
+  .aiva-roadmap-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .aiva-hero {
+    grid-template-columns: minmax(0, 1.18fr) minmax(300px, 0.82fr);
+    align-items: center;
+    padding: 1.8rem;
+  }
+
+  .aiva-page-header {
+    grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+    align-items: center;
+  }
+}
+
+@media (max-width: 599px) {
+  .site-shell {
+    padding: 0.75rem;
+  }
+
+  .site-header {
+    gap: 0.75rem;
+    padding: 0.75rem 0 1rem;
+  }
+
+  .brand {
+    gap: 0.7rem;
+    width: 100%;
+  }
+
+  .brand-badge {
+    width: 2.7rem;
+    height: 2.7rem;
+    border-radius: 0.9rem;
+    flex: 0 0 auto;
+  }
+
+  .brand strong {
+    font-size: 0.98rem;
+  }
+
+  .brand small {
+    font-size: 0.82rem;
+  }
+
+  .main-nav {
+    width: 100%;
+    gap: 0.4rem;
+  }
+
+  .nav-link {
+    flex: 1 1 calc(50% - 0.4rem);
+    padding: 0.58rem 0.78rem;
+  }
+
+  .header-actions,
+  .cta-row {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .header-actions > *,
+  .cta-row > * {
+    width: 100%;
+    max-width: none;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .ghost-button {
+    width: 100%;
+  }
+
+  .launch-banner-card {
+    width: 100%;
+    margin-bottom: 1.1rem;
+    padding: 1rem;
+    border-radius: 1.25rem;
+  }
+
+  .launch-banner-card h2 {
+    font-size: clamp(1.5rem, 8vw, 2rem);
+  }
+
+  .launch-banner-card p {
+    font-size: 0.95rem;
+  }
+
+  .launch-banner-list {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  .hero {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    padding-top: 0.5rem;
+  }
+
+  .hero.hero-smart {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .hero-copy {
+    padding: 0.25rem 0 0;
+  }
+
+  .hero h1 {
+    font-size: clamp(1.9rem, 10vw, 2.45rem);
+  }
+
+  .hero-search-card,
+  .toolbar-card,
+  .login-placeholder {
+    padding: 1rem;
+    border-radius: 1.25rem;
+  }
+
+  .hero-feature-grid,
+  .card-grid,
+  .spotlight-grid,
+  .public-preview-grid,
+  .public-directory-grid,
+  .public-detail-grid,
+  .public-careai-panel,
+  .public-toolbar-card,
+  .portal-feature-list,
+  .patient-summary-grid,
+  .patient-form-grid,
+  .patient-careai-voice-output,
+  .patient-content-grid,
+  .patient-prescription-grid,
+  .patient-booking-grid,
+  .footer-grid,
+  .careai-panel,
+  .aiva-signal-grid,
+  .aiva-runtime-strip,
+  .aiva-feature-grid,
+  .aiva-runtime-grid,
+  .aiva-demo-grid,
+  .aiva-demo-grid-secondary,
+  .aiva-architecture-grid,
+  .aiva-roadmap-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .smart-location-pill {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+    border-radius: 1.15rem;
+  }
+
+  .smart-location-button {
+    width: 100%;
+    padding: 0.3rem 0;
+  }
+
+  .smart-location-selector {
+    padding: 0.85rem;
+  }
+
+  .smart-location-options,
+  .smart-location-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .smart-location-option,
+  .smart-chip,
+  .careai-prompt-chip {
+    width: 100%;
+  }
+
+  .smart-chip-grid,
+  .careai-prompt-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .smart-search-submit,
+  .careai-cta-button {
+    width: 100%;
+  }
+
+  .directory-card-top {
+    gap: 0.75rem;
+  }
+
+  .directory-avatar {
+    width: 2.7rem;
+    height: 2.7rem;
+    flex-basis: 2.7rem;
+    border-radius: 0.85rem;
+  }
+
+  .directory-action-row,
+  .pagination-row {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .directory-action-row .primary-button,
+  .directory-action-row .secondary-button,
+  .directory-action-row .ghost-button {
+    width: 100%;
+  }
+
+  .footer-bottom {
+    align-items: center;
+  }
+
+  .footer-brand-line,
+  .footer-environment-line {
+    text-align: center;
+  }
+
+  .aiva-input-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .aiva-page-header {
+    padding: 1rem;
+  }
+
+  .aiva-hero {
+    padding: 1rem;
   }
 }
