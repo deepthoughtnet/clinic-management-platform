@@ -12,12 +12,13 @@ test("patient login is simplified", () => {
   assert.ok(source.includes("Sign in with phone number and OTP."));
   assert.ok(source.includes("Access appointments, prescriptions, bills, reports, and care updates securely."));
   assert.ok(source.includes("DoctorClinicSelector"));
-  assert.ok(source.includes("Have a clinic code?"));
-  assert.ok(source.includes("Clinic code or clinic link"));
-  assert.ok(source.includes("Please select a clinic or doctor before requesting OTP."));
+  assert.ok(source.includes("Clinic context is required"));
   assert.ok(source.includes("aria-invalid={Boolean(phoneError)}"));
   assert.ok(source.includes("aria-invalid={Boolean(otpError)}"));
-  assert.ok(source.includes("aria-invalid={Boolean(clinicFallbackError)}"));
+  assert.ok(source.includes("MISSING_CLINIC_CODE_MESSAGE"));
+  assert.ok(!source.includes("Have a clinic code?"));
+  assert.ok(!source.includes("Clinic code or clinic link"));
+  assert.ok(!source.includes("clinicFallbackError"));
   assert.ok(!source.includes("<span>Clinic code</span>"));
   assert.ok(!source.includes("Read-only patient rollout"));
   assert.ok(!source.includes("Tenant-aware session"));
@@ -47,7 +48,9 @@ test("patient login blocks otp actions when no clinic context is available", () 
   assert.ok(source.includes("Enter a valid 6-digit OTP."));
   assert.ok(source.includes("isPatientPortalLocalDev() && requestState?.accepted"));
   assert.ok(source.includes('requestState.devOtp || "123456"'));
-  assert.ok(source.includes("Please select a clinic or doctor before requesting OTP."));
+  assert.ok(source.includes("MISSING_CLINIC_CODE_MESSAGE"));
+  assert.ok(source.includes("patient-login-context"));
+  assert.ok(source.includes("patient-login-otp-payload"));
 });
 
 test("doctor booking routes through clinic context", () => {
@@ -81,6 +84,8 @@ test("clinic context helper resolves query params and booking path", () => {
   assert.ok(source.includes('searchParams.get("doctorSlug")'));
   assert.ok(source.includes('searchParams.get("doctorName")'));
   assert.ok(source.includes('searchParams.get("next")'));
+  assert.ok(source.includes("resolvePatientPortalContext"));
+  assert.ok(source.includes("persistPatientPortalClinicContext"));
   assert.ok(source.includes("patientPortalBookingPath("));
   assert.ok(source.includes("patientPortalBookingTo("));
   assert.ok(source.includes("selectedClinic"));
