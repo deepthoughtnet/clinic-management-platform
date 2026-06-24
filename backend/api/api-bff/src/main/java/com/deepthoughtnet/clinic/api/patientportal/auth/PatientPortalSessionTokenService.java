@@ -28,7 +28,11 @@ public class PatientPortalSessionTokenService {
     }
 
     public String issuePatientToken(String subject, UUID tenantId, UUID patientId, String displayName) {
-        return issueToken(subject, tenantId, patientId, null, displayName, Set.of("PATIENT"));
+        return issuePatientToken(subject, tenantId, patientId, null, displayName);
+    }
+
+    public String issuePatientToken(String subject, UUID tenantId, UUID patientId, String phone, String displayName) {
+        return issueToken(subject, tenantId, patientId, phone, displayName, Set.of("PATIENT"));
     }
 
     public String issueRegistrationToken(String subject, UUID tenantId, String phone, String displayName) {

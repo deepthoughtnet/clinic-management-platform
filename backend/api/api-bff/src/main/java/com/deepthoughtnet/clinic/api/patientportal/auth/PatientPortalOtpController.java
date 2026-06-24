@@ -21,11 +21,11 @@ public class PatientPortalOtpController {
 
     @PostMapping("/request")
     public PatientPortalOtpRequestResponse requestOtp(@Valid @RequestBody PatientPortalOtpRequestRequest request) {
-        return patientPortalOtpService.requestOtp(request.tenantCode(), request.phone());
+        return patientPortalOtpService.requestOtp(request.mobile(), request.context());
     }
 
     @PostMapping("/verify")
     public PatientPortalOtpVerifyResponse verifyOtp(@Valid @RequestBody PatientPortalOtpVerifyRequest request) {
-        return patientPortalOtpService.verifyOtp(request.tenantCode(), request.phone(), request.otp());
+        return patientPortalOtpService.verifyOtp(request.mobile(), request.otp(), request.context());
     }
 }

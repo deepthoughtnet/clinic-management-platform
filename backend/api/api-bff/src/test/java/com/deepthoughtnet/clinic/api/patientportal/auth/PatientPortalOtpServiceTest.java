@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalOtpContext;
 import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.db.TenantEntity;
@@ -19,6 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Field;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -62,6 +64,7 @@ class PatientPortalOtpServiceTest {
         );
         when(tenantRepository.findByCode("tenant-a")).thenReturn(Optional.of(tenant("tenant-a", TENANT_A_ID)));
         when(tenantRepository.findByCode("tenant-b")).thenReturn(Optional.of(tenant("tenant-b", TENANT_B_ID)));
+        when(tenantRepository.findByCode("demo-clinic")).thenReturn(Optional.of(tenant("demo-clinic", TENANT_B_ID)));
         when(challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(any(), any()))
                 .thenReturn(Optional.empty());
         when(challengeRepository.save(any(PatientPortalOtpChallengeEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -92,6 +95,17 @@ class PatientPortalOtpServiceTest {
 
         assertThat(hiddenResponse.accepted()).isTrue();
         assertThat(hiddenResponse.devOtp()).isNull();
+    }
+
+    @Test
+    void requestOtpAllowsPhoneOnlyWithoutContext() {
+        when(challengeRepository.findTopByPhoneNormalizedOrderByCreatedAtDesc("9876543210"))
+                .thenReturn(Optional.empty());
+
+        var response = service.requestOtp("9876543210", (PatientPortalOtpContext) null);
+
+        assertThat(response.accepted()).isTrue();
+        assertThat(response.devOtp()).matches("\\d{6}");
     }
 
     @Test
@@ -154,6 +168,24 @@ class PatientPortalOtpServiceTest {
     }
 
     @Test
+    void verifyOtpFallsBackToDemoClinicRegistrationWhenNoTenantContextIsAvailable() {
+        PatientPortalOtpChallengeEntity challenge = challenge(null, "9876543210", "123456");
+        when(challengeRepository.findTopByPhoneNormalizedOrderByCreatedAtDesc("9876543210"))
+                .thenReturn(Optional.of(challenge));
+        when(patientRepository.findByMobileIgnoreCaseAndActiveTrue("9876543210")).thenReturn(List.of());
+
+        var response = service.verifyOtp("9876543210", "123456", (PatientPortalOtpContext) null);
+
+        assertThat(response.verified()).isTrue();
+        assertThat(response.patientExists()).isFalse();
+        assertThat(response.registrationRequired()).isTrue();
+        assertThat(response.tenantId()).isEqualTo(TENANT_B_ID.toString());
+        assertThat(response.tenantCode()).isEqualTo("demo-clinic");
+        assertThat(response.registrationSessionToken()).isNotBlank();
+        assertThat(response.message()).contains("Complete your quick registration");
+    }
+
+    @Test
     void verifyOtpIssuesPatientSessionForMatchedPatient() {
         PatientPortalOtpChallengeEntity challenge = challenge(TENANT_A_ID, "9876543210", "123456");
         PatientEntity patient = patientEntity(TENANT_A_ID, PATIENT_ID, "9876543210");
@@ -181,6 +213,35 @@ class PatientPortalOtpServiceTest {
         assertThat(response.patientSessionToken()).isNotBlank();
         assertThat(response.registrationSessionToken()).isNull();
         assertThat(appUser.getPatientId()).isEqualTo(PATIENT_ID);
+    }
+
+    @Test
+    void verifyOtpResolvesTenantFromUniquePatientWhenContextIsMissing() {
+        PatientPortalOtpChallengeEntity challenge = challenge(null, "9876543210", "123456");
+        PatientEntity patient = patientEntity(TENANT_A_ID, PATIENT_ID, "9876543210");
+        AppUserEntity appUser = AppUserEntity.create(TENANT_A_ID, "patientportal:" + TENANT_A_ID + ":" + PATIENT_ID, null, "Riya Sharma");
+
+        when(challengeRepository.findTopByPhoneNormalizedOrderByCreatedAtDesc("9876543210"))
+                .thenReturn(Optional.of(challenge));
+        when(patientRepository.findByMobileIgnoreCaseAndActiveTrue("9876543210")).thenReturn(List.of(patient));
+        when(tenantRepository.findById(TENANT_A_ID)).thenReturn(Optional.of(tenant("tenant-a", TENANT_A_ID)));
+        when(appUserProvisioner.upsertAndReturnId(
+                eq(TENANT_A_ID),
+                eq("patientportal:" + TENANT_A_ID + ":" + PATIENT_ID),
+                eq(null),
+                eq("Riya Sharma")
+        )).thenReturn(APP_USER_ID);
+        when(appUserRepository.findByTenantIdAndId(TENANT_A_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+
+        var response = service.verifyOtp("9876543210", "123456", (PatientPortalOtpContext) null);
+
+        assertThat(response.verified()).isTrue();
+        assertThat(response.patientExists()).isTrue();
+        assertThat(response.registrationRequired()).isFalse();
+        assertThat(response.tenantId()).isEqualTo(TENANT_A_ID.toString());
+        assertThat(response.tenantCode()).isEqualTo("tenant-a");
+        assertThat(response.patientDisplayName()).isEqualTo("Riya Sharma");
+        assertThat(response.patientSessionToken()).isNotBlank();
     }
 
     private TenantEntity tenant(String code, UUID id) {

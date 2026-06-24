@@ -41,6 +41,14 @@ public class ClinicProfileService {
         return repository.findByTenantId(tenantId).map(this::toRecord);
     }
 
+    @Transactional(readOnly = true)
+    public Optional<ClinicProfileRecord> findBySlug(String slug) {
+        if (!StringUtils.hasText(slug)) {
+            return Optional.empty();
+        }
+        return repository.findBySlugIgnoreCase(slug.trim()).map(this::toRecord);
+    }
+
     @Transactional
     public ClinicProfileRecord upsert(UUID tenantId, ClinicProfileUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);

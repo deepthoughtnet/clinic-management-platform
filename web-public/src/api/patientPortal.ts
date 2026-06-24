@@ -19,6 +19,13 @@ export type PatientPortalRegistrationSession = PatientPortalSessionBase & {
 
 export type PatientPortalSession = PatientPortalPatientSession | PatientPortalRegistrationSession;
 
+export function isUuid(value: string | null | undefined): value is string {
+  if (!value) {
+    return false;
+  }
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
 export type PatientPortalOtpRequestResponse = {
   accepted: boolean;
   message: string;
@@ -33,6 +40,7 @@ export type PatientPortalOtpVerifyResponse = {
   registrationRequired: boolean;
   message: string;
   tenantId: string | null;
+  tenantCode: string | null;
   patientDisplayName: string | null;
   patientSessionToken: string | null;
   registrationSessionToken: string | null;
@@ -133,9 +141,20 @@ export type PatientPortalDoctorSlotResponse = {
 
 export type PatientPortalAppointmentBookingRequest = {
   publicDoctorId: string;
+  clinicSlug?: string | null;
+  tenantId?: string | null;
+  clinicId?: string | null;
   appointmentDate: string;
   appointmentTime: string;
   reason: string | null;
+};
+
+export type PatientPortalDoctorSlotQuery = {
+  doctorId: string;
+  clinicSlug: string;
+  tenantId?: string | null;
+  clinicId?: string | null;
+  date: string;
 };
 
 export type PatientPortalAppointmentConfirmationResponse = {
@@ -422,6 +441,29 @@ export async function fetchPatientPortalJson<T>(path: string, session: PatientPo
     throw new Error(await parseError(response));
   }
   return response.json() as Promise<T>;
+}
+
+export async function loadPatientPortalDoctorSlots(
+  query: PatientPortalDoctorSlotQuery,
+  session: PatientPortalPatientSession,
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams();
+  if (isUuid(query.clinicId)) {
+    params.set("clinicId", query.clinicId);
+  }
+  if (isUuid(query.tenantId)) {
+    params.set("tenantId", query.tenantId);
+  }
+  if (query.clinicSlug.trim()) {
+    params.set("clinicSlug", query.clinicSlug.trim());
+  }
+  params.set("date", query.date);
+  return fetchPatientPortalJson<PatientPortalDoctorSlotResponse[]>(
+    `/api/patient-portal/doctors/${encodeURIComponent(query.doctorId)}/slots?${params.toString()}`,
+    session,
+    signal,
+  );
 }
 
 export async function openPatientPortalPdf(path: string, session: PatientPortalSession) {

@@ -25,9 +25,17 @@ import {
 import PatientLabPage from "./pages/patient/PatientLabPage";
 import {
   type PatientPortalSession,
+  isPatientPortalRegistrationSession,
   patientPortalHomePath,
 } from "./api/patientPortal";
 import { branding, footerBrandingLine, productAndTagline, productTitle } from "./branding";
+import {
+  PATIENT_PORTAL_SESSION_STORAGE_KEY,
+  clearPatientAuthSession,
+  clearPatientRegistrationSession,
+  isPatientRegistrationSessionActive,
+  isStoredPatientSessionActive,
+} from "./pages/patient/patientPortalSessionState";
 
 function deriveClinicLoginUrl() {
   const url = new URL(window.location.origin);
@@ -40,7 +48,6 @@ function deriveClinicLoginUrl() {
 }
 
 const clinicLoginUrl = import.meta.env.VITE_CLINIC_LOGIN_URL?.trim() || deriveClinicLoginUrl();
-const patientSessionStorageKey = "clinic-web-public-patient-session";
 const aivaAppUrl = import.meta.env.VITE_AIVA_APP_URL?.trim() || new URL("/careai", window.location.origin).toString();
 
 const navItems = [
@@ -82,7 +89,7 @@ function readStoredPatientSession() {
   if (typeof window === "undefined") {
     return null;
   }
-  const raw = window.localStorage.getItem(patientSessionStorageKey);
+  const raw = window.localStorage.getItem(PATIENT_PORTAL_SESSION_STORAGE_KEY);
   if (!raw) {
     return null;
   }
@@ -94,12 +101,14 @@ function readStoredPatientSession() {
       && parsed.tenantId
       && parsed.tenantCode
       && (parsed.sessionRole === "patient" || parsed.sessionRole === "registration")
+      && isStoredPatientSessionActive(parsed)
     ) {
       return parsed;
     }
   } catch {
-    window.localStorage.removeItem(patientSessionStorageKey);
+    window.localStorage.removeItem(PATIENT_PORTAL_SESSION_STORAGE_KEY);
   }
+  clearPatientRegistrationSession({ clearBookingContext: false });
   return null;
 }
 
@@ -107,21 +116,35 @@ function usePatientPortalSession() {
   const [session, setSession] = useState<PatientPortalSession | null>(() => readStoredPatientSession());
 
   function saveSession(nextSession: PatientPortalSession) {
-    window.localStorage.setItem(patientSessionStorageKey, JSON.stringify(nextSession));
+    window.localStorage.setItem(PATIENT_PORTAL_SESSION_STORAGE_KEY, JSON.stringify(nextSession));
     setSession(nextSession);
   }
 
   function clearSession() {
-    window.localStorage.removeItem(patientSessionStorageKey);
+    window.localStorage.removeItem(PATIENT_PORTAL_SESSION_STORAGE_KEY);
     setSession(null);
   }
 
   return { session, saveSession, clearSession };
 }
 
-function AppShell({ children, session }: { children: ReactNode; session: PatientPortalSession | null }) {
+function AppShell({
+  children,
+  session,
+  onCancelRegistration,
+}: {
+  children: ReactNode;
+  session: PatientPortalSession | null;
+  onCancelRegistration: () => void;
+}) {
   const location = useLocation();
   const isAivaRoute = location.pathname.startsWith("/aiva");
+  const activeRegistrationSession = isPatientPortalRegistrationSession(session) && isPatientRegistrationSessionActive(session)
+    ? session
+    : null;
+  const portalNavSession = isPatientPortalRegistrationSession(session) && !activeRegistrationSession
+    ? null
+    : session;
 
   useEffect(() => {
     document.title = pageTitleForPath(location.pathname);
@@ -190,9 +213,14 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
             <a className="ghost-button" href={clinicLoginUrl}>
               Open {branding.productName} Admin Console
             </a>
-            <Link className="primary-button" to={patientPortalHomePath(session)}>
-              {session?.sessionRole === "registration" ? "Continue registration" : session ? `Open ${branding.productName} Patient Portal` : `${branding.productName} Patient Portal`}
+            <Link className="primary-button" to={patientPortalHomePath(activeRegistrationSession || portalNavSession)}>
+              {activeRegistrationSession ? "Continue registration" : portalNavSession ? `Open ${branding.productName} Patient Portal` : `${branding.productName} Patient Portal`}
             </Link>
+            {activeRegistrationSession ? (
+              <button className="ghost-button" type="button" onClick={onCancelRegistration}>
+                Start over
+              </button>
+            ) : null}
           </div>
         </header>
       )}
@@ -223,7 +251,7 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
               <strong>Runtime</strong>
               <div className="footer-link-list">
                 <Link to="/careai">Public AIVA</Link>
-                <Link to={patientPortalHomePath(session)}>Patient Portal</Link>
+                <Link to={patientPortalHomePath(portalNavSession)}>Patient Portal</Link>
                 <span>STT / LLM / TTS / Workflow engine</span>
               </div>
             </section>
@@ -254,7 +282,7 @@ function AppShell({ children, session }: { children: ReactNode; session: Patient
               <div className="footer-link-list">
                 <Link to="/">About</Link>
                 <Link to="/clinics">For Clinics</Link>
-                <Link to={patientPortalHomePath(session)}>Patient Portal</Link>
+                <Link to={patientPortalHomePath(portalNavSession)}>Patient Portal</Link>
                 <span>Doctor Portal</span>
               </div>
             </section>
@@ -313,8 +341,25 @@ function AivaRedirectPage() {
 export function App() {
   const { session, saveSession, clearSession } = usePatientPortalSession();
 
+  function clearRegistrationOnly() {
+    clearPatientRegistrationSession();
+    clearSession();
+  }
+
+  function clearPatientSessionAndContext() {
+    clearPatientAuthSession();
+    clearSession();
+  }
+
+  useEffect(() => {
+    if (!isPatientPortalRegistrationSession(session) || isPatientRegistrationSessionActive(session)) {
+      return;
+    }
+    clearRegistrationOnly();
+  }, [session]);
+
   return (
-    <AppShell session={session}>
+    <AppShell session={session} onCancelRegistration={clearRegistrationOnly}>
       <Routes>
         <Route path="/aiva/*" element={<AivaRedirectPage />} />
         <Route path="/" element={<PublicHomePage session={session} />} />
@@ -331,7 +376,7 @@ export function App() {
             <PatientLoginPage
               session={session}
               onSaveSession={saveSession}
-              onClearSession={clearSession}
+              onClearSession={clearPatientSessionAndContext}
               clinicLoginUrl={clinicLoginUrl}
             />
           }
@@ -342,19 +387,19 @@ export function App() {
             <PatientRegistrationPage
               session={session}
               onSaveSession={saveSession}
-              onClearSession={clearSession}
+              onClearSession={clearPatientSessionAndContext}
             />
           }
         />
-        <Route path="/patient/dashboard" element={<PatientDashboardPage session={session} onSignOut={clearSession} />} />
-        <Route path="/patient/book-appointment" element={<PatientBookAppointmentPage session={session} onSignOut={clearSession} />} />
-        <Route path="/patient/appointments" element={<PatientAppointmentsPage session={session} onSignOut={clearSession} />} />
-        <Route path="/patient/prescriptions" element={<PatientPrescriptionsPage session={session} onSignOut={clearSession} />} />
-        <Route path="/patient/bills" element={<PatientBillsPage session={session} onSignOut={clearSession} />} />
-        <Route path="/patient/notifications" element={<PatientNotificationsPage session={session} onSignOut={clearSession} />} />
-        <Route path="/patient/lab" element={<PatientLabPage session={session} onSignOut={clearSession} />} />
-        <Route path="/patient/careai" element={<PatientCareAiPage session={session} onSignOut={clearSession} />} />
-        <Route path="/patient/profile" element={<PatientProfilePage session={session} onSignOut={clearSession} />} />
+        <Route path="/patient/dashboard" element={<PatientDashboardPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+        <Route path="/patient/book-appointment" element={<PatientBookAppointmentPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+        <Route path="/patient/appointments" element={<PatientAppointmentsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+        <Route path="/patient/prescriptions" element={<PatientPrescriptionsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+        <Route path="/patient/bills" element={<PatientBillsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+        <Route path="/patient/notifications" element={<PatientNotificationsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+        <Route path="/patient/lab" element={<PatientLabPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+        <Route path="/patient/careai" element={<PatientCareAiPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+        <Route path="/patient/profile" element={<PatientProfilePage session={session} onSignOut={clearPatientSessionAndContext} />} />
       </Routes>
     </AppShell>
   );

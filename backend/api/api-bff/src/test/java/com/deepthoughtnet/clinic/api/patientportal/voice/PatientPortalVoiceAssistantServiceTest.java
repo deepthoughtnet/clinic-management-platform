@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -86,6 +87,24 @@ class PatientPortalVoiceAssistantServiceTest {
         assertThatThrownBy(() -> service.processAudioTurn("audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "voice.webm", "auto"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("No speech was captured");
+    }
+
+    @Test
+    void mockSttDoesNotInvokeCareAiWorkflows() {
+        VoiceOrchestratorService orchestratorService = mock(VoiceOrchestratorService.class);
+        PatientPortalCareAiService careAiService = mock(PatientPortalCareAiService.class);
+        PatientPortalVoiceAssistantService service = new PatientPortalVoiceAssistantService(orchestratorService, careAiService);
+        when(orchestratorService.transcribeBufferedAudio(any(), any(), any(), any()))
+                .thenReturn(new VoiceTranscriptionResult("Hello, I want to book an appointment.", "mock", "Mock STT transcript used because no live STT provider is configured."));
+
+        var response = service.processAudioTurn("audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "voice.webm", "auto");
+
+        verify(careAiService, never()).messageFromVoice(any());
+        assertThat(response.assistantText()).contains("temporarily unavailable");
+        assertThat(response.transcript()).isEqualTo("");
+        assertThat(response.state()).isNull();
+        assertThat(response.ttsProvider()).isNull();
+        assertThat(response.ttsFallbackReason()).contains("Mock STT transcript used because no live STT provider is configured.");
     }
 
     @Test

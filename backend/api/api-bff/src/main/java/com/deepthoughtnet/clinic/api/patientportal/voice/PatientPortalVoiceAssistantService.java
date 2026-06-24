@@ -53,6 +53,30 @@ public class PatientPortalVoiceAssistantService {
         );
         long sttDurationMs = Duration.between(sttStart, Instant.now()).toMillis();
         log.info("patient.voice.stt.complete provider={} durationMs={}", transcription.providerName(), sttDurationMs);
+        if ("mock".equalsIgnoreCase(transcription.providerName())) {
+            String assistantText = "Voice transcription is temporarily unavailable. Please type your request or try again.";
+            log.warn("patient.voice.stt.mock-guard provider={} durationMs={} reason={}",
+                    transcription.providerName(),
+                    sttDurationMs,
+                    transcription.providerMessage());
+            return new PatientPortalVoiceTurnResponse(
+                    UUID.randomUUID().toString(),
+                    "",
+                    assistantText,
+                    null,
+                    null,
+                    null,
+                    transcription.providerName(),
+                    CAREAI_PROVIDER,
+                    null,
+                    sttDurationMs,
+                    0L,
+                    0L,
+                    Duration.between(requestStart, Instant.now()).toMillis(),
+                    audioBytes == null ? 0 : audioBytes.length,
+                    transcription.providerMessage()
+            );
+        }
         if (!StringUtils.hasText(transcription.transcript())) {
             throw new IllegalStateException("No speech was captured. Please try again.");
         }

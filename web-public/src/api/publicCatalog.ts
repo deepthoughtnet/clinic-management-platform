@@ -13,6 +13,7 @@ export type PublicPageResponse<T> = {
 };
 
 export type PublicDoctorSummaryResponse = {
+  publicDoctorId: string;
   doctorSlug: string;
   doctorDisplayName: string;
   photoUrl: string | null;
@@ -46,7 +47,10 @@ export type PublicClinicMiniResponse = {
   city: string | null;
 };
 
+export type PublicDoctorClinicSummaryResponse = PublicClinicMiniResponse;
+
 export type PublicDoctorDetailResponse = {
+  publicDoctorId: string;
   doctorSlug: string;
   doctorDisplayName: string;
   photoUrl: string | null;
@@ -54,7 +58,7 @@ export type PublicDoctorDetailResponse = {
   yearsOfExperience: number | null;
   specialities: string[];
   languages: string[];
-  clinics: PublicClinicMiniResponse[];
+  clinics: PublicDoctorClinicSummaryResponse[];
   availableDays: string[];
   nextAvailableSlots: string[];
   availableToday: boolean;

@@ -664,6 +664,31 @@ class PatientPortalCareAiServiceTest {
     }
 
     @Test
+    void appointmentStatusReturnsCrossClinicAppointmentDetails() {
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        UUID appointmentId = UUID.randomUUID();
+        UUID doctorUserId = UUID.randomUUID();
+        when(patientPortalService.careAiUpcomingAppointments()).thenReturn(List.of(
+                new PatientPortalCareAiAppointmentOption(
+                        appointmentId,
+                        doctorUserId,
+                        "Dr Neha Mehta",
+                        "Demo Clinic",
+                        tomorrow,
+                        LocalTime.of(14, 0),
+                        "BOOKED",
+                        "Cross-clinic consult"
+                )
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest("When is my next appointment?", "en"));
+
+        assertThat(response.assistantMessage()).contains("Dr Neha Mehta");
+        assertThat(response.assistantMessage()).contains("Demo Clinic");
+        assertThat(response.assistantMessage()).contains("14:00");
+    }
+
+    @Test
     void waitingForTimeAndBookAtSevenPmProgressesToNearestSlots() {
         LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));

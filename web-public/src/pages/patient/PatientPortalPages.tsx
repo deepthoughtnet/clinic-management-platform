@@ -1,7 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  otpRequestSchema,
+  indianMobileNumber,
   otpVerifySchema,
   patientProfileSchema,
   patientQuickRegisterSchema,
@@ -17,7 +17,6 @@ import {
   type PatientPortalCareAiStateResponse,
   type PatientPortalBillResponse,
   type PatientPortalDashboardResponse,
-  type PatientPortalDoctorResponse,
   type PatientPortalDoctorSlotResponse,
   type PatientPortalMeResponse,
   type PatientPortalNotificationResponse,
@@ -32,6 +31,8 @@ import {
   type PatientPortalSession,
   buildPatientPortalVoiceWebSocketUrl,
   fetchPatientPortalJson,
+  isUuid,
+  loadPatientPortalDoctorSlots,
   isPatientPortalPatientSession,
   isPatientPortalRegistrationSession,
   markPatientNotificationRead,
@@ -41,17 +42,30 @@ import {
   postPatientPortalSessionJson,
   putPatientPortalSessionJson,
 } from "../../api/patientPortal";
-import { type PublicDoctorDetailResponse, fetchPublicJson } from "../../api/publicCatalog";
+import {
+  type PublicClinicDetailResponse,
+  type PublicDoctorDetailResponse,
+  type PublicDoctorSummaryResponse,
+  fetchPublicJson,
+} from "../../api/publicCatalog";
 import { branding } from "../../branding";
 import { DoctorClinicSelector } from "./DoctorClinicSelector";
 import {
   sanitizePatientOtpInput,
+  sanitizePatientPhoneInput,
 } from "./patientLoginInput.js";
 import {
-  MISSING_CLINIC_CODE_MESSAGE,
-  persistPatientPortalClinicContext,
+  clearPublicBookingContext,
+  getPublicBookingContext,
+  resolvePatientAuthContext,
   resolvePatientPortalContext,
+  savePublicBookingContext,
 } from "./patientPortalClinicContext";
+import {
+  PATIENT_PORTAL_PENDING_REGISTRATION_STORAGE_KEY,
+  clearPatientRegistrationSession,
+  isPatientRegistrationSessionActive,
+} from "./patientPortalSessionState";
 
 type FetchState<T> = {
   data: T;
@@ -170,17 +184,17 @@ function isPatientPortalLocalDev() {
   return window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 }
 
-function sanitizePatientPortalErrorMessage(value: string, missingClinicContext = false) {
+function sanitizePatientPortalErrorMessage(value: string) {
   const normalized = value.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "[redacted]");
   const lower = normalized.toLowerCase();
-  if (
-    missingClinicContext
-    && (lower.includes("invalid tenant code") || lower.includes("tenant code is required") || lower.includes("clinic context"))
-  ) {
-    return MISSING_CLINIC_CODE_MESSAGE;
-  }
   if (lower.includes("phone is required") || lower.includes("mobile") || lower.includes("patient mobile")) {
-    return "Patient mobile number is invalid.";
+    return "Enter a valid 10-digit Indian mobile number.";
+  }
+  if (lower.includes("invalid otp") || lower.includes("otp must be 6 digits")) {
+    return "Enter the valid 6-digit OTP.";
+  }
+  if (lower.includes("otp expired")) {
+    return "OTP expired. Please request a new OTP.";
   }
   if (lower.includes("sms") || lower.includes("provider") || lower.includes("not available") || lower.includes("disabled")) {
     return "OTP is not available in this environment. Use dev OTP mode or check mock OTP config.";
@@ -319,6 +333,188 @@ function formatDoctorDisplayName(value: string | null | undefined) {
   return withoutTitle || normalized;
 }
 
+function normalizeUuidOrNull(value: string | null | undefined) {
+  return isUuid(value) ? value.trim() : null;
+}
+
+type BookingDoctorChoice = {
+  publicDoctorId: string;
+  doctorSlug: string;
+  doctorName: string;
+  specialization: string | null;
+  qualification: string | null;
+  consultationRoom: string | null;
+  yearsOfExperience: number | null;
+  clinicName: string | null;
+  clinicSlug: string | null;
+  availableToday: boolean;
+  nextAvailableSlotSummary: string | null;
+};
+
+function mapPublicDoctorSummaryToBookingChoice(doctor: PublicDoctorSummaryResponse): BookingDoctorChoice {
+  return {
+    publicDoctorId: doctor.publicDoctorId,
+    doctorSlug: doctor.doctorSlug,
+    doctorName: doctor.doctorDisplayName,
+    specialization: doctor.speciality,
+    qualification: null,
+    consultationRoom: null,
+    yearsOfExperience: doctor.yearsOfExperience,
+    clinicName: doctor.clinicDisplayName,
+    clinicSlug: doctor.clinicSlug,
+    availableToday: doctor.availableToday,
+    nextAvailableSlotSummary: doctor.nextAvailableSlotSummary,
+  };
+}
+
+function mapPublicDoctorDetailToBookingChoice(
+  doctor: PublicDoctorDetailResponse,
+  clinicName: string | null,
+  clinicSlug: string | null,
+): BookingDoctorChoice {
+  return {
+    publicDoctorId: doctor.publicDoctorId,
+    doctorSlug: doctor.doctorSlug,
+    doctorName: doctor.doctorDisplayName,
+    specialization: doctor.specialities[0] ?? null,
+    qualification: doctor.qualification,
+    consultationRoom: null,
+    yearsOfExperience: doctor.yearsOfExperience,
+    clinicName,
+    clinicSlug,
+    availableToday: doctor.availableToday,
+    nextAvailableSlotSummary: doctor.nextAvailableSlots[0] ?? null,
+  };
+}
+
+function buildPatientPortalOtpContext(context: {
+  clinicId: string | null;
+  clinicSlug: string | null;
+  clinicCode?: string | null;
+  tenantId: string | null;
+  doctorId: string | null;
+  nextPath: string | null;
+}) {
+  const payload = {
+    clinicId: isUuid(context.clinicId) ? context.clinicId : undefined,
+    clinicSlug: context.clinicSlug || context.clinicCode || undefined,
+    tenantId: isUuid(context.tenantId) ? context.tenantId : undefined,
+    doctorId: context.doctorId || undefined,
+    appointmentIntent: context.nextPath || undefined,
+  };
+  const entries = Object.entries(payload).filter(([, value]) => Boolean(value));
+  if (!entries.length) {
+    return undefined;
+  }
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+type PatientPortalPendingRegistrationState = {
+  mobile: string;
+  nextPath: string | null;
+  clinicId: string | null;
+  clinicSlug: string | null;
+  clinicName: string | null;
+  tenantId: string | null;
+  tenantCode: string | null;
+  doctorId: string | null;
+  doctorSlug: string | null;
+  doctorName: string | null;
+  registrationSessionToken: string | null;
+  createdAt: string | null;
+};
+
+function storePatientPortalPendingRegistration(state: PatientPortalPendingRegistrationState | null) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (!state) {
+    window.sessionStorage.removeItem(PATIENT_PORTAL_PENDING_REGISTRATION_STORAGE_KEY);
+    return;
+  }
+  window.sessionStorage.setItem(PATIENT_PORTAL_PENDING_REGISTRATION_STORAGE_KEY, JSON.stringify(state));
+}
+
+function readPatientPortalPendingRegistration(): PatientPortalPendingRegistrationState | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(PATIENT_PORTAL_PENDING_REGISTRATION_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<PatientPortalPendingRegistrationState>;
+    if (!parsed.mobile) {
+      return null;
+    }
+    return {
+      mobile: parsed.mobile,
+      nextPath: parsed.nextPath ?? null,
+      clinicId: parsed.clinicId ?? null,
+      clinicSlug: parsed.clinicSlug ?? null,
+      clinicName: parsed.clinicName ?? null,
+      tenantId: parsed.tenantId ?? null,
+      tenantCode: parsed.tenantCode ?? null,
+      doctorId: parsed.doctorId ?? null,
+      doctorSlug: parsed.doctorSlug ?? null,
+      doctorName: parsed.doctorName ?? null,
+      registrationSessionToken: parsed.registrationSessionToken ?? null,
+      createdAt: parsed.createdAt ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildPatientRegistrationPath(
+  mobile: string,
+  context: {
+    clinicId: string | null;
+    clinicSlug: string | null;
+    clinicName: string | null;
+    tenantId: string | null;
+    tenantCode?: string | null;
+    doctorId: string | null;
+    doctorSlug: string | null;
+    doctorName: string | null;
+    nextPath: string | null;
+  },
+) {
+  const params = new URLSearchParams();
+  params.set("mobile", mobile);
+  if (context.nextPath) {
+    params.set("next", context.nextPath);
+  }
+  if (context.clinicId) {
+    params.set("clinicId", context.clinicId);
+  }
+  if (context.clinicSlug) {
+    params.set("clinicSlug", context.clinicSlug);
+    params.set("clinic", context.clinicSlug);
+  }
+  if (context.clinicName) {
+    params.set("clinicName", context.clinicName);
+  }
+  if (context.tenantId) {
+    params.set("tenantId", context.tenantId);
+    params.set("tenant", context.tenantId);
+  }
+  if (context.tenantCode) {
+    params.set("clinicCode", context.tenantCode);
+  }
+  if (context.doctorId) {
+    params.set("doctorId", context.doctorId);
+  }
+  if (context.doctorSlug) {
+    params.set("doctorSlug", context.doctorSlug);
+  }
+  if (context.doctorName) {
+    params.set("doctorName", context.doctorName);
+  }
+  return `/patient/register?${params.toString()}`;
+}
+
 function usePatientPortalResource<T>(
   session: PatientPortalSession | null,
   path: string,
@@ -393,9 +589,9 @@ function PatientPortalShell({
       <div className="patient-portal-shell">
         <aside className="patient-sidebar">
           <div className="patient-sidebar-card">
-            <span className="eyebrow">{branding.productName} Patient Portal</span>
+            <span className="eyebrow">Jeevanam Healthcare Patient Portal</span>
             <h2>{session.patientLabel}</h2>
-            <p>Read-only patient access stays separate from web-admin and staff workflows.</p>
+            <p>{session.phone}</p>
           </div>
           <nav className="patient-nav" aria-label="Patient portal navigation">
             {patientNavItems.map((item) => (
@@ -411,31 +607,21 @@ function PatientPortalShell({
             ))}
           </nav>
           <button className="ghost-button patient-signout" type="button" onClick={onSignOut}>
-            Clear session
+            Sign out
           </button>
         </aside>
 
         <div className="patient-main">
           <div className="patient-topbar">
             <div>
-              <span className="eyebrow">Verified patient access</span>
+              <span className="eyebrow">Patient Portal</span>
               <h1>{title}</h1>
               <p>{subtitle}</p>
             </div>
             <div className="patient-status-card">
-              <strong>Patient OTP session</strong>
-              <small>
-                {session.tenantCode} · {session.phone}
-              </small>
+              <strong>{session.patientLabel}</strong>
+              <small>{session.phone}</small>
             </div>
-          </div>
-
-          <div className="portal-preview-banner">
-            <strong>Tenant-aware patient data</strong>
-            <p>
-              These pages only use `/api/patient-portal/*`, which resolves the patient from the verified session and
-              keeps cross-patient and cross-tenant records out of view.
-            </p>
           </div>
 
           {children}
@@ -468,16 +654,16 @@ function RegistrationRequiredCard({
 }) {
   return (
     <section className="page-section narrow-page">
-        <div className="login-placeholder patient-guard-card">
+      <div className="login-placeholder patient-guard-card">
         <span className="eyebrow">Registration required</span>
-        <h1>Finish quick registration to open {branding.productName} Patient Portal.</h1>
-        <p>Your OTP is verified for this clinic, but the portal only unlocks after your tenant-scoped patient profile is linked.</p>
+        <h1>Complete registration to continue.</h1>
+        <p>Your OTP is already verified. Open the registration form to finish patient setup and continue booking.</p>
         <div className="cta-row">
           <Link className="primary-button" to={nextPath ? `/patient/register?next=${encodeURIComponent(nextPath)}` : "/patient/register"}>
             Continue registration
           </Link>
           <button className="ghost-button" type="button" onClick={onClearSession}>
-            Clear patient session
+            Start over
           </button>
         </div>
       </div>
@@ -498,15 +684,17 @@ function PatientAccessBoundary({
   subtitle: string;
   children: ReactNode;
 }) {
+  const location = useLocation();
+  const nextPath = `${location.pathname}${location.search}`;
   if (!session) {
     return (
       <section className="page-section narrow-page">
         <div className="login-placeholder patient-guard-card">
           <span className="eyebrow">Patient login required</span>
-          <h1>Sign in with phone OTP to open {branding.productName} Patient Portal.</h1>
-          <p>The patient session stays separate from public discovery and from all staff/admin authentication.</p>
+          <h1>Sign in with phone OTP to continue.</h1>
+          <p>Use your mobile number to open your patient portal and continue booking.</p>
           <div className="cta-row">
-            <Link className="primary-button" to="/patient/login">
+            <Link className="primary-button" to={`/patient/login?next=${encodeURIComponent(nextPath)}`}>
               Go to patient login
             </Link>
             <Link className="ghost-button" to="/">
@@ -519,7 +707,7 @@ function PatientAccessBoundary({
   }
 
   if (!isPatientPortalPatientSession(session)) {
-    return <RegistrationRequiredCard onClearSession={onSignOut} />;
+    return <RegistrationRequiredCard onClearSession={onSignOut} nextPath={nextPath} />;
   }
 
   return (
@@ -545,14 +733,13 @@ function PatientPortalApiState({
   children: ReactNode;
 }) {
   if (loading) {
-    return <div className="patient-empty-card">Loading patient-scoped data...</div>;
+    return <div className="patient-empty-card">Loading...</div>;
   }
   if (error) {
     return (
       <div className="patient-empty-card">
-        <strong>Portal data is unavailable right now</strong>
+        <strong>Something went wrong</strong>
         <p>{error}</p>
-        <p>Only patient-safe fields are exposed here.</p>
       </div>
     );
   }
@@ -607,9 +794,13 @@ export function PatientLoginPage({
     () => resolvePatientPortalContext(searchParams, location.state),
     [location.state, searchParams],
   );
+  const patientAuthContext = useMemo(
+    () => resolvePatientAuthContext(searchParams, location.state),
+    [location.state, searchParams],
+  );
   const [tenantCode, setTenantCode] = useState(portalClinicContext.clinicCode);
   const [clinicName, setClinicName] = useState(portalClinicContext.clinicName);
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(patientAuthContext.mobile ?? "");
   const [otp, setOtp] = useState("");
   const [requestState, setRequestState] = useState<PatientPortalOtpRequestResponse | null>(null);
   const [requestMessage, setRequestMessage] = useState<string | null>(null);
@@ -620,6 +811,7 @@ export function PatientLoginPage({
   const [otpTouched, setOtpTouched] = useState(false);
   const [requestAttempted, setRequestAttempted] = useState(false);
   const [verifyAttempted, setVerifyAttempted] = useState(false);
+  const loginNotice = searchParams.get("message")?.trim() || null;
   const doctorSlug = portalClinicContext.doctorSlug;
   const [doctorDetail, setDoctorDetail] = useState<FetchState<PublicDoctorDetailResponse | null>>({
     data: null,
@@ -671,14 +863,23 @@ export function PatientLoginPage({
     setClinicName(portalClinicContext.clinicName);
     if (session) {
       setPhone(session.phone);
+      return;
     }
-  }, [session, portalClinicContext.clinicCode, portalClinicContext.clinicName]);
+    if (patientAuthContext.mobile) {
+      setPhone(patientAuthContext.mobile);
+    }
+  }, [patientAuthContext.mobile, session, portalClinicContext.clinicCode, portalClinicContext.clinicName]);
 
   useEffect(() => {
-    if (portalClinicContext.clinicCode) {
-      persistPatientPortalClinicContext(portalClinicContext);
-    }
-  }, [portalClinicContext]);
+    savePublicBookingContext({
+      clinicId: portalClinicContext.clinicId,
+      clinicSlug: portalClinicContext.clinicSlug,
+      doctorId: portalClinicContext.doctorId,
+      tenantId: portalClinicContext.tenantId,
+      nextPath: portalClinicContext.nextPath,
+      mobile: patientAuthContext.mobile ?? null,
+    });
+  }, [patientAuthContext.mobile, portalClinicContext]);
 
   useEffect(() => {
     if (!doctorDetail.data || session || doctorDetail.data.clinics.length !== 1) {
@@ -691,14 +892,9 @@ export function PatientLoginPage({
     setTenantCode(onlyClinic.clinicSlug);
     setClinicName(onlyClinic.clinicDisplayName);
     const nextParams = new URLSearchParams(searchParams);
-    nextParams.set("clinicCode", onlyClinic.clinicSlug);
     nextParams.set("clinicSlug", onlyClinic.clinicSlug);
-    nextParams.set("clinicName", onlyClinic.clinicDisplayName);
-    if (portalClinicContext.doctorSlug) {
-      nextParams.set("doctorSlug", portalClinicContext.doctorSlug);
-    }
-    if (portalClinicContext.doctorName) {
-      nextParams.set("doctorName", portalClinicContext.doctorName);
+    if (portalClinicContext.doctorId) {
+      nextParams.set("doctorId", portalClinicContext.doctorId);
     }
     if (portalClinicContext.nextPath) {
       nextParams.set("next", portalClinicContext.nextPath);
@@ -720,33 +916,19 @@ export function PatientLoginPage({
     setTenantCode(nextClinicCode);
     setClinicName(nextClinicName);
     const nextParams = new URLSearchParams(searchParams);
-    nextParams.set("clinicCode", nextClinicCode);
     nextParams.set("clinicSlug", nextClinicCode);
-    if (nextClinicName) {
-      nextParams.set("clinicName", nextClinicName);
-    } else {
-      nextParams.delete("clinicName");
-    }
-    if (portalClinicContext.doctorSlug) {
-      nextParams.set("doctorSlug", portalClinicContext.doctorSlug);
-    }
-    if (portalClinicContext.doctorName) {
-      nextParams.set("doctorName", portalClinicContext.doctorName);
+    if (portalClinicContext.doctorId) {
+      nextParams.set("doctorId", portalClinicContext.doctorId);
     }
     if (portalClinicContext.nextPath) {
       nextParams.set("next", portalClinicContext.nextPath);
     }
     setSearchParams(nextParams, { replace: true });
-    persistPatientPortalClinicContext({
+    savePublicBookingContext({
       clinicId: portalClinicContext.clinicId,
-      clinicCode: nextClinicCode,
-      clinicName: nextClinicName,
       clinicSlug: nextClinicCode,
       doctorId: portalClinicContext.doctorId,
-      doctorSlug: portalClinicContext.doctorSlug,
-      doctorName: portalClinicContext.doctorName,
       tenantId: portalClinicContext.tenantId,
-      tenantSlug: portalClinicContext.tenantId,
       nextPath: portalClinicContext.nextPath,
     });
   }
@@ -760,22 +942,11 @@ export function PatientLoginPage({
       ? `Booking appointment with Dr ${portalClinicContext.doctorName} at ${resolvedClinicName}`
       : `Accessing patient portal for ${resolvedClinicName}`
     : null;
-  const missingClinicCta = !hasClinicContext && !doctorDetail.loading ? (
-    <div className="patient-inline-empty">
-      <strong>Clinic context is required</strong>
-      <p>Open the clinic directory or select a doctor card again before requesting OTP.</p>
-      <Link className="secondary-button" to="/clinics">
-        Browse clinics
-      </Link>
-    </div>
-  ) : null;
-  const phoneValidation = otpRequestSchema.shape.mobile.safeParse(phone);
+  const normalizedPhone = sanitizePatientPhoneInput(phone);
+  const phoneValidation = indianMobileNumber().safeParse(normalizedPhone);
   const otpValidation = otpVerifySchema.shape.otp.safeParse(otp);
-  const normalizedPhone = phoneValidation.success ? phoneValidation.data : "";
-  const canRequestOtp = Boolean(phoneValidation.success && portalClinicContext.isResolved) && !requestPending;
-  const canVerifyOtp =
-    Boolean(phoneValidation.success && otpValidation.success && requestState?.accepted && portalClinicContext.isResolved) &&
-    !verifyPending;
+  const canRequestOtp = Boolean(phoneValidation.success) && !requestPending;
+  const canVerifyOtp = Boolean(phoneValidation.success && otpValidation.success && requestState?.accepted) && !verifyPending;
   const phoneError =
     (phoneTouched || requestAttempted || verifyAttempted) && !phoneValidation.success
       ? "Enter a valid 10-digit Indian mobile number."
@@ -804,30 +975,20 @@ export function PatientLoginPage({
       setVerifyMessage(null);
       return;
     }
-    if (!portalClinicContext.isResolved) {
-      setRequestMessage(MISSING_CLINIC_CODE_MESSAGE);
-      setVerifyMessage(null);
-      return;
-    }
     setRequestPending(true);
     clearOtpFlowMessages();
     try {
+      const context = buildPatientPortalOtpContext(portalClinicContext);
       const requestPayload = {
-        tenantCode: portalClinicContext.clinicCode,
         mobile: normalizedPhone,
-        clinicId: portalClinicContext.clinicId,
-        clinicSlug: portalClinicContext.clinicSlug,
-        clinicCode: portalClinicContext.clinicCode,
-        tenantId: portalClinicContext.tenantId,
-        doctorId: portalClinicContext.doctorId || portalClinicContext.doctorSlug,
-        doctorSlug: portalClinicContext.doctorSlug,
+        ...(context ? { context } : {}),
       };
       if (import.meta.env.DEV) {
         console.debug("[patient-login-otp-payload]", requestPayload);
       }
       const response = await postPatientPortalJson<PatientPortalOtpRequestResponse>("/api/patient-portal/auth/otp/request", {
-        tenantCode: portalClinicContext.clinicCode,
-        phone: normalizedPhone,
+        mobile: normalizedPhone,
+        ...(context ? { context } : {}),
       });
       setRequestState(response);
       setRequestMessage(response.message || "OTP sent successfully.");
@@ -835,7 +996,7 @@ export function PatientLoginPage({
       setRequestState(null);
       setRequestMessage(
         error instanceof Error
-          ? sanitizePatientPortalErrorMessage(error.message, !portalClinicContext.isResolved)
+          ? sanitizePatientPortalErrorMessage(error.message)
           : "OTP is not available in this environment. Use dev OTP mode or check mock OTP config.",
       );
     } finally {
@@ -856,23 +1017,22 @@ export function PatientLoginPage({
       setVerifyMessage("Request an OTP first.");
       return;
     }
-    if (!portalClinicContext.isResolved) {
-      setVerifyMessage(MISSING_CLINIC_CODE_MESSAGE);
-      return;
-    }
     setVerifyPending(true);
     try {
+      const context = buildPatientPortalOtpContext(portalClinicContext);
       const response = await postPatientPortalJson<PatientPortalOtpVerifyResponse>("/api/patient-portal/auth/otp/verify", {
-        tenantCode: portalClinicContext.clinicCode,
-        phone: normalizedPhone,
+        mobile: normalizedPhone,
         otp: otpDigits,
+        ...(context ? { context } : {}),
       });
       setVerifyMessage(response.message || "OTP verified successfully.");
-      if (response.verified && response.patientSessionToken && response.tenantId && response.patientDisplayName) {
+      const sessionTenantCode = response.tenantCode || resolvedClinicCode;
+      if (response.verified && response.patientSessionToken && response.tenantId && response.patientDisplayName && sessionTenantCode) {
+        storePatientPortalPendingRegistration(null);
         onSaveSession({
           mode: "otp",
           sessionRole: "patient",
-          tenantCode: portalClinicContext.clinicCode,
+          tenantCode: sessionTenantCode,
           tenantId: response.tenantId,
           phone: normalizedPhone,
           patientLabel: response.patientDisplayName,
@@ -882,11 +1042,27 @@ export function PatientLoginPage({
         navigate(portalClinicContext.nextPath?.startsWith("/patient/") ? portalClinicContext.nextPath : "/patient/dashboard");
         return;
       }
-      if (response.verified && response.registrationRequired && response.registrationSessionToken && response.tenantId) {
+      if (response.verified && response.registrationRequired) {
+        storePatientPortalPendingRegistration({
+          mobile: normalizedPhone,
+          nextPath: portalClinicContext.nextPath,
+          clinicId: portalClinicContext.clinicId,
+          clinicSlug: portalClinicContext.clinicSlug || portalClinicContext.clinicCode || null,
+          clinicName: portalClinicContext.clinicName,
+          tenantId: response.tenantId || portalClinicContext.tenantId,
+          tenantCode: sessionTenantCode || null,
+          doctorId: portalClinicContext.doctorId,
+          doctorSlug: portalClinicContext.doctorSlug,
+          doctorName: portalClinicContext.doctorName,
+          registrationSessionToken: response.registrationSessionToken,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      if (response.verified && response.registrationRequired && response.registrationSessionToken && response.tenantId && sessionTenantCode) {
         onSaveSession({
           mode: "otp",
           sessionRole: "registration",
-          tenantCode: portalClinicContext.clinicCode,
+          tenantCode: sessionTenantCode,
           tenantId: response.tenantId,
           phone: normalizedPhone,
           patientLabel: "New patient",
@@ -898,11 +1074,31 @@ export function PatientLoginPage({
           return;
         }
         navigate("/patient/register");
+        return;
+      }
+      if (response.verified && response.registrationRequired) {
+        navigate(
+          buildPatientRegistrationPath(normalizedPhone, {
+            clinicId: portalClinicContext.clinicId,
+            clinicSlug: portalClinicContext.clinicSlug || portalClinicContext.clinicCode || null,
+            clinicName: portalClinicContext.clinicName,
+            tenantId: response.tenantId || portalClinicContext.tenantId,
+            tenantCode: sessionTenantCode || portalClinicContext.clinicCode || null,
+            doctorId: portalClinicContext.doctorId,
+            doctorSlug: portalClinicContext.doctorSlug,
+            doctorName: portalClinicContext.doctorName,
+            nextPath: portalClinicContext.nextPath,
+          }),
+        );
+        return;
+      }
+      if (response.verified) {
+        setVerifyMessage("Unable to resolve your patient portal session after OTP verification.");
       }
     } catch (error) {
       setVerifyMessage(
         error instanceof Error
-          ? sanitizePatientPortalErrorMessage(error.message, !portalClinicContext.isResolved)
+          ? sanitizePatientPortalErrorMessage(error.message)
           : "Unable to verify OTP right now. Please try again.",
       );
     } finally {
@@ -939,9 +1135,14 @@ export function PatientLoginPage({
             <strong>{bookingContextLine}</strong>
           </div>
         ) : null}
-        {missingClinicCta}
 
         <form className="patient-login-form" onSubmit={handleRequestOtp} noValidate>
+          {loginNotice ? (
+            <div className="patient-inline-empty">
+              <strong>Patient registration</strong>
+              <p>{loginNotice}</p>
+            </div>
+          ) : null}
           <label>
             <span>Phone number</span>
             <input
@@ -1032,7 +1233,7 @@ export function PatientLoginPage({
                 {isPatientPortalRegistrationSession(session) ? "Continue registration" : "Open current session"}
               </button>
               <button className="ghost-button" type="button" onClick={onClearSession}>
-                Clear patient session
+                {isPatientPortalRegistrationSession(session) ? "Start over" : "Sign out"}
               </button>
             </>
           ) : null}
@@ -1053,6 +1254,34 @@ export function PatientRegistrationPage({
 }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const pendingRegistration = useMemo(readPatientPortalPendingRegistration, []);
+  const nextPath = searchParams.get("next") || pendingRegistration?.nextPath || null;
+  const recoverableRegistrationSession = useMemo<PatientPortalRegistrationSession | null>(() => {
+    if (isPatientPortalRegistrationSession(session) && isPatientRegistrationSessionActive(session)) {
+      return session;
+    }
+    if (
+      pendingRegistration?.registrationSessionToken
+      && pendingRegistration.tenantId
+      && pendingRegistration.tenantCode
+      && pendingRegistration.mobile
+      && pendingRegistration.createdAt
+    ) {
+      const recoveredSession: PatientPortalRegistrationSession = {
+        mode: "otp",
+        sessionRole: "registration",
+        tenantCode: pendingRegistration.tenantCode,
+        tenantId: pendingRegistration.tenantId,
+        phone: pendingRegistration.mobile,
+        patientLabel: "New patient",
+        createdAt: pendingRegistration.createdAt,
+        patientSessionToken: pendingRegistration.registrationSessionToken,
+      };
+      return isPatientRegistrationSessionActive(recoveredSession) ? recoveredSession : null;
+    }
+    return null;
+  }, [pendingRegistration, session]);
+  const registrationMobile = recoverableRegistrationSession?.phone || pendingRegistration?.mobile || searchParams.get("mobile") || "";
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [gender, setGender] = useState("UNKNOWN");
@@ -1075,19 +1304,55 @@ export function PatientRegistrationPage({
     if (!isPatientPortalPatientSession(session)) {
       return;
     }
-    const nextPath = searchParams.get("next");
     navigate(nextPath?.startsWith("/patient/") ? nextPath : "/patient/dashboard");
-  }, [navigate, searchParams, session]);
+  }, [navigate, nextPath, session]);
 
-  if (!session) {
+  useEffect(() => {
+    if (!session && recoverableRegistrationSession) {
+      onSaveSession(recoverableRegistrationSession);
+    }
+  }, [onSaveSession, recoverableRegistrationSession, session]);
+
+  useEffect(() => {
+    if (recoverableRegistrationSession) {
+      return;
+    }
+    clearPatientRegistrationSession();
+    onClearSession();
+    navigate("/patient/login?message=Please%20verify%20your%20mobile%20number%20again.", { replace: true });
+  }, [navigate, onClearSession, recoverableRegistrationSession]);
+
+  function handleStartOver() {
+    clearPatientRegistrationSession();
+    onClearSession();
+    navigate("/patient/login", { replace: true });
+  }
+
+  if (!recoverableRegistrationSession) {
     return (
       <section className="page-section narrow-page">
+        <div className="section-heading">
+          <span className="eyebrow">Quick registration</span>
+          <h1>Complete patient registration.</h1>
+          <p>Your verified mobile number is ready for registration. Continue from a verified OTP session to open the form.</p>
+        </div>
         <div className="login-placeholder patient-guard-card">
-          <span className="eyebrow">Patient login required</span>
-          <h1>Verify your mobile number first.</h1>
-          <p>Quick registration only opens after OTP verification for the selected clinic code.</p>
+          <div className="patient-inline-empty">
+            <strong>Verified mobile</strong>
+            <label>
+              <span>Mobile number</span>
+              <input value={registrationMobile || ""} readOnly />
+            </label>
+            {pendingRegistration?.doctorName || pendingRegistration?.clinicName ? (
+              <p>
+                {pendingRegistration.doctorName ? `Dr ${pendingRegistration.doctorName}` : "Clinic context"}
+                {pendingRegistration.clinicName ? ` · ${pendingRegistration.clinicName}` : ""}
+              </p>
+            ) : null}
+          </div>
+          <p>Request and verify OTP again if the registration session expired.</p>
           <div className="cta-row">
-            <Link className="primary-button" to="/patient/login">
+            <Link className="primary-button" to={nextPath?.startsWith("/patient/") ? `/patient/login?next=${encodeURIComponent(nextPath)}` : "/patient/login"}>
               Go to patient login
             </Link>
           </div>
@@ -1096,10 +1361,10 @@ export function PatientRegistrationPage({
     );
   }
 
-  if (!isPatientPortalRegistrationSession(session)) {
+  if (!isPatientPortalRegistrationSession(recoverableRegistrationSession)) {
     return null;
   }
-  const registrationSession = session;
+  const registrationSession = recoverableRegistrationSession;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1151,8 +1416,9 @@ export function PatientRegistrationPage({
         createdAt: new Date().toISOString(),
         patientSessionToken: response.patientSessionToken,
       });
+      storePatientPortalPendingRegistration(null);
       setMessage(response.message);
-      const nextPath = searchParams.get("next");
+      const nextPath = searchParams.get("next") || pendingRegistration?.nextPath;
       navigate(nextPath?.startsWith("/patient/") ? nextPath : "/patient/dashboard");
     } catch (submitError: unknown) {
       setError(submitError instanceof Error ? submitError.message : "Unable to complete patient registration.");
@@ -1165,18 +1431,18 @@ export function PatientRegistrationPage({
     <section className="page-section narrow-page">
       <div className="section-heading">
         <span className="eyebrow">Quick registration</span>
-        <h1>Finish your first-time patient onboarding.</h1>
-        <p>Step 1 is already complete. Add only the patient-safe details needed to create or link your clinic record and continue booking.</p>
+        <h1>Complete your patient registration.</h1>
+        <p>Step 1 is already complete. Add the remaining details to finish registration and continue booking.</p>
       </div>
       <div className="login-placeholder portal-login-card">
         <div className="portal-feature-list portal-step-list">
           <article className="feature-card">
             <strong>Step 1</strong>
-            <p>Clinic code and OTP verified for {session.tenantCode}.</p>
+            <p>Phone OTP verification is complete.</p>
           </article>
           <article className="feature-card">
             <strong>Step 2</strong>
-            <p>Complete quick registration or link an existing patient record in the same tenant.</p>
+            <p>Complete quick registration or link an existing patient record.</p>
           </article>
           <article className="feature-card">
             <strong>Step 3</strong>
@@ -1213,7 +1479,7 @@ export function PatientRegistrationPage({
             </label>
             <label>
               <span>Mobile number</span>
-              <input value={session.phone} readOnly />
+              <input value={registrationSession.phone} readOnly />
             </label>
             <label>
               <span>City</span>
@@ -1268,8 +1534,8 @@ export function PatientRegistrationPage({
             <button className="primary-button" type="submit" disabled={submitPending}>
               {submitPending ? "Completing..." : "Complete registration"}
             </button>
-            <button className="ghost-button" type="button" onClick={onClearSession}>
-              Cancel
+            <button className="ghost-button" type="button" onClick={handleStartOver}>
+              Cancel / Start over
             </button>
           </div>
         </form>
@@ -1287,7 +1553,7 @@ export function PatientDashboardPage({ session, onSignOut }: { session: PatientP
       session={session}
       onSignOut={onSignOut}
       title="Your care at a glance"
-      subtitle="See the next visit, latest prescription, unpaid dues, and recent bill activity without exposing staff-only data."
+      subtitle="See your next visit, recent prescription, bills, and care updates in one place."
     >
       <PatientPortalApiState
         loading={dashboard.loading}
@@ -1354,7 +1620,7 @@ export function PatientDashboardPage({ session, onSignOut }: { session: PatientP
                 <p>{dashboard.data.recentPrescription.adviceSummary ?? "Advice summary will appear when available."}</p>
               </div>
             ) : (
-              <div className="patient-inline-empty">No patient-safe prescription summary is available yet.</div>
+              <div className="patient-inline-empty">No prescription summary is available yet.</div>
             )}
           </article>
 
@@ -1392,7 +1658,7 @@ export function PatientDashboardPage({ session, onSignOut }: { session: PatientP
           <div className="patient-highlight-card">
             <strong>Use AIVA for guided booking and visit prep</strong>
             <span>{dashboard.data?.clinicName ?? "Clinic"} patient view</span>
-            <p>Ask AIVA to help book a clinic visit, summarize medicines, or explain billing totals using only your patient-safe data.</p>
+            <p>Ask AIVA to help book a clinic visit, summarize medicines, or explain billing totals.</p>
           </div>
         </article>
         </div>
@@ -1418,7 +1684,7 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
       session={session}
       onSignOut={onSignOut}
       title="Appointments"
-      subtitle="Only your own tenant-scoped appointments appear here, in patient-friendly cards rather than staff tables."
+      subtitle="View your upcoming and past clinic visits."
     >
       <PatientPortalApiState
         loading={appointments.loading}
@@ -1481,39 +1747,57 @@ export function PatientBookAppointmentPage({
   session: PatientPortalSession | null;
   onSignOut: () => void;
 }) {
-  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const portalSession = isPatientPortalPatientSession(session) ? session : null;
-  const doctorsState = usePatientPortalResource<PatientPortalDoctorResponse[]>(portalSession, "/api/patient-portal/doctors", []);
+  const recentAppointments = usePatientPortalResource<PatientPortalAppointmentResponse[]>(portalSession, "/api/patient-portal/appointments", []);
+  const publicBookingContext = useMemo(
+    () => getPublicBookingContext(searchParams, location.state),
+    [location.state, searchParams],
+  );
+  const [publicDoctorsState, setPublicDoctorsState] = useState<FetchState<PublicDoctorSummaryResponse[]>>({
+    data: [],
+    loading: false,
+    error: null,
+  });
+  const [selectedClinicFilter, setSelectedClinicFilter] = useState("");
   const [selectedSpeciality, setSelectedSpeciality] = useState("All");
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
+  const [selectedDoctorSlug, setSelectedDoctorSlug] = useState("");
+  const [selectedClinicId, setSelectedClinicId] = useState("");
+  const [selectedClinicSlug, setSelectedClinicSlug] = useState("");
+  const [selectedTenantId, setSelectedTenantId] = useState("");
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
   const [slots, setSlots] = useState<PatientPortalDoctorSlotResponse[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [slotsError, setSlotsError] = useState<string | null>(null);
-  const [selectedSlotTime, setSelectedSlotTime] = useState("");
+  const [selectedSlot, setSelectedSlot] = useState<PatientPortalDoctorSlotResponse | null>(null);
   const [submitPending, setSubmitPending] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<PatientPortalAppointmentConfirmationResponse | null>(null);
-
-  const doctorOptions = useMemo(() => {
-    if (selectedSpeciality === "All") {
-      return doctorsState.data;
-    }
-    return doctorsState.data.filter((doctor) => doctor.specialization === selectedSpeciality);
-  }, [doctorsState.data, selectedSpeciality]);
-
-  const specialities = useMemo(() => {
-    const values = new Set<string>();
-    doctorsState.data.forEach((doctor) => {
-      if (doctor.specialization) {
-        values.add(doctor.specialization);
-      }
-    });
-    return ["All", ...Array.from(values).sort((left, right) => left.localeCompare(right))];
-  }, [doctorsState.data]);
-  const bookingClinicName = searchParams.get("clinicName")?.trim() || null;
-  const bookingDoctorName = formatDoctorDisplayName(searchParams.get("doctorName"));
+  const [clinicContextDetail, setClinicContextDetail] = useState<FetchState<PublicClinicDetailResponse | null>>({
+    data: null,
+    loading: false,
+    error: null,
+  });
+  const [doctorContextDetail, setDoctorContextDetail] = useState<FetchState<PublicDoctorDetailResponse | null>>({
+    data: null,
+    loading: false,
+    error: null,
+  });
+  const lastSlotRequestKeyRef = useRef<string | null>(null);
+  const manualDoctorSelectionRef = useRef(false);
+  const currentBookingPath = `${location.pathname}${location.search}`;
+  const bookingClinicCode = publicBookingContext.clinicSlug || publicBookingContext.clinicCode || null;
+  const bookingClinicId = normalizeUuidOrNull(publicBookingContext.clinicId);
+  const bookingTenantId = normalizeUuidOrNull(publicBookingContext.tenantId);
+  const bookingClinicName = publicBookingContext.clinicName?.trim() || searchParams.get("clinicName")?.trim() || null;
+  const bookingDoctorName = formatDoctorDisplayName(publicBookingContext.doctorName || searchParams.get("doctorName"));
+  const bookingDoctorSlug = publicBookingContext.doctorSlug || null;
+  const bookingDoctorId = publicBookingContext.doctorId || null;
+  const hasBookingContext = Boolean(bookingClinicCode || bookingClinicId || bookingTenantId || bookingDoctorSlug || bookingDoctorId);
   const bookingContextLine = bookingClinicName
     ? bookingDoctorName
       ? `Booking appointment with Dr ${bookingDoctorName} at ${bookingClinicName}`
@@ -1521,52 +1805,242 @@ export function PatientBookAppointmentPage({
     : bookingDoctorName
       ? `Booking appointment with Dr ${bookingDoctorName}`
       : null;
+  useEffect(() => {
+    savePublicBookingContext({
+      clinicId: bookingClinicId,
+      clinicSlug: publicBookingContext.clinicSlug ?? publicBookingContext.clinicCode ?? null,
+      tenantId: bookingTenantId,
+      doctorId: publicBookingContext.doctorId ?? null,
+      nextPath: currentBookingPath,
+    });
+  }, [bookingClinicId, bookingTenantId, currentBookingPath, publicBookingContext]);
 
   useEffect(() => {
-    if (!doctorOptions.some((doctor) => doctor.publicDoctorId === selectedDoctorId)) {
-      setSelectedDoctorId(doctorOptions[0]?.publicDoctorId ?? "");
-    }
-  }, [doctorOptions, selectedDoctorId]);
-
-  useEffect(() => {
-    setSelectedSlotTime("");
-    setConfirmation(null);
-    setSubmitError(null);
-
-    if (!portalSession || !selectedDoctorId || !selectedDate) {
-      setSlots([]);
-      setSlotsLoading(false);
-      setSlotsError(null);
-      return;
-    }
-
     const abortController = new AbortController();
-    setSlotsLoading(true);
-    setSlotsError(null);
+    setPublicDoctorsState((current) => ({
+      data: current.data,
+      loading: true,
+      error: null,
+    }));
 
-    fetchPatientPortalJson<PatientPortalDoctorSlotResponse[]>(
-      `/api/patient-portal/doctors/${selectedDoctorId}/slots?date=${selectedDate}`,
-      portalSession,
-      abortController.signal,
-    )
+    fetchPublicJson<{ items: PublicDoctorSummaryResponse[] }>("/api/public/doctors", { size: 100 }, abortController.signal)
       .then((result) => {
-        setSlots(result);
-        setSlotsLoading(false);
+        setPublicDoctorsState({
+          data: result.items,
+          loading: false,
+          error: null,
+        });
       })
       .catch((error: unknown) => {
         if (abortController.signal.aborted) {
           return;
         }
-        setSlots([]);
-        setSlotsLoading(false);
-        setSlotsError(error instanceof Error ? error.message : "Unable to load appointment slots.");
+        setPublicDoctorsState({
+          data: [],
+          loading: false,
+          error: error instanceof Error ? error.message : "Unable to load doctors right now.",
+        });
       });
 
     return () => abortController.abort();
-  }, [selectedDate, selectedDoctorId, portalSession]);
+  }, []);
+
+  useEffect(() => {
+    if (!bookingClinicCode) {
+      setClinicContextDetail({
+        data: null,
+        loading: false,
+        error: null,
+      });
+      return;
+    }
+    const hasExplicitClinicQuery =
+      searchParams.has("clinicId")
+      || searchParams.has("clinicCode")
+      || searchParams.has("clinic")
+      || searchParams.has("clinicSlug")
+      || searchParams.has("tenantId")
+      || searchParams.has("tenant")
+      || searchParams.has("tenantSlug");
+    if (bookingClinicCode === "demo-clinic" && !hasExplicitClinicQuery) {
+      setClinicContextDetail({
+        data: null,
+        loading: false,
+        error: null,
+      });
+      return;
+    }
+
+    const abortController = new AbortController();
+    setClinicContextDetail({
+      data: null,
+      loading: true,
+      error: null,
+    });
+
+    fetchPublicJson<PublicClinicDetailResponse>(`/api/public/clinics/${bookingClinicCode}`, {}, abortController.signal)
+      .then((result) => {
+        setClinicContextDetail({
+          data: result,
+          loading: false,
+          error: null,
+        });
+      })
+      .catch((error: unknown) => {
+        if (abortController.signal.aborted) {
+          return;
+        }
+        setClinicContextDetail({
+          data: null,
+          loading: false,
+          error: error instanceof Error ? error.message : "Unable to load clinic doctors right now.",
+        });
+      });
+
+    return () => abortController.abort();
+  }, [bookingClinicCode, searchParams]);
+
+  function syncBookingClinicContext(clinicSlug: string) {
+    const nextClinicId = normalizeUuidOrNull(publicBookingContext.clinicId);
+    const nextTenantId = normalizeUuidOrNull(publicBookingContext.tenantId);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("clinicSlug", clinicSlug);
+    if (selectedDoctorId) {
+      nextParams.set("doctorId", selectedDoctorId);
+    }
+    setSearchParams(nextParams, { replace: true });
+    setSelectedClinicId(nextClinicId || "");
+    setSelectedClinicSlug(clinicSlug);
+    setSelectedTenantId(nextTenantId || "");
+    setSelectedSlot(null);
+    savePublicBookingContext({
+      clinicId: nextClinicId,
+      clinicSlug,
+      tenantId: nextTenantId,
+      doctorId: selectedDoctorId || null,
+      nextPath: currentBookingPath,
+    });
+  }
+
+  useEffect(() => {
+    if (bookingClinicCode) {
+      setSelectedClinicFilter(bookingClinicCode);
+    }
+  }, [bookingClinicCode]);
+
+  const allDoctorOptions = useMemo<BookingDoctorChoice[]>(() => {
+    if (clinicContextDetail.data?.doctors.length) {
+      return clinicContextDetail.data.doctors.map(mapPublicDoctorSummaryToBookingChoice);
+    }
+    if (doctorContextDetail.data) {
+      const clinic = doctorContextDetail.data.clinics[0] ?? null;
+      return [
+        mapPublicDoctorDetailToBookingChoice(
+          doctorContextDetail.data,
+          clinic?.clinicDisplayName ?? bookingClinicName,
+          clinic?.clinicSlug ?? bookingClinicCode,
+        ),
+      ];
+    }
+    if (!hasBookingContext) {
+      return publicDoctorsState.data.map(mapPublicDoctorSummaryToBookingChoice);
+    }
+    return [];
+  }, [bookingClinicCode, bookingClinicName, clinicContextDetail.data, doctorContextDetail.data, hasBookingContext, publicDoctorsState.data]);
+
+  const clinicOptions = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          publicDoctorsState.data.map((doctor) => [
+            doctor.clinicSlug,
+            { clinicSlug: doctor.clinicSlug, clinicName: doctor.clinicDisplayName },
+          ]),
+        ).values(),
+      ).sort((left, right) => left.clinicName.localeCompare(right.clinicName)),
+    [publicDoctorsState.data],
+  );
+
+  const doctorOptions = useMemo(() => {
+    return allDoctorOptions.filter((doctor) => {
+      if (selectedClinicFilter && doctor.clinicSlug !== selectedClinicFilter) {
+        return false;
+      }
+      if (selectedSpeciality !== "All" && doctor.specialization !== selectedSpeciality) {
+        return false;
+      }
+      return true;
+    });
+  }, [allDoctorOptions, selectedClinicFilter, selectedSpeciality]);
+
+  const specialities = useMemo(() => {
+    const values = new Set<string>();
+    allDoctorOptions.forEach((doctor) => {
+      if (doctor.specialization) {
+        values.add(doctor.specialization);
+      }
+    });
+    return ["All", ...Array.from(values).sort((left, right) => left.localeCompare(right))];
+  }, [allDoctorOptions]);
+
+  useEffect(() => {
+    if (selectedDoctorId) {
+      return;
+    }
+    if (manualDoctorSelectionRef.current) {
+      return;
+    }
+
+    const seededDoctor =
+      (bookingDoctorId
+        ? allDoctorOptions.find((doctor) => doctor.publicDoctorId === bookingDoctorId) ?? null
+        : null)
+      || (bookingDoctorSlug
+        ? allDoctorOptions.find((doctor) => doctor.doctorSlug === bookingDoctorSlug) ?? null
+        : null)
+      || (bookingDoctorName
+        ? allDoctorOptions.find((doctor) => formatDoctorDisplayName(doctor.doctorName) === bookingDoctorName) ?? null
+        : null)
+      || allDoctorOptions[0]
+      || null;
+
+    if (seededDoctor) {
+      setSelectedDoctorId(seededDoctor.publicDoctorId);
+      setSelectedDoctorSlug(seededDoctor.doctorSlug);
+      if (bookingClinicCode) {
+        setSelectedClinicId(bookingClinicId || "");
+        setSelectedClinicSlug(bookingClinicCode);
+        setSelectedTenantId(bookingTenantId || "");
+      } else if (doctorContextDetail.data?.clinics.length === 1 && seededDoctor.clinicSlug) {
+        setSelectedClinicId("");
+        setSelectedClinicSlug(seededDoctor.clinicSlug);
+        setSelectedTenantId("");
+      }
+    }
+  }, [allDoctorOptions, bookingClinicCode, bookingClinicId, bookingTenantId, bookingDoctorId, bookingDoctorName, bookingDoctorSlug, doctorContextDetail.data, selectedDoctorId]);
+
+  function handleStartOver() {
+    clearPublicBookingContext();
+    setSearchParams(new URLSearchParams(), { replace: true });
+    setSelectedClinicFilter("");
+    setSelectedSpeciality("All");
+    setSelectedDoctorId("");
+    setSelectedDoctorSlug("");
+    setSelectedClinicId("");
+    setSelectedClinicSlug("");
+    setSelectedTenantId("");
+    setSelectedSlot(null);
+    setSlots([]);
+    setSlotsError(null);
+    setConfirmation(null);
+    setSubmitError(null);
+    lastSlotRequestKeyRef.current = null;
+    manualDoctorSelectionRef.current = false;
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    const selectedSlotTime = selectedSlot?.slotTime ?? "";
     if (!portalSession || !selectedDoctorId || !selectedDate || !selectedSlotTime) {
       setSubmitError("Choose a doctor, date, and available time slot before confirming.");
       return;
@@ -1587,8 +2061,13 @@ export function PatientBookAppointmentPage({
     setSubmitError(null);
     setConfirmation(null);
     try {
+      const resolvedClinicId = normalizeUuidOrNull(selectedClinicId) || bookingClinicId;
+      const resolvedTenantId = normalizeUuidOrNull(selectedTenantId) || bookingTenantId;
       const payload: PatientPortalAppointmentBookingRequest = {
         publicDoctorId: selectedDoctorId,
+        clinicSlug: resolvedSelectedClinicSlug,
+        tenantId: resolvedTenantId,
+        clinicId: resolvedClinicId,
         appointmentDate: selectedDate,
         appointmentTime: selectedSlotTime,
         reason: reason.trim() ? reason.trim() : null,
@@ -1600,7 +2079,7 @@ export function PatientBookAppointmentPage({
       );
       setConfirmation(response);
       setReason("");
-      setSelectedSlotTime("");
+      setSelectedSlot(null);
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Unable to confirm the appointment.");
     } finally {
@@ -1608,31 +2087,396 @@ export function PatientBookAppointmentPage({
     }
   }
 
-  const selectedDoctor = doctorOptions.find((doctor) => doctor.publicDoctorId === selectedDoctorId) ?? null;
+  const selectedDoctor = useMemo(
+    () => allDoctorOptions.find((doctor) => doctor.publicDoctorId === selectedDoctorId) ?? null,
+    [allDoctorOptions, selectedDoctorId],
+  );
+  const selectedDoctorClinics = doctorContextDetail.data?.clinics ?? [];
+  const resolvedSelectedClinicSlug =
+    selectedClinicSlug
+    || bookingClinicCode
+    || (selectedDoctorClinics.length === 1 ? selectedDoctor?.clinicSlug : null);
+  const resolvedSelectedClinicId = normalizeUuidOrNull(selectedClinicId) || bookingClinicId;
+  const resolvedSelectedTenantId = normalizeUuidOrNull(selectedTenantId) || bookingTenantId;
+  const selectedSlotTime = selectedSlot?.slotTime ?? "";
+  const requiresClinicSelection = Boolean(
+    selectedDoctorId && !resolvedSelectedClinicSlug && selectedDoctorClinics.length > 1,
+  );
   const availableSlots = slots.filter((slot) => slot.selectable);
+  const bookingDoctorsLoading = clinicContextDetail.loading || doctorContextDetail.loading || publicDoctorsState.loading;
+  const bookingDoctorsError = doctorContextDetail.error || clinicContextDetail.error || publicDoctorsState.error;
+  const recentDoctorOptions = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          recentAppointments.data
+            .filter((appointment) => appointment.doctorName)
+            .map((appointment) => [
+              `${appointment.doctorName}-${appointment.clinicName ?? ""}`,
+              {
+                doctorName: appointment.doctorName as string,
+                clinicName: appointment.clinicName,
+              },
+            ]),
+        ).values(),
+      ).slice(0, 4),
+    [recentAppointments.data],
+  );
+
+  const activeDoctorSlug = selectedDoctorSlug || selectedDoctor?.doctorSlug || bookingDoctorSlug || "";
+
+  useEffect(() => {
+    if (!activeDoctorSlug) {
+      setDoctorContextDetail({
+        data: null,
+        loading: false,
+        error: null,
+      });
+      return;
+    }
+
+    const abortController = new AbortController();
+    setDoctorContextDetail({
+      data: null,
+      loading: true,
+      error: null,
+    });
+
+    fetchPublicJson<PublicDoctorDetailResponse>(`/api/public/doctors/${activeDoctorSlug}`, {}, abortController.signal)
+      .then((result) => {
+        if (isPatientPortalLocalDev()) {
+          console.debug("[patient-portal] selected doctor detail", result);
+        }
+        setDoctorContextDetail({
+          data: result,
+          loading: false,
+          error: null,
+        });
+      })
+      .catch((error: unknown) => {
+        if (abortController.signal.aborted) {
+          return;
+        }
+        setDoctorContextDetail({
+          data: null,
+          loading: false,
+          error: error instanceof Error ? error.message : "Unable to load doctor details right now.",
+        });
+      });
+
+    return () => abortController.abort();
+  }, [activeDoctorSlug]);
+
+  useEffect(() => {
+    if (bookingDoctorId && doctorOptions.some((doctor) => doctor.publicDoctorId === bookingDoctorId)) {
+      const matchedDoctor = doctorOptions.find((doctor) => doctor.publicDoctorId === bookingDoctorId) ?? null;
+      setSelectedDoctorId(bookingDoctorId);
+      setSelectedDoctorSlug(matchedDoctor?.doctorSlug ?? bookingDoctorSlug ?? "");
+      return;
+    }
+
+    if (bookingDoctorSlug) {
+      const matchedDoctor = doctorOptions.find((doctor) => doctor.doctorSlug === bookingDoctorSlug) ?? null;
+      if (matchedDoctor) {
+        setSelectedDoctorId(matchedDoctor.publicDoctorId);
+        setSelectedDoctorSlug(matchedDoctor.doctorSlug);
+        return;
+      }
+    }
+
+    if (selectedDoctorId && doctorOptions.some((doctor) => doctor.publicDoctorId === selectedDoctorId)) {
+      return;
+    }
+
+    const firstDoctor = doctorOptions[0] ?? null;
+    if (firstDoctor) {
+      setSelectedDoctorId(firstDoctor.publicDoctorId);
+      setSelectedDoctorSlug(firstDoctor.doctorSlug);
+    } else {
+      setSelectedDoctorId("");
+      setSelectedDoctorSlug("");
+      setSelectedClinicId("");
+      setSelectedClinicSlug("");
+    }
+  }, [bookingDoctorId, bookingDoctorSlug, doctorOptions, selectedDoctorId]);
+
+  useEffect(() => {
+    if (!selectedDoctorId) {
+      setSelectedClinicId("");
+      setSelectedClinicSlug("");
+      return;
+    }
+
+    if (bookingClinicCode) {
+      setSelectedClinicId(bookingClinicId || "");
+      setSelectedClinicSlug(bookingClinicCode);
+      setSelectedTenantId(bookingTenantId || "");
+      return;
+    }
+
+    const doctorDetailClinics = doctorContextDetail.data?.clinics ?? [];
+    const resolvedClinics = doctorDetailClinics;
+
+    if (resolvedClinics.length === 1) {
+      const onlyClinic = resolvedClinics[0];
+      if (selectedClinicSlug !== onlyClinic.clinicSlug) {
+        setSelectedClinicId("");
+        setSelectedClinicSlug(onlyClinic.clinicSlug);
+      }
+      return;
+    }
+
+    if (resolvedClinics.length > 1 && selectedClinicSlug && !resolvedClinics.some((clinic) => clinic.clinicSlug === selectedClinicSlug)) {
+      setSelectedClinicId("");
+      setSelectedClinicSlug("");
+      return;
+    }
+
+    if (!selectedClinicSlug && selectedClinicId) {
+      setSelectedClinicId("");
+    }
+  }, [bookingClinicCode, bookingClinicId, bookingTenantId, doctorContextDetail.data, doctorOptions, selectedClinicId, selectedClinicSlug, selectedDoctorId]);
+
+  useEffect(() => {
+    const slotRequestDoctorId = selectedDoctorId || "";
+    const slotRequestClinicSlug = resolvedSelectedClinicSlug || "";
+    const slotRequestClinicId = resolvedSelectedClinicId || "";
+    const slotRequestTenantId = resolvedSelectedTenantId || "";
+    const slotRequestKey = `${slotRequestDoctorId}|${slotRequestClinicId}|${slotRequestTenantId}|${slotRequestClinicSlug}|${selectedDate}`;
+
+    if (!slotRequestDoctorId || !slotRequestClinicSlug || !selectedDate) {
+      setSlots([]);
+      setSlotsLoading(false);
+      setSlotsError(null);
+      lastSlotRequestKeyRef.current = null;
+      return;
+    }
+
+    if (!portalSession) {
+      setSlots([]);
+      setSlotsLoading(false);
+      setSlotsError(null);
+      lastSlotRequestKeyRef.current = null;
+      return;
+    }
+
+    if (lastSlotRequestKeyRef.current === slotRequestKey) {
+      return;
+    }
+    lastSlotRequestKeyRef.current = slotRequestKey;
+
+    const abortController = new AbortController();
+    setSelectedSlot(null);
+    setConfirmation(null);
+    setSubmitError(null);
+    setSlotsLoading(true);
+    setSlotsError(null);
+
+    if (isPatientPortalLocalDev()) {
+      console.debug("[patient-portal] booking URL doctorId", bookingDoctorId);
+      console.debug("[patient-portal] selectedDoctor", {
+        publicDoctorId: selectedDoctor?.publicDoctorId ?? null,
+        id: selectedDoctorId || null,
+        slug: selectedDoctor?.doctorSlug || null,
+        clinicId: resolvedSelectedClinicId,
+        tenantId: resolvedSelectedTenantId,
+      });
+      console.debug("[patient-portal] slot request payload", {
+        slotRequestKey,
+        slotRequestDoctorId,
+        clinicSlug: slotRequestClinicSlug,
+        clinicId: slotRequestClinicId,
+        tenantId: slotRequestTenantId,
+        date: selectedDate,
+      });
+    }
+
+    loadPatientPortalDoctorSlots(
+      {
+        doctorId: slotRequestDoctorId,
+        clinicSlug: slotRequestClinicSlug,
+        tenantId: slotRequestTenantId || null,
+        clinicId: slotRequestClinicId || null,
+        date: selectedDate,
+      },
+      portalSession,
+      abortController.signal,
+    )
+      .then((result) => {
+        if (abortController.signal.aborted) {
+          return;
+        }
+        if (isPatientPortalLocalDev()) {
+          console.debug("[patient-portal] slot response", result);
+        }
+        setSlots(result);
+        setSlotsLoading(false);
+      })
+      .catch((error: unknown) => {
+        if (abortController.signal.aborted) {
+          return;
+        }
+        if (isPatientPortalLocalDev()) {
+          console.debug("[patient-portal] slot error", error);
+        }
+        setSlots([]);
+        setSlotsLoading(false);
+        const message = error instanceof Error ? error.message : "";
+        if (message.toLowerCase().includes("clinic is not available for online booking")) {
+          setSlotsError("We could not load slots for this doctor. Please try another date or choose another doctor.");
+        } else {
+          setSlotsError(message || "We could not load slots for this doctor. Please try another date or choose another doctor.");
+        }
+      });
+
+    return () => abortController.abort();
+  }, [
+    portalSession,
+    resolvedSelectedClinicId,
+    resolvedSelectedClinicSlug,
+    resolvedSelectedTenantId,
+    selectedDate,
+    selectedDoctorId,
+  ]);
 
   return (
     <PatientAccessBoundary
       session={session}
       onSignOut={onSignOut}
       title="Book an in-clinic appointment"
-      subtitle="Pick a tenant-scoped doctor, choose an available slot, and book the visit for your verified patient profile only."
+      subtitle="Choose a doctor, pick a convenient slot, and confirm your visit."
     >
       {bookingContextLine ? (
         <div className="portal-banner">
           <strong>{bookingContextLine}</strong>
-          <p>Discovery context is preserved in the booking URL so the public handoff stays clinic-aware.</p>
+          <p>Your selected doctor or clinic is ready for booking.</p>
         </div>
       ) : null}
-      <PatientPortalApiState
-        loading={doctorsState.loading}
-        error={doctorsState.error}
-        empty={doctorsState.data.length === 0}
-        emptyTitle="No doctors are ready for online booking"
-        emptyMessage="The clinic has not published any active doctors with patient-safe booking slots yet."
-      >
-        <div className="patient-booking-grid">
-          <section className="patient-panel">
+      {requiresClinicSelection && doctorContextDetail.data ? (
+        <DoctorClinicSelector
+          doctorName={publicBookingContext.doctorName || doctorContextDetail.data.doctorDisplayName}
+          clinics={doctorContextDetail.data.clinics}
+          selectedClinicCode={selectedClinicSlug || bookingClinicCode || ""}
+          nextAvailableSlot={doctorContextDetail.data.nextAvailableSlots[0] ?? null}
+          onSelect={(clinic) => {
+            setSelectedClinicId("");
+            setSelectedClinicSlug(clinic.clinicSlug);
+            setSelectedTenantId("");
+            syncBookingClinicContext(clinic.clinicSlug);
+          }}
+        />
+      ) : null}
+      {(!requiresClinicSelection && bookingDoctorsLoading) ? (
+        <div className="patient-empty-card">Loading available doctors...</div>
+      ) : null}
+      {!hasBookingContext ? (
+        <div className="patient-empty-card">
+          <strong>Choose how you want to book your visit</strong>
+          <p>Select a doctor or clinic to see available appointments.</p>
+          {recentDoctorOptions.length ? (
+            <div className="patient-action-row">
+              {recentDoctorOptions.map((doctor) => (
+                <button
+                  key={`${doctor.doctorName}-${doctor.clinicName ?? ""}`}
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => {
+                    const matched = publicDoctorsState.data.find((candidate) => candidate.doctorDisplayName === doctor.doctorName);
+                    if (!matched) {
+                      return;
+                    }
+                    const nextParams = new URLSearchParams();
+                    nextParams.set("doctorId", matched.publicDoctorId);
+                    nextParams.set("clinicSlug", matched.clinicSlug);
+                    setSearchParams(nextParams, { replace: true });
+                  }}
+                >
+                  {doctor.doctorName}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="patient-action-row">
+            <Link className="primary-button" to="/doctors">
+              Search doctors
+            </Link>
+            <Link className="secondary-button" to="/clinics">
+              Browse clinics
+            </Link>
+            <Link className="ghost-button" to="/">
+              Go back to discovery
+            </Link>
+          </div>
+        </div>
+      ) : null}
+      {bookingDoctorsError ? (
+        <div className="patient-empty-card">
+          <strong>Unable to load doctors right now</strong>
+          <p>{bookingDoctorsError}</p>
+          <div className="patient-action-row">
+            <Link className="primary-button" to="/doctors">
+              Browse available doctors
+            </Link>
+            <Link className="secondary-button" to="/clinics">
+              Choose another clinic
+            </Link>
+            <button className="ghost-button" type="button" onClick={handleStartOver}>
+              Start over
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {!bookingDoctorsError && !requiresClinicSelection && !bookingDoctorsLoading && allDoctorOptions.length === 0 ? (
+        <div className="patient-empty-card">
+          <strong>No doctors are available for online booking right now.</strong>
+          <p>Try browsing doctors or clinics to continue.</p>
+          <div className="patient-action-row">
+            <Link className="primary-button" to="/doctors">
+              Browse doctors
+            </Link>
+            <Link className="secondary-button" to="/clinics">
+              Browse clinics
+            </Link>
+            <button className="ghost-button" type="button" onClick={handleStartOver}>
+              Go back home
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {!bookingDoctorsError && !requiresClinicSelection && !bookingDoctorsLoading && allDoctorOptions.length > 0 ? (
+        <>
+          {!hasBookingContext ? (
+            <section className="patient-panel">
+              <div className="patient-panel-heading">
+                <h2>Find your doctor</h2>
+              </div>
+              <div className="patient-form-grid">
+                <label>
+                  <span>Clinic</span>
+                  <select value={selectedClinicFilter} onChange={(event) => setSelectedClinicFilter(event.target.value)}>
+                    <option value="">All clinics</option>
+                    {clinicOptions.map((clinic) => (
+                      <option key={clinic.clinicSlug} value={clinic.clinicSlug}>
+                        {clinic.clinicName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Specialty</span>
+                  <select value={selectedSpeciality} onChange={(event) => setSelectedSpeciality(event.target.value)}>
+                    {specialities.map((speciality) => (
+                      <option key={speciality} value={speciality}>
+                        {speciality}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </section>
+          ) : null}
+          <div className="patient-booking-grid">
+            <section className="patient-panel">
             <div className="patient-panel-heading">
               <h2>Choose your doctor</h2>
               <span className="panel-caption">Step 1</span>
@@ -1655,14 +2499,56 @@ export function PatientBookAppointmentPage({
                   key={doctor.publicDoctorId}
                   className={`doctor-choice-card${selectedDoctorId === doctor.publicDoctorId ? " is-active" : ""}`}
                   type="button"
-                  onClick={() => setSelectedDoctorId(doctor.publicDoctorId)}
+                  onClick={() => {
+                    manualDoctorSelectionRef.current = true;
+                    if (isPatientPortalLocalDev()) {
+                      console.debug("[patient-portal] manualDoctorClick", {
+                        publicDoctorId: doctor.publicDoctorId,
+                        doctorSlug: doctor.doctorSlug,
+                        clinicSlug: doctor.clinicSlug,
+                      });
+                    }
+                    setSelectedDoctorId(doctor.publicDoctorId);
+                    setSelectedDoctorSlug(doctor.doctorSlug);
+                    if (bookingClinicCode) {
+                      setSelectedClinicId(bookingClinicId || "");
+                      setSelectedClinicSlug(bookingClinicCode);
+                      setSelectedTenantId(bookingTenantId || "");
+                    } else if (doctorContextDetail.data?.clinics.length === 1 && doctor.clinicSlug) {
+                      setSelectedClinicId("");
+                      setSelectedClinicSlug(doctor.clinicSlug);
+                      setSelectedTenantId("");
+                    } else {
+                      setSelectedClinicId("");
+                      setSelectedClinicSlug("");
+                      setSelectedTenantId("");
+                    }
+                    setSelectedSlot(null);
+                    setConfirmation(null);
+                    setSubmitError(null);
+                    const nextParams = new URLSearchParams(searchParams);
+                    nextParams.set("doctorId", doctor.publicDoctorId);
+                    if (bookingClinicCode || (doctorContextDetail.data?.clinics.length === 1 && doctor.clinicSlug)) {
+                      const clinicSlug = bookingClinicCode || doctor.clinicSlug || "";
+                      nextParams.set("clinicSlug", clinicSlug);
+                    }
+                    setSearchParams(nextParams, { replace: true });
+                    savePublicBookingContext({
+                      clinicId: bookingClinicId,
+                      clinicSlug: bookingClinicCode || (doctorContextDetail.data?.clinics.length === 1 ? doctor.clinicSlug : null),
+                      tenantId: bookingTenantId,
+                      doctorId: doctor.publicDoctorId,
+                      nextPath: currentBookingPath,
+                    });
+                  }}
                 >
                   <strong>{doctor.doctorName}</strong>
                   <span>{doctor.specialization ?? "General consultation"}</span>
                   <small>
-                    {doctor.qualification ?? "Clinic doctor"}
+                    {doctor.qualification ?? doctor.clinicName ?? "Clinic doctor"}
                     {doctor.consultationRoom ? ` · ${doctor.consultationRoom}` : ""}
                     {doctor.yearsOfExperience ? ` · ${doctor.yearsOfExperience} yrs exp` : ""}
+                    {doctor.nextAvailableSlotSummary ? ` · ${doctor.nextAvailableSlotSummary}` : ""}
                   </small>
                 </button>
               ))}
@@ -1693,7 +2579,8 @@ export function PatientBookAppointmentPage({
             ) : null}
             {!slotsLoading && !slotsError && selectedDoctor && availableSlots.length === 0 ? (
               <div className="patient-inline-empty">
-                No patient-bookable slots are available for {selectedDoctor.doctorName} on {formatDate(selectedDate)}.
+                <strong>No slots available for this date.</strong>
+                <p>Try the next day or choose another doctor to continue.</p>
               </div>
             ) : null}
 
@@ -1704,7 +2591,7 @@ export function PatientBookAppointmentPage({
                     key={`${slot.appointmentDate}-${slot.slotTime}`}
                     className={`booking-slot-card${selectedSlotTime === slot.slotTime ? " is-active" : ""}`}
                     type="button"
-                    onClick={() => setSelectedSlotTime(slot.slotTime)}
+                    onClick={() => setSelectedSlot(slot)}
                   >
                     <strong>{formatTime(slot.slotTime)}</strong>
                     <span>{slot.slotEndTime ? `Until ${formatTime(slot.slotEndTime)}` : "Available"}</span>
@@ -1712,64 +2599,65 @@ export function PatientBookAppointmentPage({
                 ))}
               </div>
             ) : null}
-          </section>
-        </div>
-
-        <section className="patient-panel">
-          <div className="patient-panel-heading">
-            <h2>Confirm booking</h2>
-            <span className="panel-caption">Step 3</span>
+            </section>
           </div>
-          <form className="patient-booking-form" onSubmit={handleSubmit}>
-            <label className="patient-form-field">
-              <span>Reason for visit</span>
-              <textarea
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                maxLength={300}
-                rows={4}
-                placeholder="Optional symptoms or complaint"
-              />
-            </label>
-            <div className="booking-summary-card">
-              <strong>{selectedDoctor?.doctorName ?? "Select a doctor"}</strong>
-              <span>{selectedDoctor?.specialization ?? "Choose a speciality and doctor first."}</span>
-              <small>
-                {selectedDate ? formatDate(selectedDate) : "Pick a date"} {selectedSlotTime ? `· ${formatTime(selectedSlotTime)}` : ""}
-              </small>
+
+          <section className="patient-panel">
+            <div className="patient-panel-heading">
+              <h2>Confirm booking</h2>
+              <span className="panel-caption">Step 3</span>
             </div>
-            {submitError ? (
-              <div className="patient-inline-empty">
-                <strong>Booking unavailable</strong>
-                <p>{submitError}</p>
+            <form className="patient-booking-form" onSubmit={handleSubmit}>
+              <label className="patient-form-field">
+                <span>Reason for visit</span>
+                <textarea
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                  maxLength={300}
+                  rows={4}
+                  placeholder="Optional symptoms or complaint"
+                />
+              </label>
+              <div className="booking-summary-card">
+                <strong>{selectedDoctor?.doctorName ?? "Select a doctor"}</strong>
+                <span>{selectedDoctor?.specialization ?? "Choose a speciality and doctor first."}</span>
+                <small>
+                  {selectedDoctor?.clinicName ?? "Clinic"} {selectedDate ? `· ${formatDate(selectedDate)}` : ""} {selectedSlotTime ? `· ${formatTime(selectedSlotTime)}` : ""}
+                </small>
               </div>
-            ) : null}
-            {confirmation ? (
-              <div className="patient-success-card">
-                <strong>{confirmation.message}</strong>
-                <p>
-                  {confirmation.doctorName ?? "Doctor"} · {formatDate(confirmation.appointmentDate)} ·{" "}
-                  {formatTime(confirmation.appointmentTime)}
-                </p>
-                <span>
-                  {confirmation.clinicName ?? "Clinic"} · {formatStatusLabel(confirmation.status)}
-                </span>
-                <Link className="secondary-button" to="/patient/appointments">
-                  View appointments
+              {submitError ? (
+                <div className="patient-inline-empty">
+                  <strong>Booking unavailable</strong>
+                  <p>{submitError}</p>
+                </div>
+              ) : null}
+              {confirmation ? (
+                <div className="patient-success-card">
+                  <strong>{confirmation.message}</strong>
+                  <p>
+                    {confirmation.doctorName ?? "Doctor"} · {formatDate(confirmation.appointmentDate)} ·{" "}
+                    {formatTime(confirmation.appointmentTime)}
+                  </p>
+                  <span>
+                    {confirmation.clinicName ?? "Clinic"} · {formatStatusLabel(confirmation.status)}
+                  </span>
+                  <Link className="secondary-button" to="/patient/appointments">
+                    View appointments
+                  </Link>
+                </div>
+              ) : null}
+              <div className="patient-action-row">
+                <button className="primary-button" type="submit" disabled={submitPending || !selectedDoctorId || !selectedSlotTime}>
+                  {submitPending ? "Confirming..." : "Confirm booking"}
+                </button>
+                <Link className="ghost-button" to="/patient/appointments">
+                  Cancel
                 </Link>
               </div>
-            ) : null}
-            <div className="patient-action-row">
-              <button className="primary-button" type="submit" disabled={submitPending || !selectedDoctorId || !selectedSlotTime}>
-                {submitPending ? "Confirming..." : "Confirm booking"}
-              </button>
-              <Link className="ghost-button" to="/patient/appointments">
-                Cancel
-              </Link>
-            </div>
-          </form>
-        </section>
-      </PatientPortalApiState>
+            </form>
+          </section>
+        </>
+      ) : null}
     </PatientAccessBoundary>
   );
 }
@@ -1785,7 +2673,7 @@ export function PatientPrescriptionsPage({ session, onSignOut }: { session: Pati
       session={session}
       onSignOut={onSignOut}
       title="Prescriptions"
-      subtitle="Read-only prescription cards show patient-safe medicine and follow-up summaries."
+      subtitle="Review medicines, advice, and follow-up details shared by your clinic."
     >
       <PatientPortalApiState
         loading={prescriptions.loading}
@@ -1816,7 +2704,7 @@ export function PatientPrescriptionsPage({ session, onSignOut }: { session: Pati
               <div className="patient-detail-list">
                 <div>
                   <strong>Diagnosis summary</strong>
-                  <span>{prescription.diagnosisSummary ?? "No patient-safe diagnosis summary is available."}</span>
+                  <span>{prescription.diagnosisSummary ?? "No diagnosis summary is available."}</span>
                 </div>
                 <div>
                   <strong>Advice</strong>
@@ -1901,7 +2789,7 @@ export function PatientBillsPage({ session, onSignOut }: { session: PatientPorta
       session={session}
       onSignOut={onSignOut}
       title="Bills"
-      subtitle="Review patient-safe bill totals, due amounts, and receipt summaries without exposing billing ledger internals."
+      subtitle="Review your bills, payments, and receipt summaries."
     >
       <PatientPortalApiState
         loading={bills.loading}
@@ -2063,7 +2951,7 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
       session={session}
       onSignOut={onSignOut}
       title="Notifications"
-      subtitle="See patient-safe appointment, prescription, bill, lab, and follow-up notifications for your own tenant session."
+      subtitle="Stay updated with appointment, prescription, bill, and lab notifications."
     >
       <PatientPortalApiState
         loading={notifications.loading}
@@ -3639,14 +4527,14 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
       session={session}
       onSignOut={onSignOut}
       title="Profile"
-      subtitle="Only your own patient-safe identity and health summary fields appear here."
+      subtitle="Review your details and update the information you want the clinic to keep on file."
     >
       <PatientPortalApiState
         loading={profile.loading}
         error={profile.error}
         empty={!profileData}
         emptyTitle="Your profile is not available yet"
-        emptyMessage="The portal will show your patient-safe demographic and history summary once the clinic has linked it."
+        emptyMessage="Your profile details will appear here once the clinic has linked them."
       >
         <div className="patient-content-grid">
           <article className="patient-panel">
@@ -3711,8 +4599,8 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
         {formState ? (
           <article className="patient-panel">
             <div className="patient-panel-heading">
-              <h2>Edit safe profile fields</h2>
-              <span className="panel-caption">Patient number, tenant, and mobile remain locked</span>
+              <h2>Edit profile details</h2>
+              <span className="panel-caption">Your mobile number stays locked after verification</span>
             </div>
             <form className="patient-login-form patient-registration-form" onSubmit={handleProfileSave}>
               <div className="patient-form-grid">

@@ -167,6 +167,7 @@ public class PublicCatalogFacade {
 
         SlotSummary slotSummary = slotSummary(candidate.snapshot().tenant().id(), candidate.doctor().user().appUserId());
         return new PublicDoctorDetailResponse(
+                candidate.doctor().user().appUserId().toString(),
                 slugForDoctor(candidate.doctor()),
                 candidate.doctor().user().displayName(),
                 null,
@@ -376,6 +377,7 @@ public class PublicCatalogFacade {
     private PublicDoctorSummaryResponse toDoctorSummary(TenantSnapshot snapshot, DoctorSnapshot doctor) {
         SlotSummary slotSummary = slotSummary(snapshot.tenant().id(), doctor.user().appUserId());
         return new PublicDoctorSummaryResponse(
+                doctor.user().appUserId().toString(),
                 slugForDoctor(doctor),
                 doctor.user().displayName(),
                 null,

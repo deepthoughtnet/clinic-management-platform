@@ -1,5 +1,6 @@
 package com.deepthoughtnet.clinic.api.patientportal.auth;
 
+import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalOtpContext;
 import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalOtpRequestResponse;
 import com.deepthoughtnet.clinic.api.patientportal.auth.dto.PatientPortalOtpVerifyResponse;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
@@ -11,7 +12,9 @@ import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,7 +26,8 @@ import org.springframework.util.StringUtils;
 @Service
 public class PatientPortalOtpService {
     private static final Logger log = LoggerFactory.getLogger(PatientPortalOtpService.class);
-    private static final String SAFE_VERIFY_FAILURE_MESSAGE = "Unable to verify patient access for this clinic.";
+    private static final String SAFE_VERIFY_FAILURE_MESSAGE = "Unable to verify patient access right now.";
+    private static final String DEMO_CLINIC_CODE = "demo-clinic";
 
     private final TenantRepository tenantRepository;
     private final PatientRepository patientRepository;
@@ -55,11 +59,19 @@ public class PatientPortalOtpService {
 
     @Transactional
     public PatientPortalOtpRequestResponse requestOtp(String tenantCode, String phone) {
-        TenantEntity tenant = resolveTenant(tenantCode);
-        String normalizedPhone = normalizePhone(phone);
+        return requestOtp(phone, new PatientPortalOtpContext(null, tenantCode, null, null, null));
+    }
+
+    @Transactional
+    public PatientPortalOtpRequestResponse requestOtp(String mobile, PatientPortalOtpContext context) {
+        TenantEntity tenant = resolveTenant(context);
+        UUID tenantId = tenant == null ? null : tenant.getId();
+        String normalizedPhone = normalizePhone(mobile);
         OffsetDateTime now = OffsetDateTime.now();
 
-        var latestChallenge = challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(tenant.getId(), normalizedPhone);
+        var latestChallenge = tenantId == null
+                ? challengeRepository.findTopByPhoneNormalizedOrderByCreatedAtDesc(normalizedPhone)
+                : challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(tenantId, normalizedPhone);
         if (latestChallenge.isPresent()) {
             long secondsSinceLast = Duration.between(latestChallenge.get().getCreatedAt(), now).getSeconds();
             long cooldownSeconds = properties.getResendCooldown().getSeconds();
@@ -80,16 +92,16 @@ public class PatientPortalOtpService {
         OffsetDateTime expiresAt = now.plus(properties.getOtpTtl());
 
         challengeRepository.save(PatientPortalOtpChallengeEntity.create(
-                tenant.getId(),
+                tenantId,
                 normalizedPhone,
                 otpHash,
                 expiresAt
         ));
 
         if (properties.isExposeDevOtp()) {
-            log.info("patient.portal.otp.generated tenantId={} phone={} devOtp={}", tenant.getId(), normalizedPhone, devOtp);
+            log.info("patient.portal.otp.generated tenantId={} phone={} devOtp={}", tenantId, normalizedPhone, devOtp);
         } else {
-            log.info("patient.portal.otp.generated tenantId={} phone={}", tenant.getId(), normalizedPhone);
+            log.info("patient.portal.otp.generated tenantId={} phone={}", tenantId, normalizedPhone);
         }
 
         return new PatientPortalOtpRequestResponse(
@@ -103,53 +115,75 @@ public class PatientPortalOtpService {
 
     @Transactional
     public PatientPortalOtpVerifyResponse verifyOtp(String tenantCode, String phone, String otp) {
-        TenantEntity tenant = resolveTenant(tenantCode);
-        String normalizedPhone = normalizePhone(phone);
+        return verifyOtp(phone, otp, new PatientPortalOtpContext(null, tenantCode, null, null, null));
+    }
+
+    @Transactional
+    public PatientPortalOtpVerifyResponse verifyOtp(String mobile, String otp, PatientPortalOtpContext context) {
+        TenantEntity tenant = resolveTenant(context);
+        String normalizedPhone = normalizePhone(mobile);
         String normalizedOtp = normalizeOtp(otp);
 
-        var latestChallenge = challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(tenant.getId(), normalizedPhone);
+        UUID tenantId = tenant == null ? null : tenant.getId();
+        var latestChallenge = tenantId == null
+                ? challengeRepository.findTopByPhoneNormalizedOrderByCreatedAtDesc(normalizedPhone)
+                : challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(tenantId, normalizedPhone);
         if (latestChallenge.isEmpty()) {
-            return new PatientPortalOtpVerifyResponse(false, false, false, SAFE_VERIFY_FAILURE_MESSAGE, null, null, null, null);
+            return new PatientPortalOtpVerifyResponse(false, false, false, SAFE_VERIFY_FAILURE_MESSAGE, null, null, null, null, null);
         }
 
         PatientPortalOtpChallengeEntity challenge = latestChallenge.get();
         OffsetDateTime now = OffsetDateTime.now();
         if (challenge.isVerified()) {
-            return new PatientPortalOtpVerifyResponse(false, false, false, "A new OTP request is required.", null, null, null, null);
+            return new PatientPortalOtpVerifyResponse(false, false, false, "A new OTP request is required.", null, null, null, null, null);
         }
         if (challenge.getExpiresAt().isBefore(now)) {
-            return new PatientPortalOtpVerifyResponse(false, false, false, "OTP expired. Request a new code.", null, null, null, null);
+            return new PatientPortalOtpVerifyResponse(false, false, false, "OTP expired. Request a new code.", null, null, null, null, null);
         }
         if (challenge.getAttempts() >= properties.getMaxAttempts()) {
-            return new PatientPortalOtpVerifyResponse(false, false, false, "OTP attempts exceeded. Request a new code.", null, null, null, null);
+            return new PatientPortalOtpVerifyResponse(false, false, false, "OTP attempts exceeded. Request a new code.", null, null, null, null, null);
         }
         if (!passwordEncoder.matches(normalizedOtp, challenge.getOtpHash())) {
             challenge.incrementAttempts();
             challengeRepository.save(challenge);
             if (challenge.getAttempts() >= properties.getMaxAttempts()) {
-                return new PatientPortalOtpVerifyResponse(false, false, false, "OTP attempts exceeded. Request a new code.", null, null, null, null);
+                return new PatientPortalOtpVerifyResponse(false, false, false, "OTP attempts exceeded. Request a new code.", null, null, null, null, null);
             }
-            return new PatientPortalOtpVerifyResponse(false, false, false, "Invalid OTP. Please try again.", null, null, null, null);
+            return new PatientPortalOtpVerifyResponse(false, false, false, "Invalid OTP. Please try again.", null, null, null, null, null);
         }
 
         challenge.markVerified();
         challengeRepository.save(challenge);
 
-        var patient = patientRepository.findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenant.getId(), normalizedPhone);
+        Optional<PatientEntity> patient = tenantId == null
+                ? resolveUniqueActivePatientByMobile(normalizedPhone)
+                : patientRepository.findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, normalizedPhone);
+
         if (patient.isEmpty()) {
-            String registrationSubject = registrationSubject(tenant.getId(), normalizedPhone);
-            String registrationToken = sessionTokenService.issueRegistrationToken(
-                    registrationSubject,
-                    tenant.getId(),
-                    normalizedPhone,
-                    "New patient"
-            );
+            if (tenant == null) {
+                tenant = resolveDirectRegistrationTenant();
+            }
+            String registrationToken = null;
+            String tenantCode = null;
+            String tenantIdValue = null;
+            if (tenant != null) {
+                String registrationSubject = registrationSubject(tenant.getId(), normalizedPhone);
+                registrationToken = sessionTokenService.issueRegistrationToken(
+                        registrationSubject,
+                        tenant.getId(),
+                        normalizedPhone,
+                        "New patient"
+                );
+                tenantIdValue = tenant.getId().toString();
+                tenantCode = tenant.getCode();
+            }
             return new PatientPortalOtpVerifyResponse(
                     true,
                     false,
                     true,
                     "OTP verified. Complete your quick registration to open the patient portal.",
-                    tenant.getId().toString(),
+                    tenantIdValue,
+                    tenantCode,
                     null,
                     null,
                     registrationToken
@@ -157,6 +191,11 @@ public class PatientPortalOtpService {
         }
 
         PatientEntity matchedPatient = patient.get();
+        if (tenant == null) {
+            tenant = tenantRepository.findById(matchedPatient.getTenantId())
+                    .orElseThrow(() -> new IllegalStateException("Matched patient tenant was not found"));
+            tenantId = tenant.getId();
+        }
         String subject = patientSubject(tenant.getId(), matchedPatient.getId());
         UUID appUserId = appUserProvisioner.upsertAndReturnId(
                 tenant.getId(),
@@ -171,6 +210,7 @@ public class PatientPortalOtpService {
                 subject,
                 tenant.getId(),
                 matchedPatient.getId(),
+                normalizedPhone,
                 matchedPatient.getFirstName() + " " + matchedPatient.getLastName()
         );
 
@@ -180,16 +220,37 @@ public class PatientPortalOtpService {
                 false,
                 "Patient portal session verified.",
                 tenant.getId().toString(),
+                tenant.getCode(),
                 matchedPatient.getFirstName() + " " + matchedPatient.getLastName(),
                 sessionToken,
                 null
         );
     }
 
-    private TenantEntity resolveTenant(String tenantCode) {
-        String normalized = StringUtils.hasText(tenantCode) ? tenantCode.trim().toLowerCase(Locale.ROOT) : null;
-        return tenantRepository.findByCode(normalized)
-                .orElseThrow(() -> new IllegalArgumentException("Invalid tenant code"));
+    private TenantEntity resolveTenant(PatientPortalOtpContext context) {
+        if (context == null) {
+            return null;
+        }
+        if (StringUtils.hasText(context.tenantId())) {
+            try {
+                UUID tenantId = UUID.fromString(context.tenantId().trim());
+                TenantEntity tenant = tenantRepository.findById(tenantId).orElse(null);
+                if (tenant != null) {
+                    return tenant;
+                }
+            } catch (IllegalArgumentException ex) {
+                log.warn("patient.portal.otp.invalid_tenant_id tenantId={}", context.tenantId());
+            }
+        }
+        if (StringUtils.hasText(context.clinicSlug())) {
+            String normalized = context.clinicSlug().trim().toLowerCase(Locale.ROOT);
+            return tenantRepository.findByCode(normalized).orElse(null);
+        }
+        return null;
+    }
+
+    private TenantEntity resolveDirectRegistrationTenant() {
+        return tenantRepository.findByCode(DEMO_CLINIC_CODE).orElse(null);
     }
 
     private String normalizePhone(String rawPhone) {
@@ -224,5 +285,17 @@ public class PatientPortalOtpService {
 
     private String registrationSubject(UUID tenantId, String phone) {
         return "patientportal-registration:" + tenantId + ":" + phone;
+    }
+
+    private Optional<PatientEntity> resolveUniqueActivePatientByMobile(String normalizedPhone) {
+        List<PatientEntity> candidates = patientRepository.findByMobileIgnoreCaseAndActiveTrue(normalizedPhone);
+        if (candidates.isEmpty()) {
+            return Optional.empty();
+        }
+        if (candidates.size() > 1) {
+            log.warn("patient.portal.otp.ambiguous_mobile phone={} matches={}", normalizedPhone, candidates.size());
+            return Optional.empty();
+        }
+        return Optional.of(candidates.get(0));
     }
 }

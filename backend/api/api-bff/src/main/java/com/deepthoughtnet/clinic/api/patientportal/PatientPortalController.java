@@ -77,9 +77,12 @@ public class PatientPortalController {
     @GetMapping("/doctors/{publicDoctorId}/slots")
     public List<PatientPortalDoctorSlotResponse> doctorSlots(
             @PathVariable String publicDoctorId,
+            @RequestParam(required = false) String clinicSlug,
+            @RequestParam(required = false) String tenantId,
+            @RequestParam(required = false) String clinicId,
             @RequestParam LocalDate date
     ) {
-        return patientPortalService.doctorSlots(publicDoctorId, date);
+        return patientPortalService.doctorSlots(publicDoctorId, clinicSlug, tenantId, clinicId, date);
     }
 
     @PostMapping("/appointments")

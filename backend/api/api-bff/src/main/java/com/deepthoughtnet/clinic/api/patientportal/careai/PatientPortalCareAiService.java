@@ -213,10 +213,15 @@ public class PatientPortalCareAiService {
         markAnsweredFacts(state);
         String detectedTimePreference = findPreferredTimeWindow(message, state.language, state);
         log.info(
-                "careai.turn.received userText={} activeWorkflow={} lastQuestionKey={} topicClassification={} detectedTimePreference={} preferredTimeWindow={} answeredTimePreference={} voiceChannel={}",
+                "careai.turn.received conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} userText={} activeWorkflow={} lastQuestionKey={} escalationReason={} topicClassification={} detectedTimePreference={} preferredTimeWindow={} answeredTimePreference={} voiceChannel={}",
+                RequestContextHolder.requireTenantId(),
+                externalSessionId,
+                patientId,
+                patientPortalService.currentPatientMobile(),
                 trimToLength(message, 160),
                 state.currentIntent == null ? null : state.currentIntent.name(),
                 state.lastQuestionKey,
+                state.handoffReason,
                 null,
                 detectedTimePreference,
                 state.preferredTimeWindow,
@@ -230,10 +235,15 @@ public class PatientPortalCareAiService {
         }
         CareAiTopicClassification topicClassification = classifyTopic(state, message);
         log.info(
-                "careai.turn.classified userText={} activeWorkflow={} lastQuestionKey={} topicClassification={} detectedTimePreference={}",
+                "careai.turn.classified conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} userText={} activeWorkflow={} lastQuestionKey={} escalationReason={} topicClassification={} detectedTimePreference={}",
+                RequestContextHolder.requireTenantId(),
+                externalSessionId,
+                patientId,
+                patientPortalService.currentPatientMobile(),
                 trimToLength(message, 160),
                 state.currentIntent == null ? null : state.currentIntent.name(),
                 state.lastQuestionKey,
+                state.handoffReason,
                 topicClassification,
                 detectedTimePreference
         );
@@ -323,10 +333,15 @@ public class PatientPortalCareAiService {
         String reply = routeConversation(state, message);
         String nextPromptKey = inferQuestionKey(state, reply);
         log.info(
-                "careai.turn.next-prompt userText={} activeWorkflow={} lastQuestionKey={} topicClassification={} detectedTimePreference={} nextPromptKey={} repeatedQuestionCount={}",
+                "careai.turn.next-prompt conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} userText={} activeWorkflow={} lastQuestionKey={} escalationReason={} topicClassification={} detectedTimePreference={} nextPromptKey={} repeatedQuestionCount={}",
+                RequestContextHolder.requireTenantId(),
+                externalSessionId,
+                patientId,
+                patientPortalService.currentPatientMobile(),
                 trimToLength(message, 160),
                 state.currentIntent == null ? null : state.currentIntent.name(),
                 state.lastQuestionKey,
+                state.handoffReason,
                 topicClassification,
                 detectedTimePreference,
                 nextPromptKey,
@@ -801,10 +816,37 @@ public class PatientPortalCareAiService {
         }
 
         LocalDate date = LocalDate.parse(state.preferredDate);
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "patient.portal.careai.slot.lookup.request conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} doctorId={} clinicSlug={} clinicId={} tenantId={} date={}",
+                    RequestContextHolder.requireTenantId(),
+                    RequestContextHolder.require().correlationId(),
+                    patientPortalService.currentPatientId(),
+                    patientPortalService.currentPatientMobile(),
+                    publicDoctorId,
+                    null,
+                    null,
+                    null,
+                    date
+            );
+        }
         List<PatientPortalDoctorSlotResponse> selectableSlots = patientPortalService.doctorSlots(publicDoctorId, date).stream()
                 .filter(PatientPortalDoctorSlotResponse::selectable)
                 .sorted(Comparator.comparing(PatientPortalDoctorSlotResponse::slotTime))
                 .toList();
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "patient.portal.careai.slot.lookup.response conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} doctorId={} date={} slotCount={} slotTimes={}",
+                    RequestContextHolder.requireTenantId(),
+                    RequestContextHolder.require().correlationId(),
+                    patientPortalService.currentPatientId(),
+                    patientPortalService.currentPatientMobile(),
+                    publicDoctorId,
+                    date,
+                    selectableSlots.size(),
+                    selectableSlots.stream().map(slot -> slot.slotTime().format(TIME_FORMATTER)).toList()
+            );
+        }
         if (selectableSlots.isEmpty()) {
             clearSlotSelection(state);
             return false;
@@ -905,10 +947,14 @@ public class PatientPortalCareAiService {
             state.confirmationPending = false;
             return response(state, askIntentPrompt(state.language));
         }
+        logAppointmentAction("executeConfirmedAction", state, List.of());
         try {
             PatientPortalAppointmentConfirmationResponse confirmation = switch (state.pendingAction) {
                 case BOOK_APPOINTMENT -> patientPortalService.bookAppointment(new PatientPortalAppointmentBookingRequest(
                         state.selectedDoctorId,
+                        null,
+                        null,
+                        null,
                         LocalDate.parse(state.preferredDate),
                         LocalTime.parse(state.selectedSlot, TIME_FORMATTER),
                         state.reason
@@ -1248,7 +1294,9 @@ public class PatientPortalCareAiService {
     }
 
     private boolean ensureAppointmentOptions(CareAiState state) {
-        List<AppointmentChoice> choices = patientPortalService.careAiUpcomingAppointments().stream()
+        List<PatientPortalCareAiAppointmentOption> appointments = patientPortalService.careAiUpcomingAppointments();
+        logAppointmentAction("appointmentLookup", state, appointments);
+        List<AppointmentChoice> choices = appointments.stream()
                 .sorted(Comparator
                         .comparing(PatientPortalCareAiAppointmentOption::appointmentDate, Comparator.nullsLast(Comparator.naturalOrder()))
                         .thenComparing(PatientPortalCareAiAppointmentOption::appointmentTime, Comparator.nullsLast(Comparator.naturalOrder())))
@@ -3120,6 +3168,7 @@ public class PatientPortalCareAiService {
 
     private String appointmentStatusSideAnswer(CareAiState state) {
         List<PatientPortalCareAiAppointmentOption> appointments = patientPortalService.careAiUpcomingAppointments();
+        logAppointmentAction("appointmentStatusSideAnswer", state, appointments);
         if (appointments.isEmpty()) {
             return noUpcomingAppointmentsPrompt(state.language);
         }
@@ -3135,6 +3184,29 @@ public class PatientPortalCareAiService {
                 next.reason(),
                 next.doctorName()
         ), state.language);
+    }
+
+    private void logAppointmentAction(String action, CareAiState state, List<PatientPortalCareAiAppointmentOption> appointments) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        List<PatientPortalCareAiAppointmentOption> safeAppointments = appointments == null ? List.of() : appointments;
+        log.debug(
+                "patient.portal.careai.appointment.action action={} conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} currentIntent={} pendingAction={} confirmationPending={} selectedAppointmentId={} appointmentCount={} appointmentIds={} appointmentStatuses={} appointmentDates={}",
+                action,
+                RequestContextHolder.requireTenantId(),
+                RequestContextHolder.require().correlationId(),
+                patientPortalService.currentPatientId(),
+                patientPortalService.currentPatientMobile(),
+                state.currentIntent,
+                state.pendingAction,
+                state.confirmationPending,
+                state.selectedAppointmentId,
+                safeAppointments.size(),
+                safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::appointmentId).toList(),
+                safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::status).toList(),
+                safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::appointmentDate).toList()
+        );
     }
 
     private String resumeWorkflowPrompt(CareAiState state, String sideAnswer) {

@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.publicsite.dto;
 import java.util.List;
 
 public record PublicDoctorDetailResponse(
+        String publicDoctorId,
         String doctorSlug,
         String doctorDisplayName,
         String photoUrl,

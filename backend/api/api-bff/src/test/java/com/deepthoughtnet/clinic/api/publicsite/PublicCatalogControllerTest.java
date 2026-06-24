@@ -23,6 +23,7 @@ class PublicCatalogControllerTest {
         PublicCatalogController controller = new PublicCatalogController(facade);
 
         var doctor = new PublicDoctorSummaryResponse(
+                "0f8fad5b-d9cb-469f-a165-70867728950e",
                 "dr-asha-menon",
                 "Dr. Asha Menon",
                 null,
@@ -52,6 +53,7 @@ class PublicCatalogControllerTest {
         var speciality = new PublicSpecialitySummaryResponse("Dermatology", "dermatology", 1, 1);
         var search = new PublicSearchResponse(doctorsPage, clinicsPage, List.of(speciality));
         var doctorDetail = new PublicDoctorDetailResponse(
+                "0f8fad5b-d9cb-469f-a165-70867728950e",
                 "dr-asha-menon",
                 "Dr. Asha Menon",
                 null,

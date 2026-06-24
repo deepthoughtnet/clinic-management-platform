@@ -12,7 +12,8 @@ import java.util.UUID;
 @Table(
         name = "patient_portal_otp_challenges",
         indexes = {
-                @Index(name = "ix_patient_portal_otp_tenant_phone_created", columnList = "tenant_id,phone_normalized,created_at")
+                @Index(name = "ix_patient_portal_otp_tenant_phone_created", columnList = "tenant_id,phone_normalized,created_at"),
+                @Index(name = "ix_patient_portal_otp_phone_created", columnList = "phone_normalized,created_at")
         }
 )
 public class PatientPortalOtpChallengeEntity {
@@ -21,7 +22,7 @@ public class PatientPortalOtpChallengeEntity {
     @Column(nullable = false)
     private UUID id;
 
-    @Column(name = "tenant_id", nullable = false)
+    @Column(name = "tenant_id")
     private UUID tenantId;
 
     @Column(name = "phone_normalized", nullable = false, length = 32)

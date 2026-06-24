@@ -6,6 +6,7 @@ public record PatientPortalOtpVerifyResponse(
         boolean registrationRequired,
         String message,
         String tenantId,
+        String tenantCode,
         String patientDisplayName,
         String patientSessionToken,
         String registrationSessionToken

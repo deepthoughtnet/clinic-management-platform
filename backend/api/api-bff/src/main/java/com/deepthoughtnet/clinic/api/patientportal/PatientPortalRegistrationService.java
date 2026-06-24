@@ -117,6 +117,7 @@ public class PatientPortalRegistrationService {
                 patientSubject,
                 tenantId,
                 patientId,
+                verifiedPhone,
                 patientDisplayName
         );
 

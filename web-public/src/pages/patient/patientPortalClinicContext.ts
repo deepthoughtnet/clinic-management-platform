@@ -1,3 +1,5 @@
+import { isUuid } from "../../api/patientPortal";
+
 export type PatientPortalClinicContext = {
   clinicId: string | null;
   clinicCode: string;
@@ -14,6 +16,27 @@ export type PatientPortalClinicContext = {
   nextPath: string | null;
 };
 
+export type PatientAuthContext = {
+  mobile?: string;
+  clinicId?: string;
+  clinicSlug?: string;
+  clinicCode?: string;
+  tenantId?: string;
+  clinicName?: string;
+  doctorId?: string;
+  doctorSlug?: string;
+  doctorName?: string;
+  selectedSlot?: Record<string, unknown>;
+  appointmentIntent?: {
+    nextPath?: string;
+  };
+  source: "direct" | "clinic" | "doctor" | "booking";
+};
+
+export type PublicBookingContext = PatientAuthContext & {
+  nextPath?: string;
+};
+
 export type PatientPortalLinkContext = {
   clinicId?: string | null;
   clinicCode?: string | null;
@@ -25,6 +48,11 @@ export type PatientPortalLinkContext = {
   doctorSlug?: string | null;
   doctorName?: string | null;
   nextPath?: string | null;
+  mobile?: string | null;
+  selectedSlot?: Record<string, unknown> | null;
+  appointmentIntent?: {
+    nextPath?: string | null;
+  } | null;
 };
 
 export type PatientPortalRouteSelectedClinicState = {
@@ -38,6 +66,8 @@ export type PatientPortalRouteSelectedClinicState = {
   tenantId: string | null;
   tenantSlug: string | null;
   nextPath: string | null;
+  mobile: string | null;
+  selectedSlot: Record<string, unknown> | null;
 };
 
 export type PatientPortalRouteState = {
@@ -96,7 +126,8 @@ function normalizeRouteSelectedClinicState(value: unknown): PatientPortalRouteSe
     source.selectedClinic && typeof source.selectedClinic === "object"
       ? (source.selectedClinic as Record<string, unknown>)
       : source;
-  const clinicId = normalizeClinicCode(typeof selectedClinic.clinicId === "string" ? selectedClinic.clinicId : null);
+  const clinicIdValue = normalizeClinicCode(typeof selectedClinic.clinicId === "string" ? selectedClinic.clinicId : null);
+  const clinicId = isUuid(clinicIdValue) ? clinicIdValue : null;
   const clinicCode = normalizeClinicCode(
     typeof selectedClinic.clinicCode === "string"
       ? selectedClinic.clinicCode
@@ -104,9 +135,17 @@ function normalizeRouteSelectedClinicState(value: unknown): PatientPortalRouteSe
         ? selectedClinic.tenantCode
         : typeof selectedClinic.clinicSlug === "string"
           ? selectedClinic.clinicSlug
-          : clinicId,
+          : clinicIdValue,
   );
-  if (!clinicCode) {
+  const doctorSlug = normalizeClinicCode(typeof selectedClinic.doctorSlug === "string" ? selectedClinic.doctorSlug : null);
+  const doctorId = normalizeClinicCode(typeof selectedClinic.doctorId === "string" ? selectedClinic.doctorId : null);
+  const nextPath = normalizeNextPath(typeof selectedClinic.nextPath === "string" ? selectedClinic.nextPath : null) || null;
+  const mobile = normalizeClinicCode(typeof selectedClinic.mobile === "string" ? selectedClinic.mobile : null) || null;
+  const selectedSlot =
+    selectedClinic.selectedSlot && typeof selectedClinic.selectedSlot === "object"
+      ? (selectedClinic.selectedSlot as Record<string, unknown>)
+      : null;
+  if (!clinicCode && !doctorSlug && !doctorId && !nextPath && !mobile) {
     return null;
   }
   return {
@@ -114,12 +153,14 @@ function normalizeRouteSelectedClinicState(value: unknown): PatientPortalRouteSe
     clinicCode,
     clinicName: normalizeClinicCode(typeof selectedClinic.clinicName === "string" ? selectedClinic.clinicName : null) || null,
     clinicSlug: normalizeClinicCode(typeof selectedClinic.clinicSlug === "string" ? selectedClinic.clinicSlug : null) || null,
-    doctorId: normalizeClinicCode(typeof selectedClinic.doctorId === "string" ? selectedClinic.doctorId : null) || null,
-    doctorSlug: normalizeClinicCode(typeof selectedClinic.doctorSlug === "string" ? selectedClinic.doctorSlug : null) || null,
+    doctorId: doctorId || null,
+    doctorSlug: doctorSlug || null,
     doctorName: normalizeClinicCode(typeof selectedClinic.doctorName === "string" ? selectedClinic.doctorName : null) || null,
     tenantId: normalizeClinicCode(typeof selectedClinic.tenantId === "string" ? selectedClinic.tenantId : null) || null,
     tenantSlug: normalizeClinicCode(typeof selectedClinic.tenantSlug === "string" ? selectedClinic.tenantSlug : null) || null,
-    nextPath: normalizeNextPath(typeof selectedClinic.nextPath === "string" ? selectedClinic.nextPath : null) || null,
+    nextPath,
+    mobile,
+    selectedSlot,
   };
 }
 
@@ -156,20 +197,26 @@ export function persistPatientPortalClinicContext(context: PatientPortalLinkCont
       return;
     }
     const clinicCode = normalizeClinicCode(context.clinicCode || context.clinicSlug);
-    if (!clinicCode) {
+    const doctorSlug = normalizeClinicCode(context.doctorSlug);
+    const doctorId = normalizeClinicCode(context.doctorId);
+    const nextPath = normalizeNextPath(context.nextPath) || null;
+    const mobile = normalizeClinicCode(context.mobile) || null;
+    const selectedSlot = context.selectedSlot && typeof context.selectedSlot === "object"
+      ? context.selectedSlot
+      : null;
+    if (!clinicCode && !doctorSlug && !doctorId && !nextPath && !mobile) {
       return;
     }
     const payload = JSON.stringify({
-      clinicId: normalizeClinicCode(context.clinicId) || null,
+      clinicId: isUuid(normalizeClinicCode(context.clinicId)) ? normalizeClinicCode(context.clinicId) : null,
       clinicCode,
-      clinicName: normalizeClinicCode(context.clinicName) || null,
       clinicSlug: normalizeClinicCode(context.clinicSlug) || null,
-      doctorId: normalizeClinicCode(context.doctorId) || null,
-      doctorSlug: normalizeClinicCode(context.doctorSlug) || null,
-      doctorName: normalizeClinicCode(context.doctorName) || null,
-      tenantId: normalizeClinicCode(context.tenantId) || null,
+      doctorId: doctorId || null,
+      tenantId: isUuid(normalizeClinicCode(context.tenantId)) ? normalizeClinicCode(context.tenantId) : null,
       tenantSlug: normalizeClinicCode(context.tenantSlug) || null,
-      nextPath: normalizeNextPath(context.nextPath) || null,
+      nextPath,
+      mobile,
+      selectedSlot,
     });
     window.sessionStorage.setItem(PATIENT_PORTAL_CLINIC_CONTEXT_STORAGE_KEY, payload);
     window.localStorage.setItem(PATIENT_PORTAL_CLINIC_CONTEXT_STORAGE_KEY, payload);
@@ -217,22 +264,26 @@ export function resolvePatientPortalContext(
 ): PatientPortalClinicContext {
   const routeSelectedClinic = normalizeRouteSelectedClinicState(routeState);
   const storedClinic = readStoredClinicContext();
-  const clinicId = normalizeClinicCode(searchParams.get("clinicId"));
+  const clinicIdParam = normalizeClinicCode(searchParams.get("clinicId"));
+  const clinicId = isUuid(clinicIdParam) ? clinicIdParam : null;
   const queryCode = normalizeClinicCode(searchParams.get("clinicCode"));
   const clinicCodeAlias = normalizeClinicCode(searchParams.get("clinic"));
   const querySlug = normalizeClinicCode(searchParams.get("clinicSlug"));
-  const tenantId = normalizeClinicCode(searchParams.get("tenantId"));
+  const tenantIdParam = normalizeClinicCode(searchParams.get("tenantId"));
+  const tenantId = isUuid(tenantIdParam) ? tenantIdParam : null;
   const tenantCode = normalizeClinicCode(searchParams.get("tenant"));
   const tenantSlug = normalizeClinicCode(searchParams.get("tenantSlug"));
   const doctorId = normalizeClinicCode(searchParams.get("doctorId"));
   const doctorSlug = normalizeClinicCode(searchParams.get("doctorSlug"));
   const doctorName = normalizeClinicCode(searchParams.get("doctorName"));
+  const clinicIdAlias = !clinicId && clinicIdParam ? clinicIdParam : null;
   const clinicCode =
     routeSelectedClinic?.clinicCode
       || clinicId
       || queryCode
       || clinicCodeAlias
       || querySlug
+      || clinicIdAlias
       || tenantCode
       || tenantSlug
       || storedClinic?.clinicCode
@@ -257,6 +308,7 @@ export function resolvePatientPortalContext(
     || null;
   const clinicSlug = routeSelectedClinic?.clinicSlug
     || querySlug
+    || clinicIdAlias
     || storedClinic?.clinicSlug
     || clinicCode;
   const resolvedTenantId = routeSelectedClinic?.tenantId
@@ -278,7 +330,7 @@ export function resolvePatientPortalContext(
     locked: Boolean(clinicCode),
     source: routeSelectedClinic
       ? "route"
-      : clinicId || queryCode || clinicCodeAlias
+      : clinicId || clinicIdAlias || queryCode || clinicCodeAlias
         ? "query"
       : querySlug
         ? "slug"
@@ -295,6 +347,55 @@ export function resolvePatientPortalContext(
     needsClinicSelection,
     nextPath,
   };
+}
+
+export function resolvePatientAuthContext(
+  searchParams: URLSearchParams,
+  routeState?: unknown,
+): PatientAuthContext {
+  const portalContext = resolvePatientPortalContext(searchParams, routeState);
+  const mobile = normalizeClinicCode(searchParams.get("mobile")) || undefined;
+  const appointmentNextPath = portalContext.nextPath || undefined;
+  const source: PatientAuthContext["source"] = appointmentNextPath
+    ? "booking"
+    : portalContext.clinicCode
+      ? "clinic"
+      : portalContext.doctorSlug || portalContext.doctorId
+        ? "doctor"
+        : "direct";
+  return {
+    ...(mobile ? { mobile } : {}),
+    ...(portalContext.clinicId ? { clinicId: portalContext.clinicId } : {}),
+    ...(portalContext.clinicCode ? { clinicCode: portalContext.clinicCode } : {}),
+    ...(portalContext.clinicSlug || portalContext.clinicCode ? { clinicSlug: portalContext.clinicSlug || portalContext.clinicCode } : {}),
+    ...(portalContext.tenantId ? { tenantId: portalContext.tenantId } : {}),
+    ...(portalContext.clinicName ? { clinicName: portalContext.clinicName } : {}),
+    ...(portalContext.doctorId ? { doctorId: portalContext.doctorId } : {}),
+    ...(portalContext.doctorSlug ? { doctorSlug: portalContext.doctorSlug } : {}),
+    ...(portalContext.doctorName ? { doctorName: portalContext.doctorName } : {}),
+    ...(appointmentNextPath ? { appointmentIntent: { nextPath: appointmentNextPath } } : {}),
+    source,
+  };
+}
+
+export function getPublicBookingContext(
+  searchParams: URLSearchParams,
+  routeState?: unknown,
+): PublicBookingContext {
+  const portalContext = resolvePatientPortalContext(searchParams, routeState);
+  const authContext = resolvePatientAuthContext(searchParams, routeState);
+  return {
+    ...authContext,
+    ...(portalContext.nextPath ? { nextPath: portalContext.nextPath } : {}),
+  };
+}
+
+export function savePublicBookingContext(context: PatientPortalLinkContext | PatientPortalRouteSelectedClinicState | null) {
+  persistPatientPortalClinicContext(context);
+}
+
+export function clearPublicBookingContext() {
+  persistPatientPortalClinicContext(null);
 }
 
 export function resolvePatientPortalClinicContext(
@@ -321,37 +422,36 @@ export function patientPortalLoginPath(context?: PatientPortalLinkContext) {
   }
   return appendQuery("/patient/login", {
     next: context.nextPath,
-    clinicId: context.clinicId,
-    clinicCode: context.clinicCode || context.clinicSlug,
-    clinic: context.clinicCode || context.clinicSlug,
-    clinicSlug: context.clinicSlug,
-    clinicName: context.clinicName,
-    tenantId: context.tenantId,
-    tenant: context.tenantSlug || context.tenantId,
-    tenantSlug: context.tenantSlug,
-    doctorId: context.doctorId || context.doctorSlug,
-    doctorSlug: context.doctorSlug,
-    doctorName: context.doctorName,
   });
 }
 
 function createBookingRouteState(context?: PatientPortalLinkContext): PatientPortalRouteState | undefined {
   const clinicCode = normalizeClinicCode(context?.clinicCode || context?.clinicSlug);
-  if (!clinicCode) {
+  const doctorId = normalizeClinicCode(context?.doctorId);
+  const doctorSlug = normalizeClinicCode(context?.doctorSlug);
+  const nextPath = normalizeNextPath(context?.nextPath) || null;
+  const mobile = normalizeClinicCode(context?.mobile) || null;
+  const clinicIdValue = normalizeClinicCode(context?.clinicId);
+  const tenantIdValue = normalizeClinicCode(context?.tenantId);
+  const clinicId = isUuid(clinicIdValue) ? clinicIdValue : null;
+  const tenantId = isUuid(tenantIdValue) ? tenantIdValue : null;
+  if (!clinicCode && !clinicId && !tenantId && !doctorId && !doctorSlug && !nextPath && !mobile) {
     return undefined;
   }
   return {
     selectedClinic: {
-      clinicId: normalizeClinicCode(context?.clinicId) || null,
+      clinicId,
       clinicCode,
-      clinicName: normalizeClinicCode(context?.clinicName) || null,
+      clinicName: null,
       clinicSlug: normalizeClinicCode(context?.clinicSlug) || null,
-      doctorId: normalizeClinicCode(context?.doctorId) || null,
-      doctorSlug: normalizeClinicCode(context?.doctorSlug) || null,
-      doctorName: normalizeClinicCode(context?.doctorName) || null,
-      tenantId: normalizeClinicCode(context?.tenantId) || null,
-      tenantSlug: normalizeClinicCode(context?.tenantSlug) || null,
-      nextPath: normalizeNextPath(context?.nextPath) || null,
+      doctorId: doctorId || null,
+      doctorSlug: null,
+      doctorName: null,
+      tenantId,
+      tenantSlug: null,
+      nextPath,
+      mobile,
+      selectedSlot: context?.selectedSlot ?? null,
     },
   };
 }
@@ -360,18 +460,13 @@ export function withPatientPortalClinicContext(path: string, context?: PatientPo
   if (!context) {
     return path;
   }
+  const clinicId = isUuid(context.clinicId) ? context.clinicId : null;
+  const tenantId = isUuid(context.tenantId) ? context.tenantId : null;
   return appendQuery(path, {
-    clinicId: context.clinicId,
-    clinicCode: context.clinicCode || context.clinicSlug,
-    clinic: context.clinicCode || context.clinicSlug,
-    clinicSlug: context.clinicSlug,
-    clinicName: context.clinicName,
-    tenantId: context.tenantId,
-    tenant: context.tenantSlug || context.tenantId,
-    tenantSlug: context.tenantSlug,
-    doctorId: context.doctorId || context.doctorSlug,
-    doctorSlug: context.doctorSlug,
-    doctorName: context.doctorName,
+    clinicId: clinicId || undefined,
+    tenantId: !clinicId && tenantId ? tenantId : undefined,
+    clinicSlug: !clinicId && !tenantId ? context.clinicSlug : undefined,
+    doctorId: context.doctorId,
   });
 }
 
@@ -380,10 +475,6 @@ export function patientPortalBookingTo(
   context?: PatientPortalLinkContext,
 ) {
   const nextPath = withPatientPortalClinicContext("/patient/book-appointment", context);
-  const loginContext = {
-    ...context,
-    nextPath,
-  };
   const bookingState = createBookingRouteState(context);
 
   if (session?.sessionRole === "patient") {
@@ -394,7 +485,7 @@ export function patientPortalBookingTo(
   }
   return {
     pathname: "/patient/login",
-    search: patientPortalLoginPath(loginContext).replace("/patient/login", ""),
+    search: patientPortalLoginPath({ nextPath }).replace("/patient/login", ""),
     state: bookingState,
   };
 }
@@ -404,10 +495,6 @@ export function patientPortalBookingPath(
   context?: PatientPortalLinkContext,
 ) {
   const nextPath = withPatientPortalClinicContext("/patient/book-appointment", context);
-  const loginContext = {
-    ...context,
-    nextPath,
-  };
   const registrationPath = `/patient/register?next=${encodeURIComponent(nextPath)}`;
 
   if (session?.sessionRole === "patient") {
@@ -416,5 +503,5 @@ export function patientPortalBookingPath(
   if (session?.sessionRole === "registration") {
     return registrationPath;
   }
-  return patientPortalLoginPath(loginContext);
+  return patientPortalLoginPath({ nextPath });
 }

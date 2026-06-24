@@ -45,6 +45,8 @@ import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
+import com.deepthoughtnet.clinic.identity.db.TenantEntity;
+import com.deepthoughtnet.clinic.identity.db.TenantRepository;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
@@ -53,6 +55,7 @@ import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.patient.service.model.PatientUpsertCommand;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
+import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
 import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
@@ -65,10 +68,15 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -77,12 +85,16 @@ import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiApp
 @Service
 @Transactional(readOnly = true)
 public class PatientPortalService {
+    private static final Logger log = LoggerFactory.getLogger(PatientPortalService.class);
+
     private final AppUserRepository appUserRepository;
+    private final TenantRepository tenantRepository;
     private final PatientRepository patientRepository;
     private final ClinicProfileService clinicProfileService;
     private final TenantUserManagementService tenantUserManagementService;
     private final DoctorProfileService doctorProfileService;
     private final PatientService patientService;
+    private final AppUserProvisioner appUserProvisioner;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final AppointmentService appointmentService;
     private final PrescriptionService prescriptionService;
@@ -94,11 +106,13 @@ public class PatientPortalService {
     @Autowired
     public PatientPortalService(
             AppUserRepository appUserRepository,
+            TenantRepository tenantRepository,
             PatientRepository patientRepository,
             ClinicProfileService clinicProfileService,
             TenantUserManagementService tenantUserManagementService,
             DoctorProfileService doctorProfileService,
             PatientService patientService,
+            AppUserProvisioner appUserProvisioner,
             ClinicTimeZoneResolver clinicTimeZoneResolver,
             AppointmentService appointmentService,
             PrescriptionService prescriptionService,
@@ -108,11 +122,13 @@ public class PatientPortalService {
             NotificationActionService notificationActionService
     ) {
         this.appUserRepository = appUserRepository;
+        this.tenantRepository = tenantRepository;
         this.patientRepository = patientRepository;
         this.clinicProfileService = clinicProfileService;
         this.tenantUserManagementService = tenantUserManagementService;
         this.doctorProfileService = doctorProfileService;
         this.patientService = patientService;
+        this.appUserProvisioner = appUserProvisioner;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
         this.appointmentService = appointmentService;
         this.prescriptionService = prescriptionService;
@@ -124,11 +140,13 @@ public class PatientPortalService {
 
     public PatientPortalService(
             AppUserRepository appUserRepository,
+            TenantRepository tenantRepository,
             PatientRepository patientRepository,
             ClinicProfileService clinicProfileService,
             TenantUserManagementService tenantUserManagementService,
             DoctorProfileService doctorProfileService,
             PatientService patientService,
+            AppUserProvisioner appUserProvisioner,
             ClinicTimeZoneResolver clinicTimeZoneResolver,
             AppointmentService appointmentService,
             PrescriptionService prescriptionService,
@@ -136,11 +154,13 @@ public class PatientPortalService {
     ) {
         this(
                 appUserRepository,
+                tenantRepository,
                 patientRepository,
                 clinicProfileService,
                 tenantUserManagementService,
                 doctorProfileService,
                 patientService,
+                appUserProvisioner,
                 clinicTimeZoneResolver,
                 appointmentService,
                 prescriptionService,
@@ -154,9 +174,10 @@ public class PatientPortalService {
     public PatientPortalDashboardResponse dashboard() {
         PatientAccess access = requireCurrentPatientAccess();
         String clinicName = clinicName(access.tenantId());
-        List<PatientPortalAppointmentResponse> appointments = appointmentResponses(access, clinicName);
-        List<PatientPortalPrescriptionResponse> prescriptions = prescriptionResponses(access, clinicName);
-        List<PatientPortalBillResponse> bills = billResponses(access);
+        List<PatientAccess> patientAccesses = resolveAccessiblePatientAccesses(access);
+        List<PatientPortalAppointmentResponse> appointments = appointmentResponses(patientAccesses);
+        List<PatientPortalPrescriptionResponse> prescriptions = prescriptionResponses(patientAccesses);
+        List<PatientPortalBillResponse> bills = billResponses(patientAccesses);
         return new PatientPortalDashboardResponse(
                 fullName(access.patient().getFirstName(), access.patient().getLastName()),
                 access.patient().getPatientNumber(),
@@ -282,13 +303,24 @@ public class PatientPortalService {
 
     public List<PatientPortalAppointmentResponse> appointments() {
         PatientAccess access = requireCurrentPatientAccess();
-        return appointmentResponses(access, clinicName(access.tenantId()));
+        List<PatientAccess> patientAccesses = resolveAccessiblePatientAccesses(access);
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "patient.portal.appointments.list patientPortalSessionId={} resolvedPatientId={} patientMobile={} tenantCount={} appointmentCount={}",
+                    RequestContextHolder.require().correlationId(),
+                    access.patient().getId(),
+                    resolveVerifiedMobile(access),
+                    patientAccesses.size(),
+                    allAppointments(patientAccesses).size()
+            );
+        }
+        return appointmentResponses(patientAccesses);
     }
 
     public List<PatientPortalCareAiAppointmentOption> careAiUpcomingAppointments() {
         PatientAccess access = requireCurrentPatientAccess();
-        String clinicName = clinicName(access.tenantId());
-        return appointmentService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+        List<PatientAccess> patientAccesses = resolveAccessiblePatientAccesses(access);
+        List<PatientPortalCareAiAppointmentOption> appointments = allAppointments(patientAccesses).stream()
                 .filter(this::isUpcomingAppointmentRecord)
                 .sorted(Comparator
                         .comparing(AppointmentRecord::appointmentDate, Comparator.nullsLast(Comparator.naturalOrder()))
@@ -297,17 +329,36 @@ public class PatientPortalService {
                         record.id(),
                         record.doctorUserId(),
                         record.doctorName(),
-                        clinicName,
+                        clinicName(record.tenantId()),
                         record.appointmentDate(),
                         record.appointmentTime(),
                         record.status() == null ? null : record.status().name(),
                         summarize(record.reason())
                 ))
                 .toList();
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "patient.portal.careai.appointments.list patientPortalSessionId={} resolvedPatientId={} patientMobile={} searchedTenantIds={} tenantCount={} appointmentCount={} appointmentIds={} appointmentStatuses={} appointmentDates={}",
+                    RequestContextHolder.require().correlationId(),
+                    access.patient().getId(),
+                    resolveVerifiedMobile(access),
+                    patientAccesses.stream().map(PatientAccess::tenantId).toList(),
+                    patientAccesses.size(),
+                    appointments.size(),
+                    appointments.stream().map(PatientPortalCareAiAppointmentOption::appointmentId).toList(),
+                    appointments.stream().map(PatientPortalCareAiAppointmentOption::status).toList(),
+                    appointments.stream().map(PatientPortalCareAiAppointmentOption::appointmentDate).toList()
+            );
+        }
+        return appointments;
     }
 
     public UUID currentPatientId() {
         return requireCurrentPatientAccess().patient().getId();
+    }
+
+    public String currentPatientMobile() {
+        return requireCurrentPatientAccess().patient().getMobile();
     }
 
     public List<PatientPortalDoctorResponse> doctors() {
@@ -325,11 +376,20 @@ public class PatientPortalService {
     }
 
     public List<PatientPortalDoctorSlotResponse> doctorSlots(String publicDoctorId, LocalDate date) {
+        return doctorSlots(publicDoctorId, null, null, null, date);
+    }
+
+    public List<PatientPortalDoctorSlotResponse> doctorSlots(String publicDoctorId, String clinicSlug, LocalDate date) {
+        return doctorSlots(publicDoctorId, clinicSlug, null, null, date);
+    }
+
+    public List<PatientPortalDoctorSlotResponse> doctorSlots(String publicDoctorId, String clinicSlug, String tenantId, String clinicId, LocalDate date) {
         PatientAccess access = requireCurrentPatientAccess();
         requireAppointmentDate(date);
-        DoctorSnapshot doctor = requireActiveDoctor(access.tenantId(), publicDoctorId);
-        ZoneId tenantZone = resolveTenantZone(access.tenantId());
-        return appointmentService.listSlots(access.tenantId(), doctor.user().appUserId(), date, tenantZone).stream()
+        BookingDoctorAccess bookingDoctor = resolveBookingDoctor(access, publicDoctorId, clinicSlug, tenantId, clinicId);
+        ZoneId tenantZone = resolveTenantZone(bookingDoctor.tenantId());
+        debugBookingResolution("doctorSlots", publicDoctorId, clinicSlug, tenantId, clinicId, bookingDoctor);
+        return appointmentService.listSlots(bookingDoctor.tenantId(), bookingDoctor.doctor().user().appUserId(), date, tenantZone).stream()
                 .map(this::toDoctorSlotResponse)
                 .toList();
     }
@@ -345,9 +405,32 @@ public class PatientPortalService {
             throw new IllegalArgumentException("Appointment time is required");
         }
 
-        DoctorSnapshot doctor = requireActiveDoctor(access.tenantId(), request.publicDoctorId());
-        ZoneId tenantZone = resolveTenantZone(access.tenantId());
-        List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(access.tenantId(), doctor.user().appUserId(), request.appointmentDate(), tenantZone);
+        BookingDoctorAccess bookingDoctor = resolveBookingDoctor(access, request.publicDoctorId(), request.clinicSlug(), request.tenantId(), request.clinicId());
+        PatientEntity bookingPatient = resolveBookingPatient(access, bookingDoctor.tenantId());
+        UUID actorAppUserId = bookingDoctor.tenantId().equals(access.tenantId())
+                ? requireActorAppUserId()
+                : ensurePatientPortalActor(bookingDoctor.tenantId(), bookingPatient);
+        ZoneId tenantZone = resolveTenantZone(bookingDoctor.tenantId());
+        debugBookingResolution("bookAppointment", request.publicDoctorId(), request.clinicSlug(), request.tenantId(), request.clinicId(), bookingDoctor);
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "patient.portal.booking.create patientPortalSessionId={} patientId={} patientMobile={} selectedClinicSlug={} selectedTenantId={} resolvedClinicTenantId={} doctorId={} bookingPatientId={}",
+                    RequestContextHolder.require().correlationId(),
+                    access.patient().getId(),
+                    resolveVerifiedMobile(access),
+                    request.clinicSlug(),
+                    request.tenantId(),
+                    bookingDoctor.tenantId(),
+                    request.publicDoctorId(),
+                    bookingPatient.getId()
+            );
+        }
+        List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(
+                bookingDoctor.tenantId(),
+                bookingDoctor.doctor().user().appUserId(),
+                request.appointmentDate(),
+                tenantZone
+        );
         boolean slotSelectable = slots.stream()
                 .anyMatch(slot -> request.appointmentTime().equals(slot.slotTime()) && slot.selectable());
         if (!slotSelectable) {
@@ -355,10 +438,10 @@ public class PatientPortalService {
         }
 
         var booked = appointmentService.createScheduled(
-                access.tenantId(),
+                bookingDoctor.tenantId(),
                 new AppointmentUpsertCommand(
-                        access.patient().getId(),
-                        doctor.user().appUserId(),
+                        bookingPatient.getId(),
+                        bookingDoctor.doctor().user().appUserId(),
                         request.appointmentDate(),
                         request.appointmentTime(),
                         normalizeBookingReason(request.reason()),
@@ -367,18 +450,28 @@ public class PatientPortalService {
                         AppointmentPriority.NORMAL,
                         false
                 ),
-                requireActorAppUserId(),
+                actorAppUserId,
                 false,
                 tenantZone
         );
         if (notificationActionService != null) {
-            notificationActionService.sendAppointmentBooked(access.tenantId(), booked.id(), requireActorAppUserId());
+            notificationActionService.sendAppointmentBooked(bookingDoctor.tenantId(), booked.id(), actorAppUserId);
+        }
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "patient.portal.booking.created patientPortalSessionId={} appointmentId={} appointmentPatientId={} appointmentTenantId={} appointmentStatus={}",
+                    RequestContextHolder.require().correlationId(),
+                    booked.id(),
+                    booked.patientId(),
+                    bookingDoctor.tenantId(),
+                    booked.status()
+            );
         }
         return new PatientPortalAppointmentConfirmationResponse(
                 booked.appointmentDate(),
                 booked.appointmentTime(),
                 booked.doctorName(),
-                clinicName(access.tenantId()),
+                clinicName(bookingDoctor.tenantId()),
                 appointmentSource(booked),
                 booked.status() == null ? null : booked.status().name(),
                 summarize(booked.reason()),
@@ -399,9 +492,13 @@ public class PatientPortalService {
             throw new IllegalArgumentException("Appointment time is required");
         }
         AppointmentRecord current = requireAccessibleUpcomingAppointment(access, appointmentId);
-        ZoneId tenantZone = resolveTenantZone(access.tenantId());
+        PatientEntity bookingPatient = resolveBookingPatient(access, current.tenantId());
+        UUID actorAppUserId = current.tenantId().equals(access.tenantId())
+                ? requireActorAppUserId()
+                : ensurePatientPortalActor(current.tenantId(), bookingPatient);
+        ZoneId tenantZone = resolveTenantZone(current.tenantId());
         var updated = appointmentService.reschedule(
-                access.tenantId(),
+                current.tenantId(),
                 current.id(),
                 new AppointmentRescheduleCommand(
                         current.doctorUserId(),
@@ -409,18 +506,18 @@ public class PatientPortalService {
                         appointmentTime,
                         normalizeBookingReason(reason == null ? current.reason() : reason)
                 ),
-                requireActorAppUserId(),
+                actorAppUserId,
                 false,
                 tenantZone
         );
         if (notificationActionService != null) {
-            notificationActionService.sendAppointmentRescheduled(access.tenantId(), updated.id(), requireActorAppUserId());
+            notificationActionService.sendAppointmentRescheduled(current.tenantId(), updated.id(), actorAppUserId);
         }
         return new PatientPortalAppointmentConfirmationResponse(
                 updated.appointmentDate(),
                 updated.appointmentTime(),
                 updated.doctorName(),
-                clinicName(access.tenantId()),
+                clinicName(current.tenantId()),
                 appointmentSource(updated),
                 updated.status() == null ? null : updated.status().name(),
                 summarize(updated.reason()),
@@ -433,8 +530,12 @@ public class PatientPortalService {
         PatientAccess access = requireCurrentPatientAccess();
         AppointmentRecord current = requireAccessibleUpcomingAppointment(access, appointmentId);
         String cancelReason = StringUtils.hasText(reason) ? reason.trim() : "Cancelled by patient";
+        PatientEntity bookingPatient = resolveBookingPatient(access, current.tenantId());
+        UUID actorAppUserId = current.tenantId().equals(access.tenantId())
+                ? requireActorAppUserId()
+                : ensurePatientPortalActor(current.tenantId(), bookingPatient);
         var updated = appointmentService.updateStatus(
-                access.tenantId(),
+                current.tenantId(),
                 current.id(),
                 new AppointmentStatusUpdateCommand(
                         AppointmentStatus.CANCELLED,
@@ -443,16 +544,16 @@ public class PatientPortalService {
                         null,
                         null
                 ),
-                requireActorAppUserId()
+                actorAppUserId
         );
         if (notificationActionService != null) {
-            notificationActionService.sendAppointmentCancelled(access.tenantId(), current.id(), requireActorAppUserId());
+            notificationActionService.sendAppointmentCancelled(current.tenantId(), current.id(), actorAppUserId);
         }
         return new PatientPortalAppointmentConfirmationResponse(
                 updated.appointmentDate(),
                 updated.appointmentTime(),
                 updated.doctorName(),
-                clinicName(access.tenantId()),
+                clinicName(current.tenantId()),
                 appointmentSource(updated),
                 updated.status() == null ? null : updated.status().name(),
                 summarize(updated.reason()),
@@ -462,12 +563,12 @@ public class PatientPortalService {
 
     public List<PatientPortalPrescriptionResponse> prescriptions() {
         PatientAccess access = requireCurrentPatientAccess();
-        return prescriptionResponses(access, clinicName(access.tenantId()));
+        return prescriptionResponses(resolveAccessiblePatientAccesses(access));
     }
 
     public List<PatientPortalBillResponse> bills() {
         PatientAccess access = requireCurrentPatientAccess();
-        return billResponses(access);
+        return billResponses(resolveAccessiblePatientAccesses(access));
     }
 
     public List<PatientPortalNotificationResponse> notifications() {
@@ -475,7 +576,7 @@ public class PatientPortalService {
             return List.of();
         }
         PatientAccess access = requireCurrentPatientAccess();
-        return notificationHistoryService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+        return allNotifications(resolveAccessiblePatientAccesses(access)).stream()
                 .map(this::toNotificationResponse)
                 .toList();
     }
@@ -485,23 +586,27 @@ public class PatientPortalService {
             throw new IllegalStateException("Notification history service is not available");
         }
         PatientAccess access = requireCurrentPatientAccess();
-        return toNotificationResponse(notificationHistoryService.markRead(access.tenantId(), notificationId));
+        NotificationHistoryRecord record = allNotifications(resolveAccessiblePatientAccesses(access)).stream()
+                .filter(notification -> notificationId != null && notificationId.equals(notification.id()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Notification not found"));
+        return toNotificationResponse(notificationHistoryService.markRead(record.tenantId(), notificationId));
     }
 
     public List<PatientPortalLabOrderResponse> labOrders() {
         PatientAccess access = requireCurrentPatientAccess();
-        return labOrderResponses(access, false);
+        return labOrderResponses(resolveAccessiblePatientAccesses(access), false);
     }
 
     public List<PatientPortalLabOrderResponse> labReports() {
         PatientAccess access = requireCurrentPatientAccess();
-        return labOrderResponses(access, true);
+        return labOrderResponses(resolveAccessiblePatientAccesses(access), true);
     }
 
     public List<PatientPortalLabLatestResultResponse> latestLabResults(String query) {
         PatientAccess access = requireCurrentPatientAccess();
         String term = summarize(query);
-        List<LabOrderRecord> records = labOrdersForPatient(access);
+        List<LabOrderRecord> records = allLabOrders(resolveAccessiblePatientAccesses(access));
         return records.stream()
                 .flatMap(order -> order.results().stream().map(result -> new LatestLabMatch(order, result)))
                 .filter(match -> term == null || matchesLabResult(match, term))
@@ -523,50 +628,54 @@ public class PatientPortalService {
 
     public PrescriptionPdf prescriptionPdf(String prescriptionNumber) {
         PatientAccess access = requireCurrentPatientAccess();
-        PrescriptionRecord record = findAccessiblePrescription(access, prescriptionNumber);
-        return prescriptionService.generatePdf(access.tenantId(), record.id(), requireActorAppUserId());
+        PrescriptionRecord record = findAccessiblePrescription(resolveAccessiblePatientAccesses(access), prescriptionNumber);
+        return prescriptionService.generatePdf(record.tenantId(), record.id(), requireActorAppUserId());
     }
 
     public com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultPdf labReportPdf(String orderNumber) {
         PatientAccess access = requireCurrentPatientAccess();
-        LabOrderRecord record = findAccessibleLabOrder(access, orderNumber);
-        var pdf = labService.renderReportPdf(access.tenantId(), record.id());
-        labService.markDelivered(access.tenantId(), record.id(), requireActorAppUserId());
+        LabOrderRecord record = findAccessibleLabOrder(resolveAccessiblePatientAccesses(access), orderNumber);
+        var pdf = labService.renderReportPdf(record.tenantId(), record.id());
+        labService.markDelivered(record.tenantId(), record.id(), requireActorAppUserId());
         return pdf;
     }
 
     public BillPdf billPdf(String billNumber) {
         PatientAccess access = requireCurrentPatientAccess();
-        BillRecord record = findAccessibleBill(access, billNumber);
-        return billingService.generateBillPdf(access.tenantId(), record.id(), requireActorAppUserId());
+        BillRecord record = findAccessibleBill(resolveAccessiblePatientAccesses(access), billNumber);
+        return billingService.generateBillPdf(record.tenantId(), record.id(), requireActorAppUserId());
     }
 
     public ReceiptPdf latestReceiptPdf(String billNumber) {
         PatientAccess access = requireCurrentPatientAccess();
-        BillRecord bill = findAccessibleBill(access, billNumber);
-        ReceiptRecord receipt = billingService.listReceipts(access.tenantId(), bill.id()).stream()
+        BillRecord bill = findAccessibleBill(resolveAccessiblePatientAccesses(access), billNumber);
+        ReceiptRecord receipt = billingService.listReceipts(bill.tenantId(), bill.id()).stream()
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Receipt not found"));
-        return billingService.generateReceiptPdf(access.tenantId(), receipt.id(), requireActorAppUserId());
+        return billingService.generateReceiptPdf(bill.tenantId(), receipt.id(), requireActorAppUserId());
     }
 
-    private List<PatientPortalLabOrderResponse> labOrderResponses(PatientAccess access, boolean reportsOnly) {
-        return labOrdersForPatient(access).stream()
+    private List<PatientPortalLabOrderResponse> labOrderResponses(List<PatientAccess> patientAccesses, boolean reportsOnly) {
+        return allLabOrders(patientAccesses).stream()
                 .filter(record -> !reportsOnly || isReportStatus(record.status() == null ? null : record.status().name()))
                 .map(this::toLabOrderResponse)
                 .toList();
     }
 
-    private List<LabOrderRecord> labOrdersForPatient(PatientAccess access) {
-        return labService.listOrders(access.tenantId(), null, access.patient().getId(), null, null, null);
+    private List<LabOrderRecord> allLabOrders(List<PatientAccess> patientAccesses) {
+        return patientAccesses.stream()
+                .flatMap(patientAccess -> labService.listOrders(patientAccess.tenantId(), null, patientAccess.patient().getId(), null, null, null).stream())
+                .distinct()
+                .toList();
     }
 
-    private LabOrderRecord findAccessibleLabOrder(PatientAccess access, String orderNumber) {
+    private LabOrderRecord findAccessibleLabOrder(List<PatientAccess> patientAccesses, String orderNumber) {
         if (!StringUtils.hasText(orderNumber)) {
             throw new IllegalArgumentException("orderNumber is required");
         }
-        return labService.findOrderByNumber(access.tenantId(), orderNumber.trim())
-                .filter(record -> access.patient().getId().equals(record.patientId()))
+        return allLabOrders(patientAccesses).stream()
+                .filter(record -> record.orderNumber() != null && record.orderNumber().equalsIgnoreCase(orderNumber.trim()))
+                .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
     }
 
@@ -729,13 +838,13 @@ public class PatientPortalService {
         );
     }
 
-    private List<PatientPortalAppointmentResponse> appointmentResponses(PatientAccess access, String clinicName) {
-        return appointmentService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+    private List<PatientPortalAppointmentResponse> appointmentResponses(List<PatientAccess> patientAccesses) {
+        return allAppointments(patientAccesses).stream()
                 .map(record -> new PatientPortalAppointmentResponse(
                         record.appointmentDate(),
                         record.appointmentTime(),
                         record.doctorName(),
-                        clinicName,
+                        clinicName(record.tenantId()),
                         appointmentSource(record),
                         summarize(record.reason()),
                         record.status() == null ? null : record.status().name()
@@ -746,14 +855,28 @@ public class PatientPortalService {
                 .toList();
     }
 
-    private List<PatientPortalPrescriptionResponse> prescriptionResponses(PatientAccess access, String clinicName) {
-        return prescriptionService.listByPatient(access.tenantId(), access.patient().getId()).stream()
-                .map(record -> withClinicName(toPrescriptionResponse(record), clinicName))
+    private List<PatientPortalPrescriptionResponse> prescriptionResponses(List<PatientAccess> patientAccesses) {
+        return allPrescriptions(patientAccesses).stream()
+                .map(record -> withClinicName(toPrescriptionResponse(record), clinicName(record.tenantId())))
                 .toList();
     }
 
-    private List<PatientPortalBillResponse> billResponses(PatientAccess access) {
-        return billingService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+    private List<BillRecord> allBills(List<PatientAccess> patientAccesses) {
+        return patientAccesses.stream()
+                .flatMap(patientAccess -> billingService.listByPatient(patientAccess.tenantId(), patientAccess.patient().getId()).stream())
+                .distinct()
+                .toList();
+    }
+
+    private List<PrescriptionRecord> allPrescriptions(List<PatientAccess> patientAccesses) {
+        return patientAccesses.stream()
+                .flatMap(patientAccess -> prescriptionService.listByPatient(patientAccess.tenantId(), patientAccess.patient().getId()).stream())
+                .distinct()
+                .toList();
+    }
+
+    private List<PatientPortalBillResponse> billResponses(List<PatientAccess> patientAccesses) {
+        return allBills(patientAccesses).stream()
                 .map(this::toBillResponse)
                 .toList();
     }
@@ -808,7 +931,7 @@ public class PatientPortalService {
                 || appointment.status() == AppointmentStatus.COMPLETED) {
             return false;
         }
-        ZoneId tenantZone = resolveTenantZone(requireCurrentPatientAccess().tenantId());
+        ZoneId tenantZone = resolveTenantZone(appointment.tenantId());
         LocalDate today = LocalDate.now(tenantZone);
         LocalTime now = LocalTime.now(tenantZone);
         return appointment.appointmentDate().isAfter(today)
@@ -820,22 +943,22 @@ public class PatientPortalService {
         if (appointmentId == null) {
             throw new IllegalArgumentException("Appointment is required");
         }
-        return appointmentService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+        return allAppointments(resolveAccessiblePatientAccesses(access)).stream()
                 .filter(record -> appointmentId.equals(record.id()))
                 .filter(this::isUpcomingAppointmentRecord)
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Upcoming appointment not found"));
     }
 
-    private PrescriptionRecord findAccessiblePrescription(PatientAccess access, String prescriptionNumber) {
-        return prescriptionService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+    private PrescriptionRecord findAccessiblePrescription(List<PatientAccess> patientAccesses, String prescriptionNumber) {
+        return allPrescriptions(patientAccesses).stream()
                 .filter(record -> record.prescriptionNumber() != null && record.prescriptionNumber().equalsIgnoreCase(prescriptionNumber))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Prescription not found"));
     }
 
-    private BillRecord findAccessibleBill(PatientAccess access, String billNumber) {
-        return billingService.listByPatient(access.tenantId(), access.patient().getId()).stream()
+    private BillRecord findAccessibleBill(List<PatientAccess> patientAccesses, String billNumber) {
+        return allBills(patientAccesses).stream()
                 .filter(record -> record.billNumber() != null && record.billNumber().equalsIgnoreCase(billNumber))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
@@ -950,12 +1073,158 @@ public class PatientPortalService {
                 .toList();
     }
 
+    private BookingDoctorAccess resolveBookingDoctor(PatientAccess access, String publicDoctorId, String clinicSlug, String tenantId, String clinicId) {
+        UUID bookingTenantId = resolveBookingTenantId(access.tenantId(), clinicSlug, tenantId, clinicId);
+        return new BookingDoctorAccess(bookingTenantId, requirePublicBookableDoctor(bookingTenantId, publicDoctorId));
+    }
+
+    private UUID resolveBookingTenantId(UUID fallbackTenantId, String clinicSlug, String tenantId, String clinicId) {
+        boolean hasExplicitTenantReference = StringUtils.hasText(tenantId) || StringUtils.hasText(clinicId) || StringUtils.hasText(clinicSlug);
+        java.util.Optional<UUID> resolvedTenant = resolveExplicitTenantReference(tenantId)
+                .or(() -> resolveExplicitTenantReference(clinicId))
+                .or(() -> resolveTenantByClinicSlug(clinicSlug));
+        UUID bookingTenantId = hasExplicitTenantReference
+                ? resolvedTenant.orElseThrow(() -> {
+                    logBookingEligibility("resolveBookingTenantId", null, clinicSlug, tenantId, clinicId, fallbackTenantId, null, null, null, null, "unable to resolve clinic tenant");
+                    return new IllegalArgumentException("Clinic is not available for online booking.");
+                })
+                : fallbackTenantId;
+        verifyPublicBookingClinic(bookingTenantId, clinicSlug, tenantId, clinicId, fallbackTenantId);
+        return bookingTenantId;
+    }
+
+    private java.util.Optional<UUID> resolveTenantByClinicSlug(String clinicSlug) {
+        if (!StringUtils.hasText(clinicSlug)) {
+            return java.util.Optional.empty();
+        }
+        String normalizedSlug = clinicSlug.trim().toLowerCase(java.util.Locale.ROOT);
+        return clinicProfileService.findBySlug(normalizedSlug)
+                .map(ClinicProfileRecord::tenantId)
+                .or(() -> tenantRepository.findByCode(normalizedSlug).map(TenantEntity::getId));
+    }
+
+    private java.util.Optional<UUID> resolveExplicitTenantReference(String value) {
+        if (!StringUtils.hasText(value)) {
+            return java.util.Optional.empty();
+        }
+        String trimmed = value.trim();
+        try {
+            UUID tenantId = UUID.fromString(trimmed);
+            return tenantRepository.findById(tenantId).map(TenantEntity::getId);
+        } catch (IllegalArgumentException ignored) {
+            return tenantRepository.findByCode(trimmed.toLowerCase(java.util.Locale.ROOT)).map(TenantEntity::getId);
+        }
+    }
+
+    private void verifyPublicBookingClinic(UUID tenantId, String clinicSlug, String tenantIdParam, String clinicId, UUID fallbackTenantId) {
+        ClinicProfileRecord clinic = clinicProfileService.findByTenantId(tenantId).orElse(null);
+        if (clinic == null) {
+            logBookingEligibility("verifyPublicBookingClinic", null, clinicSlug, tenantIdParam, clinicId, fallbackTenantId, tenantId, null, null, null, "clinic profile not found");
+            throw new IllegalArgumentException("Clinic is not available for online booking.");
+        }
+        if (!clinic.active()) {
+            logBookingEligibility("verifyPublicBookingClinic", null, clinicSlug, tenantIdParam, clinicId, fallbackTenantId, tenantId, clinic, null, null, "clinic profile inactive");
+            throw new IllegalArgumentException("Clinic is inactive.");
+        }
+        if (!clinic.publicListingEnabled()) {
+            logBookingEligibility("verifyPublicBookingClinic", null, clinicSlug, tenantIdParam, clinicId, fallbackTenantId, tenantId, clinic, null, null, "clinic public listing disabled");
+            throw new IllegalArgumentException("Clinic public listing is disabled.");
+        }
+    }
+
+    private DoctorSnapshot requirePublicBookableDoctor(UUID tenantId, String publicDoctorId) {
+        UUID doctorUserId = parseDoctorUserId(publicDoctorId);
+        DoctorSnapshot doctor = activeDoctorSnapshots(tenantId).stream()
+                .filter(snapshot -> doctorUserId.equals(snapshot.user().appUserId()))
+                .filter(snapshot -> snapshot.profile().publicListingEnabled())
+                .findFirst()
+                .orElse(null);
+        if (doctor == null) {
+            logBookingEligibility("requirePublicBookableDoctor", publicDoctorId, null, null, null, tenantId, tenantId, null, null, null, "doctor not public/bookable for tenant");
+            throw new IllegalArgumentException("Doctor not found");
+        }
+        return doctor;
+    }
+
     private DoctorSnapshot requireActiveDoctor(UUID tenantId, String publicDoctorId) {
         UUID doctorUserId = parseDoctorUserId(publicDoctorId);
         return activeDoctorSnapshots(tenantId).stream()
                 .filter(snapshot -> doctorUserId.equals(snapshot.user().appUserId()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Doctor not found"));
+    }
+
+    private void debugBookingResolution(
+            String operation,
+            String publicDoctorId,
+            String clinicSlug,
+            String tenantId,
+            String clinicId,
+            BookingDoctorAccess bookingDoctor
+    ) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        ClinicProfileRecord clinic = clinicProfileService.findByTenantId(bookingDoctor.tenantId()).orElse(null);
+        var tenant = tenantRepository.findById(bookingDoctor.tenantId()).orElse(null);
+        log.debug(
+                "patient.portal.booking.resolve operation={} incomingDoctorId={} incomingClinicSlug={} incomingTenantId={} incomingClinicId={} resolvedTenantId={} resolvedTenantCode={} resolvedClinicSlug={} clinicActive={} clinicPublicListing={} tenantPublicListing={} doctorPublicListingEnabled={} doctorBelongsToClinic={}",
+                operation,
+                publicDoctorId,
+                clinicSlug,
+                tenantId,
+                clinicId,
+                bookingDoctor.tenantId(),
+                tenant == null ? null : tenant.getCode(),
+                clinic == null ? null : clinic.slug(),
+                clinic != null && clinic.active(),
+                clinic != null && clinic.publicListingEnabled(),
+                tenant != null && tenant.isPublicListingEnabled(),
+                bookingDoctor.doctor().profile().publicListingEnabled(),
+                true
+        );
+    }
+
+    private void logBookingEligibility(
+            String operation,
+            String publicDoctorId,
+            String clinicSlug,
+            String tenantIdParam,
+            String clinicIdParam,
+            UUID requestTenantId,
+            UUID resolvedTenantId,
+            ClinicProfileRecord clinic,
+            TenantEntity tenant,
+            DoctorSnapshot doctor,
+            String reason
+    ) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        UUID sessionTenantId = RequestContextHolder.requireTenantId();
+        log.debug(
+                "patient.portal.booking.eligibility operation={} doctorId={} clinicSlugParam={} clinicIdParam={} tenantIdParam={} requestTenantId={} sessionTenantId={} resolvedTenantId={} resolvedClinicId={} clinicActive={} clinicPublicListing={} doctorPublicListing={} reason={}",
+                operation,
+                publicDoctorId,
+                clinicSlug,
+                clinicIdParam,
+                tenantIdParam,
+                requestTenantId,
+                sessionTenantId,
+                resolvedTenantId,
+                clinic == null ? null : clinic.id(),
+                clinic != null && clinic.active(),
+                clinic != null && clinic.publicListingEnabled(),
+                doctor != null && doctor.profile().publicListingEnabled(),
+                reason
+        );
+        if (tenant != null) {
+            log.debug("patient.portal.booking.eligibility.tenant resolvedTenantCode={} tenantPublicListing={} tenantStatus={}",
+                    tenant.getCode(),
+                    tenant.isPublicListingEnabled(),
+                    tenant.getStatus()
+            );
+        }
     }
 
     private UUID parseDoctorUserId(String publicDoctorId) {
@@ -1023,6 +1292,102 @@ public class PatientPortalService {
         return actorAppUserId;
     }
 
+    private PatientEntity resolveBookingPatient(PatientAccess access, UUID bookingTenantId) {
+        if (bookingTenantId.equals(access.tenantId())) {
+            return access.patient();
+        }
+
+        String mobile = resolveVerifiedMobile(access);
+        PatientEntity existingPatient = patientRepository.findFirstByTenantIdAndMobileIgnoreCase(bookingTenantId, mobile)
+                .orElse(null);
+        if (existingPatient != null) {
+            if (!existingPatient.isActive()) {
+                throw new IllegalArgumentException("A patient record already exists for this mobile number but is inactive. Please contact the clinic.");
+            }
+            return existingPatient;
+        }
+
+        var created = patientService.create(
+                bookingTenantId,
+                new PatientUpsertCommand(
+                        access.patient().getFirstName(),
+                        access.patient().getLastName(),
+                        access.patient().getGender(),
+                        access.patient().getDateOfBirth(),
+                        access.patient().getAgeYears(),
+                        mobile,
+                        access.patient().getEmail(),
+                        access.patient().getAddressLine1(),
+                        access.patient().getAddressLine2(),
+                        access.patient().getCity(),
+                        access.patient().getState(),
+                        access.patient().getCountry(),
+                        access.patient().getPostalCode(),
+                        access.patient().getEmergencyContactName(),
+                        access.patient().getEmergencyContactMobile(),
+                        access.patient().getBloodGroup(),
+                        access.patient().getAllergies(),
+                        access.patient().getExistingConditions(),
+                        access.patient().getLongTermMedications(),
+                        access.patient().getSurgicalHistory(),
+                        access.patient().getNotes(),
+                        true
+                ),
+                requireActorAppUserId()
+        );
+        return patientRepository.findByTenantIdAndId(bookingTenantId, created.id())
+                .orElseThrow(() -> new IllegalStateException("Patient record was not found for booking"));
+    }
+
+    private UUID ensurePatientPortalActor(UUID tenantId, PatientEntity patient) {
+        String subject = "patientportal:" + tenantId + ":" + patient.getId();
+        String displayName = fullName(patient.getFirstName(), patient.getLastName());
+        UUID appUserId = appUserProvisioner.upsertAndReturnId(tenantId, subject, patient.getEmail(), displayName);
+        appUserRepository.findByTenantIdAndId(tenantId, appUserId)
+                .ifPresent(appUser -> {
+                    appUser.setPatientId(patient.getId());
+                    appUser.updateProfile(patient.getEmail(), displayName);
+                });
+        return appUserId;
+    }
+
+    private String resolveVerifiedMobile(PatientAccess access) {
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getPrincipal() instanceof com.deepthoughtnet.clinic.api.patientportal.auth.PatientPortalSessionPrincipal principal) {
+            if (StringUtils.hasText(principal.phone())) {
+                return principal.phone().trim();
+            }
+        }
+        if (StringUtils.hasText(access.patient().getMobile())) {
+            return access.patient().getMobile().trim();
+        }
+        throw new UnauthorizedException("Verified mobile number is missing");
+    }
+
+    private List<PatientAccess> resolveAccessiblePatientAccesses(PatientAccess access) {
+        Map<UUID, PatientAccess> patientAccesses = new LinkedHashMap<>();
+        patientAccesses.put(access.tenantId(), access);
+        String mobile = resolveVerifiedMobile(access);
+        patientRepository.findByMobileIgnoreCaseAndActiveTrue(mobile).stream()
+                .sorted(Comparator.comparing(PatientEntity::getTenantId))
+                .forEach(patient -> patientAccesses.putIfAbsent(patient.getTenantId(), new PatientAccess(patient.getTenantId(), patient)));
+        return List.copyOf(patientAccesses.values());
+    }
+
+    private List<AppointmentRecord> allAppointments(List<PatientAccess> patientAccesses) {
+        return patientAccesses.stream()
+                .flatMap(patientAccess -> appointmentService.listByPatient(patientAccess.tenantId(), patientAccess.patient().getId()).stream())
+                .distinct()
+                .toList();
+    }
+
+    private List<NotificationHistoryRecord> allNotifications(List<PatientAccess> patientAccesses) {
+        return patientAccesses.stream()
+                .flatMap(patientAccess -> notificationHistoryService.listByPatient(patientAccess.tenantId(), patientAccess.patient().getId()).stream())
+                .distinct()
+                .toList();
+    }
+
     private String fullName(String firstName, String lastName) {
         if (firstName == null && lastName == null) {
             return null;
@@ -1037,6 +1402,9 @@ public class PatientPortalService {
     }
 
     private record PatientAccess(UUID tenantId, PatientEntity patient) {
+    }
+
+    private record BookingDoctorAccess(UUID tenantId, DoctorSnapshot doctor) {
     }
 
     private record DoctorSnapshot(TenantUserRecord user, DoctorProfileRecord profile) {

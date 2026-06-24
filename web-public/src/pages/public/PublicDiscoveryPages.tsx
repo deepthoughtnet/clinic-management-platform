@@ -385,8 +385,8 @@ function DoctorCard({ doctor, session }: { doctor: PublicDoctorSummaryResponse; 
         <Link
           className="ghost-button"
           to={patientPortalBookingTo(session, {
-            doctorSlug: doctor.doctorSlug,
-            doctorName: doctor.doctorDisplayName,
+            doctorId: doctor.publicDoctorId,
+            clinicSlug: doctor.clinicSlug,
           })}
         >
           Book appointment
@@ -425,8 +425,7 @@ function ClinicCard({ clinic, session }: { clinic: PublicClinicSummaryResponse; 
           View clinic
         </Link>
         <Link className="ghost-button" to={patientPortalBookingTo(session, {
-          clinicCode: clinic.clinicSlug,
-          clinicName: clinic.clinicDisplayName,
+          clinicSlug: clinic.clinicSlug,
         })}>
           Book appointment
         </Link>
@@ -973,8 +972,10 @@ export function PublicDoctorDetailPage({ session }: { session: PatientPortalSess
                 <Link
                   className="primary-button"
                   to={patientPortalBookingTo(session, {
-                    doctorSlug: detail.data.doctorSlug,
-                    doctorName: detail.data.doctorDisplayName,
+                    doctorId: detail.data.publicDoctorId,
+                    ...(detail.data.clinics.length === 1
+                      ? { clinicSlug: detail.data.clinics[0].clinicSlug }
+                      : {}),
                   })}
                 >
                   Book appointment
@@ -1096,8 +1097,7 @@ export function PublicClinicDetailPage({ session }: { session: PatientPortalSess
   const detail = usePublicResource<PublicClinicDetailResponse | null>(`/api/public/clinics/${clinicSlug}`, {}, null);
   const bookingPath = detail.data
     ? patientPortalBookingTo(session, {
-        clinicCode: detail.data.clinicSlug,
-        clinicName: detail.data.clinicDisplayName,
+        clinicSlug: detail.data.clinicSlug,
       })
     : patientPortalBookingPath(session);
 

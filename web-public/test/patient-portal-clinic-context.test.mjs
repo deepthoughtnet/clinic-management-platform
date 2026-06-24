@@ -12,10 +12,12 @@ test("patient login is simplified", () => {
   assert.ok(source.includes("Sign in with phone number and OTP."));
   assert.ok(source.includes("Access appointments, prescriptions, bills, reports, and care updates securely."));
   assert.ok(source.includes("DoctorClinicSelector"));
-  assert.ok(source.includes("Clinic context is required"));
   assert.ok(source.includes("aria-invalid={Boolean(phoneError)}"));
   assert.ok(source.includes("aria-invalid={Boolean(otpError)}"));
-  assert.ok(source.includes("MISSING_CLINIC_CODE_MESSAGE"));
+  assert.ok(source.includes("buildPatientPortalOtpContext"));
+  assert.ok(source.includes("resolvePatientAuthContext"));
+  assert.ok(source.includes("context ? { context } : {}"));
+  assert.ok(source.includes("indianMobileNumber().safeParse(normalizedPhone)"));
   assert.ok(!source.includes("Have a clinic code?"));
   assert.ok(!source.includes("Clinic code or clinic link"));
   assert.ok(!source.includes("clinicFallbackError"));
@@ -27,13 +29,11 @@ test("patient login is simplified", () => {
   assert.ok(!source.includes("Clinic code is managed internally"));
 });
 
-test("patient login blocks otp actions when no clinic context is available", () => {
+test("patient login keeps otp flow phone-only and preserves next-step context", () => {
   const source = readSource("pages/patient/PatientPortalPages.tsx");
-  assert.ok(source.includes("MISSING_CLINIC_CODE_MESSAGE"));
   assert.ok(source.includes("sanitizePatientOtpInput"));
   assert.ok(source.includes("sanitizePatientPortalErrorMessage"));
   assert.ok(source.includes("isPatientPortalLocalDev"));
-  assert.ok(source.includes("otpRequestSchema.shape.mobile.safeParse(phone)"));
   assert.ok(source.includes("otpVerifySchema.shape.otp.safeParse(otp)"));
   assert.ok(source.includes("noValidate"));
   assert.ok(!source.includes("pattern=\"^\\\\d{10}$\""));
@@ -43,37 +43,74 @@ test("patient login blocks otp actions when no clinic context is available", () 
   assert.ok(source.includes("disabled={requestPending || !canRequestOtp}"));
   assert.ok(source.includes("disabled={verifyPending || !canVerifyOtp}"));
   assert.ok(source.includes("OTP is not available in this environment. Use dev OTP mode or check mock OTP config."));
-  assert.ok(source.includes("Patient mobile number is invalid."));
+  assert.ok(source.includes("Enter a valid 10-digit Indian mobile number."));
   assert.ok(source.includes("Enter a valid 10-digit Indian mobile number."));
   assert.ok(source.includes("Enter a valid 6-digit OTP."));
   assert.ok(source.includes("isPatientPortalLocalDev() && requestState?.accepted"));
   assert.ok(source.includes('requestState.devOtp || "123456"'));
-  assert.ok(source.includes("MISSING_CLINIC_CODE_MESSAGE"));
   assert.ok(source.includes("patient-login-context"));
   assert.ok(source.includes("patient-login-otp-payload"));
+  assert.ok(!source.includes("Clinic context is required"));
+  assert.ok(!source.includes("tenantCode: portalClinicContext.clinicCode"));
+  assert.ok(source.includes("registrationSessionToken"));
+  assert.ok(source.includes("recoverableRegistrationSession"));
+  assert.ok(source.includes("Please%20verify%20your%20mobile%20number%20again."));
+  assert.ok(source.includes("Cancel / Start over"));
+  assert.ok(source.includes("Complete patient registration."));
 });
 
 test("doctor booking routes through clinic context", () => {
   const source = readSource("pages/public/PublicDiscoveryPages.tsx");
   assert.ok(source.includes("patientPortalBookingTo(session, {"));
-  assert.ok(source.includes("doctorSlug: doctor.doctorSlug"));
-  assert.ok(source.includes("doctorName: doctor.doctorDisplayName"));
-  assert.ok(source.includes("clinicCode: clinic.clinicSlug"));
-  assert.ok(source.includes("clinicName: clinic.clinicDisplayName"));
+  assert.ok(source.includes("doctorId: doctor.publicDoctorId"));
+  assert.ok(source.includes("clinicSlug: doctor.clinicSlug"));
+  assert.ok(!source.includes("doctorName: doctor.doctorDisplayName"));
+  assert.ok(!source.includes("doctorSlug: doctor.doctorSlug"));
+  assert.ok(!source.includes("clinicCode: doctor.clinicSlug"));
+  assert.ok(!source.includes("clinicName: doctor.clinicDisplayName"));
+  assert.ok(!source.includes("clinicCode: clinic.clinicSlug"));
+  assert.ok(!source.includes("clinicName: clinic.clinicDisplayName"));
 });
 
-test("single clinic is auto-applied and multi-clinic selector exists", () => {
+test("booking pages auto-apply single clinic context and handle multi-clinic doctor selection", () => {
   const source = readSource("pages/patient/PatientPortalPages.tsx");
   const selector = readSource("pages/patient/DoctorClinicSelector.tsx");
+  const patientPortalApi = readSource("api/patientPortal.ts");
+  assert.ok(source.includes("type BookingDoctorChoice"));
+  assert.ok(source.includes("mapPublicDoctorSummaryToBookingChoice"));
+  assert.ok(source.includes("mapPublicDoctorDetailToBookingChoice"));
+  assert.ok(source.includes("fetchPublicJson<PublicClinicDetailResponse>"));
   assert.ok(source.includes("doctorDetail.data.clinics.length !== 1"));
-  assert.ok(source.includes("setTenantCode(onlyClinic.clinicSlug)"));
+  assert.ok(source.includes("syncBookingClinicContext(clinic.clinicSlug)"));
   assert.ok(source.includes("DoctorClinicSelector"));
+  assert.ok(source.includes("requiresClinicSelection"));
+  assert.ok(source.includes("selectedClinicFilter"));
+  assert.ok(source.includes("recentDoctorOptions"));
+  assert.ok(source.includes("Choose how you want to book your visit"));
   assert.ok(selector.includes("Select a clinic"));
+  assert.ok(source.includes("booking URL doctorId"));
+  assert.ok(source.includes("selectedTenantId"));
+  assert.ok(source.includes("slotRequestKey"));
+  assert.ok(source.includes("slotRequestDoctorId"));
+  assert.ok(source.includes("loadPatientPortalDoctorSlots("));
+  assert.ok(source.includes("doctorId: slotRequestDoctorId"));
+  assert.ok(source.includes("tenantId: slotRequestTenantId"));
+  assert.ok(source.includes("clinicId: slotRequestClinicId"));
+  assert.ok(source.includes("normalizeUuidOrNull"));
+  assert.ok(source.includes('nextParams.set("doctorId", doctor.publicDoctorId)'));
+  assert.ok(patientPortalApi.includes("export type PatientPortalDoctorSlotQuery"));
+  assert.ok(patientPortalApi.includes("loadPatientPortalDoctorSlots"));
+  assert.ok(patientPortalApi.includes("encodeURIComponent(query.doctorId)"));
+  assert.ok(patientPortalApi.includes("isUuid(query.clinicId)"));
+  assert.ok(patientPortalApi.includes("isUuid(query.tenantId)"));
+  assert.ok(patientPortalApi.includes('params.set("clinicSlug", query.clinicSlug.trim())'));
+  assert.ok(patientPortalApi.includes('params.set("date", query.date)'));
 });
 
 test("clinic context helper resolves query params and booking path", () => {
   const source = readSource("pages/patient/patientPortalClinicContext.ts");
   assert.ok(source.includes("PatientPortalRouteState"));
+  assert.ok(source.includes("resolvePatientAuthContext"));
   assert.ok(source.includes('searchParams.get("clinicCode")'));
   assert.ok(source.includes('searchParams.get("clinicId")'));
   assert.ok(source.includes('searchParams.get("clinic")'));
@@ -89,20 +126,48 @@ test("clinic context helper resolves query params and booking path", () => {
   assert.ok(source.includes("patientPortalBookingPath("));
   assert.ok(source.includes("patientPortalBookingTo("));
   assert.ok(source.includes("selectedClinic"));
+  assert.ok(source.includes("mobile"));
+  assert.ok(source.includes("selectedSlot"));
   assert.ok(source.includes("demo-clinic"));
   assert.ok(source.includes("Demo Clinic"));
+  assert.ok(source.includes('searchParams.get("doctorName")'));
+  assert.ok(source.includes('searchParams.get("clinicName")'));
 });
 
 test("public nav and footer branding are cleaned up", () => {
   const source = readSource("App.tsx");
+  const portalSource = readSource("pages/patient/PatientPortalPages.tsx");
   assert.equal(source.split('label: "AIVA"').length - 1, 1);
   assert.ok(source.includes('label: "AI Assistant"'));
   assert.ok(source.includes('brand-badge">JH</span>'));
   assert.ok(!source.includes('brand-badge">AR</span>'));
+  assert.ok(source.includes("Start over"));
+  assert.ok(source.includes("clearPatientRegistrationSession"));
+  assert.ok(source.includes("isPatientRegistrationSessionActive"));
+  assert.ok(portalSource.includes("Jeevanam Healthcare Patient Portal"));
+  assert.ok(portalSource.includes("Sign out"));
+  assert.ok(!portalSource.includes("Patient OTP session"));
+  assert.ok(!portalSource.includes("Patient-scoped data"));
+  assert.ok(!portalSource.includes("Read-only patient access stays separate"));
   assert.ok(source.includes("footer-brand-line"));
   assert.ok(source.includes("footer-environment-line"));
   assert.ok(source.includes("Intelligent Healthcare Platform for clinics, patients, and teams."));
   assert.ok(source.includes("© 2026 DeepThoughtNet."));
+});
+
+test("patient registration session cleanup is centralized", () => {
+  const source = readSource("pages/patient/patientPortalSessionState.ts");
+  assert.ok(source.includes("clearPatientRegistrationSession"));
+  assert.ok(source.includes("clearPatientAuthSession"));
+  assert.ok(source.includes("PATIENT_PORTAL_PENDING_REGISTRATION_STORAGE_KEY"));
+  assert.ok(source.includes("PATIENT_PORTAL_SESSION_STORAGE_KEY"));
+  assert.ok(source.includes("PATIENT_PORTAL_CLINIC_CONTEXT_STORAGE_KEY"));
+  assert.ok(source.includes("clearPublicBookingContext"));
+  assert.ok(source.includes("verifiedMobile"));
+  assert.ok(source.includes("patientRegistrationToken"));
+  assert.ok(source.includes("registrationRequired"));
+  assert.ok(source.includes("staleOnboardingState"));
+  assert.ok(source.includes("REGISTRATION_SESSION_TTL_MS"));
 });
 
 test("homepage location selector persists common cities", () => {
