@@ -16,6 +16,9 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentB
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentConfirmationResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
+import com.deepthoughtnet.clinic.api.publicsite.PublicCatalogFacade;
+import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorSummaryResponse;
+import com.deepthoughtnet.clinic.api.publicsite.dto.PublicPageResponse;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiChannel;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationSessionSnapshot;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationPersistenceService;
@@ -196,6 +199,124 @@ class PatientPortalCareAiServiceTest {
     }
 
     @Test
+    void bookingDoctorLookupUsesPublicCatalogAndClinicSlug() {
+        PublicCatalogFacade publicCatalogFacade = mock(PublicCatalogFacade.class);
+        PatientPortalCareAiService publicService = new PatientPortalCareAiService(
+                patientPortalService,
+                clinicTimeZoneResolver,
+                new LlmBackedPatientPortalCareAiPlanner(aiOrchestrationService, new ObjectMapper(), voiceTestProperties, true),
+                conversationPersistenceService,
+                receptionistTaskService,
+                taskNotificationService,
+                publicCatalogFacade
+        );
+
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(publicCatalogFacade.listDoctors(
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.eq(24)
+        ))
+                .thenReturn(new PublicPageResponse<>(List.of(
+                        new PublicDoctorSummaryResponse(
+                                "doctor-vikas",
+                                "vikas-mehta",
+                                "Dr Vikas Mehta",
+                                null,
+                                "General Medicine",
+                                12,
+                                List.of(),
+                                "Sunrise Clinic",
+                                "curapilot-demo-clinic",
+                                "Andheri",
+                                "Mumbai",
+                                true,
+                                "Tomorrow"
+                        )
+                ), 1, 24, 1, 1));
+        when(patientPortalService.doctorSlots("doctor-vikas", "curapilot-demo-clinic", tomorrow)).thenReturn(List.of(
+                slot(tomorrow, LocalTime.of(10, 0), true)
+        ));
+
+        var response = publicService.message(new PatientPortalCareAiMessageRequest("Book with Dr Vikas tomorrow", "en"));
+
+        verify(publicCatalogFacade, org.mockito.Mockito.atLeastOnce()).listDoctors(
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.eq(24)
+        );
+        verify(patientPortalService, never()).doctors();
+        assertThat(response.state().currentIntent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(response.state().doctorName()).isEqualTo("Dr Vikas Mehta");
+        assertThat(response.state().doctorOptions()).isEmpty();
+    }
+
+    @Test
+    void cancelFlowClearsStaleBookingStateAndDoesNotHandOff() {
+        PublicCatalogFacade publicCatalogFacade = mock(PublicCatalogFacade.class);
+        PatientPortalCareAiService publicService = new PatientPortalCareAiService(
+                patientPortalService,
+                clinicTimeZoneResolver,
+                new LlmBackedPatientPortalCareAiPlanner(aiOrchestrationService, new ObjectMapper(), voiceTestProperties, true),
+                conversationPersistenceService,
+                receptionistTaskService,
+                taskNotificationService,
+                publicCatalogFacade
+        );
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(publicCatalogFacade.listDoctors(
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.eq(24)
+        ))
+                .thenReturn(new PublicPageResponse<>(List.of(
+                        new PublicDoctorSummaryResponse(
+                                "doctor-vikas",
+                                "vikas-mehta",
+                                "Dr Vikas Mehta",
+                                null,
+                                "General Medicine",
+                                12,
+                                List.of(),
+                                "Sunrise Clinic",
+                                "curapilot-demo-clinic",
+                                "Andheri",
+                                "Mumbai",
+                                true,
+                                "Tomorrow"
+                        )
+                ), 1, 24, 1, 1));
+        when(patientPortalService.doctorSlots("doctor-vikas", "curapilot-demo-clinic", tomorrow)).thenReturn(List.of(
+                slot(tomorrow, LocalTime.of(10, 0), true)
+        ));
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
+                appointment(UUID.randomUUID(), UUID.randomUUID(), "Dr Vikas Mehta", tomorrow, LocalTime.of(10, 0), "BOOKED")
+        ));
+
+        publicService.message(new PatientPortalCareAiMessageRequest("Book with Dr Vikas tomorrow", "en"));
+        var response = publicService.message(new PatientPortalCareAiMessageRequest("cancel my appointment", "en"));
+
+        assertThat(response.state().currentIntent()).isEqualTo("CANCEL_APPOINTMENT");
+        assertThat(response.state().handoffRequired()).isFalse();
+        assertThat(response.assistantMessage()).contains("Should I cancel this appointment?");
+    }
+
+    @Test
     void afterBookingSuccessThankYouByeDoesNotReuseSlotMenu() {
         LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
@@ -303,6 +424,94 @@ class PatientPortalCareAiServiceTest {
         assertThat(response.assistantMessage()).contains("I’ve created a request for our receptionist");
         verify(receptionistTaskService).upsertAppointmentHandoffTask(any(), org.mockito.Mockito.eq(CareAiReceptionistTaskPriority.MEDIUM));
         verify(receptionistTaskService, never()).upsertHandoffTask(any(), any());
+    }
+
+    @Test
+    void bookingDoctorLookupUsesPublicCatalogWhenAvailable() {
+        PublicCatalogFacade publicCatalogFacade = mock(PublicCatalogFacade.class);
+        PatientPortalCareAiService publicService = new PatientPortalCareAiService(
+                patientPortalService,
+                clinicTimeZoneResolver,
+                new LlmBackedPatientPortalCareAiPlanner(aiOrchestrationService, new ObjectMapper(), voiceTestProperties, true),
+                conversationPersistenceService,
+                receptionistTaskService,
+                taskNotificationService,
+                publicCatalogFacade
+        );
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(publicCatalogFacade.listDoctors(
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.eq(24)
+        ))
+                .thenReturn(new PublicPageResponse<>(List.of(
+                        publicDoctor("doctor-vikas", "vikas-mehta", "Dr Vikas Mehta", "General Medicine", "Sunrise Clinic", "curapilot-demo-clinic")
+                ), 1, 24, 1, 1));
+        when(patientPortalService.doctorSlots("doctor-vikas", "curapilot-demo-clinic", tomorrow)).thenReturn(List.of(
+                slot(tomorrow, LocalTime.of(10, 0), true)
+        ));
+
+        var response = publicService.message(new PatientPortalCareAiMessageRequest("Book with Dr Vikas tomorrow", "en"));
+
+        verify(publicCatalogFacade, org.mockito.Mockito.atLeastOnce()).listDoctors(
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.eq(24)
+        );
+        verify(patientPortalService, never()).doctors();
+        assertThat(response.state().currentIntent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(response.state().handoffRequired()).isFalse();
+    }
+
+    @Test
+    void cancelRequestClearsStaleBookingWorkflowState() {
+        PublicCatalogFacade publicCatalogFacade = mock(PublicCatalogFacade.class);
+        PatientPortalCareAiService publicService = new PatientPortalCareAiService(
+                patientPortalService,
+                clinicTimeZoneResolver,
+                new LlmBackedPatientPortalCareAiPlanner(aiOrchestrationService, new ObjectMapper(), voiceTestProperties, true),
+                conversationPersistenceService,
+                receptionistTaskService,
+                taskNotificationService,
+                publicCatalogFacade
+        );
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(publicCatalogFacade.listDoctors(
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.<String>nullable(String.class),
+                org.mockito.ArgumentMatchers.eq(0),
+                org.mockito.ArgumentMatchers.eq(24)
+        ))
+                .thenReturn(new PublicPageResponse<>(List.of(
+                        publicDoctor("doctor-vikas", "vikas-mehta", "Dr Vikas Mehta", "General Medicine", "Sunrise Clinic", "curapilot-demo-clinic")
+                ), 1, 24, 1, 1));
+        when(patientPortalService.doctorSlots("doctor-vikas", "curapilot-demo-clinic", tomorrow)).thenReturn(List.of(
+                slot(tomorrow, LocalTime.of(10, 0), true)
+        ));
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
+                appointment(UUID.randomUUID(), UUID.randomUUID(), "Dr Vikas Mehta", tomorrow, LocalTime.of(10, 0), "BOOKED")
+        ));
+
+        publicService.message(new PatientPortalCareAiMessageRequest("Book with Dr Vikas tomorrow", "en"));
+        var response = publicService.message(new PatientPortalCareAiMessageRequest("cancel my appointment", "en"));
+
+        assertThat(response.state().currentIntent()).isEqualTo("CANCEL_APPOINTMENT");
+        assertThat(response.state().handoffRequired()).isFalse();
+        assertThat(response.state().doctorOptions()).isEmpty();
     }
 
     @Test
@@ -472,10 +681,16 @@ class PatientPortalCareAiServiceTest {
         UUID doctorUserId = UUID.randomUUID();
         LocalDate currentDate = LocalDate.now(CLINIC_ZONE).plusDays(1);
         LocalDate nextFriday = LocalDate.now(CLINIC_ZONE).with(java.time.temporal.TemporalAdjusters.next(DayOfWeek.FRIDAY));
-        when(patientPortalService.careAiUpcomingAppointments()).thenReturn(List.of(
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
                 appointment(appointmentId, doctorUserId, "Dr Neha Mehta", currentDate, LocalTime.of(11, 0), "BOOKED")
         ));
-        when(patientPortalService.doctorSlots(doctorUserId.toString(), nextFriday)).thenReturn(List.of(
+        when(patientPortalService.doctorSlots(
+                doctorUserId.toString(),
+                null,
+                TENANT_A.toString(),
+                null,
+                nextFriday
+        )).thenReturn(List.of(
                 slot(nextFriday, LocalTime.of(14, 0), true),
                 slot(nextFriday, LocalTime.of(15, 0), true)
         ));
@@ -553,10 +768,16 @@ class PatientPortalCareAiServiceTest {
         UUID doctorUserId = UUID.randomUUID();
         LocalDate currentDate = LocalDate.now(CLINIC_ZONE).plusDays(2);
         LocalDate newDate = LocalDate.now(CLINIC_ZONE).plusDays(4);
-        when(patientPortalService.careAiUpcomingAppointments()).thenReturn(List.of(
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
                 appointment(appointmentId, doctorUserId, "Dr Neha Mehta", currentDate, LocalTime.of(11, 0), "BOOKED")
         ));
-        when(patientPortalService.doctorSlots(doctorUserId.toString(), newDate)).thenReturn(List.of(
+        when(patientPortalService.doctorSlots(
+                doctorUserId.toString(),
+                null,
+                TENANT_A.toString(),
+                null,
+                newDate
+        )).thenReturn(List.of(
                 slot(newDate, LocalTime.of(12, 0), true),
                 slot(newDate, LocalTime.of(12, 30), true)
         ));
@@ -592,7 +813,7 @@ class PatientPortalCareAiServiceTest {
         UUID appointmentB = UUID.randomUUID();
         UUID doctorUserId = UUID.randomUUID();
         LocalDate date = LocalDate.now(CLINIC_ZONE).plusDays(1);
-        when(patientPortalService.careAiUpcomingAppointments()).thenReturn(List.of(
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
                 appointment(appointmentA, doctorUserId, "Dr Ashish Shri", date, LocalTime.of(9, 0), "BOOKED"),
                 appointment(appointmentB, doctorUserId, "Dr Neha Mehta", date.plusDays(1), LocalTime.of(10, 0), "BOOKED")
         ));
@@ -609,9 +830,12 @@ class PatientPortalCareAiServiceTest {
                 ));
 
         var first = service.message(new PatientPortalCareAiMessageRequest("Cancel my appointment", "en"));
-        assertThat(first.assistantMessage()).contains("Please choose which appointment");
+        assertThat(first.assistantMessage()).contains("Please choose which appointment you want to cancel:");
+        assertThat(first.assistantMessage()).contains("1. Dr Ashish Shri");
+        assertThat(first.assistantMessage()).contains("2. Dr Neha Mehta");
 
         var second = service.message(new PatientPortalCareAiMessageRequest("2", "en"));
+        assertThat(second.assistantMessage()).contains("Should I cancel this appointment?");
         assertThat(second.state().confirmationPending()).isTrue();
         assertThat(second.state().selectedAppointment()).contains("Dr Neha Mehta");
 
@@ -651,7 +875,7 @@ class PatientPortalCareAiServiceTest {
     @Test
     void appointmentStatusReturnsNextAppointmentDetails() {
         LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
-        when(patientPortalService.careAiUpcomingAppointments()).thenReturn(List.of(
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
                 appointment(UUID.randomUUID(), UUID.randomUUID(), "Dr Neha Mehta", tomorrow, LocalTime.of(14, 0), "BOOKED")
         ));
 
@@ -668,11 +892,12 @@ class PatientPortalCareAiServiceTest {
         LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
         UUID appointmentId = UUID.randomUUID();
         UUID doctorUserId = UUID.randomUUID();
-        when(patientPortalService.careAiUpcomingAppointments()).thenReturn(List.of(
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
                 new PatientPortalCareAiAppointmentOption(
                         appointmentId,
                         doctorUserId,
                         "Dr Neha Mehta",
+                        UUID.randomUUID(),
                         "Demo Clinic",
                         tomorrow,
                         LocalTime.of(14, 0),
@@ -1416,6 +1641,31 @@ class PatientPortalCareAiServiceTest {
         );
     }
 
+    private PublicDoctorSummaryResponse publicDoctor(
+            String publicDoctorId,
+            String doctorSlug,
+            String doctorDisplayName,
+            String speciality,
+            String clinicDisplayName,
+            String clinicSlug
+    ) {
+        return new PublicDoctorSummaryResponse(
+                publicDoctorId,
+                doctorSlug,
+                doctorDisplayName,
+                null,
+                speciality,
+                12,
+                List.of(),
+                clinicDisplayName,
+                clinicSlug,
+                "Andheri",
+                "Mumbai",
+                true,
+                "Tomorrow"
+        );
+    }
+
     private PatientPortalCareAiAppointmentOption appointment(
             UUID appointmentId,
             UUID doctorUserId,
@@ -1428,6 +1678,7 @@ class PatientPortalCareAiServiceTest {
                 appointmentId,
                 doctorUserId,
                 doctorName,
+                TENANT_A,
                 "Sunrise Clinic",
                 date,
                 time,

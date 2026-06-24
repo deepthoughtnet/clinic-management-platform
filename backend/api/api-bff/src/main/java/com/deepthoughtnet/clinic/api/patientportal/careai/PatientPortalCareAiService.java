@@ -7,6 +7,9 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentC
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalDoctorSlotResponse;
+import com.deepthoughtnet.clinic.api.publicsite.PublicCatalogFacade;
+import com.deepthoughtnet.clinic.api.publicsite.dto.PublicClinicSummaryResponse;
+import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorSummaryResponse;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiChannel;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationSessionSnapshot;
 import com.deepthoughtnet.clinic.ai.careai.persistence.CareAiConversationPersistenceService;
@@ -150,6 +153,8 @@ public class PatientPortalCareAiService {
     private final CareAiConversationPersistenceService conversationPersistenceService;
     private final CareAiReceptionistTaskService receptionistTaskService;
     private final CareAiTaskNotificationService taskNotificationService;
+    private final PublicCatalogFacade publicCatalogFacade;
+    private final PatientPortalCareAiBusinessLookupService businessLookupService;
     private final Map<SessionKey, CareAiState> sessions = new ConcurrentHashMap<>();
 
     @Autowired
@@ -159,7 +164,8 @@ public class PatientPortalCareAiService {
             PatientPortalCareAiPlanner planner,
             CareAiConversationPersistenceService conversationPersistenceService,
             CareAiReceptionistTaskService receptionistTaskService,
-            CareAiTaskNotificationService taskNotificationService
+            CareAiTaskNotificationService taskNotificationService,
+            PublicCatalogFacade publicCatalogFacade
     ) {
         this.patientPortalService = patientPortalService;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
@@ -167,6 +173,27 @@ public class PatientPortalCareAiService {
         this.conversationPersistenceService = conversationPersistenceService;
         this.receptionistTaskService = receptionistTaskService;
         this.taskNotificationService = taskNotificationService;
+        this.publicCatalogFacade = publicCatalogFacade;
+        this.businessLookupService = new PatientPortalCareAiBusinessLookupService(patientPortalService, publicCatalogFacade);
+    }
+
+    public PatientPortalCareAiService(
+            PatientPortalService patientPortalService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
+            PatientPortalCareAiPlanner planner,
+            CareAiConversationPersistenceService conversationPersistenceService,
+            CareAiReceptionistTaskService receptionistTaskService,
+            CareAiTaskNotificationService taskNotificationService
+    ) {
+        this(
+                patientPortalService,
+                clinicTimeZoneResolver,
+                planner,
+                conversationPersistenceService,
+                receptionistTaskService,
+                taskNotificationService,
+                null
+        );
     }
 
     public PatientPortalCareAiMessageResponse message(PatientPortalCareAiMessageRequest request) {
@@ -202,6 +229,7 @@ public class PatientPortalCareAiService {
 
         SessionKey sessionKey = currentSessionKey();
         CareAiState state = sessions.computeIfAbsent(sessionKey, key -> new CareAiState());
+        clearLookupCaches(state);
         String message = request.message().trim();
         hydrateStateFromPersistence(state, channel, patientId, externalSessionId);
         state.lastChannel = channel;
@@ -210,8 +238,26 @@ public class PatientPortalCareAiService {
         state.lastTransport = transport;
         state.lastUserMessage = message;
         state.language = normalizeLanguage(request.language(), message, state.language);
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "careai.turn.begin source=web-public-patient-careai conversationTenantId={} tenantContextTenantId={} patientPortalSessionId={} patientId={} patientMobile={} channel={} transport={} userText={}",
+                    RequestContextHolder.requireTenantId(),
+                    RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value(),
+                    externalSessionId,
+                    patientId,
+                    patientPortalService.currentPatientMobile(),
+                    channel,
+                    transport,
+                    trimToLength(message, 160)
+            );
+        }
         markAnsweredFacts(state);
         String detectedTimePreference = findPreferredTimeWindow(message, state.language, state);
+        careAiTrace("messageInternal", "received", state,
+                "channel=" + channel
+                        + " transport=" + transport
+                        + " userText=" + trimToLength(message, 160)
+                        + " detectedTimePreference=" + detectedTimePreference);
         log.info(
                 "careai.turn.received conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} userText={} activeWorkflow={} lastQuestionKey={} escalationReason={} topicClassification={} detectedTimePreference={} preferredTimeWindow={} answeredTimePreference={} voiceChannel={}",
                 RequestContextHolder.requireTenantId(),
@@ -233,7 +279,15 @@ public class PatientPortalCareAiService {
             prepareEscalationResponse(state, message, "emergency-symptoms", emergencyPriority(message));
             return response(state, emergencyPrompt(state.language));
         }
+        careAiTrace("classifyTopic", "enter", state,
+                "userText=" + trimToLength(message, 160)
+                        + " currentWorkflow=" + state.currentIntent
+                        + " lastQuestionKey=" + state.lastQuestionKey);
         CareAiTopicClassification topicClassification = classifyTopic(state, message);
+        careAiTrace("classifyTopic", "exit", state,
+                "topicClassification=" + topicClassification
+                        + " currentWorkflow=" + state.currentIntent
+                        + " lastQuestionKey=" + state.lastQuestionKey);
         log.info(
                 "careai.turn.classified conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} userText={} activeWorkflow={} lastQuestionKey={} escalationReason={} topicClassification={} detectedTimePreference={}",
                 RequestContextHolder.requireTenantId(),
@@ -312,7 +366,20 @@ public class PatientPortalCareAiService {
             queueWorkflowEvent(state, "TOPIC_SWITCHED", workflowContextJson(state));
         }
 
+        careAiTrace("applyIntent", "enter", state,
+                "userText=" + trimToLength(message, 160)
+                        + " plannerIntent=" + (plannerDecision == null ? null : plannerDecision.intent())
+                        + " plannerDoctor=" + (plannerDecision == null ? null : plannerDecision.doctorName())
+                        + " plannerSpeciality=" + (plannerDecision == null ? null : plannerDecision.speciality()));
         boolean progressed = applyIntent(state, message, plannerDecision);
+        careAiTrace("applyIntent", "exit", state,
+                "progressed=" + progressed
+                        + " currentWorkflow=" + state.currentIntent
+                        + " selectedDoctorId=" + state.selectedDoctorId
+                        + " selectedClinicId=" + state.selectedClinicId
+                        + " selectedTenantId=" + state.selectedTenantId
+                        + " selectedClinicSlug=" + state.selectedClinicSlug
+                        + " selectedAppointmentId=" + state.selectedAppointmentId);
         if (state.confirmationPending && isPositiveConfirmation(message)) {
             return executeConfirmedAction(state);
         }
@@ -362,6 +429,40 @@ public class PatientPortalCareAiService {
         return response(state, reply);
     }
 
+    private void transitionWorkflow(CareAiState state, PatientPortalCareAiIntent nextIntent, String reason) {
+        PatientPortalCareAiIntent previousIntent = state.currentIntent;
+        boolean staleStateCleared = previousIntent != nextIntent
+                || state.handoffRequired
+                || state.confirmationPending
+                || StringUtils.hasText(state.selectedSlot)
+                || StringUtils.hasText(state.selectedAppointmentId)
+                || StringUtils.hasText(state.selectedDoctorId);
+        careAiTrace("transitionWorkflow", "enter", state,
+                "previousWorkflow=" + (previousIntent == null ? null : previousIntent.name())
+                        + " newWorkflow=" + (nextIntent == null ? null : nextIntent.name())
+                        + " reason=" + reason
+                        + " staleStateCleared=" + staleStateCleared);
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "careai.workflow.transition conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} previousWorkflow={} newWorkflow={} reason={} staleStateCleared={}",
+                    RequestContextHolder.requireTenantId(),
+                    state.lastExternalSessionId,
+                    state.lastPatientId,
+                    patientPortalService.currentPatientMobile(),
+                    previousIntent == null ? null : previousIntent.name(),
+                    nextIntent == null ? null : nextIntent.name(),
+                    reason,
+                    staleStateCleared
+            );
+        }
+        invalidatePendingConfirmation(state, reason);
+        resetWorkflowState(state, nextIntent);
+        careAiTrace("transitionWorkflow", "exit", state,
+                "previousWorkflow=" + (previousIntent == null ? null : previousIntent.name())
+                        + " newWorkflow=" + (state.currentIntent == null ? null : state.currentIntent.name())
+                        + " reason=" + reason);
+    }
+
     public PatientPortalCareAiResetResponse reset() {
         sessions.remove(currentSessionKey());
         conversationPersistenceService.safeCloseConversation(
@@ -373,6 +474,43 @@ public class PatientPortalCareAiService {
                 "AIVA booking context cleared."
         );
         return new PatientPortalCareAiResetResponse(true, "AIVA booking context cleared.");
+    }
+
+    public List<Map<String, Object>> debugDoctorLookup(String query) {
+        CareAiState state = currentState();
+        List<DoctorChoice> careAiDoctors = lookupDoctors(state, query, null);
+        int publicCatalogCount = publicCatalogFacade == null ? -1 : publicCatalogFacade.listDoctors(query, null, null, null, null, null, 0, 24).items().size();
+        careAiTrace("CAREAI_TRACE_DOCTOR_COMPARE", "enter", state,
+                "publicCatalogCount=" + publicCatalogCount
+                        + " careAiDoctorCount=" + careAiDoctors.size()
+                        + " query=" + query);
+        return careAiDoctors.stream()
+                .map(this::doctorDebugMap)
+                .toList();
+    }
+
+    public List<Map<String, Object>> debugAppointmentLookup() {
+        CareAiState state = currentState();
+        List<PatientPortalCareAiAppointmentOption> patientPortalAppointments = patientPortalService.debugAppointments();
+        List<PatientPortalCareAiAppointmentOption> careAiAppointments = businessLookupService.upcomingAppointments();
+        careAiTrace("CAREAI_TRACE_APPOINTMENT_COMPARE", "enter", state,
+                "patientPortalAppointmentsCount=" + patientPortalAppointments.size()
+                        + " careAiAppointmentsCount=" + careAiAppointments.size());
+        return careAiAppointments.stream()
+                .map(this::appointmentDebugMap)
+                .toList();
+    }
+
+    public Map<String, Object> debugActiveConversation() {
+        CareAiState state = currentState();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("workflow", state.currentIntent == null ? null : state.currentIntent.name());
+        result.put("lastQuestionKey", state.lastQuestionKey);
+        result.put("selectedDoctorId", state.selectedDoctorId);
+        result.put("selectedClinicId", state.selectedClinicId);
+        result.put("selectedTenantId", state.selectedTenantId);
+        result.put("selectedAppointmentId", state.selectedAppointmentId);
+        return result;
     }
 
     private String routeConversation(CareAiState state, String message) {
@@ -388,14 +526,17 @@ public class PatientPortalCareAiService {
     }
 
     private boolean applyIntent(CareAiState state, String message, PatientPortalCareAiPlannerDecision plannerDecision) {
+        careAiTrace("applyIntent", "enter", state,
+                "message=" + trimToLength(message, 160)
+                        + " currentWorkflow=" + state.currentIntent
+                        + " lastQuestionKey=" + state.lastQuestionKey);
         PatientPortalCareAiIntent detectedIntent = detectIntent(message);
         if (detectedIntent == null && plannerDecision != null) {
             detectedIntent = plannerDecision.intent();
         }
         boolean changed = false;
         if (detectedIntent != null && detectedIntent != state.currentIntent) {
-            invalidatePendingConfirmation(state, "intent-changed");
-            resetWorkflowState(state, detectedIntent);
+            transitionWorkflow(state, detectedIntent, "intent-changed");
             changed = true;
         }
         if (state.currentIntent == PatientPortalCareAiIntent.BOOK_APPOINTMENT) {
@@ -407,10 +548,23 @@ public class PatientPortalCareAiService {
         } else if (state.currentIntent == PatientPortalCareAiIntent.CANCEL_APPOINTMENT) {
             changed = applyAppointmentSelectionFacts(state, message) || changed;
         }
+        careAiTrace("applyIntent", "exit", state,
+                "detectedIntent=" + detectedIntent
+                        + " changed=" + changed
+                        + " currentWorkflow=" + state.currentIntent
+                        + " selectedDoctorId=" + state.selectedDoctorId
+                        + " selectedAppointmentId=" + state.selectedAppointmentId);
         return changed;
     }
 
     private boolean applyBookingFacts(CareAiState state, String message) {
+        careAiTrace("applyBookingFacts", "enter", state,
+                "message=" + trimToLength(message, 160)
+                        + " requestedDoctorName=" + state.requestedDoctorName
+                        + " requestedSpeciality=" + state.requestedSpeciality
+                        + " selectedDoctorId=" + state.selectedDoctorId
+                        + " selectedClinicSlug=" + state.selectedClinicSlug
+                        + " selectedTenantId=" + state.selectedTenantId);
         boolean changed = false;
         boolean selectionOnlyMessage = isSelectionOnlyMessage(message);
         String detectedDate = null;
@@ -478,10 +632,25 @@ public class PatientPortalCareAiService {
             state.reason = reason;
             changed = true;
         }
+        careAiTrace("applyBookingFacts", "exit", state,
+                "changed=" + changed
+                        + " requestedDoctorName=" + state.requestedDoctorName
+                        + " requestedSpeciality=" + state.requestedSpeciality
+                        + " preferredDate=" + state.preferredDate
+                        + " preferredTimeWindow=" + state.preferredTimeWindow
+                        + " selectedDoctorId=" + state.selectedDoctorId
+                        + " selectedClinicSlug=" + state.selectedClinicSlug
+                        + " selectedTenantId=" + state.selectedTenantId);
         return changed;
     }
 
     private boolean applyRescheduleFacts(CareAiState state, String message) {
+        careAiTrace("applyRescheduleFacts", "enter", state,
+                "message=" + trimToLength(message, 160)
+                        + " selectedAppointmentId=" + state.selectedAppointmentId
+                        + " preferredDate=" + state.preferredDate
+                        + " preferredTimeWindow=" + state.preferredTimeWindow
+                        + " selectedTenantId=" + state.selectedTenantId);
         boolean changed = applyAppointmentSelectionFacts(state, message);
         boolean selectionOnlyMessage = isSelectionOnlyMessage(message);
         String detectedDate = null;
@@ -521,6 +690,13 @@ public class PatientPortalCareAiService {
                 StringUtils.hasText(state.preferredDate),
                 previewNextQuestionAfterDate(state)
         );
+        careAiTrace("applyRescheduleFacts", "exit", state,
+                "changed=" + changed
+                        + " selectedAppointmentId=" + state.selectedAppointmentId
+                        + " preferredDate=" + state.preferredDate
+                        + " preferredTimeWindow=" + state.preferredTimeWindow
+                        + " selectedSlot=" + state.selectedSlot
+                        + " selectedTenantId=" + state.selectedTenantId);
         return changed;
     }
 
@@ -618,8 +794,22 @@ public class PatientPortalCareAiService {
     }
 
     private String handleBooking(CareAiState state, String message) {
+        careAiTrace("handleBooking", "enter", state,
+                "message=" + trimToLength(message, 160)
+                        + " selectedDoctorId=" + state.selectedDoctorId
+                        + " selectedClinicSlug=" + state.selectedClinicSlug
+                        + " selectedTenantId=" + state.selectedTenantId
+                        + " preferredDate=" + state.preferredDate
+                        + " preferredTimeWindow=" + state.preferredTimeWindow
+                        + " slotCount=" + state.slotOptions.size());
         if (shouldRerenderSlotOptions(state, message)) {
             return rerenderSlotOptions(state);
+        }
+        if (tryResolveClinicSelection(state, message)) {
+            String clinicDoctorPrompt = clinicDoctorChoicePrompt(state);
+            if (StringUtils.hasText(clinicDoctorPrompt)) {
+                return clinicDoctorPrompt;
+            }
         }
         if (tryResolveDoctorSelection(state, message)) {
             if (StringUtils.hasText(state.dateResolutionIssue)) {
@@ -651,10 +841,24 @@ public class PatientPortalCareAiService {
             }
             return slotChoicePrompt(state);
         }
+        careAiTrace("handleBooking", "exit", state,
+                "selectedDoctorId=" + state.selectedDoctorId
+                        + " selectedSlot=" + state.selectedSlot
+                        + " confirmationPending=" + state.confirmationPending
+                        + " slotCount=" + state.slotOptions.size());
         return slotChoicePrompt(state);
     }
 
     private String handleReschedule(CareAiState state, String message) {
+        careAiTrace("handleReschedule", "enter", state,
+                "message=" + trimToLength(message, 160)
+                        + " selectedAppointmentId=" + state.selectedAppointmentId
+                        + " selectedDoctorId=" + state.selectedDoctorId
+                        + " selectedClinicSlug=" + state.selectedClinicSlug
+                        + " selectedTenantId=" + state.selectedTenantId
+                        + " preferredDate=" + state.preferredDate
+                        + " preferredTimeWindow=" + state.preferredTimeWindow
+                        + " slotCount=" + state.slotOptions.size());
         if (shouldRerenderSlotOptions(state, message)) {
             return rerenderSlotOptions(state);
         }
@@ -689,10 +893,21 @@ public class PatientPortalCareAiService {
             }
             return slotChoicePrompt(state);
         }
+        careAiTrace("handleReschedule", "exit", state,
+                "selectedAppointmentId=" + state.selectedAppointmentId
+                        + " selectedSlot=" + state.selectedSlot
+                        + " confirmationPending=" + state.confirmationPending
+                        + " slotCount=" + state.slotOptions.size());
         return slotChoicePrompt(state);
     }
 
     private String handleCancellation(CareAiState state, String message) {
+        careAiTrace("handleCancellation", "enter", state,
+                "message=" + trimToLength(message, 160)
+                        + " selectedAppointmentId=" + state.selectedAppointmentId
+                        + " selectedDoctorId=" + state.selectedDoctorId
+                        + " selectedTenantId=" + state.selectedTenantId
+                        + " appointmentCount=" + state.appointmentOptions.size());
         if (!ensureAppointmentOptions(state)) {
             return noUpcomingAppointmentsPrompt(state.language);
         }
@@ -708,10 +923,19 @@ public class PatientPortalCareAiService {
         }
         state.pendingAction = PatientPortalCareAiIntent.CANCEL_APPOINTMENT;
         state.confirmationPending = true;
+        careAiTrace("handleCancellation", "exit", state,
+                "selectedAppointmentId=" + state.selectedAppointmentId
+                        + " confirmationPending=" + state.confirmationPending
+                        + " appointmentCount=" + state.appointmentOptions.size());
         return cancellationConfirmationPrompt(state);
     }
 
     private String handleStatus(CareAiState state, String message) {
+        careAiTrace("handleStatus", "enter", state,
+                "message=" + trimToLength(message, 160)
+                        + " selectedAppointmentId=" + state.selectedAppointmentId
+                        + " selectedTenantId=" + state.selectedTenantId
+                        + " appointmentCount=" + state.appointmentOptions.size());
         if (!ensureAppointmentOptions(state)) {
             return noUpcomingAppointmentsPrompt(state.language);
         }
@@ -725,12 +949,28 @@ public class PatientPortalCareAiService {
         }
         AppointmentChoice next = state.appointmentOptions.getFirst();
         selectAppointment(state, next);
+        careAiTrace("handleStatus", "exit", state,
+                "selectedAppointmentId=" + state.selectedAppointmentId
+                        + " selectedTenantId=" + state.selectedTenantId
+                        + " appointmentCount=" + state.appointmentOptions.size());
         return appointmentStatusPrompt(next, state.language);
     }
 
     private String promptForDoctorSelection(CareAiState state, String message) {
         List<DoctorChoice> matches = resolveDoctorMatches(state, message);
         if (matches.isEmpty()) {
+            if (mayContainClinicReference(message)) {
+                List<ClinicChoice> clinicMatches = resolveClinicMatches(state, message);
+                if (clinicMatches.size() == 1) {
+                    selectClinic(state, clinicMatches.getFirst());
+                    return clinicDoctorChoicePrompt(state);
+                }
+                if (clinicMatches.size() > 1) {
+                    state.clinicChoices = clinicMatches;
+                    state.clinicOptions = clinicMatches.stream().map(ClinicChoice::label).toList();
+                    return clinicChoicePrompt(state);
+                }
+            }
             List<DoctorChoice> fuzzyMatches = resolveFuzzyDoctorMatches(message);
             if (fuzzyMatches.size() == 1) {
                 state.doctorChoices = fuzzyMatches;
@@ -742,11 +982,35 @@ public class PatientPortalCareAiService {
                 state.doctorOptions = fuzzyMatches.stream().map(DoctorChoice::label).toList();
                 return doctorChoicePrompt(state);
             }
-            state.doctorOptions = patientPortalService.doctors().stream()
+            if (log.isDebugEnabled()) {
+                log.debug(
+                        "patient.portal.careai.doctor.lookup.empty source=web-public-patient-careai conversationTenantId={} tenantContextTenantId={} patientPortalSessionId={} patientId={} patientMobile={} selectedDoctorId={} selectedDoctorSlug={} selectedClinicId={} selectedTenantId={} selectedClinicSlug={} lookupMode={} searchText={} speciality={} reason={}",
+                        RequestContextHolder.requireTenantId(),
+                        RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value(),
+                        RequestContextHolder.require().correlationId(),
+                        patientPortalService.currentPatientId(),
+                        patientPortalService.currentPatientMobile(),
+                        state.selectedDoctorId,
+                        state.selectedDoctorSlug,
+                        state.selectedClinicId,
+                        state.selectedTenantId,
+                        state.selectedClinicSlug,
+                        StringUtils.hasText(state.selectedClinicSlug) ? "clinic-specific" : "cross-clinic",
+                        state.requestedDoctorName,
+                        state.requestedSpeciality,
+                        StringUtils.hasText(state.selectedClinicSlug) ? "doctor-not-found" : "no-clinic-context"
+                );
+            }
+            state.doctorOptions = publicBookableDoctorChoices(state).stream()
                     .limit(4)
-                    .map(this::doctorLabel)
+                    .map(DoctorChoice::label)
                     .toList();
             return askDoctorPrompt(state.language, containsBookingIntent(message, state.language));
+        }
+        if (matches.size() > 1 && sameDoctorAcrossMultipleClinics(matches)) {
+            state.clinicChoices = toClinicChoices(matches);
+            state.clinicOptions = state.clinicChoices.stream().map(ClinicChoice::label).toList();
+            return clinicChoicePrompt(state);
         }
         if (matches.size() == 1) {
             selectDoctor(state, matches.getFirst());
@@ -793,6 +1057,18 @@ public class PatientPortalCareAiService {
         return false;
     }
 
+    private boolean tryResolveClinicSelection(CareAiState state, String message) {
+        if (state.clinicChoices.isEmpty()) {
+            return false;
+        }
+        ClinicChoice selected = resolveClinicChoice(state, message);
+        if (selected == null) {
+            return false;
+        }
+        selectClinic(state, selected);
+        return true;
+    }
+
     private boolean tryResolveSlotSelection(CareAiState state, String message, String publicDoctorId) {
         if (!state.slotChoices.isEmpty()) {
             SlotChoice selected = resolveSlotChoice(state, message);
@@ -816,37 +1092,19 @@ public class PatientPortalCareAiService {
         }
 
         LocalDate date = LocalDate.parse(state.preferredDate);
-        if (log.isDebugEnabled()) {
-            log.debug(
-                    "patient.portal.careai.slot.lookup.request conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} doctorId={} clinicSlug={} clinicId={} tenantId={} date={}",
-                    RequestContextHolder.requireTenantId(),
-                    RequestContextHolder.require().correlationId(),
-                    patientPortalService.currentPatientId(),
-                    patientPortalService.currentPatientMobile(),
-                    publicDoctorId,
-                    null,
-                    null,
-                    null,
-                    date
-            );
-        }
-        List<PatientPortalDoctorSlotResponse> selectableSlots = patientPortalService.doctorSlots(publicDoctorId, date).stream()
+        logSlotLookupRequest("tryResolveSlotSelection", state, publicDoctorId, date);
+        List<PatientPortalDoctorSlotResponse> selectableSlots = loadDoctorSlots(
+                state,
+                publicDoctorId,
+                state.selectedClinicSlug,
+                state.selectedTenantId,
+                state.selectedClinicId,
+                date
+        ).stream()
                 .filter(PatientPortalDoctorSlotResponse::selectable)
                 .sorted(Comparator.comparing(PatientPortalDoctorSlotResponse::slotTime))
                 .toList();
-        if (log.isDebugEnabled()) {
-            log.debug(
-                    "patient.portal.careai.slot.lookup.response conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} doctorId={} date={} slotCount={} slotTimes={}",
-                    RequestContextHolder.requireTenantId(),
-                    RequestContextHolder.require().correlationId(),
-                    patientPortalService.currentPatientId(),
-                    patientPortalService.currentPatientMobile(),
-                    publicDoctorId,
-                    date,
-                    selectableSlots.size(),
-                    selectableSlots.stream().map(slot -> slot.slotTime().format(TIME_FORMATTER)).toList()
-            );
-        }
+        logSlotLookupResponse("tryResolveSlotSelection", state, publicDoctorId, date, selectableSlots);
         if (selectableSlots.isEmpty()) {
             clearSlotSelection(state);
             return false;
@@ -947,14 +1205,24 @@ public class PatientPortalCareAiService {
             state.confirmationPending = false;
             return response(state, askIntentPrompt(state.language));
         }
+        careAiTrace("executeConfirmedAction", "enter", state,
+                "pendingAction=" + state.pendingAction
+                        + " selectedDoctorId=" + state.selectedDoctorId
+                        + " selectedAppointmentId=" + state.selectedAppointmentId
+                        + " selectedClinicSlug=" + state.selectedClinicSlug
+                        + " selectedTenantId=" + state.selectedTenantId
+                        + " selectedClinicId=" + state.selectedClinicId
+                        + " selectedDate=" + state.preferredDate
+                        + " selectedSlot=" + state.selectedSlot);
         logAppointmentAction("executeConfirmedAction", state, List.of());
         try {
+            logBookingOrMutationRequest("executeConfirmedAction", state);
             PatientPortalAppointmentConfirmationResponse confirmation = switch (state.pendingAction) {
                 case BOOK_APPOINTMENT -> patientPortalService.bookAppointment(new PatientPortalAppointmentBookingRequest(
                         state.selectedDoctorId,
-                        null,
-                        null,
-                        null,
+                        state.selectedClinicSlug,
+                        state.selectedTenantId,
+                        state.selectedClinicId,
                         LocalDate.parse(state.preferredDate),
                         LocalTime.parse(state.selectedSlot, TIME_FORMATTER),
                         state.reason
@@ -971,6 +1239,12 @@ public class PatientPortalCareAiService {
                 );
                 case APPOINTMENT_STATUS -> throw new IllegalStateException("Status lookups do not require confirmation");
             };
+            careAiTrace("executeConfirmedAction", "success", state,
+                    "pendingAction=" + state.pendingAction
+                            + " confirmationStatus=" + confirmation.status()
+                            + " appointmentDate=" + confirmation.appointmentDate()
+                            + " appointmentTime=" + confirmation.appointmentTime()
+                            + " message=" + confirmation.message());
             state.actionCompleted = true;
             state.booked = state.pendingAction == PatientPortalCareAiIntent.BOOK_APPOINTMENT;
             state.lastAction = state.pendingAction;
@@ -990,6 +1264,8 @@ public class PatientPortalCareAiService {
             completeWorkflowCleanup(state);
             return response(state, confirmation.message());
         } catch (RuntimeException ex) {
+            careAiTrace("executeConfirmedAction", "error", state,
+                    "pendingAction=" + state.pendingAction + " error=" + ex.getMessage());
             state.confirmationPending = false;
             state.pendingAction = null;
             state.activeConfirmationScopeKey = null;
@@ -1000,6 +1276,51 @@ public class PatientPortalCareAiService {
             }
             return response(state, bookingFailedPrompt(state.language, ex.getMessage()));
         }
+    }
+
+    private List<PatientPortalDoctorSlotResponse> loadDoctorSlots(CareAiState state, String publicDoctorId, String clinicSlug, String tenantId, String clinicId, LocalDate date) {
+        careAiTrace("loadDoctorSlots", "enter", state,
+                "doctorId=" + publicDoctorId
+                        + " clinicSlug=" + clinicSlug
+                        + " tenantId=" + tenantId
+                        + " clinicId=" + clinicId
+                        + " date=" + date
+                        + " conversationTenantId=" + RequestContextHolder.requireTenantId()
+                        + " tenantContextTenantId=" + (RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value()));
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "patient.portal.careai.slot.lookup.invoke source=web-public-patient-careai conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} doctorId={} selectedDoctorName={} selectedClinicSlug={} selectedTenantId={} selectedClinicId={} date={}",
+                    RequestContextHolder.requireTenantId(),
+                    RequestContextHolder.require().correlationId(),
+                    patientPortalService.currentPatientId(),
+                    patientPortalService.currentPatientMobile(),
+                    publicDoctorId,
+                    state == null ? null : state.selectedDoctorName,
+                    clinicSlug,
+                    tenantId,
+                    clinicId,
+                    date
+            );
+        }
+        if (StringUtils.hasText(clinicId) || StringUtils.hasText(tenantId)) {
+            List<PatientPortalDoctorSlotResponse> slots = businessLookupService.findSlots(publicDoctorId, clinicSlug, tenantId, clinicId, date);
+            careAiTrace("loadDoctorSlots", "exit", state,
+                    "service=businessLookupService.findSlots resultCount=" + slots.size()
+                            + " results=" + summarizeSlots(slots));
+            return slots;
+        }
+        if (StringUtils.hasText(clinicSlug)) {
+            List<PatientPortalDoctorSlotResponse> slots = businessLookupService.findSlots(publicDoctorId, clinicSlug, null, null, date);
+            careAiTrace("loadDoctorSlots", "exit", state,
+                    "service=businessLookupService.findSlots resultCount=" + slots.size()
+                            + " results=" + summarizeSlots(slots));
+            return slots;
+        }
+        List<PatientPortalDoctorSlotResponse> slots = businessLookupService.findSlots(publicDoctorId, null, null, null, date);
+        careAiTrace("loadDoctorSlots", "exit", state,
+                "service=businessLookupService.findSlots resultCount=" + slots.size()
+                        + " results=" + summarizeSlots(slots));
+        return slots;
     }
 
     private boolean clearPendingAction(CareAiState state, boolean clearSlots) {
@@ -1215,9 +1536,15 @@ public class PatientPortalCareAiService {
         state.currentIntent = intent;
         state.requestedDoctorName = null;
         state.requestedSpeciality = null;
+        state.requestedClinicName = null;
         state.selectedDoctorId = null;
+        state.selectedDoctorSlug = null;
         state.selectedDoctorName = null;
         state.selectedSpeciality = null;
+        state.selectedClinicId = null;
+        state.selectedTenantId = null;
+        state.selectedClinicSlug = null;
+        state.selectedClinicName = null;
         state.preferredDate = null;
         state.dateResolutionIssue = null;
         state.preferredTimeWindow = null;
@@ -1226,6 +1553,8 @@ public class PatientPortalCareAiService {
         state.timePromptCount = 0;
         state.doctorChoices = List.of();
         state.doctorOptions = List.of();
+        state.clinicChoices = List.of();
+        state.clinicOptions = List.of();
         clearAppointmentSelection(state);
         clearSlotSelection(state);
         state.confirmationPending = false;
@@ -1248,8 +1577,13 @@ public class PatientPortalCareAiService {
 
     private void clearDoctorSelection(CareAiState state) {
         state.selectedDoctorId = null;
+        state.selectedDoctorSlug = null;
         state.selectedDoctorName = null;
         state.selectedSpeciality = null;
+        state.selectedClinicId = null;
+        state.selectedTenantId = null;
+        state.selectedClinicSlug = null;
+        state.selectedClinicName = null;
         state.doctorChoices = List.of();
         state.doctorOptions = List.of();
         clearSlotSelection(state);
@@ -1262,9 +1596,16 @@ public class PatientPortalCareAiService {
         state.appointmentOptions = List.of();
         if (state.currentIntent != PatientPortalCareAiIntent.BOOK_APPOINTMENT) {
             state.selectedDoctorId = null;
+            state.selectedDoctorSlug = null;
             state.selectedDoctorName = null;
             state.selectedSpeciality = null;
+            state.selectedClinicId = null;
+            state.selectedTenantId = null;
+            state.selectedClinicSlug = null;
+            state.selectedClinicName = null;
         }
+        state.clinicChoices = List.of();
+        state.clinicOptions = List.of();
         clearSlotSelection(state);
     }
 
@@ -1294,15 +1635,24 @@ public class PatientPortalCareAiService {
     }
 
     private boolean ensureAppointmentOptions(CareAiState state) {
-        List<PatientPortalCareAiAppointmentOption> appointments = patientPortalService.careAiUpcomingAppointments();
-        logAppointmentAction("appointmentLookup", state, appointments);
+        careAiTrace("ensureAppointmentOptions", "enter", state,
+                "patientId=" + patientPortalService.currentPatientId()
+                        + " patientMobile=" + patientPortalService.currentPatientMobile()
+                        + " conversationTenantId=" + RequestContextHolder.requireTenantId()
+                        + " tenantContextTenantId=" + (RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value()));
+        List<PatientPortalCareAiAppointmentOption> appointments = businessLookupService.upcomingAppointments();
+        logAppointmentLookup("ensureAppointmentOptions", state, appointments);
         List<AppointmentChoice> choices = appointments.stream()
                 .sorted(Comparator
                         .comparing(PatientPortalCareAiAppointmentOption::appointmentDate, Comparator.nullsLast(Comparator.naturalOrder()))
-                        .thenComparing(PatientPortalCareAiAppointmentOption::appointmentTime, Comparator.nullsLast(Comparator.naturalOrder())))
+                .thenComparing(PatientPortalCareAiAppointmentOption::appointmentTime, Comparator.nullsLast(Comparator.naturalOrder())))
                 .map(this::toAppointmentChoice)
                 .toList();
         state.appointmentOptions = choices;
+        careAiTrace("ensureAppointmentOptions", "exit", state,
+                "service=businessLookupService.upcomingAppointments resultCount=" + choices.size()
+                        + " results=" + summarizeAppointments(appointments)
+                        + (choices.isEmpty() ? " reason=no-appointments-found" : ""));
         return !choices.isEmpty();
     }
 
@@ -1314,6 +1664,7 @@ public class PatientPortalCareAiService {
                 option.appointmentId(),
                 option.doctorUserId(),
                 option.doctorName(),
+                option.tenantId(),
                 option.clinicName(),
                 option.appointmentDate(),
                 option.appointmentTime(),
@@ -1324,73 +1675,221 @@ public class PatientPortalCareAiService {
     }
 
     private List<DoctorChoice> resolveDoctorMatches(CareAiState state, String message) {
-        List<PatientPortalDoctorResponse> doctors = patientPortalService.doctors();
-        if (doctors.isEmpty()) {
-            state.handoffRequired = true;
-            state.handoffReason = "no-tenant-doctors";
-            return List.of();
-        }
-
         String doctorHint = state.requestedDoctorName;
         if (!StringUtils.hasText(doctorHint)) {
             doctorHint = findDoctorNameFromFreeText(message);
         }
+        if (!StringUtils.hasText(doctorHint)) {
+            doctorHint = findCorrectedDoctorNameCandidate(message);
+        }
         final String doctorHintValue = doctorHint;
         final String specialityHint = state.requestedSpeciality;
         String normalizedMessage = normalizeDoctorText(message);
-
-        List<PatientPortalDoctorResponse> matches = doctors.stream()
+        List<DoctorChoice> doctors = searchPublicBookableDoctors(state, doctorHintValue, specialityHint);
+        List<DoctorChoice> matches = doctors.stream()
                 .filter(doctor -> {
                     if (StringUtils.hasText(doctorHintValue)) {
-                        return matchesDoctorName(doctor.doctorName(), doctorHintValue);
+                        return matchesDoctorNameAny(doctor.doctorName(), doctorHintValue);
                     }
                     if (StringUtils.hasText(specialityHint)) {
-                        return containsIgnoreCase(doctor.specialization(), specialityHint);
+                        return containsIgnoreCase(doctor.speciality(), specialityHint);
                     }
                     return StringUtils.hasText(normalizedMessage)
                             && containsDoctorTokenMatch(doctor.doctorName(), normalizedMessage);
                 })
-                .sorted(Comparator.comparing(PatientPortalDoctorResponse::doctorName, String.CASE_INSENSITIVE_ORDER))
+                .sorted(Comparator.comparing(DoctorChoice::doctorName, String.CASE_INSENSITIVE_ORDER))
                 .toList();
         if (!matches.isEmpty()) {
-            return matches.stream().map(this::toDoctorChoice).toList();
+            logDoctorLookup("resolveDoctorMatches", state, doctorHintValue, specialityHint, doctors, matches, null);
+            return matches;
         }
         if (StringUtils.hasText(state.requestedSpeciality)) {
-            return doctors.stream()
-                    .filter(doctor -> containsIgnoreCase(doctor.specialization(), state.requestedSpeciality))
-                    .sorted(Comparator.comparing(PatientPortalDoctorResponse::doctorName, String.CASE_INSENSITIVE_ORDER))
-                    .map(this::toDoctorChoice)
+            List<DoctorChoice> specialityMatches = doctors.stream()
+                    .filter(doctor -> containsIgnoreCase(doctor.speciality(), state.requestedSpeciality))
+                    .sorted(Comparator.comparing(DoctorChoice::doctorName, String.CASE_INSENSITIVE_ORDER))
                     .toList();
+            logDoctorLookup("resolveDoctorMatches", state, doctorHintValue, specialityHint, doctors, specialityMatches, "speciality-only");
+            return specialityMatches;
         }
+        logDoctorLookup("resolveDoctorMatches", state, doctorHintValue, specialityHint, doctors, List.of(), "no-match");
         return List.of();
     }
 
+    private List<ClinicChoice> resolveClinicMatches(CareAiState state, String message) {
+        if (!StringUtils.hasText(message)) {
+            return List.of();
+        }
+        List<ClinicChoice> clinics = lookupClinics(state, message);
+        if (clinics.isEmpty()) {
+            return List.of();
+        }
+        String normalizedMessage = normalizeDoctorText(message);
+        List<ClinicChoice> matches = clinics.stream()
+                .filter(choice -> {
+                    String normalizedLabel = normalizeDoctorText(choice.label());
+                    String normalizedSlug = normalizeDoctorText(choice.clinicSlug());
+                    return normalizedLabel.contains(normalizedMessage)
+                            || normalizedSlug.contains(normalizedMessage)
+                            || normalizedMessage.contains(normalizedLabel);
+                })
+                .sorted(Comparator.comparing(ClinicChoice::clinicName, String.CASE_INSENSITIVE_ORDER))
+                .toList();
+        careAiTrace("resolveClinicMatches", "exit", state,
+                "resultCount=" + matches.size()
+                        + " results=" + matches.stream().limit(5).map(ClinicChoice::label).toList());
+        return matches;
+    }
+
     private DoctorChoice toDoctorChoice(PatientPortalDoctorResponse doctor) {
-        return new DoctorChoice(doctor.publicDoctorId(), doctor.doctorName(), doctor.specialization(), doctorLabel(doctor));
+        return new DoctorChoice(
+                doctor.publicDoctorId(),
+                null,
+                doctor.doctorName(),
+                doctor.specialization(),
+                null,
+                null,
+                null,
+                null,
+                doctorLabel(doctor)
+        );
+    }
+
+    private boolean sameDoctorAcrossMultipleClinics(List<DoctorChoice> matches) {
+        if (matches == null || matches.size() < 2) {
+            return false;
+        }
+        long doctorNames = matches.stream()
+                .map(DoctorChoice::doctorName)
+                .filter(StringUtils::hasText)
+                .map(name -> name.toLowerCase(Locale.ROOT))
+                .distinct()
+                .count();
+        long clinics = matches.stream()
+                .map(DoctorChoice::clinicSlug)
+                .filter(StringUtils::hasText)
+                .map(clinic -> clinic.toLowerCase(Locale.ROOT))
+                .distinct()
+                .count();
+        return doctorNames == 1 && clinics > 1;
+    }
+
+    private DoctorChoice toDoctorChoice(PublicDoctorSummaryResponse doctor) {
+        return new DoctorChoice(
+                doctor.publicDoctorId(),
+                doctor.doctorSlug(),
+                doctor.doctorDisplayName(),
+                doctor.speciality(),
+                null,
+                null,
+                doctor.clinicSlug(),
+                doctor.clinicDisplayName(),
+                doctorLabel(doctor.doctorDisplayName(), doctor.speciality(), doctor.clinicDisplayName())
+        );
+    }
+
+    private ClinicChoice toClinicChoice(PublicClinicSummaryResponse clinic) {
+        return new ClinicChoice(
+                clinic.clinicSlug(),
+                clinic.clinicDisplayName(),
+                clinic.area(),
+                clinic.city(),
+                null,
+                null,
+                clinicLabel(clinic.clinicDisplayName(), clinic.area(), clinic.city())
+        );
+    }
+
+    private List<ClinicChoice> toClinicChoices(List<DoctorChoice> doctors) {
+        Map<String, ClinicChoice> clinics = new LinkedHashMap<>();
+        for (DoctorChoice doctor : doctors) {
+            String slug = StringUtils.hasText(doctor.clinicSlug()) ? doctor.clinicSlug() : doctor.clinicName();
+            if (!StringUtils.hasText(slug)) {
+                continue;
+            }
+            String key = slug.toLowerCase(Locale.ROOT);
+            clinics.putIfAbsent(key, new ClinicChoice(
+                    doctor.clinicSlug(),
+                    doctor.clinicName(),
+                    null,
+                    null,
+                    doctor.tenantId(),
+                    doctor.clinicId(),
+                    clinicLabel(doctor.clinicName(), null, null)
+            ));
+        }
+        return List.copyOf(clinics.values());
     }
 
     private void selectDoctor(CareAiState state, DoctorChoice selected) {
+        careAiTrace("selectDoctor", "enter", state,
+                "selectedDoctorId=" + selected.publicDoctorId()
+                        + " selectedDoctorName=" + selected.doctorName()
+                        + " selectedClinicId=" + selected.clinicId()
+                        + " selectedTenantId=" + selected.tenantId()
+                        + " selectedClinicSlug=" + selected.clinicSlug());
         state.selectedDoctorId = selected.publicDoctorId();
+        state.selectedDoctorSlug = selected.doctorSlug();
         state.selectedDoctorName = selected.doctorName();
         state.selectedSpeciality = selected.speciality();
+        state.selectedClinicId = selected.clinicId();
+        state.selectedTenantId = selected.tenantId();
+        state.selectedClinicSlug = selected.clinicSlug();
+        state.selectedClinicName = selected.clinicName();
         state.timePromptCount = 0;
         state.doctorChoices = List.of();
         state.doctorOptions = List.of();
         state.lastSideTopic = null;
         clearSlotSelection(state);
+        careAiTrace("selectDoctor", "exit", state,
+                "selectedDoctorId=" + state.selectedDoctorId
+                        + " selectedDoctorSlug=" + state.selectedDoctorSlug
+                        + " selectedClinicId=" + state.selectedClinicId
+                        + " selectedTenantId=" + state.selectedTenantId
+                        + " selectedClinicSlug=" + state.selectedClinicSlug);
+    }
+
+    private void selectClinic(CareAiState state, ClinicChoice selected) {
+        careAiTrace("selectClinic", "enter", state,
+                "selectedClinicSlug=" + selected.clinicSlug()
+                        + " selectedClinicName=" + selected.clinicName()
+                        + " selectedClinicId=" + selected.clinicId()
+                        + " selectedTenantId=" + selected.tenantId());
+        state.selectedClinicSlug = selected.clinicSlug();
+        state.selectedClinicName = selected.clinicName();
+        state.selectedClinicId = selected.clinicId();
+        state.selectedTenantId = selected.tenantId();
+        state.clinicChoices = List.of();
+        state.clinicOptions = List.of();
+        clearSlotSelection(state);
+        careAiTrace("selectClinic", "exit", state,
+                "selectedClinicSlug=" + state.selectedClinicSlug
+                        + " selectedClinicName=" + state.selectedClinicName
+                        + " selectedClinicId=" + state.selectedClinicId
+                        + " selectedTenantId=" + state.selectedTenantId);
     }
 
     private void selectAppointment(CareAiState state, AppointmentChoice selected) {
+        careAiTrace("selectAppointment", "enter", state,
+                "selectedAppointmentId=" + selected.appointmentId()
+                        + " selectedDoctorId=" + selected.doctorUserId()
+                        + " selectedTenantId=" + selected.tenantId()
+                        + " selectedClinicName=" + selected.clinicName());
         state.selectedAppointmentId = selected.appointmentId().toString();
         state.selectedAppointmentLabel = selected.label();
         state.selectedAppointmentReason = selected.reason();
         state.selectedDoctorId = selected.doctorUserId() == null ? null : selected.doctorUserId().toString();
         state.selectedDoctorName = selected.doctorName();
+        state.selectedTenantId = selected.tenantId() == null ? null : selected.tenantId().toString();
         state.selectedSpeciality = null;
         state.dateResolutionIssue = null;
         state.timePromptCount = 0;
         state.lastSideTopic = null;
         clearSlotSelection(state);
+        careAiTrace("selectAppointment", "exit", state,
+                "selectedAppointmentId=" + state.selectedAppointmentId
+                        + " selectedDoctorId=" + state.selectedDoctorId
+                        + " selectedTenantId=" + state.selectedTenantId
+                        + " selectedAppointmentLabel=" + state.selectedAppointmentLabel);
     }
 
     private DoctorChoice resolveDoctorChoice(CareAiState state, String message) {
@@ -1414,6 +1913,24 @@ public class PatientPortalCareAiService {
                 message,
                 choice -> choice.doctorName() + " " + nullToBlank(choice.appointmentDate() == null ? null : choice.appointmentDate().toString())
         );
+    }
+
+    private ClinicChoice resolveClinicChoice(CareAiState state, String message) {
+        if (state.clinicChoices.isEmpty()) {
+            return null;
+        }
+        Integer index = parseSelectionIndex(message);
+        if (index != null && index >= 1 && index <= state.clinicChoices.size()) {
+            return state.clinicChoices.get(index - 1);
+        }
+        String normalized = normalizeDoctorText(message);
+        if (!StringUtils.hasText(normalized)) {
+            return null;
+        }
+        List<ClinicChoice> matches = state.clinicChoices.stream()
+                .filter(choice -> normalizeDoctorText(choice.label()).contains(normalized))
+                .toList();
+        return matches.size() == 1 ? matches.getFirst() : null;
     }
 
     private SlotChoice resolveSlotChoice(CareAiState state, String message) {
@@ -1587,9 +2104,9 @@ public class PatientPortalCareAiService {
                 state.doctorOptions,
                 state.appointmentOptions.stream().map(AppointmentChoice::label).limit(5).toList(),
                 state.slotOptions,
-                patientPortalService.doctors().stream()
+                publicBookableDoctorChoices(state).stream()
                         .limit(8)
-                        .map(PatientPortalDoctorResponse::doctorName)
+                        .map(DoctorChoice::doctorName)
                         .filter(StringUtils::hasText)
                         .toList(),
                 state.recentMessages,
@@ -1750,6 +2267,34 @@ public class PatientPortalCareAiService {
                 && (doctor.contains(requested) || requested.contains(doctor));
     }
 
+    private boolean matchesDoctorNameAny(String doctorName, String requestedDoctorName) {
+        if (!StringUtils.hasText(requestedDoctorName)) {
+            return false;
+        }
+        for (String candidate : doctorQueryVariants(requestedDoctorName)) {
+            if (matchesDoctorName(doctorName, candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<String> doctorQueryVariants(String requestedDoctorName) {
+        String normalized = normalizeDoctorText(requestedDoctorName);
+        if (!StringUtils.hasText(normalized)) {
+            return List.of();
+        }
+        String[] tokens = normalized.split("\\s+");
+        List<String> variants = new ArrayList<>();
+        for (int end = tokens.length; end >= 1; end -= 1) {
+            String variant = String.join(" ", java.util.Arrays.copyOf(tokens, end)).trim();
+            if (StringUtils.hasText(variant) && !variants.contains(variant)) {
+                variants.add(variant);
+            }
+        }
+        return variants;
+    }
+
     private String normalizeDoctorText(String value) {
         if (!StringUtils.hasText(value)) {
             return "";
@@ -1764,34 +2309,58 @@ public class PatientPortalCareAiService {
     }
 
     private String findRequestedDoctorName(String transcript, String language) {
+        careAiTrace("findRequestedDoctorName", "enter", currentState(),
+                "transcript=" + trimToLength(transcript, 160) + " language=" + language);
         Matcher english = ENGLISH_DOCTOR_PATTERN.matcher(transcript);
         if (english.find()) {
-            return cleanName(english.group(1));
+            String extracted = cleanName(english.group(1));
+            careAiTrace("findRequestedDoctorName", "exit", currentState(),
+                    "source=english extractedDoctorName=" + extracted);
+            return extracted;
         }
         if (isHindi(language) || transcript.contains("डॉक्टर") || transcript.contains("डॉ")) {
             Matcher hindi = HINDI_DOCTOR_PATTERN.matcher(transcript);
             if (hindi.find()) {
-                return cleanName(hindi.group(1));
+                String extracted = cleanName(hindi.group(1));
+                careAiTrace("findRequestedDoctorName", "exit", currentState(),
+                        "source=hindi extractedDoctorName=" + extracted);
+                return extracted;
             }
         }
+        careAiTrace("findRequestedDoctorName", "exit", currentState(),
+                "source=none extractedDoctorName=null");
         return null;
     }
 
     private String findDoctorNameFromFreeText(String transcript) {
+        careAiTrace("findDoctorNameFromFreeText", "enter", currentState(),
+                "transcript=" + trimToLength(transcript, 160));
         String correctedName = findCorrectedDoctorNameCandidate(transcript);
         if (StringUtils.hasText(correctedName)) {
+            careAiTrace("findDoctorNameFromFreeText", "exit", currentState(),
+                    "source=corrected extractedDoctorName=" + correctedName);
             return correctedName;
         }
         String normalized = normalizeDoctorText(transcript);
         if (!StringUtils.hasText(normalized)) {
+            careAiTrace("findDoctorNameFromFreeText", "exit", currentState(),
+                    "source=normalized-empty extractedDoctorName=null");
             return null;
         }
-        List<String> names = patientPortalService.doctors().stream()
-                .map(PatientPortalDoctorResponse::doctorName)
+        List<String> names = publicBookableDoctorChoices(currentState())
+                .stream()
+                .map(DoctorChoice::doctorName)
                 .filter(StringUtils::hasText)
-                .filter(name -> normalizeDoctorText(name).contains(normalized) || normalized.contains(normalizeDoctorText(name)))
+                .filter(name -> doctorQueryVariants(normalized).stream().anyMatch(candidate -> {
+                    String normalizedName = normalizeDoctorText(name);
+                        return normalizedName.contains(candidate) || candidate.contains(normalizedName);
+                }))
                 .toList();
-        return names.size() == 1 ? names.getFirst() : null;
+        String extracted = names.size() == 1 ? names.getFirst() : null;
+        careAiTrace("findDoctorNameFromFreeText", "exit", currentState(),
+                "source=publicBookableDoctorChoices extractedDoctorName=" + extracted
+                        + " candidateCount=" + names.size());
+        return extracted;
     }
 
     private List<DoctorChoice> resolveFuzzyDoctorMatches(String transcript) {
@@ -1799,24 +2368,23 @@ public class PatientPortalCareAiService {
         if (!StringUtils.hasText(correctedName)) {
             return List.of();
         }
-        List<DoctorChoice> prefixMatches = patientPortalService.doctors().stream()
+        CareAiState state = currentState();
+        List<DoctorChoice> prefixMatches = publicBookableDoctorChoices(state).stream()
                 .filter(doctor -> matchesDoctorName(doctor.doctorName(), correctedName))
-                .sorted(Comparator.comparing(PatientPortalDoctorResponse::doctorName, String.CASE_INSENSITIVE_ORDER))
-                .map(this::toDoctorChoice)
+                .sorted(Comparator.comparing(DoctorChoice::doctorName, String.CASE_INSENSITIVE_ORDER))
                 .toList();
         if (!prefixMatches.isEmpty()) {
             return prefixMatches;
         }
         String normalizedCandidate = normalizeDoctorText(correctedName);
-        return patientPortalService.doctors().stream()
+        return publicBookableDoctorChoices(state).stream()
                 .map(doctor -> Map.entry(doctor, doctorNameDistance(normalizeDoctorText(doctor.doctorName()), normalizedCandidate)))
                 .filter(entry -> entry.getValue() <= 3)
                 .sorted(Comparator
-                        .comparingInt((Map.Entry<PatientPortalDoctorResponse, Integer> entry) -> entry.getValue())
+                        .comparingInt((Map.Entry<DoctorChoice, Integer> entry) -> entry.getValue())
                         .thenComparing(entry -> entry.getKey().doctorName(), String.CASE_INSENSITIVE_ORDER))
                 .limit(3)
                 .map(Map.Entry::getKey)
-                .map(this::toDoctorChoice)
                 .toList();
     }
 
@@ -1855,7 +2423,7 @@ public class PatientPortalCareAiService {
                 .replaceAll("^(they want to see|want to see|they want|doctor|dr)\\s+", "")
                 .replaceAll("\\s{2,}", " ")
                 .trim();
-        return StringUtils.hasText(cleaned) ? cleaned : null;
+        return StringUtils.hasText(cleaned) ? trimDoctorQueryTail(cleaned) : null;
     }
 
     private int doctorNameDistance(String left, String right) {
@@ -1910,8 +2478,8 @@ public class PatientPortalCareAiService {
     private String findSpeciality(String transcript) {
         String normalized = transcript.toLowerCase(Locale.ROOT);
         LinkedHashSet<String> specialities = new LinkedHashSet<>();
-        patientPortalService.doctors().stream()
-                .map(PatientPortalDoctorResponse::specialization)
+        publicBookableDoctorChoices(currentState()).stream()
+                .map(DoctorChoice::speciality)
                 .filter(StringUtils::hasText)
                 .forEach(specialities::add);
         return specialities.stream()
@@ -2205,6 +2773,16 @@ public class PatientPortalCareAiService {
         return isHindi(language) && NEW_PATIENT_KEYWORDS_HI.stream().anyMatch(transcript::contains);
     }
 
+    private boolean mayContainClinicReference(String transcript) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        return lower.contains("clinic")
+                || lower.contains("hospital")
+                || lower.contains("centre")
+                || lower.contains("center")
+                || lower.contains("branch")
+                || lower.contains("location");
+    }
+
     private boolean wantsTopicSwitch(String transcript, String language) {
         String lower = transcript.toLowerCase(Locale.ROOT);
         if (TOPIC_SWITCH_KEYWORDS.stream().anyMatch(lower::contains)) {
@@ -2269,6 +2847,76 @@ public class PatientPortalCareAiService {
         return doctor.doctorName();
     }
 
+    private String doctorLabel(String doctorName, String speciality, String clinicName) {
+        List<String> parts = new ArrayList<>();
+        if (StringUtils.hasText(doctorName)) {
+            parts.add(doctorName);
+        }
+        if (StringUtils.hasText(speciality)) {
+            parts.add(speciality);
+        }
+        if (StringUtils.hasText(clinicName)) {
+            parts.add(clinicName);
+        }
+        return parts.isEmpty() ? "Doctor" : String.join(" · ", parts);
+    }
+
+    private String clinicLabel(String clinicName, String area, String city) {
+        List<String> parts = new ArrayList<>();
+        if (StringUtils.hasText(clinicName)) {
+            parts.add(clinicName);
+        }
+        if (StringUtils.hasText(area)) {
+            parts.add(area);
+        }
+        if (StringUtils.hasText(city)) {
+            parts.add(city);
+        }
+        return parts.isEmpty() ? "Clinic" : String.join(" · ", parts);
+    }
+
+    private List<DoctorChoice> publicBookableDoctorChoices(CareAiState state) {
+        return lookupDoctors(state, null, null);
+    }
+
+    private List<DoctorChoice> searchPublicBookableDoctors(CareAiState state, String doctorQuery, String specialityQuery) {
+        return lookupDoctors(state, doctorQuery, specialityQuery);
+    }
+
+    private List<DoctorChoice> lookupDoctors(CareAiState state, String doctorQuery, String specialityQuery) {
+        careAiTrace("lookupDoctors", "enter", state,
+                "lookupMode=" + (StringUtils.hasText(state.selectedClinicSlug) ? "clinic-specific" : "global-public-bookable")
+                        + " selectedClinicSlug=" + state.selectedClinicSlug
+                        + " selectedTenantId=" + state.selectedTenantId
+                        + " searchText=" + doctorQuery
+                        + " speciality=" + specialityQuery
+                        + " defaultTenantIgnored=true");
+        List<DoctorChoice> choices = businessLookupService.findDoctors(doctorQuery, specialityQuery, state.selectedClinicSlug).stream()
+                .map(this::toDoctorChoice)
+                .toList();
+        careAiTrace("lookupDoctors", "exit", state,
+                "resultCount=" + choices.size()
+                        + " results=" + summarizeDoctors(choices));
+        return choices;
+    }
+
+    private List<ClinicChoice> lookupClinics(CareAiState state, String clinicQuery) {
+        String cacheKey = "clinic|" + nullToBlank(clinicQuery);
+        return state.clinicLookupCache.computeIfAbsent(cacheKey, key -> {
+            careAiTrace("lookupClinics", "enter", state,
+                    "lookupMode=global-public-bookable selectedClinicSlug=" + state.selectedClinicSlug
+                            + " searchText=" + clinicQuery
+                            + " defaultTenantIgnored=true");
+            List<ClinicChoice> choices = businessLookupService.findClinics(clinicQuery).stream()
+                    .map(this::toClinicChoice)
+                    .toList();
+            careAiTrace("lookupClinics", "exit", state,
+                    "resultCount=" + choices.size()
+                            + " results=" + choices.stream().limit(5).map(ClinicChoice::label).toList());
+            return choices;
+        });
+    }
+
     private boolean containsIgnoreCase(String left, String right) {
         return StringUtils.hasText(left) && StringUtils.hasText(right)
                 && left.toLowerCase(Locale.ROOT).contains(right.toLowerCase(Locale.ROOT));
@@ -2295,7 +2943,64 @@ public class PatientPortalCareAiService {
         if (!StringUtils.hasText(raw)) {
             return null;
         }
-        return raw.replaceAll("[^\\p{L} .'-]", " ").replaceAll("\\s{2,}", " ").trim();
+        return trimDoctorQueryTail(raw.replaceAll("[^\\p{L} .'-]", " ").replaceAll("\\s{2,}", " ").trim());
+    }
+
+    private String trimDoctorQueryTail(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return null;
+        }
+        String[] tokens = raw.trim().split("\\s+");
+        List<String> kept = new ArrayList<>();
+        for (String token : tokens) {
+            String lower = token.toLowerCase(Locale.ROOT);
+            if (isDoctorQueryTailToken(lower)) {
+                break;
+            }
+            kept.add(token);
+        }
+        String joined = String.join(" ", kept).replaceAll("\\s{2,}", " ").trim();
+        return StringUtils.hasText(joined) ? joined : raw.trim();
+    }
+
+    private boolean isDoctorQueryTailToken(String lowerToken) {
+        return "today".equals(lowerToken)
+                || "tomorrow".equals(lowerToken)
+                || "today's".equals(lowerToken)
+                || "tomorrow's".equals(lowerToken)
+                || "yesterday".equals(lowerToken)
+                || "this".equals(lowerToken)
+                || "next".equals(lowerToken)
+                || "morning".equals(lowerToken)
+                || "afternoon".equals(lowerToken)
+                || "evening".equals(lowerToken)
+                || "night".equals(lowerToken)
+                || "noon".equals(lowerToken)
+                || "lunch".equals(lowerToken)
+                || "appointment".equals(lowerToken)
+                || "appointments".equals(lowerToken)
+                || "booking".equals(lowerToken)
+                || "book".equals(lowerToken)
+                || "schedule".equals(lowerToken)
+                || "visit".equals(lowerToken)
+                || "slot".equals(lowerToken)
+                || "slots".equals(lowerToken)
+                || "available".equals(lowerToken)
+                || "availability".equals(lowerToken)
+                || "for".equals(lowerToken)
+                || "with".equals(lowerToken)
+                || "on".equals(lowerToken)
+                || "at".equals(lowerToken)
+                || "please".equals(lowerToken)
+                || "kindly".equals(lowerToken)
+                || "monday".equals(lowerToken)
+                || "tuesday".equals(lowerToken)
+                || "wednesday".equals(lowerToken)
+                || "thursday".equals(lowerToken)
+                || "friday".equals(lowerToken)
+                || "saturday".equals(lowerToken)
+                || "sunday".equals(lowerToken)
+                || MONTH_NAME_MAP.containsKey(lowerToken);
     }
 
     private String trimToLength(String value, int maxLength) {
@@ -2346,6 +3051,35 @@ public class PatientPortalCareAiService {
                 state.language,
                 "I found multiple matching doctors. Please choose one:",
                 "मुझे कई डॉक्टर मिले। कृपया एक चुनिए:",
+                state.doctorOptions
+        );
+    }
+
+    private String clinicChoicePrompt(CareAiState state) {
+        return numberedChoicePrompt(
+                state.language,
+                "I found multiple matching clinics. Please choose one:",
+                "मुझे कई क्लिनिक मिले। कृपया एक चुनिए:",
+                state.clinicOptions
+        );
+    }
+
+    private String clinicDoctorChoicePrompt(CareAiState state) {
+        if (state.doctorChoices.isEmpty()) {
+            state.doctorChoices = publicBookableDoctorChoices(state);
+            state.doctorOptions = state.doctorChoices.stream().map(DoctorChoice::label).toList();
+        }
+        if (state.doctorChoices.size() == 1) {
+            selectDoctor(state, state.doctorChoices.getFirst());
+            return askDatePrompt(state.language);
+        }
+        if (state.doctorOptions.isEmpty()) {
+            return askDoctorPrompt(state.language, true);
+        }
+        return numberedChoicePrompt(
+                state.language,
+                "Please choose a doctor at this clinic:",
+                "कृपया इस क्लिनिक में डॉक्टर चुनिए:",
                 state.doctorOptions
         );
     }
@@ -2755,8 +3489,13 @@ public class PatientPortalCareAiService {
         context.put("requestedDoctorName", state.requestedDoctorName);
         context.put("requestedSpeciality", state.requestedSpeciality);
         context.put("doctorId", state.selectedDoctorId);
+        context.put("doctorSlug", state.selectedDoctorSlug);
         context.put("doctorName", state.selectedDoctorName);
         context.put("speciality", state.selectedSpeciality);
+        context.put("clinicId", state.selectedClinicId);
+        context.put("tenantId", state.selectedTenantId);
+        context.put("clinicSlug", state.selectedClinicSlug);
+        context.put("clinicName", state.selectedClinicName);
         context.put("appointmentId", state.selectedAppointmentId);
         context.put("selectedAppointmentLabel", state.selectedAppointmentLabel);
         context.put("preferredDate", state.preferredDate);
@@ -2900,8 +3639,13 @@ public class PatientPortalCareAiService {
         state.requestedDoctorName = coalesce(state.requestedDoctorName, stringValue(context, "requestedDoctorName"));
         state.requestedSpeciality = coalesce(state.requestedSpeciality, stringValue(context, "requestedSpeciality"));
         state.selectedDoctorId = coalesce(state.selectedDoctorId, stringValue(context, "doctorId"));
+        state.selectedDoctorSlug = coalesce(state.selectedDoctorSlug, stringValue(context, "doctorSlug"));
         state.selectedDoctorName = coalesce(state.selectedDoctorName, stringValue(context, "doctorName"));
         state.selectedSpeciality = coalesce(state.selectedSpeciality, stringValue(context, "speciality"));
+        state.selectedClinicId = coalesce(state.selectedClinicId, stringValue(context, "clinicId"));
+        state.selectedTenantId = coalesce(state.selectedTenantId, stringValue(context, "tenantId"));
+        state.selectedClinicSlug = coalesce(state.selectedClinicSlug, stringValue(context, "clinicSlug"));
+        state.selectedClinicName = coalesce(state.selectedClinicName, stringValue(context, "clinicName"));
         state.selectedAppointmentId = coalesce(state.selectedAppointmentId, stringValue(context, "appointmentId"));
         state.selectedAppointmentLabel = coalesce(state.selectedAppointmentLabel, stringValue(context, "selectedAppointmentLabel"));
         state.preferredDate = coalesce(state.preferredDate, stringValue(context, "preferredDate"));
@@ -3150,7 +3894,7 @@ public class PatientPortalCareAiService {
     private String doctorAvailabilitySideAnswer(CareAiState state) {
         if (StringUtils.hasText(state.selectedDoctorId) && StringUtils.hasText(state.preferredDate)) {
             LocalDate date = LocalDate.parse(state.preferredDate);
-            List<String> slots = patientPortalService.doctorSlots(state.selectedDoctorId, date).stream()
+            List<String> slots = loadDoctorSlots(state, state.selectedDoctorId, state.selectedClinicSlug, state.selectedTenantId, state.selectedClinicId, date).stream()
                     .filter(PatientPortalDoctorSlotResponse::selectable)
                     .map(slot -> slot.slotTime().format(TIME_FORMATTER))
                     .limit(3)
@@ -3167,16 +3911,27 @@ public class PatientPortalCareAiService {
     }
 
     private String appointmentStatusSideAnswer(CareAiState state) {
-        List<PatientPortalCareAiAppointmentOption> appointments = patientPortalService.careAiUpcomingAppointments();
-        logAppointmentAction("appointmentStatusSideAnswer", state, appointments);
+        careAiTrace("appointmentStatusSideAnswer", "enter", state,
+                "patientId=" + patientPortalService.currentPatientId()
+                        + " patientMobile=" + patientPortalService.currentPatientMobile());
+        List<PatientPortalCareAiAppointmentOption> appointments = businessLookupService.upcomingAppointments();
+        logAppointmentLookup("appointmentStatusSideAnswer", state, appointments);
         if (appointments.isEmpty()) {
+            careAiTrace("appointmentStatusSideAnswer", "exit", state,
+                    "service=businessLookupService.upcomingAppointments resultCount=0 reason=no-appointments-found");
             return noUpcomingAppointmentsPrompt(state.language);
         }
         PatientPortalCareAiAppointmentOption next = appointments.getFirst();
+        careAiTrace("appointmentStatusSideAnswer", "exit", state,
+                "service=businessLookupService.upcomingAppointments resultCount=" + appointments.size()
+                        + " firstAppointmentId=" + next.appointmentId()
+                        + " firstAppointmentDoctor=" + next.doctorName()
+                        + " firstAppointmentTenantId=" + next.tenantId());
         return appointmentStatusPrompt(new AppointmentChoice(
                 next.appointmentId(),
                 next.doctorUserId(),
                 next.doctorName(),
+                next.tenantId(),
                 next.clinicName(),
                 next.appointmentDate(),
                 next.appointmentTime(),
@@ -3192,9 +3947,10 @@ public class PatientPortalCareAiService {
         }
         List<PatientPortalCareAiAppointmentOption> safeAppointments = appointments == null ? List.of() : appointments;
         log.debug(
-                "patient.portal.careai.appointment.action action={} conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} currentIntent={} pendingAction={} confirmationPending={} selectedAppointmentId={} appointmentCount={} appointmentIds={} appointmentStatuses={} appointmentDates={}",
+                "patient.portal.careai.appointment.action source=web-public-patient-careai action={} conversationTenantId={} tenantContextTenantId={} patientPortalSessionId={} patientId={} patientMobile={} currentIntent={} pendingAction={} confirmationPending={} selectedAppointmentId={} selectedDoctorId={} selectedDoctorSlug={} selectedClinicSlug={} selectedTenantId={} appointmentCount={} appointmentIds={} appointmentTenantIds={} appointmentStatuses={} appointmentDates={}",
                 action,
                 RequestContextHolder.requireTenantId(),
+                RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value(),
                 RequestContextHolder.require().correlationId(),
                 patientPortalService.currentPatientId(),
                 patientPortalService.currentPatientMobile(),
@@ -3202,11 +3958,237 @@ public class PatientPortalCareAiService {
                 state.pendingAction,
                 state.confirmationPending,
                 state.selectedAppointmentId,
+                state.selectedDoctorId,
+                state.selectedDoctorSlug,
+                state.selectedClinicSlug,
+                state.selectedTenantId,
                 safeAppointments.size(),
                 safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::appointmentId).toList(),
+                safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::tenantId).toList(),
                 safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::status).toList(),
                 safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::appointmentDate).toList()
         );
+    }
+
+    private void logDoctorLookup(
+            String method,
+            CareAiState state,
+            String doctorQuery,
+            String specialityQuery,
+            List<DoctorChoice> doctors,
+            List<DoctorChoice> matches,
+            String reason
+    ) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        List<DoctorChoice> safeDoctors = doctors == null ? List.of() : doctors;
+        List<DoctorChoice> safeMatches = matches == null ? List.of() : matches;
+        log.debug(
+                "patient.portal.careai.doctor.lookup source=web-public-patient-careai method={} conversationTenantId={} tenantContextTenantId={} patientPortalSessionId={} patientId={} patientMobile={} requestedDoctorName={} requestedSpeciality={} selectedDoctorId={} selectedDoctorSlug={} selectedClinicId={} selectedTenantId={} selectedClinicSlug={} lookupMode={} doctorCount={} matchedCount={} doctorIds={} doctorNames={} clinicSlugs={} reason={}",
+                method,
+                RequestContextHolder.requireTenantId(),
+                RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value(),
+                RequestContextHolder.require().correlationId(),
+                patientPortalService.currentPatientId(),
+                patientPortalService.currentPatientMobile(),
+                doctorQuery,
+                specialityQuery,
+                state.selectedDoctorId,
+                state.selectedDoctorSlug,
+                state.selectedClinicId,
+                state.selectedTenantId,
+                state.selectedClinicSlug,
+                StringUtils.hasText(state.selectedClinicSlug) ? "clinic-specific" : "cross-clinic",
+                safeDoctors.size(),
+                safeMatches.size(),
+                safeDoctors.stream().map(DoctorChoice::publicDoctorId).toList(),
+                safeDoctors.stream().map(DoctorChoice::doctorName).toList(),
+                safeDoctors.stream().map(DoctorChoice::clinicSlug).toList(),
+                reason
+        );
+    }
+
+    private void logAppointmentLookup(String method, CareAiState state, List<PatientPortalCareAiAppointmentOption> appointments) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        List<PatientPortalCareAiAppointmentOption> safeAppointments = appointments == null ? List.of() : appointments;
+        log.debug(
+                "patient.portal.careai.appointment.lookup source=web-public-patient-careai method={} conversationTenantId={} tenantContextTenantId={} patientPortalSessionId={} patientId={} patientMobile={} clinicTenantsSearched={} appointmentCount={} appointmentIds={} appointmentTenantIds={} appointmentStatuses={} appointmentDates={} reason={}",
+                method,
+                RequestContextHolder.requireTenantId(),
+                RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value(),
+                RequestContextHolder.require().correlationId(),
+                patientPortalService.currentPatientId(),
+                patientPortalService.currentPatientMobile(),
+                safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::tenantId).distinct().toList(),
+                safeAppointments.size(),
+                safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::appointmentId).toList(),
+                safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::tenantId).toList(),
+                safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::status).toList(),
+                safeAppointments.stream().map(PatientPortalCareAiAppointmentOption::appointmentDate).toList(),
+                safeAppointments.isEmpty() ? "no-appointments-found" : null
+        );
+    }
+
+    private void logSlotLookupResponse(
+            String method,
+            CareAiState state,
+            String publicDoctorId,
+            LocalDate date,
+            List<PatientPortalDoctorSlotResponse> slots
+    ) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        List<PatientPortalDoctorSlotResponse> safeSlots = slots == null ? List.of() : slots;
+        log.debug(
+                "patient.portal.careai.slot.lookup.response source=web-public-patient-careai method={} conversationTenantId={} tenantContextTenantId={} patientPortalSessionId={} patientId={} patientMobile={} doctorId={} doctorName={} selectedClinicSlug={} selectedTenantId={} selectedClinicId={} date={} slotCount={} slotTimes={}",
+                method,
+                RequestContextHolder.requireTenantId(),
+                RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value(),
+                RequestContextHolder.require().correlationId(),
+                patientPortalService.currentPatientId(),
+                patientPortalService.currentPatientMobile(),
+                publicDoctorId,
+                state == null ? null : state.selectedDoctorName,
+                state == null ? null : state.selectedClinicSlug,
+                state == null ? null : state.selectedTenantId,
+                state == null ? null : state.selectedClinicId,
+                date,
+                safeSlots.size(),
+                safeSlots.stream().map(slot -> slot.slotTime().format(TIME_FORMATTER)).toList()
+        );
+    }
+
+    private void logSlotLookupRequest(String method, CareAiState state, String publicDoctorId, LocalDate date) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        log.debug(
+                "patient.portal.careai.slot.lookup.request source=web-public-patient-careai method={} conversationTenantId={} tenantContextTenantId={} patientPortalSessionId={} patientId={} patientMobile={} doctorId={} doctorName={} selectedClinicSlug={} selectedTenantId={} selectedClinicId={} lookupMode={} date={}",
+                method,
+                RequestContextHolder.requireTenantId(),
+                RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value(),
+                RequestContextHolder.require().correlationId(),
+                patientPortalService.currentPatientId(),
+                patientPortalService.currentPatientMobile(),
+                publicDoctorId,
+                state == null ? null : state.selectedDoctorName,
+                state == null ? null : state.selectedClinicSlug,
+                state == null ? null : state.selectedTenantId,
+                state == null ? null : state.selectedClinicId,
+                state == null || !StringUtils.hasText(state.selectedClinicSlug) ? "cross-clinic" : "clinic-specific",
+                date
+        );
+    }
+
+    private void logBookingOrMutationRequest(String method, CareAiState state) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        log.debug(
+                "patient.portal.careai.booking.action source=web-public-patient-careai method={} conversationTenantId={} tenantContextTenantId={} patientPortalSessionId={} patientId={} patientMobile={} selectedDoctorId={} selectedDoctorSlug={} selectedDoctorName={} selectedClinicSlug={} selectedTenantId={} selectedClinicId={} selectedDate={} selectedSlot={} selectedAppointmentId={}",
+                method,
+                RequestContextHolder.requireTenantId(),
+                RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value(),
+                RequestContextHolder.require().correlationId(),
+                patientPortalService.currentPatientId(),
+                patientPortalService.currentPatientMobile(),
+                state.selectedDoctorId,
+                state.selectedDoctorSlug,
+                state.selectedDoctorName,
+                state.selectedClinicSlug,
+                state.selectedTenantId,
+                state.selectedClinicId,
+                state.preferredDate,
+                state.selectedSlot,
+                state.selectedAppointmentId
+        );
+    }
+
+    private void clearLookupCaches(CareAiState state) {
+        if (state == null) {
+            return;
+        }
+        state.doctorLookupCache.clear();
+        state.clinicLookupCache.clear();
+        state.appointmentLookupCache.clear();
+    }
+
+    private Map<String, Object> doctorDebugMap(DoctorChoice doctor) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("doctorId", doctor.publicDoctorId());
+        result.put("doctorName", doctor.doctorName());
+        result.put("clinicId", doctor.clinicId());
+        result.put("clinicName", doctor.clinicName());
+        result.put("tenantId", doctor.tenantId());
+        result.put("speciality", doctor.speciality());
+        return result;
+    }
+
+    private Map<String, Object> appointmentDebugMap(PatientPortalCareAiAppointmentOption appointment) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("appointmentId", appointment.appointmentId());
+        result.put("doctorName", appointment.doctorName());
+        result.put("clinicName", appointment.clinicName());
+        result.put("tenantId", appointment.tenantId());
+        result.put("status", appointment.status());
+        result.put("dateTime", appointment.appointmentDate() == null ? null : appointment.appointmentDate().toString() + "T" + appointment.appointmentTime());
+        return result;
+    }
+
+    private void careAiTrace(String method, String phase, CareAiState state, String details) {
+        if (!log.isInfoEnabled()) {
+            return;
+        }
+        log.info(
+                "CAREAI_TRACE method={} phase={} conversationTenantId={} tenantContextTenantId={} patientPortalSessionId={} patientId={} patientMobile={} activeWorkflow={} lastQuestionKey={} details={}",
+                method,
+                phase,
+                RequestContextHolder.requireTenantId(),
+                RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value(),
+                state == null ? null : state.lastExternalSessionId,
+                state == null ? null : state.lastPatientId,
+                patientPortalService.currentPatientMobile(),
+                state == null || state.currentIntent == null ? null : state.currentIntent.name(),
+                state == null ? null : state.lastQuestionKey,
+                details
+        );
+    }
+
+    private String summarizeDoctors(List<DoctorChoice> doctors) {
+        if (doctors == null || doctors.isEmpty()) {
+            return "[]";
+        }
+        return doctors.stream()
+                .limit(5)
+                .map(choice -> choice.publicDoctorId() + ":" + choice.doctorName())
+                .toList()
+                .toString();
+    }
+
+    private String summarizeAppointments(List<PatientPortalCareAiAppointmentOption> appointments) {
+        if (appointments == null || appointments.isEmpty()) {
+            return "[]";
+        }
+        return appointments.stream()
+                .limit(5)
+                .map(option -> option.appointmentId() + ":" + option.doctorName() + ":" + option.tenantId() + ":" + option.status())
+                .toList()
+                .toString();
+    }
+
+    private String summarizeSlots(List<PatientPortalDoctorSlotResponse> slots) {
+        if (slots == null || slots.isEmpty()) {
+            return "[]";
+        }
+        return slots.stream()
+                .limit(5)
+                .map(slot -> slot.appointmentDate() + ":" + slot.slotTime() + ":" + slot.status() + ":" + slot.selectable())
+                .toList()
+                .toString();
     }
 
     private String resumeWorkflowPrompt(CareAiState state, String sideAnswer) {
@@ -3369,15 +4351,23 @@ public class PatientPortalCareAiService {
         state.currentIntent = null;
         state.requestedDoctorName = null;
         state.requestedSpeciality = null;
+        state.requestedClinicName = null;
         state.selectedDoctorId = null;
+        state.selectedDoctorSlug = null;
         state.selectedDoctorName = null;
         state.selectedSpeciality = null;
+        state.selectedClinicId = null;
+        state.selectedTenantId = null;
+        state.selectedClinicSlug = null;
+        state.selectedClinicName = null;
         state.preferredDate = null;
         state.dateResolutionIssue = null;
         state.preferredTimeWindow = null;
         state.reason = null;
         state.slotPromptLead = null;
         state.timePromptCount = 0;
+        state.clinicChoices = List.of();
+        state.clinicOptions = List.of();
         clearAppointmentSelection(state);
         clearSlotSelection(state);
         state.confirmationPending = false;
@@ -3623,6 +4613,10 @@ public class PatientPortalCareAiService {
         return LocalTime.now(currentClinicZone()).withSecond(0).withNano(0);
     }
 
+    private CareAiState currentState() {
+        return sessions.computeIfAbsent(currentSessionKey(), key -> new CareAiState());
+    }
+
     private static String buildInstanceId() {
         try {
             return InetAddress.getLocalHost().getHostName() + ":" + ManagementFactory.getRuntimeMXBean().getName();
@@ -3636,12 +4630,20 @@ public class PatientPortalCareAiService {
         private PatientPortalCareAiIntent currentIntent;
         private String requestedDoctorName;
         private String requestedSpeciality;
+        private String requestedClinicName;
         private String selectedDoctorId;
+        private String selectedDoctorSlug;
         private String selectedDoctorName;
         private String selectedSpeciality;
+        private String selectedClinicId;
+        private String selectedTenantId;
+        private String selectedClinicSlug;
+        private String selectedClinicName;
         private String selectedAppointmentId;
         private String selectedAppointmentLabel;
         private String selectedAppointmentReason;
+        private List<ClinicChoice> clinicChoices = List.of();
+        private List<String> clinicOptions = List.of();
         private String preferredDate;
         private boolean preferredDateExplicit;
         private String dateResolutionIssue;
@@ -3699,6 +4701,9 @@ public class PatientPortalCareAiService {
         private CareAiReceptionistTaskType activeTaskType;
         private String pendingWorkflowEventType;
         private String pendingWorkflowEventPayloadJson;
+        private final Map<String, List<DoctorChoice>> doctorLookupCache = new HashMap<>();
+        private final Map<String, List<ClinicChoice>> clinicLookupCache = new HashMap<>();
+        private final Map<String, List<AppointmentChoice>> appointmentLookupCache = new HashMap<>();
     }
 
     private record CallbackPreference(String label, OffsetDateTime dueAt) {
@@ -3707,13 +4712,35 @@ public class PatientPortalCareAiService {
     private record SessionKey(UUID tenantId, UUID appUserId) {
     }
 
-    private record DoctorChoice(String publicDoctorId, String doctorName, String speciality, String label) {
+    private record DoctorChoice(
+            String publicDoctorId,
+            String doctorSlug,
+            String doctorName,
+            String speciality,
+            String clinicId,
+            String tenantId,
+            String clinicSlug,
+            String clinicName,
+            String label
+    ) {
+    }
+
+    private record ClinicChoice(
+            String clinicSlug,
+            String clinicName,
+            String area,
+            String city,
+            String tenantId,
+            String clinicId,
+            String label
+    ) {
     }
 
     private record AppointmentChoice(
             UUID appointmentId,
             UUID doctorUserId,
             String doctorName,
+            UUID tenantId,
             String clinicName,
             LocalDate appointmentDate,
             LocalTime appointmentTime,

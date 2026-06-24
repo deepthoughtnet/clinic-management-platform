@@ -8,6 +8,7 @@ public record PatientPortalCareAiAppointmentOption(
         UUID appointmentId,
         UUID doctorUserId,
         String doctorName,
+        UUID tenantId,
         String clinicName,
         LocalDate appointmentDate,
         LocalTime appointmentTime,

@@ -317,6 +317,41 @@ public class PatientPortalService {
         return appointmentResponses(patientAccesses);
     }
 
+    public List<PatientPortalCareAiAppointmentOption> debugAppointments() {
+        PatientAccess access = requireCurrentPatientAccess();
+        List<PatientAccess> patientAccesses = resolveAccessiblePatientAccesses(access);
+        List<PatientPortalCareAiAppointmentOption> appointments = allAppointments(patientAccesses).stream()
+                .sorted(Comparator
+                        .comparing(AppointmentRecord::appointmentDate, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(AppointmentRecord::appointmentTime, Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(record -> new PatientPortalCareAiAppointmentOption(
+                        record.id(),
+                        record.doctorUserId(),
+                        record.doctorName(),
+                        record.tenantId(),
+                        clinicName(record.tenantId()),
+                        record.appointmentDate(),
+                        record.appointmentTime(),
+                        record.status() == null ? null : record.status().name(),
+                        summarize(record.reason())
+                ))
+                .toList();
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "patient.portal.appointments.debug patientPortalSessionId={} resolvedPatientId={} patientMobile={} tenantIds={} appointmentCount={} appointmentIds={} appointmentStatuses={} appointmentDates={}",
+                    RequestContextHolder.require().correlationId(),
+                    access.patient().getId(),
+                    resolveVerifiedMobile(access),
+                    patientAccesses.stream().map(PatientAccess::tenantId).toList(),
+                    appointments.size(),
+                    appointments.stream().map(PatientPortalCareAiAppointmentOption::appointmentId).toList(),
+                    appointments.stream().map(PatientPortalCareAiAppointmentOption::status).toList(),
+                    appointments.stream().map(PatientPortalCareAiAppointmentOption::appointmentDate).toList()
+            );
+        }
+        return appointments;
+    }
+
     public List<PatientPortalCareAiAppointmentOption> careAiUpcomingAppointments() {
         PatientAccess access = requireCurrentPatientAccess();
         List<PatientAccess> patientAccesses = resolveAccessiblePatientAccesses(access);
@@ -329,6 +364,7 @@ public class PatientPortalService {
                         record.id(),
                         record.doctorUserId(),
                         record.doctorName(),
+                        record.tenantId(),
                         clinicName(record.tenantId()),
                         record.appointmentDate(),
                         record.appointmentTime(),
