@@ -85,7 +85,21 @@ public class PatientPortalCareAiService {
     private static final List<String> BOOKING_INTENT_KEYWORDS = List.of("book appointment", "book", "need doctor", "want consultation", "schedule");
     private static final List<String> RESCHEDULE_INTENT_KEYWORDS = List.of("reschedule", "change my appointment", "move my appointment", "change appointment");
     private static final List<String> CANCEL_INTENT_KEYWORDS = List.of("cancel appointment", "cancel my appointment", "remove booking", "cancel booking");
-    private static final List<String> STATUS_INTENT_KEYWORDS = List.of("when is my appointment", "when is my next appointment", "show appointments", "appointment status", "next appointment");
+    private static final List<String> STATUS_INTENT_KEYWORDS = List.of(
+            "check my appointment",
+            "check my bookings",
+            "show my appointments",
+            "when is my appointment",
+            "when is my next appointment",
+            "do i have upcoming appointments",
+            "my appointments",
+            "upcoming appointments",
+            "appointment list",
+            "show my bookings",
+            "show appointments",
+            "appointment status",
+            "next appointment"
+    );
     private static final List<String> HUMAN_HANDOFF_KEYWORDS = List.of(
             "talk to receptionist",
             "connect me to staff",
@@ -140,12 +154,21 @@ public class PatientPortalCareAiService {
             "repeat options",
             "repeat the options"
     );
+    private static final List<String> SLOT_MORE_KEYWORDS = List.of(
+            "more slots",
+            "show more",
+            "show me more slot",
+            "show me more slots",
+            "any other slots",
+            "other slots"
+    );
     private static final List<String> NEW_PATIENT_KEYWORDS = List.of("new patient", "first time patient", "first-time patient");
     private static final List<String> NEW_PATIENT_KEYWORDS_HI = List.of("नया मरीज", "पहली बार", "पहली दफ़ा");
     private static final List<String> EMERGENCY_KEYWORDS = List.of("chest pain", "difficulty breathing", "severe bleeding", "unconscious", "stroke", "suicidal");
     private static final List<String> EMERGENCY_KEYWORDS_HI = List.of("सीने में दर्द", "सांस लेने में दिक्कत", "ज़्यादा खून", "बेहोश", "स्ट्रोक", "आत्महत्या");
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd MMM uuuu", Locale.ENGLISH);
+    private static final int SLOT_PAGE_SIZE = 3;
     private static final Map<String, Month> MONTH_NAME_MAP = monthNameMap();
     private final PatientPortalService patientPortalService;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
@@ -155,6 +178,9 @@ public class PatientPortalCareAiService {
     private final CareAiTaskNotificationService taskNotificationService;
     private final PublicCatalogFacade publicCatalogFacade;
     private final PatientPortalCareAiBusinessLookupService businessLookupService;
+    private final PatientPortalCareAiIntentRegistry intentRegistry;
+    private final PatientPortalCareAiWorkflowRegistry workflowRegistry;
+    private final PatientPortalCareAiWorkflowRouter workflowRouter;
     private final Map<SessionKey, CareAiState> sessions = new ConcurrentHashMap<>();
 
     @Autowired
@@ -175,6 +201,9 @@ public class PatientPortalCareAiService {
         this.taskNotificationService = taskNotificationService;
         this.publicCatalogFacade = publicCatalogFacade;
         this.businessLookupService = new PatientPortalCareAiBusinessLookupService(patientPortalService, publicCatalogFacade);
+        this.intentRegistry = new PatientPortalCareAiIntentRegistry();
+        this.workflowRegistry = new PatientPortalCareAiWorkflowRegistry();
+        this.workflowRouter = new PatientPortalCareAiWorkflowRouter(intentRegistry, workflowRegistry);
     }
 
     public PatientPortalCareAiService(
@@ -279,33 +308,6 @@ public class PatientPortalCareAiService {
             prepareEscalationResponse(state, message, "emergency-symptoms", emergencyPriority(message));
             return response(state, emergencyPrompt(state.language));
         }
-        careAiTrace("classifyTopic", "enter", state,
-                "userText=" + trimToLength(message, 160)
-                        + " currentWorkflow=" + state.currentIntent
-                        + " lastQuestionKey=" + state.lastQuestionKey);
-        CareAiTopicClassification topicClassification = classifyTopic(state, message);
-        careAiTrace("classifyTopic", "exit", state,
-                "topicClassification=" + topicClassification
-                        + " currentWorkflow=" + state.currentIntent
-                        + " lastQuestionKey=" + state.lastQuestionKey);
-        log.info(
-                "careai.turn.classified conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} userText={} activeWorkflow={} lastQuestionKey={} escalationReason={} topicClassification={} detectedTimePreference={}",
-                RequestContextHolder.requireTenantId(),
-                externalSessionId,
-                patientId,
-                patientPortalService.currentPatientMobile(),
-                trimToLength(message, 160),
-                state.currentIntent == null ? null : state.currentIntent.name(),
-                state.lastQuestionKey,
-                state.handoffReason,
-                topicClassification,
-                detectedTimePreference
-        );
-        if (state.lastTopicClassification == CareAiTopicClassification.SIDE_QUESTION
-                && topicClassification == CareAiTopicClassification.ACTIVE_WORKFLOW_CONTINUATION) {
-            queueWorkflowEvent(state, "WORKFLOW_RESUMED", workflowContextJson(state));
-            state.lastSideTopic = null;
-        }
         if (state.awaitingFreshConfirmation && isPositiveConfirmation(message) && !state.confirmationPending) {
             state.awaitingFreshConfirmation = false;
             return response(state, reconfirmationPrompt(state));
@@ -328,10 +330,68 @@ public class PatientPortalCareAiService {
         PatientPortalCareAiPlannerDecision plannerDecision = shouldUsePlanner(state, message)
                 ? planner.plan(buildPlanningContext(state, message))
                 : null;
+        PatientPortalCareAiIntent classifiedIntent = classifyIntent(state, message, plannerDecision);
+        PatientPortalCareAiWorkflowRouteDecision workflowRoute = workflowRouter.route(
+                state.currentIntent,
+                state,
+                classifiedIntent,
+                message
+        );
+        log.info(
+                "CAREAI_TRACE_WORKFLOW_ROUTER previousWorkflow={} intent={} targetWorkflow={} shouldSwitch={} reset={} reason={}",
+                state.currentIntent == null ? null : state.currentIntent.name(),
+                classifiedIntent == null ? null : classifiedIntent.name(),
+                workflowRoute.targetWorkflow() == null ? null : workflowRoute.targetWorkflow().name(),
+                workflowRoute.shouldSwitch(),
+                workflowRoute.shouldResetState(),
+                workflowRoute.reason()
+        );
+        if (classifiedIntent == PatientPortalCareAiIntent.RESET_CONVERSATION) {
+            clearCurrentConversation(state);
+            return response(state, topicSwitchPrompt(state.language));
+        }
+        if (workflowRoute.shouldSwitch() && workflowRoute.targetWorkflow() != null) {
+            if (state.currentIntent != null && PatientPortalCareAiIntent.normalize(state.currentIntent) != workflowRoute.targetWorkflow()) {
+                queueWorkflowEvent(state, "TOPIC_SWITCHED", workflowContextJson(state));
+            }
+            transitionWorkflow(state, workflowRoute.targetWorkflow(), workflowRoute.reason());
+        }
+        boolean explicitWorkflowIntent = classifiedIntent != null
+                && PatientPortalCareAiIntent.normalize(classifiedIntent) != null
+                && PatientPortalCareAiIntent.normalize(classifiedIntent).isWorkflowIntent();
+        careAiTrace("classifyTopic", "enter", state,
+                "userText=" + trimToLength(message, 160)
+                        + " currentWorkflow=" + state.currentIntent
+                        + " classifiedIntent=" + classifiedIntent
+                        + " lastQuestionKey=" + state.lastQuestionKey);
+        CareAiTopicClassification topicClassification = classifyTopic(state, message, classifiedIntent);
         if (plannerDecision != null && StringUtils.hasText(plannerDecision.sideTopic())) {
             topicClassification = CareAiTopicClassification.SIDE_QUESTION;
         }
-        if (wantsTopicSwitch(message, state.language)) {
+        careAiTrace("classifyTopic", "exit", state,
+                "topicClassification=" + topicClassification
+                        + " currentWorkflow=" + state.currentIntent
+                        + " classifiedIntent=" + classifiedIntent
+                        + " lastQuestionKey=" + state.lastQuestionKey);
+        log.info(
+                "careai.turn.classified conversationTenantId={} patientPortalSessionId={} patientId={} patientMobile={} userText={} activeWorkflow={} lastQuestionKey={} escalationReason={} topicClassification={} detectedTimePreference={}",
+                RequestContextHolder.requireTenantId(),
+                externalSessionId,
+                patientId,
+                patientPortalService.currentPatientMobile(),
+                trimToLength(message, 160),
+                state.currentIntent == null ? null : state.currentIntent.name(),
+                state.lastQuestionKey,
+                state.handoffReason,
+                topicClassification,
+                detectedTimePreference
+        );
+        if (state.lastTopicClassification == CareAiTopicClassification.SIDE_QUESTION
+                && topicClassification == CareAiTopicClassification.ACTIVE_WORKFLOW_CONTINUATION) {
+            queueWorkflowEvent(state, "WORKFLOW_RESUMED", workflowContextJson(state));
+            state.lastSideTopic = null;
+        }
+        if (!explicitWorkflowIntent && wantsTopicSwitch(message, state.language)) {
             if (state.currentIntent != null) {
                 queueWorkflowEvent(state, "TOPIC_SWITCH_REQUESTED", workflowContextJson(state));
                 return response(state, topicSwitchClarificationPrompt(state.language));
@@ -339,7 +399,7 @@ public class PatientPortalCareAiService {
             clearCurrentConversation(state);
             return response(state, topicSwitchPrompt(state.language));
         }
-        if (plannerDecision != null && plannerDecision.topicSwitch()) {
+        if (!explicitWorkflowIntent && plannerDecision != null && plannerDecision.topicSwitch()) {
             if (state.currentIntent != null) {
                 queueWorkflowEvent(state, "TOPIC_SWITCH_REQUESTED", workflowContextJson(state));
                 return response(state, topicSwitchClarificationPrompt(state.language));
@@ -347,11 +407,11 @@ public class PatientPortalCareAiService {
             clearCurrentConversation(state);
             return response(state, topicSwitchPrompt(state.language));
         }
-        if (topicClassification == CareAiTopicClassification.AMBIGUOUS_CANCEL) {
+        if (!explicitWorkflowIntent && topicClassification == CareAiTopicClassification.AMBIGUOUS_CANCEL) {
             queueWorkflowEvent(state, "AMBIGUOUS_CANCEL_DETECTED", workflowContextJson(state));
             return response(state, ambiguousCancelPrompt(state));
         }
-        if (topicClassification == CareAiTopicClassification.CANCEL_CURRENT_WORKFLOW) {
+        if (!explicitWorkflowIntent && topicClassification == CareAiTopicClassification.CANCEL_CURRENT_WORKFLOW) {
             queueWorkflowEvent(state, "WORKFLOW_SUSPEND_REQUESTED", workflowContextJson(state));
             return response(state, topicSwitchClarificationPrompt(state.language));
         }
@@ -361,8 +421,9 @@ public class PatientPortalCareAiService {
             queueWorkflowEvent(state, "WORKFLOW_SUSPENDED", workflowContextJson(state));
             return response(state, sideTopicResponse(state, message, plannerDecision));
         }
-        if (topicClassification == CareAiTopicClassification.NEW_WORKFLOW
-                || topicClassification == CareAiTopicClassification.CANCEL_EXISTING_APPOINTMENT) {
+        if (!workflowRoute.shouldSwitch()
+                && (topicClassification == CareAiTopicClassification.NEW_WORKFLOW
+                || topicClassification == CareAiTopicClassification.CANCEL_EXISTING_APPOINTMENT)) {
             queueWorkflowEvent(state, "TOPIC_SWITCHED", workflowContextJson(state));
         }
 
@@ -371,7 +432,7 @@ public class PatientPortalCareAiService {
                         + " plannerIntent=" + (plannerDecision == null ? null : plannerDecision.intent())
                         + " plannerDoctor=" + (plannerDecision == null ? null : plannerDecision.doctorName())
                         + " plannerSpeciality=" + (plannerDecision == null ? null : plannerDecision.speciality()));
-        boolean progressed = applyIntent(state, message, plannerDecision);
+        boolean progressed = applyIntent(state, message, plannerDecision, classifiedIntent);
         careAiTrace("applyIntent", "exit", state,
                 "progressed=" + progressed
                         + " currentWorkflow=" + state.currentIntent
@@ -521,21 +582,24 @@ public class PatientPortalCareAiService {
             case BOOK_APPOINTMENT -> handleBooking(state, message);
             case RESCHEDULE_APPOINTMENT -> handleReschedule(state, message);
             case CANCEL_APPOINTMENT -> handleCancellation(state, message);
-            case APPOINTMENT_STATUS -> handleStatus(state, message);
+            case CHECK_APPOINTMENT, APPOINTMENT_STATUS -> handleStatus(state, message);
+            default -> askIntentPrompt(state.language);
         };
     }
 
-    private boolean applyIntent(CareAiState state, String message, PatientPortalCareAiPlannerDecision plannerDecision) {
+    private boolean applyIntent(CareAiState state,
+                                String message,
+                                PatientPortalCareAiPlannerDecision plannerDecision,
+                                PatientPortalCareAiIntent classifiedIntent) {
         careAiTrace("applyIntent", "enter", state,
                 "message=" + trimToLength(message, 160)
                         + " currentWorkflow=" + state.currentIntent
                         + " lastQuestionKey=" + state.lastQuestionKey);
-        PatientPortalCareAiIntent detectedIntent = detectIntent(message);
-        if (detectedIntent == null && plannerDecision != null) {
-            detectedIntent = plannerDecision.intent();
-        }
+        PatientPortalCareAiIntent detectedIntent = PatientPortalCareAiIntent.normalize(classifiedIntent);
         boolean changed = false;
-        if (detectedIntent != null && detectedIntent != state.currentIntent) {
+        if (detectedIntent != null
+                && detectedIntent.isWorkflowIntent()
+                && detectedIntent != PatientPortalCareAiIntent.normalize(state.currentIntent)) {
             transitionWorkflow(state, detectedIntent, "intent-changed");
             changed = true;
         }
@@ -805,6 +869,9 @@ public class PatientPortalCareAiService {
         if (shouldRerenderSlotOptions(state, message)) {
             return rerenderSlotOptions(state);
         }
+        if (shouldAdvanceSlotOptions(state, message)) {
+            return advanceSlotOptions(state);
+        }
         if (tryResolveClinicSelection(state, message)) {
             String clinicDoctorPrompt = clinicDoctorChoicePrompt(state);
             if (StringUtils.hasText(clinicDoctorPrompt)) {
@@ -861,6 +928,9 @@ public class PatientPortalCareAiService {
                         + " slotCount=" + state.slotOptions.size());
         if (shouldRerenderSlotOptions(state, message)) {
             return rerenderSlotOptions(state);
+        }
+        if (shouldAdvanceSlotOptions(state, message)) {
+            return advanceSlotOptions(state);
         }
         if (!ensureAppointmentOptions(state)) {
             return noUpcomingAppointmentsPrompt(state.language);
@@ -1124,8 +1194,9 @@ public class PatientPortalCareAiService {
                     .orElse(null);
             if (exact != null) {
                 state.slotPromptLead = null;
-                state.slotChoices = List.of(new SlotChoice(exact.appointmentDate(), exact.slotTime()));
-                state.slotOptions = List.of(exact.slotTime().format(TIME_FORMATTER));
+                state.allSlotChoices = List.of(new SlotChoice(exact.appointmentDate(), exact.slotTime()));
+                state.shownSlotOffset = 0;
+                renderSlotPage(state, 0);
                 if (!exact.slotTime().format(TIME_FORMATTER).equals(state.selectedSlot)) {
                     invalidatePendingConfirmation(state, "slot-changed");
                 }
@@ -1146,11 +1217,11 @@ public class PatientPortalCareAiService {
         }
 
         List<SlotChoice> options = candidates.stream()
-                .limit(3)
                 .map(slot -> new SlotChoice(slot.appointmentDate(), slot.slotTime()))
                 .toList();
-        state.slotChoices = options;
-        state.slotOptions = options.stream().map(choice -> choice.slotTime().format(TIME_FORMATTER)).toList();
+        state.allSlotChoices = options;
+        state.shownSlotOffset = 0;
+        renderSlotPage(state, 0);
         state.selectedSlot = null;
         state.confirmationPending = false;
         state.pendingAction = null;
@@ -1237,7 +1308,8 @@ public class PatientPortalCareAiService {
                         UUID.fromString(state.selectedAppointmentId),
                         "Cancelled via AIVA"
                 );
-                case APPOINTMENT_STATUS -> throw new IllegalStateException("Status lookups do not require confirmation");
+                case CHECK_APPOINTMENT, APPOINTMENT_STATUS -> throw new IllegalStateException("Status lookups do not require confirmation");
+                default -> throw new IllegalStateException("Unsupported confirmation action: " + state.pendingAction);
             };
             careAiTrace("executeConfirmedAction", "success", state,
                     "pendingAction=" + state.pendingAction
@@ -1612,6 +1684,8 @@ public class PatientPortalCareAiService {
     private void clearSlotSelection(CareAiState state) {
         state.selectedSlot = null;
         state.slotPromptLead = null;
+        state.allSlotChoices = List.of();
+        state.shownSlotOffset = 0;
         state.slotChoices = List.of();
         state.slotOptions = List.of();
         state.confirmationPending = false;
@@ -1877,9 +1951,15 @@ public class PatientPortalCareAiService {
         state.selectedAppointmentId = selected.appointmentId().toString();
         state.selectedAppointmentLabel = selected.label();
         state.selectedAppointmentReason = selected.reason();
-        state.selectedDoctorId = selected.doctorUserId() == null ? null : selected.doctorUserId().toString();
-        state.selectedDoctorName = selected.doctorName();
-        state.selectedTenantId = selected.tenantId() == null ? null : selected.tenantId().toString();
+        if (state.currentIntent == PatientPortalCareAiIntent.RESCHEDULE_APPOINTMENT) {
+            state.selectedDoctorId = selected.doctorUserId() == null ? null : selected.doctorUserId().toString();
+            state.selectedDoctorName = selected.doctorName();
+            state.selectedTenantId = selected.tenantId() == null ? null : selected.tenantId().toString();
+        } else {
+            state.selectedDoctorId = null;
+            state.selectedDoctorName = null;
+            state.selectedTenantId = null;
+        }
         state.selectedSpeciality = null;
         state.dateResolutionIssue = null;
         state.timePromptCount = 0;
@@ -2048,7 +2128,7 @@ public class PatientPortalCareAiService {
         }
     }
 
-    private PatientPortalCareAiIntent detectIntent(String transcript) {
+    private PatientPortalCareAiIntent detectWorkflowIntent(String transcript) {
         String lower = transcript.toLowerCase(Locale.ROOT);
         if (RESCHEDULE_INTENT_KEYWORDS.stream().anyMatch(lower::contains) || transcript.contains("रीशेड्यूल")) {
             return PatientPortalCareAiIntent.RESCHEDULE_APPOINTMENT;
@@ -2057,12 +2137,40 @@ public class PatientPortalCareAiService {
             return PatientPortalCareAiIntent.CANCEL_APPOINTMENT;
         }
         if (STATUS_INTENT_KEYWORDS.stream().anyMatch(lower::contains) || transcript.contains("अपॉइंटमेंट कब")) {
-            return PatientPortalCareAiIntent.APPOINTMENT_STATUS;
+            return PatientPortalCareAiIntent.CHECK_APPOINTMENT;
         }
         if (BOOKING_INTENT_KEYWORDS.stream().anyMatch(lower::contains) || transcript.contains("बुक")) {
             return PatientPortalCareAiIntent.BOOK_APPOINTMENT;
         }
         return null;
+    }
+
+    private PatientPortalCareAiIntent classifyIntent(CareAiState state,
+                                                     String transcript,
+                                                     PatientPortalCareAiPlannerDecision plannerDecision) {
+        if (detectResetConversation(transcript, state.language)) {
+            return PatientPortalCareAiIntent.RESET_CONVERSATION;
+        }
+        PatientPortalCareAiIntent workflowIntent = detectWorkflowIntent(transcript);
+        if (workflowIntent != null) {
+            return workflowIntent;
+        }
+        if (detectDoctorSearchIntent(transcript)) {
+            return PatientPortalCareAiIntent.FIND_DOCTOR;
+        }
+        if (detectClinicSearchIntent(transcript)) {
+            return PatientPortalCareAiIntent.FIND_CLINIC;
+        }
+        if (isGreetingOnly(transcript, state.language)) {
+            return PatientPortalCareAiIntent.GREETING;
+        }
+        if (isSmallTalkOnly(transcript, state.language)) {
+            return PatientPortalCareAiIntent.SMALL_TALK;
+        }
+        if (plannerDecision != null && plannerDecision.intent() != null) {
+            return PatientPortalCareAiIntent.normalize(plannerDecision.intent());
+        }
+        return PatientPortalCareAiIntent.UNKNOWN;
     }
 
     private boolean shouldUsePlanner(CareAiState state, String message) {
@@ -2183,7 +2291,9 @@ public class PatientPortalCareAiService {
                     "CHOOSE_APPOINTMENT",
                     "CONFIRM_OR_REJECT"
             ));
-            case APPOINTMENT_STATUS -> actions.addAll(List.of("SET_INTENT", "CHOOSE_APPOINTMENT"));
+            case CHECK_APPOINTMENT, APPOINTMENT_STATUS -> actions.addAll(List.of("SET_INTENT", "CHOOSE_APPOINTMENT"));
+            default -> {
+            }
         }
         return actions;
     }
@@ -2557,6 +2667,13 @@ public class PatientPortalCareAiService {
         }
         Matcher slash = SLASH_DATE_PATTERN.matcher(transcript);
         if (slash.find()) {
+            int first = Integer.parseInt(slash.group(1));
+            int second = Integer.parseInt(slash.group(2));
+            if (first <= 12 && second <= 12
+                    && slash.group(1).length() == 2
+                    && slash.group(2).length() == 2) {
+                return DateResolution.invalid("ambiguous");
+            }
             return resolveAbsoluteDate(parseSlashDate(slash.group(1), slash.group(2), slash.group(3)), true);
         }
         for (DayOfWeek dayOfWeek : DayOfWeek.values()) {
@@ -2757,6 +2874,12 @@ public class PatientPortalCareAiService {
         return isHindi(language) && (transcript.contains("धन्यवाद") || transcript.contains("शुक्रिया") || transcript.contains("अलविदा"));
     }
 
+    private boolean isSmallTalkOnly(String transcript, String language) {
+        return isPostCompletionCourtesy(transcript, language)
+                || "how are you".equalsIgnoreCase(transcript.trim())
+                || (isHindi(language) && transcript.contains("कैसे हैं"));
+    }
+
     private boolean containsBookingIntent(String transcript, String language) {
         String lower = transcript.toLowerCase(Locale.ROOT);
         if (BOOKING_INTENT_KEYWORDS.stream().anyMatch(lower::contains)) {
@@ -2791,6 +2914,33 @@ public class PatientPortalCareAiService {
         return isHindi(language) && TOPIC_SWITCH_KEYWORDS_HI.stream().anyMatch(transcript::contains);
     }
 
+    private boolean detectResetConversation(String transcript, String language) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        return lower.contains("reset conversation")
+                || lower.contains("reset chat")
+                || lower.contains("clear conversation")
+                || lower.contains("clear chat")
+                || lower.contains("start over")
+                || lower.contains("restart conversation")
+                || (isHindi(language) && (transcript.contains("शुरू से") || transcript.contains("रीसेट")));
+    }
+
+    private boolean detectDoctorSearchIntent(String transcript) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        return lower.contains("find doctor")
+                || lower.contains("show doctors")
+                || lower.contains("which doctor")
+                || lower.contains("available doctor");
+    }
+
+    private boolean detectClinicSearchIntent(String transcript) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        return lower.contains("find clinic")
+                || lower.contains("show clinics")
+                || lower.contains("which clinic")
+                || lower.contains("available clinic");
+    }
+
     private boolean containsAny(String value, String... candidates) {
         for (String candidate : candidates) {
             if (candidate.contains(" ")) {
@@ -2808,9 +2958,14 @@ public class PatientPortalCareAiService {
 
     private boolean asksForAllAppointments(String transcript) {
         String lower = transcript.toLowerCase(Locale.ROOT);
-        return lower.contains("show")
-                || lower.contains("all")
-                || lower.contains("appointments")
+        return lower.contains("show my appointments")
+                || lower.contains("show appointments")
+                || lower.contains("my appointments")
+                || lower.contains("upcoming appointments")
+                || lower.contains("appointment list")
+                || lower.contains("show my bookings")
+                || lower.contains("check my bookings")
+                || lower.contains("all appointments")
                 || transcript.contains("सभी");
     }
 
@@ -3103,6 +3258,28 @@ public class PatientPortalCareAiService {
         return numberedChoicePrompt(state.language, englishLead, hindiLead, state.slotOptions);
     }
 
+    private boolean shouldAdvanceSlotOptions(CareAiState state, String message) {
+        if (state == null || state.slotOptions.isEmpty() || !StringUtils.hasText(message)) {
+            return false;
+        }
+        String lower = message.toLowerCase(Locale.ROOT);
+        return SLOT_MORE_KEYWORDS.stream().anyMatch(lower::contains);
+    }
+
+    private String advanceSlotOptions(CareAiState state) {
+        if (StringUtils.hasText(state.selectedDoctorId) && StringUtils.hasText(state.preferredDate)) {
+            refreshSlotChoicesForPagination(state);
+        }
+        int nextOffset = state.shownSlotOffset + SLOT_PAGE_SIZE;
+        if (nextOffset >= state.allSlotChoices.size()) {
+            return isHindi(state.language)
+                    ? "उस तारीख के लिए मुझे यही उपलब्ध स्लॉट मिले।"
+                    : "These are the available slots I found for that date.";
+        }
+        renderSlotPage(state, nextOffset);
+        return slotChoicePrompt(state);
+    }
+
     private String numberedChoicePrompt(String language, String englishLead, String hindiLead, List<String> options) {
         List<String> lines = new ArrayList<>();
         lines.add(isHindi(language) ? hindiLead : englishLead);
@@ -3126,10 +3303,76 @@ public class PatientPortalCareAiService {
                 && StringUtils.hasText(state.preferredDate)) {
             tryResolveSlotSelection(state, "show options again", state.selectedDoctorId);
         }
+        if (!state.allSlotChoices.isEmpty() && state.slotOptions.isEmpty()) {
+            renderSlotPage(state, state.shownSlotOffset);
+        }
         if (state.slotOptions.isEmpty()) {
             return unavailablePreferredWindowPrompt(state, state.preferredTimeWindow, List.of());
         }
         return slotChoicePrompt(state);
+    }
+
+    private void refreshSlotChoicesForPagination(CareAiState state) {
+        if (state == null
+                || !StringUtils.hasText(state.selectedDoctorId)
+                || !StringUtils.hasText(state.preferredDate)) {
+            return;
+        }
+        LocalDate date = LocalDate.parse(state.preferredDate);
+        List<PatientPortalDoctorSlotResponse> selectableSlots = loadDoctorSlots(
+                state,
+                state.selectedDoctorId,
+                state.selectedClinicSlug,
+                state.selectedTenantId,
+                state.selectedClinicId,
+                date
+        ).stream()
+                .filter(PatientPortalDoctorSlotResponse::selectable)
+                .sorted(Comparator.comparing(PatientPortalDoctorSlotResponse::slotTime))
+                .toList();
+        if (selectableSlots.isEmpty()) {
+            return;
+        }
+        List<PatientPortalDoctorSlotResponse> filtered = filterSlots(selectableSlots, state.preferredTimeWindow);
+        List<PatientPortalDoctorSlotResponse> candidates = filtered.isEmpty() ? selectableSlots : filtered;
+        if (isExactTime(state.preferredTimeWindow)) {
+            PatientPortalDoctorSlotResponse exact = candidates.stream()
+                    .filter(slot -> slot.slotTime().format(TIME_FORMATTER).equalsIgnoreCase(state.preferredTimeWindow))
+                    .findFirst()
+                    .orElse(null);
+            if (exact != null) {
+                candidates = List.of(exact);
+            } else {
+                List<PatientPortalDoctorSlotResponse> nearest = nearestSlots(candidates, state.preferredTimeWindow);
+                if (!nearest.isEmpty()) {
+                    candidates = nearest;
+                }
+            }
+        }
+        if (candidates.isEmpty()) {
+            return;
+        }
+        state.allSlotChoices = candidates.stream()
+                .map(slot -> new SlotChoice(slot.appointmentDate(), slot.slotTime()))
+                .toList();
+        if (state.slotOptions.isEmpty()) {
+            renderSlotPage(state, 0);
+        }
+    }
+
+    private void renderSlotPage(CareAiState state, int offset) {
+        if (state == null || state.allSlotChoices.isEmpty()) {
+            state.slotChoices = List.of();
+            state.slotOptions = List.of();
+            state.shownSlotOffset = 0;
+            return;
+        }
+        int safeOffset = Math.max(0, Math.min(offset, Math.max(0, state.allSlotChoices.size() - 1)));
+        int endExclusive = Math.min(safeOffset + SLOT_PAGE_SIZE, state.allSlotChoices.size());
+        List<SlotChoice> page = state.allSlotChoices.subList(safeOffset, endExclusive);
+        state.shownSlotOffset = safeOffset;
+        state.slotChoices = page;
+        state.slotOptions = page.stream().map(choice -> choice.slotTime().format(TIME_FORMATTER)).toList();
     }
 
     private String askDatePrompt(String language) {
@@ -3289,8 +3532,8 @@ public class PatientPortalCareAiService {
 
     private String noUpcomingAppointmentsPrompt(String language) {
         return isHindi(language)
-                ? "कोई आगामी अपॉइंटमेंट नहीं मिली।"
-                : "I could not find any upcoming appointments.";
+                ? "आपकी कोई आगामी अपॉइंटमेंट नहीं है।"
+                : "You do not have any upcoming appointments.";
     }
 
     private String bookingFailedPrompt(String language, String errorMessage) {
@@ -3307,6 +3550,11 @@ public class PatientPortalCareAiService {
             return isHindi(language)
                     ? "कृपया आज या आने वाली तारीख चुनें। पिछली तारीख पर अपॉइंटमेंट नहीं किया जा सकता।"
                     : "Please choose today or a future date. I cannot use a past date for this request.";
+        }
+        if ("ambiguous".equals(issue)) {
+            return isHindi(language)
+                    ? "कृपया तारीख थोड़ा स्पष्ट बताइए। क्या आपका मतलब 6 July 2026 है या 7 June 2026?"
+                    : "Please clarify the date. Do you mean 6 July 2026 or 7 June 2026?";
         }
         return isHindi(language)
                 ? "मैं वह तारीख समझ नहीं सका। कृपया 4 जून 2026, अगले शुक्रवार, या 04/06/2026 जैसे प्रारूप में बताइए।"
@@ -3420,7 +3668,8 @@ public class PatientPortalCareAiService {
             case BOOK_APPOINTMENT -> CareAiWorkflowType.BOOK_APPOINTMENT;
             case RESCHEDULE_APPOINTMENT -> CareAiWorkflowType.RESCHEDULE_APPOINTMENT;
             case CANCEL_APPOINTMENT -> CareAiWorkflowType.CANCEL_APPOINTMENT;
-            case APPOINTMENT_STATUS -> CareAiWorkflowType.CHECK_APPOINTMENT;
+            case CHECK_APPOINTMENT, APPOINTMENT_STATUS -> CareAiWorkflowType.CHECK_APPOINTMENT;
+            default -> null;
         };
     }
 
@@ -3503,6 +3752,8 @@ public class PatientPortalCareAiService {
         context.put("preferredTimeWindow", state.preferredTimeWindow);
         context.put("selectedSlot", state.selectedSlot);
         context.put("slotPromptLead", state.slotPromptLead);
+        context.put("allSlotChoices", slotChoicesContext(state.allSlotChoices));
+        context.put("shownSlotOffset", state.shownSlotOffset);
         context.put("slotChoices", slotChoicesContext(state));
         context.put("slotOptions", state.slotOptions);
         context.put("reason", state.reason);
@@ -3554,7 +3805,11 @@ public class PatientPortalCareAiService {
     }
 
     private List<Map<String, Object>> slotChoicesContext(CareAiState state) {
-        return state.slotChoices.stream()
+        return slotChoicesContext(state.slotChoices);
+    }
+
+    private List<Map<String, Object>> slotChoicesContext(List<SlotChoice> slotChoices) {
+        return slotChoices.stream()
                 .map(choice -> {
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("appointmentDate", choice.appointmentDate() == null ? null : choice.appointmentDate().toString());
@@ -3630,7 +3885,7 @@ public class PatientPortalCareAiService {
         mergePersistedValue(context, "intent", value -> {
             if (state.currentIntent == null && StringUtils.hasText(value)) {
                 try {
-                    state.currentIntent = PatientPortalCareAiIntent.valueOf(value);
+                    state.currentIntent = PatientPortalCareAiIntent.parse(value);
                 } catch (IllegalArgumentException ignored) {
                     // Ignore unknown historical values.
                 }
@@ -3653,9 +3908,14 @@ public class PatientPortalCareAiService {
         state.preferredTimeWindow = coalesce(state.preferredTimeWindow, stringValue(context, "preferredTimeWindow"));
         state.selectedSlot = coalesce(state.selectedSlot, stringValue(context, "selectedSlot"));
         state.slotPromptLead = coalesce(state.slotPromptLead, stringValue(context, "slotPromptLead"));
+        hydrateAllSlotChoices(state, context.get("allSlotChoices"));
+        state.shownSlotOffset = intValue(context.get("shownSlotOffset"));
         hydrateSlotChoices(state, context.get("slotChoices"));
         if (state.slotOptions.isEmpty()) {
             state.slotOptions = stringList(context.get("slotOptions"));
+        }
+        if (state.slotOptions.isEmpty() && !state.allSlotChoices.isEmpty()) {
+            renderSlotPage(state, state.shownSlotOffset);
         }
         state.reason = coalesce(state.reason, stringValue(context, "reason"));
         state.dateResolutionIssue = coalesce(state.dateResolutionIssue, stringValue(context, "dateResolutionIssue"));
@@ -3686,7 +3946,7 @@ public class PatientPortalCareAiService {
         state.actionCompleted = state.actionCompleted || booleanValue(context.get("actionCompleted"));
         if (state.lastAction == null && StringUtils.hasText(stringValue(context, "lastAction"))) {
             try {
-                state.lastAction = PatientPortalCareAiIntent.valueOf(stringValue(context, "lastAction"));
+                state.lastAction = PatientPortalCareAiIntent.parse(stringValue(context, "lastAction"));
             } catch (IllegalArgumentException ignored) {
                 // Ignore unknown historical values.
             }
@@ -3731,6 +3991,29 @@ public class PatientPortalCareAiService {
         if (!hydrated.isEmpty()) {
             state.slotChoices = hydrated;
             state.slotOptions = hydrated.stream().map(choice -> choice.slotTime().format(TIME_FORMATTER)).toList();
+        }
+    }
+
+    private void hydrateAllSlotChoices(CareAiState state, Object value) {
+        if (!(value instanceof List<?> rows) || !state.allSlotChoices.isEmpty()) {
+            return;
+        }
+        List<SlotChoice> hydrated = new ArrayList<>();
+        for (Object row : rows) {
+            Map<String, Object> map = nestedMap(row);
+            LocalDate appointmentDate = parseIsoDate(stringValue(map, "appointmentDate"));
+            String slotTimeValue = stringValue(map, "slotTime");
+            if (appointmentDate == null || !StringUtils.hasText(slotTimeValue)) {
+                continue;
+            }
+            try {
+                hydrated.add(new SlotChoice(appointmentDate, LocalTime.parse(slotTimeValue, TIME_FORMATTER)));
+            } catch (RuntimeException ignored) {
+                // Ignore malformed persisted slot rows.
+            }
+        }
+        if (!hydrated.isEmpty()) {
+            state.allSlotChoices = hydrated;
         }
     }
 
@@ -3829,8 +4112,18 @@ public class PatientPortalCareAiService {
         state.pendingWorkflowEventPayloadJson = payloadJson;
     }
 
-    private CareAiTopicClassification classifyTopic(CareAiState state, String message) {
-        if (state.currentIntent != null && isAmbiguousCancel(message)) {
+    private CareAiTopicClassification classifyTopic(CareAiState state,
+                                                    String message,
+                                                    PatientPortalCareAiIntent classifiedIntent) {
+        PatientPortalCareAiIntent normalizedIntent = PatientPortalCareAiIntent.normalize(classifiedIntent);
+        if (state.currentIntent != null
+                && !state.slotOptions.isEmpty()
+                && (shouldAdvanceSlotOptions(state, message) || shouldRerenderSlotOptions(state, message))) {
+            return CareAiTopicClassification.ACTIVE_WORKFLOW_CONTINUATION;
+        }
+        if (state.currentIntent != null
+                && normalizedIntent != PatientPortalCareAiIntent.CANCEL_APPOINTMENT
+                && isAmbiguousCancel(message)) {
             return CareAiTopicClassification.AMBIGUOUS_CANCEL;
         }
         if (state.currentIntent != null && asksClinicTiming(message, state.language)) {
@@ -3839,12 +4132,17 @@ public class PatientPortalCareAiService {
         if (state.currentIntent != null && asksDoctorAvailability(message, state.language)) {
             return CareAiTopicClassification.SIDE_QUESTION;
         }
-        if (state.currentIntent != null && detectIntent(message) != null && detectIntent(message) != state.currentIntent) {
-            return detectIntent(message) == PatientPortalCareAiIntent.CANCEL_APPOINTMENT
+        if (state.currentIntent != null
+                && normalizedIntent != null
+                && normalizedIntent.isWorkflowIntent()
+                && normalizedIntent != PatientPortalCareAiIntent.normalize(state.currentIntent)) {
+            return normalizedIntent == PatientPortalCareAiIntent.CANCEL_APPOINTMENT
                     ? CareAiTopicClassification.CANCEL_EXISTING_APPOINTMENT
                     : CareAiTopicClassification.NEW_WORKFLOW;
         }
-        if (state.currentIntent != null && wantsTopicSwitch(message, state.language)) {
+        if (state.currentIntent != null
+                && (normalizedIntent == null || normalizedIntent == PatientPortalCareAiIntent.UNKNOWN)
+                && wantsTopicSwitch(message, state.language)) {
             return CareAiTopicClassification.CANCEL_CURRENT_WORKFLOW;
         }
         return CareAiTopicClassification.ACTIVE_WORKFLOW_CONTINUATION;
@@ -4542,7 +4840,19 @@ public class PatientPortalCareAiService {
 
     private LocalDate parseSlashDate(String dayValue, String monthValue, String yearValue) {
         try {
-            return LocalDate.of(Integer.parseInt(yearValue), Integer.parseInt(monthValue), Integer.parseInt(dayValue));
+            int first = Integer.parseInt(dayValue);
+            int second = Integer.parseInt(monthValue);
+            int year = Integer.parseInt(yearValue);
+            if (first > 12 && second <= 12) {
+                return LocalDate.of(year, second, first);
+            }
+            if (second > 12 && first <= 12) {
+                return LocalDate.of(year, first, second);
+            }
+            if (first <= 12 && second <= 12) {
+                return null;
+            }
+            return LocalDate.of(year, second, first);
         } catch (RuntimeException ex) {
             return null;
         }
@@ -4654,6 +4964,8 @@ public class PatientPortalCareAiService {
         private List<DoctorChoice> doctorChoices = List.of();
         private List<String> doctorOptions = List.of();
         private List<AppointmentChoice> appointmentOptions = List.of();
+        private List<SlotChoice> allSlotChoices = List.of();
+        private int shownSlotOffset;
         private List<SlotChoice> slotChoices = List.of();
         private List<String> slotOptions = List.of();
         private boolean confirmationPending;

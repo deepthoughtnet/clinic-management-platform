@@ -82,7 +82,7 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
                     Use the current conversation state and latest user message to infer the next safe planning update only.
                     Return strict JSON with keys:
                     intent, doctorName, speciality, preferredDate, preferredTimeWindow, confirmation, reason, topicSwitch, sideTopic.
-                    intent must be one of BOOK_APPOINTMENT, RESCHEDULE_APPOINTMENT, CANCEL_APPOINTMENT, APPOINTMENT_STATUS, or null.
+                    intent must be one of BOOK_APPOINTMENT, RESCHEDULE_APPOINTMENT, CANCEL_APPOINTMENT, CHECK_APPOINTMENT, or null.
                     preferredDate should be yyyy-MM-dd when confidently known, otherwise null.
                     preferredTimeWindow may be morning, afternoon, evening, night, before lunch, after lunch, now, HH:mm, or null.
                     confirmation must be confirm, reject, or null.
@@ -187,8 +187,8 @@ public class LlmBackedPatientPortalCareAiPlanner implements PatientPortalCareAiP
             return null;
         }
         try {
-            return PatientPortalCareAiIntent.valueOf(value.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException ex) {
+            return PatientPortalCareAiIntent.parse(value);
+        } catch (RuntimeException ex) {
             return null;
         }
     }

@@ -199,6 +199,28 @@ class PatientPortalCareAiServiceTest {
     }
 
     @Test
+    void showMoreSlotsPaginatesSlotList() {
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
+                slot(tomorrow, LocalTime.of(9, 0), true),
+                slot(tomorrow, LocalTime.of(9, 30), true),
+                slot(tomorrow, LocalTime.of(10, 0), true),
+                slot(tomorrow, LocalTime.of(10, 30), true),
+                slot(tomorrow, LocalTime.of(11, 0), true)
+        ));
+
+        var first = service.message(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta tomorrow",
+                "en"
+        ));
+        var second = service.message(new PatientPortalCareAiMessageRequest("show more slots", "en"));
+
+        assertThat(first.state().slotOptions()).containsExactly("09:00", "09:30", "10:00");
+        assertThat(second.state().slotOptions()).containsExactly("10:30", "11:00");
+    }
+
+    @Test
     void bookingDoctorLookupUsesPublicCatalogAndClinicSlug() {
         PublicCatalogFacade publicCatalogFacade = mock(PublicCatalogFacade.class);
         PatientPortalCareAiService publicService = new PatientPortalCareAiService(
@@ -846,6 +868,38 @@ class PatientPortalCareAiServiceTest {
     }
 
     @Test
+    void cancelClearsAppointmentCacheAndShowAppointmentsExcludesCancelledAppointment() {
+        UUID appointmentId = UUID.randomUUID();
+        UUID doctorUserId = UUID.randomUUID();
+        LocalDate date = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(patientPortalService.debugAppointments()).thenReturn(
+                List.of(appointment(appointmentId, doctorUserId, "Dr Ashish Shri", date, LocalTime.of(10, 0), "BOOKED")),
+                List.of(appointment(appointmentId, doctorUserId, "Dr Ashish Shri", date, LocalTime.of(10, 0), "BOOKED")),
+                List.of(appointment(appointmentId, doctorUserId, "Dr Ashish Shri", date, LocalTime.of(10, 0), "CANCELLED"))
+        );
+        when(patientPortalService.cancelAppointment(appointmentId, "Cancelled via AIVA"))
+                .thenReturn(new PatientPortalAppointmentConfirmationResponse(
+                        date,
+                        LocalTime.of(10, 0),
+                        "Dr Ashish Shri",
+                        "Sunrise Clinic",
+                        "Scheduled",
+                        "CANCELLED",
+                        "Review visit",
+                        "Appointment cancelled successfully."
+                ));
+
+        service.message(new PatientPortalCareAiMessageRequest("cancel appointment", "en"));
+        service.message(new PatientPortalCareAiMessageRequest("1", "en"));
+        var cancelled = service.message(new PatientPortalCareAiMessageRequest("yes", "en"));
+        var appointments = service.message(new PatientPortalCareAiMessageRequest("show appointments", "en"));
+
+        assertThat(cancelled.assistantMessage()).contains("Appointment cancelled successfully.");
+        assertThat(appointments.state().currentIntent()).isEqualTo("CHECK_APPOINTMENT");
+        assertThat(appointments.assistantMessage()).isEqualTo("You do not have any upcoming appointments.");
+    }
+
+    @Test
     void invalidDateIsRejectedPolitely() {
         when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
 
@@ -856,6 +910,37 @@ class PatientPortalCareAiServiceTest {
 
         assertThat(response.state().preferredDate()).isNull();
         assertThat(response.assistantMessage()).contains("could not understand that date");
+    }
+
+    @Test
+    void indianSlashDateIsAccepted() {
+        LocalDate date = LocalDate.now(CLINIC_ZONE);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(patientPortalService.doctorSlots("doctor-neha", date)).thenReturn(List.of(
+                slot(date, LocalTime.of(9, 0), true),
+                slot(date, LocalTime.of(9, 30), true)
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta on " + date.format(java.time.format.DateTimeFormatter.ofPattern("d/M/uuuu")),
+                "en"
+        ));
+
+        assertThat(response.state().preferredDate()).isEqualTo(date.toString());
+        assertThat(response.state().slotOptions()).containsExactly("09:00", "09:30");
+    }
+
+    @Test
+    void ambiguousSlashDateAsksForClarification() {
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta on 06/07/2026",
+                "en"
+        ));
+
+        assertThat(response.state().preferredDate()).isNull();
+        assertThat(response.assistantMessage()).contains("Do you mean 6 July 2026 or 7 June 2026?");
     }
 
     @Test
@@ -881,10 +966,142 @@ class PatientPortalCareAiServiceTest {
 
         var response = service.message(new PatientPortalCareAiMessageRequest("When is my next appointment?", "en"));
 
-        assertThat(response.state().currentIntent()).isEqualTo("APPOINTMENT_STATUS");
+        assertThat(response.state().currentIntent()).isEqualTo("CHECK_APPOINTMENT");
         assertThat(response.assistantMessage()).contains("Dr Neha Mehta");
         assertThat(response.assistantMessage()).contains("Sunrise Clinic");
         assertThat(response.assistantMessage()).contains("14:00");
+    }
+
+    @Test
+    void showMyAppointmentsMapsToCheckAppointmentIntent() {
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
+                appointment(UUID.randomUUID(), UUID.randomUUID(), "Dr Neha Mehta", tomorrow, LocalTime.of(14, 0), "BOOKED")
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest("show my appointments", "en"));
+
+        assertThat(response.state().currentIntent()).isEqualTo("CHECK_APPOINTMENT");
+        assertThat(response.assistantMessage()).contains("Here are your upcoming appointments:");
+    }
+
+    @Test
+    void upcomingAppointmentsUtteranceMapsToCheckAppointmentIntent() {
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
+                appointment(UUID.randomUUID(), UUID.randomUUID(), "Dr Neha Mehta", tomorrow, LocalTime.of(14, 0), "BOOKED")
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest("do I have upcoming appointments", "en"));
+
+        assertThat(response.state().currentIntent()).isEqualTo("CHECK_APPOINTMENT");
+        assertThat(response.assistantMessage()).contains("Dr Neha Mehta");
+    }
+
+    @Test
+    void bookingFlowSwitchesImmediatelyToCancel() {
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
+                appointment(UUID.randomUUID(), UUID.randomUUID(), "Dr Neha Mehta", tomorrow, LocalTime.of(14, 0), "BOOKED")
+        ));
+
+        service.message(new PatientPortalCareAiMessageRequest("Book appointment with Dr Neha Mehta", "en"));
+        var response = service.message(new PatientPortalCareAiMessageRequest("cancel appointment", "en"));
+
+        assertThat(response.state().currentIntent()).isEqualTo("CANCEL_APPOINTMENT");
+        assertThat(response.assistantMessage()).contains("Should I cancel this appointment?");
+        assertThat(response.assistantMessage()).doesNotContain("cancel this booking flow");
+        assertThat(response.state().doctorName()).isNull();
+        assertThat(response.state().suggestedSlot()).isNull();
+    }
+
+    @Test
+    void cancelFlowSwitchesImmediatelyToBooking() {
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
+                appointment(UUID.randomUUID(), UUID.randomUUID(), "Dr Neha Mehta", tomorrow, LocalTime.of(14, 0), "BOOKED")
+        ));
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(patientPortalService.doctorSlots("doctor-neha", tomorrow)).thenReturn(List.of(
+                slot(tomorrow, LocalTime.of(10, 0), true)
+        ));
+
+        service.message(new PatientPortalCareAiMessageRequest("cancel appointment", "en"));
+        var response = service.message(new PatientPortalCareAiMessageRequest("book appointment with Dr Neha Mehta tomorrow", "en"));
+
+        assertThat(response.state().currentIntent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(response.state().selectedAppointment()).isNull();
+        assertThat(response.state().doctorName()).isEqualTo("Dr Neha Mehta");
+        assertThat(response.assistantMessage()).doesNotContain("cancel this booking flow");
+    }
+
+    @Test
+    void bookingFlowSwitchesImmediatelyToCheckAppointment() {
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
+                appointment(UUID.randomUUID(), UUID.randomUUID(), "Dr Neha Mehta", tomorrow, LocalTime.of(14, 0), "BOOKED")
+        ));
+
+        service.message(new PatientPortalCareAiMessageRequest("Book appointment with Dr Neha Mehta", "en"));
+        var response = service.message(new PatientPortalCareAiMessageRequest("check my appointment", "en"));
+
+        assertThat(response.state().currentIntent()).isEqualTo("CHECK_APPOINTMENT");
+        assertThat(response.assistantMessage()).contains("Dr Neha Mehta");
+        assertThat(response.assistantMessage()).doesNotContain("cancel this booking flow");
+    }
+
+    @Test
+    void cancelFlowSwitchesImmediatelyToReschedule() {
+        LocalDate tomorrow = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
+                appointment(UUID.randomUUID(), UUID.randomUUID(), "Dr Neha Mehta", tomorrow, LocalTime.of(14, 0), "BOOKED")
+        ));
+
+        service.message(new PatientPortalCareAiMessageRequest("cancel appointment", "en"));
+        var response = service.message(new PatientPortalCareAiMessageRequest("reschedule appointment", "en"));
+
+        assertThat(response.state().currentIntent()).isEqualTo("RESCHEDULE_APPOINTMENT");
+        assertThat(response.assistantMessage()).contains("What new date would you prefer");
+        assertThat(response.assistantMessage()).doesNotContain("cancel this booking flow");
+    }
+
+    @Test
+    void greetingDoesNotClearActiveWorkflow() {
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+
+        service.message(new PatientPortalCareAiMessageRequest("Book appointment with Dr Neha Mehta", "en"));
+        var response = service.message(new PatientPortalCareAiMessageRequest("hello", "en"));
+
+        assertThat(response.state().currentIntent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(response.state().doctorName()).isEqualTo("Dr Neha Mehta");
+        assertThat(response.assistantMessage().toLowerCase()).contains("date");
+    }
+
+    @Test
+    void resetConversationClearsWorkflowState() {
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+
+        service.message(new PatientPortalCareAiMessageRequest("Book appointment with Dr Neha Mehta", "en"));
+        var response = service.message(new PatientPortalCareAiMessageRequest("start over", "en"));
+
+        assertThat(response.state().currentIntent()).isNull();
+        assertThat(response.state().doctorName()).isNull();
+        assertThat(response.state().suggestedSlot()).isNull();
+        assertThat(response.assistantMessage()).contains("cleared the current booking flow");
+    }
+
+    @Test
+    void unknownIntentPreservesCurrentWorkflow() {
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+
+        service.message(new PatientPortalCareAiMessageRequest("Book appointment with Dr Neha Mehta", "en"));
+        var response = service.message(new PatientPortalCareAiMessageRequest("maybe later", "en"));
+
+        assertThat(response.state().currentIntent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(response.state().doctorName()).isEqualTo("Dr Neha Mehta");
+        assertThat(response.assistantMessage().toLowerCase()).contains("date");
     }
 
     @Test

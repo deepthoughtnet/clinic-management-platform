@@ -8,6 +8,7 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicClinicSummaryResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorSummaryResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicPageResponse;
 import java.time.LocalDate;
+import java.util.Locale;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -103,7 +104,9 @@ class PatientPortalCareAiBusinessLookupService {
                         + " mobile=" + safeMobile()
                         + " conversationTenantId=" + safeConversationTenantId()
                         + " tenantContextTenantId=" + safeTenantContextTenantId());
-        List<com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiAppointmentOption> appointments = patientPortalService.debugAppointments();
+        List<com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiAppointmentOption> appointments = patientPortalService.debugAppointments().stream()
+                .filter(this::isActiveUpcomingAppointment)
+                .toList();
         trace("CAREAI_TRACE_APPOINTMENTS_END",
                 "repositoryPath=patientPortalService.debugAppointments"
                         + " linkedTenantIds=" + appointments.stream().map(com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiAppointmentOption::tenantId).distinct().toList()
@@ -111,6 +114,17 @@ class PatientPortalCareAiBusinessLookupService {
                         + " statuses=" + appointments.stream().map(com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiAppointmentOption::status).toList()
                         + " count=" + appointments.size());
         return appointments;
+    }
+
+    private boolean isActiveUpcomingAppointment(com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiAppointmentOption appointment) {
+        if (appointment == null) {
+            return false;
+        }
+        String status = appointment.status() == null ? "" : appointment.status().trim().toUpperCase(Locale.ROOT);
+        return switch (status) {
+            case "BOOKED", "CONFIRMED", "SCHEDULED" -> true;
+            default -> false;
+        };
     }
 
     private boolean matchesDoctor(PatientPortalDoctorResponse doctor, String doctorQuery, String specialityQuery) {
