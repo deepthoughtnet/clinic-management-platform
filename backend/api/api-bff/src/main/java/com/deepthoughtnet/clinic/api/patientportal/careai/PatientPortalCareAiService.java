@@ -44,6 +44,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.LinkedHashMap;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -181,6 +182,9 @@ public class PatientPortalCareAiService {
     private final PatientPortalCareAiIntentRegistry intentRegistry;
     private final PatientPortalCareAiWorkflowRegistry workflowRegistry;
     private final PatientPortalCareAiWorkflowRouter workflowRouter;
+    private final PatientPortalCareAiEntityRegistry entityRegistry;
+    private final PatientPortalCareAiEntityExtractor entityExtractor;
+    private final PatientPortalCareAiToolRegistry toolRegistry;
     private final Map<SessionKey, CareAiState> sessions = new ConcurrentHashMap<>();
 
     @Autowired
@@ -204,6 +208,9 @@ public class PatientPortalCareAiService {
         this.intentRegistry = new PatientPortalCareAiIntentRegistry();
         this.workflowRegistry = new PatientPortalCareAiWorkflowRegistry();
         this.workflowRouter = new PatientPortalCareAiWorkflowRouter(intentRegistry, workflowRegistry);
+        this.entityRegistry = new PatientPortalCareAiEntityRegistry();
+        this.entityExtractor = new PatientPortalCareAiEntityExtractor(entityRegistry);
+        this.toolRegistry = new PatientPortalCareAiToolRegistry();
     }
 
     public PatientPortalCareAiService(
@@ -1642,6 +1649,7 @@ public class PatientPortalCareAiService {
         state.unresolvedTurns = 0;
         state.lastSideTopic = null;
         state.awaitingFreshConfirmation = false;
+        clearEntityExtraction(state);
         state.transientWorkflowType = null;
         state.activeTaskId = null;
         state.activeTaskType = null;
@@ -2016,6 +2024,17 @@ public class PatientPortalCareAiService {
     private SlotChoice resolveSlotChoice(CareAiState state, String message) {
         if (state.slotChoices.isEmpty()) {
             return null;
+        }
+        PatientPortalCareAiExtractedEntities extractedEntities = extractEntities(message, state.language);
+        if (StringUtils.hasText(extractedEntities.timeSlot())) {
+            try {
+                int slotNumber = Integer.parseInt(extractedEntities.timeSlot());
+                if (slotNumber >= 1 && slotNumber <= state.slotChoices.size()) {
+                    return state.slotChoices.get(slotNumber - 1);
+                }
+            } catch (NumberFormatException ignored) {
+                // Fall through to existing selection logic.
+            }
         }
         Integer index = parseSelectionIndex(message);
         if (index != null && index >= 1 && index <= state.slotChoices.size()) {
@@ -2421,21 +2440,11 @@ public class PatientPortalCareAiService {
     private String findRequestedDoctorName(String transcript, String language) {
         careAiTrace("findRequestedDoctorName", "enter", currentState(),
                 "transcript=" + trimToLength(transcript, 160) + " language=" + language);
-        Matcher english = ENGLISH_DOCTOR_PATTERN.matcher(transcript);
-        if (english.find()) {
-            String extracted = cleanName(english.group(1));
+        PatientPortalCareAiExtractedEntities extractedEntities = extractEntities(transcript, language);
+        if (StringUtils.hasText(extractedEntities.doctor())) {
             careAiTrace("findRequestedDoctorName", "exit", currentState(),
-                    "source=english extractedDoctorName=" + extracted);
-            return extracted;
-        }
-        if (isHindi(language) || transcript.contains("डॉक्टर") || transcript.contains("डॉ")) {
-            Matcher hindi = HINDI_DOCTOR_PATTERN.matcher(transcript);
-            if (hindi.find()) {
-                String extracted = cleanName(hindi.group(1));
-                careAiTrace("findRequestedDoctorName", "exit", currentState(),
-                        "source=hindi extractedDoctorName=" + extracted);
-                return extracted;
-            }
+                    "source=entity-registry extractedDoctorName=" + extractedEntities.doctor());
+            return extractedEntities.doctor();
         }
         careAiTrace("findRequestedDoctorName", "exit", currentState(),
                 "source=none extractedDoctorName=null");
@@ -2599,89 +2608,27 @@ public class PatientPortalCareAiService {
     }
 
     private DateResolution findPreferredDate(String transcript, String language) {
-        Matcher iso = ISO_DATE_PATTERN.matcher(transcript);
-        if (iso.find()) {
-            return resolveAbsoluteDate(parseIsoDate(iso.group(1)), true);
+        PatientPortalCareAiExtractedEntities extractedEntities = extractEntities(transcript, language);
+        if (StringUtils.hasText(extractedEntities.dateIssue())) {
+            return DateResolution.invalid(extractedEntities.dateIssue());
         }
-        String lower = transcript.toLowerCase(Locale.ROOT);
-        LocalDate today = currentClinicDate();
-        if (lower.contains("day after tomorrow") || transcript.contains("परसों")) {
-            return DateResolution.valid(today.plusDays(2).toString());
+        if (extractedEntities.requiresDateClarification()) {
+            return DateResolution.invalid("ambiguous");
         }
-        if (lower.contains("tomorrow") || transcript.contains("कल")) {
-            return DateResolution.valid(today.plusDays(1).toString());
-        }
-        if (lower.contains("today") || transcript.contains("आज")) {
-            return DateResolution.valid(today.toString());
-        }
-        if (lower.contains("next week")) {
-            return DateResolution.valid(today.plusWeeks(1).toString());
-        }
-        if (lower.contains("this weekend")) {
-            return DateResolution.valid(resolveThisWeekday(today, DayOfWeek.SATURDAY).toString());
-        }
-        if (lower.contains("this saturday")) {
-            return DateResolution.valid(resolveThisWeekday(today, DayOfWeek.SATURDAY).toString());
-        }
-        if (lower.contains("this sunday")) {
-            return DateResolution.valid(resolveThisWeekday(today, DayOfWeek.SUNDAY).toString());
-        }
-        if (lower.contains("next monday")) {
-            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.MONDAY)).toString());
-        }
-        if (lower.contains("next tuesday")) {
-            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.TUESDAY)).toString());
-        }
-        if (lower.contains("next wednesday")) {
-            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.WEDNESDAY)).toString());
-        }
-        if (lower.contains("next thursday")) {
-            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.THURSDAY)).toString());
-        }
-        if (lower.contains("next friday")) {
-            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.FRIDAY)).toString());
-        }
-        if (lower.contains("next saturday")) {
-            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.SATURDAY)).toString());
-        }
-        if (lower.contains("next sunday")) {
-            return DateResolution.valid(today.with(TemporalAdjusters.next(DayOfWeek.SUNDAY)).toString());
-        }
-        Matcher dmy = DMY_DATE_PATTERN.matcher(transcript);
-        if (dmy.find()) {
-            return resolveAbsoluteDate(parseMonthNameDate(dmy.group(1), dmy.group(2), dmy.group(3)), true);
-        }
-        Matcher mdy = MDY_DATE_PATTERN.matcher(transcript);
-        if (mdy.find()) {
-            return resolveAbsoluteDate(parseMonthNameDate(mdy.group(2), mdy.group(1), mdy.group(3)), true);
-        }
-        Matcher dmyWithoutYear = DMY_DATE_WITHOUT_YEAR_PATTERN.matcher(transcript);
-        if (dmyWithoutYear.find()) {
-            LocalDate parsed = parseMonthNameDateWithoutYear(dmyWithoutYear.group(1), dmyWithoutYear.group(2));
-            return parsed == null ? DateResolution.none() : resolveAbsoluteDate(parsed, false);
-        }
-        Matcher mdyWithoutYear = MDY_DATE_WITHOUT_YEAR_PATTERN.matcher(transcript);
-        if (mdyWithoutYear.find()) {
-            LocalDate parsed = parseMonthNameDateWithoutYear(mdyWithoutYear.group(1), mdyWithoutYear.group(2));
-            return parsed == null ? DateResolution.none() : resolveAbsoluteDate(parsed, false);
-        }
-        Matcher slash = SLASH_DATE_PATTERN.matcher(transcript);
-        if (slash.find()) {
-            int first = Integer.parseInt(slash.group(1));
-            int second = Integer.parseInt(slash.group(2));
-            if (first <= 12 && second <= 12
-                    && slash.group(1).length() == 2
-                    && slash.group(2).length() == 2) {
-                return DateResolution.invalid("ambiguous");
-            }
-            return resolveAbsoluteDate(parseSlashDate(slash.group(1), slash.group(2), slash.group(3)), true);
-        }
-        for (DayOfWeek dayOfWeek : DayOfWeek.values()) {
-            if (matchesWeekday(transcript, lower, dayOfWeek)) {
-                return DateResolution.valid(today.with(TemporalAdjusters.nextOrSame(dayOfWeek)).toString(), true);
-            }
+        if (StringUtils.hasText(extractedEntities.date())) {
+            return resolveAbsoluteDate(parseIsoDate(extractedEntities.date()), isExplicitDateExpression(transcript));
         }
         return DateResolution.none();
+    }
+
+    private boolean isExplicitDateExpression(String transcript) {
+        if (!StringUtils.hasText(transcript)) {
+            return false;
+        }
+        return ISO_DATE_PATTERN.matcher(transcript).find()
+                || DMY_DATE_PATTERN.matcher(transcript).find()
+                || MDY_DATE_PATTERN.matcher(transcript).find()
+                || SLASH_DATE_PATTERN.matcher(transcript).find();
     }
 
     private boolean matchesWeekday(String transcript, String lower, DayOfWeek dayOfWeek) {
@@ -2701,6 +2648,13 @@ public class PatientPortalCareAiService {
     }
 
     private String findPreferredTimeWindow(String transcript, String language, CareAiState state) {
+        PatientPortalCareAiExtractedEntities extractedEntities = extractEntities(transcript, language);
+        if (StringUtils.hasText(extractedEntities.timeWindow())) {
+            return extractedEntities.timeWindow();
+        }
+        if (StringUtils.hasText(extractedEntities.time())) {
+            return extractedEntities.time();
+        }
         String normalizedTranscript = normalizeTimeTranscript(transcript);
         String lower = normalizedTranscript.toLowerCase(Locale.ROOT);
         if (isGreetingOnly(transcript, language)) {
@@ -2915,6 +2869,10 @@ public class PatientPortalCareAiService {
     }
 
     private boolean detectResetConversation(String transcript, String language) {
+        PatientPortalCareAiExtractedEntities extractedEntities = extractEntities(transcript, language);
+        if (extractedEntities.reset()) {
+            return true;
+        }
         String lower = transcript.toLowerCase(Locale.ROOT);
         return lower.contains("reset conversation")
                 || lower.contains("reset chat")
@@ -2970,12 +2928,20 @@ public class PatientPortalCareAiService {
     }
 
     private boolean isPositiveConfirmation(String message) {
+        PatientPortalCareAiExtractedEntities extractedEntities = extractEntities(message, "en");
+        if (extractedEntities.confirmation()) {
+            return true;
+        }
         String lower = message.toLowerCase(Locale.ROOT);
         return POSITIVE_CONFIRMATIONS.stream().anyMatch(lower::contains)
                 || POSITIVE_CONFIRMATIONS_HI.stream().anyMatch(message::contains);
     }
 
     private boolean isNegativeConfirmation(String message) {
+        PatientPortalCareAiExtractedEntities extractedEntities = extractEntities(message, "en");
+        if (extractedEntities.cancellation()) {
+            return true;
+        }
         String lower = message.toLowerCase(Locale.ROOT);
         return NEGATIVE_CONFIRMATIONS.stream().anyMatch(lower::contains)
                 || NEGATIVE_CONFIRMATIONS_HI.stream().anyMatch(message::contains);
@@ -4415,6 +4381,14 @@ public class PatientPortalCareAiService {
         state.appointmentLookupCache.clear();
     }
 
+    private void clearEntityExtraction(CareAiState state) {
+        if (state == null) {
+            return;
+        }
+        state.lastEntityExtractionMessage = null;
+        state.lastEntityExtraction = null;
+    }
+
     private Map<String, Object> doctorDebugMap(DoctorChoice doctor) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("doctorId", doctor.publicDoctorId());
@@ -4454,6 +4428,30 @@ public class PatientPortalCareAiService {
                 state == null ? null : state.lastQuestionKey,
                 details
         );
+    }
+
+    private PatientPortalCareAiExtractedEntities extractEntities(CareAiState state, String message, String language) {
+        if (state != null
+                && Objects.equals(state.lastEntityExtractionMessage, message)
+                && state.lastEntityExtraction != null) {
+            return state.lastEntityExtraction;
+        }
+        PatientPortalCareAiExtractedEntities extracted = entityExtractor.extract(message, language);
+        if (state != null) {
+            state.lastEntityExtractionMessage = message;
+            state.lastEntityExtraction = extracted;
+        }
+        log.info(
+                "CAREAI_TRACE_ENTITY_EXTRACTION userText={} entities={} confidence={}",
+                trimToLength(message, 160),
+                extracted.traceView(),
+                extracted.confidence()
+        );
+        return extracted;
+    }
+
+    private PatientPortalCareAiExtractedEntities extractEntities(String message, String language) {
+        return extractEntities(currentState(), message, language);
     }
 
     private String summarizeDoctors(List<DoctorChoice> doctors) {
@@ -4682,6 +4680,7 @@ public class PatientPortalCareAiService {
         state.lastSideTopic = null;
         state.suspendedIntent = null;
         state.awaitingFreshConfirmation = false;
+        clearEntityExtraction(state);
     }
 
     private boolean detectHumanHandoffRequest(String transcript, String language) {
@@ -4997,6 +4996,8 @@ public class PatientPortalCareAiService {
         private String lastExternalSessionId;
         private String lastQuestionKey;
         private int repeatedQuestionCount;
+        private String lastEntityExtractionMessage;
+        private PatientPortalCareAiExtractedEntities lastEntityExtraction;
         private boolean persistenceHydrated;
         private String persistedWorkflowContextJson;
         private List<String> recentMessages = List.of();

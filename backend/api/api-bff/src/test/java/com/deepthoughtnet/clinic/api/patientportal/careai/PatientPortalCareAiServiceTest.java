@@ -1844,6 +1844,83 @@ class PatientPortalCareAiServiceTest {
         assertThat(response.state().preferredTimeWindow()).isEqualTo("evening");
     }
 
+    @Test
+    void extractsDoctorFromBookingText() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("book appointment with Dr Vikas", "en");
+
+        assertThat(extracted.doctor()).isEqualTo("Vikas");
+    }
+
+    @Test
+    void extractsDateFromSlashFormat() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("book appointment on 26/06/2026", "en");
+
+        assertThat(extracted.date()).isEqualTo("2026-06-26");
+        assertThat(extracted.requiresDateClarification()).isFalse();
+    }
+
+    @Test
+    void extractsDateFromMonthNameFormat() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("book appointment on 26 June 2026", "en");
+
+        assertThat(extracted.date()).isEqualTo("2026-06-26");
+    }
+
+    @Test
+    void extractsTimeFromClockFormat() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("book appointment at 10 AM", "en");
+
+        assertThat(extracted.time()).isEqualTo("10:00");
+    }
+
+    @Test
+    void extractsSlotNumberFromSelectionText() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("book 3", "en");
+
+        assertThat(extracted.timeSlot()).isEqualTo("3");
+    }
+
+    @Test
+    void extractsConfirmationFromYesCancel() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("yes cancel", "en");
+
+        assertThat(extracted.confirmation()).isTrue();
+        assertThat(extracted.cancellation()).isTrue();
+    }
+
+    @Test
+    void extractsResetFromStartOver() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("start over", "en");
+
+        assertThat(extracted.reset()).isTrue();
+    }
+
+    @Test
+    void ambiguousSlashDateRequiresClarification() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("book appointment on 06/07/2026", "en");
+
+        assertThat(extracted.date()).isNull();
+        assertThat(extracted.requiresDateClarification()).isTrue();
+    }
+
+    @Test
+    void greetingDoesNotCreateFalseDoctorOrDateEntity() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("hi", "en");
+
+        assertThat(extracted.doctor()).isNull();
+        assertThat(extracted.date()).isNull();
+        assertThat(extracted.confirmation()).isFalse();
+    }
+
     private PatientPortalDoctorResponse doctor(String publicDoctorId, String doctorName, String specialization) {
         return new PatientPortalDoctorResponse(publicDoctorId, doctorName, specialization, "MBBS", "Room 1", 8);
     }
