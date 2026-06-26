@@ -30,6 +30,10 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
     private static final Logger log = LoggerFactory.getLogger(FasterWhisperSpeechToTextProvider.class);
     private static final String CONFIGURED_PROVIDER_KEY = "faster-whisper";
     private static final String TRACE_PROVIDER_NAME = "FASTER_WHISPER";
+    private static final String HEALTH_PATH = "/health";
+    private static final String READY_PATH = "/ready";
+    private static final String TRANSCRIBE_PATH = "/transcribe";
+    private static final int MAX_TRANSCRIBE_ATTEMPTS = 2;
     private final VoiceTestProperties properties;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -69,13 +73,16 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
             ));
             throw new IllegalStateException("Local STT service unavailable");
         }
-        log.info("voice.stt.request provider={} filename={} contentType={} sizeBytes={}",
+        log.info("voice.stt.request provider={} baseUrl={} endpoint={} filename={} contentType={} sizeBytes={} connectTimeoutMs={} readTimeoutMs={}",
                 providerName(),
+                sanitizedBaseUrl(),
+                transcribeUrl(),
                 request.filename(),
                 request.contentType(),
-                request.audioBytes() == null ? 0 : request.audioBytes().length);
-        String baseUrl = properties.getStt().getFasterWhisper().getBaseUrl().replaceAll("/+$", "");
-        String url = baseUrl + "/transcribe";
+                request.audioBytes() == null ? 0 : request.audioBytes().length,
+                properties.getStt().getFasterWhisper().getConnectTimeoutMs(),
+                properties.getStt().getFasterWhisper().getReadTimeoutMs());
+        String url = transcribeUrl();
         addTrace(debugTrace, new VoiceDebugTraceEntry(
                 "STT_PROVIDER_SELECTED", true, providerName(), null, null,
                 request.filename(), request.contentType(), sizeOf(request), null, null,
@@ -86,82 +93,107 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
                 request.filename(), request.contentType(), sizeOf(request), url, "file",
                 null, null, null, null, null, null
         ));
-        Instant started = Instant.now();
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
-            headers.setAccept(java.util.List.of(MediaType.APPLICATION_JSON));
-
-            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-            body.add("file", audioPart(request));
-            if (StringUtils.hasText(request.language())
-                    && !"auto".equalsIgnoreCase(request.language().trim())
-                    && !"auto-detect".equalsIgnoreCase(request.language().trim())) {
-                body.add("language", request.language().trim());
+        IllegalStateException lastFailure = null;
+        for (int attempt = 1; attempt <= MAX_TRANSCRIBE_ATTEMPTS; attempt += 1) {
+            Instant started = Instant.now();
+            try {
+                ResponseEntity<String> response = restTemplate.postForEntity(
+                        url,
+                        multipartRequest(request),
+                        String.class
+                );
+                log.info("voice.stt.http.complete provider={} status={} attempt={} filename={} contentType={}",
+                        TRACE_PROVIDER_NAME,
+                        response.getStatusCode().value(),
+                        attempt,
+                        request.filename(),
+                        request.contentType());
+                addTrace(debugTrace, new VoiceDebugTraceEntry(
+                        "FASTER_WHISPER_RESPONSE", response.getStatusCode().is2xxSuccessful(), providerName(), null, null,
+                        request.filename(), request.contentType(), sizeOf(request), url, "file",
+                        response.getStatusCode().value(), summarizeBody(response.getBody()),
+                        Duration.between(started, Instant.now()).toMillis(), null, null, null
+                ));
+                JsonNode root = objectMapper.readTree(response.getBody());
+                String transcript = root.path("text").asText("");
+                if (!StringUtils.hasText(transcript)) {
+                    throw new IllegalStateException("Audio could not be transcribed");
+                }
+                addTrace(debugTrace, new VoiceDebugTraceEntry(
+                        "STT_RESULT", true, providerName(), null, null,
+                        request.filename(), request.contentType(), sizeOf(request), null, null,
+                        response.getStatusCode().value(), null,
+                        Duration.between(started, Instant.now()).toMillis(), transcript.trim().length(), null, null
+                ));
+                return new VoiceTranscriptionResult(transcript.trim(), TRACE_PROVIDER_NAME, null);
+            } catch (HttpStatusCodeException ex) {
+                String reason = extractErrorMessage(ex);
+                log.warn("voice.stt.http.failed provider={} status={} attempt={} baseUrl={} endpoint={} filename={} contentType={} body={}",
+                        TRACE_PROVIDER_NAME,
+                        ex.getStatusCode().value(),
+                        attempt,
+                        sanitizedBaseUrl(),
+                        url,
+                        request.filename(),
+                        request.contentType(),
+                        summarizeBody(ex.getResponseBodyAsString()));
+                addTrace(debugTrace, new VoiceDebugTraceEntry(
+                        "FASTER_WHISPER_RESPONSE", false, providerName(), null, null,
+                        request.filename(), request.contentType(), sizeOf(request), url, "file",
+                        ex.getStatusCode().value(), summarizeBody(ex.getResponseBodyAsString()),
+                        Duration.between(started, Instant.now()).toMillis(), null, reason, null
+                ));
+                lastFailure = new IllegalStateException(reason, ex);
+                if (ex.getStatusCode().is5xxServerError() && attempt < MAX_TRANSCRIBE_ATTEMPTS) {
+                    log.warn("voice.stt.retry provider={} attempt={} nextAttempt={} reason={}",
+                            TRACE_PROVIDER_NAME,
+                            attempt,
+                            attempt + 1,
+                            reason);
+                    continue;
+                }
+                break;
+            } catch (RestClientException ex) {
+                String reason = rootCauseMessage(ex);
+                log.warn("voice.stt.transport.failed provider={} attempt={} baseUrl={} endpoint={} filename={} contentType={} exception={} reason={}",
+                        TRACE_PROVIDER_NAME,
+                        attempt,
+                        sanitizedBaseUrl(),
+                        url,
+                        request.filename(),
+                        request.contentType(),
+                        ex.getClass().getSimpleName(),
+                        reason);
+                addTrace(debugTrace, new VoiceDebugTraceEntry(
+                        "FASTER_WHISPER_RESPONSE", false, providerName(), null, null,
+                        request.filename(), request.contentType(), sizeOf(request), url, "file",
+                        null, null, Duration.between(started, Instant.now()).toMillis(), null, reason, null
+                ));
+                lastFailure = new IllegalStateException("Local STT service unavailable", ex);
+                if (attempt < MAX_TRANSCRIBE_ATTEMPTS) {
+                    log.warn("voice.stt.retry provider={} attempt={} nextAttempt={} reason={}",
+                            TRACE_PROVIDER_NAME,
+                            attempt,
+                            attempt + 1,
+                            reason);
+                    continue;
+                }
+            } catch (Exception ex) {
+                String reason = rootCauseMessage(ex);
+                log.warn("voice.stt.fallback provider={} attempt={} reason={}", TRACE_PROVIDER_NAME, attempt, reason);
+                addTrace(debugTrace, new VoiceDebugTraceEntry(
+                        "FASTER_WHISPER_RESPONSE", false, providerName(), null, null,
+                        request.filename(), request.contentType(), sizeOf(request), url, "file",
+                        null, null, Duration.between(started, Instant.now()).toMillis(), null, reason, null
+                ));
+                lastFailure = new IllegalStateException("Audio could not be transcribed", ex);
+                break;
             }
-            body.add("task", "transcribe");
-            body.add("model", properties.getStt().getFasterWhisper().getModel());
-
-            ResponseEntity<String> response = restTemplate.postForEntity(
-                    url,
-                    new HttpEntity<>(body, headers),
-                    String.class
-            );
-            log.info("voice.stt.http.complete provider={} status={} filename={} contentType={}",
-                    TRACE_PROVIDER_NAME,
-                    response.getStatusCode().value(),
-                    request.filename(),
-                    request.contentType());
-            addTrace(debugTrace, new VoiceDebugTraceEntry(
-                    "FASTER_WHISPER_RESPONSE", response.getStatusCode().is2xxSuccessful(), providerName(), null, null,
-                    request.filename(), request.contentType(), sizeOf(request), url, "file",
-                    response.getStatusCode().value(), summarizeBody(response.getBody()),
-                    Duration.between(started, Instant.now()).toMillis(), null, null, null
-            ));
-            JsonNode root = objectMapper.readTree(response.getBody());
-            String transcript = root.path("text").asText("");
-            if (!StringUtils.hasText(transcript)) {
-                throw new IllegalStateException("Audio could not be transcribed");
-            }
-            addTrace(debugTrace, new VoiceDebugTraceEntry(
-                    "STT_RESULT", true, providerName(), null, null,
-                    request.filename(), request.contentType(), sizeOf(request), null, null,
-                    response.getStatusCode().value(), null,
-                    Duration.between(started, Instant.now()).toMillis(), transcript.trim().length(), null, null
-            ));
-            return new VoiceTranscriptionResult(transcript.trim(), TRACE_PROVIDER_NAME, null);
-        } catch (HttpStatusCodeException ex) {
-            log.warn("voice.stt.http.failed provider={} status={} filename={} contentType={} body={}",
-                    TRACE_PROVIDER_NAME,
-                    ex.getStatusCode().value(),
-                    request.filename(),
-                    request.contentType(),
-                    summarizeBody(ex.getResponseBodyAsString()));
-            log.warn("voice.stt.fallback provider={} reason={}", TRACE_PROVIDER_NAME, extractErrorMessage(ex));
-            addTrace(debugTrace, new VoiceDebugTraceEntry(
-                    "FASTER_WHISPER_RESPONSE", false, providerName(), null, null,
-                    request.filename(), request.contentType(), sizeOf(request), url, "file",
-                    ex.getStatusCode().value(), summarizeBody(ex.getResponseBodyAsString()),
-                    Duration.between(started, Instant.now()).toMillis(), null, extractErrorMessage(ex), null
-            ));
-            throw new IllegalStateException(extractErrorMessage(ex), ex);
-        } catch (RestClientException ex) {
-            log.warn("voice.stt.fallback provider={} reason={}", TRACE_PROVIDER_NAME, rootCauseMessage(ex));
-            addTrace(debugTrace, new VoiceDebugTraceEntry(
-                    "FASTER_WHISPER_RESPONSE", false, providerName(), null, null,
-                    request.filename(), request.contentType(), sizeOf(request), url, "file",
-                    null, null, Duration.between(started, Instant.now()).toMillis(), null, rootCauseMessage(ex), null
-            ));
-            throw new IllegalStateException("Local STT service unavailable", ex);
-        } catch (Exception ex) {
-            log.warn("voice.stt.fallback provider={} reason={}", TRACE_PROVIDER_NAME, rootCauseMessage(ex));
-            addTrace(debugTrace, new VoiceDebugTraceEntry(
-                    "FASTER_WHISPER_RESPONSE", false, providerName(), null, null,
-                    request.filename(), request.contentType(), sizeOf(request), url, "file",
-                    null, null, Duration.between(started, Instant.now()).toMillis(), null, rootCauseMessage(ex), null
-            ));
-            throw new IllegalStateException("Audio could not be transcribed", ex);
         }
+        log.warn("voice.stt.fallback provider={} reason={}",
+                TRACE_PROVIDER_NAME,
+                lastFailure == null ? "Local STT service unavailable" : lastFailure.getMessage());
+        throw lastFailure == null ? new IllegalStateException("Local STT service unavailable") : lastFailure;
     }
 
     public VoiceServiceStatus status(boolean warmup) {
@@ -169,8 +201,13 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
             return new VoiceServiceStatus("FASTER_WHISPER", false, false, "Local STT service unavailable");
         }
         try {
-            String baseUrl = properties.getStt().getFasterWhisper().getBaseUrl().replaceAll("/+$", "");
-            String endpoint = baseUrl + (warmup ? "/ready" : "/health");
+            String endpoint = statusUrl(warmup);
+            log.info("voice.stt.health.request provider={} endpoint={} warmup={} connectTimeoutMs={} readTimeoutMs={}",
+                    TRACE_PROVIDER_NAME,
+                    endpoint,
+                    warmup,
+                    properties.getStt().getFasterWhisper().getConnectTimeoutMs(),
+                    properties.getStt().getFasterWhisper().getReadTimeoutMs());
             ResponseEntity<Map> response = restTemplate.getForEntity(endpoint, Map.class);
             Map<?, ?> body = response.getBody();
             boolean ready = warmup
@@ -180,10 +217,40 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
             if (!StringUtils.hasText(message)) {
                 message = warmup ? "Faster-Whisper model ready." : "Faster-Whisper reachable.";
             }
+            log.info("voice.stt.health.complete provider={} endpoint={} warmup={} status={} ready={} body={}",
+                    TRACE_PROVIDER_NAME,
+                    endpoint,
+                    warmup,
+                    response.getStatusCode().value(),
+                    ready,
+                    summarizeBody(writeValue(body)));
             return new VoiceServiceStatus("FASTER_WHISPER", true, ready, message);
         } catch (RestClientException ex) {
+            log.warn("voice.stt.health.failed provider={} endpoint={} warmup={} exception={} reason={}",
+                    TRACE_PROVIDER_NAME,
+                    statusUrl(warmup),
+                    warmup,
+                    ex.getClass().getSimpleName(),
+                    rootCauseMessage(ex));
             return new VoiceServiceStatus("FASTER_WHISPER", false, false, "Local STT service unavailable");
         }
+    }
+
+    private HttpEntity<MultiValueMap<String, Object>> multipartRequest(VoiceTranscriptionRequest request) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        headers.setAccept(java.util.List.of(MediaType.APPLICATION_JSON));
+
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("file", audioPart(request));
+        if (StringUtils.hasText(request.language())
+                && !"auto".equalsIgnoreCase(request.language().trim())
+                && !"auto-detect".equalsIgnoreCase(request.language().trim())) {
+            body.add("language", request.language().trim());
+        }
+        body.add("task", "transcribe");
+        body.add("model", properties.getStt().getFasterWhisper().getModel());
+        return new HttpEntity<>(body, headers);
     }
 
     private HttpEntity<ByteArrayResource> audioPart(VoiceTranscriptionRequest request) {
@@ -305,5 +372,28 @@ public class FasterWhisperSpeechToTextProvider implements SpeechToTextProvider {
 
     private long sizeOf(VoiceTranscriptionRequest request) {
         return request.audioBytes() == null ? 0 : request.audioBytes().length;
+    }
+
+    private String sanitizedBaseUrl() {
+        return properties.getStt().getFasterWhisper().getBaseUrl().replaceAll("/+$", "");
+    }
+
+    private String transcribeUrl() {
+        return sanitizedBaseUrl() + TRANSCRIBE_PATH;
+    }
+
+    private String statusUrl(boolean warmup) {
+        return sanitizedBaseUrl() + (warmup ? READY_PATH : HEALTH_PATH);
+    }
+
+    private String writeValue(Map<?, ?> body) {
+        if (body == null || body.isEmpty()) {
+            return "";
+        }
+        try {
+            return objectMapper.writeValueAsString(body);
+        } catch (Exception ignored) {
+            return String.valueOf(body);
+        }
     }
 }

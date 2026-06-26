@@ -91,6 +91,7 @@ public class VoiceOrchestratorService {
         this.piperTextToSpeechProvider = piperTextToSpeechProvider;
         this.voiceAppointmentWorkflowService = voiceAppointmentWorkflowService;
         log.info("voice.stt.providers.available={}", sttProviderRegistry().keySet().stream().toList());
+        logSttStartupStatus();
     }
 
     public VoiceTestResponse processAudio(MultipartFile audio, String context, String language) {
@@ -544,6 +545,33 @@ public class VoiceOrchestratorService {
             byName.putIfAbsent(providerKey(provider), provider);
         }
         return byName;
+    }
+
+    private void logSttStartupStatus() {
+        if (fasterWhisperSpeechToTextProvider == null) {
+            return;
+        }
+        try {
+            VoiceServiceStatus status = fasterWhisperSpeechToTextProvider.status(false);
+            if (status == null) {
+                return;
+            }
+            if (!status.reachable() || !status.ready()) {
+                log.warn("voice.stt.startup.warning provider={} reachable={} ready={} message={}",
+                        status.provider(),
+                        status.reachable(),
+                        status.ready(),
+                        status.message());
+                return;
+            }
+            log.info("voice.stt.startup.ready provider={} reachable={} ready={} message={}",
+                    status.provider(),
+                    status.reachable(),
+                    status.ready(),
+                    status.message());
+        } catch (RuntimeException ex) {
+            log.warn("voice.stt.startup.warning provider=FASTER_WHISPER reason={}", ex.getMessage());
+        }
     }
 
     private List<TextToSpeechProvider> orderedTtsProviders(List<String> configuredOrder) {

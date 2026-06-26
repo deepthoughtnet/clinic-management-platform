@@ -45,12 +45,41 @@ public class PatientPortalVoiceAssistantService {
                 language);
         Instant sttStart = Instant.now();
         log.info("patient.voice.stt.start");
-        VoiceTranscriptionResult transcription = voiceOrchestratorService.transcribeBufferedAudio(
-                audioBytes,
-                contentType,
-                originalFilename,
-                language
-        );
+        VoiceTranscriptionResult transcription;
+        try {
+            transcription = voiceOrchestratorService.transcribeBufferedAudio(
+                    audioBytes,
+                    contentType,
+                    originalFilename,
+                    language
+            );
+        } catch (RuntimeException ex) {
+            long sttDurationMs = Duration.between(sttStart, Instant.now()).toMillis();
+            String assistantText = "Voice transcription is temporarily unavailable. Please type your request or try again.";
+            log.warn("patient.voice.stt.unavailable contentType={} sizeBytes={} durationMs={} exception={} reason={}",
+                    contentType,
+                    audioBytes == null ? 0 : audioBytes.length,
+                    sttDurationMs,
+                    ex.getClass().getSimpleName(),
+                    ex.getMessage());
+            return new PatientPortalVoiceTurnResponse(
+                    UUID.randomUUID().toString(),
+                    "",
+                    assistantText,
+                    null,
+                    null,
+                    null,
+                    null,
+                    CAREAI_PROVIDER,
+                    null,
+                    sttDurationMs,
+                    0L,
+                    0L,
+                    Duration.between(requestStart, Instant.now()).toMillis(),
+                    audioBytes == null ? 0 : audioBytes.length,
+                    ex.getMessage()
+            );
+        }
         long sttDurationMs = Duration.between(sttStart, Instant.now()).toMillis();
         log.info("patient.voice.stt.complete provider={} durationMs={}", transcription.providerName(), sttDurationMs);
         if ("mock".equalsIgnoreCase(transcription.providerName())) {

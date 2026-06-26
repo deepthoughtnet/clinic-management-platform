@@ -149,4 +149,21 @@ class PatientPortalVoiceAssistantServiceTest {
         assertThat(response.ttsProvider()).isNull();
         assertThat(response.ttsFallbackReason()).contains("tts timeout");
     }
+
+    @Test
+    void sttFailureReturnsTypedFallbackWithoutInvokingCareAi() {
+        VoiceOrchestratorService orchestratorService = mock(VoiceOrchestratorService.class);
+        PatientPortalCareAiService careAiService = mock(PatientPortalCareAiService.class);
+        PatientPortalVoiceAssistantService service = new PatientPortalVoiceAssistantService(orchestratorService, careAiService);
+        when(orchestratorService.transcribeBufferedAudio(any(), any(), any(), any()))
+                .thenThrow(new IllegalStateException("Local STT service unavailable"));
+
+        var response = service.processAudioTurn("audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "voice.webm", "auto");
+
+        verify(careAiService, never()).messageFromVoice(any());
+        assertThat(response.transcript()).isEmpty();
+        assertThat(response.assistantText()).contains("temporarily unavailable");
+        assertThat(response.sttProvider()).isNull();
+        assertThat(response.ttsFallbackReason()).contains("Local STT service unavailable");
+    }
 }

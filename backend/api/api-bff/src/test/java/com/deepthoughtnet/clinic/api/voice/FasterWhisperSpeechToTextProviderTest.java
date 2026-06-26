@@ -21,6 +21,7 @@ import static org.springframework.test.web.client.ExpectedCount.once;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class FasterWhisperSpeechToTextProviderTest {
@@ -173,6 +174,33 @@ class FasterWhisperSpeechToTextProviderTest {
         ));
 
         assertThat(result.transcript()).isEqualTo("Hello from normalized webm");
+        assertThat(result.providerName()).isEqualTo("FASTER_WHISPER");
+        server.verify();
+    }
+
+    @Test
+    void transcribeRetriesOnceAfterTransientTransportFailure() {
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().getFasterWhisper().setBaseUrl("http://faster-whisper:8000");
+        FasterWhisperSpeechToTextProvider provider = new FasterWhisperSpeechToTextProvider(properties, new RestTemplateBuilder(), new ObjectMapper());
+        RestTemplate restTemplate = (RestTemplate) ReflectionTestUtils.getField(provider, "restTemplate");
+        MockRestServiceServer server = MockRestServiceServer.createServer(restTemplate);
+        server.expect(once(), requestTo("http://faster-whisper:8000/transcribe"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withServerError());
+        server.expect(once(), requestTo("http://faster-whisper:8000/transcribe"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"text\":\"Recovered after retry\"}", MediaType.APPLICATION_JSON));
+
+        var result = provider.transcribe(new VoiceTranscriptionRequest(
+                UUID.randomUUID(),
+                "audio".getBytes(StandardCharsets.UTF_8),
+                "audio/webm",
+                "sample.webm",
+                "en"
+        ));
+
+        assertThat(result.transcript()).isEqualTo("Recovered after retry");
         assertThat(result.providerName()).isEqualTo("FASTER_WHISPER");
         server.verify();
     }
