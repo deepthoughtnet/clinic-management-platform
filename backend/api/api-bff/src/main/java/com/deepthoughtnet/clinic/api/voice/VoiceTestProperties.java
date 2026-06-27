@@ -8,8 +8,11 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "voice")
 public class VoiceTestProperties {
     private boolean enabled = true;
+    private String defaultLanguage = "hi-IN";
+    private String responseLanguage = "hi-IN";
     private final Stt stt = new Stt();
     private final Tts tts = new Tts();
+    private final Sarvam sarvam = new Sarvam();
     private final Llm llm = new Llm();
     private final Vad vad = new Vad();
     private final Live live = new Live();
@@ -23,12 +26,32 @@ public class VoiceTestProperties {
         this.enabled = enabled;
     }
 
+    public String getDefaultLanguage() {
+        return defaultLanguage;
+    }
+
+    public void setDefaultLanguage(String defaultLanguage) {
+        this.defaultLanguage = defaultLanguage;
+    }
+
+    public String getResponseLanguage() {
+        return responseLanguage;
+    }
+
+    public void setResponseLanguage(String responseLanguage) {
+        this.responseLanguage = responseLanguage;
+    }
+
     public Stt getStt() {
         return stt;
     }
 
     public Tts getTts() {
         return tts;
+    }
+
+    public Sarvam getSarvam() {
+        return sarvam;
     }
 
     public Llm getLlm() {
@@ -48,7 +71,7 @@ public class VoiceTestProperties {
     }
 
     public static class Stt {
-        private List<String> providerOrder = List.of("faster-whisper", "mock");
+        private List<String> providerOrder = List.of("sarvam", "faster-whisper", "mock");
         private final FasterWhisper fasterWhisper = new FasterWhisper();
         private final Deepgram deepgram = new Deepgram();
 
@@ -148,7 +171,7 @@ public class VoiceTestProperties {
     }
 
     public static class Tts {
-        private List<String> providerOrder = List.of("piper", "mock");
+        private List<String> providerOrder = List.of("sarvam", "piper", "mock");
         private final Piper piper = new Piper();
         private final ElevenLabs elevenlabs = new ElevenLabs();
 
@@ -166,6 +189,108 @@ public class VoiceTestProperties {
 
         public Piper getPiper() {
             return piper;
+        }
+    }
+
+    public static class Sarvam {
+        private boolean enabled = false;
+        private boolean sttEnabled = false;
+        private boolean ttsEnabled = false;
+        private String apiKey;
+        private String baseUrl = "https://api.sarvam.ai";
+        private String sttPath = "/speech-to-text";
+        private String ttsPath = "/text-to-speech";
+        private String defaultLanguage = "hi-IN";
+        private String responseLanguage = "hi-IN";
+        private int connectTimeoutMs = 10000;
+        private int readTimeoutMs = 60000;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public boolean isSttEnabled() {
+            return sttEnabled;
+        }
+
+        public void setSttEnabled(boolean sttEnabled) {
+            this.sttEnabled = sttEnabled;
+        }
+
+        public boolean isTtsEnabled() {
+            return ttsEnabled;
+        }
+
+        public void setTtsEnabled(boolean ttsEnabled) {
+            this.ttsEnabled = ttsEnabled;
+        }
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public void setApiKey(String apiKey) {
+            this.apiKey = apiKey;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public String getSttPath() {
+            return sttPath;
+        }
+
+        public void setSttPath(String sttPath) {
+            this.sttPath = sttPath;
+        }
+
+        public String getTtsPath() {
+            return ttsPath;
+        }
+
+        public void setTtsPath(String ttsPath) {
+            this.ttsPath = ttsPath;
+        }
+
+        public String getDefaultLanguage() {
+            return defaultLanguage;
+        }
+
+        public void setDefaultLanguage(String defaultLanguage) {
+            this.defaultLanguage = defaultLanguage;
+        }
+
+        public String getResponseLanguage() {
+            return responseLanguage;
+        }
+
+        public void setResponseLanguage(String responseLanguage) {
+            this.responseLanguage = responseLanguage;
+        }
+
+        public int getConnectTimeoutMs() {
+            return connectTimeoutMs;
+        }
+
+        public void setConnectTimeoutMs(int connectTimeoutMs) {
+            this.connectTimeoutMs = connectTimeoutMs;
+        }
+
+        public int getReadTimeoutMs() {
+            return readTimeoutMs;
+        }
+
+        public void setReadTimeoutMs(int readTimeoutMs) {
+            this.readTimeoutMs = readTimeoutMs;
         }
     }
 

@@ -188,8 +188,22 @@ logging:
 
 voice:
   enabled: ${VOICE_TEST_ENABLED:true}
+  default-language: ${AIVA_DEFAULT_LANGUAGE:hi-IN}
+  response-language: ${AIVA_RESPONSE_LANGUAGE:hi-IN}
+  sarvam:
+    enabled: ${SARVAM_ENABLED:false}
+    stt-enabled: ${SARVAM_STT_ENABLED:false}
+    tts-enabled: ${SARVAM_TTS_ENABLED:false}
+    api-key: ${SARVAM_API_KEY:}
+    base-url: ${SARVAM_BASE_URL:https://api.sarvam.ai}
+    stt-path: ${SARVAM_STT_PATH:/speech-to-text}
+    tts-path: ${SARVAM_TTS_PATH:/text-to-speech}
+    default-language: ${SARVAM_DEFAULT_LANGUAGE:hi-IN}
+    response-language: ${SARVAM_DEFAULT_LANGUAGE:hi-IN}
+    connect-timeout-ms: ${SARVAM_CONNECT_TIMEOUT_MS:10000}
+    read-timeout-ms: ${SARVAM_READ_TIMEOUT_MS:60000}
   stt:
-    provider-order: ${VOICE_STT_PROVIDER_ORDER:faster-whisper,mock}
+    provider-order: ${VOICE_STT_PROVIDER_ORDER:sarvam,faster-whisper,mock}
     faster-whisper:
       base-url: ${FASTER_WHISPER_BASE_URL:http://faster-whisper:8000}
       model: ${FASTER_WHISPER_MODEL:base}
@@ -201,7 +215,7 @@ voice:
       model: ${DEEPGRAM_MODEL:nova-2}
       base-url: ${DEEPGRAM_BASE_URL:https://api.deepgram.com/v1/listen}
   tts:
-    provider-order: ${VOICE_TTS_PROVIDER_ORDER:piper,mock}
+    provider-order: ${VOICE_TTS_PROVIDER_ORDER:sarvam,piper,mock}
     piper:
       base-url: ${PIPER_TTS_BASE_URL:http://piper-tts:8001}
       voice: ${PIPER_DEFAULT_VOICE:${PIPER_VOICE:en_US-lessac-medium}}

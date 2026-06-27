@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisRequest;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionRequest;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
+import com.deepthoughtnet.clinic.tts.spi.VoiceTextNormalizer;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest;
@@ -58,6 +59,7 @@ public class VoiceOrchestratorService {
     private final FasterWhisperSpeechToTextProvider fasterWhisperSpeechToTextProvider;
     private final PiperTextToSpeechProvider piperTextToSpeechProvider;
     private final VoiceAppointmentWorkflowService voiceAppointmentWorkflowService;
+    private final VoiceTextNormalizer voiceTextNormalizer = new VoiceTextNormalizer();
 
     public VoiceOrchestratorService(List<SpeechToTextProvider> sttProviders,
                                     List<TextToSpeechProvider> ttsProviders,
@@ -269,7 +271,8 @@ public class VoiceOrchestratorService {
             ));
             String assistantText = sanitizeVoiceAssistantText(aiResponse.outputText());
             Instant ttsStart = Instant.now();
-            VoiceSynthesisResult synthesis = synthesize(new VoiceSynthesisRequest(tenantId, assistantText, normalizedLanguage));
+            String ttsAssistantText = normalizeAssistantTextForVoice(assistantText, normalizedLanguage);
+            VoiceSynthesisResult synthesis = synthesize(new VoiceSynthesisRequest(tenantId, ttsAssistantText, normalizedLanguage));
             log.info("voice.tts.complete requestId={} provider={} durationMs={} playableAudio={}",
                     requestId,
                     synthesis.providerName(),
@@ -375,7 +378,8 @@ public class VoiceOrchestratorService {
         }
         UUID tenantId = RequestContextHolder.requireTenantId();
         String normalizedLanguage = normalizeLanguageHint(language);
-        return synthesize(new VoiceSynthesisRequest(tenantId, sanitizeVoiceAssistantText(assistantText), normalizedLanguage));
+        String ttsAssistantText = normalizeAssistantTextForVoice(assistantText, normalizedLanguage);
+        return synthesize(new VoiceSynthesisRequest(tenantId, ttsAssistantText, normalizedLanguage));
     }
 
     public VoiceStatusResponse status(boolean warmup) {
@@ -466,6 +470,11 @@ public class VoiceOrchestratorService {
                 }
                 return result;
             } catch (RuntimeException ex) {
+                String nextProvider = index + 1 < orderedProviders.size() ? orderedProviders.get(index + 1).providerName() : null;
+                log.warn("voice.provider.fallback from={} to={} type=STT reason={}",
+                        provider.providerName(),
+                        nextProvider,
+                        ex.getMessage());
                 log.warn("voice.stt.fallback provider={} reason={}", provider.providerName(), ex.getMessage());
                 if (debugTrace != null) {
                     debugTrace.add(trace(
@@ -499,7 +508,9 @@ public class VoiceOrchestratorService {
     private VoiceSynthesisResult synthesize(VoiceSynthesisRequest request) {
         List<String> providerOrder = properties.getTts().getProviderOrder();
         IllegalStateException lastFailure = null;
-        for (TextToSpeechProvider provider : orderedTtsProviders(providerOrder)) {
+        List<TextToSpeechProvider> orderedProviders = orderedTtsProviders(providerOrder);
+        for (int index = 0; index < orderedProviders.size(); index += 1) {
+            TextToSpeechProvider provider = orderedProviders.get(index);
             if (!provider.isReady()) {
                 log.info("voice.tts.skip provider={} reason=not-ready", provider.providerName());
                 continue;
@@ -510,6 +521,11 @@ public class VoiceOrchestratorService {
                     return result;
                 }
             } catch (RuntimeException ex) {
+                String nextProvider = index + 1 < orderedProviders.size() ? orderedProviders.get(index + 1).providerName() : null;
+                log.warn("voice.provider.fallback from={} to={} type=TTS reason={}",
+                        provider.providerName(),
+                        nextProvider,
+                        ex.getMessage());
                 log.warn("voice.tts.fallback provider={} reason={}", provider.providerName(), ex.getMessage());
                 lastFailure = new IllegalStateException(ex.getMessage(), ex);
             }
@@ -725,6 +741,16 @@ public class VoiceOrchestratorService {
             }
         }
         return cleaned;
+    }
+
+    private String normalizeAssistantTextForVoice(String assistantText, String language) {
+        String originalText = sanitizeVoiceAssistantText(assistantText);
+        String normalizedText = voiceTextNormalizer.normalizeForVoice(originalText, language);
+        log.info("voice.tts.text.normalized language={} originalTextLength={} normalizedTextLength={}",
+                normalizeLanguageHint(language),
+                originalText.length(),
+                normalizedText == null ? 0 : normalizedText.length());
+        return normalizedText;
     }
 
     private String extractAnswerCandidate(String raw) {

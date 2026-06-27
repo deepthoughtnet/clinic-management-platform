@@ -155,6 +155,144 @@ class VoiceOrchestratorServiceTest {
     }
 
     @Test
+    void processAudioFallsBackFromSarvamToFasterWhisperWhenSttFails() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-sarvam-stt"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("sarvam", "faster-whisper", "mock"));
+        properties.getTts().setProviderOrder(List.of("mock"));
+        AiOrchestrationService aiOrchestrationService = mock(AiOrchestrationService.class);
+        when(aiOrchestrationService.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "gemini", "gemini", "Fallback answer", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 10L, false, null
+        ));
+
+        SpeechToTextProvider sarvam = new SpeechToTextProvider() {
+            @Override
+            public String providerName() {
+                return "sarvam";
+            }
+
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public VoiceTranscriptionResult transcribe(VoiceTranscriptionRequest request) {
+                throw new IllegalStateException("sarvam failed");
+            }
+        };
+        SpeechToTextProvider fasterWhisperFallback = new SpeechToTextProvider() {
+            @Override
+            public String providerName() {
+                return "faster-whisper";
+            }
+
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public VoiceTranscriptionResult transcribe(VoiceTranscriptionRequest request) {
+                return new VoiceTranscriptionResult("Hello, I want to book an appointment.", "FASTER_WHISPER", null);
+            }
+        };
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(sarvam, fasterWhisperFallback),
+                List.of(new MockVoiceTextToSpeechProvider()),
+                aiOrchestrationService,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
+        );
+
+        VoiceTestResponse response = service.processAudio(
+                new MockMultipartFile("audio", "sample.webm", "audio/webm", "voice".getBytes()),
+                null,
+                null
+        );
+
+        assertThat(response.transcript()).isEqualTo("Hello, I want to book an appointment.");
+        assertThat(response.providerTrace().sttProvider()).isEqualTo("FASTER_WHISPER");
+    }
+
+    @Test
+    void processAudioFallsBackFromSarvamToPiperWhenTtsFails() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid-sarvam-tts"));
+
+        VoiceTestProperties properties = new VoiceTestProperties();
+        properties.getStt().setProviderOrder(List.of("mock"));
+        properties.getTts().setProviderOrder(List.of("sarvam", "piper", "mock"));
+        AiOrchestrationService aiOrchestrationService = mock(AiOrchestrationService.class);
+        when(aiOrchestrationService.complete(any())).thenReturn(new AiOrchestrationResponse(
+                UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                "gemini", "gemini", "Fallback answer", null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 10L, false, null
+        ));
+
+        TextToSpeechProvider sarvam = new TextToSpeechProvider() {
+            @Override
+            public String providerName() {
+                return "sarvam";
+            }
+
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public VoiceSynthesisResult synthesize(com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisRequest request) {
+                throw new IllegalStateException("sarvam tts failed");
+            }
+        };
+        TextToSpeechProvider piperFallback = new TextToSpeechProvider() {
+            @Override
+            public String providerName() {
+                return "piper";
+            }
+
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public VoiceSynthesisResult synthesize(com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisRequest request) {
+                return new VoiceSynthesisResult("audio".getBytes(), "audio/wav", "piper", null);
+            }
+        };
+
+        VoiceOrchestratorService service = new VoiceOrchestratorService(
+                List.of(new MockVoiceSpeechToTextProvider()),
+                List.of(sarvam, piperFallback),
+                aiOrchestrationService,
+                mock(AuditEventPublisher.class),
+                properties,
+                new ObjectMapper(),
+                mock(FasterWhisperSpeechToTextProvider.class),
+                mock(PiperTextToSpeechProvider.class)
+        );
+
+        VoiceTestResponse response = service.processAudio(
+                new MockMultipartFile("audio", "sample.wav", "audio/wav", "voice".getBytes()),
+                null,
+                null
+        );
+
+        assertThat(response.audioBase64()).isNotNull();
+        assertThat(response.providerTrace().ttsProvider()).isEqualTo("piper");
+    }
+
+    @Test
     void processAudioReflectsGroqWhenLlmFallbackIsUsed() {
         UUID tenantId = UUID.randomUUID();
         UUID actorId = UUID.randomUUID();
@@ -416,11 +554,12 @@ class VoiceOrchestratorServiceTest {
         AiOrchestrationService ai = mock(AiOrchestrationService.class);
         when(ai.complete(any())).thenReturn(new AiOrchestrationResponse(
                 UUID.randomUUID(), UUID.randomUUID(), AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
-                "GEMINI", "gemini", "{\"answer\":\"Namaste, aap kis samay aana chahenge?\",\"suggestedActions\":[]}",
+                "GEMINI", "gemini", "{\"answer\":\"Dr Vikas Singh · 27 Jun 2026 · 10:00\",\"suggestedActions\":[]}",
                 null, BigDecimal.ONE, List.of(), List.of(), List.of(), null, 1L, false, null
         ));
 
         AtomicReference<String> capturedLanguage = new AtomicReference<>();
+        AtomicReference<String> capturedText = new AtomicReference<>();
         TextToSpeechProvider captureTts = new TextToSpeechProvider() {
             @Override
             public String providerName() {
@@ -435,6 +574,7 @@ class VoiceOrchestratorServiceTest {
             @Override
             public VoiceSynthesisResult synthesize(VoiceSynthesisRequest request) {
                 capturedLanguage.set(request.language());
+                capturedText.set(request.text());
                 return new VoiceSynthesisResult("wav".getBytes(StandardCharsets.UTF_8), "audio/wav", "capture", null);
             }
         };
@@ -457,6 +597,7 @@ class VoiceOrchestratorServiceTest {
         );
 
         assertThat(capturedLanguage.get()).isEqualTo("hi");
+        assertThat(capturedText.get()).isEqualTo("डॉक्टर विकास सिंह, सत्ताईस जून दो हज़ार छब्बीस, सुबह दस बजे");
         assertThat(response.providerTrace().ttsProvider()).isEqualTo("capture");
     }
 
