@@ -1,5 +1,6 @@
 package com.deepthoughtnet.clinic.api.lab.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -16,6 +17,7 @@ import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterRepository;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderCreateCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDirectCreateCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDoctorReviewCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultEntryCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultItemCommand;
@@ -23,6 +25,10 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderSampleCollectionC
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestUpsertCommand;
 import com.deepthoughtnet.clinic.api.notifications.LabNotificationService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.billing.service.model.BillLineRecord;
+import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
+import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
+import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
@@ -192,6 +198,30 @@ class LabServiceValidationTest {
     }
 
     @Test
+    void createsStandaloneLabOrderWithBilling() {
+        setupPatientOnly();
+        LabTestMasterEntity test = LabTestMasterEntity.create(TENANT_ID, "CBC", "Complete Blood Count");
+        setEntityId(test, TEST_ID);
+        test.update("CBC", "Complete Blood Count", "HEMATOLOGY", null, "Blood", null, null, null, BigDecimal.valueOf(100), true);
+        when(labTestMasterRepository.findAllById(anyList())).thenReturn(List.of(test));
+        when(billingService.createDraft(any(), any(), any())).thenReturn(sampleBill());
+        when(billingService.issue(any(), any(), any())).thenReturn(sampleBill());
+
+        var result = service.createOrder(TENANT_ID, new LabOrderDirectCreateCommand(PATIENT_ID, null, List.of(TEST_ID), "Standalone request"), ACTOR_ID);
+
+        assertThat(result.status()).isEqualTo(com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord.PAYMENT_PENDING);
+        assertThat(result.patientNumber()).isEqualTo("P-001");
+        assertThat(result.patientName()).isEqualTo("Test Patient");
+    }
+
+    @Test
+    void rejectsStandaloneLabOrderWithoutPatient() {
+        assertThatThrownBy(() -> service.createOrder(TENANT_ID, new LabOrderDirectCreateCommand(null, null, List.of(TEST_ID), null), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("patientId");
+    }
+
+    @Test
     void rejectsSendBackWithoutReason() {
         assertThatThrownBy(() -> service.reviewReport(TENANT_ID, ORDER_ID, new LabOrderDoctorReviewCommand("SEND_BACK", null, null), ACTOR_ID))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -233,6 +263,47 @@ class LabServiceValidationTest {
         lenient().when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of());
         lenient().when(labOrderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         lenient().when(labOrderItemRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    }
+
+    private void setupPatientOnly() {
+        PatientEntity patient = PatientEntity.create(TENANT_ID, "P-001");
+        patient.update("Test", "Patient", null, null, null, "9876543210", null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, true);
+        lenient().when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        lenient().when(tenantUserManagementService.list(TENANT_ID)).thenReturn(List.of());
+        lenient().when(labOrderRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        lenient().when(labOrderItemRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    }
+
+    private BillRecord sampleBill() {
+        return new BillRecord(
+                UUID.randomUUID(),
+                TENANT_ID,
+                "BILL-001",
+                PATIENT_ID,
+                "P-001",
+                "Test Patient",
+                null,
+                null,
+                LocalDate.now(),
+                BillStatus.ISSUED,
+                BigDecimal.valueOf(100),
+                DiscountType.NONE,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                null,
+                null,
+                BigDecimal.ZERO,
+                BigDecimal.valueOf(100),
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                BigDecimal.valueOf(100),
+                null,
+                "Lab tests ordered",
+                OffsetDateTime.now(),
+                OffsetDateTime.now(),
+                List.<BillLineRecord>of()
+        );
     }
 
     private com.deepthoughtnet.clinic.api.lab.db.LabOrderEntity sampleOrder(LabOrderStatus status) {

@@ -1,7 +1,9 @@
 package com.deepthoughtnet.clinic.api.lab;
 
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderCreateRequest;
+import com.deepthoughtnet.clinic.api.lab.dto.LabOrderDirectCreateRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderDoctorReviewRequest;
+import com.deepthoughtnet.clinic.api.lab.dto.LabCsvImportResponse;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderItemResponse;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderPaymentRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderResultRequest;
@@ -11,8 +13,10 @@ import com.deepthoughtnet.clinic.api.lab.dto.LabOrderResponse;
 import com.deepthoughtnet.clinic.api.lab.dto.LabTestRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabTestResponse;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderStatus;
+import com.deepthoughtnet.clinic.api.lab.LabCsvService;
 import com.deepthoughtnet.clinic.api.lab.service.LabService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderCreateCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDirectCreateCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDoctorReviewCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultComponentCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultEntryCommand;
@@ -55,9 +59,11 @@ import org.springframework.util.StringUtils;
 @RequestMapping("/api/lab")
 public class LabController {
     private final LabService labService;
+    private final LabCsvService labCsvService;
 
-    public LabController(LabService labService) {
+    public LabController(LabService labService, LabCsvService labCsvService) {
         this.labService = labService;
+        this.labCsvService = labCsvService;
     }
 
     @GetMapping("/categories")
@@ -83,6 +89,20 @@ public class LabController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(labService.createTest(tenantId, toCommand(request), actorAppUserId));
+    }
+
+    @PostMapping(value = "/tests/import-csv", consumes = "multipart/form-data")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.test.manage')")
+    public LabCsvImportResponse importTests(@RequestParam("file") org.springframework.web.multipart.MultipartFile file) throws java.io.IOException {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return labCsvService.importCsv(tenantId, file.getBytes(), actorAppUserId);
+    }
+
+    @GetMapping(value = "/tests/import-template", produces = "text/csv")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.test.manage')")
+    public ResponseEntity<byte[]> importTemplate() throws java.io.IOException {
+        return csvResponse("lab-tests-import-template.csv", labCsvService.importTemplateCsv());
     }
 
     @PutMapping("/tests/{id}")
@@ -131,6 +151,20 @@ public class LabController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(labService.createOrderFromConsultation(tenantId, consultationId, new LabOrderCreateCommand(request.testIds(), request.notes()), actorAppUserId));
+    }
+
+    @PostMapping("/orders")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("@permissionChecker.hasPermission('lab.order.create')")
+    public LabOrderResponse createStandaloneOrder(@Valid @RequestBody LabOrderDirectCreateRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toResponse(labService.createOrder(tenantId, new LabOrderDirectCreateCommand(
+                request.patientId(),
+                request.doctorUserId(),
+                request.testIds(),
+                request.notes()
+        ), actorAppUserId));
     }
 
     @PostMapping("/orders/{id}/payments")
@@ -240,6 +274,14 @@ public class LabController {
                         component.referenceRange()
                 ))
                 .toList();
+    }
+
+    private ResponseEntity<byte[]> csvResponse(String filename, String csv) {
+        byte[] bytes = csv == null ? new byte[0] : csv.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(filename).build().toString())
+                .body(bytes);
     }
 
     private LabTestResponse toResponse(LabTestRecord record) {

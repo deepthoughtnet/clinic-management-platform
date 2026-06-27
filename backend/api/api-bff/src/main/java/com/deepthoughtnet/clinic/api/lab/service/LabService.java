@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterRepository;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderCreateCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDirectCreateCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDoctorReviewCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderItemRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultComponentCommand;
@@ -303,82 +304,47 @@ public class LabService {
                 .filter(user -> consultation.doctorUserId().equals(user.appUserId()))
                 .findFirst()
                 .orElse(null);
-
-        List<LabTestMasterEntity> tests = loadTests(tenantId, command.testIds());
-        LabOrderEntity order = LabOrderEntity.create(
+        return createOrderInternal(
                 tenantId,
-                generateOrderNumber(tenantId),
-                patient.getId(),
-                patient.getPatientNumber(),
-                patient.getFirstName() + " " + patient.getLastName(),
+                patient,
                 consultation.doctorUserId(),
                 doctor == null ? consultation.doctorName() : doctor.displayName(),
                 consultation.id(),
-                normalizeNullable(command.notes())
-        );
-        LabOrderEntity savedOrder = labOrderRepository.save(order);
-        int sortOrder = 1;
-        List<LabOrderItemEntity> items = new ArrayList<>();
-        for (LabTestMasterEntity test : tests) {
-            items.add(labOrderItemRepository.save(LabOrderItemEntity.create(
-                    tenantId,
-                    savedOrder.getId(),
-                    test.getId(),
-                    test.getTestCode(),
-                    test.getTestName(),
-                    test.getCategory(),
-                    test.getDepartment(),
-                    test.getSampleType(),
-                    test.getUnit(),
-                    test.getReferenceRange(),
-                    test.getTurnaroundTime(),
-                    normalizeMoney(test.getPrice()),
-                    sortOrder++
-            )));
-        }
-        List<BillLineCommand> billLines = items.stream()
-                .map(item -> new BillLineCommand(
-                        BillItemType.TEST,
-                        item.getTestName(),
-                        1,
-                        item.getPrice(),
-                        item.getLabTestId(),
-                        item.getSortOrder(),
-                        ZERO,
-                        null,
-                        item.getId()
-                ))
-                .toList();
-        BillRecord bill = billingService.createDraft(tenantId, new BillUpsertCommand(
-                patient.getId(),
-                consultation.id(),
                 consultation.appointmentId(),
-                LocalDate.now(),
-                DiscountType.NONE,
-                ZERO,
-                null,
-                null,
-                null,
-                ZERO,
-                "Lab tests ordered from consultation",
-                billLines
-        ), actorAppUserId);
-        BillRecord issuedBill = billingService.issue(tenantId, bill.id(), actorAppUserId);
-        savedOrder.linkBill(issuedBill.id());
-        savedOrder.markStatus(LabOrderStatus.PAYMENT_PENDING);
-        LabOrderEntity persisted = labOrderRepository.save(savedOrder);
-        auditOrder(tenantId, persisted, "lab_order.created", actorAppUserId, "Created lab order and billing");
-        labNotificationService.notifyOrderCreated(
-                tenantId,
-                patient.getId(),
-                persisted.getId(),
-                persisted.getOrderNumber(),
-                persisted.getPatientName(),
-                persisted.getDoctorName(),
-                tests.stream().map(LabTestMasterEntity::getTestName).toList(),
-                actorAppUserId
+                normalizeNullable(command.notes()),
+                loadTests(tenantId, command.testIds()),
+                actorAppUserId,
+                "Created lab order and billing"
         );
-        return toRecord(tenantId, persisted);
+    }
+
+    @Transactional
+    public LabOrderRecord createOrder(UUID tenantId, LabOrderDirectCreateCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        validateDirectOrder(command);
+        PatientEntity patient = patientRepository.findByTenantIdAndId(tenantId, command.patientId())
+                .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
+        UUID doctorUserId = command.doctorUserId();
+        String doctorName = null;
+        if (doctorUserId != null) {
+            TenantUserRecord doctor = tenantUserManagementService.list(tenantId).stream()
+                    .filter(user -> doctorUserId.equals(user.appUserId()))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Doctor not found"));
+            doctorName = doctor.displayName();
+        }
+        return createOrderInternal(
+                tenantId,
+                patient,
+                doctorUserId,
+                doctorName,
+                null,
+                null,
+                normalizeNullable(command.notes()),
+                loadTests(tenantId, command.testIds()),
+                actorAppUserId,
+                "Created standalone lab order and billing"
+        );
     }
 
     @Transactional
@@ -1154,6 +1120,94 @@ public class LabService {
         return testIds.stream().map(byId::get).toList();
     }
 
+    private LabOrderRecord createOrderInternal(
+            UUID tenantId,
+            PatientEntity patient,
+            UUID doctorUserId,
+            String doctorName,
+            UUID consultationId,
+            UUID appointmentId,
+            String notes,
+            List<LabTestMasterEntity> tests,
+            UUID actorAppUserId,
+            String auditMessage
+    ) {
+        LabOrderEntity order = LabOrderEntity.create(
+                tenantId,
+                generateOrderNumber(tenantId),
+                patient.getId(),
+                patient.getPatientNumber(),
+                patient.getFirstName() + " " + patient.getLastName(),
+                doctorUserId,
+                doctorName,
+                consultationId,
+                notes
+        );
+        LabOrderEntity savedOrder = labOrderRepository.save(order);
+        int sortOrder = 1;
+        List<LabOrderItemEntity> items = new ArrayList<>();
+        for (LabTestMasterEntity test : tests) {
+            items.add(labOrderItemRepository.save(LabOrderItemEntity.create(
+                    tenantId,
+                    savedOrder.getId(),
+                    test.getId(),
+                    test.getTestCode(),
+                    test.getTestName(),
+                    test.getCategory(),
+                    test.getDepartment(),
+                    test.getSampleType(),
+                    test.getUnit(),
+                    test.getReferenceRange(),
+                    test.getTurnaroundTime(),
+                    normalizeMoney(test.getPrice()),
+                    sortOrder++
+            )));
+        }
+        List<BillLineCommand> billLines = items.stream()
+                .map(item -> new BillLineCommand(
+                        BillItemType.TEST,
+                        item.getTestName(),
+                        1,
+                        item.getPrice(),
+                        item.getLabTestId(),
+                        item.getSortOrder(),
+                        ZERO,
+                        null,
+                        item.getId()
+                ))
+                .toList();
+        BillRecord bill = billingService.createDraft(tenantId, new BillUpsertCommand(
+                patient.getId(),
+                consultationId,
+                appointmentId,
+                LocalDate.now(),
+                DiscountType.NONE,
+                ZERO,
+                null,
+                null,
+                null,
+                ZERO,
+                "Lab tests ordered",
+                billLines
+        ), actorAppUserId);
+        BillRecord issuedBill = billingService.issue(tenantId, bill.id(), actorAppUserId);
+        savedOrder.linkBill(issuedBill.id());
+        savedOrder.markStatus(LabOrderStatus.PAYMENT_PENDING);
+        LabOrderEntity persisted = labOrderRepository.save(savedOrder);
+        auditOrder(tenantId, persisted, "lab_order.created", actorAppUserId, auditMessage);
+        labNotificationService.notifyOrderCreated(
+                tenantId,
+                patient.getId(),
+                persisted.getId(),
+                persisted.getOrderNumber(),
+                persisted.getPatientName(),
+                persisted.getDoctorName(),
+                tests.stream().map(LabTestMasterEntity::getTestName).toList(),
+                actorAppUserId
+        );
+        return toRecord(tenantId, persisted);
+    }
+
     private void validateTest(LabTestUpsertCommand command) {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
@@ -1207,6 +1261,19 @@ public class LabService {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
         }
+        if (command.testIds() == null || command.testIds().isEmpty()) {
+            throw new IllegalArgumentException("At least one test is required");
+        }
+        if (StringUtils.hasText(command.notes()) && command.notes().trim().length() > 250) {
+            throw new IllegalArgumentException("notes must be 250 characters or fewer");
+        }
+    }
+
+    private void validateDirectOrder(LabOrderDirectCreateCommand command) {
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        requireId(command.patientId(), "patientId");
         if (command.testIds() == null || command.testIds().isEmpty()) {
             throw new IllegalArgumentException("At least one test is required");
         }

@@ -1271,6 +1271,19 @@ export type LabTestParameter = {
   updatedAt: string;
 };
 
+export type LabTestCsvImportRowError = {
+  rowNumber: number;
+  message: string;
+};
+
+export type LabTestCsvImportResult = {
+  totalRows: number;
+  createdCount: number;
+  updatedCount: number;
+  failedCount: number;
+  rowErrors: LabTestCsvImportRowError[];
+};
+
 export type LabOrderStatus =
   | "ORDERED"
   | "PAYMENT_PENDING"
@@ -2809,6 +2822,16 @@ export async function createLabTest(token: string, tenantId: string, body: LabTe
   return httpPost<LabTest>("/api/lab/tests", body, { token, tenantId });
 }
 
+export async function importLabTestsCsv(token: string, tenantId: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return httpPostForm<LabTestCsvImportResult>("/api/lab/tests/import-csv", formData, { token, tenantId });
+}
+
+export async function getLabTestImportTemplate(token: string, tenantId: string) {
+  return httpGetText("/api/lab/tests/import-template", { token, tenantId });
+}
+
 export async function updateLabTest(token: string, tenantId: string, id: string, body: LabTestInput) {
   return httpPut<LabTest>(`/api/lab/tests/${id}`, body, { token, tenantId });
 }
@@ -2838,6 +2861,20 @@ export async function getLabOrder(token: string, tenantId: string, id: string) {
 
 export async function createConsultationLabOrder(token: string, tenantId: string, consultationId: string, body: { testIds: string[]; notes?: string | null }) {
   return httpPost<LabOrder>(`/api/lab/consultations/${consultationId}/orders`, body, { token, tenantId });
+}
+
+export async function createLabOrder(token: string, tenantId: string, body: {
+  patientId: string;
+  doctorUserId?: string | null;
+  testIds: string[];
+  notes?: string | null;
+}) {
+  return httpPost<LabOrder>("/api/lab/orders", {
+    patientId: body.patientId,
+    doctorUserId: body.doctorUserId ?? null,
+    testIds: body.testIds,
+    notes: body.notes ?? null,
+  }, { token, tenantId });
 }
 
 export async function collectLabOrderPayment(token: string, tenantId: string, id: string, body: {

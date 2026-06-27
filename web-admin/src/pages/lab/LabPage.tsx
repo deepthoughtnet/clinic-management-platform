@@ -11,6 +11,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Autocomplete,
   FormControl,
   Grid,
   IconButton,
@@ -33,7 +34,7 @@ import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import PaidRoundedIcon from "@mui/icons-material/PaidRounded";
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
-import { firstZodError, labDoctorReviewSchema, labPaymentSchema, labResultEntrySchema, labSampleCollectionSchema, labTestMasterSchema } from "@deepthoughtnet/form-validation-kit";
+import { firstZodError, labDoctorReviewSchema, labOrderCreateSchema, labPaymentSchema, labResultEntrySchema, labSampleCollectionSchema, labTestMasterSchema } from "@deepthoughtnet/form-validation-kit";
 
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactStatCard, compactCardContentSx } from "../../components/compact/CompactUi";
@@ -43,14 +44,20 @@ import {
   collectLabOrderPayment,
   collectLabOrderSample,
   createLabTest,
+  createLabOrder,
   deactivateLabTest,
   enterLabOrderResults,
   getLabCategories,
+  getLabTestImportTemplate,
   getLabOrderPdf,
   getLabOrders,
   getLabTests,
+  importLabTestsCsv,
+  searchPatients,
   reviewLabOrder,
   updateLabTest,
+  type LabTestCsvImportResult,
+  type Patient,
   type LabOrder,
   type LabOrderResult,
   type LabOrderStatus,
@@ -93,6 +100,20 @@ type ResultItemForm = {
   referenceRange: string;
   componentResults: ResultComponentForm[];
 };
+
+type LabRequestForm = {
+  patientId: string;
+  doctorUserId: string;
+  testIds: string[];
+  notes: string;
+};
+
+const emptyLabRequestForm = (): LabRequestForm => ({
+  patientId: "",
+  doctorUserId: "",
+  testIds: [],
+  notes: "",
+});
 
 function formatMoney(value: number | null | undefined) {
   if (typeof value !== "number" || Number.isNaN(value)) return "-";
@@ -250,6 +271,16 @@ export default function LabPage() {
   const [reviewComments, setReviewComments] = React.useState("");
   const [reviewDecision, setReviewDecision] = React.useState<"APPROVE" | "SEND_BACK">("APPROVE");
   const [reviewReason, setReviewReason] = React.useState("");
+  const [importOpen, setImportOpen] = React.useState(false);
+  const [importResult, setImportResult] = React.useState<LabTestCsvImportResult | null>(null);
+  const [requestOpen, setRequestOpen] = React.useState(false);
+  const [requestForm, setRequestForm] = React.useState<LabRequestForm>(emptyLabRequestForm());
+  const [patientQuery, setPatientQuery] = React.useState("");
+  const [patientOptions, setPatientOptions] = React.useState<Patient[]>([]);
+  const [patientLoading, setPatientLoading] = React.useState(false);
+  const [patientOptionsLoaded, setPatientOptionsLoaded] = React.useState(false);
+  const [selectedPatient, setSelectedPatient] = React.useState<Patient | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const canManageTests = auth.hasPermission("lab.test.manage") || auth.rolesUpper.includes("CLINIC_ADMIN") || auth.rolesUpper.includes("PLATFORM_ADMIN");
   const canViewOrders = auth.hasPermission("lab.order.read")
@@ -288,6 +319,34 @@ export default function LabPage() {
     void load();
   }, [load]);
 
+  React.useEffect(() => {
+    if (!requestOpen || !auth.accessToken || !auth.tenantId) {
+      setPatientLoading(false);
+      return;
+    }
+    if (patientQuery.trim().length < 2) {
+      setPatientOptions(selectedPatient ? [selectedPatient] : []);
+      setPatientOptionsLoaded(true);
+      setPatientLoading(false);
+      return;
+    }
+    setPatientLoading(true);
+    const timer = window.setTimeout(() => {
+      void searchPatients(auth.accessToken!, auth.tenantId!, { name: patientQuery.trim(), active: true })
+        .then((rows) => {
+          setPatientOptions(rows);
+          setPatientOptionsLoaded(true);
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : "Failed to search patients");
+        })
+        .finally(() => {
+          setPatientLoading(false);
+        });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [auth.accessToken, auth.tenantId, patientQuery, requestOpen, selectedPatient]);
+
   const filteredTests = React.useMemo(() => {
     const term = search.trim().toLowerCase();
     return tests.filter((row) => {
@@ -321,8 +380,10 @@ export default function LabPage() {
   );
 
   const activeTestCount = tests.filter((row) => row.active).length;
-  const pendingOrders = orders.filter((row) => row.status === "PAYMENT_PENDING").length;
-  const readyOrders = orders.filter((row) => row.status === "READY_FOR_COLLECTION").length;
+  const pendingStatusCount = orders.filter((row) => ["ORDERED", "PAYMENT_PENDING", "PAID", "READY_FOR_COLLECTION"].includes(row.status)).length;
+  const sampleCollectedCount = orders.filter((row) => ["SAMPLE_COLLECTED", "PROCESSING"].includes(row.status)).length;
+  const completedCount = orders.filter((row) => ["RESULT_ENTERED", "REPORT_READY", "REPORT_GENERATED", "DOCTOR_REVIEWED"].includes(row.status)).length;
+  const deliveredCount = orders.filter((row) => row.status === "DELIVERED").length;
 
   const openCreate = () => {
     setEditing(null);
@@ -592,6 +653,87 @@ export default function LabPage() {
     }
   };
 
+  const openImportFilePicker = () => fileInputRef.current?.click();
+
+  const downloadImportTemplate = async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    try {
+      const csv = await getLabTestImportTemplate(auth.accessToken, auth.tenantId);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "lab-tests-import-template.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download import template");
+    }
+  };
+
+  const handleImportCsv = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !auth.accessToken || !auth.tenantId) return;
+    try {
+      setSaving(true);
+      setError(null);
+      const result = await importLabTestsCsv(auth.accessToken, auth.tenantId, file);
+      setImportResult(result);
+      setImportOpen(true);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to import lab tests");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openRequestDialog = () => {
+    setRequestForm(emptyLabRequestForm());
+    setSelectedPatient(null);
+    setPatientQuery("");
+    setPatientOptions([]);
+    setPatientOptionsLoaded(false);
+    setRequestOpen(true);
+  };
+
+  const submitLabRequest = async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    const parsed = labOrderCreateSchema.safeParse({
+      patientId: requestForm.patientId,
+      doctorId: requestForm.doctorUserId || undefined,
+      testIds: requestForm.testIds,
+      notes: requestForm.notes || undefined,
+    });
+    if (!parsed.success) {
+      setError(firstZodError(parsed.error));
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await createLabOrder(auth.accessToken, auth.tenantId, {
+        patientId: parsed.data.patientId,
+        doctorUserId: null,
+        testIds: parsed.data.testIds,
+        notes: parsed.data.notes || null,
+      });
+      setRequestOpen(false);
+      setRequestForm(emptyLabRequestForm());
+      setSelectedPatient(null);
+      setPatientQuery("");
+      setPatientOptions([]);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create lab request");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
   }
@@ -612,9 +754,14 @@ export default function LabPage() {
           <Typography variant="body2" color="text.secondary">Catalog, collection, result entry, and report generation.</Typography>
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap">
+          {canManageTests ? <Button variant="outlined" onClick={() => void downloadImportTemplate()} disabled={saving}>Download CSV Template</Button> : null}
+          {canManageTests ? <Button variant="outlined" onClick={openImportFilePicker} disabled={saving}>Import CSV</Button> : null}
           {canManageTests ? <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openCreate}>New Test</Button> : null}
+          {canViewOrders ? <Button variant="outlined" onClick={openRequestDialog} startIcon={<ScienceRoundedIcon />}>New Lab Request</Button> : null}
         </Stack>
       </Box>
+
+      <input ref={fileInputRef} type="file" accept=".csv,text/csv" hidden onChange={handleImportCsv} />
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 
@@ -623,13 +770,16 @@ export default function LabPage() {
           <CompactStatCard label="Catalog items" value={tests.length} helper={`${activeTestCount} active`} tone="info" />
         </Grid>
         <Grid size={{ xs: 12, md: 3 }}>
-          <CompactStatCard label="Pending payment" value={pendingOrders} helper="Awaiting bill settlement" tone="warning" />
+          <CompactStatCard label="Pending" value={pendingStatusCount} helper="Ordered through ready-for-collection" tone="warning" />
         </Grid>
         <Grid size={{ xs: 12, md: 3 }}>
-          <CompactStatCard label="Sample queue" value={pendingSampleOrders.length} helper="Ready for collection" tone="info" />
+          <CompactStatCard label="Sample collected" value={sampleCollectedCount} helper="Processing or already collected" tone="info" />
         </Grid>
         <Grid size={{ xs: 12, md: 3 }}>
-          <CompactStatCard label="Results queue" value={pendingResultsOrders.length} helper="Awaiting entry" tone="success" />
+          <CompactStatCard label="Completed" value={completedCount} helper="Results entered or reviewed" tone="success" />
+        </Grid>
+        <Grid size={{ xs: 12, md: 3 }}>
+          <CompactStatCard label="Delivered" value={deliveredCount} helper="Reports handed over" tone="info" />
         </Grid>
       </Grid>
 
@@ -1153,6 +1303,97 @@ export default function LabPage() {
         <DialogActions>
           <Button onClick={() => setReviewTarget(null)}>Cancel</Button>
           <Button variant="contained" onClick={() => void saveReview()} disabled={saving || !reviewTarget}>{reviewDecision === "SEND_BACK" ? "Send Back" : "Approve & Review"}</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={importOpen} onClose={() => setImportOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>Lab Test CSV Import Result</DialogTitle>
+        <DialogContent dividers>
+          {importResult ? (
+            <Stack spacing={1.5} sx={{ pt: 0.5 }}>
+              <Alert severity={importResult.failedCount > 0 ? "warning" : "success"}>
+                Total rows: {importResult.totalRows} | Created: {importResult.createdCount} | Updated: {importResult.updatedCount} | Failed: {importResult.failedCount}
+              </Alert>
+              {importResult.rowErrors.length ? (
+                <Stack spacing={1}>
+                  {importResult.rowErrors.map((rowError) => (
+                    <Alert key={`${rowError.rowNumber}-${rowError.message}`} severity="error">
+                      Row {rowError.rowNumber}: {rowError.message}
+                    </Alert>
+                  ))}
+                </Stack>
+              ) : (
+                <Typography variant="body2" color="text.secondary">All uploaded rows were processed successfully.</Typography>
+              )}
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setImportOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={requestOpen} onClose={() => setRequestOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>New Lab Request</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 0.5 }}>
+            <Alert severity="info">Create a lab request directly from the laboratory desk without a consultation.</Alert>
+            <Autocomplete
+              value={selectedPatient}
+              options={patientOptions}
+              loading={patientLoading}
+              getOptionLabel={(option) => `${option.patientNumber} • ${option.firstName} ${option.lastName || ""} • ${option.mobile}`.trim()}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              onChange={(_, value) => {
+                setSelectedPatient(value);
+                setRequestForm((current) => ({ ...current, patientId: value?.id || "" }));
+                if (!value) {
+                  setPatientQuery("");
+                }
+              }}
+              inputValue={patientQuery}
+              onInputChange={(_, value) => setPatientQuery(value)}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Search patient"
+                  helperText={patientOptionsLoaded && !patientLoading ? "Search by patient name or number." : "Type at least 2 characters."}
+                />
+              )}
+            />
+            <Autocomplete
+              multiple
+              options={tests}
+              value={tests.filter((test) => requestForm.testIds.includes(test.id))}
+              getOptionLabel={(option) => `${option.testName}${option.testCode ? ` (${option.testCode})` : ""}`}
+              onChange={(_, value) => setRequestForm((current) => ({ ...current, testIds: value.map((row) => row.id) }))}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Lab tests"
+                  helperText="Select one or more tests."
+                />
+              )}
+            />
+            <TextField
+              label="Notes"
+              value={requestForm.notes}
+              onChange={(e) => setRequestForm((current) => ({ ...current, notes: e.target.value.slice(0, 250) }))}
+              multiline
+              minRows={2}
+              inputProps={{ maxLength: 250 }}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRequestOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => void submitLabRequest()}
+            disabled={saving || !requestForm.patientId || requestForm.testIds.length === 0}
+          >
+            Create Request
+          </Button>
         </DialogActions>
       </Dialog>
     </Stack>
