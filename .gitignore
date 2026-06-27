@@ -25,3 +25,9 @@ web-admin/.env
 web-admin/.env.*
 web-admin/node_modules/
 !local/.env.uat-arogia.example
+
+# Voice models
+local/voice/piper/models/
+*.onnx
+*.bin
+*.Zone.Identifier
