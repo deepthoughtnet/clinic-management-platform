@@ -32,6 +32,7 @@ import com.deepthoughtnet.clinic.stt.spi.TranscriptChunk;
 import com.deepthoughtnet.clinic.tts.spi.SpeechSynthesisRequest;
 import com.deepthoughtnet.clinic.tts.spi.SpeechSynthesisResult;
 import com.deepthoughtnet.clinic.tts.spi.TextToSpeechProvider;
+import com.deepthoughtnet.clinic.tts.spi.VoiceTextNormalizer;
 import java.time.OffsetDateTime;
 import java.util.ArrayDeque;
 import java.util.Base64;
@@ -40,6 +41,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -48,6 +51,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 public class RealtimeVoiceSessionService {
+    private static final Logger log = LoggerFactory.getLogger(RealtimeVoiceSessionService.class);
     private final VoiceSessionRepository sessionRepository;
     private final VoiceSessionEventRepository eventRepository;
     private final VoiceTranscriptRepository transcriptRepository;
@@ -61,6 +65,7 @@ public class RealtimeVoiceSessionService {
     private final VoiceGatewayProperties properties;
     private final AiReceptionistWorkflowService receptionistWorkflowService;
     private final CareAiConversationPersistenceService conversationPersistenceService;
+    private final VoiceTextNormalizer voiceTextNormalizer = new VoiceTextNormalizer();
     private final Map<UUID, SessionAudioRuntime> audioRuntime = new ConcurrentHashMap<>();
 
     public RealtimeVoiceSessionService(
@@ -183,7 +188,13 @@ public class RealtimeVoiceSessionService {
         VoiceTurnResult turn = processUserText(tenantId, sessionId, actorUserId, finalResult.fullText(), promptKey, patientContextJson, correlationId);
 
         long ttsStarted = System.currentTimeMillis();
-        SpeechSynthesisResult tts = ttsProvider.synthesize(new SpeechSynthesisRequest(tenantId, turn.aiTranscript().text(), locale, properties.getTts().getVoice()));
+        String originalText = turn.aiTranscript().text();
+        String normalizedText = voiceTextNormalizer.normalizeForVoice(originalText, locale);
+        log.info("voice.tts.text.normalized language={} originalTextLength={} normalizedTextLength={}",
+                locale,
+                originalText == null ? 0 : originalText.length(),
+                normalizedText == null ? 0 : normalizedText.length());
+        SpeechSynthesisResult tts = ttsProvider.synthesize(new SpeechSynthesisRequest(tenantId, normalizedText, locale, properties.getTts().getVoice()));
         metrics.addTtsLatency(System.currentTimeMillis() - ttsStarted);
         if (tts.audioBytes() == null || tts.audioBytes().length == 0) {
             metrics.markTtsFailure();
