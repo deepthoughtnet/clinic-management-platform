@@ -2,17 +2,24 @@ package com.deepthoughtnet.clinic.api.patientportal.voice;
 
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiMessageRequest;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiMessageResponse;
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiResponseComposerService;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiService;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiStateResponse;
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalConversationStateService;
 import com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService;
+import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.time.Duration;
 import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -23,13 +30,39 @@ public class PatientPortalVoiceAssistantService {
 
     private final VoiceOrchestratorService voiceOrchestratorService;
     private final PatientPortalCareAiService patientPortalCareAiService;
+    private final PatientPortalCareAiResponseComposerService responseComposerService;
+    private final PatientPortalConversationStateService conversationStateService;
+    private final VoiceTestProperties voiceProperties;
 
     public PatientPortalVoiceAssistantService(
             VoiceOrchestratorService voiceOrchestratorService,
             PatientPortalCareAiService patientPortalCareAiService
     ) {
+        this(voiceOrchestratorService, patientPortalCareAiService, new VoiceTestProperties(), null, null);
+    }
+
+    public PatientPortalVoiceAssistantService(
+            VoiceOrchestratorService voiceOrchestratorService,
+            PatientPortalCareAiService patientPortalCareAiService,
+            VoiceTestProperties voiceProperties,
+            PatientPortalCareAiResponseComposerService responseComposerService
+    ) {
+        this(voiceOrchestratorService, patientPortalCareAiService, voiceProperties, responseComposerService, null);
+    }
+
+    @Autowired
+    public PatientPortalVoiceAssistantService(
+            VoiceOrchestratorService voiceOrchestratorService,
+            PatientPortalCareAiService patientPortalCareAiService,
+            VoiceTestProperties voiceProperties,
+            PatientPortalCareAiResponseComposerService responseComposerService,
+            PatientPortalConversationStateService conversationStateService
+    ) {
         this.voiceOrchestratorService = voiceOrchestratorService;
         this.patientPortalCareAiService = patientPortalCareAiService;
+        this.voiceProperties = voiceProperties;
+        this.responseComposerService = responseComposerService;
+        this.conversationStateService = conversationStateService;
     }
 
     public PatientPortalVoiceTurnResponse processAudioTurn(
@@ -106,6 +139,19 @@ public class PatientPortalVoiceAssistantService {
                     transcription.providerMessage()
             );
         }
+        String conversationId = currentConversationId();
+        boolean resetRequested = conversationStateService != null
+                && StringUtils.hasText(conversationId)
+                && conversationStateService.isResetRequest(transcription.transcript());
+        if (conversationStateService != null && StringUtils.hasText(conversationId)) {
+            if (conversationStateService.isExpired(conversationId)) {
+                patientPortalCareAiService.resetVoiceConversation();
+                conversationStateService.clear(conversationId);
+            } else if (resetRequested) {
+                patientPortalCareAiService.resetVoiceConversation();
+                conversationStateService.clear(conversationId);
+            }
+        }
         if (!StringUtils.hasText(transcription.transcript())) {
             throw new IllegalStateException("No speech was captured. Please try again.");
         }
@@ -117,6 +163,33 @@ public class PatientPortalVoiceAssistantService {
         );
         long careAiDurationMs = Duration.between(careAiStart, Instant.now()).toMillis();
         log.info("patient.voice.careai.complete durationMs={}", careAiDurationMs);
+        String assistantText = responseComposerService == null
+                ? careAiResponse.assistantMessage()
+                : responseComposerService.compose(
+                        careAiResponse.assistantMessage(),
+                        resolveResponseType(careAiResponse.state()),
+                        resolveVoiceLanguage(careAiResponse.state() == null ? language : careAiResponse.state().language()),
+                        resolveWorkflow(careAiResponse.state()),
+                        safeStructuredFacts(careAiResponse.state())
+                );
+        if (conversationStateService != null && StringUtils.hasText(conversationId)) {
+            conversationStateService.recordTurn(
+                    conversationId,
+                    conversationStateService.turn(
+                            transcription.transcript(),
+                            resolveVoiceLanguage(careAiResponse.state() == null ? language : careAiResponse.state().language()),
+                            careAiResponse.state() == null ? null : careAiResponse.state().currentIntent(),
+                            careAiResponse.state() == null ? null : careAiResponse.state().currentIntent(),
+                            currentEntities(careAiResponse.state()),
+                            pendingEntities(careAiResponse.state()),
+                            completedSteps(careAiResponse.state()),
+                            careAiResponse.state() != null && careAiResponse.state().confirmationPending(),
+                            assistantText,
+                            resolveResponseType(careAiResponse.state()),
+                            resetRequested
+                    )
+            );
+        }
         VoiceSynthesisResult synthesis = null;
         long ttsDurationMs = 0L;
         String ttsFallbackReason = null;
@@ -124,8 +197,8 @@ public class PatientPortalVoiceAssistantService {
         try {
             log.info("patient.voice.tts.start");
             synthesis = voiceOrchestratorService.synthesizeAssistantText(
-                    careAiResponse.assistantMessage(),
-                    careAiResponse.state() == null ? language : careAiResponse.state().language()
+                    assistantText,
+                    resolveVoiceLanguage(careAiResponse.state() == null ? language : careAiResponse.state().language())
             );
             ttsDurationMs = Duration.between(ttsStart, Instant.now()).toMillis();
             log.info("patient.voice.tts.complete provider={} durationMs={} playableAudio={}",
@@ -145,7 +218,7 @@ public class PatientPortalVoiceAssistantService {
         return new PatientPortalVoiceTurnResponse(
                 UUID.randomUUID().toString(),
                 transcription.transcript(),
-                careAiResponse.assistantMessage(),
+                assistantText,
                 careAiResponse.state(),
                 synthesis == null ? null : synthesis.contentType(),
                 audioPayload == null ? null : Base64.getEncoder().encodeToString(audioPayload),
@@ -170,6 +243,120 @@ public class PatientPortalVoiceAssistantService {
             return null;
         }
         return synthesis.audioBytes();
+    }
+
+    private String resolveVoiceLanguage(String candidate) {
+        if (StringUtils.hasText(candidate)) {
+            String normalized = candidate.trim();
+            if (!"auto".equalsIgnoreCase(normalized) && !"auto-detect".equalsIgnoreCase(normalized)) {
+                return normalized;
+            }
+        }
+        if (StringUtils.hasText(voiceProperties.getResponseLanguage())) {
+            return voiceProperties.getResponseLanguage().trim();
+        }
+        return "hi-IN";
+    }
+
+    private String resolveResponseType(PatientPortalCareAiStateResponse state) {
+        if (state == null) {
+            return "general";
+        }
+        if (state.handoffRequired()) {
+            return "handoff";
+        }
+        if (state.booked()) {
+            return "booked_success";
+        }
+        if (state.confirmationPending()) {
+            return "confirmation_prompt";
+        }
+        if (state.slotOptions() != null && !state.slotOptions().isEmpty()) {
+            return "slot_list";
+        }
+        return StringUtils.hasText(state.currentIntent()) ? state.currentIntent().toLowerCase() : "general";
+    }
+
+    private String resolveWorkflow(PatientPortalCareAiStateResponse state) {
+        if (state == null || !StringUtils.hasText(state.currentIntent())) {
+            return "general";
+        }
+        return state.currentIntent();
+    }
+
+    private PatientPortalCareAiResponseComposerService.SafeStructuredFacts safeStructuredFacts(PatientPortalCareAiStateResponse state) {
+        if (state == null) {
+            return new PatientPortalCareAiResponseComposerService.SafeStructuredFacts(
+                    null,
+                    null,
+                    null,
+                    null,
+                    List.of(),
+                    List.of(),
+                    false,
+                    null
+            );
+        }
+        return new PatientPortalCareAiResponseComposerService.SafeStructuredFacts(
+                state.doctorName(),
+                null,
+                state.booked() ? state.bookedAppointmentDate() : state.preferredDate(),
+                state.booked() ? state.bookedAppointmentTime() : state.suggestedSlot(),
+                state.slotOptions(),
+                state.appointmentOptions(),
+                state.confirmationPending(),
+                state.lastAction()
+        );
+    }
+
+    private Map<String, Object> currentEntities(PatientPortalCareAiStateResponse state) {
+        if (state == null) {
+            return Map.of();
+        }
+        Map<String, Object> entities = new LinkedHashMap<>();
+        entities.put("doctorName", state.doctorName());
+        entities.put("speciality", state.speciality());
+        entities.put("selectedAppointment", state.selectedAppointment());
+        entities.put("preferredDate", state.preferredDate());
+        entities.put("preferredTimeWindow", state.preferredTimeWindow());
+        entities.put("suggestedSlot", state.suggestedSlot());
+        entities.put("bookedAppointmentDate", state.bookedAppointmentDate());
+        entities.put("bookedAppointmentTime", state.bookedAppointmentTime());
+        entities.put("bookingStatus", state.bookingStatus());
+        return entities;
+    }
+
+    private Map<String, Object> pendingEntities(PatientPortalCareAiStateResponse state) {
+        if (state == null) {
+            return Map.of();
+        }
+        Map<String, Object> entities = new LinkedHashMap<>();
+        entities.put("confirmationPending", state.confirmationPending());
+        entities.put("handoffRequired", state.handoffRequired());
+        return entities;
+    }
+
+    private List<String> completedSteps(PatientPortalCareAiStateResponse state) {
+        if (state == null) {
+            return List.of();
+        }
+        List<String> steps = new java.util.ArrayList<>();
+        if (state.booked()) {
+            steps.add("booked");
+        }
+        if (state.actionCompleted()) {
+            steps.add("actionCompleted");
+        }
+        if (StringUtils.hasText(state.bookingStatus())) {
+            steps.add(state.bookingStatus());
+        }
+        return List.copyOf(steps);
+    }
+
+    private String currentConversationId() {
+        return com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.get() == null
+                ? null
+                : com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder.get().correlationId();
     }
 
     public record PatientPortalVoiceTurnResponse(

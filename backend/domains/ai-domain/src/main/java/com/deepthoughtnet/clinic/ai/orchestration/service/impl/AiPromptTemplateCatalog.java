@@ -36,6 +36,44 @@ public class AiPromptTemplateCatalog {
             Return ONLY valid JSON. Do not include markdown. Do not include explanatory text before or after JSON.
             """;
 
+    private static final String RESPONSE_COMPOSER_SYSTEM_PROMPT = """
+            You rewrite patient portal CareAI responses for speech.
+            You are a professional clinic assistant, warm but concise.
+            Deterministic workflow output is authoritative.
+            Preserve all supplied facts exactly.
+            Never invent doctors, dates, times, slots, appointments, prices, or clinic names.
+            Do not give medical advice.
+            Return plain text only.
+            """;
+
+    private static final String RESPONSE_COMPOSER_USER_PROMPT = """
+            Product: {{productCode}}
+            Task: {{taskType}}
+            Use case: {{useCaseCode}}
+            Prompt template: {{promptTemplateCode}}
+            Tenant: {{tenantId}}
+            Actor: {{actorUserId}}
+            Correlation: {{correlationId}}
+            Language: {{input.language}}
+            Response type: {{input.responseType}}
+            Workflow: {{input.workflow}}
+            Raw response text:
+            {{input.rawResponseText}}
+
+            Safe structured facts JSON:
+            {{input.safeStructuredFactsJson}}
+
+            Rewrite the raw response into a professional clinic assistant voice response.
+            For hi-IN, use natural Hindi or Hinglish.
+            Add a greeting only if the user greeted or this is clearly the first turn.
+            Keep the response concise.
+            Preserve all facts exactly.
+            Do not invent or change slots, doctors, appointments, dates, times, clinic names, or prices.
+            Keep confirmation prompts explicit.
+            If the raw response is an error, keep it clear and polite.
+            Return only the final spoken text.
+            """;
+
     private final Map<String, AiPromptTemplateDefinition> defaults = Map.ofEntries(
             entry("clinic.clinic.extraction.v1", AiProductCode.CLINIC, AiTaskType.CLINIC_EXTRACTION,
                     "Extract clinic details from the supplied document context. Return structured JSON when possible.",
@@ -169,6 +207,12 @@ public class AiPromptTemplateCatalog {
                     "Provide a business recommendation from the supplied context.",
                     List.of("Use as a reviewer aid", "Confirm with deterministic application data"),
                     List.of("Recommendations are advisory only")),
+            entry("patient.portal.careai.response.composer.v1", AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
+                    RESPONSE_COMPOSER_SYSTEM_PROMPT,
+                    RESPONSE_COMPOSER_USER_PROMPT,
+                    "Rewrite patient portal CareAI responses for speech.",
+                    List.of("Preserve all confirmed facts", "Keep confirmation prompts explicit", "Do not invent or mutate workflow outcomes"),
+                    List.of("Speech rewrite is advisory only", "Deterministic CareAI state remains authoritative")),
             entry("generic.copilot.v1", AiProductCode.GENERIC, AiTaskType.GENERIC_COPILOT,
                     "Act as a generic copilot for the supplied business context.",
                     List.of("Explain the situation clearly", "Offer concrete next steps", "Do not take irreversible action"),
@@ -210,13 +254,21 @@ public class AiPromptTemplateCatalog {
                                                                 AiTaskType taskType, String fallbackSummary,
                                                                 List<String> fallbackSuggestedActions,
                                                                 List<String> fallbackLimitations) {
+        return entry(templateCode, productCode, taskType, SYSTEM_PROMPT, USER_PROMPT, fallbackSummary, fallbackSuggestedActions, fallbackLimitations);
+    }
+
+    private Map.Entry<String, AiPromptTemplateDefinition> entry(String templateCode, AiProductCode productCode,
+                                                                AiTaskType taskType, String systemPrompt,
+                                                                String userPromptTemplate, String fallbackSummary,
+                                                                List<String> fallbackSuggestedActions,
+                                                                List<String> fallbackLimitations) {
         return Map.entry(templateCode, new AiPromptTemplateDefinition(
                 templateCode,
                 "v1",
                 productCode,
                 taskType,
-                SYSTEM_PROMPT,
-                USER_PROMPT,
+                systemPrompt,
+                userPromptTemplate,
                 AiPromptTemplateStatus.ACTIVE,
                 fallbackSummary,
                 List.copyOf(fallbackSuggestedActions),

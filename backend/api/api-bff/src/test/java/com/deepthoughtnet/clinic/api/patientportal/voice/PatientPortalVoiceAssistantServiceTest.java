@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.patientportal.voice;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -10,14 +11,21 @@ import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiMessageRequest;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiMessageResponse;
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiResponseComposerService;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiService;
 import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalCareAiStateResponse;
+import com.deepthoughtnet.clinic.api.patientportal.careai.PatientPortalConversationStateService;
 import com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
+import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
+import com.deepthoughtnet.clinic.platform.core.context.TenantId;
+import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -165,5 +173,124 @@ class PatientPortalVoiceAssistantServiceTest {
         assertThat(response.assistantText()).contains("temporarily unavailable");
         assertThat(response.sttProvider()).isNull();
         assertThat(response.ttsFallbackReason()).contains("Local STT service unavailable");
+    }
+
+    @Test
+    void voiceTurnUsesComposerForTtsWhenConfigured() {
+        VoiceOrchestratorService orchestratorService = mock(VoiceOrchestratorService.class);
+        PatientPortalCareAiService careAiService = mock(PatientPortalCareAiService.class);
+        PatientPortalCareAiResponseComposerService composerService = mock(PatientPortalCareAiResponseComposerService.class);
+        PatientPortalVoiceAssistantService service = new PatientPortalVoiceAssistantService(
+                orchestratorService,
+                careAiService,
+                new com.deepthoughtnet.clinic.api.voice.VoiceTestProperties(),
+                composerService
+        );
+        PatientPortalCareAiStateResponse state = new PatientPortalCareAiStateResponse(
+                "en",
+                "BOOK_APPOINTMENT",
+                "Dr Neha Mehta",
+                "Dermatology",
+                null,
+                "2026-06-10",
+                "morning",
+                "10:30",
+                true,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                List.of("Dr Neha Mehta"),
+                List.of(),
+                List.of("10:30")
+        );
+        when(orchestratorService.transcribeBufferedAudio(any(), any(), any(), any()))
+                .thenReturn(new VoiceTranscriptionResult("I want to book appointment", "faster-whisper", "ok"));
+        when(careAiService.messageFromVoice(any(PatientPortalCareAiMessageRequest.class)))
+                .thenReturn(new PatientPortalCareAiMessageResponse("Please confirm the 10:30 slot.", state));
+        when(composerService.compose(
+                eq("Please confirm the 10:30 slot."),
+                eq("confirmation_prompt"),
+                eq("en"),
+                eq("BOOK_APPOINTMENT"),
+                any()
+        )).thenReturn("डॉक्टर नेहा मेहता के लिए सुबह साढ़े नौ बजे का स्लॉट उपलब्ध है। क्या मैं यह अपॉइंटमेंट बुक कर दूँ?");
+        when(orchestratorService.synthesizeAssistantText(
+                "डॉक्टर नेहा मेहता के लिए सुबह साढ़े नौ बजे का स्लॉट उपलब्ध है। क्या मैं यह अपॉइंटमेंट बुक कर दूँ?",
+                "en"
+        )).thenReturn(new VoiceSynthesisResult("voice".getBytes(StandardCharsets.UTF_8), "audio/wav", "piper", "ok"));
+
+        var response = service.processAudioTurn("audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "voice.webm", "auto");
+
+        assertThat(response.assistantText()).contains("सुबह साढ़े नौ बजे");
+        verify(composerService).compose(
+                eq("Please confirm the 10:30 slot."),
+                eq("confirmation_prompt"),
+                eq("en"),
+                eq("BOOK_APPOINTMENT"),
+                any()
+        );
+    }
+
+    @Test
+    void expiredConversationStateIsResetBeforeProcessingVoiceTurn() {
+        VoiceOrchestratorService orchestratorService = mock(VoiceOrchestratorService.class);
+        PatientPortalCareAiService careAiService = mock(PatientPortalCareAiService.class);
+        PatientPortalConversationStateService conversationStateService = mock(PatientPortalConversationStateService.class);
+        PatientPortalVoiceAssistantService service = new PatientPortalVoiceAssistantService(
+                orchestratorService,
+                careAiService,
+                new com.deepthoughtnet.clinic.api.voice.VoiceTestProperties(),
+                null,
+                conversationStateService
+        );
+        UUID tenantId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), userId, "patient", Set.of("PATIENT"), "PATIENT", "voice-session-1"));
+        try {
+            when(conversationStateService.isExpired("voice-session-1")).thenReturn(true);
+            when(orchestratorService.transcribeBufferedAudio(any(), any(), any(), any()))
+                    .thenReturn(new VoiceTranscriptionResult("Book appointment with Dr Neha Mehta", "faster-whisper", "ok"));
+            when(careAiService.messageFromVoice(any(PatientPortalCareAiMessageRequest.class)))
+                    .thenReturn(new PatientPortalCareAiMessageResponse("Please confirm the 10:30 slot.", state()));
+            when(orchestratorService.synthesizeAssistantText(any(), any()))
+                    .thenReturn(new VoiceSynthesisResult("voice".getBytes(StandardCharsets.UTF_8), "audio/wav", "piper", "ok"));
+
+            service.processAudioTurn("audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "voice.webm", "auto");
+
+            verify(careAiService).resetVoiceConversation();
+            verify(conversationStateService).clear("voice-session-1");
+        } finally {
+            RequestContextHolder.clear();
+        }
+    }
+
+    private PatientPortalCareAiStateResponse state() {
+        return new PatientPortalCareAiStateResponse(
+                "en",
+                "BOOK_APPOINTMENT",
+                "Dr Neha Mehta",
+                "Dermatology",
+                null,
+                "2026-06-10",
+                "morning",
+                "10:30",
+                true,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                List.of("Dr Neha Mehta"),
+                List.of(),
+                List.of("10:30")
+        );
     }
 }
