@@ -6,12 +6,15 @@ import java.util.Map;
 import java.util.Objects;
 
 record PatientPortalCareAiExtractedEntities(
+        String rawText,
+        String normalizedText,
+        String languageHint,
         Map<PatientPortalCareAiEntityType, List<String>> values,
         Map<PatientPortalCareAiEntityType, Double> confidenceByType,
         String dateIssue
 ) {
     static PatientPortalCareAiExtractedEntities empty() {
-        return new PatientPortalCareAiExtractedEntities(Map.of(), Map.of(), null);
+        return new PatientPortalCareAiExtractedEntities(null, null, null, Map.of(), Map.of(), null);
     }
 
     String first(PatientPortalCareAiEntityType type) {
@@ -88,6 +91,9 @@ record PatientPortalCareAiExtractedEntities(
 
     Map<String, Object> traceView() {
         Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("rawText", rawText);
+        result.put("normalizedText", normalizedText);
+        result.put("languageHint", languageHint);
         if (values != null) {
             result.put("values", values);
         }

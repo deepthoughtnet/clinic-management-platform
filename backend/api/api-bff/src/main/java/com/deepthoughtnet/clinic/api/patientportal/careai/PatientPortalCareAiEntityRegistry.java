@@ -30,11 +30,11 @@ final class PatientPortalCareAiEntityRegistry {
         register(byType, PatientPortalCareAiEntityType.LOCATION, "Location or area reference",
                 List.of("Andheri", "Mumbai"), Set.of("location", "area", "city", "near"), 0.7);
         register(byType, PatientPortalCareAiEntityType.CONFIRMATION, "Positive confirmation",
-                List.of("yes", "confirm", "book it", "cancel it"), Set.of("yes", "confirm", "book it", "go ahead", "okay", "ok"), 0.99);
+                List.of("yes", "confirm", "book it", "cancel it", "हाँ", "हां", "ठीक है"), Set.of("yes", "confirm", "book it", "go ahead", "okay", "ok", "हाँ", "हां", "ठीक है", "कन्फर्म", "बुक कर दीजिए"), 0.99);
         register(byType, PatientPortalCareAiEntityType.CANCELLATION, "Cancellation acknowledgement",
-                List.of("cancel it", "cancel this", "stop it"), Set.of("cancel", "cancel it", "stop"), 0.98);
+                List.of("cancel it", "cancel this", "stop it", "नहीं", "रद्द"), Set.of("cancel", "cancel it", "stop", "नहीं", "रद्द", "कैंसल"), 0.98);
         register(byType, PatientPortalCareAiEntityType.RESET, "Conversation reset",
-                List.of("start over", "forget it", "switch conversation"), Set.of("start over", "forget it", "switch conversation", "reset", "clear chat"), 0.99);
+                List.of("start over", "forget it", "switch conversation", "टॉपिक चेंज", "बातचीत बदलो", "नया शुरू करो"), Set.of("start over", "forget it", "switch conversation", "reset", "clear chat", "टॉपिक चेंज", "बातचीत बदलो", "नया शुरू करो", "शुरू से"), 0.99);
         this.definitions = Map.copyOf(byType);
     }
 

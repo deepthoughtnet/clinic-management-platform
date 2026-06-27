@@ -1853,6 +1853,22 @@ class PatientPortalCareAiServiceTest {
     }
 
     @Test
+    void extractsDoctorFromHindiDoctorPhrase() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("डॉक्टर विकास की अपॉइंटमेंट", "hi");
+
+        assertThat(extracted.doctor()).isEqualTo("Vikas");
+    }
+
+    @Test
+    void extractsDoctorAshishFromHindiDoctorPhrase() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("डॉ आशीष", "hi");
+
+        assertThat(extracted.doctor()).isEqualTo("Ashish");
+    }
+
+    @Test
     void extractsDateFromSlashFormat() {
         PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
                 .extract("book appointment on 26/06/2026", "en");
@@ -1867,6 +1883,45 @@ class PatientPortalCareAiServiceTest {
                 .extract("book appointment on 26 June 2026", "en");
 
         assertThat(extracted.date()).isEqualTo("2026-06-26");
+    }
+
+    @Test
+    void extractsDateFromHindiMonthNameFormat() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("27 जून 2026", "hi");
+
+        assertThat(extracted.date()).isEqualTo("2026-06-27");
+    }
+
+    @Test
+    void extractsDateFromHindiDevanagariDigits() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("२७ जून २०२६", "hi");
+
+        assertThat(extracted.date()).isEqualTo("2026-06-27");
+    }
+
+    @Test
+    void extractsDateFromHindiNumberWordFormat() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("सत्ताईस जून 2026", "hi");
+
+        assertThat(extracted.date()).isEqualTo("2026-06-27");
+    }
+
+    @Test
+    void extractsDateFromHindiRelativeDates() {
+        PatientPortalCareAiExtractedEntities today = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("आज", "hi");
+        PatientPortalCareAiExtractedEntities tomorrow = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("कल", "hi");
+        PatientPortalCareAiExtractedEntities dayAfterTomorrow = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("परसों", "hi");
+
+        LocalDate now = LocalDate.now(CLINIC_ZONE);
+        assertThat(today.date()).isEqualTo(now.toString());
+        assertThat(tomorrow.date()).isEqualTo(now.plusDays(1).toString());
+        assertThat(dayAfterTomorrow.date()).isEqualTo(now.plusDays(2).toString());
     }
 
     @Test
@@ -1900,6 +1955,54 @@ class PatientPortalCareAiServiceTest {
                 .extract("start over", "en");
 
         assertThat(extracted.reset()).isTrue();
+    }
+
+    @Test
+    void extractsResetFromHindiTopicChangePhrase() {
+        PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
+                .extract("टॉपिक चेंज करो", "hi");
+
+        assertThat(extracted.reset()).isTrue();
+    }
+
+    @Test
+    void bookingPhraseInHindiKeepsBookingIntentFlow() {
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-vikas", "Dr Vikas", "General Medicine")));
+        when(patientPortalService.doctorSlots("doctor-vikas", LocalDate.now(CLINIC_ZONE).plusDays(1))).thenReturn(List.of(
+                slot(LocalDate.now(CLINIC_ZONE).plusDays(1), LocalTime.of(10, 0), true)
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest("मुझे डॉक्टर विकास की अपॉइंटमेंट बुक करनी है", "hi"));
+
+        assertThat(response.state().currentIntent()).isEqualTo("BOOK_APPOINTMENT");
+        assertThat(response.assistantMessage()).doesNotContain("Please tell me the doctor name or speciality you want.");
+    }
+
+    @Test
+    void datePhraseInHindiAdvancesToSlotLookupWhenDoctorAlreadySelected() {
+        LocalDate targetDate = LocalDate.now(CLINIC_ZONE).plusDays(1);
+        when(patientPortalService.doctorSlots("doctor-vikas", targetDate)).thenReturn(List.of(
+                slot(targetDate, LocalTime.of(10, 0), true),
+                slot(targetDate, LocalTime.of(10, 30), true)
+        ));
+        PatientPortalCareAiMessageRequest request = new PatientPortalCareAiMessageRequest("मैं 27 जून 2026 को आना चाहता हूँ", "hi");
+        setPatientContext(TENANT_A, APP_USER_A);
+        PatientPortalCareAiService localService = new PatientPortalCareAiService(
+                patientPortalService,
+                clinicTimeZoneResolver,
+                new LlmBackedPatientPortalCareAiPlanner(aiOrchestrationService, new ObjectMapper(), voiceTestProperties, true),
+                conversationPersistenceService,
+                receptionistTaskService,
+                taskNotificationService
+        );
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-vikas", "Dr Vikas", "General Medicine")));
+        var first = localService.message(new PatientPortalCareAiMessageRequest("Book appointment with Dr Vikas", "en"));
+        assertThat(first.state().doctorName()).isEqualTo("Dr Vikas");
+        var second = localService.message(request);
+
+        assertThat(second.state().preferredDate()).isEqualTo(targetDate.toString());
+        assertThat(second.assistantMessage()).contains("कृपया नंबर या समय से स्लॉट चुनिए");
+        assertThat(second.state().slotOptions()).containsExactly("10:00", "10:30");
     }
 
     @Test

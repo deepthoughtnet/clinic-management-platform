@@ -26,6 +26,7 @@ final class PatientPortalCareAiEntityExtractor {
     private static final Pattern ENGLISH_CLINIC_PATTERN = Pattern.compile("(?i)\\b(?:at|in|clinic|hospital|centre|center|branch)\\s+([A-Za-z][A-Za-z0-9 .'-]{1,80})");
     private static final Pattern HINDI_CLINIC_PATTERN = Pattern.compile("(?:क्लिनिक|हॉस्पिटल|सेंटर|केंद्र)([^,.!?]+)");
     private static final Pattern ISO_DATE_PATTERN = Pattern.compile("\\b(\\d{4}-\\d{2}-\\d{2})\\b");
+    private static final Pattern ISO_DATE_SPACED_PATTERN = Pattern.compile("\\b(\\d{4})\\s+(\\d{1,2})\\s+(\\d{1,2})\\b");
     private static final Pattern DMY_DATE_PATTERN = Pattern.compile("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+([A-Za-z]{3,9})\\s+(\\d{4})\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern MDY_DATE_PATTERN = Pattern.compile("\\b([A-Za-z]{3,9})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,)?\\s+(\\d{4})\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern DMY_DATE_WITHOUT_YEAR_PATTERN = Pattern.compile("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+([A-Za-z]{3,9})\\b", Pattern.CASE_INSENSITIVE);
@@ -37,6 +38,9 @@ final class PatientPortalCareAiEntityExtractor {
     private static final Pattern SPECIALITY_PATTERN = Pattern.compile("(?i)\\b(?:speciality|specialty|department|dept)\\s+([A-Za-z][A-Za-z .'-]{1,60})");
     private static final DateTimeFormatter STRICT_ISO_DATE = DateTimeFormatter.ISO_LOCAL_DATE.withResolverStyle(ResolverStyle.STRICT);
     private static final Map<String, Month> MONTH_NAME_MAP = monthNameMap();
+    private static final Map<String, Month> HINDI_MONTH_NAME_MAP = hindiMonthNameMap();
+    private static final Map<String, String> HINDI_DOCTOR_NAME_MAP = hindiDoctorNameMap();
+    private static final Map<String, String> HINDI_NUMBER_WORD_MAP = hindiNumberWordMap();
 
     private final PatientPortalCareAiEntityRegistry registry;
 
@@ -48,25 +52,29 @@ final class PatientPortalCareAiEntityExtractor {
         if (!StringUtils.hasText(transcript)) {
             return PatientPortalCareAiExtractedEntities.empty();
         }
+        String normalizedTranscript = normalizeForExtraction(transcript);
         Map<PatientPortalCareAiEntityType, List<String>> values = new EnumMap<>(PatientPortalCareAiEntityType.class);
         Map<PatientPortalCareAiEntityType, Double> confidence = new EnumMap<>(PatientPortalCareAiEntityType.class);
         String[] dateIssue = new String[1];
-        String lower = transcript.toLowerCase(Locale.ROOT);
+        String lower = normalizedTranscript.toLowerCase(Locale.ROOT);
 
-        extractDoctor(transcript, language, values, confidence);
-        extractClinic(transcript, values, confidence);
-        extractAppointment(transcript, values, confidence);
-        extractDate(transcript, values, confidence, dateIssue);
-        extractTime(transcript, values, confidence);
-        extractSlotNumber(transcript, values, confidence);
-        extractTimeWindow(transcript, language, values, confidence);
-        extractSpeciality(transcript, values, confidence);
-        extractLocation(transcript, values, confidence);
-        extractConfirmation(lower, transcript, values, confidence);
-        extractCancellation(lower, transcript, values, confidence);
-        extractReset(lower, transcript, values, confidence);
+        extractDoctor(transcript, normalizedTranscript, language, values, confidence);
+        extractClinic(transcript, normalizedTranscript, values, confidence);
+        extractAppointment(transcript, normalizedTranscript, values, confidence);
+        extractDate(transcript, normalizedTranscript, values, confidence, dateIssue);
+        extractTime(transcript, normalizedTranscript, values, confidence);
+        extractSlotNumber(transcript, normalizedTranscript, values, confidence);
+        extractTimeWindow(transcript, normalizedTranscript, language, values, confidence);
+        extractSpeciality(transcript, normalizedTranscript, values, confidence);
+        extractLocation(transcript, normalizedTranscript, values, confidence);
+        extractConfirmation(lower, transcript, normalizedTranscript, values, confidence);
+        extractCancellation(lower, transcript, normalizedTranscript, values, confidence);
+        extractReset(lower, transcript, normalizedTranscript, values, confidence);
 
         return new PatientPortalCareAiExtractedEntities(
+                transcript,
+                normalizedTranscript,
+                language,
                 copy(values),
                 copyConfidence(confidence),
                 dateIssue[0]
@@ -74,6 +82,7 @@ final class PatientPortalCareAiEntityExtractor {
     }
 
     private void extractDoctor(String transcript,
+                               String normalizedTranscript,
                                String language,
                                Map<PatientPortalCareAiEntityType, List<String>> values,
                                Map<PatientPortalCareAiEntityType, Double> confidence) {
@@ -90,15 +99,24 @@ final class PatientPortalCareAiEntityExtractor {
         if (isHindi(language) || transcript.contains("डॉक्टर") || transcript.contains("डॉ")) {
             Matcher hindi = HINDI_DOCTOR_PATTERN.matcher(transcript);
             if (hindi.find()) {
-                put(values, confidence, PatientPortalCareAiEntityType.DOCTOR, cleanCandidate(hindi.group(1)), 0.95);
+                put(values, confidence, PatientPortalCareAiEntityType.DOCTOR, cleanCandidate(normalizeDoctorPhrase(hindi.group(1))), 0.95);
+                return;
+            }
+        }
+        String normalizedDoctorText = normalizeDoctorPhrase(transcript);
+        if (StringUtils.hasText(normalizedDoctorText) && !normalizedDoctorText.equalsIgnoreCase(transcript)) {
+            Matcher normalizedMatcher = ENGLISH_DOCTOR_PATTERN.matcher(normalizedDoctorText);
+            if (normalizedMatcher.find()) {
+                put(values, confidence, PatientPortalCareAiEntityType.DOCTOR, cleanCandidate(trimDoctorQueryTail(normalizedMatcher.group(1))), 0.9);
             }
         }
     }
 
     private void extractClinic(String transcript,
+                               String normalizedTranscript,
                                Map<PatientPortalCareAiEntityType, List<String>> values,
                                Map<PatientPortalCareAiEntityType, Double> confidence) {
-        Matcher english = ENGLISH_CLINIC_PATTERN.matcher(transcript);
+        Matcher english = ENGLISH_CLINIC_PATTERN.matcher(normalizedTranscript);
         if (english.find()) {
             put(values, confidence, PatientPortalCareAiEntityType.CLINIC, cleanCandidate(trimTrailingNoise(english.group(1))), 0.9);
             return;
@@ -110,19 +128,21 @@ final class PatientPortalCareAiEntityExtractor {
     }
 
     private void extractAppointment(String transcript,
+                                    String normalizedTranscript,
                                     Map<PatientPortalCareAiEntityType, List<String>> values,
                                     Map<PatientPortalCareAiEntityType, Double> confidence) {
-        String lower = transcript.toLowerCase(Locale.ROOT);
+        String lower = normalizedTranscript.toLowerCase(Locale.ROOT);
         if (lower.contains("appointment") || lower.contains("booking") || lower.contains("bookings") || lower.contains("visit")) {
             put(values, confidence, PatientPortalCareAiEntityType.APPOINTMENT, "appointment", 0.75);
         }
     }
 
     private void extractDate(String transcript,
+                             String normalizedTranscript,
                              Map<PatientPortalCareAiEntityType, List<String>> values,
                              Map<PatientPortalCareAiEntityType, Double> confidence,
                              String[] dateIssue) {
-        Matcher iso = ISO_DATE_PATTERN.matcher(transcript);
+        Matcher iso = ISO_DATE_PATTERN.matcher(normalizedTranscript);
         if (iso.find()) {
             LocalDate parsed = parseIsoDate(iso.group(1));
             if (parsed != null) {
@@ -130,7 +150,17 @@ final class PatientPortalCareAiEntityExtractor {
             }
             return;
         }
-        String lower = transcript.toLowerCase(Locale.ROOT);
+        Matcher isoSpaced = ISO_DATE_SPACED_PATTERN.matcher(normalizedTranscript);
+        if (isoSpaced.find()) {
+            LocalDate parsed = parseIsoDate(isoSpaced.group(1) + "-" + isoSpaced.group(2) + "-" + isoSpaced.group(3));
+            if (parsed != null) {
+                put(values, confidence, PatientPortalCareAiEntityType.DATE, parsed.toString(), 0.97);
+            } else {
+                dateIssue[0] = "invalid";
+            }
+            return;
+        }
+        String lower = normalizedTranscript.toLowerCase(Locale.ROOT);
         LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
         if (lower.contains("day after tomorrow") || transcript.contains("परसों")) {
             put(values, confidence, PatientPortalCareAiEntityType.DATE, today.plusDays(2).toString(), 0.95);
@@ -142,6 +172,14 @@ final class PatientPortalCareAiEntityExtractor {
         }
         if (lower.contains("today") || transcript.contains("आज")) {
             put(values, confidence, PatientPortalCareAiEntityType.DATE, today.toString(), 0.95);
+            return;
+        }
+        if (lower.contains("this friday")) {
+            put(values, confidence, PatientPortalCareAiEntityType.DATE, resolveWeekday(today, DayOfWeek.FRIDAY).toString(), 0.95);
+            return;
+        }
+        if (lower.contains("next friday") || transcript.contains("अगले शुक्रवार")) {
+            put(values, confidence, PatientPortalCareAiEntityType.DATE, today.with(TemporalAdjusters.next(DayOfWeek.FRIDAY)).toString(), 0.95);
             return;
         }
         if (lower.contains("next week")) {
@@ -189,12 +227,12 @@ final class PatientPortalCareAiEntityExtractor {
             return;
         }
         for (DayOfWeek dayOfWeek : DayOfWeek.values()) {
-            if (matchesWeekday(transcript, lower, dayOfWeek)) {
+            if (matchesWeekday(normalizedTranscript, lower, dayOfWeek)) {
                 put(values, confidence, PatientPortalCareAiEntityType.DATE, resolveWeekday(today, dayOfWeek).toString(), 0.9);
                 return;
             }
         }
-        Matcher dmy = DMY_DATE_PATTERN.matcher(transcript);
+        Matcher dmy = DMY_DATE_PATTERN.matcher(normalizedTranscript);
         if (dmy.find()) {
             LocalDate parsed = parseMonthNameDate(dmy.group(1), dmy.group(2), dmy.group(3));
             if (parsed != null) {
@@ -204,7 +242,7 @@ final class PatientPortalCareAiEntityExtractor {
             }
             return;
         }
-        Matcher mdy = MDY_DATE_PATTERN.matcher(transcript);
+        Matcher mdy = MDY_DATE_PATTERN.matcher(normalizedTranscript);
         if (mdy.find()) {
             LocalDate parsed = parseMonthNameDate(mdy.group(2), mdy.group(1), mdy.group(3));
             if (parsed != null) {
@@ -214,7 +252,7 @@ final class PatientPortalCareAiEntityExtractor {
             }
             return;
         }
-        Matcher dmyWithoutYear = DMY_DATE_WITHOUT_YEAR_PATTERN.matcher(transcript);
+        Matcher dmyWithoutYear = DMY_DATE_WITHOUT_YEAR_PATTERN.matcher(normalizedTranscript);
         if (dmyWithoutYear.find()) {
             LocalDate parsed = parseMonthNameDateWithoutYear(dmyWithoutYear.group(1), dmyWithoutYear.group(2));
             if (parsed != null) {
@@ -224,7 +262,7 @@ final class PatientPortalCareAiEntityExtractor {
             }
             return;
         }
-        Matcher mdyWithoutYear = MDY_DATE_WITHOUT_YEAR_PATTERN.matcher(transcript);
+        Matcher mdyWithoutYear = MDY_DATE_WITHOUT_YEAR_PATTERN.matcher(normalizedTranscript);
         if (mdyWithoutYear.find()) {
             LocalDate parsed = parseMonthNameDateWithoutYear(mdyWithoutYear.group(1), mdyWithoutYear.group(2));
             if (parsed != null) {
@@ -234,7 +272,7 @@ final class PatientPortalCareAiEntityExtractor {
             }
             return;
         }
-        Matcher slash = SLASH_DATE_PATTERN.matcher(transcript);
+        Matcher slash = SLASH_DATE_PATTERN.matcher(normalizedTranscript);
         if (slash.find()) {
             String issue = slashDateIssue(slash.group(1), slash.group(2));
             if ("ambiguous".equals(issue)) {
@@ -251,9 +289,10 @@ final class PatientPortalCareAiEntityExtractor {
     }
 
     private void extractTime(String transcript,
+                             String normalizedTranscript,
                              Map<PatientPortalCareAiEntityType, List<String>> values,
                              Map<PatientPortalCareAiEntityType, Double> confidence) {
-        String sanitized = ISO_DATE_PATTERN.matcher(transcript.toLowerCase(Locale.ROOT)).replaceAll(" ");
+        String sanitized = ISO_DATE_PATTERN.matcher(normalizedTranscript.toLowerCase(Locale.ROOT)).replaceAll(" ");
         Matcher matcher = EXPLICIT_TIME_PATTERN.matcher(sanitized);
         while (matcher.find()) {
             if (matcher.group(2) == null && matcher.group(3) == null) {
@@ -278,19 +317,20 @@ final class PatientPortalCareAiEntityExtractor {
     }
 
     private void extractSlotNumber(String transcript,
+                                   String normalizedTranscript,
                                    Map<PatientPortalCareAiEntityType, List<String>> values,
                                    Map<PatientPortalCareAiEntityType, Double> confidence) {
-        Matcher matcher = SLOT_NUMBER_PATTERN.matcher(transcript);
+        Matcher matcher = SLOT_NUMBER_PATTERN.matcher(normalizedTranscript);
         if (matcher.find()) {
             put(values, confidence, PatientPortalCareAiEntityType.TIME_SLOT, matcher.group(1), 0.9);
             return;
         }
-        String lower = transcript.toLowerCase(Locale.ROOT);
-        if (containsDateLikeExpression(transcript)) {
+        String lower = normalizedTranscript.toLowerCase(Locale.ROOT);
+        if (containsDateLikeExpression(normalizedTranscript)) {
             return;
         }
         if (lower.contains("slot") || lower.contains("number") || lower.contains("book")) {
-            Matcher digit = DIGIT_PATTERN.matcher(transcript);
+            Matcher digit = DIGIT_PATTERN.matcher(normalizedTranscript);
             if (digit.find()) {
                 put(values, confidence, PatientPortalCareAiEntityType.TIME_SLOT, digit.group(1), 0.65);
             }
@@ -298,13 +338,14 @@ final class PatientPortalCareAiEntityExtractor {
     }
 
     private void extractTimeWindow(String transcript,
+                                   String normalizedTranscript,
                                    String language,
                                    Map<PatientPortalCareAiEntityType, List<String>> values,
                                    Map<PatientPortalCareAiEntityType, Double> confidence) {
         if (isGreetingOnly(transcript)) {
             return;
         }
-        String lower = transcript.toLowerCase(Locale.ROOT);
+        String lower = normalizedTranscript.toLowerCase(Locale.ROOT);
         if (lower.contains("morning") || transcript.contains("सुबह")) {
             put(values, confidence, PatientPortalCareAiEntityType.TIME_WINDOW, isHindi(language) ? "सुबह" : "morning", 0.9);
             return;
@@ -323,51 +364,59 @@ final class PatientPortalCareAiEntityExtractor {
     }
 
     private void extractSpeciality(String transcript,
+                                   String normalizedTranscript,
                                    Map<PatientPortalCareAiEntityType, List<String>> values,
                                    Map<PatientPortalCareAiEntityType, Double> confidence) {
-        Matcher matcher = SPECIALITY_PATTERN.matcher(transcript);
+        Matcher matcher = SPECIALITY_PATTERN.matcher(normalizedTranscript);
         if (matcher.find()) {
             put(values, confidence, PatientPortalCareAiEntityType.SPECIALITY, cleanCandidate(trimTrailingNoise(matcher.group(1))), 0.82);
         }
     }
 
     private void extractLocation(String transcript,
+                                 String normalizedTranscript,
                                  Map<PatientPortalCareAiEntityType, List<String>> values,
                                  Map<PatientPortalCareAiEntityType, Double> confidence) {
-        String lower = transcript.toLowerCase(Locale.ROOT);
+        String lower = normalizedTranscript.toLowerCase(Locale.ROOT);
         if (lower.contains("location") || lower.contains("area") || lower.contains("city") || lower.contains("near")) {
             put(values, confidence, PatientPortalCareAiEntityType.LOCATION, trimTrailingNoise(transcript), 0.55);
         }
     }
 
     private void extractConfirmation(String lower, String transcript,
+                                     String normalizedTranscript,
                                      Map<PatientPortalCareAiEntityType, List<String>> values,
                                      Map<PatientPortalCareAiEntityType, Double> confidence) {
-        if (matchesAny(lower, transcript, registry.aliasesFor(PatientPortalCareAiEntityType.CONFIRMATION))) {
+        String normalized = normalizedTranscript.toLowerCase(Locale.ROOT);
+        if (matchesAny(lower, transcript, normalized, registry.aliasesFor(PatientPortalCareAiEntityType.CONFIRMATION))) {
             put(values, confidence, PatientPortalCareAiEntityType.CONFIRMATION, "confirm", 0.99);
         }
     }
 
     private void extractCancellation(String lower, String transcript,
+                                     String normalizedTranscript,
                                      Map<PatientPortalCareAiEntityType, List<String>> values,
                                      Map<PatientPortalCareAiEntityType, Double> confidence) {
-        if (matchesAny(lower, transcript, registry.aliasesFor(PatientPortalCareAiEntityType.CANCELLATION))) {
+        String normalized = normalizedTranscript.toLowerCase(Locale.ROOT);
+        if (matchesAny(lower, transcript, normalized, registry.aliasesFor(PatientPortalCareAiEntityType.CANCELLATION))) {
             put(values, confidence, PatientPortalCareAiEntityType.CANCELLATION, "cancel", 0.98);
         }
     }
 
     private void extractReset(String lower, String transcript,
+                              String normalizedTranscript,
                               Map<PatientPortalCareAiEntityType, List<String>> values,
                               Map<PatientPortalCareAiEntityType, Double> confidence) {
-        if (matchesAny(lower, transcript, registry.aliasesFor(PatientPortalCareAiEntityType.RESET))) {
+        String normalized = normalizedTranscript.toLowerCase(Locale.ROOT);
+        if (matchesAny(lower, transcript, normalized, registry.aliasesFor(PatientPortalCareAiEntityType.RESET))) {
             put(values, confidence, PatientPortalCareAiEntityType.RESET, "reset", 0.99);
         }
     }
 
-    private boolean matchesAny(String lower, String transcript, Set<String> aliases) {
+    private boolean matchesAny(String lower, String transcript, String normalized, Set<String> aliases) {
         for (String alias : aliases) {
             String normalizedAlias = alias.toLowerCase(Locale.ROOT);
-            if (lower.contains(normalizedAlias) || transcript.toLowerCase(Locale.ROOT).contains(normalizedAlias)) {
+            if (lower.contains(normalizedAlias) || normalized.contains(normalizedAlias) || transcript.toLowerCase(Locale.ROOT).contains(normalizedAlias)) {
                 return true;
             }
         }
@@ -410,17 +459,139 @@ final class PatientPortalCareAiEntityExtractor {
         if (!StringUtils.hasText(value)) {
             return null;
         }
-        return trimTrailingNoise(value)
+        String cleaned = trimTrailingNoise(value)
+                .replaceAll("(?i)\\b(?:appointment|appointments|booking|book|visit|slot|slots|schedule|scheduled)\\b.*$", "")
+                .replace("की", " ")
+                .replace("के", " ")
+                .replace("का", " ")
+                .replace("को", " ")
+                .replace("से", " ")
+                .replace("में", " ")
+                .replace("पर", " ")
+                .replace("और", " ")
+                .replaceAll("\\b(?:ki|ke|ka|ko|se|mein|par|aur)\\b", " ")
                 .replaceAll("^(?:dr\\.?|doctor)\\s+", "")
                 .replaceAll("\\s{2,}", " ")
+                .trim()
+                .replaceAll("(?i)\\bdr\\.?\\b\\s*", "")
+                .replaceAll("(?i)\\bdoctor\\b\\s*", "")
+                .replaceAll("\\s{2,}", " ")
                 .trim();
+        return titleCaseLatinWords(cleaned);
+    }
+
+    private String titleCaseLatinWords(String value) {
+        if (!StringUtils.hasText(value)) {
+            return value;
+        }
+        String[] parts = value.split("\\s+");
+        StringBuilder builder = new StringBuilder(value.length());
+        for (String part : parts) {
+            if (!StringUtils.hasText(part)) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(' ');
+            }
+            if (part.matches("(?i)[A-Za-z][A-Za-z']*")) {
+                builder.append(Character.toUpperCase(part.charAt(0)));
+                if (part.length() > 1) {
+                    builder.append(part.substring(1).toLowerCase(Locale.ROOT));
+                }
+            } else {
+                builder.append(part);
+            }
+        }
+        return builder.toString().trim();
+    }
+
+    private String normalizeDoctorPhrase(String value) {
+        String normalized = normalizeForExtraction(value);
+        if (!StringUtils.hasText(normalized)) {
+            return normalized;
+        }
+        normalized = normalized
+                .replaceAll("\\bdoctor\\b", "doctor")
+                .replaceAll("\\bdr\\b", "dr");
+        for (Map.Entry<String, String> entry : HINDI_DOCTOR_NAME_MAP.entrySet()) {
+            normalized = normalized.replace(entry.getKey(), entry.getValue());
+        }
+        return normalized.replaceAll("\\s{2,}", " ").trim();
+    }
+
+    private String normalizeForExtraction(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        String normalized = replaceDevanagariDigits(value)
+                .replace("डॉक्टर", "doctor")
+                .replace("डॉ.", "dr")
+                .replace("डॉ", "dr")
+                .replace("अपॉइंटमेंट", "appointment")
+                .replace("बुक", "book")
+                .replace("मुलाकात", "appointment")
+                .replace("से मिलना", "appointment")
+                .replace("दिखाना", "appointment")
+                .replace("आना चाहता हूँ", "tomorrow")
+                .replace("आना चाहती हूँ", "tomorrow")
+                .replace("आज", "today")
+                .replace("कल", "tomorrow")
+                .replace("परसों", "day after tomorrow")
+                .replace("अगले शुक्रवार", "next friday")
+                .replace("इस शुक्रवार", "this friday")
+                .replace("अगले शनिवार", "next saturday")
+                .replace("इस शनिवार", "this saturday")
+                .replace("अगले रविवार", "next sunday")
+                .replace("इस रविवार", "this sunday")
+                .replace("डॉक्टर से मिलना", "book appointment")
+                .replace("डॉक्टर दिखाना", "book appointment")
+                .replace("टॉपिक चेंज", "switch topic")
+                .replace("बातचीत बदलो", "switch conversation")
+                .replace("नया शुरू करो", "start over")
+                .replace("शुरू से", "start over");
+        for (Map.Entry<String, Month> entry : HINDI_MONTH_NAME_MAP.entrySet()) {
+            normalized = normalized.replace(entry.getKey(), entry.getValue().name().toLowerCase(Locale.ROOT));
+        }
+        for (Map.Entry<String, String> entry : HINDI_NUMBER_WORD_MAP.entrySet()) {
+            normalized = normalized.replace(entry.getKey(), entry.getValue());
+        }
+        return normalized
+                .replaceAll("[\\u200B-\\u200D\\uFEFF]", " ")
+                .replaceAll("[\\p{Punct}&&[^:/]]", " ")
+                .replaceAll("\\s{2,}", " ")
+                .trim()
+                .toLowerCase(Locale.ROOT);
+    }
+
+    private String replaceDevanagariDigits(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            char ch = value.charAt(index);
+            builder.append(switch (ch) {
+                case '०' -> '0';
+                case '१' -> '1';
+                case '२' -> '2';
+                case '३' -> '3';
+                case '४' -> '4';
+                case '५' -> '5';
+                case '६' -> '6';
+                case '७' -> '7';
+                case '८' -> '8';
+                case '९' -> '9';
+                default -> ch;
+            });
+        }
+        return builder.toString();
     }
 
     private String trimTrailingNoise(String raw) {
         if (!StringUtils.hasText(raw)) {
             return null;
         }
-        String cleaned = raw
+        String cleaned = normalizeForExtraction(raw)
                 .replaceAll("(?i)\\b(?:tomorrow|today|day after tomorrow|next\\s+friday|next\\s+saturday|next\\s+sunday|next\\s+monday|next\\s+tuesday|next\\s+wednesday|next\\s+thursday|morning|afternoon|evening|night|confirm|book it|cancel it|yes|no)\\b.*$", "")
                 .replaceAll("[,.!?].*$", "")
                 .replaceAll("\\s{2,}", " ")
@@ -594,20 +765,22 @@ final class PatientPortalCareAiEntityExtractor {
     }
 
     private boolean isHindi(String language) {
-        return "hi".equalsIgnoreCase(language);
+        return StringUtils.hasText(language) && language.toLowerCase(Locale.ROOT).startsWith("hi");
     }
 
     private boolean containsDateLikeExpression(String transcript) {
         if (!StringUtils.hasText(transcript)) {
             return false;
         }
-        String lower = transcript.toLowerCase(Locale.ROOT);
-        return ISO_DATE_PATTERN.matcher(transcript).find()
-                || DMY_DATE_PATTERN.matcher(transcript).find()
-                || MDY_DATE_PATTERN.matcher(transcript).find()
-                || DMY_DATE_WITHOUT_YEAR_PATTERN.matcher(transcript).find()
-                || MDY_DATE_WITHOUT_YEAR_PATTERN.matcher(transcript).find()
-                || SLASH_DATE_PATTERN.matcher(transcript).find()
+        String normalized = normalizeForExtraction(transcript);
+        String lower = normalized.toLowerCase(Locale.ROOT);
+        return ISO_DATE_PATTERN.matcher(normalized).find()
+                || ISO_DATE_SPACED_PATTERN.matcher(normalized).find()
+                || DMY_DATE_PATTERN.matcher(normalized).find()
+                || MDY_DATE_PATTERN.matcher(normalized).find()
+                || DMY_DATE_WITHOUT_YEAR_PATTERN.matcher(normalized).find()
+                || MDY_DATE_WITHOUT_YEAR_PATTERN.matcher(normalized).find()
+                || SLASH_DATE_PATTERN.matcher(normalized).find()
                 || lower.contains("today")
                 || lower.contains("tomorrow")
                 || lower.contains("day after tomorrow")
@@ -633,4 +806,75 @@ final class PatientPortalCareAiEntityExtractor {
         map.put("sept", Month.SEPTEMBER);
         return Map.copyOf(map);
     }
+
+    private static Map<String, Month> hindiMonthNameMap() {
+        Map<String, Month> map = new HashMap<>();
+        map.put("जनवरी", Month.JANUARY);
+        map.put("फरवरी", Month.FEBRUARY);
+        map.put("मार्च", Month.MARCH);
+        map.put("अप्रैल", Month.APRIL);
+        map.put("मई", Month.MAY);
+        map.put("जून", Month.JUNE);
+        map.put("जुलाई", Month.JULY);
+        map.put("अगस्त", Month.AUGUST);
+        map.put("सितंबर", Month.SEPTEMBER);
+        map.put("सितम्बर", Month.SEPTEMBER);
+        map.put("अक्टूबर", Month.OCTOBER);
+        map.put("नवंबर", Month.NOVEMBER);
+        map.put("नवम्बर", Month.NOVEMBER);
+        map.put("दिसंबर", Month.DECEMBER);
+        map.put("दिसम्बर", Month.DECEMBER);
+        return Map.copyOf(map);
+    }
+
+    private static Map<String, String> hindiDoctorNameMap() {
+        Map<String, String> map = new HashMap<>();
+        map.put("विकास", "Vikas");
+        map.put("आशीष", "Ashish");
+        map.put("अशिश", "Ashish");
+        map.put("अशिष", "Ashish");
+        map.put("नेहा", "Neha");
+        map.put("आरती", "Arti");
+        map.put("आर्ती", "Arti");
+        return Map.copyOf(map);
+    }
+
+    private static Map<String, String> hindiNumberWordMap() {
+        Map<String, String> map = new HashMap<>();
+        map.put("इकतीस", "31");
+        map.put("इक्कीस", "21");
+        map.put("बाईस", "22");
+        map.put("तेईस", "23");
+        map.put("चौबीस", "24");
+        map.put("पच्चीस", "25");
+        map.put("छब्बीस", "26");
+        map.put("सत्ताईस", "27");
+        map.put("अट्ठाईस", "28");
+        map.put("उनतीस", "29");
+        map.put("तीस", "30");
+        map.put("उन्नीस", "19");
+        map.put("अठारह", "18");
+        map.put("सत्रह", "17");
+        map.put("सोलह", "16");
+        map.put("पंद्रह", "15");
+        map.put("पन्द्रह", "15");
+        map.put("चौदह", "14");
+        map.put("तेरह", "13");
+        map.put("बारह", "12");
+        map.put("ग्यारह", "11");
+        map.put("दस", "10");
+        map.put("नौ", "9");
+        map.put("आठ", "8");
+        map.put("सात", "7");
+        map.put("छह", "6");
+        map.put("छः", "6");
+        map.put("पांच", "5");
+        map.put("पाँच", "5");
+        map.put("चार", "4");
+        map.put("तीन", "3");
+        map.put("दो", "2");
+        map.put("एक", "1");
+        return Map.copyOf(map);
+    }
+
 }
