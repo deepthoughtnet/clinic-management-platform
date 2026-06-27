@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   appointmentCreateSchema,
   appointmentRescheduleSchema,
+  mapZodErrors,
   normalizeIndianMobileInput,
   patientQuickRegisterSchema,
 } from "@deepthoughtnet/form-validation-kit";
@@ -330,6 +331,11 @@ export default function AppointmentsPage() {
   const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
   const canCreateAppointmentFlow = !isDoctor && auth.hasPermission("appointment.manage");
   const canQuickRegisterPatient = canCreateAppointmentFlow && auth.hasPermission("patient.create");
+  const quickRegisterPreview = React.useMemo(
+    () => patientQuickRegisterSchema.safeParse(toPatientInput(quickRegisterForm)),
+    [quickRegisterForm],
+  );
+  const quickRegisterFieldErrors: Record<string, string> = quickRegisterPreview.success ? {} : mapZodErrors(quickRegisterPreview.error);
   const doctorOptions = users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
   const doctorFilter = isDoctor && auth.appUserId ? auth.appUserId : undefined;
   const today = React.useMemo(() => getClinicDateKey(clinicTimeZone, clinicNowSnapshot), [clinicNowSnapshot, clinicTimeZone, clockTick]);
@@ -993,9 +999,8 @@ export default function AppointmentsPage() {
   const saveQuickPatient = async () => {
     if (!auth.accessToken || !auth.tenantId || !canQuickRegisterPatient) return;
     const payload = toPatientInput(quickRegisterForm);
-    const parsed = patientQuickRegisterSchema.safeParse(payload);
-    if (!parsed.success) {
-      setQuickRegisterError(parsed.error.issues[0]?.message || "Unable to create patient");
+    if (!quickRegisterPreview.success) {
+      setQuickRegisterError(quickRegisterPreview.error.issues[0]?.message || "Unable to create patient");
       return;
     }
     setQuickRegisterSaving(true);
@@ -1504,22 +1509,24 @@ export default function AppointmentsPage() {
               value={quickRegisterForm.mobile}
               onChange={(event) => setQuickRegisterForm((current) => ({ ...current, mobile: event.target.value }))}
               inputProps={{ inputMode: "tel" }}
+              error={Boolean(quickRegisterFieldErrors.mobile)}
+              helperText={quickRegisterFieldErrors.mobile || " "}
             />
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth label="First name" value={quickRegisterForm.firstName} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, firstName: event.target.value }))} />
+                <TextField fullWidth label="First name" value={quickRegisterForm.firstName} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, firstName: event.target.value }))} error={Boolean(quickRegisterFieldErrors.firstName)} helperText={quickRegisterFieldErrors.firstName || " "} />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth label="Last name" value={quickRegisterForm.lastName} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, lastName: event.target.value }))} />
+                <TextField fullWidth label="Last name" value={quickRegisterForm.lastName} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, lastName: event.target.value }))} error={Boolean(quickRegisterFieldErrors.lastName)} helperText={quickRegisterFieldErrors.lastName || " "} />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth type="number" label="Age" value={quickRegisterForm.ageYears} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, ageYears: event.target.value, dateOfBirth: approximateDobFromAge(event.target.value) }))} inputProps={{ min: 0, max: 130 }} />
+                <TextField fullWidth type="number" label="Age" value={quickRegisterForm.ageYears} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, ageYears: event.target.value, dateOfBirth: approximateDobFromAge(event.target.value) }))} inputProps={{ min: 0, max: 130 }} error={Boolean(quickRegisterFieldErrors.ageYears)} helperText={quickRegisterFieldErrors.ageYears || " "}/>
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth type="date" label="Date of birth" value={quickRegisterForm.dateOfBirth} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, dateOfBirth: event.target.value, ageYears: calculateAge(event.target.value) }))} InputLabelProps={{ shrink: true }} />
+                <TextField fullWidth type="date" label="Date of birth" value={quickRegisterForm.dateOfBirth} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, dateOfBirth: event.target.value, ageYears: calculateAge(event.target.value) }))} InputLabelProps={{ shrink: true }} error={Boolean(quickRegisterFieldErrors.dateOfBirth)} helperText={quickRegisterFieldErrors.dateOfBirth || " "}/>
               </Grid>
               <Grid size={{ xs: 12 }}>
-                <FormControl fullWidth>
+                <FormControl fullWidth error={Boolean(quickRegisterFieldErrors.gender)}>
                   <InputLabel id="quick-gender-label">Gender</InputLabel>
                   <Select
                     labelId="quick-gender-label"
@@ -1532,6 +1539,7 @@ export default function AppointmentsPage() {
                     <MenuItem value="OTHER">Other</MenuItem>
                     <MenuItem value="UNKNOWN">Unknown</MenuItem>
                   </Select>
+                  {quickRegisterFieldErrors.gender ? <Typography variant="caption" color="error">{quickRegisterFieldErrors.gender}</Typography> : null}
                 </FormControl>
               </Grid>
             </Grid>
@@ -1539,7 +1547,7 @@ export default function AppointmentsPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setQuickRegisterOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={() => void saveQuickPatient()} disabled={quickRegisterSaving}>Save patient</Button>
+          <Button variant="contained" onClick={() => void saveQuickPatient()} disabled={quickRegisterSaving || !quickRegisterPreview.success}>Save patient</Button>
         </DialogActions>
         </Dialog>
       ) : null}

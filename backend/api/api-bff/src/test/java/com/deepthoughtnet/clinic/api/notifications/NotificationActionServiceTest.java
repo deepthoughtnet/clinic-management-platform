@@ -182,6 +182,46 @@ class NotificationActionServiceTest {
     }
 
     @Test
+    void sendAppointmentBookedUsesReadableInAppRecipient() {
+        AppointmentRecord appointment = new AppointmentRecord(
+                UUID.randomUUID(),
+                tenantId,
+                patientId,
+                "PAT-1",
+                "Asha Rao",
+                "9999999999",
+                UUID.randomUUID(),
+                "Dr. Clinic",
+                null,
+                LocalDate.now(),
+                LocalTime.of(9, 30),
+                1,
+                "Follow up",
+                AppointmentType.SCHEDULED,
+                AppointmentPriority.NORMAL,
+                AppointmentStatus.BOOKED,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        );
+        when(appointmentService.findById(eq(tenantId), eq(appointment.id()))).thenReturn(appointment);
+
+        service.sendAppointmentBooked(tenantId, appointment.id(), actorId);
+
+        Mockito.verify(notificationHistoryService).queueDetailed(
+                eq(tenantId),
+                eq(patientId),
+                eq("APPOINTMENT_BOOKED"),
+                eq("in_app"),
+                eq("patient:Asha Rao"),
+                eq("Appointment booked " + appointment.appointmentDate()),
+                eq("Your appointment has been booked successfully."),
+                eq("APPOINTMENT"),
+                eq(appointment.id()),
+                eq(actorId)
+        );
+    }
+
+    @Test
     void sendInvoiceEmailMissingPatientEmailReturnsCleanError() {
         BillRecord bill = billRecord(BillStatus.ISSUED);
         when(billingService.findById(tenantId, bill.id())).thenReturn(Optional.of(bill));

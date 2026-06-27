@@ -332,19 +332,19 @@ public class NotificationActionService {
             boolean sendEmail,
             NotificationAttachment attachment
     ) {
-        String recipient = resolveRecipient(patient, "email");
-        NotificationHistoryRecord notification = notificationHistoryService.queue(
+        String recipient = patientTargetLabel(patient);
+        NotificationHistoryRecord notification = notificationHistoryService.queueDetailed(
                 tenantId,
                 patient.getId(),
                 eventType,
                 "in_app",
-                "patient:" + patient.getId(),
+                recipient,
                 subject,
                 message,
                 sourceType,
                 sourceId,
                 actorAppUserId
-        );
+        ).notification();
         if (sendEmail && StringUtils.hasText(patient.getEmail())) {
             try {
                 List<NotificationAttachment> attachments = attachment == null ? List.of() : List.of(attachment);
@@ -539,6 +539,14 @@ public class NotificationActionService {
             return patient.getMobile();
         }
         throw new IllegalArgumentException("Patient contact is required");
+    }
+
+    private String patientTargetLabel(PatientEntity patient) {
+        String name = (patient.getFirstName() + " " + patient.getLastName()).trim();
+        if (StringUtils.hasText(patient.getPatientNumber())) {
+            return "patient:" + patient.getPatientNumber() + " • " + name;
+        }
+        return StringUtils.hasText(name) ? "patient:" + name : "patient";
     }
 
     private String normalizeChannel(String channel) {

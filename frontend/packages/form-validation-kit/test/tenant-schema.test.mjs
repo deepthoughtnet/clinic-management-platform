@@ -32,9 +32,14 @@ test("tenant schema rejects a missing clinic name", () => {
   const result = createTenantSchema.safeParse({
     clinicName: "",
     tenantCode: "arogia-clinic",
+    displayName: "Arogia Clinic",
     city: "Pune",
+    state: "Maharashtra",
     country: "India",
     adminEmail: "admin@example.com",
+    adminFirstName: "Admin",
+    adminLastName: "User",
+    planId: "FREE",
   });
 
   assert.equal(result.success, false);
@@ -45,10 +50,15 @@ test("tenant schema rejects an invalid email", () => {
   const result = createTenantSchema.safeParse({
     clinicName: "Arogia Clinic",
     tenantCode: "arogia-clinic",
+    displayName: "Arogia Clinic",
     city: "Pune",
+    state: "Maharashtra",
     country: "India",
     clinicEmail: "not-an-email",
     adminEmail: "admin@example.com",
+    adminFirstName: "Admin",
+    adminLastName: "User",
+    planId: "FREE",
   });
 
   assert.equal(result.success, false);
@@ -59,10 +69,15 @@ test("tenant schema rejects an invalid Indian mobile number", () => {
   const result = createTenantSchema.safeParse({
     clinicName: "Arogia Clinic",
     tenantCode: "arogia-clinic",
+    displayName: "Arogia Clinic",
     city: "Pune",
+    state: "Maharashtra",
     country: "India",
     phone: "12345",
     adminEmail: "admin@example.com",
+    adminFirstName: "Admin",
+    adminLastName: "User",
+    planId: "FREE",
   });
 
   assert.equal(result.success, false);
@@ -73,9 +88,14 @@ test("tenant schema allows optional fields to be omitted", () => {
   const result = createTenantSchema.safeParse({
     clinicName: "Arogia Clinic",
     tenantCode: "arogia-clinic",
+    displayName: "Arogia Clinic",
     city: "Pune",
+    state: "Maharashtra",
     country: "India",
     adminEmail: "admin@example.com",
+    adminFirstName: "Admin",
+    adminLastName: "User",
+    planId: "FREE",
   });
 
   assert.equal(result.success, true);

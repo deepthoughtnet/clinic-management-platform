@@ -37,6 +37,7 @@ import {
   type NotificationStatus,
   type Patient,
 } from "../../api/clinicApi";
+import { formatNotificationSourceLabel, formatNotificationTargetLabel } from "./notificationDisplay.js";
 
 const STATUS_OPTIONS: Array<NotificationStatus | ""> = ["", "PENDING", "SENT", "FAILED", "SKIPPED"];
 const CHANNEL_OPTIONS: Array<NotificationChannel | ""> = ["", "EMAIL", "WHATSAPP", "SMS", "PUSH", "IN_APP"];
@@ -225,26 +226,10 @@ export default function NotificationsPage() {
   const pendingCount = rows.filter((row) => row.status === "PENDING").length;
   const failedCount = rows.filter((row) => row.status === "FAILED").length;
 
-  const patientLabel = (row: NotificationHistory) => {
-    const patient = patients.find((item) => item.id === row.patientId);
-    if (patient) {
-      return `${patient.firstName} ${patient.lastName}${patient.patientNumber ? ` • ${patient.patientNumber}` : ""}`;
-    }
-    return row.patientId ? "Patient record unavailable" : "Walk-in / system";
-  };
-
   const eventLabel = (row: NotificationHistory) => row.eventType.replaceAll("_", " ");
   const categoryLabel = (row: NotificationHistory) => (REMINDER_EVENT_TYPES.has(row.eventType) ? "Reminder" : "Notification");
-  const sourceLabel = (row: NotificationHistory) => {
-    if (row.sourceType === "APPOINTMENT") return "Appointment";
-    if (row.sourceType === "BILL") return "Bill";
-    if (row.sourceType === "CONSULTATION") return "Consultation";
-    if (row.sourceType === "PRESCRIPTION") return "Prescription";
-    if (row.sourceType === "LAB_ORDER") return "Lab";
-    if (row.sourceType === "PATIENT_VACCINATION") return "Vaccination";
-    if (row.sourceType === "RECEIPT") return "Receipt";
-    return row.sourceType ? row.sourceType.replaceAll("_", " ") : "-";
-  };
+  const sourceLabel = (row: NotificationHistory) => formatNotificationSourceLabel(row);
+  const targetLabel = (row: NotificationHistory) => formatNotificationTargetLabel(row, patients);
 
   return (
     <Stack spacing={3}>
@@ -434,7 +419,7 @@ export default function NotificationsPage() {
                           <Typography variant="caption" color="text.secondary">{row.subject || "No subject"}</Typography>
                         </Stack>
                       </TableCell>
-                      <TableCell>{patientLabel(row)}</TableCell>
+                      <TableCell>{targetLabel(row)}</TableCell>
                       <TableCell>{row.recipient}</TableCell>
                       <TableCell>{row.channel}</TableCell>
                       <TableCell>{sourceLabel(row)}</TableCell>

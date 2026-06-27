@@ -221,6 +221,11 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   const [loadedPatient, setLoadedPatient] = React.useState<Patient | null>(null);
   const mobileInputRef = React.useRef<HTMLInputElement | null>(null);
   const validationSchema = mode === "create" ? patientQuickRegisterSchema : patientRegistrationSchema;
+  const validationPreview = React.useMemo(
+    () => validationSchema.safeParse(formToInput({ ...form, mobile: normalizeIndianMobileInput(form.mobile) as string })),
+    [form, validationSchema],
+  );
+  const liveFieldErrors: Record<string, string> = validationPreview.success ? {} : mapZodErrors(validationPreview.error);
 
   const clearFieldError = (field: string) => {
     setFieldErrors((current) => {
@@ -458,10 +463,8 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     value={form.mobile}
                     onChange={updateMobile}
                     disabled={disabled}
-                    error={Boolean(fieldErrors.mobile) || (Boolean(form.mobile) && !validationSchema.shape.mobile.safeParse(form.mobile).success)}
-                    helperText={fieldErrors.mobile || (Boolean(form.mobile) && !validationSchema.shape.mobile.safeParse(form.mobile).success
-                      ? "Enter a valid 10-digit Indian mobile number."
-                      : "Primary lookup and duplicate check")}
+                    error={Boolean(fieldErrors.mobile) || Boolean(liveFieldErrors.mobile)}
+                    helperText={fieldErrors.mobile || liveFieldErrors.mobile || "Primary lookup and duplicate check"}
                     inputProps={{ inputMode: "tel", autoComplete: "tel" }}
                   />
                 </Grid>
@@ -473,8 +476,8 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     value={form.firstName}
                     onChange={updateField("firstName")}
                     disabled={disabled}
-                    error={Boolean(fieldErrors.firstName)}
-                    helperText={fieldErrors.firstName || ""}
+                    error={Boolean(fieldErrors.firstName) || Boolean(liveFieldErrors.firstName)}
+                    helperText={fieldErrors.firstName || liveFieldErrors.firstName || ""}
                     inputProps={{ autoComplete: "given-name" }}
                   />
                 </Grid>
@@ -497,7 +500,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     >
                       {genderOptions.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
                     </Select>
-                    <FormHelperText>{fieldErrors.gender || ""}</FormHelperText>
+                    <FormHelperText>{fieldErrors.gender || liveFieldErrors.gender || ""}</FormHelperText>
                   </FormControl>
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }}>
@@ -509,8 +512,8 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     value={form.ageYears ?? ""}
                     onChange={updateAge}
                     disabled={disabled}
-                    error={Boolean(fieldErrors.ageYears)}
-                    helperText={fieldErrors.ageYears || "DOB auto-filled approximately"}
+                    error={Boolean(fieldErrors.ageYears) || Boolean(liveFieldErrors.ageYears)}
+                    helperText={fieldErrors.ageYears || liveFieldErrors.ageYears || "DOB auto-filled approximately"}
                     inputProps={{ min: 0, max: 120 }}
                   />
                 </Grid>
@@ -523,13 +526,13 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     value={form.dateOfBirth}
                     onChange={updateDateOfBirth}
                     disabled={disabled}
-                    error={Boolean(fieldErrors.dateOfBirth)}
-                    helperText={fieldErrors.dateOfBirth || "Age updates automatically"}
+                    error={Boolean(fieldErrors.dateOfBirth) || Boolean(liveFieldErrors.dateOfBirth)}
+                    helperText={fieldErrors.dateOfBirth || liveFieldErrors.dateOfBirth || "Age updates automatically"}
                     InputLabelProps={{ shrink: true }}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }} sx={{ display: "flex", alignItems: "center", justifyContent: { xs: "stretch", md: "flex-end" }, gap: 1 }}>
-                  <Button type="submit" fullWidth variant="contained" size="large" disabled={disabled || checkingDuplicates}>
+                  <Button type="submit" fullWidth variant="contained" size="large" disabled={disabled || checkingDuplicates || !validationPreview.success}>
                     {saving ? "Saving..." : mode === "create" ? "Register" : "Save"}
                   </Button>
                 </Grid>
@@ -565,8 +568,8 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
 
               {mode === "create" && !isDoctor ? (
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                  <Button type="button" variant="outlined" disabled={disabled} onClick={() => void savePatient("appointment")}>Save & Create Appointment</Button>
-                  <Button type="button" variant="outlined" disabled={disabled} onClick={() => void savePatient("queue")}>Save & Add to Queue</Button>
+                  <Button type="button" variant="outlined" disabled={disabled || !validationPreview.success} onClick={() => void savePatient("appointment")}>Save & Create Appointment</Button>
+                  <Button type="button" variant="outlined" disabled={disabled || !validationPreview.success} onClick={() => void savePatient("queue")}>Save & Add to Queue</Button>
                 </Stack>
               ) : null}
             </Stack>
@@ -597,11 +600,8 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                       setForm((current) => ({ ...current, emergencyContactMobile: event.target.value }));
                     }}
                     disabled={disabled}
-                    error={Boolean(fieldErrors.emergencyContactMobile) || (Boolean(form.emergencyContactMobile) && !validationSchema.shape.emergencyContactMobile.safeParse(form.emergencyContactMobile).success)}
-                    helperText={fieldErrors.emergencyContactMobile || (Boolean(form.emergencyContactMobile) && !validationSchema.shape.emergencyContactMobile.safeParse(form.emergencyContactMobile).success
-                      ? "Enter a valid 10-digit Indian mobile number."
-                      : "")
-                    }
+                    error={Boolean(fieldErrors.emergencyContactMobile) || Boolean(liveFieldErrors.emergencyContactMobile)}
+                    helperText={fieldErrors.emergencyContactMobile || liveFieldErrors.emergencyContactMobile || ""}
                     inputProps={{ inputMode: "tel" }}
                   />
                 </Grid>
@@ -699,7 +699,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                 {mode === "edit" ? (
                   <Button type="button" variant="outlined" color="error" onClick={() => void onDeactivate()} disabled={disabled || !form.active}>Deactivate</Button>
                 ) : null}
-                <Button type="submit" variant="contained" disabled={disabled}>{saving ? "Saving..." : "Save Patient"}</Button>
+                <Button type="submit" variant="contained" disabled={disabled || !validationPreview.success}>{saving ? "Saving..." : "Save Patient"}</Button>
               </Stack>
             </Stack>
             <Divider sx={{ mt: 1.5 }} />

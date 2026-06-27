@@ -106,15 +106,15 @@ export default function TenantsPage() {
     reset,
     clearErrors,
     watch,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isValid },
   } = useForm<CreateTenantFormValues>({
     resolver: zodFormResolver(createTenantSchema),
     defaultValues: EMPTY_FORM,
-    mode: "onSubmit",
+    mode: "onChange",
+    reValidateMode: "onChange",
   });
 
-  const requiredCreateFields = watch(["clinicName", "tenantCode", "city", "country", "adminEmail"]);
-  const canCreateTenant = requiredCreateFields.every((value: string | undefined) => typeof value === "string" ? value.trim().length > 0 : Boolean(value));
+  const canCreateTenant = isValid && !isSubmitting;
   const countryValue = watch("country") || "";
   const cityValue = watch("city") || "";
   const stateValue = watch("state") || "";
@@ -194,19 +194,13 @@ export default function TenantsPage() {
       });
       setError(null);
       setMessage("Tenant created successfully.");
-      auth.selectTenant({
-        id: created.tenant.id,
-        code: created.tenant.code,
-        name: created.tenant.name,
-      });
-      closeCreateDialog();
       await load();
-      navigate("/");
+      closeCreateDialog();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create tenant";
       setCreateFormError(message);
     }
-  }, [auth.accessToken, auth.selectTenant, closeCreateDialog, load, navigate]);
+  }, [auth.accessToken, closeCreateDialog, load]);
 
   if (!auth.rolesUpper.includes("PLATFORM_ADMIN")) {
     return <Alert severity="error">Platform access is restricted to PLATFORM_ADMIN.</Alert>;
@@ -391,8 +385,23 @@ export default function TenantsPage() {
                 />
               </Stack>
               <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-                <TextField label="Display Name" fullWidth {...register("displayName")} />
-                <TextField label="Plan" select fullWidth {...register("planId")}>
+                <TextField
+                  label="Tenant Name"
+                  fullWidth
+                  required
+                  error={Boolean(errors.displayName)}
+                  helperText={errors.displayName?.message || " "}
+                  {...register("displayName")}
+                />
+                <TextField
+                  label="Plan"
+                  select
+                  fullWidth
+                  required
+                  error={Boolean(errors.planId)}
+                  helperText={errors.planId?.message || " "}
+                  {...register("planId")}
+                >
                   {plans.map((plan) => (
                     <MenuItem key={plan.id} value={plan.id}>
                       {plan.id} - {plan.name}
@@ -424,7 +433,8 @@ export default function TenantsPage() {
                       value={field.value || ""}
                       onChange={field.onChange}
                       suggestions={stateSuggestions}
-                      helperText=" "
+                      error={Boolean(errors.state)}
+                      helperText={errors.state?.message || " "}
                     />
                   )}
                 />
@@ -507,8 +517,22 @@ export default function TenantsPage() {
                   helperText={errors.adminEmail?.message || " "}
                   {...register("adminEmail")}
                 />
-                <TextField label="First Name" fullWidth {...register("adminFirstName")} />
-                <TextField label="Last Name" fullWidth {...register("adminLastName")} />
+                <TextField
+                  label="First Name"
+                  fullWidth
+                  required
+                  error={Boolean(errors.adminFirstName)}
+                  helperText={errors.adminFirstName?.message || " "}
+                  {...register("adminFirstName")}
+                />
+                <TextField
+                  label="Last Name"
+                  fullWidth
+                  required
+                  error={Boolean(errors.adminLastName)}
+                  helperText={errors.adminLastName?.message || " "}
+                  {...register("adminLastName")}
+                />
               </Stack>
               <TextField label="Temporary Password (optional)" fullWidth {...register("tempPassword")} />
             </Stack>
@@ -520,7 +544,7 @@ export default function TenantsPage() {
             type="submit"
             form="create-tenant-form"
             variant="contained"
-            disabled={isSubmitting || !canCreateTenant}
+            disabled={!canCreateTenant}
           >
             {isSubmitting ? "Creating..." : "Create Tenant"}
           </Button>

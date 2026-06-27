@@ -2,6 +2,7 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } 
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   indianMobileNumber,
+  mapZodErrors,
   otpVerifySchema,
   patientProfileSchema,
   patientQuickRegisterSchema,
@@ -1299,6 +1300,27 @@ export function PatientRegistrationPage({
   const [submitPending, setSubmitPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const registrationPayload = useMemo(() => ({
+    firstName,
+    lastName,
+    gender,
+    dateOfBirth: dateOfBirth || null,
+    ageYears: ageYears.trim() ? Number(ageYears.trim()) : null,
+    email: email.trim() || null,
+    addressLine1: addressLine1.trim() || null,
+    addressLine2: addressLine2.trim() || null,
+    city: city.trim(),
+    state: state.trim() || null,
+    country: country.trim() || null,
+    postalCode: postalCode.trim() || null,
+    emergencyContactName: emergencyContactName.trim() || null,
+    emergencyContactMobile: emergencyContactMobile.trim() || null,
+  }), [firstName, lastName, gender, dateOfBirth, ageYears, email, addressLine1, addressLine2, city, state, country, postalCode, emergencyContactName, emergencyContactMobile]);
+  const registrationPreview = useMemo(
+    () => patientQuickRegisterSchema.safeParse({ ...registrationPayload, mobile: registrationMobile }),
+    [registrationMobile, registrationPayload],
+  );
+  const registrationFieldErrors: Record<string, string> = registrationPreview.success ? {} : mapZodErrors(registrationPreview.error);
 
   useEffect(() => {
     if (!isPatientPortalPatientSession(session)) {
@@ -1368,34 +1390,11 @@ export function PatientRegistrationPage({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!dateOfBirth && !ageYears.trim()) {
-      setError("Date of birth or age is required.");
+    if (!registrationPreview.success) {
+      setError(registrationPreview.error.issues[0]?.message || "Unable to complete patient registration.");
       return;
     }
-    const payload: PatientPortalRegistrationRequest = {
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
-      gender,
-      dateOfBirth: dateOfBirth || null,
-      ageYears: ageYears.trim() ? Number(ageYears.trim()) : null,
-      email: email.trim() || null,
-      addressLine1: addressLine1.trim() || null,
-      addressLine2: addressLine2.trim() || null,
-      city: city.trim(),
-      state: state.trim() || null,
-      country: country.trim() || null,
-      postalCode: postalCode.trim() || null,
-      emergencyContactName: emergencyContactName.trim() || null,
-      emergencyContactMobile: emergencyContactMobile.trim() || null,
-    };
-    const parsed = patientQuickRegisterSchema.safeParse({
-      ...payload,
-      mobile: registrationSession.phone,
-    });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message || "Unable to complete patient registration.");
-      return;
-    }
+    const payload: PatientPortalRegistrationRequest = registrationPayload;
 
     setSubmitPending(true);
     setError(null);
@@ -1454,28 +1453,33 @@ export function PatientRegistrationPage({
           <div className="patient-form-grid">
             <label>
               <span>First name</span>
-              <input value={firstName} onChange={(event) => setFirstName(event.target.value)} required autoComplete="given-name" />
+              <input value={firstName} onChange={(event) => setFirstName(event.target.value)} required autoComplete="given-name" aria-invalid={Boolean(registrationFieldErrors.firstName)} />
+              {registrationFieldErrors.firstName ? <p className="patient-field-error">{registrationFieldErrors.firstName}</p> : null}
             </label>
             <label>
               <span>Last name</span>
               <input value={lastName} onChange={(event) => setLastName(event.target.value)} required autoComplete="family-name" />
+              {registrationFieldErrors.lastName ? <p className="patient-field-error">{registrationFieldErrors.lastName}</p> : null}
             </label>
             <label>
               <span>Gender</span>
-              <select value={gender} onChange={(event) => setGender(event.target.value)}>
+              <select value={gender} onChange={(event) => setGender(event.target.value)} aria-invalid={Boolean(registrationFieldErrors.gender)}>
                 <option value="UNKNOWN">Prefer not to say</option>
                 <option value="MALE">Male</option>
                 <option value="FEMALE">Female</option>
                 <option value="OTHER">Other</option>
               </select>
+              {registrationFieldErrors.gender ? <p className="patient-field-error">{registrationFieldErrors.gender}</p> : null}
             </label>
             <label>
               <span>Date of birth</span>
-              <input type="date" value={dateOfBirth} onChange={(event) => setDateOfBirth(event.target.value)} max={new Date().toISOString().slice(0, 10)} />
+              <input type="date" value={dateOfBirth} onChange={(event) => setDateOfBirth(event.target.value)} max={new Date().toISOString().slice(0, 10)} aria-invalid={Boolean(registrationFieldErrors.dateOfBirth)} />
+              {registrationFieldErrors.dateOfBirth ? <p className="patient-field-error">{registrationFieldErrors.dateOfBirth}</p> : null}
             </label>
             <label>
               <span>Age</span>
-              <input value={ageYears} onChange={(event) => setAgeYears(event.target.value)} inputMode="numeric" placeholder="If DOB is not available" />
+              <input value={ageYears} onChange={(event) => setAgeYears(event.target.value)} inputMode="numeric" placeholder="If DOB is not available" aria-invalid={Boolean(registrationFieldErrors.ageYears)} />
+              {registrationFieldErrors.ageYears ? <p className="patient-field-error">{registrationFieldErrors.ageYears}</p> : null}
             </label>
             <label>
               <span>Mobile number</span>
@@ -1483,7 +1487,8 @@ export function PatientRegistrationPage({
             </label>
             <label>
               <span>City</span>
-              <input value={city} onChange={(event) => setCity(event.target.value)} required autoComplete="address-level2" />
+              <input value={city} onChange={(event) => setCity(event.target.value)} required autoComplete="address-level2" aria-invalid={Boolean(registrationFieldErrors.city)} />
+              {registrationFieldErrors.city ? <p className="patient-field-error">{registrationFieldErrors.city}</p> : null}
             </label>
             <label>
               <span>Email</span>
@@ -1531,7 +1536,7 @@ export function PatientRegistrationPage({
             </div>
           ) : null}
           <div className="patient-action-row">
-            <button className="primary-button" type="submit" disabled={submitPending}>
+            <button className="primary-button" type="submit" disabled={submitPending || !registrationPreview.success}>
               {submitPending ? "Completing..." : "Complete registration"}
             </button>
             <button className="ghost-button" type="button" onClick={handleStartOver}>
