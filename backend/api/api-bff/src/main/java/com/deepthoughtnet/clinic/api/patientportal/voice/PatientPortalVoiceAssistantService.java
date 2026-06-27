@@ -10,6 +10,7 @@ import com.deepthoughtnet.clinic.api.voice.VoiceOrchestratorService;
 import com.deepthoughtnet.clinic.api.voice.VoiceTestProperties;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceSynthesisResult;
 import com.deepthoughtnet.clinic.api.voice.spi.VoiceTranscriptionResult;
+import com.deepthoughtnet.clinic.tts.spi.VoiceTextNormalizer;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,6 +34,7 @@ public class PatientPortalVoiceAssistantService {
     private final PatientPortalCareAiResponseComposerService responseComposerService;
     private final PatientPortalConversationStateService conversationStateService;
     private final VoiceTestProperties voiceProperties;
+    private final VoiceTextNormalizer voiceTextNormalizer = new VoiceTextNormalizer();
 
     public PatientPortalVoiceAssistantService(
             VoiceOrchestratorService voiceOrchestratorService,
@@ -172,6 +174,10 @@ public class PatientPortalVoiceAssistantService {
                         resolveWorkflow(careAiResponse.state()),
                         safeStructuredFacts(careAiResponse.state())
                 );
+        String voiceAssistantText = voiceTextNormalizer.normalizeForVoice(
+                assistantText,
+                resolveVoiceLanguage(careAiResponse.state() == null ? language : careAiResponse.state().language())
+        );
         if (conversationStateService != null && StringUtils.hasText(conversationId)) {
             conversationStateService.recordTurn(
                     conversationId,
@@ -197,7 +203,7 @@ public class PatientPortalVoiceAssistantService {
         try {
             log.info("patient.voice.tts.start");
             synthesis = voiceOrchestratorService.synthesizeAssistantText(
-                    assistantText,
+                    voiceAssistantText,
                     resolveVoiceLanguage(careAiResponse.state() == null ? language : careAiResponse.state().language())
             );
             ttsDurationMs = Duration.between(ttsStart, Instant.now()).toMillis();

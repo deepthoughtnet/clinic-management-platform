@@ -203,6 +203,7 @@ public class PatientPortalCareAiService {
     private final PatientPortalCareAiEntityRegistry entityRegistry;
     private final PatientPortalCareAiEntityExtractor entityExtractor;
     private final PatientPortalCareAiToolRegistry toolRegistry;
+    private final PatientPortalAppointmentResolverService appointmentResolverService;
     private final Map<SessionKey, CareAiState> sessions = new ConcurrentHashMap<>();
     private final Map<VoiceSessionKey, CareAiState> voiceSessions = new ConcurrentHashMap<>();
 
@@ -214,7 +215,8 @@ public class PatientPortalCareAiService {
             CareAiConversationPersistenceService conversationPersistenceService,
             CareAiReceptionistTaskService receptionistTaskService,
             CareAiTaskNotificationService taskNotificationService,
-            PublicCatalogFacade publicCatalogFacade
+            PublicCatalogFacade publicCatalogFacade,
+            PatientPortalAppointmentResolverService appointmentResolverService
     ) {
         this.patientPortalService = patientPortalService;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
@@ -230,6 +232,7 @@ public class PatientPortalCareAiService {
         this.entityRegistry = new PatientPortalCareAiEntityRegistry();
         this.entityExtractor = new PatientPortalCareAiEntityExtractor(entityRegistry);
         this.toolRegistry = new PatientPortalCareAiToolRegistry();
+        this.appointmentResolverService = appointmentResolverService == null ? new PatientPortalAppointmentResolverService() : appointmentResolverService;
     }
 
     public PatientPortalCareAiService(
@@ -247,7 +250,29 @@ public class PatientPortalCareAiService {
                 conversationPersistenceService,
                 receptionistTaskService,
                 taskNotificationService,
-                null
+                null,
+                new PatientPortalAppointmentResolverService()
+        );
+    }
+
+    public PatientPortalCareAiService(
+            PatientPortalService patientPortalService,
+            ClinicTimeZoneResolver clinicTimeZoneResolver,
+            PatientPortalCareAiPlanner planner,
+            CareAiConversationPersistenceService conversationPersistenceService,
+            CareAiReceptionistTaskService receptionistTaskService,
+            CareAiTaskNotificationService taskNotificationService,
+            PublicCatalogFacade publicCatalogFacade
+    ) {
+        this(
+                patientPortalService,
+                clinicTimeZoneResolver,
+                planner,
+                conversationPersistenceService,
+                receptionistTaskService,
+                taskNotificationService,
+                publicCatalogFacade,
+                new PatientPortalAppointmentResolverService()
         );
     }
 
@@ -775,6 +800,9 @@ public class PatientPortalCareAiService {
             state.reason = reason;
             changed = true;
         }
+        if (changed && isVoiceConversationChannel()) {
+            resetPromptRepetitionTracking(state);
+        }
         careAiTrace("applyBookingFacts", "exit", state,
                 "changed=" + changed
                         + " requestedDoctorName=" + state.requestedDoctorName
@@ -859,6 +887,9 @@ public class PatientPortalCareAiService {
                 state.selectedClinicName = previousSelectedClinicName;
             }
         }
+        if (changed && isVoiceConversationChannel()) {
+            resetPromptRepetitionTracking(state);
+        }
         careAiTrace("applyRescheduleFacts", "exit", state,
                 "changed=" + changed
                         + " selectedAppointmentId=" + state.selectedAppointmentId
@@ -870,10 +901,25 @@ public class PatientPortalCareAiService {
     }
 
     private boolean applyAppointmentSelectionFacts(CareAiState state, String message) {
+        if (state == null
+                || state.currentIntent == null
+                || state.confirmationPending
+                || (state.currentIntent != PatientPortalCareAiIntent.CANCEL_APPOINTMENT
+                && state.currentIntent != PatientPortalCareAiIntent.RESCHEDULE_APPOINTMENT
+                && state.currentIntent != PatientPortalCareAiIntent.CHECK_APPOINTMENT)) {
+            return false;
+        }
         if (StringUtils.hasText(message) && !state.appointmentOptions.isEmpty()) {
-            AppointmentChoice match = resolveAppointmentChoice(state, message);
-            if (match != null) {
-                selectAppointment(state, match);
+            PatientPortalAppointmentResolverService.AppointmentResolution resolution = resolveAppointmentSelection(state, message);
+            if (resolution.resolved()) {
+                AppointmentChoice match = findAppointmentChoice(state, resolution.appointment());
+                if (match != null) {
+                    selectAppointment(state, match);
+                    return true;
+                }
+            }
+            if (state.appointmentOptions.size() == 1) {
+                selectAppointment(state, state.appointmentOptions.getFirst());
                 return true;
             }
         }
@@ -925,6 +971,9 @@ public class PatientPortalCareAiService {
         }
         if (changed) {
             queueWorkflowEvent(state, "PLANNER_CONTEXT_ENRICHED", workflowContextJson(state));
+            if (isVoiceConversationChannel()) {
+                resetPromptRepetitionTracking(state);
+            }
         }
         return changed;
     }
@@ -958,6 +1007,9 @@ public class PatientPortalCareAiService {
         }
         if (changed) {
             queueWorkflowEvent(state, "PLANNER_CONTEXT_ENRICHED", workflowContextJson(state));
+            if (isVoiceConversationChannel()) {
+                resetPromptRepetitionTracking(state);
+            }
         }
         return changed;
     }
@@ -1037,15 +1089,27 @@ public class PatientPortalCareAiService {
         if (shouldAdvanceSlotOptions(state, message)) {
             return advanceSlotOptions(state);
         }
+        if (state.confirmationPending && StringUtils.hasText(state.selectedAppointmentId)) {
+            return rescheduleConfirmationPrompt(state);
+        }
         if (!ensureAppointmentOptions(state)) {
             return noUpcomingAppointmentsPrompt(state.language);
         }
         if (!StringUtils.hasText(state.selectedAppointmentId)) {
-            AppointmentChoice match = resolveAppointmentChoice(state, message);
-            if (match != null) {
-                selectAppointment(state, match);
+            PatientPortalAppointmentResolverService.AppointmentResolution resolution = resolveAppointmentSelection(state, message);
+            if (resolution.resolved()) {
+                AppointmentChoice match = findAppointmentChoice(state, resolution.appointment());
+                if (match != null) {
+                    selectAppointment(state, match);
+                } else {
+                    return appointmentNoMatchPrompt(state.language);
+                }
             } else if (state.appointmentOptions.size() == 1) {
                 selectAppointment(state, state.appointmentOptions.getFirst());
+            } else if (resolution.status() == PatientPortalAppointmentResolverService.ResolutionStatus.MULTIPLE) {
+                return appointmentMultipleMatchPrompt(state, resolution.matches(), "reschedule");
+            } else if (resolution.status() == PatientPortalAppointmentResolverService.ResolutionStatus.NONE) {
+                return appointmentChoicePrompt(state, "reschedule");
             } else {
                 return appointmentChoicePrompt(state, "reschedule");
             }
@@ -1083,15 +1147,27 @@ public class PatientPortalCareAiService {
                         + " selectedDoctorId=" + state.selectedDoctorId
                         + " selectedTenantId=" + state.selectedTenantId
                         + " appointmentCount=" + state.appointmentOptions.size());
+        if (state.confirmationPending && StringUtils.hasText(state.selectedAppointmentId)) {
+            return cancellationConfirmationPrompt(state);
+        }
         if (!ensureAppointmentOptions(state)) {
             return noUpcomingAppointmentsPrompt(state.language);
         }
         if (!StringUtils.hasText(state.selectedAppointmentId)) {
-            AppointmentChoice match = resolveAppointmentChoice(state, message);
-            if (match != null) {
-                selectAppointment(state, match);
+            PatientPortalAppointmentResolverService.AppointmentResolution resolution = resolveAppointmentSelection(state, message);
+            if (resolution.resolved()) {
+                AppointmentChoice match = findAppointmentChoice(state, resolution.appointment());
+                if (match != null) {
+                    selectAppointment(state, match);
+                } else {
+                    return appointmentNoMatchPrompt(state.language);
+                }
             } else if (state.appointmentOptions.size() == 1) {
                 selectAppointment(state, state.appointmentOptions.getFirst());
+            } else if (resolution.status() == PatientPortalAppointmentResolverService.ResolutionStatus.MULTIPLE) {
+                return appointmentMultipleMatchPrompt(state, resolution.matches(), "cancel");
+            } else if (resolution.status() == PatientPortalAppointmentResolverService.ResolutionStatus.NONE) {
+                return appointmentChoicePrompt(state, "cancel");
             } else {
                 return appointmentChoicePrompt(state, "cancel");
             }
@@ -1114,21 +1190,33 @@ public class PatientPortalCareAiService {
         if (!ensureAppointmentOptions(state)) {
             return noUpcomingAppointmentsPrompt(state.language);
         }
-        AppointmentChoice selected = resolveAppointmentChoice(state, message);
-        if (selected != null) {
-            selectAppointment(state, selected);
-            return appointmentStatusPrompt(selected, state.language);
-        }
         if (asksForAllAppointments(message)) {
-            return appointmentListPrompt(state, "Here are your upcoming appointments:");
+            return appointmentListPrompt(state, isHindi(state.language) ? "आपकी आने वाली अपॉइंटमेंट ये हैं:" : "Here are your upcoming appointments:");
         }
-        AppointmentChoice next = state.appointmentOptions.getFirst();
-        selectAppointment(state, next);
-        careAiTrace("handleStatus", "exit", state,
-                "selectedAppointmentId=" + state.selectedAppointmentId
-                        + " selectedTenantId=" + state.selectedTenantId
-                        + " appointmentCount=" + state.appointmentOptions.size());
-        return appointmentStatusPrompt(next, state.language);
+        if (isNextAppointmentQuery(message) || state.appointmentOptions.size() == 1) {
+            AppointmentChoice next = state.appointmentOptions.getFirst();
+            selectAppointment(state, next);
+            careAiTrace("handleStatus", "exit", state,
+                    "selectedAppointmentId=" + state.selectedAppointmentId
+                            + " selectedTenantId=" + state.selectedTenantId
+                            + " appointmentCount=" + state.appointmentOptions.size());
+            return appointmentStatusPrompt(next, state.language);
+        }
+        PatientPortalAppointmentResolverService.AppointmentResolution resolution = resolveAppointmentSelection(state, message);
+        if (resolution.resolved()) {
+            AppointmentChoice selected = findAppointmentChoice(state, resolution.appointment());
+            if (selected != null) {
+                selectAppointment(state, selected);
+                return appointmentStatusPrompt(selected, state.language);
+            }
+        }
+        if (resolution.status() == PatientPortalAppointmentResolverService.ResolutionStatus.MULTIPLE) {
+            return appointmentMultipleMatchPrompt(state, resolution.matches(), "view");
+        }
+        if (resolution.status() == PatientPortalAppointmentResolverService.ResolutionStatus.NONE) {
+            return appointmentNoMatchPrompt(state.language);
+        }
+        return appointmentSelectionHelpPrompt(state.language, "view");
     }
 
     private String promptForDoctorSelection(CareAiState state, String message) {
@@ -1267,7 +1355,7 @@ public class PatientPortalCareAiService {
         }
 
         LocalDate date = LocalDate.parse(state.preferredDate);
-        logSlotLookupRequest("tryResolveSlotSelection", state, publicDoctorId, date);
+        logSlotLookupTrace("tryResolveSlotSelection.enter", state, publicDoctorId, date, state.preferredTimeWindow, true, null, null);
         List<PatientPortalDoctorSlotResponse> selectableSlots = loadDoctorSlots(
                 state,
                 publicDoctorId,
@@ -1279,9 +1367,10 @@ public class PatientPortalCareAiService {
                 .filter(PatientPortalDoctorSlotResponse::selectable)
                 .sorted(Comparator.comparing(PatientPortalDoctorSlotResponse::slotTime))
                 .toList();
-        logSlotLookupResponse("tryResolveSlotSelection", state, publicDoctorId, date, selectableSlots);
+        logSlotLookupTrace("tryResolveSlotSelection.exit", state, publicDoctorId, date, state.preferredTimeWindow, true, selectableSlots.size(), null);
         if (selectableSlots.isEmpty()) {
             clearSlotSelection(state);
+            logSlotLookupTrace("tryResolveSlotSelection.exit", state, publicDoctorId, date, state.preferredTimeWindow, true, 0, "no-selectable-slots");
             return false;
         }
 
@@ -1289,6 +1378,7 @@ public class PatientPortalCareAiService {
         List<PatientPortalDoctorSlotResponse> candidates = filtered.isEmpty() ? selectableSlots : filtered;
         if (candidates.isEmpty()) {
             clearSlotSelection(state);
+            logSlotLookupTrace("tryResolveSlotSelection.exit", state, publicDoctorId, date, state.preferredTimeWindow, true, selectableSlots.size(), "no-candidates-after-filter");
             return false;
         }
 
@@ -1309,16 +1399,19 @@ public class PatientPortalCareAiService {
                 state.confirmationPending = true;
                 state.awaitingFreshConfirmation = false;
                 state.pendingAction = state.currentIntent;
+                logSlotLookupTrace("tryResolveSlotSelection.exit", state, publicDoctorId, date, state.preferredTimeWindow, true, selectableSlots.size(), null);
                 return true;
             }
             List<PatientPortalDoctorSlotResponse> nearest = nearestSlots(candidates, state.preferredTimeWindow);
             if (!nearest.isEmpty()) {
                 candidates = nearest;
                 state.slotPromptLead = exactTimeUnavailablePrompt(state, state.preferredTimeWindow, nearest);
+                logSlotLookupTrace("tryResolveSlotSelection.exit", state, publicDoctorId, date, state.preferredTimeWindow, true, selectableSlots.size(), "exact-time-miss");
             }
         } else if (StringUtils.hasText(state.preferredTimeWindow) && filtered.isEmpty()) {
             candidates = selectableSlots.stream().limit(3).toList();
             state.slotPromptLead = broadTimeUnavailablePrompt(state, state.preferredTimeWindow, candidates);
+            logSlotLookupTrace("tryResolveSlotSelection.exit", state, publicDoctorId, date, state.preferredTimeWindow, true, selectableSlots.size(), "preferred-window-miss");
         }
 
         List<SlotChoice> options = candidates.stream()
@@ -1331,6 +1424,7 @@ public class PatientPortalCareAiService {
         state.confirmationPending = false;
         state.pendingAction = null;
         state.awaitingFreshConfirmation = false;
+        logSlotLookupTrace("tryResolveSlotSelection.exit", state, publicDoctorId, date, state.preferredTimeWindow, true, selectableSlots.size(), candidates.isEmpty() ? "no-candidates" : null);
         return false;
     }
 
@@ -1436,6 +1530,7 @@ public class PatientPortalCareAiService {
             state.handoffReason = null;
             state.unresolvedTurns = 0;
             if (state.lastAction == PatientPortalCareAiIntent.CANCEL_APPOINTMENT) {
+                ensureAppointmentOptions(state);
                 clearAppointmentSelection(state);
             }
             completeWorkflowCleanup(state);
@@ -1799,6 +1894,15 @@ public class PatientPortalCareAiService {
         state.activeConfirmationScopeKey = null;
     }
 
+    private void resetPromptRepetitionTracking(CareAiState state) {
+        if (state == null) {
+            return;
+        }
+        state.lastQuestionKey = null;
+        state.repeatedQuestionCount = 0;
+        state.timePromptCount = 0;
+    }
+
     private void completeWorkflowCleanup(CareAiState state) {
         clearSlotSelection(state);
         state.currentIntent = null;
@@ -1823,6 +1927,7 @@ public class PatientPortalCareAiService {
         List<PatientPortalCareAiAppointmentOption> appointments = businessLookupService.upcomingAppointments();
         logAppointmentLookup("ensureAppointmentOptions", state, appointments);
         List<AppointmentChoice> choices = appointments.stream()
+                .filter(appointment -> !isCancelledAppointmentStatus(appointment.status()))
                 .sorted(Comparator
                         .comparing(PatientPortalCareAiAppointmentOption::appointmentDate, Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(PatientPortalCareAiAppointmentOption::appointmentTime, Comparator.nullsLast(Comparator.naturalOrder())))
@@ -2086,19 +2191,77 @@ public class PatientPortalCareAiService {
         );
     }
 
-    private AppointmentChoice resolveAppointmentChoice(CareAiState state, String message) {
-        if (state.appointmentOptions.isEmpty()) {
+    private PatientPortalAppointmentResolverService.AppointmentResolution resolveAppointmentSelection(CareAiState state, String message) {
+        if (state == null || state.appointmentOptions.isEmpty()) {
+            return PatientPortalAppointmentResolverService.AppointmentResolution.none();
+        }
+        List<PatientPortalCareAiAppointmentOption> appointments = state.appointmentOptions.stream()
+                .map(choice -> new PatientPortalCareAiAppointmentOption(
+                        choice.appointmentId(),
+                        choice.doctorUserId(),
+                        choice.doctorName(),
+                        choice.tenantId(),
+                        choice.clinicName(),
+                        choice.appointmentDate(),
+                        choice.appointmentTime(),
+                        choice.status(),
+                        choice.reason()
+                ))
+                .toList();
+        PatientPortalCareAiExtractedEntities extractedEntities = extractEntities(state, message, state.language);
+        return appointmentResolverService.resolve(appointments, message, state.language, extractedEntities);
+    }
+
+    private AppointmentChoice findAppointmentChoice(CareAiState state, PatientPortalCareAiAppointmentOption appointment) {
+        if (state == null || appointment == null || state.appointmentOptions.isEmpty()) {
             return null;
         }
-        String normalized = normalizeDoctorText(message);
-        if (List.of("next", "next appointment", "first", "1st").contains(normalized)) {
-            return state.appointmentOptions.getFirst();
+        return state.appointmentOptions.stream()
+                .filter(choice -> Objects.equals(choice.appointmentId(), appointment.appointmentId()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private String appointmentSelectionHelpPrompt(String language, String actionWord) {
+        if (isHindi(language)) {
+            return switch (actionWord) {
+                case "cancel" -> "मुझे आपकी कुछ अपॉइंटमेंट दिखाई दे रही हैं। कृपया बताइए कि आप किस अपॉइंटमेंट को रद्द करना चाहते हैं। आप डॉक्टर का नाम, तारीख, समय या सूची का क्रमांक भी बता सकते हैं।";
+                case "reschedule" -> "मुझे आपकी कुछ अपॉइंटमेंट दिखाई दे रही हैं। कृपया बताइए कि आप किस अपॉइंटमेंट को रीशेड्यूल करना चाहते हैं। आप डॉक्टर का नाम, तारीख, समय या सूची का क्रमांक भी बता सकते हैं।";
+                default -> "मुझे आपकी कुछ अपॉइंटमेंट दिखाई दे रही हैं। कृपया डॉक्टर का नाम, तारीख, समय या सूची का क्रमांक बताइए।";
+            };
         }
-        return resolveIndexedOrNamedChoice(
-                state.appointmentOptions,
-                message,
-                choice -> choice.doctorName() + " " + nullToBlank(choice.appointmentDate() == null ? null : choice.appointmentDate().toString())
+        return switch (actionWord) {
+            case "cancel" -> "I found one or more appointments. Please tell me which appointment you want to cancel by doctor name, date, time, or list number.";
+            case "reschedule" -> "I found one or more appointments. Please tell me which appointment you want to reschedule by doctor name, date, time, or list number.";
+            default -> "I found one or more appointments. Please tell me the doctor name, date, time, or list number.";
+        };
+    }
+
+    private String appointmentMultipleMatchPrompt(CareAiState state, List<PatientPortalCareAiAppointmentOption> matches, String actionWord) {
+        if (matches == null || matches.isEmpty()) {
+            return appointmentSelectionHelpPrompt(state.language, actionWord);
+        }
+        List<String> labels = matches.stream()
+                .map(this::appointmentLabel)
+                .toList();
+        return numberedChoicePrompt(
+                state.language,
+                appointmentSelectionHelpPrompt(state.language, actionWord),
+                appointmentSelectionHelpPrompt(state.language, actionWord),
+                labels
         );
+    }
+
+    private String appointmentNoMatchPrompt(String language) {
+        return isHindi(language)
+                ? "मुझे उस विवरण से कोई अपॉइंटमेंट नहीं मिली। कृपया डॉक्टर का नाम, तारीख, समय या सूची का क्रमांक बताइए।"
+                : "I could not find a matching appointment. Please share the doctor name, date, time, or list number.";
+    }
+
+    private String appointmentLabel(PatientPortalCareAiAppointmentOption appointment) {
+        return safe(appointment.doctorName()) + " · "
+                + safe(appointment.appointmentDate() == null ? null : DATE_FORMATTER.format(appointment.appointmentDate())) + " · "
+                + safe(appointment.appointmentTime() == null ? null : appointment.appointmentTime().format(TIME_FORMATTER));
     }
 
     private ClinicChoice resolveClinicChoice(CareAiState state, String message) {
@@ -2260,7 +2423,9 @@ public class PatientPortalCareAiService {
         if (RESCHEDULE_INTENT_KEYWORDS.stream().anyMatch(lower::contains) || transcript.contains("रीशेड्यूल")) {
             return PatientPortalCareAiIntent.RESCHEDULE_APPOINTMENT;
         }
-        if (CANCEL_INTENT_KEYWORDS.stream().anyMatch(lower::contains) || transcript.contains("रद्द")) {
+        if (CANCEL_INTENT_KEYWORDS.stream().anyMatch(lower::contains)
+                || (lower.contains("cancel") && hasAppointmentSelectionSignal(transcript))
+                || (transcript.contains("रद्द") && hasAppointmentSelectionSignal(transcript))) {
             return PatientPortalCareAiIntent.CANCEL_APPOINTMENT;
         }
         if (STATUS_INTENT_KEYWORDS.stream().anyMatch(lower::contains) || transcript.contains("अपॉइंटमेंट कब")) {
@@ -3068,6 +3233,14 @@ public class PatientPortalCareAiService {
                 || transcript.contains("सभी");
     }
 
+    private boolean isNextAppointmentQuery(String transcript) {
+        String lower = transcript.toLowerCase(Locale.ROOT);
+        return lower.contains("next appointment")
+                || lower.contains("when is my next appointment")
+                || lower.contains("what is my next appointment")
+                || lower.contains("my next appointment");
+    }
+
     private boolean isPositiveConfirmation(String message) {
         PatientPortalCareAiExtractedEntities extractedEntities = extractEntities(message, "en");
         if (extractedEntities.confirmation()) {
@@ -3199,6 +3372,18 @@ public class PatientPortalCareAiService {
 
     private boolean isSelectionOnlyMessage(String message) {
         return StringUtils.hasText(message) && message.trim().matches("\\d{1,2}");
+    }
+
+    private boolean hasAppointmentSelectionSignal(String transcript) {
+        PatientPortalCareAiExtractedEntities entities = extractEntities(transcript, "en");
+        return entities.has(PatientPortalCareAiEntityType.DOCTOR)
+                || entities.has(PatientPortalCareAiEntityType.DATE)
+                || entities.has(PatientPortalCareAiEntityType.TIME)
+                || entities.has(PatientPortalCareAiEntityType.TIME_SLOT)
+                || entities.has(PatientPortalCareAiEntityType.TIME_WINDOW)
+                || entities.has(PatientPortalCareAiEntityType.APPOINTMENT)
+                || transcript.toLowerCase(Locale.ROOT).contains("appointment")
+                || transcript.contains("अपॉइंटमेंट");
     }
 
     private String cleanName(String raw) {
@@ -3347,8 +3532,12 @@ public class PatientPortalCareAiService {
     }
 
     private String appointmentChoicePrompt(CareAiState state, String actionWord) {
-        String english = "Please choose which appointment you want to " + actionWord + ":";
-        String hindi = "कृपया वह अपॉइंटमेंट चुनिए जिसे आप " + actionWord + " चाहते हैं:";
+        String english = switch (actionWord) {
+            case "cancel" -> "Please choose which appointment you want to cancel:";
+            case "reschedule" -> "Please choose which appointment you want to reschedule:";
+            default -> "Please choose which appointment you want to view:";
+        };
+        String hindi = appointmentSelectionHelpPrompt(state.language, actionWord);
         return numberedChoicePrompt(state.language, english, hindi, state.appointmentOptions.stream().map(AppointmentChoice::label).toList());
     }
 
@@ -3361,7 +3550,7 @@ public class PatientPortalCareAiService {
                 : "Please choose a slot by number or time:";
         String hindiLead = StringUtils.hasText(state.slotPromptLead)
                 ? state.slotPromptLead
-                : "कृपया नंबर या समय से स्लॉट चुनिए:";
+                : "कृपया इन उपलब्ध स्लॉट में से एक चुनिए:";
         return numberedChoicePrompt(state.language, englishLead, hindiLead, state.slotOptions);
     }
 
@@ -3599,33 +3788,47 @@ public class PatientPortalCareAiService {
 
     private String bookingConfirmationPrompt(CareAiState state) {
         if (isHindi(state.language)) {
-            return safe(state.selectedDoctorName) + " के लिए " + safe(state.preferredDate) + " को " + safe(state.selectedSlot) + " बुक कर दूँ?";
+            return "डॉक्टर " + safe(state.selectedDoctorName)
+                    + " के साथ\n" + safe(state.preferredDate)
+                    + "\n" + safe(state.selectedSlot)
+                    + " का स्लॉट उपलब्ध है।\nक्या मैं यह अपॉइंटमेंट बुक कर दूँ?";
         }
         return "Should I book " + safe(state.selectedDoctorName) + " on " + safe(state.preferredDate) + " at " + safe(state.selectedSlot) + "?";
     }
 
     private String rescheduleConfirmationPrompt(CareAiState state) {
         if (isHindi(state.language)) {
-            return safe(state.selectedAppointmentLabel) + " को " + safe(state.preferredDate) + " " + safe(state.selectedSlot) + " पर रीशेड्यूल कर दूँ?";
+            return "क्या मैं " + safe(state.selectedAppointmentLabel)
+                    + " को\n" + safe(state.preferredDate)
+                    + "\n" + safe(state.selectedSlot)
+                    + " पर रीशेड्यूल कर दूँ?";
         }
         return "Should I reschedule " + safe(state.selectedAppointmentLabel) + " to " + safe(state.preferredDate) + " at " + safe(state.selectedSlot) + "?";
     }
 
     private String cancellationConfirmationPrompt(CareAiState state) {
         if (isHindi(state.language)) {
-            return "क्या मैं यह अपॉइंटमेंट रद्द कर दूँ? " + safe(state.selectedAppointmentLabel);
+            return "क्या आप इस अपॉइंटमेंट को रद्द करना चाहते हैं? " + safe(state.selectedAppointmentLabel);
         }
         return "Should I cancel this appointment? " + safe(state.selectedAppointmentLabel);
     }
 
     private String appointmentStatusPrompt(AppointmentChoice appointment, String language) {
-        String summary = safe(appointment.doctorName()) + " · "
-                + safe(appointment.appointmentDate() == null ? null : DATE_FORMATTER.format(appointment.appointmentDate())) + " · "
-                + safe(appointment.appointmentTime() == null ? null : appointment.appointmentTime().format(TIME_FORMATTER)) + " · "
-                + safe(appointment.clinicName());
         return isHindi(language)
-                ? "आपकी अपॉइंटमेंट: " + summary
-                : "Your appointment is with " + summary;
+                ? "डॉक्टर " + safe(appointment.doctorName())
+                + " के साथ आपकी अपॉइंटमेंट "
+                + safe(appointment.appointmentDate() == null ? null : DATE_FORMATTER.format(appointment.appointmentDate()))
+                + " को "
+                + safe(appointment.appointmentTime() == null ? null : appointment.appointmentTime().format(TIME_FORMATTER))
+                + " पर है"
+                + (StringUtils.hasText(appointment.clinicName()) ? ". क्लिनिक: " + safe(appointment.clinicName()) : ".")
+                : "Your appointment is with "
+                + safe(appointment.doctorName())
+                + " on "
+                + safe(appointment.appointmentDate() == null ? null : DATE_FORMATTER.format(appointment.appointmentDate()))
+                + " at "
+                + safe(appointment.appointmentTime() == null ? null : appointment.appointmentTime().format(TIME_FORMATTER))
+                + (StringUtils.hasText(appointment.clinicName()) ? " at " + safe(appointment.clinicName()) : ".");
     }
 
     private String appointmentListPrompt(CareAiState state, String header) {
@@ -4571,6 +4774,42 @@ public class PatientPortalCareAiService {
         );
     }
 
+    private void logSlotLookupTrace(String phase,
+                                    CareAiState state,
+                                    String doctorId,
+                                    LocalDate appointmentDate,
+                                    String preferredTimeWindow,
+                                    boolean slotLookupTriggered,
+                                    Integer availableSlotCount,
+                                    String noSlotReason) {
+        if (!log.isInfoEnabled()) {
+            return;
+        }
+        log.info(
+                "AIVA_SLOT_LOOKUP_TRACE phase={} conversationTenantId={} tenantContextTenantId={} patientPortalSessionId={} patientId={} patientMobile={} doctorId={} doctorName={} appointmentDate={} preferredTimeWindow={} slotLookupTriggered={} slotLookupDate={} slotLookupTimeWindow={} availableSlotCount={} noSlotReason={} repeatedQuestionCount={}",
+                phase,
+                RequestContextHolder.requireTenantId(),
+                RequestContextHolder.get() == null ? null : RequestContextHolder.get().tenantId().value(),
+                state == null ? null : state.lastExternalSessionId,
+                state == null ? null : state.lastPatientId,
+                patientPortalService.currentPatientMobile(),
+                doctorId,
+                state == null ? null : state.selectedDoctorName,
+                appointmentDate,
+                preferredTimeWindow,
+                slotLookupTriggered,
+                appointmentDate,
+                preferredTimeWindow,
+                availableSlotCount,
+                noSlotReason,
+                state == null ? null : state.repeatedQuestionCount
+        );
+    }
+
+    private boolean isVoiceConversationChannel() {
+        return ACTIVE_CHANNEL.get() == CareAiChannel.PATIENT_PORTAL_VOICE;
+    }
+
     private PatientPortalCareAiExtractedEntities extractEntities(CareAiState state, String message, String language) {
         if (state != null
                 && Objects.equals(state.lastEntityExtractionMessage, message)
@@ -4780,6 +5019,10 @@ public class PatientPortalCareAiService {
 
     private String safe(String value) {
         return StringUtils.hasText(value) ? value : "the clinic";
+    }
+
+    private boolean isCancelledAppointmentStatus(String status) {
+        return StringUtils.hasText(status) && "CANCELLED".equalsIgnoreCase(status.trim());
     }
 
     private void clearCurrentConversation(CareAiState state) {

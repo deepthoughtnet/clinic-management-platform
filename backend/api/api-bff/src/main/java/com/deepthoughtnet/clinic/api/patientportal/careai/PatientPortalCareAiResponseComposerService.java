@@ -1,12 +1,14 @@
 package com.deepthoughtnet.clinic.api.patientportal.careai;
 
-import com.deepthoughtnet.clinic.ai.orchestration.service.AiOrchestrationService;
+import com.deepthoughtnet.clinic.ai.orchestration.service.AiProviderRouter;
+import com.deepthoughtnet.clinic.llm.spi.AiProviderException;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationRequest;
-import com.deepthoughtnet.clinic.platform.contracts.ai.AiOrchestrationResponse;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiProvider;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderRequest;
+import com.deepthoughtnet.clinic.platform.contracts.ai.AiProviderResponse;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiProductCode;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,16 +31,16 @@ public class PatientPortalCareAiResponseComposerService {
     private static final double TEMPERATURE = 0.2d;
     private static final int MAX_OUTPUT_TOKENS = 384;
 
-    private final AiOrchestrationService aiOrchestrationService;
+    private final AiProviderRouter aiProviderRouter;
     private final ObjectMapper objectMapper;
     private final AivaResponseComposerProperties properties;
 
     public PatientPortalCareAiResponseComposerService(
-            AiOrchestrationService aiOrchestrationService,
+            AiProviderRouter aiProviderRouter,
             ObjectMapper objectMapper,
             AivaResponseComposerProperties properties
     ) {
-        this.aiOrchestrationService = aiOrchestrationService;
+        this.aiProviderRouter = aiProviderRouter;
         this.objectMapper = objectMapper;
         this.properties = properties;
     }
@@ -51,7 +53,7 @@ public class PatientPortalCareAiResponseComposerService {
             SafeStructuredFacts safeStructuredFacts
     ) {
         String normalizedRaw = rawResponseText == null ? "" : rawResponseText.trim();
-        if (!properties.isEnabled() || !properties.isVoiceOnly() || aiOrchestrationService == null || !StringUtils.hasText(normalizedRaw)) {
+        if (!properties.isEnabled() || aiProviderRouter == null || !StringUtils.hasText(normalizedRaw)) {
             trace(false, workflow, responseType, language, null, false, normalizedRaw.length(), normalizedRaw.length());
             return rawResponseText;
         }
@@ -63,6 +65,7 @@ public class PatientPortalCareAiResponseComposerService {
         input.put("workflow", safe(workflow));
         input.put("safeStructuredFactsJson", safeFactsJson(safeStructuredFacts));
         input.put("safeStructuredFacts", safeStructuredFacts == null ? Map.of() : safeStructuredFacts.toMap());
+        UUID requestId = UUID.randomUUID();
 
         AiOrchestrationRequest request = new AiOrchestrationRequest(
                 AiProductCode.GENERIC,
@@ -78,32 +81,70 @@ public class PatientPortalCareAiResponseComposerService {
                 USE_CASE_CODE
         );
 
+        List<AiProvider> providers = aiProviderRouter.resolveCandidates(AiTaskType.GENERIC_COPILOT);
+        if (providers.isEmpty()) {
+            trace(true, workflow, responseType, language, null, true, normalizedRaw.length(), normalizedRaw.length());
+            return rawResponseText;
+        }
+
         try (ExecutorService executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-            AiOrchestrationResponse response = CompletableFuture.supplyAsync(() -> aiOrchestrationService.complete(request), executor)
-                    .get(Math.max(1, properties.getTimeoutSeconds()), TimeUnit.SECONDS);
-            String polished = extractPolishedText(response);
-            if (!StringUtils.hasText(polished)) {
-                polished = normalizedRaw;
+            for (int i = 0; i < providers.size(); i += 1) {
+                AiProvider provider = providers.get(i);
+                AiProviderResponse response;
+                try {
+                    response = CompletableFuture.supplyAsync(() -> provider.complete(new AiProviderRequest(
+                                    request,
+                                    null,
+                                    buildSystemPrompt(),
+                                    buildUserPrompt(normalizedRaw, responseType, language, workflow, safeStructuredFacts),
+                                    input,
+                                    List.of(),
+                                    requestId
+                            )), executor)
+                            .get(Math.max(1, properties.getTimeoutSeconds()), TimeUnit.SECONDS);
+                } catch (TimeoutException ex) {
+                    log.warn("AIVA_RESPONSE_COMPOSER_TRACE timeout workflow={} responseType={} language={} provider={} timeoutSeconds={}",
+                            safe(workflow),
+                            safe(responseType),
+                            safe(language),
+                            provider.providerName(),
+                            properties.getTimeoutSeconds());
+                    continue;
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    trace(true, workflow, responseType, language, provider.providerName(), true, normalizedRaw.length(), normalizedRaw.length());
+                    return rawResponseText;
+                } catch (AiProviderException ex) {
+                    log.debug("AIVA_RESPONSE_COMPOSER_TRACE provider_failed workflow={} responseType={} language={} provider={} reason={}",
+                            safe(workflow),
+                            safe(responseType),
+                            safe(language),
+                            provider.providerName(),
+                            ex.toString());
+                    continue;
+                } catch (Exception ex) {
+                    log.debug("AIVA_RESPONSE_COMPOSER_TRACE provider_failed workflow={} responseType={} language={} provider={} reason={}",
+                            safe(workflow),
+                            safe(responseType),
+                            safe(language),
+                            provider.providerName(),
+                            ex.toString());
+                    continue;
+                }
+
+                String polished = normalizeProviderOutput(response == null ? null : response.outputText());
+                if (!StringUtils.hasText(polished)) {
+                    trace(true, workflow, responseType, language, provider.providerName(), true, normalizedRaw.length(), normalizedRaw.length());
+                    return rawResponseText;
+                }
+                trace(true, workflow, responseType, language, provider.providerName(), i > 0, normalizedRaw.length(), polished.length());
+                if (log.isDebugEnabled()) {
+                    log.debug("AIVA_RESPONSE_COMPOSER_TRACE raw=\"{}\" polished=\"{}\"",
+                            preview(normalizedRaw),
+                            preview(polished));
+                }
+                return polished;
             }
-            trace(true, workflow, responseType, language, response == null ? null : response.provider(), response != null && response.fallbackUsed(), normalizedRaw.length(), polished.length());
-            if (log.isDebugEnabled()) {
-                log.debug("AIVA_RESPONSE_COMPOSER_TRACE raw=\"{}\" polished=\"{}\"",
-                        preview(normalizedRaw),
-                        preview(polished));
-            }
-            return polished;
-        } catch (TimeoutException ex) {
-            trace(true, workflow, responseType, language, "timeout", true, normalizedRaw.length(), normalizedRaw.length());
-            log.warn("AIVA_RESPONSE_COMPOSER_TRACE timeout workflow={} responseType={} language={} timeoutSeconds={}",
-                    safe(workflow),
-                    safe(responseType),
-                    safe(language),
-                    properties.getTimeoutSeconds());
-            return rawResponseText;
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            trace(true, workflow, responseType, language, "interrupted", true, normalizedRaw.length(), normalizedRaw.length());
-            return rawResponseText;
         } catch (Exception ex) {
             trace(true, workflow, responseType, language, "error", true, normalizedRaw.length(), normalizedRaw.length());
             log.debug("AIVA_RESPONSE_COMPOSER_TRACE fallback workflow={} responseType={} language={} reason={}",
@@ -113,6 +154,9 @@ public class PatientPortalCareAiResponseComposerService {
                     ex.toString());
             return rawResponseText;
         }
+
+        trace(true, workflow, responseType, language, "fallback", true, normalizedRaw.length(), normalizedRaw.length());
+        return rawResponseText;
     }
 
     public SafeStructuredFacts safeStructuredFacts(
@@ -128,50 +172,22 @@ public class PatientPortalCareAiResponseComposerService {
         return new SafeStructuredFacts(doctorName, clinicName, date, time, slots, appointments, confirmationRequired, actionType);
     }
 
-    private String extractPolishedText(AiOrchestrationResponse response) {
-        if (response == null || !StringUtils.hasText(response.outputText())) {
+    private String normalizeProviderOutput(String outputText) {
+        if (!StringUtils.hasText(outputText)) {
             return null;
         }
-        String output = response.outputText().trim();
-        String extracted = extractFromJson(output);
-        return StringUtils.hasText(extracted) ? extracted.trim() : output;
-    }
-
-    private String extractFromJson(String output) {
-        String candidate = stripFences(output);
-        if (!looksLikeJson(candidate)) {
+        String output = outputText.trim();
+        if (looksLikeJson(output)) {
             return null;
         }
-        try {
-            JsonNode root = objectMapper.readTree(candidate);
-            if (root == null || !root.isObject()) {
-                return null;
-            }
-            for (String field : List.of("answer", "outputText", "summary")) {
-                JsonNode node = root.get(field);
-                if (node != null && node.isTextual() && StringUtils.hasText(node.asText())) {
-                    return node.asText();
-                }
-            }
-            return null;
-        } catch (Exception ex) {
+        if (isWrappedInQuotes(output)) {
+            String unwrapped = output.substring(1, output.length() - 1).trim();
+            return StringUtils.hasText(unwrapped) ? unwrapped.replace("\\\"", "\"") : null;
+        }
+        if (isPartialQuote(output)) {
             return null;
         }
-    }
-
-    private String stripFences(String value) {
-        if (value == null) {
-            return null;
-        }
-        String trimmed = value.trim();
-        if (trimmed.startsWith("```")) {
-            int firstNewline = trimmed.indexOf('\n');
-            int lastFence = trimmed.lastIndexOf("```");
-            if (firstNewline >= 0 && lastFence > firstNewline) {
-                return trimmed.substring(firstNewline + 1, lastFence).trim();
-            }
-        }
-        return trimmed;
+        return output;
     }
 
     private boolean looksLikeJson(String value) {
@@ -181,6 +197,52 @@ public class PatientPortalCareAiResponseComposerService {
         String trimmed = value.trim();
         return (trimmed.startsWith("{") && trimmed.endsWith("}"))
                 || (trimmed.startsWith("[") && trimmed.endsWith("]"));
+    }
+
+    private boolean isWrappedInQuotes(String value) {
+        if (!StringUtils.hasText(value) || value.length() < 2) {
+            return false;
+        }
+        return (value.startsWith("\"") && value.endsWith("\""))
+                || (value.startsWith("'") && value.endsWith("'"));
+    }
+
+    private boolean isPartialQuote(String value) {
+        if (!StringUtils.hasText(value) || value.length() < 2) {
+            return false;
+        }
+        return (value.startsWith("\"") && !value.endsWith("\""))
+                || (!value.startsWith("\"") && value.endsWith("\""))
+                || (value.startsWith("'") && !value.endsWith("'"))
+                || (!value.startsWith("'") && value.endsWith("'"));
+    }
+
+    private String buildSystemPrompt() {
+        return """
+                You are a professional, warm clinic assistant.
+                Rewrite the assistant response as plain text only.
+                Keep it concise.
+                Do not add medical advice.
+                Do not invent facts, slots, dates, prices, clinic names, or appointments.
+                Preserve confirmation prompts exactly in meaning.
+                For hi-IN, use natural Hindi or Hinglish.
+                Return plain text only.
+                """;
+    }
+
+    private String buildUserPrompt(String rawResponseText,
+                                   String responseType,
+                                   String language,
+                                   String workflow,
+                                   SafeStructuredFacts safeStructuredFacts) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("rawResponseText: ").append(rawResponseText).append('\n');
+        prompt.append("responseType: ").append(safe(responseType)).append('\n');
+        prompt.append("language: ").append(safe(language)).append('\n');
+        prompt.append("workflow: ").append(safe(workflow)).append('\n');
+        prompt.append("safeStructuredFacts: ").append(safeFactsJson(safeStructuredFacts)).append('\n');
+        prompt.append("Rewrite this as a professional clinic assistant response. Return plain text only.");
+        return prompt.toString();
     }
 
     private String safeFactsJson(SafeStructuredFacts safeStructuredFacts) {

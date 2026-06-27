@@ -85,6 +85,53 @@ class PatientPortalVoiceAssistantServiceTest {
     }
 
     @Test
+    void hindiVoiceTurnNormalizesAssistantTextBeforeTtsWithoutChangingReturnedText() {
+        VoiceOrchestratorService orchestratorService = mock(VoiceOrchestratorService.class);
+        PatientPortalCareAiService careAiService = mock(PatientPortalCareAiService.class);
+        PatientPortalVoiceAssistantService service = new PatientPortalVoiceAssistantService(orchestratorService, careAiService);
+        PatientPortalCareAiStateResponse state = new PatientPortalCareAiStateResponse(
+                "hi-IN",
+                "CHECK_APPOINTMENT",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                false,
+                null,
+                List.of(),
+                List.of(),
+                List.of()
+        );
+        when(orchestratorService.transcribeBufferedAudio(any(), any(), any(), any()))
+                .thenReturn(new VoiceTranscriptionResult("show appointments", "faster-whisper", "ok"));
+        when(careAiService.messageFromVoice(any(PatientPortalCareAiMessageRequest.class)))
+                .thenReturn(new PatientPortalCareAiMessageResponse(
+                        "Here are your upcoming appointments:\nVikas Singh · 27 Jun 2026 · 10:00",
+                        state
+                ));
+        when(orchestratorService.synthesizeAssistantText(any(), eq("hi-IN")))
+                .thenReturn(new VoiceSynthesisResult("voice".getBytes(StandardCharsets.UTF_8), "audio/wav", "piper", "ok"));
+
+        var response = service.processAudioTurn("audio".getBytes(StandardCharsets.UTF_8), "audio/webm", "voice.webm", "auto");
+
+        ArgumentCaptor<String> synthesizedTextCaptor = ArgumentCaptor.forClass(String.class);
+        verify(orchestratorService).synthesizeAssistantText(synthesizedTextCaptor.capture(), eq("hi-IN"));
+        assertThat(response.assistantText()).isEqualTo("Here are your upcoming appointments:\nVikas Singh · 27 Jun 2026 · 10:00");
+        assertThat(synthesizedTextCaptor.getValue()).contains("आपकी आने वाली अपॉइंटमेंट ये हैं:");
+        assertThat(synthesizedTextCaptor.getValue()).contains("विकास सिंह");
+        assertThat(response.audioContentType()).isEqualTo("audio/wav");
+    }
+
+    @Test
     void emptyTranscriptFailsBeforeCareAiMutation() {
         VoiceOrchestratorService orchestratorService = mock(VoiceOrchestratorService.class);
         PatientPortalCareAiService careAiService = mock(PatientPortalCareAiService.class);

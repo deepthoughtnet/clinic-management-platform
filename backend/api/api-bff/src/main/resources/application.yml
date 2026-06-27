@@ -180,6 +180,12 @@ clinic:
       session-secret: ${CLINIC_PATIENT_PORTAL_SESSION_SECRET:local-patient-portal-session-secret}
       session-ttl: ${CLINIC_PATIENT_PORTAL_SESSION_TTL:PT12H}
 
+aiva:
+  response-composer:
+    enabled: ${AIVA_RESPONSE_COMPOSER_ENABLED:false}
+    timeout-seconds: ${AIVA_RESPONSE_COMPOSER_TIMEOUT_SECONDS:5}
+    voice-only: ${AIVA_RESPONSE_COMPOSER_VOICE_ONLY:true}
+
 logging:
   level:
     root: INFO

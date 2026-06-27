@@ -293,6 +293,11 @@ services:
       PIPER_VOICE: ${PIPER_DEFAULT_VOICE:-supertonic-3-hi}
 
       AIVA_RESPONSE_LANGUAGE: ${AIVA_RESPONSE_LANGUAGE:-hi-IN}
+
+      AIVA_RESPONSE_COMPOSER_ENABLED: "false"
+      AIVA_RESPONSE_COMPOSER_TIMEOUT_SECONDS: "5"
+      AIVA_RESPONSE_COMPOSER_VOICE_ONLY: "true"
+
     ports:
       - "${API_PORT:-8089}:8089"
     extra_hosts:

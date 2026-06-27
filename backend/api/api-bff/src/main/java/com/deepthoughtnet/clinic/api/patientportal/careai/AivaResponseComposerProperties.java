@@ -1,12 +1,10 @@
 package com.deepthoughtnet.clinic.api.patientportal.careai;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
-@Component
-@ConfigurationProperties(prefix = "aiva.response.composer")
+@ConfigurationProperties(prefix = "aiva.response-composer")
 public class AivaResponseComposerProperties {
-    private boolean enabled = true;
+    private boolean enabled = false;
     private int timeoutSeconds = 5;
     private boolean voiceOnly = true;
 

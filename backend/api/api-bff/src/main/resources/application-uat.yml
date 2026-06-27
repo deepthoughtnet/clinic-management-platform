@@ -74,6 +74,12 @@ clinic:
       username: ${CLINIC_KEYCLOAK_ADMIN_USERNAME:admin}
       password: ${CLINIC_KEYCLOAK_ADMIN_PASSWORD:admin}
 
+aiva:
+  response-composer:
+    enabled: ${AIVA_RESPONSE_COMPOSER_ENABLED:false}
+    timeout-seconds: ${AIVA_RESPONSE_COMPOSER_TIMEOUT_SECONDS:5}
+    voice-only: ${AIVA_RESPONSE_COMPOSER_VOICE_ONLY:true}
+
 logging:
   level:
     root: INFO

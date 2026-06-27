@@ -868,6 +868,24 @@ class PatientPortalCareAiServiceTest {
     }
 
     @Test
+    void cancellationFlowResolvesAppointmentByDoctorDateAndTime() {
+        UUID appointmentA = UUID.randomUUID();
+        UUID appointmentB = UUID.randomUUID();
+        UUID doctorUserId = UUID.randomUUID();
+        LocalDate date = LocalDate.of(2026, 6, 28);
+        when(patientPortalService.debugAppointments()).thenReturn(List.of(
+                appointment(appointmentA, doctorUserId, "Dr Ashish Shri", date, LocalTime.of(9, 0), "BOOKED"),
+                appointment(appointmentB, doctorUserId, "Dr Neha Mehta", date, LocalTime.of(16, 30), "BOOKED")
+        ));
+
+        var response = service.message(new PatientPortalCareAiMessageRequest("Cancel Dr Neha Mehta on 28 June 2026 at 4:30 PM", "en"));
+
+        assertThat(response.state().selectedAppointment()).contains("Dr Neha Mehta");
+        assertThat(response.assistantMessage()).contains("Should I cancel this appointment?");
+        assertThat(response.assistantMessage()).doesNotContain("Please choose which appointment");
+    }
+
+    @Test
     void cancelClearsAppointmentCacheAndShowAppointmentsExcludesCancelledAppointment() {
         UUID appointmentId = UUID.randomUUID();
         UUID doctorUserId = UUID.randomUUID();
@@ -1845,6 +1863,61 @@ class PatientPortalCareAiServiceTest {
     }
 
     @Test
+    void voiceBookingCorrectionRequeriesSlotsForNewTimeWindowWithoutRepeatingQuestionCount() {
+        LocalDate appointmentDate = LocalDate.of(2026, 6, 30);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(patientPortalService.doctorSlots("doctor-neha", appointmentDate)).thenReturn(List.of(
+                slot(appointmentDate, LocalTime.of(10, 0), true),
+                slot(appointmentDate, LocalTime.of(10, 30), true),
+                slot(appointmentDate, LocalTime.of(15, 0), true),
+                slot(appointmentDate, LocalTime.of(15, 30), true)
+        ));
+
+        service.messageFromVoice(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta on " + appointmentDate + " in the evening",
+                "hi-IN"
+        ));
+        var correction = service.messageFromVoice(new PatientPortalCareAiMessageRequest("दोपहर", "hi-IN"));
+
+        ArgumentCaptor<CareAiConversationTurnCommand> captor = ArgumentCaptor.forClass(CareAiConversationTurnCommand.class);
+        verify(conversationPersistenceService, org.mockito.Mockito.atLeast(2)).safeRecordTurn(captor.capture());
+        assertThat(captor.getAllValues().getLast().workflowSnapshot().repeatedQuestionCount()).isZero();
+        verify(patientPortalService, org.mockito.Mockito.atLeast(2)).doctorSlots("doctor-neha", appointmentDate);
+        assertThat(correction.state().preferredTimeWindow()).isEqualTo("दोपहर");
+        assertThat(correction.state().slotOptions()).containsExactly("15:00", "15:30");
+        assertThat(correction.assistantMessage()).doesNotContain("evening slot");
+    }
+
+    @Test
+    void voiceBookingCorrectionRequeriesSlotsForNewDateWithoutRepeatingQuestionCount() {
+        LocalDate firstDate = LocalDate.of(2026, 6, 30);
+        LocalDate secondDate = LocalDate.of(2026, 7, 1);
+        when(patientPortalService.doctors()).thenReturn(List.of(doctor("doctor-neha", "Dr Neha Mehta", "General Medicine")));
+        when(patientPortalService.doctorSlots("doctor-neha", firstDate)).thenReturn(List.of(
+                slot(firstDate, LocalTime.of(10, 0), true),
+                slot(firstDate, LocalTime.of(10, 30), true)
+        ));
+        when(patientPortalService.doctorSlots("doctor-neha", secondDate)).thenReturn(List.of(
+                slot(secondDate, LocalTime.of(18, 0), true),
+                slot(secondDate, LocalTime.of(18, 30), true)
+        ));
+
+        service.messageFromVoice(new PatientPortalCareAiMessageRequest(
+                "Book appointment with Dr Neha Mehta on " + firstDate + " in the evening",
+                "hi-IN"
+        ));
+        var correction = service.messageFromVoice(new PatientPortalCareAiMessageRequest("1 July 2026", "hi-IN"));
+
+        ArgumentCaptor<CareAiConversationTurnCommand> captor = ArgumentCaptor.forClass(CareAiConversationTurnCommand.class);
+        verify(conversationPersistenceService, org.mockito.Mockito.atLeast(2)).safeRecordTurn(captor.capture());
+        assertThat(captor.getAllValues().getLast().workflowSnapshot().repeatedQuestionCount()).isZero();
+        verify(patientPortalService, org.mockito.Mockito.atLeastOnce()).doctorSlots("doctor-neha", secondDate);
+        assertThat(correction.state().preferredDate()).isEqualTo(secondDate.toString());
+        assertThat(correction.state().preferredTimeWindow()).isEqualTo("शाम");
+        assertThat(correction.state().slotOptions()).containsExactly("18:00", "18:30");
+    }
+
+    @Test
     void extractsDoctorFromBookingText() {
         PatientPortalCareAiExtractedEntities extracted = new PatientPortalCareAiEntityExtractor(new PatientPortalCareAiEntityRegistry())
                 .extract("book appointment with Dr Vikas", "en");
@@ -2001,7 +2074,7 @@ class PatientPortalCareAiServiceTest {
         var second = localService.message(request);
 
         assertThat(second.state().preferredDate()).isEqualTo(targetDate.toString());
-        assertThat(second.assistantMessage()).contains("कृपया नंबर या समय से स्लॉट चुनिए");
+        assertThat(second.assistantMessage()).contains("कृपया इन उपलब्ध स्लॉट में से एक चुनिए");
         assertThat(second.state().slotOptions()).containsExactly("10:00", "10:30");
     }
 
