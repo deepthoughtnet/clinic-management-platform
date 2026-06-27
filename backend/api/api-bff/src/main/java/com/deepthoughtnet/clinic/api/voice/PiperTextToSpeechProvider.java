@@ -12,6 +12,9 @@ import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.StandardEnvironment;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -27,9 +30,16 @@ public class PiperTextToSpeechProvider implements TextToSpeechProvider {
     private static final Logger log = LoggerFactory.getLogger(PiperTextToSpeechProvider.class);
     private final VoiceTestProperties properties;
     private final RestTemplate restTemplate;
+    private final Environment environment;
 
+    @Autowired
     public PiperTextToSpeechProvider(VoiceTestProperties properties, RestTemplateBuilder builder) {
+        this(properties, builder, new StandardEnvironment());
+    }
+
+    PiperTextToSpeechProvider(VoiceTestProperties properties, RestTemplateBuilder builder, Environment environment) {
         this.properties = properties;
+        this.environment = environment;
         this.restTemplate = builder
                 .setConnectTimeout(Duration.ofMillis(properties.getTts().getPiper().getConnectTimeoutMs()))
                 .setReadTimeout(Duration.ofMillis(properties.getTts().getPiper().getReadTimeoutMs()))
@@ -52,20 +62,28 @@ public class PiperTextToSpeechProvider implements TextToSpeechProvider {
             throw new IllegalStateException("Local TTS service unavailable");
         }
         String normalizedLanguage = normalizeLanguage(request.language());
+        String displayLanguage = "hi".equals(normalizedLanguage) ? "hi-IN"
+                : "en".equals(normalizedLanguage) ? "en-IN" : normalizedLanguage;
         ResolvedVoiceSelection voiceSelection = resolveVoice(request.language());
         if (!StringUtils.hasText(voiceSelection.voice())) {
             throw new IllegalStateException("Hindi Piper voice is not configured.");
         }
         try {
             log.info(
+                    "VOICE_PROVIDER_TRACE provider=piper defaultVoice={} fallbackVoice={} language={}",
+                    resolveHindiPrimaryVoice(),
+                    resolveHindiFallbackVoice(),
+                    displayLanguage
+            );
+            log.info(
                     "voice.tts.request provider=PIPER language={} selectedVoice={} fallbackReason={}",
-                    normalizedLanguage,
+                    displayLanguage,
                     voiceSelection.voice(),
                     voiceSelection.fallbackReason()
             );
             return synthesizeWithVoice(request.text(), voiceSelection.voice());
         } catch (Exception ex) {
-            String fallbackVoice = resolveVoice("en").voice();
+            String fallbackVoice = resolveHindiFallbackVoice();
             if ("hi".equals(normalizedLanguage)
                     && properties.getTts().getPiper().isAllowFallbackVoice()
                     && StringUtils.hasText(fallbackVoice)
@@ -76,7 +94,22 @@ public class PiperTextToSpeechProvider implements TextToSpeechProvider {
                         fallbackVoice,
                         ex.getMessage()
                 );
-                return synthesizeWithVoice(request.text(), fallbackVoice);
+                try {
+                    return synthesizeWithVoice(request.text(), fallbackVoice);
+                } catch (Exception fallbackEx) {
+                    log.warn(
+                            "voice.tts.fallback provider=PIPER language=hi fromVoice={} toVoice={} reason={}",
+                            fallbackVoice,
+                            resolveVoice("en").voice(),
+                            fallbackEx.getMessage()
+                    );
+                }
+            }
+            String englishFallback = resolveVoice("en").voice();
+            if (properties.getTts().getPiper().isAllowFallbackVoice()
+                    && StringUtils.hasText(englishFallback)
+                    && !englishFallback.equals(voiceSelection.voice())) {
+                return synthesizeWithVoice(request.text(), englishFallback);
             }
             throw new IllegalStateException("Audio could not be synthesized", ex);
         }
@@ -166,6 +199,25 @@ public class PiperTextToSpeechProvider implements TextToSpeechProvider {
         return properties.getTts().getPiper().getEnglishVoice();
     }
 
+    private String resolveHindiPrimaryVoice() {
+        String voice = env("PIPER_DEFAULT_VOICE");
+        if (StringUtils.hasText(voice)) {
+            return voice.trim();
+        }
+        if (StringUtils.hasText(properties.getTts().getPiper().getHindiVoice())) {
+            return properties.getTts().getPiper().getHindiVoice().trim();
+        }
+        return null;
+    }
+
+    private String resolveHindiFallbackVoice() {
+        String voice = env("PIPER_FALLBACK_VOICE");
+        if (StringUtils.hasText(voice)) {
+            return voice.trim();
+        }
+        return null;
+    }
+
     private String voiceSelectionOrDefault(ResolvedVoiceSelection selection) {
         return StringUtils.hasText(selection.voice()) ? selection.voice() : configuredDefaultVoice();
     }
@@ -176,12 +228,16 @@ public class PiperTextToSpeechProvider implements TextToSpeechProvider {
         String englishVoice = StringUtils.hasText(properties.getTts().getPiper().getEnglishVoice())
                 ? properties.getTts().getPiper().getEnglishVoice()
                 : defaultVoice;
-        String hindiVoice = properties.getTts().getPiper().getHindiVoice();
+        String hindiVoice = resolveHindiPrimaryVoice();
+        String hindiFallbackVoice = resolveHindiFallbackVoice();
         boolean allowFallback = properties.getTts().getPiper().isAllowFallbackVoice();
 
         if ("hi".equals(normalizedLanguage)) {
             if (StringUtils.hasText(hindiVoice)) {
                 return new ResolvedVoiceSelection("hi", hindiVoice, true, null);
+            }
+            if (StringUtils.hasText(hindiFallbackVoice)) {
+                return new ResolvedVoiceSelection("hi", hindiFallbackVoice, false, "Hindi Piper voice is not configured. Using fallback voice.");
             }
             if (allowFallback && StringUtils.hasText(englishVoice)) {
                 return new ResolvedVoiceSelection("hi", englishVoice, false, "Hindi Piper voice is not configured. Using fallback voice.");
@@ -195,6 +251,10 @@ public class PiperTextToSpeechProvider implements TextToSpeechProvider {
             return new ResolvedVoiceSelection(normalizedLanguage, defaultVoice, true, null);
         }
         return new ResolvedVoiceSelection(normalizedLanguage, englishVoice, StringUtils.hasText(englishVoice), null);
+    }
+
+    private String env(String key) {
+        return environment == null ? null : environment.getProperty(key);
     }
 
     private String normalizeLanguage(String language) {
