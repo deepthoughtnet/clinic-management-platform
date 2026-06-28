@@ -1,8 +1,10 @@
 export const AIVA_CHAT_INTRO_MESSAGE =
   "Hello!\n\nI'm AIVA, your healthcare assistant.\n\nI can help you:\n• Book appointments\n• Reschedule visits\n• Cancel appointments\n• View bills\n• Check lab reports\n• Explain prescriptions\n• Answer clinic questions\n\nI always ask for confirmation before making changes.";
 
-export const AIVA_CHAT_PLACEHOLDER =
-  "Ask AIVA anything...\n\nExamples:\n• Book appointment with Dr Vikas tomorrow\n• Cancel my next appointment\n• Show my lab reports";
+export const AIVA_CHAT_PLACEHOLDER = "Ask AIVA anything…";
+
+export const AIVA_CHAT_COMPOSER_HINT =
+  "Examples: Book appointment with Dr Vikas tomorrow · Cancel my next appointment · Show my bills";
 
 export const AIVA_CHAT_HELP_TEXT =
   "AIVA will ask for confirmation before booking, rescheduling, or cancelling.";
@@ -15,13 +17,6 @@ export const AIVA_CHAT_QUICK_ACTIONS = [
   { label: "Show bills", message: "Show my bills.", sendDirect: true },
   { label: "Show lab reports", message: "Show my lab reports.", sendDirect: true },
   { label: "Talk to receptionist", message: "I need help from the receptionist.", sendDirect: true },
-];
-
-export const AIVA_CHAT_EXAMPLES = [
-  "Book appointment with Dr Vikas tomorrow",
-  "Cancel my next appointment",
-  "Show my lab reports",
-  "Check my pending bills",
 ];
 
 export const AIVA_CHAT_FRIENDLY_ERROR =

@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  AIVA_CHAT_EXAMPLES,
   AIVA_CHAT_FRIENDLY_ERROR,
+  AIVA_CHAT_COMPOSER_HINT,
   AIVA_CHAT_HELP_TEXT,
   AIVA_CHAT_INTRO_MESSAGE,
   AIVA_CHAT_PLACEHOLDER,
@@ -29,20 +29,15 @@ test("aiva chat draft helpers reject blank messages and normalize newlines", () 
 test("aiva quick actions send direct messages and examples stay patient friendly", () => {
   assert.ok(AIVA_CHAT_QUICK_ACTIONS.length >= 5);
   assert.ok(AIVA_CHAT_QUICK_ACTIONS.every((action) => action.sendDirect === true && action.message.trim().length > 0));
-  assert.deepEqual(AIVA_CHAT_EXAMPLES, [
-    "Book appointment with Dr Vikas tomorrow",
-    "Cancel my next appointment",
-    "Show my lab reports",
-    "Check my pending bills",
-  ]);
 });
 
 test("aiva chat copy stays friendly and non-technical", () => {
   assert.match(AIVA_CHAT_INTRO_MESSAGE, /healthcare assistant/i);
   assert.match(AIVA_CHAT_INTRO_MESSAGE, /Book appointments/i);
   assert.match(AIVA_CHAT_INTRO_MESSAGE, /Check lab reports/i);
-  assert.match(AIVA_CHAT_PLACEHOLDER, /Ask AIVA anything/i);
-  assert.match(AIVA_CHAT_PLACEHOLDER, /Show my lab reports/);
+  assert.equal(AIVA_CHAT_PLACEHOLDER, "Ask AIVA anything…");
+  assert.match(AIVA_CHAT_COMPOSER_HINT, /Examples:/i);
+  assert.match(AIVA_CHAT_COMPOSER_HINT, /Book appointment with Dr Vikas tomorrow/);
   assert.match(AIVA_CHAT_HELP_TEXT, /confirmation/i);
   assert.equal(
     AIVA_CHAT_FRIENDLY_ERROR,
