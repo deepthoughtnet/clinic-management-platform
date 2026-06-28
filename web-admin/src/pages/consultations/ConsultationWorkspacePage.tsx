@@ -41,6 +41,7 @@ import ChatBubbleOutlineRoundedIcon from "@mui/icons-material/ChatBubbleOutlineR
 import HealingRoundedIcon from "@mui/icons-material/HealingRounded";
 import PsychologyRoundedIcon from "@mui/icons-material/PsychologyRounded";
 import FavoriteRoundedIcon from "@mui/icons-material/FavoriteRounded";
+import CallRoundedIcon from "@mui/icons-material/CallRounded";
 import EventRoundedIcon from "@mui/icons-material/EventRounded";
 import TipsAndUpdatesRoundedIcon from "@mui/icons-material/TipsAndUpdatesRounded";
 import HistoryEduRoundedIcon from "@mui/icons-material/HistoryEduRounded";
@@ -824,7 +825,7 @@ function SectionCard({
 }) {
   return (
     <Card variant="outlined" sx={{ boxShadow: "none" }}>
-      <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
+      <CardContent sx={{ py: 1.1, "&:last-child": { pb: 1.1 } }}>
         <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
             {icon ? (
@@ -844,7 +845,7 @@ function SectionCard({
           </Typography>
         ) : null}
         <Collapse in={expanded} timeout="auto" unmountOnExit>
-          <Box sx={{ pt: 1.5 }}>{children}</Box>
+          <Box sx={{ pt: 1.1 }}>{children}</Box>
         </Collapse>
       </CardContent>
     </Card>
@@ -909,9 +910,9 @@ export default function ConsultationWorkspacePage() {
     symptoms: true,
     diagnosis: true,
     notes: false,
-    advice: true,
+    advice: false,
     followup: true,
-    history: true,
+    history: false,
     "patient-history-summary": false,
   });
 
@@ -974,6 +975,15 @@ export default function ConsultationWorkspacePage() {
   React.useEffect(() => {
     setActiveTab(consultationTabKeyToIndex(searchParams.get("tab")));
   }, [searchParams]);
+
+  React.useEffect(() => {
+    if (activeTab === 0) {
+      setExpanded((current) => ({
+        ...current,
+        followup: true,
+      }));
+    }
+  }, [activeTab]);
 
   const clearAutosaveTimers = React.useCallback(() => {
     if (autosaveTimerRef.current) {
@@ -1296,7 +1306,7 @@ export default function ConsultationWorkspacePage() {
       case "Patient number":
         return <BadgeRoundedIcon fontSize="inherit" />;
       case "Phone":
-        return <PersonRoundedIcon fontSize="inherit" />;
+        return <CallRoundedIcon fontSize="inherit" />;
       case "Blood group":
         return <FavoriteRoundedIcon fontSize="inherit" />;
       case "Allergies":
@@ -2282,14 +2292,14 @@ export default function ConsultationWorkspacePage() {
         backdropFilter: "blur(12px)",
       }}
     >
-      <CardContent sx={{ py: 1.25, "&:last-child": { pb: 1.25 } }}>
-        <Stack spacing={1.25}>
-          <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1.25, flexWrap: "wrap" }}>
-            <Stack direction="row" spacing={1.25} alignItems="center" sx={{ minWidth: 0, flex: 1 }}>
+      <CardContent sx={{ py: 0.9, "&:last-child": { pb: 0.9 } }}>
+        <Stack spacing={0.85}>
+          <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, flex: 1 }}>
               <Box
                 sx={{
-                  width: 52,
-                  height: 52,
+                  width: 44,
+                  height: 44,
                   borderRadius: "50%",
                   display: "grid",
                   placeItems: "center",
@@ -2308,21 +2318,21 @@ export default function ConsultationWorkspacePage() {
                   .map((part) => part[0]?.toUpperCase() || "")
                   .join("") || "P"}
               </Box>
-              <Stack spacing={0.5} sx={{ minWidth: 0 }}>
-                <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
-                  <Typography variant="h6" sx={{ fontWeight: 950, lineHeight: 1.1 }}>
+              <Stack spacing={0.35} sx={{ minWidth: 0 }}>
+                <Stack direction="row" spacing={0.75} alignItems="center" useFlexGap flexWrap="wrap">
+                  <Typography variant="h6" sx={{ fontWeight: 950, lineHeight: 1, fontSize: { xs: "1.12rem", md: "1.35rem" } }}>
                     {patientRow ? `${patientRow.firstName} ${patientRow.lastName}` : consultation.patientName || consultation.patientId}
                   </Typography>
                   <Chip size="small" label={formatPatientAgeGender(patientRow)} />
                   <Chip size="small" color={statusColor(consultation.status)} label={consultation.status} />
                 </Stack>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
                   Patient summary, timeline, clinical notes, prescriptions, investigations, and AI companion in one workspace.
                 </Typography>
               </Stack>
             </Stack>
 
-            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" justifyContent="flex-end">
+            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" justifyContent="flex-end" sx={{ maxWidth: { xs: "100%", md: 520 } }}>
               <Button type="button" size="small" variant="outlined" onClick={() => void backToQueue()}>Back to Queue</Button>
               {canEditConsultation && !readOnly ? <Button type="button" size="small" disabled={saving} onClick={() => void manualSaveDraft()}>Save Draft</Button> : null}
               {canEditConsultation && !readOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !labTests.length} onClick={openLabOrderDialog}>Order Lab Tests</Button> : null}
@@ -2333,33 +2343,36 @@ export default function ConsultationWorkspacePage() {
             </Stack>
           </Box>
 
-          <Grid container spacing={1}>
+          <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
             {summaryMetrics.map((metric) => (
-              <Grid key={metric.label} size={{ xs: 6, md: 4, lg: 3 }}>
-                <Card variant="outlined" sx={{ boxShadow: "none", bgcolor: "rgba(255,255,255,0.75)" }}>
-                  <CardContent sx={{ p: 1, "&:last-child": { pb: 1 } }}>
-                    <Stack direction="row" spacing={0.75} alignItems="center" sx={{ color: "text.secondary" }}>
-                      <Box sx={{ display: "grid", placeItems: "center", fontSize: 14, width: 18, height: 18, borderRadius: "50%", bgcolor: "primary.50", color: "primary.main" }}>
-                        {summaryMetricIcon(metric.label)}
-                      </Box>
-                      <Typography variant="caption" sx={{ display: "block", lineHeight: 1.1, color: "text.secondary" }}>
-                        {metric.label}
-                      </Typography>
-                    </Stack>
-                    <Typography variant="body2" sx={{ fontWeight: 800, mt: 0.35, lineHeight: 1.25 }}>
-                      {metric.value}
-                    </Typography>
-                  </CardContent>
-                </Card>
-              </Grid>
+              <Chip
+                key={metric.label}
+                variant="outlined"
+                size="small"
+                icon={
+                  <Box sx={{ display: "grid", placeItems: "center", width: 18, height: 18, borderRadius: "50%", bgcolor: "primary.50", color: "primary.main" }}>
+                    {summaryMetricIcon(metric.label)}
+                  </Box>
+                }
+                label={`${metric.label}: ${metric.value}`}
+                sx={{
+                  maxWidth: "100%",
+                  "& .MuiChip-label": {
+                    maxWidth: "100%",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  },
+                }}
+              />
             ))}
-          </Grid>
+          </Stack>
 
-          <Stack direction={{ xs: "column", lg: "row" }} spacing={1} justifyContent="space-between" alignItems={{ xs: "flex-start", lg: "center" }}>
-            <Alert severity={readOnly ? "info" : prescriptionReadyForCompletion ? "success" : "warning"} sx={{ py: 0, width: "100%" }}>
+          <Stack direction={{ xs: "column", lg: "row" }} spacing={0.75} justifyContent="space-between" alignItems={{ xs: "flex-start", lg: "center" }}>
+            <Alert severity={readOnly ? "info" : prescriptionReadyForCompletion ? "success" : "warning"} sx={{ py: 0.25, width: "100%" }}>
               <strong>{workflowNextAction.title}</strong> {workflowNextAction.detail}
             </Alert>
-            <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: { lg: "nowrap" } }}>
+            <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: { lg: "nowrap" }, lineHeight: 1.2 }}>
               Shortcuts: Ctrl/Cmd+S save draft, Ctrl/Cmd+P preview Rx, Esc closes document viewer.
             </Typography>
           </Stack>
@@ -2374,20 +2387,20 @@ export default function ConsultationWorkspacePage() {
   );
 
   return (
-    <Stack spacing={1.5} sx={{ pb: 4 }}>
+    <Stack spacing={1.25} sx={{ pb: 3.5 }}>
       {header}
       {timelinePreview.length ? (
         <Card sx={{ boxShadow: "none", borderColor: "primary.light" }}>
-          <CardContent sx={{ py: 1.25, "&:last-child": { pb: 1.25 } }}>
-            <Stack spacing={1}>
+          <CardContent sx={{ py: 0.65, "&:last-child": { pb: 0.65 } }}>
+            <Stack spacing={0.6}>
               <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
                 <Box>
-                  <Stack direction="row" spacing={0.75} alignItems="center">
+                  <Stack direction="row" spacing={0.5} alignItems="center">
                     <TimelineRoundedIcon fontSize="small" color="primary" />
-                    <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Patient timeline</Typography>
-                    <Chip size="small" variant="outlined" label={`${timelinePreview.length} recent`} sx={{ height: 22 }} />
+                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Patient timeline</Typography>
+                    <Chip size="small" variant="outlined" label={`${timelinePreview.length} recent`} sx={{ height: 20 }} />
                   </Stack>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
                     Recent visits, prescriptions, and documents
                   </Typography>
                 </Box>
@@ -2396,20 +2409,20 @@ export default function ConsultationWorkspacePage() {
                 </Button>
               </Stack>
               {timelinePreview.length ? (
-                <Stack direction="row" spacing={1} sx={{ overflowX: "auto", pb: 0.25, minHeight: 96, maxHeight: 108 }}>
+                <Stack direction="row" spacing={0.75} sx={{ overflowX: "auto", pb: 0.25, minHeight: 82, maxHeight: 92 }}>
                   {timelinePreview.map((item) => (
                     <Card
                       key={item.id}
                       variant="outlined"
                       sx={{
                         boxShadow: "none",
-                        minWidth: 150,
-                        maxWidth: 176,
+                        minWidth: 114,
+                        maxWidth: 124,
                         flex: "0 0 auto",
                         cursor: item.itemType === "DOCUMENT" || item.consultationId || item.prescriptionId ? "pointer" : "default",
                         borderColor: item.consultationId === consultation.id ? "primary.main" : "divider",
                         bgcolor: item.consultationId === consultation.id ? "primary.50" : "background.paper",
-                        borderRadius: 2,
+                        borderRadius: 1.75,
                         transition: "transform 120ms ease, box-shadow 120ms ease",
                         "&:hover": {
                           transform: "translateY(-1px)",
@@ -2427,23 +2440,21 @@ export default function ConsultationWorkspacePage() {
                         }
                       }}
                     >
-                      <CardContent sx={{ p: 0.75, "&:last-child": { pb: 0.75 } }}>
-                        <Stack spacing={0.5}>
-                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
-                            <Chip size="small" label={timelineTypeLabel(item.itemType)} color={timelineColor(item.itemType)} variant="outlined" sx={{ width: "fit-content", height: 20, "& .MuiChip-label": { px: 0.75 } }} />
-                            {item.status ? <Chip size="small" label={item.status.replaceAll("_", " ")} variant="outlined" sx={{ height: 20, "& .MuiChip-label": { px: 0.75 } }} /> : null}
+                      <CardContent sx={{ p: 0.65, "&:last-child": { pb: 0.65 } }}>
+                        <Stack spacing={0.35}>
+                          <Stack direction="row" spacing={0.5} alignItems="center">
+                            <Box sx={{ width: 20, height: 20, borderRadius: "50%", display: "grid", placeItems: "center", bgcolor: "primary.50", color: "primary.main", flexShrink: 0 }}>
+                              {item.itemType === "PRESCRIPTION" ? <MedicationRoundedIcon fontSize="inherit" /> : item.itemType === "LAB_ORDER" || item.itemType === "DOCUMENT" ? <ScienceRoundedIcon fontSize="inherit" /> : item.itemType === "INVESTIGATION" ? <BiotechRoundedIcon fontSize="inherit" /> : <HistoryRoundedIcon fontSize="inherit" />}
+                            </Box>
+                            <Chip size="small" label={timelineTypeLabel(item.itemType)} color={timelineColor(item.itemType)} variant="outlined" sx={{ height: 18, maxWidth: 72, "& .MuiChip-label": { px: 0.6, fontSize: 10.5 } }} />
                           </Stack>
-                          <Typography variant="body2" sx={{ fontWeight: 850, lineHeight: 1.2, fontSize: 12.5 }} noWrap>
+                          <Typography variant="body2" sx={{ fontWeight: 850, lineHeight: 1.1, fontSize: 11.5 }} noWrap>
                             {item.title}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.2 }} noWrap>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.05 }} noWrap>
                             {compactDateTime(item.occurredAt)}
                           </Typography>
-                          {item.subtitle ? (
-                            <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                              {compactText(item.subtitle, 48)}
-                            </Typography>
-                          ) : null}
+                          {item.status ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.05 }} noWrap>{item.status.replaceAll("_", " ")}</Typography> : null}
                         </Stack>
                       </CardContent>
                     </Card>
@@ -2520,11 +2531,11 @@ export default function ConsultationWorkspacePage() {
       </Card>
 
       {activeTab === 0 ? (
-        <Card sx={{ boxShadow: "none", overflow: "hidden", borderColor: "divider" }}>
-          <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
-            <Grid container spacing={1.5} alignItems="stretch" sx={{ minHeight: 0 }}>
+        <Card sx={{ boxShadow: "none", overflow: "visible", borderColor: "divider" }}>
+          <CardContent sx={{ p: 0.75, "&:last-child": { pb: 0.75 } }}>
+            <Grid container spacing={0.75} alignItems="stretch" sx={{ minHeight: 0 }}>
               <Grid size={{ xs: 12, xl: 8 }}>
-                <Stack spacing={1.25}>
+                <Stack spacing={0.75}>
               <SectionCard id="complaint" title="Chief Complaint" subtitle="Start with the visit reason" icon={<ChatBubbleOutlineRoundedIcon fontSize="small" />} expanded={expanded.complaint} onToggle={toggleSection}>
                 <Stack spacing={1}>
                   <TextField size="small" fullWidth value={consultationForm.chiefComplaints} onChange={(e) => setConsultationForm((c) => ({ ...c, chiefComplaints: e.target.value }))} multiline minRows={2} disabled={readOnly} placeholder="Type complaint and press Tab to continue" />
@@ -2554,26 +2565,59 @@ export default function ConsultationWorkspacePage() {
 
               <SectionCard id="diagnosis" title="Diagnosis" subtitle="Suggestions with inline AI" icon={<PsychologyRoundedIcon fontSize="small" />} expanded={expanded.diagnosis} onToggle={toggleSection}>
                 <Stack spacing={1}>
-                  <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
-                    <TextField fullWidth size="small" label="Manual diagnosis" value={customDiagnosis} disabled={readOnly} onChange={(e) => setCustomDiagnosis(e.target.value)} onKeyDown={(e) => {
-                      if (e.key === "Enter" && customDiagnosis.trim()) {
-                        e.preventDefault();
-                        setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, customDiagnosis) }));
-                        setCustomDiagnosis("");
-                      }
-                    }} />
-                    <Button type="button" variant="outlined" disabled={readOnly} onClick={() => {
-                      setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, customDiagnosis) }));
-                      setCustomDiagnosis("");
-                    }}>Add</Button>
-                    {canRunAi && aiAvailable ? <Button type="button" variant="outlined" disabled={aiBusy || readOnly} onClick={() => void runAiAction("diagnosis")}>AI Suggest</Button> : null}
+                  <Stack direction={{ xs: "column", md: "row" }} spacing={1} alignItems={{ xs: "stretch", md: "center" }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Manual diagnosis"
+                      value={customDiagnosis}
+                      disabled={readOnly}
+                      onChange={(e) => setCustomDiagnosis(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && customDiagnosis.trim()) {
+                          e.preventDefault();
+                          setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, customDiagnosis) }));
+                          setCustomDiagnosis("");
+                        }
+                      }}
+                    />
+                    <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+                      <Button
+                        type="button"
+                        variant="outlined"
+                        startIcon={<AddRoundedIcon fontSize="small" />}
+                        disabled={readOnly}
+                        onClick={() => {
+                          setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, customDiagnosis) }));
+                          setCustomDiagnosis("");
+                        }}
+                      >
+                        Add
+                      </Button>
+                      {canRunAi && aiAvailable ? (
+                        <Button
+                          type="button"
+                          variant="contained"
+                          startIcon={<AutoAwesomeRoundedIcon fontSize="small" />}
+                          disabled={aiBusy || readOnly}
+                          onClick={() => void runAiAction("diagnosis")}
+                        >
+                          AI Suggest
+                        </Button>
+                      ) : null}
+                    </Stack>
                   </Stack>
+
                   <Grid container spacing={1}>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                        <CardContent sx={{ p: 1.25 }}>
-                          <Stack spacing={0.75}>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Selected diagnosis</Typography>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2, height: "100%" }}>
+                        <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
+                          <Stack spacing={0.8}>
+                            <Stack direction="row" spacing={0.75} alignItems="center">
+                              <PsychologyRoundedIcon fontSize="small" color="primary" />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Selected diagnosis</Typography>
+                            </Stack>
+                            <Typography variant="caption" color="text.secondary">Confirmed diagnoses and manual entries</Typography>
                             <QuickChipGroup disabled={readOnly} chips={DIAGNOSIS_CHIPS} color="primary" onPick={(chip) => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, chip) }))} />
                             <TextField
                               size="small"
@@ -2586,7 +2630,7 @@ export default function ConsultationWorkspacePage() {
                               disabled={readOnly}
                               InputProps={{
                                 sx: {
-                                  maxHeight: 170,
+                                  maxHeight: 150,
                                   overflowY: "auto",
                                   alignItems: "flex-start",
                                   "& textarea": { whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
@@ -2597,41 +2641,46 @@ export default function ConsultationWorkspacePage() {
                         </CardContent>
                       </Card>
                     </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                        <CardContent sx={{ p: 1.25 }}>
-                          <Stack spacing={0.75}>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Suggested differential</Typography>
+
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2, height: "100%" }}>
+                        <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
+                          <Stack spacing={0.8}>
+                            <Stack direction="row" spacing={0.75} alignItems="center">
+                              <HistoryEduRoundedIcon fontSize="small" color="primary" />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Suggested differential</Typography>
+                            </Stack>
+                            <Typography variant="caption" color="text.secondary">AI suggestions and red flags</Typography>
                             {aiDiagnosisSuggestion || aiDiagnosisItems.length ? (
                               <Stack spacing={0.75}>
-                                <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
                                   {aiDiagnosisProvider ? <Chip size="small" variant="outlined" label={`Provider: ${aiDiagnosisProvider}`} /> : null}
                                   {aiDiagnosisSummary ? <Chip size="small" color="primary" variant="outlined" label="AI ready" /> : null}
                                 </Stack>
                                 {aiDiagnosisUnstructured && !aiDiagnosisItems.length ? (
-                                  <Alert severity="error">
+                                  <Alert severity="error" sx={{ py: 0.5 }}>
                                     {aiDiagnosisSuggestion || "AI returned an invalid response. Please retry."}
                                   </Alert>
                                 ) : null}
-                                <Stack spacing={0.75}>
+                                <Stack spacing={0.65}>
                                   {aiDiagnosisItems.length ? aiDiagnosisItems.map((item, index) => (
                                     <Card key={`${item.title}-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
-                                      <CardContent sx={{ p: 1 }}>
+                                      <CardContent sx={{ p: 0.9, "&:last-child": { pb: 0.9 } }}>
                                         <Stack spacing={0.5}>
-                                          <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between">
+                                          <Stack direction="row" spacing={0.75} alignItems="flex-start" justifyContent="space-between">
                                             <Box sx={{ minWidth: 0, flex: 1 }}>
-                                              <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
+                                              <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.25 }}>
                                                 {item.title}
                                               </Typography>
-                                              {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>{item.reason}</Typography> : null}
+                                              {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.15 }}>{item.reason}</Typography> : null}
                                             </Box>
                                             <Button type="button" size="small" variant="outlined" disabled={readOnly} onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, item.title) }))}>
                                               Add
                                             </Button>
                                           </Stack>
                                           <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                            {item.redFlags.length ? item.redFlags.slice(0, 3).map((flag) => <Chip key={flag} size="small" color="warning" variant="outlined" label={`Red flag: ${flag}`} />) : null}
-                                            {item.recommendedInvestigations.length ? item.recommendedInvestigations.slice(0, 3).map((test) => <Chip key={test} size="small" variant="outlined" label={test} />) : null}
+                                            {item.redFlags.length ? item.redFlags.slice(0, 2).map((flag) => <Chip key={flag} size="small" color="warning" variant="outlined" label={`Red flag: ${flag}`} />) : null}
+                                            {item.recommendedInvestigations.length ? item.recommendedInvestigations.slice(0, 2).map((test) => <Chip key={test} size="small" variant="outlined" label={test} />) : null}
                                           </Stack>
                                         </Stack>
                                       </CardContent>
@@ -2640,8 +2689,8 @@ export default function ConsultationWorkspacePage() {
                                 </Stack>
                               </Stack>
                             ) : (
-                              <Box sx={{ p: 1.25, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                <Stack spacing={0.5}>
+                              <Box sx={{ p: 1.1, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+                                <Stack spacing={0.4}>
                                   <Typography variant="body2" sx={{ fontWeight: 800 }}>
                                     Ask AIVA to suggest differential diagnoses based on current symptoms.
                                   </Typography>
@@ -2651,21 +2700,32 @@ export default function ConsultationWorkspacePage() {
                                 </Stack>
                               </Box>
                             )}
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2, height: "100%" }}>
+                        <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
+                          <Stack spacing={0.8}>
+                            <Stack direction="row" spacing={0.75} alignItems="center">
+                              <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>AI clinical reasoning</Typography>
+                            </Stack>
+                            <Typography variant="caption" color="text.secondary">Reasoning summary and next steps</Typography>
                             <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                              <Stack spacing={0.5}>
-                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>AI explanation</Typography>
-                                {aiDiagnosisSuggestion ? (
-                                  <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
-                                    {aiDiagnosisSuggestion}
-                                  </Typography>
-                                ) : (
-                                  <Typography variant="body2" color="text.secondary">
-                                    No AI explanation yet.
-                                  </Typography>
-                                )}
-                              </Stack>
+                              {aiDiagnosisSuggestion ? (
+                                <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
+                                  {aiDiagnosisSuggestion}
+                                </Typography>
+                              ) : (
+                                <Typography variant="body2" color="text.secondary">
+                                  Ask AIVA to suggest differential diagnoses based on current symptoms.
+                                </Typography>
+                              )}
                             </Box>
-                            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
                               <Button
                                 type="button"
                                 size="small"
@@ -2675,7 +2735,15 @@ export default function ConsultationWorkspacePage() {
                               >
                                 Add to diagnosis
                               </Button>
-                              <Button type="button" size="small" variant="outlined" disabled={readOnly || !aiDiagnosisSummary} onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, aiDiagnosisSummary || "") }))}>Add summary</Button>
+                              <Button
+                                type="button"
+                                size="small"
+                                variant="outlined"
+                                disabled={readOnly || !aiDiagnosisSummary}
+                                onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, aiDiagnosisSummary || "") }))}
+                              >
+                                Add summary
+                              </Button>
                             </Stack>
                           </Stack>
                         </CardContent>
@@ -2686,7 +2754,7 @@ export default function ConsultationWorkspacePage() {
               </SectionCard>
 
               <SectionCard id="notes" title="Clinical Notes / SOAP" subtitle="Subjective, objective, assessment, and plan" icon={<DescriptionRoundedIcon fontSize="small" />} expanded={expanded.notes} onToggle={toggleSection}>
-                <Grid container spacing={1}>
+                <Grid container spacing={0.75}>
                   <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Subjective" value={consultationForm.chiefComplaints} onChange={(e) => setConsultationForm((c) => ({ ...c, chiefComplaints: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
                   <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Objective" value={consultationForm.clinicalNotes} onChange={(e) => setConsultationForm((c) => ({ ...c, clinicalNotes: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
                   <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Assessment" value={consultationForm.diagnosis} onChange={(e) => setConsultationForm((c) => ({ ...c, diagnosis: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
@@ -2696,234 +2764,446 @@ export default function ConsultationWorkspacePage() {
                 </Stack>
               </Grid>
 
-              <Grid size={{ xs: 12, xl: 4 }}>
-                <Stack spacing={1.25} sx={{ position: { xl: "sticky" }, top: { xl: 88 }, alignSelf: "flex-start" }}>
-              <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                <CardContent sx={{ p: 1.5 }}>
-                  <Stack spacing={1.25}>
-                    <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                      <Box>
-                        <Stack direction="row" spacing={0.75} alignItems="center">
-                          <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                          <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>AIVA Clinical Companion</Typography>
+              <Grid
+                size={{ xs: 12, xl: 4 }}
+                sx={{
+                  minWidth: 0,
+                  minHeight: 0,
+                }}
+              >
+                <Stack
+                  spacing={1}
+                  sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 1,
+                    minWidth: 0,
+                    minHeight: 0,
+                    overflowX: "hidden",
+                    overflowY: "visible",
+                    pr: 0,
+                  }}
+                >
+                  <Card variant="outlined" sx={{ boxShadow: "none", overflow: "visible", height: "auto", minHeight: "auto" }}>
+                    <CardContent sx={{ p: 0.95, "&:last-child": { pb: 0.95 } }}>
+                      <Stack spacing={0.85}>
+                        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                          <Box>
+                            <Stack direction="row" spacing={0.75} alignItems="center">
+                              <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                              <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>AIVA Clinical Companion</Typography>
+                            </Stack>
+                            <Typography variant="caption" color="text.secondary">Assistive clinical guidance and next steps</Typography>
+                          </Box>
+                          <Chip size="small" color={aiAvailable ? "success" : "warning"} variant="outlined" label={aiAvailable ? "AI ready" : "AI unavailable"} />
                         </Stack>
-                        <Typography variant="caption" color="text.secondary">Assistive clinical guidance and next steps</Typography>
-                      </Box>
-                      <Chip size="small" color={aiAvailable ? "success" : "warning"} variant="outlined" label={aiAvailable ? "AI ready" : "AI unavailable"} />
-                    </Stack>
-                    <Alert severity="info" sx={{ py: 0.5 }}>
-                      AI suggestions are assistive only. Doctor must verify.
-                    </Alert>
-                    <Box sx={{ p: 1.25, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                      <Stack spacing={0.75}>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Ask AIVA</Typography>
-                        <TextField
-                          size="small"
-                          fullWidth
-                          label={undefined}
-                          placeholder="Ask about diagnosis, red flags, tests, or prescription safety…"
-                          value={aivaClinicalQuestion}
-                          onChange={(e) => setAivaClinicalQuestion(e.target.value)}
-                          multiline
-                          minRows={2}
-                          disabled={!aiAvailable || aiBusy}
-                        />
-                        <Stack direction="row" spacing={0.75} justifyContent="flex-end">
-                          <Button type="button" size="small" variant="contained" disabled>
-                            Ask
-                          </Button>
-                        </Stack>
-                      </Stack>
-                    </Box>
-                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                      <Chip size="small" color="primary" icon={<PsychologyRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAvailable} disabled={aiBusy || !aiAvailable} variant="outlined" label="Suggest diagnosis" onClick={() => void runAiAction("diagnosis")} />
-                      <Chip size="small" color="info" icon={<DescriptionRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAvailable} disabled={aiBusy || !aiAvailable} variant="outlined" label="Structure SOAP notes" onClick={() => void runAiAction("notes")} />
-                      <Chip size="small" color="secondary" icon={<MedicationRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAvailable} disabled={aiBusy || !aiAvailable} variant="outlined" label="Prescription template" onClick={() => void applyAiPrescriptionTemplate()} />
-                      <Chip size="small" color="success" icon={<TipsAndUpdatesRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAvailable} disabled={aiBusy || !aiAvailable} variant="outlined" label="Patient advice" onClick={() => void runAiAction("instructions")} />
-                      <Chip size="small" color="warning" icon={<WarningAmberRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAvailable} disabled={aiBusy || !aiAvailable} variant="outlined" label="Red flags" onClick={() => void runAiAction("diagnosis")} />
-                      <Chip size="small" color="error" icon={<HealthAndSafetyRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAvailable} disabled={aiBusy || !aiAvailable} variant="outlined" label="Drug safety" onClick={() => void applyAiPrescriptionTemplate()} />
-                      <Chip size="small" color="info" icon={<ScienceRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAvailable} disabled={aiBusy || !aiAvailable} variant="outlined" label="Recommended tests" onClick={() => void generateClinicalSummary()} />
-                    </Stack>
-                    {aiStatusMessage ? <Alert severity="warning">{aiStatusMessage}</Alert> : null}
-                    <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                      <Stack spacing={0.75}>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Current AI output</Typography>
-                        {aiSummaryText || clinicalSummary ? (
-                          <Stack spacing={0.75}>
-                            {aiSummaryProviderLabel ? <Chip size="small" variant="outlined" label={`Provider: ${aiSummaryProviderLabel}`} /> : null}
-                            {aiSummaryModelLabel ? <Chip size="small" variant="outlined" label={`Model: ${aiSummaryModelLabel}`} /> : null}
-                            {aiSummaryText ? <Typography variant="body2" sx={{ lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{compactText(aiSummaryText, 420)}</Typography> : <Typography variant="body2" color="text.secondary">Generate a summary or ask AIVA to see results here.</Typography>}
-                            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                              <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText} onClick={() => void copyAiSummaryToClipboard()}>Copy summary</Button>
-                              <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText || readOnly} onClick={applyAiSummaryToConsultationNotes}>Apply to notes</Button>
+                        <Alert severity="info" sx={{ py: 0.4 }}>
+                          AI suggestions are assistive only. Doctor must verify.
+                        </Alert>
+                        <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper", overflow: "visible" }}>
+                          <Stack spacing={0.65}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Ask AIVA</Typography>
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "flex-end" }}>
+                              <TextField
+                                size="small"
+                                fullWidth
+                                placeholder="Ask about diagnosis, red flags, tests, or prescription safety…"
+                                value={aivaClinicalQuestion}
+                                onChange={(e) => setAivaClinicalQuestion(e.target.value)}
+                                multiline
+                                minRows={1}
+                                disabled={!aiAvailable || aiBusy}
+                                sx={{ flex: 1, minWidth: 0 }}
+                              />
+                              <Button
+                                type="button"
+                                size="small"
+                                variant="contained"
+                                disabled
+                                title="AIVA ask action is not wired yet"
+                                sx={{ flexShrink: 0, minWidth: 72 }}
+                              >
+                                Ask
+                              </Button>
                             </Stack>
                           </Stack>
-                        ) : (
-                          <Box sx={{ p: 1, borderRadius: 1.5, bgcolor: "action.hover" }}>
-                            <Typography variant="body2" color="text.secondary">
-                              AIVA is ready. Ask a question or choose a clinical action.
-                            </Typography>
-                          </Box>
-                        )}
-                      </Stack>
-                    </Box>
-                  </Stack>
-                </CardContent>
-              </Card>
-
-              <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                <CardContent sx={{ p: 1.5 }}>
-                  <Stack spacing={1.1}>
-                    <Box>
-                      <Stack direction="row" spacing={0.75} alignItems="center">
-                        <TrendingUpRoundedIcon fontSize="small" color="primary" />
-                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Report trends</Typography>
-                      </Stack>
-                      <Typography variant="caption" color="text.secondary">Compare recent lab reports and findings</Typography>
-                    </Box>
-                    {!labReportPreview.length ? (
-                      <Box sx={{ p: 1.25, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                        <Stack spacing={0.5} alignItems="flex-start">
-                          <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                            No previous comparable reports.
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            When previous reports become available, AIVA will automatically compare trends.
-                          </Typography>
-                          <Button type="button" size="small" variant="outlined" disabled startIcon={<TrendingUpRoundedIcon fontSize="small" />}>
-                            Compare reports
+                        </Box>
+                        <Box
+                          sx={{
+                            display: "grid",
+                            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
+                            gap: 0.75,
+                            overflow: "visible",
+                          }}
+                        >
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<PsychologyRoundedIcon fontSize="small" />} disabled={!aiAvailable || aiBusy} onClick={() => void runAiAction("diagnosis")}>
+                            Suggest diagnosis
                           </Button>
-                        </Stack>
-                      </Box>
-                    ) : (
-                      <Stack spacing={0.75}>
-                        {labReportPreview.map((document) => (
-                          <Card key={document.id} variant="outlined" sx={{ boxShadow: "none" }}>
-                            <CardContent sx={{ p: 1 }}>
-                              <Stack spacing={0.35}>
-                                <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap>
-                                  {document.documentType.replaceAll("_", " ")} • {document.originalFilename}
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<WarningAmberRoundedIcon fontSize="small" />} sx={{ color: "warning.main", borderColor: "warning.light" }} disabled={!aiAvailable || aiBusy} onClick={() => void runAiAction("diagnosis")}>
+                            Red flags
+                          </Button>
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<ScienceRoundedIcon fontSize="small" />} sx={{ color: "secondary.main", borderColor: "secondary.light" }} disabled={!aiAvailable || aiBusy} onClick={() => void generateClinicalSummary()}>
+                            Recommended tests
+                          </Button>
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<HealthAndSafetyRoundedIcon fontSize="small" />} sx={{ color: "error.main", borderColor: "error.light" }} disabled={!aiAvailable || aiBusy} onClick={() => void applyAiPrescriptionTemplate()}>
+                            Drug interaction
+                          </Button>
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<TipsAndUpdatesRoundedIcon fontSize="small" />} sx={{ color: "success.main", borderColor: "success.light" }} disabled={!aiAvailable || aiBusy} onClick={() => void runAiAction("instructions")}>
+                            Patient advice
+                          </Button>
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<DescriptionRoundedIcon fontSize="small" />} sx={{ color: "info.main", borderColor: "info.light" }} disabled={!aiAvailable || aiBusy} onClick={() => void runAiAction("notes")}>
+                            SOAP notes
+                          </Button>
+                        </Box>
+                        {aiStatusMessage ? <Alert severity="warning">{aiStatusMessage}</Alert> : null}
+                        <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper", overflow: "visible" }}>
+                          <Stack spacing={0.65}>
+                            <Stack direction="row" spacing={0.75} alignItems="center">
+                              <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Current AI output</Typography>
+                            </Stack>
+                            {aiSummaryText || clinicalSummary ? (
+                              <Stack spacing={0.75}>
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  {aiSummaryProviderLabel ? <Chip size="small" variant="outlined" label={`Provider: ${aiSummaryProviderLabel}`} /> : null}
+                                  {aiSummaryModelLabel ? <Chip size="small" variant="outlined" label={`Model: ${aiSummaryModelLabel}`} /> : null}
+                                  <Chip size="small" color="primary" variant="outlined" label="AI ready" />
+                                </Stack>
+                                <Box sx={{ p: 1, borderRadius: 2, bgcolor: "primary.50", border: 1, borderColor: "primary.light" }}>
+                                  <Stack direction="row" spacing={0.75} alignItems="flex-start">
+                                    <Box sx={{ width: 26, height: 26, borderRadius: "50%", display: "grid", placeItems: "center", bgcolor: "background.paper", color: "primary.main", border: 1, borderColor: "primary.light", flexShrink: 0 }}>
+                                      <AutoAwesomeRoundedIcon fontSize="inherit" />
+                                    </Box>
+                                    <Box sx={{ minWidth: 0, flex: 1 }}>
+                                      <Typography variant="body2" sx={{ lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
+                                        {aiSummaryText ? compactText(aiSummaryText, 420) : "AIVA is ready. Ask a question or choose a clinical action."}
+                                      </Typography>
+                                    </Box>
+                                  </Stack>
+                                </Box>
+                                <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                                  <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText} onClick={() => void copyAiSummaryToClipboard()}>Copy summary</Button>
+                                  <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText || readOnly} onClick={applyAiSummaryToConsultationNotes}>Apply to notes</Button>
+                                </Stack>
+                              </Stack>
+                            ) : (
+                              <Box sx={{ p: 1.1, borderRadius: 2, bgcolor: "action.hover" }}>
+                                <Typography variant="body2" color="text.secondary">
+                                  AIVA is ready. Ask a question or choose a clinical action.
                                 </Typography>
-                                <Typography variant="caption" color="text.secondary" noWrap>
-                                  {compactDate(document.createdAt)}{document.aiExtractionSummary ? ` • ${compactText(document.aiExtractionSummary, 60)}` : ""}
+                              </Box>
+                            )}
+                          </Stack>
+                        </Box>
+                      </Stack>
+                    </CardContent>
+                  </Card>
+
+                  <SectionCard id="followup" title="Vitals & Follow-up" subtitle="Capture essentials, set next visit" icon={<MonitorHeartRoundedIcon fontSize="small" />} expanded={expanded.followup} onToggle={toggleSection}>
+                    <Stack spacing={1} sx={{ overflow: "visible", minHeight: 0 }}>
+                      <Box
+                        sx={{
+                          display: "grid",
+                          gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))", xl: "repeat(2, minmax(0, 1fr))" },
+                          gap: 0.75,
+                          alignItems: "stretch",
+                          minHeight: 0,
+                        }}
+                      >
+                        {[
+                          {
+                            label: "BP Sys",
+                            icon: <FavoriteRoundedIcon fontSize="small" color="error" />,
+                            value: consultationForm.bloodPressureSystolic,
+                            onChange: (value: string) => setConsultationForm((c) => ({ ...c, bloodPressureSystolic: value })),
+                          },
+                          {
+                            label: "BP Dia",
+                            icon: <FavoriteRoundedIcon fontSize="small" color="error" />,
+                            value: consultationForm.bloodPressureDiastolic,
+                            onChange: (value: string) => setConsultationForm((c) => ({ ...c, bloodPressureDiastolic: value })),
+                          },
+                          {
+                            label: "Pulse",
+                            icon: <MonitorHeartRoundedIcon fontSize="small" color="primary" />,
+                            value: consultationForm.pulseRate,
+                            onChange: (value: string) => setConsultationForm((c) => ({ ...c, pulseRate: value })),
+                          },
+                          {
+                            label: "Temp",
+                            icon: <EventRoundedIcon fontSize="small" color="warning" />,
+                            value: consultationForm.temperature,
+                            onChange: (value: string) => setConsultationForm((c) => ({ ...c, temperature: value })),
+                          },
+                          {
+                            label: "SpO2",
+                            icon: <HealthAndSafetyRoundedIcon fontSize="small" color="success" />,
+                            value: consultationForm.spo2,
+                            onChange: (value: string) => setConsultationForm((c) => ({ ...c, spo2: value })),
+                          },
+                          {
+                            label: "Resp. Rate",
+                            icon: <ScienceRoundedIcon fontSize="small" color="secondary" />,
+                            value: consultationForm.respiratoryRate,
+                            onChange: (value: string) => setConsultationForm((c) => ({ ...c, respiratoryRate: value })),
+                          },
+                          {
+                            label: "Weight (kg)",
+                            icon: <PersonRoundedIcon fontSize="small" color="primary" />,
+                            value: consultationForm.weightKg,
+                            onChange: (value: string) => setConsultationForm((c) => ({ ...c, weightKg: value })),
+                          },
+                          {
+                            label: "Height (cm)",
+                            icon: <BadgeRoundedIcon fontSize="small" color="primary" />,
+                            value: consultationForm.heightCm,
+                            onChange: (value: string) => setConsultationForm((c) => ({ ...c, heightCm: value })),
+                          },
+                        ].map((item) => (
+                          <Card key={item.label} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.25, height: "auto", minHeight: "auto", overflow: "visible" }}>
+                            <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                              <Stack spacing={0.55} sx={{ height: "auto", minHeight: 0, overflow: "visible" }}>
+                                <Stack direction="row" spacing={0.5} alignItems="center">
+                                  {item.icon}
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 900, lineHeight: 1.05, fontSize: 12.5 }}>{item.label}</Typography>
+                                </Stack>
+                                <TextField
+                                  size="small"
+                                  fullWidth
+                                  label={item.label}
+                                  value={item.value}
+                                  onChange={(e) => item.onChange(e.target.value)}
+                                  disabled={readOnly}
+                                  sx={{ flex: 1, minWidth: 0 }}
+                                />
+                                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.05 }}>
+                                  Trend n/a
                                 </Typography>
                               </Stack>
                             </CardContent>
                           </Card>
                         ))}
-                      </Stack>
-                    )}
-                  </Stack>
-                </CardContent>
-              </Card>
+                      </Box>
 
-              <SectionCard id="advice" title="Advice" subtitle="Reusable advice shortcuts" icon={<LightbulbRoundedIcon fontSize="small" />} expanded={expanded.advice} onToggle={toggleSection}>
-                <Stack spacing={1}>
-                  <QuickChipGroup disabled={readOnly} chips={ADVICE_CHIPS} onPick={(chip) => setConsultationForm((c) => ({ ...c, advice: appendTokenLine(c.advice, chip) }))} />
-                  <TextField size="small" fullWidth label="Advice" value={consultationForm.advice} onChange={(e) => setConsultationForm((c) => ({ ...c, advice: e.target.value }))} multiline minRows={2} disabled={readOnly} />
-                </Stack>
-              </SectionCard>
-
-              <SectionCard id="followup" title="Vitals & Follow-up" subtitle="Capture essentials, set next visit" icon={<MonitorHeartRoundedIcon fontSize="small" />} expanded={expanded.followup} onToggle={toggleSection}>
-                <Stack spacing={1}>
-                  <Grid container spacing={1}>
-                    <Grid size={{ xs: 6, md: 3 }}><TextField size="small" fullWidth label="BP Sys" value={consultationForm.bloodPressureSystolic} onChange={(e) => setConsultationForm((c) => ({ ...c, bloodPressureSystolic: e.target.value }))} disabled={readOnly} /></Grid>
-                    <Grid size={{ xs: 6, md: 3 }}><TextField size="small" fullWidth label="BP Dia" value={consultationForm.bloodPressureDiastolic} onChange={(e) => setConsultationForm((c) => ({ ...c, bloodPressureDiastolic: e.target.value }))} disabled={readOnly} /></Grid>
-                    <Grid size={{ xs: 6, md: 3 }}><TextField size="small" fullWidth label="Pulse" value={consultationForm.pulseRate} onChange={(e) => setConsultationForm((c) => ({ ...c, pulseRate: e.target.value }))} disabled={readOnly} /></Grid>
-                    <Grid size={{ xs: 6, md: 3 }}><TextField size="small" fullWidth label="Temp" value={consultationForm.temperature} onChange={(e) => setConsultationForm((c) => ({ ...c, temperature: e.target.value }))} disabled={readOnly} /></Grid>
-                    <Grid size={{ xs: 6, md: 3 }}><TextField size="small" fullWidth label="SpO2" value={consultationForm.spo2} onChange={(e) => setConsultationForm((c) => ({ ...c, spo2: e.target.value }))} disabled={readOnly} /></Grid>
-                    <Grid size={{ xs: 6, md: 3 }}><TextField size="small" fullWidth label="Resp. Rate" value={consultationForm.respiratoryRate} onChange={(e) => setConsultationForm((c) => ({ ...c, respiratoryRate: e.target.value }))} disabled={readOnly} /></Grid>
-                    <Grid size={{ xs: 6, md: 3 }}><TextField size="small" fullWidth label="Weight (kg)" value={consultationForm.weightKg} onChange={(e) => setConsultationForm((c) => ({ ...c, weightKg: e.target.value }))} disabled={readOnly} /></Grid>
-                    <Grid size={{ xs: 6, md: 3 }}><TextField size="small" fullWidth label="Height (cm)" value={consultationForm.heightCm} onChange={(e) => setConsultationForm((c) => ({ ...c, heightCm: e.target.value }))} disabled={readOnly} /></Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel id="temp-unit-label">Unit</InputLabel>
-                        <Select labelId="temp-unit-label" label="Unit" value={consultationForm.temperatureUnit} onChange={(e) => setConsultationForm((c) => ({ ...c, temperatureUnit: String(e.target.value) as ConsultationFormState["temperatureUnit"] }))}>
-                          <MenuItem value="">-</MenuItem>
-                          <MenuItem value="CELSIUS">C</MenuItem>
-                          <MenuItem value="FAHRENHEIT">F</MenuItem>
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                  </Grid>
-                  <Grid container spacing={1}>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <Stack direction="row" spacing={1} flexWrap="wrap">
-                        <Chip size="small" label={`BMI ${currentBmi ? currentBmi.toFixed(1) : "-"}`} variant="outlined" />
-                        <Chip size="small" label={currentBmiCategory || "BMI n/a"} variant="outlined" />
-                      </Stack>
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <Stack direction="row" spacing={1} flexWrap="wrap">
-                        <Chip size="small" label={`Last BMI ${lastBmi ? lastBmi.toFixed(1) : "-"}`} variant="outlined" />
-                        <Chip size="small" label={lastBmiCategory || "Last BMI n/a"} variant="outlined" />
-                      </Stack>
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <TextField size="small" fullWidth label="Follow-up date" type="date" value={consultationForm.followUpDate} disabled={readOnly} onChange={(e) => setConsultationForm((c) => ({ ...c, followUpDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
-                    </Grid>
-                    <Grid size={{ xs: 12 }}>
-                      <QuickChipGroup disabled={readOnly} chips={FOLLOWUP_CHIPS} color="secondary" onPick={applyFollowUp} />
-                    </Grid>
-                  </Grid>
-                </Stack>
-              </SectionCard>
-
-              <SectionCard id="history" title="History at a glance" subtitle="Previous visits, prescriptions, and documents" icon={<HistoryRoundedIcon fontSize="small" />} expanded={expanded.history} onToggle={toggleSection}>
-                <Stack spacing={1}>
-                  {!activeTimeline.length ? (
-                    <Alert severity="info">No previous clinical history recorded.</Alert>
-                  ) : (
-                    <Stack spacing={0.75}>
-                      {activeTimeline.slice(0, 6).map((item) => (
-                        <Card
-                          key={item.id}
-                          variant="outlined"
-                          sx={{
-                            boxShadow: "none",
-                            cursor: item.itemType === "DOCUMENT" || item.consultationId || item.prescriptionId ? "pointer" : "default",
-                            borderRadius: 1.5,
-                            transition: "transform 120ms ease, box-shadow 120ms ease",
-                            "&:hover": { boxShadow: 1, transform: "translateY(-1px)" },
-                          }}
-                          onClick={() => {
-                            if (item.itemType === "DOCUMENT" && item.documentId) {
-                              const document = clinicalDocuments.find((row) => row.id === item.documentId);
-                              if (document) void openClinicalDocument(document);
-                              return;
-                            }
-                            if (item.consultationId && item.consultationId !== consultation.id) {
-                              navigate(`/consultations/${item.consultationId}`);
-                            }
-                          }}
-                        >
-                          <CardContent sx={{ p: 1 }}>
-                            <Stack direction="row" spacing={1} alignItems="flex-start">
-                              <Box sx={{ width: 28, height: 28, borderRadius: "50%", display: "grid", placeItems: "center", bgcolor: "primary.50", color: "primary.main", flexShrink: 0 }}>
-                                {item.itemType === "PRESCRIPTION" ? <MedicationRoundedIcon fontSize="small" /> : item.itemType === "LAB_ORDER" || item.itemType === "DOCUMENT" ? <ScienceRoundedIcon fontSize="small" /> : item.itemType === "INVESTIGATION" ? <BiotechRoundedIcon fontSize="small" /> : <HistoryRoundedIcon fontSize="small" />}
-                              </Box>
-                              <Stack spacing={0.25} sx={{ minWidth: 0, flex: 1 }}>
-                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
-                                  <Chip size="small" label={timelineTypeLabel(item.itemType)} color={timelineColor(item.itemType)} variant="outlined" sx={{ height: 22 }} />
-                                  {item.consultationId === consultation.id ? <Chip size="small" color="primary" label="Current" sx={{ height: 22 }} /> : null}
-                                </Stack>
-                                <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.25 }} noWrap>
-                                  {item.title}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary" noWrap>
-                                  {compactDateTime(item.occurredAt)}{item.subtitle ? ` • ${compactText(item.subtitle, 42)}` : ""}
-                                </Typography>
+                      <Box
+                        sx={{
+                          display: "grid",
+                          gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+                          gap: 0.75,
+                          alignItems: "stretch",
+                          minHeight: 0,
+                        }}
+                      >
+                        <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.25, overflow: "visible", height: "auto", minHeight: "auto" }}>
+                          <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                            <Stack spacing={0.55}>
+                              <Stack direction="row" spacing={0.5} alignItems="center">
+                                <EventRoundedIcon fontSize="small" color="primary" />
+                                <Typography variant="subtitle2" sx={{ fontWeight: 900, lineHeight: 1.05, fontSize: 12.5 }}>Temperature unit</Typography>
                               </Stack>
+                              <FormControl fullWidth size="small">
+                                <InputLabel id="temp-unit-label">Unit</InputLabel>
+                                <Select labelId="temp-unit-label" label="Unit" value={consultationForm.temperatureUnit} onChange={(e) => setConsultationForm((c) => ({ ...c, temperatureUnit: String(e.target.value) as ConsultationFormState["temperatureUnit"] }))}>
+                                  <MenuItem value="">-</MenuItem>
+                                  <MenuItem value="CELSIUS">C</MenuItem>
+                                  <MenuItem value="FAHRENHEIT">F</MenuItem>
+                                </Select>
+                              </FormControl>
+                              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.05 }}>
+                                Trend n/a
+                              </Typography>
                             </Stack>
                           </CardContent>
                         </Card>
-                      ))}
+
+                        <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.25, overflow: "visible", height: "auto", minHeight: "auto" }}>
+                          <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                            <Stack spacing={0.55}>
+                              <Stack direction="row" spacing={0.5} alignItems="center">
+                                <MonitorHeartRoundedIcon fontSize="small" color="primary" />
+                                <Typography variant="subtitle2" sx={{ fontWeight: 900, lineHeight: 1.05, fontSize: 12.5 }}>BMI</Typography>
+                              </Stack>
+                              <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                                <Chip size="small" label={`BMI ${currentBmi ? currentBmi.toFixed(1) : "-"}`} variant="outlined" />
+                                <Chip size="small" label={currentBmiCategory || "BMI n/a"} variant="outlined" />
+                                <Chip size="small" label={`Last ${lastBmi ? lastBmi.toFixed(1) : "-"}`} variant="outlined" />
+                                <Chip size="small" label={lastBmiCategory || "Last BMI n/a"} variant="outlined" />
+                              </Stack>
+                              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.05 }}>
+                                Trend n/a
+                              </Typography>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      </Box>
+
+                      <Box
+                        sx={{
+                          display: "grid",
+                          gridTemplateColumns: "minmax(0, 1fr)",
+                          gap: 1,
+                          minHeight: 0,
+                        }}
+                      >
+                        <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.25, overflow: "visible", height: "auto", minHeight: "auto" }}>
+                          <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                            <Stack spacing={0.55}>
+                              <Stack direction="row" spacing={0.5} alignItems="center">
+                                <EventRoundedIcon fontSize="small" color="secondary" />
+                                <Typography variant="subtitle2" sx={{ fontWeight: 900, lineHeight: 1.05, fontSize: 12.5 }}>Follow-up date</Typography>
+                              </Stack>
+                              <TextField size="small" fullWidth label="Follow-up date" type="date" value={consultationForm.followUpDate} disabled={readOnly} onChange={(e) => setConsultationForm((c) => ({ ...c, followUpDate: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.05 }}>
+                                Next visit
+                              </Typography>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      </Box>
+
+                      <Box sx={{ overflow: "visible" }}>
+                        <QuickChipGroup disabled={readOnly} chips={FOLLOWUP_CHIPS} color="secondary" onPick={applyFollowUp} />
+                      </Box>
                     </Stack>
-                  )}
+                  </SectionCard>
+
+                  <SectionCard id="advice" title="Advice" subtitle="Reusable advice shortcuts" icon={<LightbulbRoundedIcon fontSize="small" />} expanded={expanded.advice} onToggle={toggleSection}>
+                    <Stack spacing={1.25} sx={{ overflow: "visible", minHeight: 0 }}>
+                      <Box sx={{ overflow: "visible", minHeight: 0 }}>
+                        <QuickChipGroup disabled={readOnly} chips={ADVICE_CHIPS} onPick={(chip) => setConsultationForm((c) => ({ ...c, advice: appendTokenLine(c.advice, chip) }))} />
+                      </Box>
+                      <TextField size="small" fullWidth label="Advice" value={consultationForm.advice} onChange={(e) => setConsultationForm((c) => ({ ...c, advice: e.target.value }))} multiline minRows={2} disabled={readOnly} />
+                    </Stack>
+                  </SectionCard>
+
+                  <Card variant="outlined" sx={{ boxShadow: "none", overflow: "visible", height: "auto", minHeight: "auto" }}>
+                    <CardContent sx={{ p: 0.95, "&:last-child": { pb: 0.95 } }}>
+                      <Stack spacing={0.8}>
+                        <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between">
+                          <Box>
+                            <Stack direction="row" spacing={0.75} alignItems="center">
+                              <InsightsRoundedIcon fontSize="small" color="primary" />
+                              <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Report trends</Typography>
+                            </Stack>
+                            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.15 }}>
+                              {labReportPreview.length ? "Compare recent lab reports and findings" : "No comparable reports yet"}
+                            </Typography>
+                          </Box>
+                          <Button type="button" size="small" variant="outlined" disabled={!labReportPreview.length} startIcon={<TrendingUpRoundedIcon fontSize="small" />}>
+                            Compare
+                          </Button>
+                        </Stack>
+                        {!labReportPreview.length ? (
+                          <Box sx={{ p: 0.9, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper", overflow: "visible" }}>
+                            <Stack spacing={0.45} alignItems="flex-start" sx={{ width: "100%" }}>
+                              <Stack direction="row" spacing={0.75} alignItems="center">
+                                <InsightsRoundedIcon fontSize="small" color="primary" />
+                                <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                  No previous comparable reports.
+                                </Typography>
+                              </Stack>
+                              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+                                When previous reports become available, AIVA will compare trends automatically.
+                              </Typography>
+                            </Stack>
+                          </Box>
+                        ) : (
+                          <Stack spacing={0.5}>
+                            {labReportPreview.slice(0, 2).map((document) => (
+                              <Card key={document.id} variant="outlined" sx={{ boxShadow: "none", height: "auto", minHeight: "auto", overflow: "visible" }}>
+                                <CardContent sx={{ p: 0.8, "&:last-child": { pb: 0.8 } }}>
+                                  <Stack spacing={0.25}>
+                                    <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.2 }} noWrap>
+                                      {document.documentType.replaceAll("_", " ")} • {document.originalFilename}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                      {compactDate(document.createdAt)}{document.aiExtractionSummary ? ` • ${compactText(document.aiExtractionSummary, 48)}` : ""}
+                                    </Typography>
+                                  </Stack>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </Stack>
+                        )}
+                      </Stack>
+                    </CardContent>
+                  </Card>
+
+                  <Box sx={{ overflow: "visible" }}>
+                    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1, mb: 0.75 }}>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
+                        <Box sx={{ display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: "50%", bgcolor: "primary.50", color: "primary.main", flexShrink: 0 }}>
+                          <HistoryRoundedIcon fontSize="small" />
+                        </Box>
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 900, lineHeight: 1.15 }}>History at a glance</Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.1 }}>
+                            {activeTimeline.length ? `${activeTimeline.length} previous consultation${activeTimeline.length === 1 ? "" : "s"}` : "No previous history"}
+                          </Typography>
+                        </Box>
+                      </Box>
+                      <Button type="button" size="small" variant="text" onClick={() => {
+                        setExpanded((current) => ({ ...current, history: !current.history }));
+                      }}>
+                        {expanded.history ? "Hide" : "View"}
+                      </Button>
+                    </Box>
+                    <Collapse in={expanded.history} timeout="auto" unmountOnExit>
+                    <Stack spacing={1}>
+                      {!activeTimeline.length ? (
+                        <Alert severity="info" sx={{ py: 0.5 }}>No previous clinical history recorded.</Alert>
+                      ) : (
+                        <Stack spacing={0.75}>
+                          {activeTimeline.slice(0, 6).map((item) => (
+                            <Card
+                              key={item.id}
+                              variant="outlined"
+                              sx={{
+                                boxShadow: "none",
+                                cursor: item.itemType === "DOCUMENT" || item.consultationId || item.prescriptionId ? "pointer" : "default",
+                                borderRadius: 1.5,
+                                transition: "transform 120ms ease, box-shadow 120ms ease",
+                                "&:hover": { boxShadow: 1, transform: "translateY(-1px)" },
+                              }}
+                              onClick={() => {
+                                if (item.itemType === "DOCUMENT" && item.documentId) {
+                                  const document = clinicalDocuments.find((row) => row.id === item.documentId);
+                                  if (document) void openClinicalDocument(document);
+                                  return;
+                                }
+                                if (item.consultationId && item.consultationId !== consultation.id) {
+                                  navigate(`/consultations/${item.consultationId}`);
+                                }
+                              }}
+                            >
+                              <CardContent sx={{ p: 1 }}>
+                                <Stack direction="row" spacing={1} alignItems="flex-start">
+                                  <Box sx={{ width: 28, height: 28, borderRadius: "50%", display: "grid", placeItems: "center", bgcolor: "primary.50", color: "primary.main", flexShrink: 0 }}>
+                                    {item.itemType === "PRESCRIPTION" ? <MedicationRoundedIcon fontSize="small" /> : item.itemType === "LAB_ORDER" || item.itemType === "DOCUMENT" ? <ScienceRoundedIcon fontSize="small" /> : item.itemType === "INVESTIGATION" ? <BiotechRoundedIcon fontSize="small" /> : <HistoryRoundedIcon fontSize="small" />}
+                                  </Box>
+                                  <Stack spacing={0.25} sx={{ minWidth: 0, flex: 1 }}>
+                                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
+                                      <Chip size="small" label={timelineTypeLabel(item.itemType)} color={timelineColor(item.itemType)} variant="outlined" sx={{ height: 22 }} />
+                                      {item.consultationId === consultation.id ? <Chip size="small" color="primary" label="Current" sx={{ height: 22 }} /> : null}
+                                    </Stack>
+                                    <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.25 }} noWrap>
+                                      {item.title}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                      {compactDateTime(item.occurredAt)}{item.subtitle ? ` • ${compactText(item.subtitle, 42)}` : ""}
+                                    </Typography>
+                                  </Stack>
+                                </Stack>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </Stack>
+                      )}
+                    </Stack>
+                    </Collapse>
+                  </Box>
                 </Stack>
-              </SectionCard>
-            </Stack>
-          </Grid>
+              </Grid>
             </Grid>
           </CardContent>
         </Card>
