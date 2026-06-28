@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
   PublicCareAiPage,
   PublicClinicDetailPage,
@@ -29,6 +29,8 @@ import {
   patientPortalHomePath,
 } from "./api/patientPortal";
 import { branding, footerBrandingLine, productAndTagline, productTitle } from "./branding";
+import { GlobalPatientHeader } from "./components/GlobalPatientHeader";
+import { PublicLocationProvider } from "./context/publicLocation";
 import {
   PATIENT_PORTAL_SESSION_STORAGE_KEY,
   clearPatientAuthSession,
@@ -49,22 +51,6 @@ function deriveClinicLoginUrl() {
 
 const clinicLoginUrl = import.meta.env.VITE_CLINIC_LOGIN_URL?.trim() || deriveClinicLoginUrl();
 const aivaAppUrl = import.meta.env.VITE_AIVA_APP_URL?.trim() || new URL("/careai", window.location.origin).toString();
-
-const navItems = [
-  { to: "/", label: "Home" },
-  { to: "/doctors", label: "Doctors" },
-  { to: "/clinics", label: "Clinics" },
-  { to: "/specialities", label: "Specialities" },
-  { to: "/aiva", label: "AIVA" },
-  { to: "/patient/login", label: "Patient Login" },
-];
-
-const aivaNavItems = [
-  { to: "/aiva", label: "Overview" },
-  { to: "/aiva/demo", label: "Demo" },
-  { to: "/aiva/architecture", label: "Architecture" },
-  { to: "/aiva/roadmap", label: "Roadmap" },
-];
 
 function pageTitleForPath(pathname: string) {
   if (pathname === "/") return productTitle();
@@ -177,10 +163,8 @@ function AppShell({
 }) {
   const location = useLocation();
   const isAivaRoute = location.pathname.startsWith("/aiva");
-  const activeRegistrationSession = isPatientPortalRegistrationSession(session) && isPatientRegistrationSessionActive(session)
-    ? session
-    : null;
-  const portalNavSession = isPatientPortalRegistrationSession(session) && !activeRegistrationSession
+  const isPatientRoute = location.pathname.startsWith("/patient");
+  const portalNavSession = isPatientPortalRegistrationSession(session) && !isPatientRegistrationSessionActive(session)
     ? null
     : session;
 
@@ -198,70 +182,7 @@ function AppShell({
 
   return (
     <div className="site-shell">
-      {isAivaRoute ? (
-        <header className="site-header aiva-header">
-          <Link to="/aiva" className="brand aiva-brand">
-            <span className="brand-badge aiva-brand-badge">AI</span>
-            <span className="brand-meta">
-              <strong>AIVA</strong>
-              <small>{productAndTagline()}</small>
-            </span>
-          </Link>
-          <nav className="main-nav" aria-label="AIVA navigation">
-            {aivaNavItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) => `nav-link${isActive || location.pathname === item.to ? " is-active" : ""}`}
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
-          <div className="header-actions">
-            <Link className="secondary-button" to="/aiva/architecture">
-              View architecture
-            </Link>
-            <Link className="primary-button" to="/aiva/demo">
-              Talk to AIVA
-            </Link>
-          </div>
-        </header>
-      ) : (
-        <header className="site-header">
-          <Link to="/" className="brand">
-            <span className="brand-badge">JH</span>
-            <span className="brand-meta">
-              <strong>{branding.productName}</strong>
-              <small>{branding.tagline}</small>
-            </span>
-          </Link>
-          <nav className="main-nav" aria-label="Main navigation">
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) => `nav-link${isActive || location.pathname === item.to ? " is-active" : ""}`}
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
-          <div className="header-actions">
-            <a className="ghost-button" href={clinicLoginUrl}>
-              Open {branding.productName} Admin Console
-            </a>
-            <Link className="primary-button" to={patientPortalHomePath(activeRegistrationSession || portalNavSession)}>
-              {activeRegistrationSession ? "Continue registration" : portalNavSession ? `Open ${branding.productName} Patient Portal` : `${branding.productName} Patient Portal`}
-            </Link>
-            {activeRegistrationSession ? (
-              <button className="ghost-button" type="button" onClick={onCancelRegistration}>
-                Start over
-              </button>
-            ) : null}
-          </div>
-        </header>
-      )}
+      {!isPatientRoute ? <GlobalPatientHeader session={session} /> : null}
       <main>{children}</main>
       {isAivaRoute ? (
         <footer className="site-footer aiva-footer">
@@ -403,93 +324,95 @@ export function App() {
   }, [session]);
 
   return (
-    <AppShell session={session} onCancelRegistration={clearRegistrationOnly}>
-      <Routes>
-        <Route path="/ai-assistant/*" element={<Navigate to="/aiva" replace />} />
-        <Route path="/aiva/*" element={<AivaRedirectPage />} />
-        <Route path="/" element={<PublicHomePage session={session} />} />
-        <Route path="/doctors" element={<PublicDoctorsPage session={session} />} />
-        <Route path="/doctors/:doctorSlug" element={<PublicDoctorDetailPage session={session} />} />
-        <Route path="/clinics" element={<PublicClinicsPage session={session} />} />
-        <Route path="/clinics/:clinicSlug" element={<PublicClinicDetailPage session={session} />} />
-        <Route path="/specialities" element={<PublicSpecialitiesPage />} />
-        <Route path="/specialities/:specialitySlug" element={<PublicSpecialityDetailPage session={session} />} />
-        <Route path="/careai" element={<PublicCareAiPage session={session} />} />
-        <Route
-          path="/patient/login"
-          element={
-            <PatientLoginPage
-              session={session}
-              onSaveSession={saveSession}
-              onClearSession={clearPatientSessionAndContext}
-              clinicLoginUrl={clinicLoginUrl}
-            />
-          }
-        />
-        <Route
-          path="/patient/register"
-          element={
-            <PatientRegistrationPage
-              session={session}
-              onSaveSession={saveSession}
-              onClearSession={clearPatientSessionAndContext}
-            />
-          }
-        />
-        <Route path="/patient/dashboard" element={<PatientDashboardPage session={session} onSignOut={clearPatientSessionAndContext} />} />
-        <Route path="/patient/book-appointment" element={<PatientBookAppointmentPage session={session} onSignOut={clearPatientSessionAndContext} />} />
-        <Route path="/patient/appointments" element={<PatientAppointmentsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
-        <Route path="/patient/prescriptions" element={<PatientPrescriptionsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
-        <Route path="/patient/bills" element={<PatientBillsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
-        <Route path="/patient/notifications" element={<PatientNotificationsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
-        <Route path="/patient/lab" element={<PatientLabPage session={session} onSignOut={clearPatientSessionAndContext} />} />
-        <Route path="/patient/careai" element={<PatientCareAiPage session={session} onSignOut={clearPatientSessionAndContext} />} />
-        <Route path="/patient/profile" element={<PatientProfilePage session={session} onSignOut={clearPatientSessionAndContext} />} />
-        <Route
-          path="/contact"
-          element={
-            <StaticSupportPage
-              eyebrow="Support"
-              title="Contact"
-              subtitle="Reach the platform team for deployment-specific support."
-              body="Use the clinic or platform support channel configured for your deployment. No patient data is shared on this page."
-            />
-          }
-        />
-        <Route
-          path="/help-centre"
-          element={
-            <StaticSupportPage
-              eyebrow="Support"
-              title="Help Centre"
-              subtitle="Find quick answers for public-web usage."
-              body="This page can be replaced with your deployment-specific help content when ready."
-            />
-          }
-        />
-        <Route
-          path="/privacy-policy"
-          element={
-            <StaticSupportPage
-              eyebrow="Support"
-              title="Privacy Policy"
-              subtitle="Review the current privacy placeholder for this deployment."
-              body="Replace this page with the approved privacy policy text for your environment."
-            />
-          }
-        />
-        <Route
-          path="/terms"
-          element={
-            <StaticSupportPage
-              eyebrow="Support"
-              title="Terms"
-              subtitle="Review the current terms placeholder for this deployment."
-              body="Replace this page with the approved terms and conditions text for your environment."
-            />
-          }
-        />
-      </Routes>
-    </AppShell>
+    <PublicLocationProvider>
+      <AppShell session={session} onCancelRegistration={clearRegistrationOnly}>
+        <Routes>
+          <Route path="/ai-assistant/*" element={<Navigate to="/aiva" replace />} />
+          <Route path="/aiva/*" element={<AivaRedirectPage />} />
+          <Route path="/" element={<PublicHomePage session={session} />} />
+          <Route path="/doctors" element={<PublicDoctorsPage session={session} />} />
+          <Route path="/doctors/:doctorSlug" element={<PublicDoctorDetailPage session={session} />} />
+          <Route path="/clinics" element={<PublicClinicsPage session={session} />} />
+          <Route path="/clinics/:clinicSlug" element={<PublicClinicDetailPage session={session} />} />
+          <Route path="/specialities" element={<PublicSpecialitiesPage />} />
+          <Route path="/specialities/:specialitySlug" element={<PublicSpecialityDetailPage session={session} />} />
+          <Route path="/careai" element={<PublicCareAiPage session={session} />} />
+          <Route
+            path="/patient/login"
+            element={
+              <PatientLoginPage
+                session={session}
+                onSaveSession={saveSession}
+                onClearSession={clearPatientSessionAndContext}
+                clinicLoginUrl={clinicLoginUrl}
+              />
+            }
+          />
+          <Route
+            path="/patient/register"
+            element={
+              <PatientRegistrationPage
+                session={session}
+                onSaveSession={saveSession}
+                onClearSession={clearPatientSessionAndContext}
+              />
+            }
+          />
+          <Route path="/patient/dashboard" element={<PatientDashboardPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/book-appointment" element={<PatientBookAppointmentPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/appointments" element={<PatientAppointmentsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/prescriptions" element={<PatientPrescriptionsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/bills" element={<PatientBillsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/notifications" element={<PatientNotificationsPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/lab" element={<PatientLabPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/careai" element={<PatientCareAiPage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route path="/patient/profile" element={<PatientProfilePage session={session} onSignOut={clearPatientSessionAndContext} />} />
+          <Route
+            path="/contact"
+            element={
+              <StaticSupportPage
+                eyebrow="Support"
+                title="Contact"
+                subtitle="Reach the platform team for deployment-specific support."
+                body="Use the clinic or platform support channel configured for your deployment. No patient data is shared on this page."
+              />
+            }
+          />
+          <Route
+            path="/help-centre"
+            element={
+              <StaticSupportPage
+                eyebrow="Support"
+                title="Help Centre"
+                subtitle="Find quick answers for public-web usage."
+                body="This page can be replaced with your deployment-specific help content when ready."
+              />
+            }
+          />
+          <Route
+            path="/privacy-policy"
+            element={
+              <StaticSupportPage
+                eyebrow="Support"
+                title="Privacy Policy"
+                subtitle="Review the current privacy placeholder for this deployment."
+                body="Replace this page with the approved privacy policy text for your environment."
+              />
+            }
+          />
+          <Route
+            path="/terms"
+            element={
+              <StaticSupportPage
+                eyebrow="Support"
+                title="Terms"
+                subtitle="Review the current terms placeholder for this deployment."
+                body="Replace this page with the approved terms and conditions text for your environment."
+              />
+            }
+          />
+        </Routes>
+      </AppShell>
+    </PublicLocationProvider>
   );
 }

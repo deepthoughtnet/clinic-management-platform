@@ -62,6 +62,7 @@ import {
   resolvePatientPortalContext,
   savePublicBookingContext,
 } from "./patientPortalClinicContext";
+import { GlobalPatientHeader } from "../../components/GlobalPatientHeader";
 import {
   PATIENT_PORTAL_PENDING_REGISTRATION_STORAGE_KEY,
   clearPatientRegistrationSession,
@@ -362,6 +363,81 @@ function isUpcomingAppointment(appointment: PatientPortalAppointmentResponse) {
   return appointmentAt.getTime() >= Date.now();
 }
 
+type AppointmentFilterKey = "upcoming" | "past" | "cancelled" | "no_show" | "all";
+
+type AppointmentViewModel = PatientPortalAppointmentResponse & {
+  appointmentTimestamp: number | null;
+  filterBucket: AppointmentFilterKey;
+};
+
+const APPOINTMENT_FILTERS: Array<{ key: AppointmentFilterKey; label: string; emptyTitle: string; emptyMessage: string }> = [
+  { key: "upcoming", label: "Upcoming", emptyTitle: "No upcoming appointments.", emptyMessage: "Book a new clinic visit when you are ready." },
+  { key: "past", label: "Past", emptyTitle: "No previous appointments.", emptyMessage: "Your completed visits will appear here." },
+  { key: "cancelled", label: "Cancelled", emptyTitle: "No cancelled appointments.", emptyMessage: "Cancelled appointments will appear here." },
+  { key: "no_show", label: "No Show", emptyTitle: "No no-show appointments.", emptyMessage: "No-show visits will appear here." },
+  { key: "all", label: "All", emptyTitle: "No appointments yet.", emptyMessage: "Appointments will appear here once they are booked." },
+];
+
+function parseAppointmentTimestamp(appointment: PatientPortalAppointmentResponse) {
+  if (!appointment.appointmentDate) {
+    return null;
+  }
+  const appointmentAt = new Date(`${appointment.appointmentDate}T${appointment.appointmentTime ?? "23:59"}:00`);
+  if (Number.isNaN(appointmentAt.getTime())) {
+    return null;
+  }
+  return appointmentAt.getTime();
+}
+
+function getAppointmentFilterBucket(appointment: PatientPortalAppointmentResponse): AppointmentFilterKey {
+  const status = (appointment.status ?? "").toUpperCase();
+  if (status === "CANCELLED") {
+    return "cancelled";
+  }
+  if (status === "NO_SHOW") {
+    return "no_show";
+  }
+  if (status === "COMPLETED") {
+    return "past";
+  }
+  const appointmentTimestamp = parseAppointmentTimestamp(appointment);
+  if (appointmentTimestamp == null) {
+    return "upcoming";
+  }
+  return appointmentTimestamp >= Date.now() ? "upcoming" : "past";
+}
+
+function toAppointmentViewModel(appointment: PatientPortalAppointmentResponse): AppointmentViewModel {
+  return {
+    ...appointment,
+    appointmentTimestamp: parseAppointmentTimestamp(appointment),
+    filterBucket: getAppointmentFilterBucket(appointment),
+  };
+}
+
+function appointmentBucketPriority(bucket: AppointmentFilterKey) {
+  if (bucket === "upcoming") return 0;
+  if (bucket === "past") return 1;
+  if (bucket === "cancelled") return 2;
+  if (bucket === "no_show") return 3;
+  return 4;
+}
+
+function sortAppointmentsForView(appointments: AppointmentViewModel[]) {
+  return [...appointments].sort((left, right) => {
+    const bucketOrder = appointmentBucketPriority(left.filterBucket) - appointmentBucketPriority(right.filterBucket);
+    if (bucketOrder !== 0) {
+      return bucketOrder;
+    }
+    const leftTimestamp = left.appointmentTimestamp ?? 0;
+    const rightTimestamp = right.appointmentTimestamp ?? 0;
+    if (left.filterBucket === "upcoming") {
+      return leftTimestamp - rightTimestamp;
+    }
+    return rightTimestamp - leftTimestamp;
+  });
+}
+
 function formatDoctorDisplayName(value: string | null | undefined) {
   const normalized = value?.trim() ?? "";
   const withoutTitle = normalized.replace(/^dr\.?\s+/i, "").trim();
@@ -608,19 +684,22 @@ function PatientPortalShell({
   session,
   title,
   subtitle,
+  className,
   children,
   onSignOut,
 }: {
   session: PatientPortalPatientSession;
   title: string;
   subtitle: string;
+  className?: string;
   children: ReactNode;
   onSignOut: () => void;
 }) {
   const location = useLocation();
 
   return (
-    <section className="page-section patient-portal-page patient-notifications-page">
+    <section className={`page-section patient-portal-page${className ? ` ${className}` : ""}`}>
+      <GlobalPatientHeader session={session} />
       <div className="patient-portal-shell">
         <aside className="patient-sidebar">
           <div className="patient-sidebar-card">
@@ -662,20 +741,6 @@ function PatientPortalShell({
           {children}
         </div>
       </div>
-
-      <nav className="patient-mobile-nav" aria-label="Patient portal mobile navigation">
-        {patientNavItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) =>
-              `patient-mobile-link${isActive || location.pathname === item.to ? " is-active" : ""}`
-            }
-          >
-            {item.shortLabel}
-          </NavLink>
-        ))}
-      </nav>
     </section>
   );
 }
@@ -711,12 +776,14 @@ function PatientAccessBoundary({
   onSignOut,
   title,
   subtitle,
+  className,
   children,
 }: {
   session: PatientPortalSession | null;
   onSignOut: () => void;
   title: string;
   subtitle: string;
+  className?: string;
   children: ReactNode;
 }) {
   const location = useLocation();
@@ -746,7 +813,7 @@ function PatientAccessBoundary({
   }
 
   return (
-    <PatientPortalShell session={session} title={title} subtitle={subtitle} onSignOut={onSignOut}>
+    <PatientPortalShell session={session} title={title} subtitle={subtitle} className={className} onSignOut={onSignOut}>
       {children}
     </PatientPortalShell>
   );
@@ -1709,9 +1776,40 @@ export function PatientDashboardPage({ session, onSignOut }: { session: PatientP
 export function PatientAppointmentsPage({ session, onSignOut }: { session: PatientPortalSession | null; onSignOut: () => void }) {
   const portalSession = isPatientPortalPatientSession(session) ? session : null;
   const appointments = usePatientPortalResource<PatientPortalAppointmentResponse[]>(portalSession, "/api/patient-portal/appointments", []);
-  const upcomingAppointments = useMemo(
-    () => appointments.data.filter(isUpcomingAppointment),
+  const [activeFilter, setActiveFilter] = useState<AppointmentFilterKey>("upcoming");
+  const [searchText, setSearchText] = useState("");
+  const appointmentViewModels = useMemo(
+    () => appointments.data.map(toAppointmentViewModel),
     [appointments.data],
+  );
+  const visibleAppointments = useMemo(() => {
+    const normalizedSearch = searchText.trim().toLowerCase();
+    const filtered = appointmentViewModels.filter((appointment) => {
+      if (activeFilter !== "all" && appointment.filterBucket !== activeFilter) {
+        return false;
+      }
+      if (!normalizedSearch) {
+        return true;
+      }
+      const fields = [
+        appointment.doctorName,
+        appointment.clinicName,
+        appointment.reason,
+        appointment.appointmentDate,
+        appointment.appointmentTime,
+        appointment.status,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return fields.includes(normalizedSearch);
+    });
+    return sortAppointmentsForView(filtered);
+  }, [activeFilter, appointmentViewModels, searchText]);
+  const activeFilterMeta = APPOINTMENT_FILTERS.find((item) => item.key === activeFilter) ?? APPOINTMENT_FILTERS[0];
+  const upcomingAppointments = useMemo(
+    () => appointmentViewModels.filter((appointment) => appointment.filterBucket === "upcoming"),
+    [appointmentViewModels],
   );
 
   return (
@@ -1720,14 +1818,39 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
       onSignOut={onSignOut}
       title="Appointments"
       subtitle="View your upcoming and past clinic visits."
+      className="patient-appointments-page"
     >
       <PatientPortalApiState
         loading={appointments.loading}
         error={appointments.error}
         empty={appointments.data.length === 0}
-        emptyTitle="No upcoming appointments."
-        emptyMessage="Book a new clinic visit when you are ready."
+        emptyTitle={activeFilterMeta.emptyTitle}
+        emptyMessage={activeFilterMeta.emptyMessage}
       >
+        <div className="patient-appointments-toolbar">
+          <div className="patient-filter-row" role="tablist" aria-label="Appointment filters">
+            {APPOINTMENT_FILTERS.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`status-pill patient-filter-pill${activeFilter === item.key ? " is-active" : ""}`}
+                aria-pressed={activeFilter === item.key}
+                onClick={() => setActiveFilter(item.key)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <label className="patient-search-field">
+            <span>Search appointments</span>
+            <input
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="Doctor, clinic, or date"
+            />
+          </label>
+        </div>
+
         <div className="patient-action-strip">
           <Link className="primary-button" to="/patient/book-appointment">
             Book appointment
@@ -1744,8 +1867,8 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
             </div>
           </div>
         ) : null}
-        <div className="patient-card-stack">
-          {appointments.data.map((appointment) => (
+        <div className="patient-card-stack patient-appointment-list">
+          {visibleAppointments.length ? visibleAppointments.map((appointment) => (
             <article key={`${appointment.doctorName ?? "doctor"}-${appointment.appointmentDate}-${appointment.appointmentTime ?? "time"}`} className="patient-record-card">
               <div className="record-card-top">
                 <div>
@@ -1754,7 +1877,9 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
                     {appointment.clinicName ?? "Clinic"} · {formatDateTimeFromParts(appointment.appointmentDate, appointment.appointmentTime)}
                   </span>
                 </div>
-                <span className="status-pill">{formatStatusLabel(appointment.status)}</span>
+                <span className={`status-pill appointment-status-${(appointment.status ?? appointment.filterBucket).toLowerCase().replaceAll(" ", "-")}`}>
+                  {formatStatusLabel(appointment.status ?? appointment.filterBucket)}
+                </span>
               </div>
               <p>{appointment.reason ?? "Visit reason is not available for this appointment."}</p>
               <div className="record-card-meta">
@@ -1768,7 +1893,12 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
                 </div>
               ) : null}
             </article>
-          ))}
+          )) : (
+            <div className="patient-inline-empty">
+              <strong>{activeFilterMeta.emptyTitle}</strong>
+              <p>{activeFilterMeta.emptyMessage}</p>
+            </div>
+          )}
         </div>
       </PatientPortalApiState>
     </PatientAccessBoundary>
@@ -2998,6 +3128,7 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
       onSignOut={onSignOut}
       title="Notifications"
       subtitle="Stay updated with appointment, prescription, bill, and lab notifications."
+      className="patient-notifications-page"
     >
       <PatientPortalApiState
         loading={notifications.loading}

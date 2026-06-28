@@ -14,6 +14,15 @@ import {
 } from "../../api/publicCatalog";
 import type { PatientPortalSession } from "../../api/patientPortal";
 import { branding } from "../../branding";
+import {
+  PUBLIC_CURRENT_LOCATION_LABEL,
+  PUBLIC_DEFAULT_LOCATION,
+  PUBLIC_LOCATION_OPTIONS,
+  normalizePublicLocation,
+  readStoredPublicLocation,
+  type PublicLocationCoordinates,
+  usePublicLocation,
+} from "../../context/publicLocation";
 import { patientPortalBookingPath, patientPortalBookingTo } from "../patient/patientPortalClinicContext";
 
 type FetchState<T> = {
@@ -114,92 +123,6 @@ const TRUST_SIGNALS = [
   "AI-guided care navigation",
   "Secure patient experience",
 ] as const;
-
-const PUBLIC_LOCATION_STORAGE_KEY = "clinic-web-public-location";
-const PUBLIC_LOCATION_COORDS_STORAGE_KEY = "clinic-web-public-location-coordinates";
-const PUBLIC_LOCATION_SOURCE_STORAGE_KEY = "clinic-web-public-location-source";
-const PUBLIC_LOCATION_OPTIONS = [
-  "Pune",
-  "Mumbai",
-  "Bangalore",
-  "Delhi",
-  "Hyderabad",
-  "Chennai",
-  "Bhopal",
-] as const;
-const PUBLIC_CURRENT_LOCATION_LABEL = "Current location selected";
-const PUBLIC_DEFAULT_LOCATION = "Pune";
-
-type PublicLocationCoordinates = {
-  latitude: number;
-  longitude: number;
-};
-
-type PublicLocationSource = "default" | "manual" | "browser";
-
-type PublicLocationState = {
-  location: string;
-  coordinates: PublicLocationCoordinates | null;
-  source: PublicLocationSource;
-};
-
-function readStoredPublicLocation(): PublicLocationState {
-  if (typeof window === "undefined") {
-    return { location: PUBLIC_DEFAULT_LOCATION, coordinates: null, source: "default" };
-  }
-  const stored = window.localStorage.getItem(PUBLIC_LOCATION_STORAGE_KEY)?.trim();
-  const storedCoordinates = window.localStorage.getItem(PUBLIC_LOCATION_COORDS_STORAGE_KEY)?.trim();
-  const storedSource = window.localStorage.getItem(PUBLIC_LOCATION_SOURCE_STORAGE_KEY)?.trim() as PublicLocationSource | null;
-  if (stored) {
-    return {
-      location: stored,
-      coordinates: storedCoordinates ? readStoredPublicCoordinates(storedCoordinates) : null,
-      source: storedCoordinates ? "browser" : storedSource === "browser" ? "browser" : "manual",
-    };
-  }
-  if (storedCoordinates) {
-    return {
-      location: PUBLIC_CURRENT_LOCATION_LABEL,
-      coordinates: readStoredPublicCoordinates(storedCoordinates),
-      source: "browser",
-    };
-  }
-  return { location: PUBLIC_DEFAULT_LOCATION, coordinates: null, source: "default" };
-}
-
-function normalizePublicLocation(value: string) {
-  return value.trim().slice(0, 60);
-}
-
-function readStoredPublicCoordinates(value: string): PublicLocationCoordinates | null {
-  try {
-    const parsed = JSON.parse(value) as { latitude?: unknown; longitude?: unknown };
-    const latitude = typeof parsed.latitude === "number" ? parsed.latitude : Number(parsed.latitude);
-    const longitude = typeof parsed.longitude === "number" ? parsed.longitude : Number(parsed.longitude);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-      return null;
-    }
-    return { latitude, longitude };
-  } catch {
-    return null;
-  }
-}
-
-function savePublicLocation(state: PublicLocationState) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.localStorage.setItem(PUBLIC_LOCATION_STORAGE_KEY, state.location);
-  window.localStorage.setItem(
-    PUBLIC_LOCATION_SOURCE_STORAGE_KEY,
-    state.coordinates ? "browser" : "manual",
-  );
-  if (state.coordinates) {
-    window.localStorage.setItem(PUBLIC_LOCATION_COORDS_STORAGE_KEY, JSON.stringify(state.coordinates));
-  } else {
-    window.localStorage.removeItem(PUBLIC_LOCATION_COORDS_STORAGE_KEY);
-  }
-}
 
 function usePublicResource<T>(path: string, params: Record<string, string | number | undefined | null>, initialValue: T): FetchState<T> {
   const [state, setState] = useState<FetchState<T>>({
@@ -520,14 +443,11 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
   const navigate = useNavigate();
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const storedLocation = useMemo(() => readStoredPublicLocation(), []);
-  const hasSavedPublicLocation = storedLocation.source !== "default";
+  const { locationState, setSelectedLocation } = usePublicLocation();
+  const hasSavedPublicLocation = locationState.source !== "default";
   const queryLocation = normalizePublicLocation(filters.searchParams.get("city")?.trim() || "");
-  const [selectedLocation, setSelectedLocation] = useState(() =>
-    hasSavedPublicLocation ? storedLocation.location : queryLocation || storedLocation.location,
-  );
-  const [selectedCoordinates, setSelectedCoordinates] = useState<PublicLocationCoordinates | null>(() =>
-    hasSavedPublicLocation ? storedLocation.coordinates : null,
-  );
+  const selectedLocation = hasSavedPublicLocation ? locationState.location : queryLocation || storedLocation.location;
+  const selectedCoordinates = hasSavedPublicLocation ? locationState.coordinates : null;
   const [locationDraft, setLocationDraft] = useState(() => selectedLocation);
   const [locationMessage, setLocationMessage] = useState<string | null>(null);
   const [locationBusy, setLocationBusy] = useState(false);
@@ -553,17 +473,18 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
   }, [selectedLocation]);
 
   useEffect(() => {
-    if (!hasHydratedLocation.current) {
-      hasHydratedLocation.current = true;
+    if (hasHydratedLocation.current) {
       return;
     }
-    savePublicLocation({ location: selectedLocation, coordinates: selectedCoordinates, source: selectedCoordinates ? "browser" : "manual" });
-  }, [selectedCoordinates, selectedLocation]);
+    hasHydratedLocation.current = true;
+    if (!hasSavedPublicLocation && queryLocation) {
+      setSelectedLocation(queryLocation);
+    }
+  }, [hasSavedPublicLocation, queryLocation, setSelectedLocation]);
 
   function commitSelectedLocation(nextLocation: string, nextCoordinates: PublicLocationCoordinates | null = null) {
     const normalizedLocation = normalizePublicLocation(nextLocation) || PUBLIC_DEFAULT_LOCATION;
-    setSelectedLocation(normalizedLocation);
-    setSelectedCoordinates(nextCoordinates);
+    setSelectedLocation(normalizedLocation, nextCoordinates);
     setLocationDraft(normalizedLocation);
     setLocationMessage(null);
     setLocationPickerOpen(false);

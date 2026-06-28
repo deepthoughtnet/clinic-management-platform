@@ -93,6 +93,129 @@ textarea {
   min-width: 0;
 }
 
+.global-header {
+  display: grid;
+  gap: 0.9rem;
+  padding: 0.9rem 0 1.25rem;
+  text-align: center;
+}
+
+.global-header-brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.global-brand {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.global-header-mobile-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.global-header-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--primary-strong);
+  cursor: pointer;
+}
+
+.global-header-nav {
+  display: none;
+}
+
+.global-header-actions {
+  display: none;
+  align-items: center;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.global-header-search-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.7rem;
+  height: 2.7rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--line);
+}
+
+.global-location-shell,
+.global-demo-shell {
+  position: relative;
+}
+
+.global-location-pill {
+  min-width: 9.5rem;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.global-location-caret {
+  font-size: 0.7rem;
+}
+
+.global-location-panel,
+.global-demo-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  z-index: 30;
+  display: grid;
+  gap: 0.75rem;
+  width: min(24rem, calc(100vw - 2rem));
+  padding: 0.95rem;
+  border-radius: 1.15rem;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(18, 54, 60, 0.12);
+  box-shadow: var(--shadow);
+  text-align: left;
+}
+
+.global-demo-menu-link {
+  display: block;
+  padding: 0.75rem 0.9rem;
+  border-radius: 0.95rem;
+  background: rgba(15, 122, 117, 0.06);
+  color: var(--primary-strong);
+  font-weight: 700;
+}
+
+.global-header-drawer {
+  display: grid;
+  gap: 0.9rem;
+  padding: 0.95rem;
+  border-radius: 1.35rem;
+  border: 1px solid rgba(18, 54, 60, 0.1);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--shadow);
+}
+
+.global-header-drawer-nav {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.global-header-drawer-actions {
+  display: grid;
+  gap: 0.5rem;
+}
+
 .site-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1273,6 +1396,14 @@ input {
   padding: 1rem;
 }
 
+.patient-portal-page .patient-portal-shell {
+  min-height: 0;
+}
+
+.patient-portal-page .patient-main {
+  min-height: 0;
+}
+
 .patient-sidebar {
   display: grid;
   gap: 0.9rem;
@@ -1438,6 +1569,59 @@ input {
   justify-content: flex-start;
 }
 
+.patient-appointments-page .patient-portal-shell {
+  align-items: start;
+}
+
+.patient-appointments-page .patient-main {
+  overflow: hidden;
+}
+
+.patient-appointments-page .patient-appointments-toolbar {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.patient-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.patient-filter-pill {
+  border: 1px solid rgba(18, 54, 60, 0.1);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+}
+
+.patient-filter-pill.is-active {
+  background: rgba(15, 122, 117, 0.12);
+  color: var(--primary-strong);
+  border-color: rgba(15, 122, 117, 0.25);
+}
+
+.patient-search-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.patient-search-field span {
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.patient-search-field input {
+  width: 100%;
+}
+
+.patient-appointment-list {
+  overflow-y: auto;
+  max-height: min(58vh, 42rem);
+  padding-right: 0.35rem;
+  overscroll-behavior: contain;
+}
+
 .patient-highlight-card,
 .patient-subcard {
   padding: 0.9rem 0.95rem;
@@ -1461,6 +1645,10 @@ input {
 .patient-bill-summary > div {
   display: grid;
   gap: 0.2rem;
+}
+
+.record-card-top {
+  align-items: flex-start;
 }
 
 .record-card-meta {
@@ -1493,6 +1681,10 @@ input {
   display: block;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.patient-portal-page .patient-topbar {
+  align-items: start;
 }
 
 .text-link {
@@ -2593,6 +2785,34 @@ input {
     padding: 1.4rem 2rem;
   }
 
+  .global-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
+    align-items: center;
+    justify-items: stretch;
+    text-align: left;
+  }
+
+  .global-header-brand-row {
+    justify-content: flex-start;
+  }
+
+  .global-header-mobile-actions {
+    display: none;
+  }
+
+  .global-header-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .global-header-actions {
+    display: flex;
+  }
+
   .site-header {
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     justify-items: stretch;
@@ -2712,6 +2932,17 @@ input {
     align-items: start;
   }
 
+  .patient-portal-page .patient-portal-shell {
+    grid-template-columns: minmax(260px, 290px) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .patient-portal-page .patient-sidebar {
+    position: sticky;
+    top: 1rem;
+    align-self: start;
+  }
+
   .aiva-feature-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2738,6 +2969,53 @@ input {
 @media (max-width: 599px) {
   .site-shell {
     padding: 0.75rem;
+  }
+
+  .global-header {
+    gap: 0.75rem;
+    padding: 0.75rem 0 1rem;
+  }
+
+  .global-header-brand-row {
+    width: 100%;
+  }
+
+  .global-brand {
+    gap: 0.7rem;
+    width: auto;
+  }
+
+  .global-header-actions {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .global-header-search-link {
+    display: none;
+  }
+
+  .global-location-pill {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .global-demo-shell {
+    width: 100%;
+  }
+
+  .global-demo-button {
+    width: 100%;
+  }
+
+  .global-demo-shell {
+    display: none;
+  }
+
+  .global-location-panel,
+  .global-demo-menu {
+    width: 100%;
   }
 
   .site-header {
@@ -2799,6 +3077,24 @@ input {
     margin-bottom: 1.1rem;
     padding: 1rem;
     border-radius: 1.25rem;
+  }
+
+  .patient-portal-page .patient-sidebar {
+    display: none;
+  }
+
+  .patient-portal-page .patient-portal-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .patient-portal-page .patient-main {
+    overflow: visible;
+  }
+
+  .patient-appointments-page .patient-appointment-list {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .launch-banner-card h2 {
