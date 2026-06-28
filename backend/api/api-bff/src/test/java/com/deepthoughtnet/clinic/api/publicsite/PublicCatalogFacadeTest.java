@@ -25,6 +25,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -77,12 +78,16 @@ class PublicCatalogFacadeTest {
                 doctorProfile(publicTenantId, hiddenDoctorId, "Cardiology", true, false, "dr-hidden", 12)
         ));
 
-        when(clinicTimeZoneResolver.resolve(any())).thenReturn(java.time.ZoneOffset.UTC);
+        ZoneId zone = java.time.ZoneOffset.UTC;
+        LocalDate today = LocalDate.now(zone);
+        LocalTime nowTime = LocalTime.now(zone).withSecond(0).withNano(0);
+        LocalTime futureTime = nowTime.getHour() <= 21 ? nowTime.plusHours(2) : LocalTime.of(23, 59);
+        when(clinicTimeZoneResolver.resolve(any())).thenReturn(zone);
         when(appointmentService.listSlots(any(), any(), any(), any())).thenAnswer(invocation -> {
             UUID doctorId = invocation.getArgument(1, UUID.class);
             LocalDate date = invocation.getArgument(2, LocalDate.class);
-            if (doctorId.equals(visibleDoctorId) && date.equals(LocalDate.now(java.time.ZoneOffset.UTC))) {
-                return List.of(slot(doctorId, date, LocalTime.of(10, 30), true));
+            if (doctorId.equals(visibleDoctorId) && date.equals(today)) {
+                return List.of(slot(doctorId, date, futureTime, true));
             }
             return List.of();
         });
@@ -197,6 +202,61 @@ class PublicCatalogFacadeTest {
                 .doesNotContain("id", "tenantId", "patientId", "email", "mobile", "registrationNumber", "consultationRoom", "notes");
         assertThat(componentNames(com.deepthoughtnet.clinic.api.publicsite.dto.PublicDoctorDetailResponse.class))
                 .doesNotContain("tenantId", "patientId", "email", "mobile", "registrationNumber", "consultationRoom", "notes");
+    }
+
+    @Test
+    void doctorDetailOmitsPastSlotsFromNextAvailableSlots() {
+        PlatformTenantManagementService tenantService = mock(PlatformTenantManagementService.class);
+        ClinicProfileService clinicProfileService = mock(ClinicProfileService.class);
+        TenantUserManagementService tenantUserManagementService = mock(TenantUserManagementService.class);
+        DoctorProfileService doctorProfileService = mock(DoctorProfileService.class);
+        AppointmentService appointmentService = mock(AppointmentService.class);
+        ClinicTimeZoneResolver clinicTimeZoneResolver = mock(ClinicTimeZoneResolver.class);
+        PublicCatalogFacade facade = new PublicCatalogFacade(
+                tenantService,
+                clinicProfileService,
+                tenantUserManagementService,
+                doctorProfileService,
+                appointmentService,
+                clinicTimeZoneResolver
+        );
+
+        UUID tenantId = UUID.randomUUID();
+        UUID doctorId = UUID.randomUUID();
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        LocalDate today = LocalDate.now(zone);
+        LocalTime nowTime = LocalTime.now(zone).withSecond(0).withNano(0);
+        LocalTime pastTime = nowTime.getHour() >= 2 ? nowTime.minusHours(2) : LocalTime.of(0, 0);
+        LocalTime futureTime = nowTime.getHour() <= 21 ? nowTime.plusHours(2) : LocalTime.of(23, 59);
+        java.time.format.DateTimeFormatter timeFormatter = java.time.format.DateTimeFormatter.ofPattern("h:mm a", java.util.Locale.ENGLISH);
+        String futureLabel = "Today · " + futureTime.format(timeFormatter);
+
+        when(tenantService.list()).thenReturn(List.of(tenant(tenantId, "sunrise", "ACTIVE", true)));
+        when(clinicProfileService.findByTenantId(tenantId)).thenReturn(Optional.of(clinic(tenantId, "Sunrise Clinic", true, true, "sunrise-clinic", "Pune", "Baner")));
+        when(tenantUserManagementService.list(tenantId)).thenReturn(List.of(doctorUser(doctorId, tenantId, "Dr. Asha Menon", "ACTIVE", "ACTIVE")));
+        when(doctorProfileService.findByDoctorUserId(tenantId, doctorId)).thenReturn(Optional.of(
+                doctorProfile(tenantId, doctorId, "Dermatology, Skin Care", true, true, "dr-asha-menon", 8)
+        ));
+        when(clinicTimeZoneResolver.resolve(any())).thenReturn(zone);
+        when(appointmentService.listSlots(any(), any(), any(), any())).thenAnswer(invocation -> {
+            LocalDate date = invocation.getArgument(2, LocalDate.class);
+            if (today.equals(date)) {
+                return List.of(
+                        slot(doctorId, date, pastTime, true),
+                        slot(doctorId, date, futureTime, true)
+                );
+            }
+            return List.of();
+        });
+        when(appointmentService.listDoctorAvailabilities(any(), any())).thenReturn(List.of(
+                availability(tenantId, doctorId, DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(17, 0))
+        ));
+
+        var detail = facade.doctorDetail("dr-asha-menon");
+
+        assertThat(detail.availableToday()).isTrue();
+        assertThat(detail.nextAvailableSlots()).doesNotContain("Today · " + pastTime.format(timeFormatter));
+        assertThat(detail.nextAvailableSlots()).contains(futureLabel);
     }
 
     private List<String> componentNames(Class<?> type) {

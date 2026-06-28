@@ -5,6 +5,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentPriority;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertCommand;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
+import com.deepthoughtnet.clinic.api.appointment.AppointmentTimingRules;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
@@ -15,6 +16,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.TemporalAdjusters;
@@ -293,7 +295,9 @@ class VoiceAppointmentWorkflowService {
             UUID doctorUserId = UUID.fromString(state.doctorUserId);
             LocalDate preferredDate = LocalDate.parse(state.preferredDate);
             ZoneId tenantZone = clinicTimeZoneResolver.resolve(state.tenantId);
+            ZonedDateTime clinicNow = ZonedDateTime.now(tenantZone);
             List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(state.tenantId, doctorUserId, preferredDate, tenantZone).stream()
+                    .filter(slot -> AppointmentTimingRules.isSlotBookableForPatient(slot.appointmentDate(), slot.slotTime(), tenantZone, clinicNow))
                     .filter(DoctorAvailabilitySlotRecord::selectable)
                     .sorted(Comparator.comparing(DoctorAvailabilitySlotRecord::slotTime))
                     .toList();

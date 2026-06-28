@@ -69,6 +69,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.LinkedHashMap;
 import java.util.Comparator;
 import java.util.List;
@@ -426,7 +427,9 @@ public class PatientPortalService {
         BookingDoctorAccess bookingDoctor = resolveBookingDoctor(access, publicDoctorId, clinicSlug, tenantId, clinicId);
         ZoneId tenantZone = resolveTenantZone(bookingDoctor.tenantId());
         debugBookingResolution("doctorSlots", publicDoctorId, clinicSlug, tenantId, clinicId, bookingDoctor);
+        ZonedDateTime clinicNow = ZonedDateTime.now(tenantZone);
         return appointmentService.listSlots(bookingDoctor.tenantId(), bookingDoctor.doctor().user().appUserId(), date, tenantZone).stream()
+                .filter(slot -> AppointmentTimingRules.isSlotBookableForPatient(slot.appointmentDate(), slot.slotTime(), tenantZone, clinicNow))
                 .map(this::toDoctorSlotResponse)
                 .toList();
     }
@@ -468,7 +471,9 @@ public class PatientPortalService {
                 request.appointmentDate(),
                 tenantZone
         );
+        ZonedDateTime clinicNow = ZonedDateTime.now(tenantZone);
         boolean slotSelectable = slots.stream()
+                .filter(slot -> AppointmentTimingRules.isSlotBookableForPatient(slot.appointmentDate(), slot.slotTime(), tenantZone, clinicNow))
                 .anyMatch(slot -> request.appointmentTime().equals(slot.slotTime()) && slot.selectable());
         if (!slotSelectable) {
             throw new IllegalArgumentException("Selected slot is no longer available.");

@@ -9,6 +9,7 @@ import com.deepthoughtnet.clinic.api.publicsite.dto.PublicPageResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSearchResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialityDetailResponse;
 import com.deepthoughtnet.clinic.api.publicsite.dto.PublicSpecialitySummaryResponse;
+import com.deepthoughtnet.clinic.api.appointment.AppointmentTimingRules;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
@@ -24,6 +25,7 @@ import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
@@ -438,12 +440,14 @@ public class PublicCatalogFacade {
     private SlotSummary slotSummary(UUID tenantId, UUID doctorUserId) {
         ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
         LocalDate today = LocalDate.now(bookingZone);
+        ZonedDateTime clinicNow = ZonedDateTime.now(bookingZone);
         List<String> nextSlots = new ArrayList<>();
         boolean availableToday = false;
 
         for (int offset = 0; offset < SLOT_LOOKAHEAD_DAYS && nextSlots.size() < SLOT_SUGGESTION_LIMIT; offset++) {
             LocalDate date = today.plusDays(offset);
             List<DoctorAvailabilitySlotRecord> slots = appointmentService.listSlots(tenantId, doctorUserId, date, bookingZone).stream()
+                    .filter(slot -> AppointmentTimingRules.isSlotBookableForPatient(slot.appointmentDate(), slot.slotTime(), bookingZone, clinicNow))
                     .filter(DoctorAvailabilitySlotRecord::selectable)
                     .sorted(Comparator.comparing(DoctorAvailabilitySlotRecord::slotTime))
                     .toList();

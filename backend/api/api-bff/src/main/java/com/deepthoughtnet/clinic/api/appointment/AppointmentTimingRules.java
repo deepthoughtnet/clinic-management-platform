@@ -19,9 +19,22 @@ public final class AppointmentTimingRules {
     }
 
     public static boolean isUpcoming(LocalDate appointmentDate, LocalTime appointmentTime, ZoneId zone) {
-        ZonedDateTime now = ZonedDateTime.now(resolveZone(zone));
-        ZonedDateTime start = appointmentStart(appointmentDate, appointmentTime, now.getZone());
-        return start != null && !start.isBefore(now);
+        return isUpcoming(appointmentDate, appointmentTime, zone, ZonedDateTime.now(resolveZone(zone)));
+    }
+
+    public static boolean isUpcoming(LocalDate appointmentDate, LocalTime appointmentTime, ZoneId zone, ZonedDateTime now) {
+        ZoneId resolvedZone = resolveZone(zone);
+        ZonedDateTime referenceNow = now == null ? ZonedDateTime.now(resolvedZone) : now.withZoneSameInstant(resolvedZone);
+        ZonedDateTime start = appointmentStart(appointmentDate, appointmentTime, resolvedZone);
+        return start != null && !start.isBefore(referenceNow);
+    }
+
+    public static boolean isBookableForPatient(LocalDate appointmentDate, LocalTime appointmentTime, ZoneId zone, ZonedDateTime now) {
+        return isSlotBookableForPatient(appointmentDate, appointmentTime, zone, now);
+    }
+
+    public static boolean isSlotBookableForPatient(LocalDate appointmentDate, LocalTime appointmentTime, ZoneId zone, ZonedDateTime now) {
+        return isUpcoming(appointmentDate, appointmentTime, zone, now);
     }
 
     public static boolean isActionable(AppointmentRecord appointment, ZoneId zone) {

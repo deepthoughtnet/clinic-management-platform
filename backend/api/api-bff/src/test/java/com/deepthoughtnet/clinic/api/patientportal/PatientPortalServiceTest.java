@@ -421,6 +421,35 @@ class PatientPortalServiceTest {
     }
 
     @Test
+    void patientDoctorSlotsExcludePastSlotsBeforeReturningThem() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        UUID doctorUserId = UUID.randomUUID();
+        LocalDate appointmentDate = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        LocalTime nowTime = LocalTime.now(ZoneId.of("Asia/Kolkata")).withSecond(0).withNano(0);
+        LocalTime pastTime = nowTime.getHour() >= 2 ? nowTime.minusHours(2) : LocalTime.of(0, 0);
+        LocalTime futureTime = nowTime.getHour() <= 21 ? nowTime.plusHours(2) : LocalTime.of(23, 59);
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(TENANT_ID, PATIENT_ID, "PAT-001")));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile(TENANT_ID, "Sunrise Clinic", true)));
+        when(tenantRepository.findByCode("demo-clinic")).thenReturn(Optional.of(tenant("demo-clinic", OTHER_TENANT_ID)));
+        when(clinicProfileService.findByTenantId(OTHER_TENANT_ID)).thenReturn(Optional.of(clinicProfile(OTHER_TENANT_ID, "Demo Clinic", true)));
+        when(tenantUserManagementService.list(OTHER_TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Asha", OTHER_TENANT_ID)));
+        when(doctorProfileService.findByDoctorUserId(OTHER_TENANT_ID, doctorUserId)).thenReturn(Optional.of(doctorProfile(OTHER_TENANT_ID, doctorUserId, true)));
+        when(appointmentService.listSlots(eq(OTHER_TENANT_ID), eq(doctorUserId), eq(appointmentDate), any()))
+                .thenReturn(List.of(
+                        slotRecord(doctorUserId, appointmentDate, pastTime, DoctorAvailabilitySlotStatus.AVAILABLE, true),
+                        slotRecord(doctorUserId, appointmentDate, futureTime, DoctorAvailabilitySlotStatus.AVAILABLE, true)
+                ));
+
+        var slots = service.doctorSlots(doctorUserId.toString(), "demo-clinic", appointmentDate);
+
+        assertThat(slots).hasSize(1);
+        assertThat(slots.getFirst().slotTime()).isEqualTo(futureTime);
+    }
+
+    @Test
     void patientCannotLoadSlotsForDoctorOutsideRequestedTenant() {
         AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
         appUser.setPatientId(PATIENT_ID);
