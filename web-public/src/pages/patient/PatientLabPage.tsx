@@ -112,7 +112,7 @@ export default function PatientLabPage({
       session={portalSession}
       onSignOut={onSignOut}
       title="Laboratory Reports"
-      subtitle="View your lab orders, track report status, and download PDFs securely from your own tenant session."
+      subtitle="View your lab orders, track report status, and download PDFs securely from your verified portal session."
     >
       <div className="patient-content-grid patient-lab-page">
         <div className="portal-dashboard-grid patient-lab-stats">

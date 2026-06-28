@@ -77,7 +77,6 @@ import {
 } from "../../utils/dateDisplay";
 import { groupAvailableSlotsByDate } from "../../utils/bookingSlots.js";
 import {
-  AIVA_CHAT_EXAMPLES,
   AIVA_CHAT_FRIENDLY_ERROR,
   AIVA_CHAT_HELP_TEXT,
   AIVA_CHAT_INTRO_MESSAGE,
@@ -751,9 +750,29 @@ export function PatientPortalShell({
             </div>
           </div>
 
+          <div className="patient-mobile-top-actions">
+            <button className="ghost-button patient-mobile-signout" type="button" onClick={onSignOut}>
+              Sign out
+            </button>
+          </div>
+
           {children}
         </div>
       </div>
+
+      <nav className="patient-mobile-nav" aria-label="Patient portal navigation">
+        {patientNavItems.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            className={({ isActive }) => `patient-mobile-link${isActive || location.pathname === item.to ? " is-active" : ""}`}
+            aria-label={item.label}
+            title={item.label}
+          >
+            <span>{item.shortLabel}</span>
+          </NavLink>
+        ))}
+      </nav>
     </section>
   );
 }
@@ -1698,7 +1717,7 @@ export function PatientDashboardPage({ session, onSignOut }: { session: PatientP
           <article className="patient-stat-card">
             <span>Unpaid due</span>
             <strong>{formatCurrency(dashboard.data?.unpaidDueAmount ?? null)}</strong>
-            <small>Billing totals only. Ledger internals remain hidden.</small>
+            <small>Billing totals only. Detailed accounting stays with the clinic team.</small>
           </article>
         </div>
 
@@ -3234,7 +3253,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     {
       id: "assistant-intro",
       role: "assistant",
-      text: "I can help book, reschedule, cancel, or check appointments. I only complete changes after you explicitly confirm.",
+      text: AIVA_CHAT_INTRO_MESSAGE,
     },
   ]);
   const [draft, setDraft] = useState("");
@@ -3264,6 +3283,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const [voiceSilenceDetected, setVoiceSilenceDetected] = useState(false);
   const [showVoiceTechnicalDetails, setShowVoiceTechnicalDetails] = useState(false);
   const [voiceInactivityWarning, setVoiceInactivityWarning] = useState<string | null>(null);
+  const [quickActionsCollapsed, setQuickActionsCollapsed] = useState(false);
   const chatStreamRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const voiceSocketRef = useRef<WebSocket | null>(null);
@@ -3968,7 +3988,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
     }
     if (type === "error") {
       updateVoiceStatus("error");
-      setVoiceError(String(payload.message || "AIVA voice could not process that request."));
+      setVoiceError(String(payload.message || "Sorry, I couldn't process that voice request. Please try again or contact reception."));
       setVoiceInfo(null);
       appendVoiceEvent("SERVER_ERROR");
     }
@@ -4322,6 +4342,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   }
 
   function handleQuickAction(message: string) {
+    setQuickActionsCollapsed(true);
     void sendAivaMessage(message);
   }
 
@@ -4361,7 +4382,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       setState(null);
       setDraft("");
     } catch (resetError: unknown) {
-      setError(resetError instanceof Error ? resetError.message : "AIVA could not reset the booking context.");
+      setError(resetError instanceof Error ? resetError.message : "Sorry, I couldn't reset your chat. Please try again or contact reception.");
     } finally {
       setResetting(false);
     }
@@ -4372,48 +4393,52 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       session={session}
       onSignOut={onSignOut}
       title={`${branding.productName} Patient Portal`}
-      subtitle="Chat-based booking uses your verified patient session, asks for explicit confirmation, and stays scoped to your tenant."
+      subtitle="I'm here to help with appointments, prescriptions, bills, lab reports and general healthcare assistance."
+      className="patient-careai-page"
     >
       <div className="patient-content-grid">
         <article className="patient-panel patient-panel-wide patient-careai-panel-shell">
           <div className="patient-panel-heading">
-            <h2>AIVA booking chat</h2>
+            <h2>AIVA Patient Assistant</h2>
             <button className="ghost-button" type="button" disabled={!portalSession || resetting} onClick={handleReset}>
               {resetting ? "Resetting..." : "Reset"}
             </button>
           </div>
           <div className="patient-careai-workspace">
             <div className="patient-careai-voice-panel">
+              <div className="patient-careai-voice-header">
+                <strong>Voice Session</strong>
+                <span className={`patient-voice-status patient-voice-status-${voiceStatus}`}>
+                  {voiceMuted && voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error"
+                    ? "Muted"
+                    : patientVoiceStatusLabel(voiceStatus)}
+                </span>
+              </div>
               <div className="patient-careai-voice-actions">
                 <button
-                  className="primary-button"
+                  className="secondary-button patient-careai-voice-button"
                   type="button"
                   disabled={!portalSession || submitting || (voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error")}
                   onClick={handleVoiceStart}
                 >
-                  Talk to AIVA
+                  Talk
                 </button>
                 <button
-                  className="secondary-button"
+                  className="ghost-button patient-careai-voice-button"
                   type="button"
                   disabled={voiceStatus === "idle" || voiceStatus === "ended"}
                   onClick={handleVoiceEndSession}
                 >
-                  End Call
+                  End
                 </button>
                 <button
-                  className="ghost-button"
+                  className="ghost-button patient-careai-voice-button"
                   type="button"
                   disabled={voiceStatus === "idle" || voiceStatus === "ended"}
                   onClick={() => setVoiceMuted((current) => !current)}
                 >
                   {voiceMuted ? "Unmute" : "Mute"}
                 </button>
-                <span className={`patient-voice-status patient-voice-status-${voiceStatus}`}>
-                  {voiceMuted && voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error"
-                    ? "Muted"
-                    : patientVoiceStatusLabel(voiceStatus)}
-                </span>
               </div>
               <div className="patient-careai-voice-toolbar">
                 <span className="patient-inline-note">
@@ -4546,14 +4571,18 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                   </div>
                 ))}
                 {submitting ? (
-                  <div className="patient-chat-bubble patient-chat-bubble-ai">
+                  <div className="patient-chat-bubble patient-chat-bubble-ai patient-chat-bubble-typing">
                     <strong>AIVA</strong>
-                    <p>AIVA is typing…</p>
+                    <div className="patient-typing-indicator" aria-label="AIVA is typing">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
                   </div>
                 ) : null}
                 <div ref={chatEndRef} />
               </div>
-              <div className="patient-careai-quick-actions" aria-label="AIVA quick actions">
+              <div className={`patient-careai-quick-actions${quickActionsCollapsed ? " patient-careai-quick-actions-collapsed" : ""}`} aria-label="AIVA quick actions">
                 {AIVA_CHAT_QUICK_ACTIONS.map((action) => (
                   <button
                     key={action.label}
@@ -4565,22 +4594,6 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                     {action.label}
                   </button>
                 ))}
-              </div>
-              <div className="patient-careai-examples">
-                <span className="patient-inline-note">Examples</span>
-                <div className="patient-careai-example-row" aria-label="AIVA message examples">
-                  {AIVA_CHAT_EXAMPLES.map((example) => (
-                    <button
-                      key={example}
-                      type="button"
-                      className="careai-prompt-chip patient-careai-example-chip"
-                      disabled={!portalSession || submitting}
-                      onClick={() => setDraft(example)}
-                    >
-                      {example}
-                    </button>
-                  ))}
-                </div>
               </div>
               <form className="patient-careai-form" onSubmit={handleSubmit}>
                 <label className="patient-form-field">
@@ -4600,7 +4613,6 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                   </button>
                   <span className="patient-inline-note">{AIVA_CHAT_HELP_TEXT}</span>
                 </div>
-                {submitting ? <div className="patient-inline-note">AIVA is typing…</div> : null}
                 {error ? <div className="patient-inline-empty patient-inline-error">{error}</div> : null}
               </form>
             </div>
@@ -4649,35 +4661,54 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
               </div>
 
               {state.doctorOptions.length ? (
-                <div className="patient-subcard-list">
+                <div className="patient-chip-list" aria-label="Doctor suggestions">
                   {state.doctorOptions.map((option, index) => (
-                    <div key={option} className="patient-subcard">
-                      <strong>Doctor option {index + 1}</strong>
-                      <span>{option}</span>
-                    </div>
+                    <button
+                      key={option}
+                      type="button"
+                      className="careai-prompt-chip patient-careai-suggestion-chip"
+                      disabled={!portalSession || submitting}
+                      onClick={() => handleQuickAction(option)}
+                    >
+                      Doctor {index + 1}: {option}
+                    </button>
                   ))}
                 </div>
               ) : null}
 
               {state.appointmentOptions.length ? (
-                <div className="patient-subcard-list">
+                <div className="patient-chip-list" aria-label="Appointment suggestions">
                   {state.appointmentOptions.map((option, index) => (
-                    <div key={option} className="patient-subcard">
-                      <strong>Appointment {index + 1}</strong>
-                      <span>{option}</span>
-                    </div>
+                    <button
+                      key={option}
+                      type="button"
+                      className="careai-prompt-chip patient-careai-suggestion-chip"
+                      disabled={!portalSession || submitting}
+                      onClick={() => handleQuickAction(option)}
+                    >
+                      Appointment {index + 1}: {option}
+                    </button>
                   ))}
                 </div>
               ) : null}
 
               {state.slotOptions.length ? (
-                <div className="patient-subcard-list">
-                  {state.slotOptions.map((option, index) => (
-                    <div key={option} className="patient-subcard">
-                      <strong>Slot {index + 1}</strong>
-                      <span>{formatTime(option)}</span>
-                    </div>
-                  ))}
+                <div className="patient-careai-slot-card">
+                  <strong>Available slots</strong>
+                  <div className="patient-chip-list" aria-label="Available slots">
+                    {state.slotOptions.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        className="careai-prompt-chip patient-careai-suggestion-chip patient-careai-slot-chip"
+                        disabled={!portalSession || submitting}
+                        onClick={() => handleQuickAction(option)}
+                      >
+                        {formatTime(option)}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="patient-inline-note">Tap a slot to send it back to AIVA.</span>
                 </div>
               ) : null}
 
@@ -4685,14 +4716,14 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
                 <div className="patient-highlight-card patient-careai-alert">
                   <strong>Reception follow-up recommended</strong>
                   <span>{state.handoffReason ?? "manual-assist"}</span>
-                  <p>AIVA could not safely finish this request. The clinic team should help complete the booking.</p>
+                  <p>We couldn't safely finish this request. Please continue with reception.</p>
                 </div>
               ) : null}
             </div>
           ) : (
             <div className="patient-empty-card">
-              <strong>AIVA is ready</strong>
-              <p>Ask to book, reschedule, cancel, or check an appointment. You can reply in English or Hindi.</p>
+              <strong>Start a conversation</strong>
+              <p>Ask AIVA about appointments, prescriptions, bills, lab reports, or clinic questions.</p>
             </div>
           )}
         </article>

@@ -1799,7 +1799,8 @@ input {
 }
 
 .patient-careai-panel-shell {
-  min-height: min(72rem, calc(100dvh - 12rem));
+  min-height: 0;
+  height: auto;
   overflow: hidden;
   grid-template-rows: auto minmax(0, 1fr);
 }
@@ -1853,6 +1854,7 @@ input {
 
 .patient-chat-bubble p {
   margin: 0;
+  white-space: pre-line;
 }
 
 .patient-chat-bubble-ai {
@@ -1870,8 +1872,11 @@ input {
 }
 
 .patient-careai-chat {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   align-self: stretch;
+  gap: 0.75rem;
 }
 
 .patient-careai-chat .patient-chat-stream {
@@ -1885,7 +1890,8 @@ input {
 }
 
 .patient-careai-quick-actions,
-.patient-careai-example-row {
+.patient-careai-example-row,
+.patient-chip-list {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
@@ -1897,14 +1903,72 @@ input {
   white-space: nowrap;
 }
 
-.patient-careai-examples {
+.patient-careai-suggestion-chip {
+  min-height: 2.4rem;
+  padding-inline: 0.9rem;
+}
+
+.patient-careai-voice-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.patient-careai-voice-button {
+  min-width: 0;
+  padding-inline: 0.9rem;
+}
+
+.patient-careai-slot-card {
   display: grid;
   gap: 0.5rem;
   min-width: 0;
 }
 
 .patient-careai-panel-shell .patient-careai-chat {
-  min-height: min(36rem, calc(100dvh - 30rem));
+  min-height: 0;
+}
+
+.patient-chat-bubble-typing {
+  min-width: 8rem;
+}
+
+.patient-typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 1.25rem;
+}
+
+.patient-typing-indicator span {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--primary);
+  animation: patientTypingDots 1.15s infinite ease-in-out;
+}
+
+.patient-typing-indicator span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.patient-typing-indicator span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes patientTypingDots {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  40% {
+    transform: translateY(-0.2rem);
+    opacity: 1;
+  }
 }
 
 .patient-careai-voice-panel {
@@ -2049,6 +2113,14 @@ input {
 
 .patient-success-card {
   background: linear-gradient(180deg, #f5fdfb 0%, #ffffff 100%);
+}
+
+.patient-mobile-nav {
+  display: none;
+}
+
+.patient-mobile-top-actions {
+  display: none;
 }
 
 .patient-mobile-nav {
@@ -2284,6 +2356,11 @@ input {
     grid-column: span 2;
   }
 
+  .patient-careai-page .patient-content-grid {
+    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+    align-items: start;
+  }
+
   .public-preview-grid,
   .public-detail-grid,
   .public-careai-panel {
@@ -2325,8 +2402,13 @@ input {
     min-height: auto;
   }
 
+  .patient-careai-chat {
+    gap: 0.65rem;
+  }
+
   .patient-careai-quick-actions,
-  .patient-careai-example-row {
+  .patient-careai-example-row,
+  .patient-chip-list {
     flex-wrap: nowrap;
     overflow-x: auto;
     padding-bottom: 0.15rem;
@@ -2334,7 +2416,8 @@ input {
   }
 
   .patient-careai-quick-action,
-  .patient-careai-example-chip {
+  .patient-careai-example-chip,
+  .patient-careai-suggestion-chip {
     flex: 0 0 auto;
   }
 
@@ -2379,12 +2462,12 @@ input {
   }
 
   .patient-careai-panel-shell .patient-careai-workspace {
-    grid-template-columns: minmax(18rem, 0.8fr) minmax(0, 1.2fr);
+    grid-template-columns: minmax(16rem, 0.36fr) minmax(0, 0.64fr);
     align-items: stretch;
   }
 
   .patient-careai-panel-shell {
-    height: calc(100dvh - 12rem);
+    height: clamp(30rem, calc(100dvh - 16rem), 37.5rem);
   }
 
   .patient-careai-panel-shell .patient-careai-chat {
@@ -3055,6 +3138,11 @@ input {
     align-items: start;
   }
 
+  .patient-careai-page .patient-content-grid {
+    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+    align-items: start;
+  }
+
   .patient-portal-page .patient-portal-shell {
     grid-template-columns: minmax(260px, 290px) minmax(0, 1fr);
     align-items: start;
@@ -3086,6 +3174,36 @@ input {
   .aiva-page-header {
     grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
     align-items: center;
+  }
+}
+
+@media (min-width: 600px) and (max-width: 900px) {
+  .global-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
+    align-items: center;
+    justify-items: stretch;
+    text-align: left;
+  }
+
+  .global-header-brand-row {
+    justify-content: flex-start;
+  }
+
+  .global-header-mobile-actions {
+    display: none;
+  }
+
+  .global-header-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .global-header-actions {
+    display: flex;
   }
 }
 
@@ -3212,6 +3330,38 @@ input {
 
   .patient-portal-page .patient-main {
     overflow: visible;
+  }
+
+  .patient-portal-page {
+    padding-bottom: 8rem;
+  }
+
+  .patient-careai-page .patient-content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .patient-mobile-top-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .patient-mobile-signout {
+    width: 100%;
+  }
+
+  .patient-mobile-nav {
+    display: flex;
+    gap: 0.45rem;
+    align-items: stretch;
+    overflow-x: auto;
+    padding-inline: 0.75rem;
+    scrollbar-width: thin;
+  }
+
+  .patient-mobile-link {
+    flex: 0 0 auto;
+    min-width: 4.75rem;
+    white-space: nowrap;
   }
 
   .patient-appointments-page .patient-appointment-list {

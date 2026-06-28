@@ -1,7 +1,8 @@
 export const AIVA_CHAT_INTRO_MESSAGE =
-  "Hello, I’m AIVA. I can help you book, reschedule, cancel, or check appointments. I can also help with bills, prescriptions, and lab reports.";
+  "Hello!\n\nI'm AIVA, your healthcare assistant.\n\nI can help you:\n• Book appointments\n• Reschedule visits\n• Cancel appointments\n• View bills\n• Check lab reports\n• Explain prescriptions\n• Answer clinic questions\n\nI always ask for confirmation before making changes.";
 
-export const AIVA_CHAT_PLACEHOLDER = "Type your request, e.g. Book appointment with Dr Neha tomorrow";
+export const AIVA_CHAT_PLACEHOLDER =
+  "Ask AIVA anything...\n\nExamples:\n• Book appointment with Dr Vikas tomorrow\n• Cancel my next appointment\n• Show my lab reports";
 
 export const AIVA_CHAT_HELP_TEXT =
   "AIVA will ask for confirmation before booking, rescheduling, or cancelling.";

@@ -38,10 +38,11 @@ test("aiva quick actions send direct messages and examples stay patient friendly
 });
 
 test("aiva chat copy stays friendly and non-technical", () => {
-  assert.match(AIVA_CHAT_INTRO_MESSAGE, /appointments/i);
-  assert.match(AIVA_CHAT_INTRO_MESSAGE, /bills/i);
-  assert.match(AIVA_CHAT_INTRO_MESSAGE, /lab reports/i);
-  assert.match(AIVA_CHAT_PLACEHOLDER, /Book appointment with Dr Neha tomorrow/);
+  assert.match(AIVA_CHAT_INTRO_MESSAGE, /healthcare assistant/i);
+  assert.match(AIVA_CHAT_INTRO_MESSAGE, /Book appointments/i);
+  assert.match(AIVA_CHAT_INTRO_MESSAGE, /Check lab reports/i);
+  assert.match(AIVA_CHAT_PLACEHOLDER, /Ask AIVA anything/i);
+  assert.match(AIVA_CHAT_PLACEHOLDER, /Show my lab reports/);
   assert.match(AIVA_CHAT_HELP_TEXT, /confirmation/i);
   assert.equal(
     AIVA_CHAT_FRIENDLY_ERROR,
