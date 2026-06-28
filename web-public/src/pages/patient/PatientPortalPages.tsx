@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   indianMobileNumber,
@@ -76,6 +76,17 @@ import {
   formatDisplayTime,
 } from "../../utils/dateDisplay";
 import { groupAvailableSlotsByDate } from "../../utils/bookingSlots.js";
+import {
+  AIVA_CHAT_EXAMPLES,
+  AIVA_CHAT_FRIENDLY_ERROR,
+  AIVA_CHAT_HELP_TEXT,
+  AIVA_CHAT_INTRO_MESSAGE,
+  AIVA_CHAT_PLACEHOLDER,
+  AIVA_CHAT_QUICK_ACTIONS,
+  isBlankAivaMessage,
+  normalizeAivaMessageDraft,
+  shouldSendAivaMessageOnKeyDown,
+} from "../../utils/aivaChat.js";
 
 type FetchState<T> = {
   data: T;
@@ -682,7 +693,7 @@ function usePatientPortalResource<T>(
   return state;
 }
 
-function PatientPortalShell({
+export function PatientPortalShell({
   session,
   title,
   subtitle,
@@ -3253,6 +3264,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   const [voiceSilenceDetected, setVoiceSilenceDetected] = useState(false);
   const [showVoiceTechnicalDetails, setShowVoiceTechnicalDetails] = useState(false);
   const [voiceInactivityWarning, setVoiceInactivityWarning] = useState<string | null>(null);
+  const chatStreamRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const voiceSocketRef = useRef<WebSocket | null>(null);
   const voiceRecorderRef = useRef<MediaRecorder | null>(null);
@@ -3548,6 +3560,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   }
 
   useEffect(() => {
+    chatStreamRef.current?.scrollTo({ top: chatStreamRef.current.scrollHeight, behavior: "smooth" });
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
 
@@ -3556,7 +3569,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       {
         id: "assistant-intro",
         role: "assistant",
-        text: "I can help book, reschedule, cancel, or check appointments. I only complete changes after you explicitly confirm.",
+        text: AIVA_CHAT_INTRO_MESSAGE,
       },
     ]);
     setDraft("");
@@ -4250,11 +4263,20 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!portalSession || !draft.trim() || submitting) {
+    if (!portalSession || submitting || isBlankAivaMessage(draft)) {
       return;
     }
+    await sendAivaMessage(draft);
+  }
 
-    const trimmed = draft.trim();
+  async function sendAivaMessage(messageText: string) {
+    if (!portalSession || submitting) {
+      return;
+    }
+    const trimmed = normalizeAivaMessageDraft(messageText).trim();
+    if (isBlankAivaMessage(trimmed)) {
+      return;
+    }
     const patientMessage: PatientCareAiChatEntry = {
       id: `patient-${Date.now()}`,
       role: "patient",
@@ -4284,11 +4306,23 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
           text: response.assistantMessage,
         },
       ]);
-    } catch (submitError: unknown) {
-      setError(submitError instanceof Error ? submitError.message : "AIVA could not process that request.");
+    } catch {
+      setError(AIVA_CHAT_FRIENDLY_ERROR);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function handleDraftKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!shouldSendAivaMessageOnKeyDown(event.key, event.shiftKey)) {
+      return;
+    }
+    event.preventDefault();
+    void sendAivaMessage(draft);
+  }
+
+  function handleQuickAction(message: string) {
+    void sendAivaMessage(message);
   }
 
   async function handleReset() {
@@ -4341,202 +4375,235 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
       subtitle="Chat-based booking uses your verified patient session, asks for explicit confirmation, and stays scoped to your tenant."
     >
       <div className="patient-content-grid">
-        <article className="patient-panel patient-panel-wide">
+        <article className="patient-panel patient-panel-wide patient-careai-panel-shell">
           <div className="patient-panel-heading">
             <h2>AIVA booking chat</h2>
             <button className="ghost-button" type="button" disabled={!portalSession || resetting} onClick={handleReset}>
               {resetting ? "Resetting..." : "Reset"}
             </button>
           </div>
-          <div className="patient-careai-voice-panel">
-            <div className="patient-careai-voice-actions">
-              <button
-                className="primary-button"
-                type="button"
-                disabled={!portalSession || submitting || (voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error")}
-                onClick={handleVoiceStart}
-              >
-                Talk to AIVA
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={voiceStatus === "idle" || voiceStatus === "ended"}
-                onClick={handleVoiceEndSession}
-              >
-                End Call
-              </button>
-              <button
-                className="ghost-button"
-                type="button"
-                disabled={voiceStatus === "idle" || voiceStatus === "ended"}
-                onClick={() => setVoiceMuted((current) => !current)}
-              >
-                {voiceMuted ? "Unmute" : "Mute"}
-              </button>
-              <span className={`patient-voice-status patient-voice-status-${voiceStatus}`}>
-                {voiceMuted && voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error"
-                  ? "Muted"
-                  : patientVoiceStatusLabel(voiceStatus)}
-              </span>
-            </div>
-            <div className="patient-careai-voice-toolbar">
-              <span className="patient-inline-note">
-                {voiceInfo || "Start a voice session and AIVA will listen automatically after it connects."}
-              </span>
-              <button
-                className="ghost-button patient-technical-toggle"
-                type="button"
-                onClick={() => setShowVoiceTechnicalDetails((current) => !current)}
-              >
-                {showVoiceTechnicalDetails ? "Hide technical details" : "Show technical details"}
-              </button>
-            </div>
-            {voiceInactivityWarning ? <div className="patient-inline-empty patient-careai-voice-warning">{voiceInactivityWarning}</div> : null}
-            <audio
-              ref={voiceAudioElementRef}
-              className="patient-careai-audio"
-              muted={voiceMuted}
-              onEnded={() => {
-                clearAssistantAudioFlags();
-                voicePendingAutoPlayRef.current = false;
-                const playbackDurationMs = voicePlaybackStartedAtRef.current == null ? 0 : Math.round(performance.now() - voicePlaybackStartedAtRef.current);
-                appendVoiceEvent(`ASSISTANT_AUDIO_ENDED ${playbackDurationMs}ms`);
-                voicePlaybackStartedAtRef.current = null;
-                updateVoiceStatus("session_started");
-                setVoiceInfo("Listening again…");
-                setVoiceReplyReadyToPlay(false);
-                if (voiceAutoResumeRef.current) {
-                  scheduleVoiceListeningResume("playback_ended");
-                }
-              }}
-            />
-            {voiceReplyReadyToPlay ? (
-              <button className="ghost-button patient-careai-reply-play" type="button" onClick={() => void handleVoiceReplyPlayback()}>
-                Play AIVA reply
-              </button>
-            ) : null}
-            {voiceError ? <div className="patient-inline-empty patient-inline-error">{voiceError}</div> : null}
-            {showVoiceTechnicalDetails ? (
-              <div className="patient-careai-technical-panel">
-                <div className="patient-careai-voice-actions patient-careai-voice-debug-actions">
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={!portalSession || voiceStatus !== "session_started"}
-                    onClick={() => void handleVoiceStartTurn()}
-                  >
-                    Start Turn
-                  </button>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={voiceStatus !== "listening" && voiceStatus !== "speech_detected"}
-                    onClick={handleVoiceStopTurn}
-                  >
-                    Stop Turn / Send
-                  </button>
-                </div>
-                <div className="patient-careai-voice-meta">
-                  <div className="patient-subcard">
-                    <strong>Transcript</strong>
-                    <span>{voiceTranscript || "No transcript yet."}</span>
+          <div className="patient-careai-workspace">
+            <div className="patient-careai-voice-panel">
+              <div className="patient-careai-voice-actions">
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={!portalSession || submitting || (voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error")}
+                  onClick={handleVoiceStart}
+                >
+                  Talk to AIVA
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={voiceStatus === "idle" || voiceStatus === "ended"}
+                  onClick={handleVoiceEndSession}
+                >
+                  End Call
+                </button>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  disabled={voiceStatus === "idle" || voiceStatus === "ended"}
+                  onClick={() => setVoiceMuted((current) => !current)}
+                >
+                  {voiceMuted ? "Unmute" : "Mute"}
+                </button>
+                <span className={`patient-voice-status patient-voice-status-${voiceStatus}`}>
+                  {voiceMuted && voiceStatus !== "idle" && voiceStatus !== "ended" && voiceStatus !== "error"
+                    ? "Muted"
+                    : patientVoiceStatusLabel(voiceStatus)}
+                </span>
+              </div>
+              <div className="patient-careai-voice-toolbar">
+                <span className="patient-inline-note">
+                  {voiceInfo || "Start a voice session and AIVA will listen automatically after it connects."}
+                </span>
+                <button
+                  className="ghost-button patient-technical-toggle"
+                  type="button"
+                  onClick={() => setShowVoiceTechnicalDetails((current) => !current)}
+                >
+                  {showVoiceTechnicalDetails ? "Hide technical details" : "Show technical details"}
+                </button>
+              </div>
+              {voiceInactivityWarning ? <div className="patient-inline-empty patient-careai-voice-warning">{voiceInactivityWarning}</div> : null}
+              <audio
+                ref={voiceAudioElementRef}
+                className="patient-careai-audio"
+                muted={voiceMuted}
+                onEnded={() => {
+                  clearAssistantAudioFlags();
+                  voicePendingAutoPlayRef.current = false;
+                  const playbackDurationMs = voicePlaybackStartedAtRef.current == null ? 0 : Math.round(performance.now() - voicePlaybackStartedAtRef.current);
+                  appendVoiceEvent(`ASSISTANT_AUDIO_ENDED ${playbackDurationMs}ms`);
+                  voicePlaybackStartedAtRef.current = null;
+                  updateVoiceStatus("session_started");
+                  setVoiceInfo("Listening again…");
+                  setVoiceReplyReadyToPlay(false);
+                  if (voiceAutoResumeRef.current) {
+                    scheduleVoiceListeningResume("playback_ended");
+                  }
+                }}
+              />
+              {voiceReplyReadyToPlay ? (
+                <button className="ghost-button patient-careai-reply-play" type="button" onClick={() => void handleVoiceReplyPlayback()}>
+                  Play AIVA reply
+                </button>
+              ) : null}
+              {voiceError ? <div className="patient-inline-empty patient-inline-error">{voiceError}</div> : null}
+              {showVoiceTechnicalDetails ? (
+                <div className="patient-careai-technical-panel">
+                  <div className="patient-careai-voice-actions patient-careai-voice-debug-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={!portalSession || voiceStatus !== "session_started"}
+                      onClick={() => void handleVoiceStartTurn()}
+                    >
+                      Start Turn
+                    </button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={voiceStatus !== "listening" && voiceStatus !== "speech_detected"}
+                      onClick={handleVoiceStopTurn}
+                    >
+                      Stop Turn / Send
+                    </button>
                   </div>
-                  <div className="patient-subcard">
-                    <strong>Voice reply</strong>
-                    <span>{voiceAssistant || "No assistant reply yet."}</span>
-                  </div>
-                  <div className="patient-subcard">
-                    <strong>Session</strong>
-                    <span>{voiceSessionId || "Starts after websocket handshake."}</span>
-                  </div>
-                  <div className="patient-subcard">
-                    <strong>WebSocket target</strong>
-                    <span>{voiceConnectionTargetUrl || "Not connected yet."}</span>
-                  </div>
-                  <div className="patient-subcard">
-                    <strong>Last close</strong>
-                    <span>
-                      {voiceConnectionCloseCode == null
-                        ? "No close event yet."
-                        : `${voiceConnectionCloseCode}${voiceConnectionCloseReason ? ` · ${voiceConnectionCloseReason}` : ""}`}
-                    </span>
-                  </div>
-                  <div className="patient-subcard">
-                    <strong>Providers</strong>
-                    <span>
-                      STT {formatPatientVoiceProvider(voiceProviderTrace?.sttProvider)} · LLM {formatPatientVoiceProvider(voiceProviderTrace?.llmProvider)} · TTS {formatPatientVoiceProvider(voiceProviderTrace?.ttsProvider)}
-                    </span>
-                  </div>
-                  <div className="patient-subcard">
-                    <strong>Voice activity</strong>
-                    <span>
-                      RMS {voiceMicLevel.toFixed(3)} · Peak {voiceMicPeak.toFixed(3)} · {voiceSpeechDetected ? "Speech detected" : voiceSilenceDetected ? "Silence detected" : "Waiting"}
-                    </span>
-                  </div>
-                  <div className="patient-subcard">
-                    <strong>Turn timings</strong>
-                    <span>
-                      {voiceTurnMetrics
-                        ? `STT ${voiceTurnMetrics.sttDurationMs}ms · AIVA ${voiceTurnMetrics.careAiDurationMs}ms · TTS ${voiceTurnMetrics.ttsDurationMs}ms · Total ${voiceTurnMetrics.totalDurationMs}ms`
-                        : `VAD start ${voiceConfig.speechStartThreshold.toFixed(3)} · silence ${voiceConfig.silenceTimeoutMs}ms · auto resume ${voiceConfig.autoResumeDelayMs}ms`}
-                    </span>
-                  </div>
-                </div>
-                {voiceAudioUrl ? (
-                  <audio className="patient-careai-audio-technical" controls src={voiceAudioUrl} muted={voiceMuted} />
-                ) : null}
-                {voiceEvents.length > 0 ? (
-                  <div className="patient-careai-voice-events">
-                    <strong>Live events</strong>
-                    <div className="patient-careai-voice-event-list">
-                      {voiceEvents.map((item, index) => (
-                        <span key={`${item}-${index}`}>{item}</span>
-                      ))}
+                  <div className="patient-careai-voice-meta">
+                    <div className="patient-subcard">
+                      <strong>Transcript</strong>
+                      <span>{voiceTranscript || "No transcript yet."}</span>
+                    </div>
+                    <div className="patient-subcard">
+                      <strong>Voice reply</strong>
+                      <span>{voiceAssistant || "No assistant reply yet."}</span>
+                    </div>
+                    <div className="patient-subcard">
+                      <strong>Session</strong>
+                      <span>{voiceSessionId || "Starts after websocket handshake."}</span>
+                    </div>
+                    <div className="patient-subcard">
+                      <strong>WebSocket target</strong>
+                      <span>{voiceConnectionTargetUrl || "Not connected yet."}</span>
+                    </div>
+                    <div className="patient-subcard">
+                      <strong>Last close</strong>
+                      <span>
+                        {voiceConnectionCloseCode == null
+                          ? "No close event yet."
+                          : `${voiceConnectionCloseCode}${voiceConnectionCloseReason ? ` · ${voiceConnectionCloseReason}` : ""}`}
+                      </span>
+                    </div>
+                    <div className="patient-subcard">
+                      <strong>Providers</strong>
+                      <span>
+                        STT {formatPatientVoiceProvider(voiceProviderTrace?.sttProvider)} · LLM {formatPatientVoiceProvider(voiceProviderTrace?.llmProvider)} · TTS {formatPatientVoiceProvider(voiceProviderTrace?.ttsProvider)}
+                      </span>
+                    </div>
+                    <div className="patient-subcard">
+                      <strong>Voice activity</strong>
+                      <span>
+                        RMS {voiceMicLevel.toFixed(3)} · Peak {voiceMicPeak.toFixed(3)} · {voiceSpeechDetected ? "Speech detected" : voiceSilenceDetected ? "Silence detected" : "Waiting"}
+                      </span>
+                    </div>
+                    <div className="patient-subcard">
+                      <strong>Turn timings</strong>
+                      <span>
+                        {voiceTurnMetrics
+                          ? `STT ${voiceTurnMetrics.sttDurationMs}ms · AIVA ${voiceTurnMetrics.careAiDurationMs}ms · TTS ${voiceTurnMetrics.ttsDurationMs}ms · Total ${voiceTurnMetrics.totalDurationMs}ms`
+                          : `VAD start ${voiceConfig.speechStartThreshold.toFixed(3)} · silence ${voiceConfig.silenceTimeoutMs}ms · auto resume ${voiceConfig.autoResumeDelayMs}ms`}
+                      </span>
                     </div>
                   </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-          <div className="patient-careai-chat">
-            <div className="patient-chat-stream" aria-live="polite">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`patient-chat-bubble ${message.role === "patient" ? "patient-chat-bubble-self" : "patient-chat-bubble-ai"}`}
-                >
-                  <strong>{message.role === "patient" ? "You" : "AIVA"}</strong>
-                  <p>{message.text}</p>
-                </div>
-              ))}
-              {submitting ? (
-                <div className="patient-chat-bubble patient-chat-bubble-ai">
-                  <strong>AIVA</strong>
-                  <p>Checking doctors and slots for you...</p>
+                  {voiceAudioUrl ? (
+                    <audio className="patient-careai-audio-technical" controls src={voiceAudioUrl} muted={voiceMuted} />
+                  ) : null}
+                  {voiceEvents.length > 0 ? (
+                    <div className="patient-careai-voice-events">
+                      <strong>Live events</strong>
+                      <div className="patient-careai-voice-event-list">
+                        {voiceEvents.map((item, index) => (
+                          <span key={`${item}-${index}`}>{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
-              <div ref={chatEndRef} />
             </div>
-            <form className="patient-careai-form" onSubmit={handleSubmit}>
-              <label className="patient-form-field">
-                <span>Message</span>
-                <textarea
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  placeholder="Example: Reschedule my appointment, Book with Dr Neha tomorrow, Cancel next appointment."
-                  rows={4}
-                  disabled={!portalSession || submitting}
-                />
-              </label>
-              <div className="patient-action-row">
-                <button className="primary-button" type="submit" disabled={!portalSession || submitting || !draft.trim()}>
-                  {submitting ? "Sending..." : "Send to AIVA"}
-                </button>
-                <span className="patient-inline-note">AIVA never books, reschedules, or cancels until you explicitly confirm.</span>
+            <div className="patient-careai-chat">
+              <div className="patient-chat-stream" aria-live="polite" ref={chatStreamRef}>
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`patient-chat-bubble ${message.role === "patient" ? "patient-chat-bubble-self" : "patient-chat-bubble-ai"}`}
+                  >
+                    <strong>{message.role === "patient" ? "You" : "AIVA"}</strong>
+                    <p>{message.text}</p>
+                  </div>
+                ))}
+                {submitting ? (
+                  <div className="patient-chat-bubble patient-chat-bubble-ai">
+                    <strong>AIVA</strong>
+                    <p>AIVA is typing…</p>
+                  </div>
+                ) : null}
+                <div ref={chatEndRef} />
               </div>
-              {error ? <div className="patient-inline-empty patient-inline-error">{error}</div> : null}
-            </form>
+              <div className="patient-careai-quick-actions" aria-label="AIVA quick actions">
+                {AIVA_CHAT_QUICK_ACTIONS.map((action) => (
+                  <button
+                    key={action.label}
+                    type="button"
+                    className="careai-prompt-chip patient-careai-quick-action"
+                    disabled={!portalSession || submitting}
+                    onClick={() => handleQuickAction(action.message)}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+              <div className="patient-careai-examples">
+                <span className="patient-inline-note">Examples</span>
+                <div className="patient-careai-example-row" aria-label="AIVA message examples">
+                  {AIVA_CHAT_EXAMPLES.map((example) => (
+                    <button
+                      key={example}
+                      type="button"
+                      className="careai-prompt-chip patient-careai-example-chip"
+                      disabled={!portalSession || submitting}
+                      onClick={() => setDraft(example)}
+                    >
+                      {example}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <form className="patient-careai-form" onSubmit={handleSubmit}>
+                <label className="patient-form-field">
+                  <span>Message</span>
+                  <textarea
+                    value={draft}
+                    onChange={(event) => setDraft(normalizeAivaMessageDraft(event.target.value))}
+                    onKeyDown={handleDraftKeyDown}
+                    placeholder={AIVA_CHAT_PLACEHOLDER}
+                    rows={4}
+                    disabled={!portalSession || submitting}
+                  />
+                </label>
+                <div className="patient-action-row">
+                  <button className="primary-button" type="submit" disabled={!portalSession || submitting || !draft.trim()}>
+                    {submitting ? "Sending..." : "Send to AIVA"}
+                  </button>
+                  <span className="patient-inline-note">{AIVA_CHAT_HELP_TEXT}</span>
+                </div>
+                {submitting ? <div className="patient-inline-note">AIVA is typing…</div> : null}
+                {error ? <div className="patient-inline-empty patient-inline-error">{error}</div> : null}
+              </form>
+            </div>
           </div>
         </article>
 

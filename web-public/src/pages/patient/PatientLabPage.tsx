@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 import {
   getPatientLabOrders,
@@ -10,8 +10,8 @@ import {
   type PatientPortalLabOrderResponse,
   type PatientPortalSession,
 } from "../../api/patientPortal";
-import { branding } from "../../branding";
 import { formatDisplayDateTime } from "../../utils/dateDisplay";
+import { PatientPortalShell } from "./PatientPortalPages";
 
 function statusLabel(status: string | null | undefined) {
   return (status || "PENDING").replaceAll("_", " ");
@@ -108,20 +108,13 @@ export default function PatientLabPage({
   const noLabData = !orders.length && !reports.length;
 
   return (
-    <section className="page-section patient-portal-page patient-lab-page">
-      <div className="patient-lab-shell">
-        <header className="patient-lab-header">
-          <div className="section-heading patient-lab-heading">
-            <span className="eyebrow">{branding.productName} Patient Portal</span>
-            <h1>Laboratory Reports</h1>
-            <p>View your lab orders, track report status, and download PDFs securely from your own tenant session.</p>
-          </div>
-          <div className="cta-row patient-lab-actions">
-            <Link className="secondary-button" to="/patient/dashboard">Back to dashboard</Link>
-            <button className="ghost-button" type="button" onClick={onSignOut}>Sign out</button>
-          </div>
-        </header>
-
+    <PatientPortalShell
+      session={portalSession}
+      onSignOut={onSignOut}
+      title="Laboratory Reports"
+      subtitle="View your lab orders, track report status, and download PDFs securely from your own tenant session."
+    >
+      <div className="patient-content-grid patient-lab-page">
         <div className="portal-dashboard-grid patient-lab-stats">
           <article className="dashboard-card">
             <span>Lab orders</span>
@@ -159,89 +152,91 @@ export default function PatientLabPage({
 
         {!noLabData ? (
           <div className="portal-section-grid patient-lab-grid">
-          <section className="portal-panel">
-            <div className="portal-panel-header">
-              <h2>Lab Orders</h2>
-            </div>
-            {!orders.length ? (
-              <div className="portal-empty-state">
-                <strong>No lab orders yet.</strong>
-                <p>Your ordered tests will appear here once the clinic creates them.</p>
+            <section className="portal-panel">
+              <div className="portal-panel-header">
+                <h2>Lab Orders</h2>
               </div>
-            ) : (
-              <div className="portal-list">
-                {orders.map((order) => (
-                  <article className="portal-list-card" key={order.orderNumber}>
-                    <div className="portal-list-card-header">
-                      <strong>{order.orderNumber}</strong>
-                      <span className={`status-pill status-${statusTone(order.status)}`}>{statusLabel(order.status)}</span>
-                    </div>
-                    <div className="portal-list-meta">
-                      <span>Doctor: {order.doctorName || "-"}</span>
-                      <span>Ordered: {formatDisplayDateTime(order.orderedAt)}</span>
-                      <span>Sample: {order.sampleCollectedAt ? formatDisplayDateTime(order.sampleCollectedAt) : "Pending"}</span>
-                      <span>Review: {order.doctorReviewedAt ? formatDisplayDateTime(order.doctorReviewedAt) : "Pending"}</span>
-                    </div>
-                    {order.results.length ? (
-                      <ul className="portal-inline-list">
-                        {order.results.slice(0, 5).map((result, index) => (
-                          <li key={`${order.orderNumber}-${index}`}>
-                            <strong>{result.testName}</strong>
-                            <span>{result.parameterName || result.componentName || "Result"}: {result.resultValue || "-"}</span>
-                            <span>{result.referenceRange || "-"}</span>
-                            <span>{result.resultFlag || "NORMAL"}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="portal-help-text">Results are not available yet.</p>
-                    )}
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
+              {!orders.length ? (
+                <div className="portal-empty-state">
+                  <strong>No lab orders yet.</strong>
+                  <p>Your ordered tests will appear here once the clinic creates them.</p>
+                </div>
+              ) : (
+                <div className="portal-list">
+                  {orders.map((order) => (
+                    <article className="portal-list-card" key={order.orderNumber}>
+                      <div className="portal-list-card-header">
+                        <strong>{order.orderNumber}</strong>
+                        <span className={`status-pill status-${statusTone(order.status)}`}>{statusLabel(order.status)}</span>
+                      </div>
+                      <div className="portal-list-meta">
+                        <span>Doctor: {order.doctorName || "-"}</span>
+                        <span>Ordered: {formatDisplayDateTime(order.orderedAt)}</span>
+                        <span>Sample: {order.sampleCollectedAt ? formatDisplayDateTime(order.sampleCollectedAt) : "Pending"}</span>
+                        <span>Review: {order.doctorReviewedAt ? formatDisplayDateTime(order.doctorReviewedAt) : "Pending"}</span>
+                      </div>
+                      {order.results.length ? (
+                        <ul className="portal-inline-list">
+                          {order.results.slice(0, 5).map((result, index) => (
+                            <li key={`${order.orderNumber}-${index}`}>
+                              <strong>{result.testName}</strong>
+                              <span>
+                                {result.parameterName || result.componentName || "Result"}: {result.resultValue || "-"}
+                              </span>
+                              <span>{result.referenceRange || "-"}</span>
+                              <span>{result.resultFlag || "NORMAL"}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="portal-help-text">Results are not available yet.</p>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
 
-          <section className="portal-panel">
-            <div className="portal-panel-header">
-              <h2>Reports</h2>
-            </div>
-            {!reports.length ? (
-              <div className="portal-empty-state">
-                <strong>No reports available.</strong>
-                <p>Completed and reviewed reports will appear here for secure download.</p>
+            <section className="portal-panel">
+              <div className="portal-panel-header">
+                <h2>Reports</h2>
               </div>
-            ) : (
-              <div className="portal-list">
-                {reports.map((order) => (
-                  <article className="portal-list-card" key={order.orderNumber}>
-                    <div className="portal-list-card-header">
-                      <strong>{order.orderNumber}</strong>
-                      <span className={`status-pill status-${statusTone(order.status)}`}>{statusLabel(order.status)}</span>
-                    </div>
-                    <div className="portal-list-meta">
-                      <span>Report: {order.reportGeneratedAt ? formatDisplayDateTime(order.reportGeneratedAt) : "Pending"}</span>
-                      <span>Doctor review: {order.doctorReviewedAt ? formatDisplayDateTime(order.doctorReviewedAt) : "Pending"}</span>
-                      <span>Comments: {order.doctorComments || "-"}</span>
-                    </div>
-                    <div className="cta-row">
-                      <button
-                        className="primary-button"
-                        type="button"
-                        disabled={workingOrder === order.orderNumber}
-                        onClick={() => void openPdf(order.orderNumber)}
-                      >
-                        {workingOrder === order.orderNumber ? "Opening..." : "Download Report"}
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-        </div>
+              {!reports.length ? (
+                <div className="portal-empty-state">
+                  <strong>No reports available.</strong>
+                  <p>Completed and reviewed reports will appear here for secure download.</p>
+                </div>
+              ) : (
+                <div className="portal-list">
+                  {reports.map((order) => (
+                    <article className="portal-list-card" key={order.orderNumber}>
+                      <div className="portal-list-card-header">
+                        <strong>{order.orderNumber}</strong>
+                        <span className={`status-pill status-${statusTone(order.status)}`}>{statusLabel(order.status)}</span>
+                      </div>
+                      <div className="portal-list-meta">
+                        <span>Report: {order.reportGeneratedAt ? formatDisplayDateTime(order.reportGeneratedAt) : "Pending"}</span>
+                        <span>Doctor review: {order.doctorReviewedAt ? formatDisplayDateTime(order.doctorReviewedAt) : "Pending"}</span>
+                        <span>Comments: {order.doctorComments || "-"}</span>
+                      </div>
+                      <div className="cta-row">
+                        <button
+                          className="primary-button"
+                          type="button"
+                          disabled={workingOrder === order.orderNumber}
+                          onClick={() => void openPdf(order.orderNumber)}
+                        >
+                          {workingOrder === order.orderNumber ? "Opening..." : "Download Report"}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
         ) : null}
       </div>
-    </section>
+    </PatientPortalShell>
   );
 }

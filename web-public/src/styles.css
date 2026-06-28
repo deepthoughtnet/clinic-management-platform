@@ -1798,6 +1798,18 @@ input {
   gap: 1rem;
 }
 
+.patient-careai-panel-shell {
+  min-height: min(72rem, calc(100dvh - 12rem));
+  overflow: hidden;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.patient-careai-workspace {
+  display: grid;
+  gap: 1rem;
+  min-height: 0;
+}
+
 .patient-careai-progress {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
@@ -1826,7 +1838,6 @@ input {
 .patient-chat-stream {
   display: grid;
   gap: 0.85rem;
-  max-height: 28rem;
   overflow-y: auto;
   padding-right: 0.2rem;
 }
@@ -1856,6 +1867,44 @@ input {
 .patient-careai-form {
   display: grid;
   gap: 0.9rem;
+}
+
+.patient-careai-chat {
+  min-height: 0;
+  align-self: stretch;
+}
+
+.patient-careai-chat .patient-chat-stream {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.patient-careai-chat .patient-careai-form {
+  flex: 0 0 auto;
+}
+
+.patient-careai-quick-actions,
+.patient-careai-example-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.patient-careai-quick-action,
+.patient-careai-example-chip {
+  white-space: nowrap;
+}
+
+.patient-careai-examples {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.patient-careai-panel-shell .patient-careai-chat {
+  min-height: min(36rem, calc(100dvh - 30rem));
 }
 
 .patient-careai-voice-panel {
@@ -2267,6 +2316,28 @@ input {
     align-items: stretch;
   }
 
+  .patient-careai-panel-shell {
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .patient-careai-panel-shell .patient-careai-chat {
+    min-height: auto;
+  }
+
+  .patient-careai-quick-actions,
+  .patient-careai-example-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.15rem;
+    scrollbar-width: thin;
+  }
+
+  .patient-careai-quick-action,
+  .patient-careai-example-chip {
+    flex: 0 0 auto;
+  }
+
   .patient-technical-toggle {
     width: 100%;
   }
@@ -2305,6 +2376,23 @@ input {
 
   .patient-panel-wide {
     grid-column: 1 / -1;
+  }
+
+  .patient-careai-panel-shell .patient-careai-workspace {
+    grid-template-columns: minmax(18rem, 0.8fr) minmax(0, 1.2fr);
+    align-items: stretch;
+  }
+
+  .patient-careai-panel-shell {
+    height: calc(100dvh - 12rem);
+  }
+
+  .patient-careai-panel-shell .patient-careai-chat {
+    min-height: 0;
+  }
+
+  .patient-careai-panel-shell .patient-careai-voice-panel {
+    align-self: start;
   }
 
   .patient-mobile-nav {
