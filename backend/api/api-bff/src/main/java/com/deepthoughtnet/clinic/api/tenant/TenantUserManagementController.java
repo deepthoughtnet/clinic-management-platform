@@ -43,7 +43,9 @@ public class TenantUserManagementController {
             "SERVICE_AGENT",
             "LAB_TECHNICIAN",
             "LAB_ASSISTANT",
-            "PHARMACIST"
+            "PHARMACIST",
+            "PHARMACY_INVENTORY_MANAGER",
+            "PHARMACY_POS_USER"
     );
 
     private final TenantUserManagementService tenantUserManagementService;

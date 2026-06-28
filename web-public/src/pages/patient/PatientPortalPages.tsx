@@ -67,6 +67,12 @@ import {
   clearPatientRegistrationSession,
   isPatientRegistrationSessionActive,
 } from "./patientPortalSessionState";
+import {
+  formatDisplayDate,
+  formatDisplayDateTime,
+  formatDisplayDateTimeFromParts,
+  formatDisplayTime,
+} from "../../utils/dateDisplay";
 
 type FetchState<T> = {
   data: T;
@@ -281,29 +287,19 @@ const patientNavItems = [
 ];
 
 function formatDate(value: string | null | undefined) {
-  if (!value) {
-    return "Not available yet";
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(parsed);
+  return formatDisplayDate(value);
 }
 
 function formatTime(value: string | null | undefined) {
-  if (!value) {
-    return "Time to be confirmed";
-  }
-  const [hourText = "0", minuteText = "0"] = value.split(":");
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-  if (Number.isNaN(hour) || Number.isNaN(minute)) {
-    return value;
-  }
-  const date = new Date();
-  date.setHours(hour, minute, 0, 0);
-  return new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(date);
+  return formatDisplayTime(value);
+}
+
+function formatDateTime(value: string | null | undefined) {
+  return formatDisplayDateTime(value);
+}
+
+function formatDateTimeFromParts(dateValue: string | null | undefined, timeValue: string | null | undefined) {
+  return formatDisplayDateTimeFromParts(dateValue, timeValue);
 }
 
 function formatCurrency(value: number | null | undefined) {
@@ -326,6 +322,21 @@ function formatStatusLabel(value: string | null | undefined) {
     .split("_")
     .map((item) => item.charAt(0).toUpperCase() + item.slice(1))
     .join(" ");
+}
+
+function isUpcomingAppointment(appointment: PatientPortalAppointmentResponse) {
+  const status = (appointment.status ?? "").toUpperCase();
+  if (status === "CANCELLED" || status === "NO_SHOW" || status === "COMPLETED") {
+    return false;
+  }
+  if (!appointment.appointmentDate) {
+    return false;
+  }
+  const appointmentAt = new Date(`${appointment.appointmentDate}T${appointment.appointmentTime ?? "23:59"}:00`);
+  if (Number.isNaN(appointmentAt.getTime())) {
+    return true;
+  }
+  return appointmentAt.getTime() >= Date.now();
 }
 
 function formatDoctorDisplayName(value: string | null | undefined) {
@@ -1601,8 +1612,8 @@ export function PatientDashboardPage({ session, onSignOut }: { session: PatientP
               <div className="patient-highlight-card">
                 <strong>{dashboard.data.nextAppointment.doctorName ?? "Doctor to be confirmed"}</strong>
                 <span>
-                  {dashboard.data.nextAppointment.clinicName ?? dashboard.data.clinicName} · {formatDate(dashboard.data.nextAppointment.appointmentDate)} ·{" "}
-                  {formatTime(dashboard.data.nextAppointment.appointmentTime)}
+                  {dashboard.data.nextAppointment.clinicName ?? dashboard.data.clinicName} ·{" "}
+                  {formatDateTimeFromParts(dashboard.data.nextAppointment.appointmentDate, dashboard.data.nextAppointment.appointmentTime)}
                 </span>
                 <p>{dashboard.data.nextAppointment.reason ?? "Visit reason will appear when the clinic shares it safely."}</p>
               </div>
@@ -1676,11 +1687,7 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
   const portalSession = isPatientPortalPatientSession(session) ? session : null;
   const appointments = usePatientPortalResource<PatientPortalAppointmentResponse[]>(portalSession, "/api/patient-portal/appointments", []);
   const upcomingAppointments = useMemo(
-    () =>
-      appointments.data.filter((appointment) => {
-        const status = (appointment.status ?? "").toUpperCase();
-        return status !== "CANCELLED" && status !== "NO_SHOW" && status !== "COMPLETED";
-      }),
+    () => appointments.data.filter(isUpcomingAppointment),
     [appointments.data],
   );
 
@@ -1695,8 +1702,8 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
         loading={appointments.loading}
         error={appointments.error}
         empty={appointments.data.length === 0}
-        emptyTitle="No appointments yet"
-        emptyMessage="Your visits will appear here once the clinic has linked them to this patient session. You can also book a new clinic visit now."
+        emptyTitle="No upcoming appointments."
+        emptyMessage="Book a new clinic visit when you are ready."
       >
         <div className="patient-action-strip">
           <Link className="primary-button" to="/patient/book-appointment">
@@ -1721,7 +1728,7 @@ export function PatientAppointmentsPage({ session, onSignOut }: { session: Patie
                 <div>
                   <strong>{appointment.doctorName ?? "Doctor to be confirmed"}</strong>
                   <span>
-                    {appointment.clinicName ?? "Clinic"} · {formatDate(appointment.appointmentDate)} · {formatTime(appointment.appointmentTime)}
+                    {appointment.clinicName ?? "Clinic"} · {formatDateTimeFromParts(appointment.appointmentDate, appointment.appointmentTime)}
                   </span>
                 </div>
                 <span className="status-pill">{formatStatusLabel(appointment.status)}</span>
@@ -2627,7 +2634,7 @@ export function PatientBookAppointmentPage({
                 <strong>{selectedDoctor?.doctorName ?? "Select a doctor"}</strong>
                 <span>{selectedDoctor?.specialization ?? "Choose a speciality and doctor first."}</span>
                 <small>
-                  {selectedDoctor?.clinicName ?? "Clinic"} {selectedDate ? `· ${formatDate(selectedDate)}` : ""} {selectedSlotTime ? `· ${formatTime(selectedSlotTime)}` : ""}
+                  {selectedDoctor?.clinicName ?? "Clinic"} {selectedDate ? `· ${selectedSlotTime ? formatDateTimeFromParts(selectedDate, selectedSlotTime) : formatDate(selectedDate)}` : ""}
                 </small>
               </div>
               {submitError ? (
@@ -2640,8 +2647,7 @@ export function PatientBookAppointmentPage({
                 <div className="patient-success-card">
                   <strong>{confirmation.message}</strong>
                   <p>
-                    {confirmation.doctorName ?? "Doctor"} · {formatDate(confirmation.appointmentDate)} ·{" "}
-                    {formatTime(confirmation.appointmentTime)}
+                    {confirmation.doctorName ?? "Doctor"} · {formatDateTimeFromParts(confirmation.appointmentDate, confirmation.appointmentTime)}
                   </p>
                   <span>
                     {confirmation.clinicName ?? "Clinic"} · {formatStatusLabel(confirmation.status)}
@@ -2684,7 +2690,7 @@ export function PatientPrescriptionsPage({ session, onSignOut }: { session: Pati
         loading={prescriptions.loading}
         error={prescriptions.error}
         empty={prescriptions.data.length === 0}
-        emptyTitle="No prescriptions yet"
+        emptyTitle="No prescriptions available."
         emptyMessage="Published prescriptions will appear here once your clinic finalizes them for patient access."
       >
         {documentError ? (
@@ -2800,7 +2806,7 @@ export function PatientBillsPage({ session, onSignOut }: { session: PatientPorta
         loading={bills.loading}
         error={bills.error}
         empty={bills.data.length === 0}
-        emptyTitle="No bills yet"
+        emptyTitle="No bills available."
         emptyMessage="Your bill summaries will appear here when the clinic publishes them to the patient portal."
       >
         {documentError ? (
@@ -2920,6 +2926,18 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
     return notification.actionPath ?? switchActionPath(notification.sourceType);
   }
 
+  function notificationDisplayTitle(notification: PatientPortalNotificationResponse) {
+    const subject = notification.subject?.trim() || "";
+    if (subject && !isUuid(subject)) {
+      return subject;
+    }
+    const sourceType = notification.sourceType?.trim() || notification.eventType.trim();
+    return sourceType
+      .replaceAll("_", " ")
+      .toLowerCase()
+      .replace(/(^|\s)\w/g, (char) => char.toUpperCase());
+  }
+
   function switchActionPath(sourceType: string | null) {
     switch ((sourceType ?? "").toUpperCase()) {
       case "APPOINTMENT":
@@ -2962,7 +2980,7 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
         loading={notifications.loading}
         error={notifications.error}
         empty={notifications.data.length === 0}
-        emptyTitle="No notifications yet"
+        emptyTitle="You’re all caught up."
         emptyMessage="Your portal notifications will appear here once the clinic sends them."
       >
         <div className="portal-dashboard-grid">
@@ -2984,13 +3002,13 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
           {notifications.data.map((notification) => (
             <article key={notification.id} className="portal-list-card">
               <div className="portal-list-card-header">
-                <strong>{notification.subject ?? notification.eventType.replaceAll("_", " ")}</strong>
+                <strong>{notificationDisplayTitle(notification)}</strong>
                 <span className={`status-pill status-${notification.readAt ? "success" : "warning"}`}>
                   {notification.readAt ? "Read" : "Unread"}
                 </span>
               </div>
               <div className="portal-list-meta">
-                <span>{new Date(notification.createdAt).toLocaleString()}</span>
+                <span>{formatDateTime(notification.createdAt)}</span>
                 <span>{notification.sourceType ?? "Notification"}</span>
                 <span>{notification.status}</span>
               </div>
@@ -3098,7 +3116,7 @@ export function PatientCareAiPage({ session, onSignOut }: { session: PatientPort
   }
 
   function appendVoiceEvent(message: string) {
-    setVoiceEvents((current) => [...current.slice(-11), `${new Date().toLocaleTimeString()} • ${message}`]);
+    setVoiceEvents((current) => [...current.slice(-11), `${formatDisplayDateTime(new Date())} • ${message}`]);
   }
 
   function storedVoiceResumeSessionId() {
@@ -4472,6 +4490,21 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const profileValidation = useMemo(() => {
+    if (!formState) {
+      return { success: false, errors: {} as Record<string, string> };
+    }
+    const parsed = patientProfileSchema.safeParse(formState);
+    const fieldErrors = parsed.success ? {} : mapZodErrors(parsed.error);
+    if (!formState.firstName.trim()) {
+      fieldErrors.firstName = "First name is required.";
+    }
+    return {
+      success: parsed.success && !fieldErrors.firstName,
+      errors: fieldErrors,
+    };
+  }, [formState]);
+  const profileFieldErrors = profileValidation.errors;
 
   useEffect(() => {
     if (!profile.data) {
@@ -4504,9 +4537,8 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
     if (!portalSession || !formState) {
       return;
     }
-    const parsed = patientProfileSchema.safeParse(formState);
-    if (!parsed.success) {
-      setSaveError(parsed.error.issues[0]?.message || "Unable to save your profile.");
+    if (!profileValidation.success) {
+      setSaveError(Object.values(profileFieldErrors)[0] || "Unable to save your profile.");
       return;
     }
     setSaving(true);
@@ -4611,20 +4643,28 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
               <div className="patient-form-grid">
                 <label>
                   <span>First name</span>
-                  <input value={formState.firstName} onChange={(event) => setFormState((current) => current ? { ...current, firstName: event.target.value } : current)} required />
+                  <input
+                    value={formState.firstName}
+                    onChange={(event) => setFormState((current) => current ? { ...current, firstName: event.target.value } : current)}
+                    required
+                    aria-invalid={Boolean(profileFieldErrors.firstName)}
+                  />
+                  {profileFieldErrors.firstName ? <p className="patient-field-error">{profileFieldErrors.firstName}</p> : null}
                 </label>
                 <label>
                   <span>Last name</span>
-                  <input value={formState.lastName} onChange={(event) => setFormState((current) => current ? { ...current, lastName: event.target.value } : current)} required />
+                  <input value={formState.lastName} onChange={(event) => setFormState((current) => current ? { ...current, lastName: event.target.value } : current)} />
+                  {profileFieldErrors.lastName ? <p className="patient-field-error">{profileFieldErrors.lastName}</p> : null}
                 </label>
                 <label>
                   <span>Gender</span>
-                  <select value={formState.gender} onChange={(event) => setFormState((current) => current ? { ...current, gender: event.target.value } : current)}>
+                  <select value={formState.gender} onChange={(event) => setFormState((current) => current ? { ...current, gender: event.target.value } : current)} aria-invalid={Boolean(profileFieldErrors.gender)}>
                     <option value="UNKNOWN">Prefer not to say</option>
                     <option value="MALE">Male</option>
                     <option value="FEMALE">Female</option>
                     <option value="OTHER">Other</option>
                   </select>
+                  {profileFieldErrors.gender ? <p className="patient-field-error">{profileFieldErrors.gender}</p> : null}
                 </label>
                 <label>
                   <span>Date of birth</span>
@@ -4633,7 +4673,9 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
                     max={new Date().toISOString().slice(0, 10)}
                     value={formState.dateOfBirth ?? ""}
                     onChange={(event) => setFormState((current) => current ? { ...current, dateOfBirth: event.target.value || null } : current)}
+                    aria-invalid={Boolean(profileFieldErrors.dateOfBirth)}
                   />
+                  {profileFieldErrors.dateOfBirth ? <p className="patient-field-error">{profileFieldErrors.dateOfBirth}</p> : null}
                 </label>
                 <label>
                   <span>Age</span>
@@ -4641,6 +4683,7 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
                     value={formState.ageYears ?? ""}
                     onChange={(event) => setFormState((current) => current ? { ...current, ageYears: event.target.value ? Number(event.target.value) : null } : current)}
                   />
+                  {profileFieldErrors.ageYears ? <p className="patient-field-error">{profileFieldErrors.ageYears}</p> : null}
                 </label>
                 <label>
                   <span>Mobile</span>
@@ -4648,7 +4691,12 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
                 </label>
                 <label>
                   <span>Email</span>
-                  <input value={formState.email ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, email: event.target.value || null } : current)} />
+                  <input
+                    value={formState.email ?? ""}
+                    onChange={(event) => setFormState((current) => current ? { ...current, email: event.target.value || null } : current)}
+                    aria-invalid={Boolean(profileFieldErrors.email)}
+                  />
+                  {profileFieldErrors.email ? <p className="patient-field-error">{profileFieldErrors.email}</p> : null}
                 </label>
                 <label className="patient-form-span-2">
                   <span>Address line 1</span>
@@ -4660,27 +4708,57 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
                 </label>
                 <label>
                   <span>City</span>
-                  <input value={formState.city ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, city: event.target.value || null } : current)} />
+                  <input
+                    value={formState.city ?? ""}
+                    onChange={(event) => setFormState((current) => current ? { ...current, city: event.target.value || null } : current)}
+                    aria-invalid={Boolean(profileFieldErrors.city)}
+                  />
+                  {profileFieldErrors.city ? <p className="patient-field-error">{profileFieldErrors.city}</p> : null}
                 </label>
                 <label>
                   <span>State</span>
-                  <input value={formState.state ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, state: event.target.value || null } : current)} />
+                  <input
+                    value={formState.state ?? ""}
+                    onChange={(event) => setFormState((current) => current ? { ...current, state: event.target.value || null } : current)}
+                    aria-invalid={Boolean(profileFieldErrors.state)}
+                  />
+                  {profileFieldErrors.state ? <p className="patient-field-error">{profileFieldErrors.state}</p> : null}
                 </label>
                 <label>
                   <span>Country</span>
-                  <input value={formState.country ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, country: event.target.value || null } : current)} />
+                  <input
+                    value={formState.country ?? ""}
+                    onChange={(event) => setFormState((current) => current ? { ...current, country: event.target.value || null } : current)}
+                    aria-invalid={Boolean(profileFieldErrors.country)}
+                  />
+                  {profileFieldErrors.country ? <p className="patient-field-error">{profileFieldErrors.country}</p> : null}
                 </label>
                 <label>
                   <span>Postal code</span>
-                  <input value={formState.postalCode ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, postalCode: event.target.value || null } : current)} />
+                  <input
+                    value={formState.postalCode ?? ""}
+                    onChange={(event) => setFormState((current) => current ? { ...current, postalCode: event.target.value || null } : current)}
+                    aria-invalid={Boolean(profileFieldErrors.postalCode)}
+                  />
+                  {profileFieldErrors.postalCode ? <p className="patient-field-error">{profileFieldErrors.postalCode}</p> : null}
                 </label>
                 <label>
                   <span>Emergency contact</span>
-                  <input value={formState.emergencyContactName ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, emergencyContactName: event.target.value || null } : current)} />
+                  <input
+                    value={formState.emergencyContactName ?? ""}
+                    onChange={(event) => setFormState((current) => current ? { ...current, emergencyContactName: event.target.value || null } : current)}
+                    aria-invalid={Boolean(profileFieldErrors.emergencyContactName)}
+                  />
+                  {profileFieldErrors.emergencyContactName ? <p className="patient-field-error">{profileFieldErrors.emergencyContactName}</p> : null}
                 </label>
                 <label>
                   <span>Emergency mobile</span>
-                  <input value={formState.emergencyContactMobile ?? ""} onChange={(event) => setFormState((current) => current ? { ...current, emergencyContactMobile: event.target.value || null } : current)} />
+                  <input
+                    value={formState.emergencyContactMobile ?? ""}
+                    onChange={(event) => setFormState((current) => current ? { ...current, emergencyContactMobile: event.target.value || null } : current)}
+                    aria-invalid={Boolean(profileFieldErrors.emergencyContactMobile)}
+                  />
+                  {profileFieldErrors.emergencyContactMobile ? <p className="patient-field-error">{profileFieldErrors.emergencyContactMobile}</p> : null}
                 </label>
               </div>
               {saveMessage ? (
@@ -4695,7 +4773,7 @@ export function PatientProfilePage({ session, onSignOut }: { session: PatientPor
                 </div>
               ) : null}
               <div className="patient-action-row">
-                <button className="primary-button" type="submit" disabled={saving}>
+                <button className="primary-button" type="submit" disabled={saving || !profileValidation.success}>
                   {saving ? "Saving..." : "Save profile"}
                 </button>
               </div>

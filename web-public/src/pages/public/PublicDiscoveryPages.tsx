@@ -657,6 +657,9 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
             <Link className="secondary-button" to="/clinics">
               Browse clinics
             </Link>
+            <Link className="secondary-button" to="/patient/login">
+              Patient Login
+            </Link>
             <Link className="ghost-button" to="/careai">
               Ask AIVA
             </Link>

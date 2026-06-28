@@ -138,7 +138,9 @@ test("public nav and footer branding are cleaned up", () => {
   const source = readSource("App.tsx");
   const portalSource = readSource("pages/patient/PatientPortalPages.tsx");
   assert.equal(source.split('label: "AIVA"').length - 1, 1);
-  assert.ok(source.includes('label: "AI Assistant"'));
+  assert.ok(!source.includes('label: "AI Assistant"'));
+  assert.ok(source.includes('label: "Patient Login"'));
+  assert.ok(source.includes('path="/ai-assistant/*"'));
   assert.ok(source.includes('brand-badge">JH</span>'));
   assert.ok(!source.includes('brand-badge">AR</span>'));
   assert.ok(source.includes("Start over"));
@@ -146,6 +148,8 @@ test("public nav and footer branding are cleaned up", () => {
   assert.ok(source.includes("isPatientRegistrationSessionActive"));
   assert.ok(portalSource.includes("Jeevanam Healthcare Patient Portal"));
   assert.ok(portalSource.includes("Sign out"));
+  assert.ok(portalSource.includes("profileValidation.success"));
+  assert.ok(portalSource.includes("patient-field-error"));
   assert.ok(!portalSource.includes("Patient OTP session"));
   assert.ok(!portalSource.includes("Patient-scoped data"));
   assert.ok(!portalSource.includes("Read-only patient access stays separate"));
@@ -153,6 +157,9 @@ test("public nav and footer branding are cleaned up", () => {
   assert.ok(source.includes("footer-environment-line"));
   assert.ok(source.includes("Intelligent Healthcare Platform for clinics, patients, and teams."));
   assert.ok(source.includes("© 2026 DeepThoughtNet."));
+  assert.ok(source.includes('Link to="/patient/login"'));
+  assert.ok(source.includes('Link to="/contact"'));
+  assert.ok(source.includes('Link to="/privacy-policy"'));
 });
 
 test("patient registration session cleanup is centralized", () => {
@@ -175,6 +182,7 @@ test("homepage location selector persists common cities", () => {
   assert.ok(source.includes("COMING SOON"));
   assert.ok(source.includes("DEMO / UAT ENVIRONMENT"));
   assert.ok(source.includes("Currently available for invited clinics, demonstrations and UAT testing."));
+  assert.ok(source.includes('to="/patient/login"'));
   assert.ok(source.includes("PUBLIC_LOCATION_STORAGE_KEY"));
   assert.ok(source.includes("PUBLIC_LOCATION_COORDS_STORAGE_KEY"));
   assert.ok(source.includes("PUBLIC_LOCATION_SOURCE_STORAGE_KEY"));
@@ -202,4 +210,20 @@ test("homepage location selector persists common cities", () => {
   assert.ok(source.includes("Current location selected"));
   assert.ok(source.includes("navigator.geolocation"));
   assert.ok(source.includes("Location permission was not allowed. Please select your city manually."));
+});
+
+test("patient portal empty states and lab rendering are updated", () => {
+  const portalSource = readSource("pages/patient/PatientPortalPages.tsx");
+  const labSource = readSource("pages/patient/PatientLabPage.tsx");
+  assert.ok(portalSource.includes('emptyTitle="No upcoming appointments."'));
+  assert.ok(portalSource.includes('emptyTitle="No prescriptions available."'));
+  assert.ok(portalSource.includes('emptyTitle="No bills available."'));
+  assert.ok(portalSource.includes('emptyTitle="You’re all caught up."'));
+  assert.ok(portalSource.includes("formatDisplayDateTimeFromParts"));
+  assert.ok(portalSource.includes("notificationDisplayTitle"));
+  assert.ok(portalSource.includes("profileValidation.success"));
+  assert.ok(portalSource.includes("patient-field-error"));
+  assert.ok(labSource.includes("No laboratory reports yet."));
+  assert.ok(labSource.includes("formatDisplayDateTime"));
+  assert.ok(labSource.includes("noLabData"));
 });

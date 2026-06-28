@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import {
   PublicCareAiPage,
   PublicClinicDetailPage,
@@ -55,8 +55,8 @@ const navItems = [
   { to: "/doctors", label: "Doctors" },
   { to: "/clinics", label: "Clinics" },
   { to: "/specialities", label: "Specialities" },
-  { to: "/careai", label: "AI Assistant" },
   { to: "/aiva", label: "AIVA" },
+  { to: "/patient/login", label: "Patient Login" },
 ];
 
 const aivaNavItems = [
@@ -74,6 +74,10 @@ function pageTitleForPath(pathname: string) {
   if (pathname.startsWith("/patient")) return `Patient Portal | ${branding.productName}`;
   if (pathname === "/careai") return `AIVA | ${branding.productName}`;
   if (pathname.startsWith("/aiva")) return `AIVA | ${branding.productName}`;
+  if (pathname === "/contact") return `Contact | ${branding.productName}`;
+  if (pathname === "/help-centre") return `Help Centre | ${branding.productName}`;
+  if (pathname === "/privacy-policy") return `Privacy Policy | ${branding.productName}`;
+  if (pathname === "/terms") return `Terms | ${branding.productName}`;
   return productTitle();
 }
 
@@ -82,7 +86,41 @@ function descriptionForPath(pathname: string) {
   if (pathname === "/careai") return `${branding.productName} connects patients to guided care navigation powered by ${branding.aiPlatformName}.`;
   if (pathname.startsWith("/patient")) return `${branding.productName} patient portal for verified appointments, prescriptions, bills, and reports.`;
   if (pathname.startsWith("/aiva")) return `${branding.productName} AI voice and assistant platform powered by ${branding.aiPlatformName}.`;
+  if (pathname === "/contact") return `${branding.productName} contact page.`;
+  if (pathname === "/help-centre") return `${branding.productName} help centre.`;
+  if (pathname === "/privacy-policy") return `${branding.productName} privacy policy.`;
+  if (pathname === "/terms") return `${branding.productName} terms and conditions.`;
   return `${branding.productName} by ${branding.companyName}.`;
+}
+
+function StaticSupportPage({
+  title,
+  eyebrow,
+  subtitle,
+  body,
+}: {
+  title: string;
+  eyebrow: string;
+  subtitle: string;
+  body: string;
+}) {
+  return (
+    <section className="page-section narrow-page">
+      <div className="section-heading">
+        <span className="eyebrow">{eyebrow}</span>
+        <h1>{title}</h1>
+        <p>{subtitle}</p>
+      </div>
+      <div className="login-placeholder">
+        <p>{body}</p>
+        <div className="cta-row">
+          <Link className="primary-button" to="/">
+            Back to home
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function readStoredPatientSession() {
@@ -213,6 +251,9 @@ function AppShell({
             <a className="ghost-button" href={clinicLoginUrl}>
               Open {branding.productName} Admin Console
             </a>
+            <Link className="secondary-button" to="/patient/login">
+              Patient Login
+            </Link>
             <Link className="primary-button" to={patientPortalHomePath(activeRegistrationSession || portalNavSession)}>
               {activeRegistrationSession ? "Continue registration" : portalNavSession ? `Open ${branding.productName} Patient Portal` : `${branding.productName} Patient Portal`}
             </Link>
@@ -278,12 +319,23 @@ function AppShell({
             </section>
 
             <section className="footer-column">
-              <strong>{branding.productName}</strong>
+              <strong>Patients</strong>
               <div className="footer-link-list">
-                <Link to="/">About</Link>
-                <Link to="/clinics">For Clinics</Link>
+                <Link to="/patient/login">Patient Login</Link>
                 <Link to={patientPortalHomePath(portalNavSession)}>Patient Portal</Link>
-                <span>Doctor Portal</span>
+                <Link to="/patient/book-appointment">Book Appointment</Link>
+                <Link to="/patient/appointments">Appointments</Link>
+                <Link to="/patient/lab">Lab Reports</Link>
+                <Link to="/patient/bills">Bills</Link>
+              </div>
+            </section>
+
+            <section className="footer-column">
+              <strong>Discover</strong>
+              <div className="footer-link-list">
+                <Link to="/doctors">Doctors</Link>
+                <Link to="/clinics">Clinics</Link>
+                <Link to="/specialities">Specialities</Link>
               </div>
             </section>
 
@@ -291,21 +343,16 @@ function AppShell({
               <strong>Platform</strong>
               <div className="footer-link-list">
                 <Link to="/careai">AIVA</Link>
-                <span>Appointments</span>
-                <span>Consultation</span>
-                <span>Lab Reports</span>
-                <span>Billing</span>
-                <span>Pharmacy</span>
               </div>
             </section>
 
             <section className="footer-column">
               <strong>Support</strong>
               <div className="footer-link-list">
-                <span>Contact</span>
-                <span>Help Center</span>
-                <span>Privacy Policy</span>
-                <span>Terms</span>
+                <Link to="/contact">Contact</Link>
+                <Link to="/help-centre">Help Centre</Link>
+                <Link to="/privacy-policy">Privacy Policy</Link>
+                <Link to="/terms">Terms</Link>
               </div>
             </section>
           </div>
@@ -361,6 +408,7 @@ export function App() {
   return (
     <AppShell session={session} onCancelRegistration={clearRegistrationOnly}>
       <Routes>
+        <Route path="/ai-assistant/*" element={<Navigate to="/aiva" replace />} />
         <Route path="/aiva/*" element={<AivaRedirectPage />} />
         <Route path="/" element={<PublicHomePage session={session} />} />
         <Route path="/doctors" element={<PublicDoctorsPage session={session} />} />
@@ -400,6 +448,50 @@ export function App() {
         <Route path="/patient/lab" element={<PatientLabPage session={session} onSignOut={clearPatientSessionAndContext} />} />
         <Route path="/patient/careai" element={<PatientCareAiPage session={session} onSignOut={clearPatientSessionAndContext} />} />
         <Route path="/patient/profile" element={<PatientProfilePage session={session} onSignOut={clearPatientSessionAndContext} />} />
+        <Route
+          path="/contact"
+          element={
+            <StaticSupportPage
+              eyebrow="Support"
+              title="Contact"
+              subtitle="Reach the platform team for deployment-specific support."
+              body="Use the clinic or platform support channel configured for your deployment. No patient data is shared on this page."
+            />
+          }
+        />
+        <Route
+          path="/help-centre"
+          element={
+            <StaticSupportPage
+              eyebrow="Support"
+              title="Help Centre"
+              subtitle="Find quick answers for public-web usage."
+              body="This page can be replaced with your deployment-specific help content when ready."
+            />
+          }
+        />
+        <Route
+          path="/privacy-policy"
+          element={
+            <StaticSupportPage
+              eyebrow="Support"
+              title="Privacy Policy"
+              subtitle="Review the current privacy placeholder for this deployment."
+              body="Replace this page with the approved privacy policy text for your environment."
+            />
+          }
+        />
+        <Route
+          path="/terms"
+          element={
+            <StaticSupportPage
+              eyebrow="Support"
+              title="Terms"
+              subtitle="Review the current terms placeholder for this deployment."
+              body="Replace this page with the approved terms and conditions text for your environment."
+            />
+          }
+        />
       </Routes>
     </AppShell>
   );

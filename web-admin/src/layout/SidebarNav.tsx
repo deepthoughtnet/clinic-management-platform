@@ -120,7 +120,11 @@ function iconFor(key: string): React.ReactNode {
 function roleDefaultExpanded(roles: Set<string>, groupKey: string): boolean {
   const isPlatformAdmin = roles.has("PLATFORM_ADMIN");
   const isBillingUser = roles.has("BILLING_USER");
-  const isPharmacyRole = roles.has("PHARMA") || roles.has("PHARMACY") || roles.has("PHARMACIST");
+  const isPharmacyRole = roles.has("PHARMA")
+    || roles.has("PHARMACY")
+    || roles.has("PHARMACIST")
+    || roles.has("PHARMACY_INVENTORY_MANAGER")
+    || roles.has("PHARMACY_POS_USER");
   if (isPlatformAdmin) return groupKey === "platform";
   if (isBillingUser) return groupKey === "finance";
   if (isPharmacyRole) return groupKey === "pharmacy";

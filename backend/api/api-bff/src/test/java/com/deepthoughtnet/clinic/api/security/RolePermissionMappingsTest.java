@@ -155,6 +155,42 @@ class RolePermissionMappingsTest {
     }
 
     @Test
+    void inventoryManagerCanManageStockButCannotRunPosPayments() {
+        Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.PHARMACY_INVENTORY_MANAGER);
+
+        assertThat(permissions).contains(
+                Permissions.INVENTORY_READ,
+                Permissions.INVENTORY_CREATE,
+                Permissions.INVENTORY_UPDATE,
+                Permissions.INVENTORY_MANAGE,
+                Permissions.MEDICINE_READ
+        );
+        assertThat(permissions).doesNotContain(
+                Permissions.PAYMENT_COLLECT,
+                Permissions.BILLING_RECEIPT
+        );
+    }
+
+    @Test
+    void posUserCanSellMedicineWithoutStockMasterEditing() {
+        Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.PHARMACY_POS_USER);
+
+        assertThat(permissions).contains(
+                Permissions.BILLING_CREATE,
+                Permissions.BILLING_READ,
+                Permissions.BILLING_RECEIPT,
+                Permissions.PAYMENT_COLLECT,
+                Permissions.MEDICINE_READ,
+                Permissions.INVENTORY_READ
+        );
+        assertThat(permissions).doesNotContain(
+                Permissions.INVENTORY_CREATE,
+                Permissions.INVENTORY_UPDATE,
+                Permissions.INVENTORY_MANAGE
+        );
+    }
+
+    @Test
     void carePilotLeadPermissionsFollowOperationalRoleModel() {
         Set<String> clinicAdmin = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
         Set<String> receptionist = RolePermissionMappings.permissionsForRole(Roles.RECEPTIONIST);

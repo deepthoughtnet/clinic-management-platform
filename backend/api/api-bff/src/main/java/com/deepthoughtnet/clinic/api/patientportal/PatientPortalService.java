@@ -19,6 +19,7 @@ import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescription
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionResponse;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalPrescriptionTestResponse;
 import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
+import com.deepthoughtnet.clinic.api.appointment.AppointmentTimingRules;
 import com.deepthoughtnet.clinic.api.lab.service.LabService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord;
@@ -938,16 +939,11 @@ public class PatientPortalService {
 
     private PatientPortalAppointmentResponse nextUpcomingAppointment(List<PatientPortalAppointmentResponse> appointments) {
         ZoneId tenantZone = resolveTenantZone(requireCurrentPatientAccess().tenantId());
-        LocalDate today = LocalDate.now(tenantZone);
-        LocalTime now = LocalTime.now(tenantZone);
         return appointments.stream()
                 .filter(this::isUpcomingStatus)
-                .filter(appointment -> appointment.appointmentDate() != null)
-                .filter(appointment -> appointment.appointmentDate().isAfter(today)
-                        || (appointment.appointmentDate().isEqual(today)
-                        && (appointment.appointmentTime() == null || !appointment.appointmentTime().isBefore(now))))
+                .filter(appointment -> AppointmentTimingRules.isUpcoming(appointment.appointmentDate(), appointment.appointmentTime(), tenantZone))
                 .findFirst()
-                .orElse(appointments.isEmpty() ? null : appointments.getFirst());
+                .orElse(null);
     }
 
     private boolean isUpcomingStatus(PatientPortalAppointmentResponse appointment) {
@@ -968,11 +964,7 @@ public class PatientPortalService {
             return false;
         }
         ZoneId tenantZone = resolveTenantZone(appointment.tenantId());
-        LocalDate today = LocalDate.now(tenantZone);
-        LocalTime now = LocalTime.now(tenantZone);
-        return appointment.appointmentDate().isAfter(today)
-                || (appointment.appointmentDate().isEqual(today)
-                && (appointment.appointmentTime() == null || !appointment.appointmentTime().isBefore(now)));
+        return AppointmentTimingRules.isUpcoming(appointment, tenantZone);
     }
 
     private AppointmentRecord requireAccessibleUpcomingAppointment(PatientAccess access, UUID appointmentId) {
@@ -981,7 +973,12 @@ public class PatientPortalService {
         }
         return allAppointments(resolveAccessiblePatientAccesses(access)).stream()
                 .filter(record -> appointmentId.equals(record.id()))
-                .filter(this::isUpcomingAppointmentRecord)
+                .filter(record -> {
+                    if (record == null || record.status() == AppointmentStatus.CANCELLED || record.status() == AppointmentStatus.NO_SHOW || record.status() == AppointmentStatus.COMPLETED) {
+                        return false;
+                    }
+                    return AppointmentTimingRules.isActionable(record, resolveTenantZone(record.tenantId()));
+                })
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Upcoming appointment not found"));
     }

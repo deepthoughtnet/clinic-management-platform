@@ -208,7 +208,8 @@ export default function MedicineMasterPage() {
     || auth.rolesUpper.includes("CLINIC_ADMIN")
     || auth.rolesUpper.includes("PHARMACIST")
     || auth.rolesUpper.includes("PHARMACY")
-    || auth.rolesUpper.includes("PHARMA");
+    || auth.rolesUpper.includes("PHARMA")
+    || auth.rolesUpper.includes("PHARMACY_INVENTORY_MANAGER");
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;

@@ -115,7 +115,7 @@ type CodeScanMode = "BARCODE" | "QR";
 type CartFieldName = "quantity" | "unitPrice" | "discount" | "taxRate";
 
 const PAYMENT_MODES: PaymentMode[] = ["CASH", "UPI", "CARD", "INSURANCE", "PHONEPE", "GOOGLE_PAY", "PAYTM", "BANK_TRANSFER", "CHEQUE", "OTHER"];
-const POS_ROLES = new Set(["CLINIC_ADMIN", "PHARMACIST", "PHARMACY", "PHARMA"]);
+const POS_ROLES = new Set(["CLINIC_ADMIN", "PHARMACIST", "PHARMACY", "PHARMA", "PHARMACY_POS_USER"]);
 const HELD_CART_STORAGE_KEY = "pharmacy-pos-held-cart";
 const STICKY_TOP = 88;
 const PRESCRIPTION_MAX_BYTES = 10 * 1024 * 1024;

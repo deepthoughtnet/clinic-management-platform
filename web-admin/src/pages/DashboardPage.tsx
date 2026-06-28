@@ -169,7 +169,11 @@ export default function DashboardPage() {
   const isReceptionist = tenantRole === "RECEPTIONIST";
   const isAuditor = tenantRole === "AUDITOR";
   const isClinicAdmin = tenantRole === "CLINIC_ADMIN";
-  const isPharmacyRole = tenantRole === "PHARMA" || tenantRole === "PHARMACY" || tenantRole === "PHARMACIST";
+  const isPharmacyRole = tenantRole === "PHARMA"
+    || tenantRole === "PHARMACY"
+    || tenantRole === "PHARMACIST"
+    || tenantRole === "PHARMACY_INVENTORY_MANAGER"
+    || tenantRole === "PHARMACY_POS_USER";
   const canBilling = auth.hasPermission("billing.read") || auth.hasPermission("payment.collect") || tenantRole === "CLINIC_ADMIN" || isBillingUser;
   const canUseAppointmentShortcuts = !isBillingUser && !isAuditor && (auth.hasPermission("appointment.manage") || auth.hasPermission("appointment.read"));
   const canCreateAppointments = !isDoctor && !isBillingUser && !isAuditor && auth.hasPermission("appointment.manage");

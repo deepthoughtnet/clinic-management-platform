@@ -54,6 +54,7 @@ import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.ZoneId;
@@ -140,7 +141,14 @@ class PatientPortalServiceTest {
         when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
         when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
         when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile()));
-        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(appointmentRecord(PATIENT_ID)));
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(
+                appointmentRecord(
+                        PATIENT_ID,
+                        UUID.randomUUID(),
+                        LocalDate.now(ZoneId.of("Asia/Kolkata")).plusDays(1),
+                        java.time.LocalTime.of(10, 30)
+                )
+        ));
         when(prescriptionService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(prescriptionRecord(PATIENT_ID)));
         when(billingService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(billRecord(PATIENT_ID)));
         when(billingService.listReceipts(TENANT_ID, billRecord(PATIENT_ID).id())).thenReturn(List.of());
@@ -239,6 +247,93 @@ class PatientPortalServiceTest {
             assertThat(item.doctorName()).isEqualTo("Dr. Mehta");
             assertThat(item.appointmentDate()).isEqualTo(appointmentDate);
         });
+    }
+
+    @Test
+    void dashboardSkipsPastAppointmentsWhenPickingNextVisit() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        AppointmentRecord past = appointmentRecord(PATIENT_ID, UUID.randomUUID(), today, LocalTime.now(ZoneId.of("Asia/Kolkata")).minusHours(2));
+        AppointmentRecord future = appointmentRecord(PATIENT_ID, UUID.randomUUID(), today.plusDays(1), LocalTime.now(ZoneId.of("Asia/Kolkata")).plusHours(2));
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(clinicProfileService.findByTenantId(TENANT_ID)).thenReturn(Optional.of(clinicProfile(TENANT_ID, "Sunrise Clinic", true)));
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(past, future));
+        when(prescriptionService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of());
+        when(billingService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of());
+
+        var dashboard = service.dashboard();
+        assertThat(dashboard.nextAppointment()).isNotNull();
+        assertThat(dashboard.nextAppointment().appointmentDate()).isEqualTo(future.appointmentDate());
+    }
+
+    @Test
+    void patientCanRescheduleDuringOneHourActionableGraceWindow() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        LocalTime thirtyMinutesAgo = LocalTime.now(ZoneId.of("Asia/Kolkata")).minusMinutes(30);
+        UUID appointmentId = UUID.randomUUID();
+        AppointmentRecord current = appointmentRecord(PATIENT_ID, UUID.randomUUID(), today, thirtyMinutesAgo);
+        current = new AppointmentRecord(
+                appointmentId,
+                current.tenantId(),
+                current.patientId(),
+                current.patientNumber(),
+                current.patientName(),
+                current.patientMobile(),
+                current.doctorUserId(),
+                current.doctorName(),
+                current.consultationId(),
+                current.appointmentDate(),
+                current.appointmentTime(),
+                current.tokenNumber(),
+                current.displayReference(),
+                current.reason(),
+                current.type(),
+                current.priority(),
+                current.status(),
+                current.paymentBypassReason(),
+                current.paymentBypassNotes(),
+                current.paymentBypassedBy(),
+                current.paymentBypassedAt(),
+                current.createdAt(),
+                current.updatedAt()
+        );
+        AppointmentRecord updated = new AppointmentRecord(
+                appointmentId,
+                TENANT_ID,
+                PATIENT_ID,
+                "PAT-001",
+                "Riya Sharma",
+                "9999999999",
+                current.doctorUserId(),
+                "Dr. Mehta",
+                null,
+                today.plusDays(1),
+                LocalTime.of(11, 30),
+                17,
+                "Review visit",
+                AppointmentType.SCHEDULED,
+                AppointmentPriority.NORMAL,
+                AppointmentStatus.BOOKED,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        );
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(appointmentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(current));
+        when(appointmentService.reschedule(eq(TENANT_ID), eq(appointmentId), any(AppointmentRescheduleCommand.class), eq(APP_USER_ID), eq(false), any())).thenReturn(updated);
+
+        var confirmation = service.rescheduleAppointment(appointmentId, today.plusDays(1), LocalTime.of(11, 30), "Review visit");
+
+        assertThat(confirmation.status()).isEqualTo("BOOKED");
+        verify(appointmentService).reschedule(eq(TENANT_ID), eq(appointmentId), any(AppointmentRescheduleCommand.class), eq(APP_USER_ID), eq(false), any());
     }
 
     @Test

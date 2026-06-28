@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { PatientPortalSession } from "../../api/patientPortal";
 import { isPatientPortalPatientSession } from "../../api/patientPortal";
+import { formatDisplayTime } from "../../utils/dateDisplay";
 
 type AivaMessage = {
   role: "user" | "assistant";
@@ -313,7 +314,7 @@ export function AivaDemoPage({ session }: { session: PatientPortalSession | null
   function runPrompt(prompt: string) {
     setSelectedPrompt(prompt);
     const assistantText = buildResponse(prompt);
-    const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const timestamp = formatDisplayTime(new Date());
     setMessages((current) => [
       ...current,
       { role: "user", text: prompt, time: timestamp },

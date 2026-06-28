@@ -39,7 +39,11 @@ export default function PrescriptionsPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const tenantRole = (auth.tenantRole || "").toUpperCase();
-  const isPharmacyRole = tenantRole === "PHARMA" || tenantRole === "PHARMACY" || tenantRole === "PHARMACIST";
+  const isPharmacyRole = tenantRole === "PHARMA"
+    || tenantRole === "PHARMACY"
+    || tenantRole === "PHARMACIST"
+    || tenantRole === "PHARMACY_INVENTORY_MANAGER"
+    || tenantRole === "PHARMACY_POS_USER";
   const canOpenWorkspace = tenantRole === "DOCTOR" && auth.hasPermission("consultation.read");
   const canPrintPrescription = auth.hasPermission("prescription.print");
   const canSendPrescription = auth.hasPermission("prescription.send");

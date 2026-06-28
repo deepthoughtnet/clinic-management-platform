@@ -420,7 +420,7 @@ export default function NotificationsPage() {
                         </Stack>
                       </TableCell>
                       <TableCell>{targetLabel(row)}</TableCell>
-                      <TableCell>{row.recipient}</TableCell>
+                      <TableCell>{targetLabel(row)}</TableCell>
                       <TableCell>{row.channel}</TableCell>
                       <TableCell>{sourceLabel(row)}</TableCell>
                       <TableCell>

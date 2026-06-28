@@ -18,6 +18,11 @@ export function formatNotificationTargetLabel(row, patients) {
     return "Patient record unavailable";
   }
 
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.recipient)) {
+    const sourceLabel = formatNotificationSourceLabel(row);
+    return sourceLabel || "Notification target";
+  }
+
   if (row.recipient.trim()) {
     return row.recipient;
   }

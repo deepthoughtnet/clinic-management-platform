@@ -208,6 +208,13 @@ function isPastDateTime(date: string, time: string | null | undefined, timeZone?
   return isBookingTimePast(date, time, undefined, timeZone, clinicNow);
 }
 
+function shiftClinicNow(clinicNow: string | null, minutes: number) {
+  if (!clinicNow) return null;
+  const parsed = new Date(clinicNow);
+  if (Number.isNaN(parsed.getTime())) return clinicNow;
+  return new Date(parsed.getTime() + minutes * 60_000).toISOString();
+}
+
 function slotTone(state: ReturnType<typeof getAppointmentSlotPresentation>["state"]) {
   switch (state) {
     case "AVAILABLE":
@@ -650,12 +657,22 @@ export default function AppointmentsPage() {
   }, [auth.accessToken, auth.tenantId, canQuickRegisterPatient, patientQuery]);
 
   const todayRows = React.useMemo(
-    () => appointments.filter((item) => item.appointmentDate === today && item.status !== "CANCELLED" && item.status !== "NO_SHOW"),
-    [appointments, today],
+    () => appointments.filter((item) => {
+      if (item.status === "CANCELLED" || item.status === "NO_SHOW") {
+        return false;
+      }
+      return item.appointmentDate === today && !isPastDateTime(item.appointmentDate, item.appointmentTime, clinicTimeZone, shiftClinicNow(clinicNowSnapshot, -60));
+    }),
+    [appointments, clinicNowSnapshot, clinicTimeZone, today],
   );
   const upcomingRows = React.useMemo(
-    () => appointments.filter((item) => item.appointmentDate > today && item.status !== "CANCELLED" && item.status !== "NO_SHOW"),
-    [appointments, today],
+    () => appointments.filter((item) => {
+      if (item.status === "CANCELLED" || item.status === "NO_SHOW") {
+        return false;
+      }
+      return !isPastDateTime(item.appointmentDate, item.appointmentTime, clinicTimeZone, clinicNowSnapshot);
+    }),
+    [appointments, clinicNowSnapshot, clinicTimeZone],
   );
   const completedRows = React.useMemo(
     () => appointments.filter((item) => item.status === "COMPLETED"),

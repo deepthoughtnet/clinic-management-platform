@@ -301,6 +301,35 @@ public final class RolePermissionMappings {
             Permissions.REPORT_READ
     );
 
+    private static final Set<String> PHARMACY_INVENTORY_MANAGER_PERMISSIONS = Set.of(
+            Permissions.DASHBOARD_READ,
+            Permissions.CLINIC_DASHBOARD_READ,
+            Permissions.PATIENT_READ,
+            Permissions.PRESCRIPTION_READ,
+            Permissions.PRESCRIPTION_PRINT,
+            Permissions.MEDICINE_READ,
+            Permissions.INVENTORY_READ,
+            Permissions.INVENTORY_CREATE,
+            Permissions.INVENTORY_UPDATE,
+            Permissions.INVENTORY_MANAGE,
+            Permissions.REPORT_READ
+    );
+
+    private static final Set<String> PHARMACY_POS_USER_PERMISSIONS = Set.of(
+            Permissions.DASHBOARD_READ,
+            Permissions.CLINIC_DASHBOARD_READ,
+            Permissions.PATIENT_READ,
+            Permissions.PRESCRIPTION_READ,
+            Permissions.PRESCRIPTION_PRINT,
+            Permissions.MEDICINE_READ,
+            Permissions.INVENTORY_READ,
+            Permissions.BILLING_CREATE,
+            Permissions.BILLING_READ,
+            Permissions.BILLING_RECEIPT,
+            Permissions.PAYMENT_COLLECT,
+            Permissions.REPORT_READ
+    );
+
     private static final Set<String> LAB_ASSISTANT_PERMISSIONS = Set.of(
             Permissions.PATIENT_READ,
             Permissions.CONSULTATION_READ,
@@ -504,6 +533,8 @@ public final class RolePermissionMappings {
             Map.entry(Roles.PHARMA, PHARMACIST_PERMISSIONS),
             Map.entry(Roles.PHARMACY, PHARMACIST_PERMISSIONS),
             Map.entry(Roles.PHARMACIST, PHARMACIST_PERMISSIONS),
+            Map.entry(Roles.PHARMACY_INVENTORY_MANAGER, PHARMACY_INVENTORY_MANAGER_PERMISSIONS),
+            Map.entry(Roles.PHARMACY_POS_USER, PHARMACY_POS_USER_PERMISSIONS),
             Map.entry(Roles.LAB_TECHNICIAN, LAB_TECHNICIAN_PERMISSIONS),
             Map.entry(Roles.LAB_ASSISTANT, LAB_ASSISTANT_PERMISSIONS),
             Map.entry(Roles.CLINIC_REVIEWER, Set.of(

@@ -44,7 +44,19 @@ import {
   type ClinicUser,
 } from "../../api/clinicApi";
 
-const ASSIGNABLE_ROLES = ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "SERVICE_AGENT", "LAB_TECHNICIAN", "LAB_ASSISTANT", "PHARMACIST"] as const;
+const ASSIGNABLE_ROLES = [
+  "CLINIC_ADMIN",
+  "DOCTOR",
+  "RECEPTIONIST",
+  "BILLING_USER",
+  "AUDITOR",
+  "SERVICE_AGENT",
+  "LAB_TECHNICIAN",
+  "LAB_ASSISTANT",
+  "PHARMACIST",
+  "PHARMACY_INVENTORY_MANAGER",
+  "PHARMACY_POS_USER",
+] as const;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type CreateForm = {
@@ -71,6 +83,52 @@ function roleLabel(role: string) {
     .toLowerCase()
     .replace(/_/g, " ")
     .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function permissionLabel(permission: string) {
+  return permission
+    .replace(/\./g, " ")
+    .replace(/_/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function permissionModule(permission: string) {
+  const normalized = permission.toLowerCase();
+  if (normalized.startsWith("appointment.")) return "Appointments";
+  if (normalized.startsWith("queue.")) return "Queue";
+  if (normalized.startsWith("patient.")) return "Patients";
+  if (normalized.startsWith("consultation.")) return "Consultations";
+  if (normalized.startsWith("prescription.")) return "Prescriptions";
+  if (normalized.startsWith("billing.") || normalized.startsWith("payment.")) return "Billing";
+  if (normalized.startsWith("inventory.") || normalized.startsWith("medicine.")) return "Pharmacy";
+  if (normalized.startsWith("lab.")) return "Laboratory";
+  if (normalized.startsWith("notification.")) return "Notifications";
+  if (normalized.startsWith("carepilot.")) return "CarePilot";
+  if (normalized.startsWith("ai_") || normalized.startsWith("ai.")) return "AI";
+  if (normalized.startsWith("tenant.users.") || normalized.startsWith("user.")) return "Users";
+  if (normalized.startsWith("clinic.")) return "Clinic";
+  if (normalized.startsWith("report.")) return "Reports";
+  if (normalized.startsWith("audit.")) return "Audit";
+  return "Other";
+}
+
+function groupPermissions(permissions: string[]) {
+  const groups = new Map<string, string[]>();
+  for (const permission of permissions) {
+    const module = permissionModule(permission);
+    const bucket = groups.get(module) || [];
+    if (!bucket.includes(permission)) {
+      bucket.push(permission);
+    }
+    groups.set(module, bucket);
+  }
+  return Array.from(groups.entries()).map(([module, values]) => ({
+    module,
+    permissions: values.sort((left, right) => permissionLabel(left).localeCompare(permissionLabel(right))),
+  })).sort((left, right) => left.module.localeCompare(right.module));
 }
 
 function isInvalidSelectedClinic(tenant: { id: string; code: string; name: string } | null): boolean {
@@ -341,11 +399,18 @@ export default function UsersRolesPage() {
                           <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{role.displayName}</Typography>
                           <Chip size="small" label={role.role} />
                         </Box>
-                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-                          {role.permissions.map((permission) => (
-                            <Chip key={permission} size="small" variant="outlined" label={permission} />
-                          ))}
-                        </Box>
+                        {groupPermissions(role.permissions).map((group) => (
+                          <Stack key={group.module} spacing={0.75}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                              {group.module}
+                            </Typography>
+                            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+                              {group.permissions.map((permission) => (
+                                <Chip key={permission} size="small" variant="outlined" label={permissionLabel(permission)} />
+                              ))}
+                            </Box>
+                          </Stack>
+                        ))}
                       </Stack>
                     </CardContent>
                   </Card>

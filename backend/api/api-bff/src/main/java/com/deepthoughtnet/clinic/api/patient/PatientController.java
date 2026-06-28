@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.patient;
 
 import com.deepthoughtnet.clinic.api.patient.dto.AppointmentSummaryResponse;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
+import com.deepthoughtnet.clinic.api.appointment.AppointmentTimingRules;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.api.patient.dto.PatientDetailResponse;
 import com.deepthoughtnet.clinic.api.patient.dto.PatientRequest;
@@ -184,13 +185,11 @@ public class PatientController {
     }
 
     private boolean isUpcoming(AppointmentRecord appointment) {
-        LocalDate today = LocalDate.now(resolveTenantZone(RequestContextHolder.requireTenantId()));
-        return appointment.appointmentDate() != null
-                && (appointment.appointmentDate().isAfter(today)
-                || (appointment.appointmentDate().isEqual(today)
-                && appointment.status() != AppointmentStatus.CANCELLED
+        ZoneId tenantZone = resolveTenantZone(RequestContextHolder.requireTenantId());
+        return appointment.status() != AppointmentStatus.CANCELLED
                 && appointment.status() != AppointmentStatus.NO_SHOW
-                && appointment.status() != AppointmentStatus.COMPLETED));
+                && appointment.status() != AppointmentStatus.COMPLETED
+                && AppointmentTimingRules.isUpcoming(appointment, tenantZone);
     }
 
     private PatientUpsertCommand toCommand(PatientRequest request) {

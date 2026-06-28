@@ -11,6 +11,7 @@ import {
   type PatientPortalSession,
 } from "../../api/patientPortal";
 import { branding } from "../../branding";
+import { formatDisplayDateTime } from "../../utils/dateDisplay";
 
 function statusLabel(status: string | null | undefined) {
   return (status || "PENDING").replaceAll("_", " ");
@@ -50,7 +51,7 @@ export default function PatientLabPage({
 
   useEffect(() => {
     if (!portalSession) {
-      navigate("/patient/login");
+      navigate("/patient/login?next=%2Fpatient%2Flab", { replace: true });
       return;
     }
     const activeSession = portalSession;
@@ -104,6 +105,7 @@ export default function PatientLabPage({
   const reportCount = reports.length;
   const readyCount = reports.filter((row) => ["REPORT_READY", "REPORT_GENERATED", "DOCTOR_REVIEWED", "DELIVERED"].includes((row.status || "").toUpperCase())).length;
   const loadErrorMessage = error ? "Unable to load laboratory reports. Please sign in again or try later." : null;
+  const noLabData = !orders.length && !reports.length;
 
   return (
     <section className="page-section patient-portal-page patient-lab-page">
@@ -148,14 +150,22 @@ export default function PatientLabPage({
           </div>
         ) : null}
 
-        <div className="portal-section-grid patient-lab-grid">
+        {noLabData && !loading ? (
+          <div className="portal-empty-state">
+            <strong>No laboratory reports yet.</strong>
+            <p>Reports will appear here once they are ready.</p>
+          </div>
+        ) : null}
+
+        {!noLabData ? (
+          <div className="portal-section-grid patient-lab-grid">
           <section className="portal-panel">
             <div className="portal-panel-header">
               <h2>Lab Orders</h2>
             </div>
             {!orders.length ? (
               <div className="portal-empty-state">
-                <strong>No lab orders yet</strong>
+                <strong>No lab orders yet.</strong>
                 <p>Your ordered tests will appear here once the clinic creates them.</p>
               </div>
             ) : (
@@ -168,9 +178,9 @@ export default function PatientLabPage({
                     </div>
                     <div className="portal-list-meta">
                       <span>Doctor: {order.doctorName || "-"}</span>
-                      <span>Ordered: {new Date(order.orderedAt).toLocaleString()}</span>
-                      <span>Sample: {order.sampleCollectedAt ? new Date(order.sampleCollectedAt).toLocaleString() : "Pending"}</span>
-                      <span>Review: {order.doctorReviewedAt ? new Date(order.doctorReviewedAt).toLocaleString() : "Pending"}</span>
+                      <span>Ordered: {formatDisplayDateTime(order.orderedAt)}</span>
+                      <span>Sample: {order.sampleCollectedAt ? formatDisplayDateTime(order.sampleCollectedAt) : "Pending"}</span>
+                      <span>Review: {order.doctorReviewedAt ? formatDisplayDateTime(order.doctorReviewedAt) : "Pending"}</span>
                     </div>
                     {order.results.length ? (
                       <ul className="portal-inline-list">
@@ -198,7 +208,7 @@ export default function PatientLabPage({
             </div>
             {!reports.length ? (
               <div className="portal-empty-state">
-                <strong>No reports available</strong>
+                <strong>No reports available.</strong>
                 <p>Completed and reviewed reports will appear here for secure download.</p>
               </div>
             ) : (
@@ -210,8 +220,8 @@ export default function PatientLabPage({
                       <span className={`status-pill status-${statusTone(order.status)}`}>{statusLabel(order.status)}</span>
                     </div>
                     <div className="portal-list-meta">
-                      <span>Report: {order.reportGeneratedAt ? new Date(order.reportGeneratedAt).toLocaleString() : "Pending"}</span>
-                      <span>Doctor review: {order.doctorReviewedAt ? new Date(order.doctorReviewedAt).toLocaleString() : "Pending"}</span>
+                      <span>Report: {order.reportGeneratedAt ? formatDisplayDateTime(order.reportGeneratedAt) : "Pending"}</span>
+                      <span>Doctor review: {order.doctorReviewedAt ? formatDisplayDateTime(order.doctorReviewedAt) : "Pending"}</span>
                       <span>Comments: {order.doctorComments || "-"}</span>
                     </div>
                     <div className="cta-row">
@@ -230,6 +240,7 @@ export default function PatientLabPage({
             )}
           </section>
         </div>
+        ) : null}
       </div>
     </section>
   );

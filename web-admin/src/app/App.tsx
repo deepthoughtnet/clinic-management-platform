@@ -180,7 +180,11 @@ function PlatformAdminGate({ children }: { children: React.ReactNode }) {
 function HomeRedirect() {
   const auth = useAuth();
   const tenantRole = (auth.tenantRole || "").toUpperCase();
-  const isPharmacyRole = tenantRole === "PHARMA" || tenantRole === "PHARMACY" || tenantRole === "PHARMACIST";
+  const isPharmacyRole = tenantRole === "PHARMA"
+    || tenantRole === "PHARMACY"
+    || tenantRole === "PHARMACIST"
+    || tenantRole === "PHARMACY_INVENTORY_MANAGER"
+    || tenantRole === "PHARMACY_POS_USER";
   return <Navigate to={isPharmacyRole ? "/pharmacy/dashboard" : "/dashboard"} replace />;
 }
 
