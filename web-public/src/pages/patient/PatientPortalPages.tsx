@@ -302,6 +302,16 @@ function formatDateTimeFromParts(dateValue: string | null | undefined, timeValue
   return formatDisplayDateTimeFromParts(dateValue, timeValue);
 }
 
+function formatNotificationText(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+  return value.replace(
+    /\b(\d{4}-\d{2}-\d{2})(?:[T\s](\d{2}:\d{2})(?::\d{2}(?:\.\d{3})?Z?)?)?\b/g,
+    (_match, datePart: string, timePart?: string) => (timePart ? `${formatDate(datePart)} ${formatTime(timePart)}` : formatDate(datePart)),
+  );
+}
+
 function formatCurrency(value: number | null | undefined) {
   if (value == null) {
     return "Not available yet";
@@ -322,6 +332,19 @@ function formatStatusLabel(value: string | null | undefined) {
     .split("_")
     .map((item) => item.charAt(0).toUpperCase() + item.slice(1))
     .join(" ");
+}
+
+function notificationSummaryLabel(notification: PatientPortalNotificationResponse) {
+  const eventType = (notification.eventType ?? "").toUpperCase();
+  if (eventType.includes("APPOINTMENT_BOOKED")) return "Appointment booked";
+  if (eventType.includes("APPOINTMENT_CANCELLED")) return "Appointment cancelled";
+  if (eventType.includes("APPOINTMENT_RESCHEDULED")) return "Appointment rescheduled";
+  if (eventType.includes("APPOINTMENT_REMINDER")) return "Appointment reminder";
+  if (eventType.includes("BILL_") || eventType.includes("RECEIPT_")) return "Bill update";
+  if (eventType.includes("LAB_REPORT_READY") || eventType.includes("LAB_")) return "Lab report ready";
+  if (eventType.includes("PRESCRIPTION_")) return "Prescription update";
+  if (eventType.includes("FOLLOW_UP")) return "Follow-up reminder";
+  return "Notification";
 }
 
 function isUpcomingAppointment(appointment: PatientPortalAppointmentResponse) {
@@ -597,7 +620,7 @@ function PatientPortalShell({
   const location = useLocation();
 
   return (
-    <section className="page-section patient-portal-page">
+    <section className="page-section patient-portal-page patient-notifications-page">
       <div className="patient-portal-shell">
         <aside className="patient-sidebar">
           <div className="patient-sidebar-card">
@@ -2981,7 +3004,7 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
         error={notifications.error}
         empty={notifications.data.length === 0}
         emptyTitle="You’re all caught up."
-        emptyMessage="Your portal notifications will appear here once the clinic sends them."
+        emptyMessage="New appointment, bill, prescription, and lab updates will appear here."
       >
         <div className="portal-dashboard-grid">
           <article className="dashboard-card">
@@ -3002,17 +3025,17 @@ export function PatientNotificationsPage({ session, onSignOut }: { session: Pati
           {notifications.data.map((notification) => (
             <article key={notification.id} className="portal-list-card">
               <div className="portal-list-card-header">
-                <strong>{notificationDisplayTitle(notification)}</strong>
+                <strong>{formatNotificationText(notificationDisplayTitle(notification))}</strong>
                 <span className={`status-pill status-${notification.readAt ? "success" : "warning"}`}>
                   {notification.readAt ? "Read" : "Unread"}
                 </span>
               </div>
               <div className="portal-list-meta">
                 <span>{formatDateTime(notification.createdAt)}</span>
-                <span>{notification.sourceType ?? "Notification"}</span>
-                <span>{notification.status}</span>
+                <span>{notificationSummaryLabel(notification)}</span>
+                {notification.sourceType ? <span>{notification.sourceType.replaceAll("_", " ").toLowerCase().replace(/(^|\s)\w/g, (char) => char.toUpperCase())}</span> : null}
               </div>
-              <p className="portal-help-text">{notification.message}</p>
+              <p className="portal-help-text">{formatNotificationText(notification.message)}</p>
               <div className="cta-row">
                 {actionPath(notification) ? (
                   <Link className="secondary-button" to={actionPath(notification) as string}>

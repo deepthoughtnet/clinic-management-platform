@@ -45,6 +45,7 @@ import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import com.deepthoughtnet.clinic.notification.service.NotificationHistoryService;
+import com.deepthoughtnet.clinic.notification.service.model.NotificationHistoryRecord;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
@@ -181,6 +182,38 @@ class PatientPortalServiceTest {
         verify(appointmentService, times(2)).listByPatient(TENANT_ID, PATIENT_ID);
         verify(prescriptionService, times(2)).listByPatient(TENANT_ID, PATIENT_ID);
         verify(billingService, times(2)).listByPatient(TENANT_ID, PATIENT_ID);
+    }
+
+    @Test
+    void notificationsStayScopedToAuthenticatedPatient() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        UUID otherPatientId = UUID.randomUUID();
+        PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
+        PatientEntity otherPatient = patientEntity(OTHER_TENANT_ID, otherPatientId, "PAT-201");
+        NotificationHistoryRecord ownNotification = notificationRecord(TENANT_ID, PATIENT_ID, "APPOINTMENT_BOOKED", "Appointment booked");
+        NotificationHistoryRecord otherNotification = notificationRecord(OTHER_TENANT_ID, otherPatientId, "APPOINTMENT_BOOKED", "Other patient appointment booked");
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(notificationHistoryService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(ownNotification));
+        when(notificationHistoryService.markRead(TENANT_ID, ownNotification.id())).thenReturn(ownNotification);
+
+        assertThat(service.notifications()).singleElement().satisfies(notification -> {
+            assertThat(notification.id()).isEqualTo(ownNotification.id().toString());
+            assertThat(notification.subject()).isEqualTo("Appointment booked");
+        });
+
+        assertThat(service.markNotificationRead(ownNotification.id())).satisfies(notification -> {
+            assertThat(notification.id()).isEqualTo(ownNotification.id().toString());
+            assertThat(notification.subject()).isEqualTo("Appointment booked");
+        });
+
+        verify(notificationHistoryService, times(2)).listByPatient(TENANT_ID, PATIENT_ID);
+        verify(notificationHistoryService).markRead(TENANT_ID, ownNotification.id());
+        verify(notificationHistoryService, never()).listByPatient(OTHER_TENANT_ID, otherPatientId);
+        verify(patientRepository, never()).findByMobileIgnoreCaseAndActiveTrue(patient.getMobile());
+        verify(patientRepository, never()).findByMobileIgnoreCaseAndActiveTrue(otherPatient.getMobile());
     }
 
     @Test
@@ -858,6 +891,31 @@ class PatientPortalServiceTest {
                                 null
                         )
                 )
+        );
+    }
+
+    private NotificationHistoryRecord notificationRecord(UUID tenantId, UUID patientId, String eventType, String subject) {
+        OffsetDateTime now = OffsetDateTime.now();
+        return new NotificationHistoryRecord(
+                UUID.randomUUID(),
+                tenantId,
+                patientId,
+                eventType,
+                "in_app",
+                "patient@example.com",
+                subject,
+                subject + " message",
+                "SENT",
+                null,
+                "APPOINTMENT",
+                UUID.randomUUID(),
+                "dedupe-key-" + patientId,
+                null,
+                0,
+                null,
+                null,
+                now,
+                now
         );
     }
 

@@ -251,9 +251,6 @@ function AppShell({
             <a className="ghost-button" href={clinicLoginUrl}>
               Open {branding.productName} Admin Console
             </a>
-            <Link className="secondary-button" to="/patient/login">
-              Patient Login
-            </Link>
             <Link className="primary-button" to={patientPortalHomePath(activeRegistrationSession || portalNavSession)}>
               {activeRegistrationSession ? "Continue registration" : portalNavSession ? `Open ${branding.productName} Patient Portal` : `${branding.productName} Patient Portal`}
             </Link>

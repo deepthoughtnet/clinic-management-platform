@@ -141,6 +141,7 @@ test("public nav and footer branding are cleaned up", () => {
   assert.ok(!source.includes('label: "AI Assistant"'));
   assert.ok(source.includes('label: "Patient Login"'));
   assert.ok(source.includes('path="/ai-assistant/*"'));
+  assert.ok(!source.includes('className="secondary-button" to="/patient/login"'));
   assert.ok(source.includes('brand-badge">JH</span>'));
   assert.ok(!source.includes('brand-badge">AR</span>'));
   assert.ok(source.includes("Start over"));
@@ -150,6 +151,9 @@ test("public nav and footer branding are cleaned up", () => {
   assert.ok(portalSource.includes("Sign out"));
   assert.ok(portalSource.includes("profileValidation.success"));
   assert.ok(portalSource.includes("patient-field-error"));
+  assert.ok(portalSource.includes("notificationSummaryLabel"));
+  assert.ok(portalSource.includes("formatNotificationText"));
+  assert.ok(portalSource.includes("New appointment, bill, prescription, and lab updates will appear here."));
   assert.ok(!portalSource.includes("Patient OTP session"));
   assert.ok(!portalSource.includes("Patient-scoped data"));
   assert.ok(!portalSource.includes("Read-only patient access stays separate"));
@@ -215,15 +219,21 @@ test("homepage location selector persists common cities", () => {
 test("patient portal empty states and lab rendering are updated", () => {
   const portalSource = readSource("pages/patient/PatientPortalPages.tsx");
   const labSource = readSource("pages/patient/PatientLabPage.tsx");
+  const styleSource = readSource("styles.css");
   assert.ok(portalSource.includes('emptyTitle="No upcoming appointments."'));
   assert.ok(portalSource.includes('emptyTitle="No prescriptions available."'));
   assert.ok(portalSource.includes('emptyTitle="No bills available."'));
   assert.ok(portalSource.includes('emptyTitle="You’re all caught up."'));
   assert.ok(portalSource.includes("formatDisplayDateTimeFromParts"));
   assert.ok(portalSource.includes("notificationDisplayTitle"));
+  assert.ok(portalSource.includes("notificationSummaryLabel"));
+  assert.ok(portalSource.includes("formatNotificationText"));
   assert.ok(portalSource.includes("profileValidation.success"));
   assert.ok(portalSource.includes("patient-field-error"));
   assert.ok(labSource.includes("No laboratory reports yet."));
   assert.ok(labSource.includes("formatDisplayDateTime"));
   assert.ok(labSource.includes("noLabData"));
+  assert.ok(styleSource.includes(".patient-notifications-page .portal-list"));
+  assert.ok(styleSource.includes("max-height: min(52vh, 38rem);"));
+  assert.ok(styleSource.includes("patient-main"));
 });

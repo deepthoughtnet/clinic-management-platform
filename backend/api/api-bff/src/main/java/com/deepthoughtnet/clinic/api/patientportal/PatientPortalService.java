@@ -613,7 +613,7 @@ public class PatientPortalService {
             return List.of();
         }
         PatientAccess access = requireCurrentPatientAccess();
-        return allNotifications(resolveAccessiblePatientAccesses(access)).stream()
+        return notificationHistoryService.listByPatient(access.tenantId(), access.patient().getId()).stream()
                 .map(this::toNotificationResponse)
                 .toList();
     }
@@ -623,7 +623,7 @@ public class PatientPortalService {
             throw new IllegalStateException("Notification history service is not available");
         }
         PatientAccess access = requireCurrentPatientAccess();
-        NotificationHistoryRecord record = allNotifications(resolveAccessiblePatientAccesses(access)).stream()
+        NotificationHistoryRecord record = notificationHistoryService.listByPatient(access.tenantId(), access.patient().getId()).stream()
                 .filter(notification -> notificationId != null && notificationId.equals(notification.id()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Notification not found"));
