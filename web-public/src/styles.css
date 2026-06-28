@@ -2073,6 +2073,41 @@ input {
   box-shadow: 0 16px 40px rgba(18, 54, 60, 0.08);
 }
 
+.speciality-card,
+.speciality-summary-card,
+.booking-location-card {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.speciality-summary-card,
+.booking-location-card {
+  padding: 0.95rem 1rem;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, #fcfffe 0%, #eef8f5 100%);
+  border: 1px solid rgba(18, 54, 60, 0.12);
+}
+
+.speciality-summary-card strong,
+.booking-location-card strong {
+  font-size: 1rem;
+}
+
+.booking-slot-groups {
+  display: grid;
+  gap: 1rem;
+}
+
+.booking-slot-group {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.booking-slot-group-heading h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
 .directory-card-top {
   display: flex;
   align-items: flex-start;

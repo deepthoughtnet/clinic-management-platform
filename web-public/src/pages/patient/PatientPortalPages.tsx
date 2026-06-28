@@ -51,6 +51,7 @@ import {
 } from "../../api/publicCatalog";
 import { branding } from "../../branding";
 import { DoctorClinicSelector } from "./DoctorClinicSelector";
+import { usePublicLocation } from "../../context/publicLocation";
 import {
   sanitizePatientOtpInput,
   sanitizePatientPhoneInput,
@@ -74,6 +75,7 @@ import {
   formatDisplayDateTimeFromParts,
   formatDisplayTime,
 } from "../../utils/dateDisplay";
+import { groupAvailableSlotsByDate } from "../../utils/bookingSlots.js";
 
 type FetchState<T> = {
   data: T;
@@ -1952,6 +1954,7 @@ export function PatientBookAppointmentPage({
     loading: false,
     error: null,
   });
+  const { locationState } = usePublicLocation();
   const lastSlotRequestKeyRef = useRef<string | null>(null);
   const manualDoctorSelectionRef = useRef(false);
   const currentBookingPath = `${location.pathname}${location.search}`;
@@ -1963,6 +1966,7 @@ export function PatientBookAppointmentPage({
   const bookingDoctorSlug = publicBookingContext.doctorSlug || null;
   const bookingDoctorId = publicBookingContext.doctorId || null;
   const hasBookingContext = Boolean(bookingClinicCode || bookingClinicId || bookingTenantId || bookingDoctorSlug || bookingDoctorId);
+  const selectedLocation = locationState.location.trim() || "Pune";
   const bookingContextLine = bookingClinicName
     ? bookingDoctorName
       ? `Booking appointment with Dr ${bookingDoctorName} at ${bookingClinicName}`
@@ -2267,7 +2271,8 @@ export function PatientBookAppointmentPage({
   const requiresClinicSelection = Boolean(
     selectedDoctorId && !resolvedSelectedClinicSlug && selectedDoctorClinics.length > 1,
   );
-  const availableSlots = slots.filter((slot) => slot.selectable);
+  const availableSlotGroups = useMemo(() => groupAvailableSlotsByDate(slots), [slots]);
+  const availableSlots = useMemo(() => availableSlotGroups.flatMap((group) => group.slots), [availableSlotGroups]);
   const bookingDoctorsLoading = clinicContextDetail.loading || doctorContextDetail.loading || publicDoctorsState.loading;
   const bookingDoctorsError = doctorContextDetail.error || clinicContextDetail.error || publicDoctorsState.error;
   const recentDoctorOptions = useMemo(
@@ -2517,6 +2522,11 @@ export function PatientBookAppointmentPage({
           <p>Your selected doctor or clinic is ready for booking.</p>
         </div>
       ) : null}
+      <div className="patient-highlight-card booking-location-card">
+        <strong>Selected location</strong>
+        <span>{selectedLocation}</span>
+        <p>We prioritize doctors and clinics near your chosen location when results are available.</p>
+      </div>
       {requiresClinicSelection && doctorContextDetail.data ? (
         <DoctorClinicSelector
           doctorName={publicBookingContext.doctorName || doctorContextDetail.data.doctorDisplayName}
@@ -2746,21 +2756,36 @@ export function PatientBookAppointmentPage({
               <div className="patient-inline-empty">
                 <strong>No slots available for this date.</strong>
                 <p>Try the next day or choose another doctor to continue.</p>
+                <div className="patient-action-row">
+                  <Link className="secondary-button" to="/patient/careai">
+                    Need help booking? Ask AIVA.
+                  </Link>
+                </div>
               </div>
             ) : null}
 
-            {availableSlots.length > 0 ? (
-              <div className="booking-slot-grid">
-                {availableSlots.map((slot) => (
-                  <button
-                    key={`${slot.appointmentDate}-${slot.slotTime}`}
-                    className={`booking-slot-card${selectedSlotTime === slot.slotTime ? " is-active" : ""}`}
-                    type="button"
-                    onClick={() => setSelectedSlot(slot)}
-                  >
-                    <strong>{formatTime(slot.slotTime)}</strong>
-                    <span>{slot.slotEndTime ? `Until ${formatTime(slot.slotEndTime)}` : "Available"}</span>
-                  </button>
+            {availableSlotGroups.length > 0 ? (
+              <div className="booking-slot-groups">
+                {availableSlotGroups.map((group) => (
+                  <section key={group.date} className="booking-slot-group">
+                    <div className="patient-panel-heading booking-slot-group-heading">
+                      <h3>{group.label}</h3>
+                      <span className="panel-caption">{group.slots.length} slot{group.slots.length === 1 ? "" : "s"}</span>
+                    </div>
+                    <div className="booking-slot-grid">
+                      {group.slots.map((slot) => (
+                        <button
+                          key={`${slot.appointmentDate}-${slot.slotTime}`}
+                          className={`booking-slot-card${selectedSlotTime === slot.slotTime ? " is-active" : ""}`}
+                          type="button"
+                          onClick={() => setSelectedSlot(slot)}
+                        >
+                          <strong>{formatTime(slot.slotTime)}</strong>
+                          <span>{slot.slotEndTime ? `Until ${formatTime(slot.slotEndTime)}` : "Available"}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
             ) : null}
@@ -2788,6 +2813,8 @@ export function PatientBookAppointmentPage({
                 <span>{selectedDoctor?.specialization ?? "Choose a speciality and doctor first."}</span>
                 <small>
                   {selectedDoctor?.clinicName ?? "Clinic"} {selectedDate ? `· ${selectedSlotTime ? formatDateTimeFromParts(selectedDate, selectedSlotTime) : formatDate(selectedDate)}` : ""}
+                  <br />
+                  Selected location: {selectedLocation}
                 </small>
               </div>
               {submitError ? (
@@ -2816,6 +2843,9 @@ export function PatientBookAppointmentPage({
                 </button>
                 <Link className="ghost-button" to="/patient/appointments">
                   Cancel
+                </Link>
+                <Link className="ghost-button" to="/patient/careai">
+                  Need help booking? Ask AIVA.
                 </Link>
               </div>
             </form>

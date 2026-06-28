@@ -23,6 +23,12 @@ import {
   type PublicLocationCoordinates,
   usePublicLocation,
 } from "../../context/publicLocation";
+import {
+  discoveryEmptyMessage,
+  matchesDiscoveryQuery,
+  normalizeDiscoveryText,
+  scoreDiscoveryLocation,
+} from "../../utils/publicDiscovery.js";
 import { patientPortalBookingPath, patientPortalBookingTo } from "../patient/patientPortalClinicContext";
 
 type FetchState<T> = {
@@ -180,6 +186,21 @@ function initials(label: string) {
     .join("");
 }
 
+function formatConsultationFee(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numericValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return null;
+  }
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(numericValue);
+}
+
 function QueryToolbar({
   actionLabel,
   query,
@@ -277,6 +298,7 @@ function PaginationBar({
 }
 
 function DoctorCard({ doctor, session }: { doctor: PublicDoctorSummaryResponse; session: PatientPortalSession | null }) {
+  const consultationFee = formatConsultationFee(doctor.consultationFee ?? null);
   return (
     <article className="public-directory-card doctor-directory-card">
       <div className="directory-card-top">
@@ -295,6 +317,7 @@ function DoctorCard({ doctor, session }: { doctor: PublicDoctorSummaryResponse; 
           {doctor.area ? ` · ${doctor.area}` : ""}
           {doctor.city ? ` · ${doctor.city}` : ""}
         </span>
+        {consultationFee ? <span>Fee: {consultationFee}</span> : null}
         {doctor.languages.length ? <span>Languages: {doctor.languages.join(", ")}</span> : null}
       </div>
       <div className="directory-badge-row">
@@ -357,6 +380,76 @@ function ClinicCard({ clinic, session }: { clinic: PublicClinicSummaryResponse; 
   );
 }
 
+function filterAndSortDoctorResults(
+  doctors: PublicDoctorSummaryResponse[],
+  query: string,
+  selectedLocation: string,
+) {
+  return [...doctors]
+    .filter((doctor) =>
+      matchesDiscoveryQuery(
+        [
+          doctor.doctorDisplayName,
+          doctor.speciality,
+          doctor.clinicDisplayName,
+          doctor.area,
+          doctor.city,
+          doctor.nextAvailableSlotSummary,
+          doctor.languages.join(" "),
+        ],
+        query,
+      ),
+    )
+    .sort((left, right) => {
+      const locationScore = scoreDiscoveryLocation(right.city, right.area, selectedLocation) - scoreDiscoveryLocation(left.city, left.area, selectedLocation);
+      if (locationScore !== 0) {
+        return locationScore;
+      }
+      const leftName = normalizeDiscoveryText(left.doctorDisplayName);
+      const rightName = normalizeDiscoveryText(right.doctorDisplayName);
+      return leftName.localeCompare(rightName);
+    });
+}
+
+function filterAndSortClinicResults(
+  clinics: PublicClinicSummaryResponse[],
+  query: string,
+  selectedLocation: string,
+) {
+  return [...clinics]
+    .filter((clinic) =>
+      matchesDiscoveryQuery(
+        [
+          clinic.clinicDisplayName,
+          clinic.address,
+          clinic.area,
+          clinic.city,
+          clinic.specialities.join(" "),
+          clinic.doctorsCount,
+        ].map((value) => `${value ?? ""}`),
+        query,
+      ),
+    )
+    .sort((left, right) => {
+      const locationScore = scoreDiscoveryLocation(right.city, right.area, selectedLocation) - scoreDiscoveryLocation(left.city, left.area, selectedLocation);
+      if (locationScore !== 0) {
+        return locationScore;
+      }
+      const leftName = normalizeDiscoveryText(left.clinicDisplayName);
+      const rightName = normalizeDiscoveryText(right.clinicDisplayName);
+      return leftName.localeCompare(rightName);
+    });
+}
+
+function filterAndSortSpecialities(
+  specialities: PublicSpecialitySummaryResponse[],
+  query: string,
+) {
+  return [...specialities]
+    .filter((speciality) => matchesDiscoveryQuery([speciality.speciality, speciality.doctorsCount, speciality.clinicsCount].map((value) => `${value ?? ""}`), query))
+    .sort((left, right) => normalizeDiscoveryText(left.speciality).localeCompare(normalizeDiscoveryText(right.speciality)));
+}
+
 function slugify(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
@@ -399,22 +492,28 @@ function buildDirectorySearchParams({
 function useDirectoryFilters(defaultSize = 12) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [query, setQuery] = useState(searchParams.get("q") ?? "");
-  const [city, setCity] = useState(searchParams.get("city") ?? "");
+  const { locationState } = usePublicLocation();
+  const selectedLocation = locationState.location === PUBLIC_CURRENT_LOCATION_LABEL
+    ? PUBLIC_DEFAULT_LOCATION
+    : locationState.location || PUBLIC_DEFAULT_LOCATION;
+  const queryParam = searchParams.get("q") ?? "";
+  const cityParam = searchParams.get("city") ?? "";
+  const [query, setQuery] = useState(queryParam);
+  const [city, setCity] = useState(cityParam || selectedLocation);
   const [area, setArea] = useState(searchParams.get("area") ?? "");
   const page = Number(searchParams.get("page") ?? "0") || 0;
   const size = Number(searchParams.get("size") ?? `${defaultSize}`) || defaultSize;
 
   useEffect(() => {
     setQuery(searchParams.get("q") ?? "");
-    setCity(searchParams.get("city") ?? "");
+    setCity(searchParams.get("city") ?? selectedLocation);
     setArea(searchParams.get("area") ?? "");
-  }, [searchParams]);
+  }, [searchParams, selectedLocation]);
 
   function submit(basePath: string, extra?: Record<string, string | undefined>) {
     const params = buildDirectorySearchParams({
       query,
-      city,
+      city: city || selectedLocation,
       area,
       page: 0,
       size: defaultSize,
@@ -426,7 +525,7 @@ function useDirectoryFilters(defaultSize = 12) {
   function changePage(basePath: string, nextPage: number, extra?: Record<string, string | undefined>) {
     const params = buildDirectorySearchParams({
       query: searchParams.get("q"),
-      city: searchParams.get("city"),
+      city: searchParams.get("city") || selectedLocation,
       area: searchParams.get("area"),
       page: nextPage,
       size,
@@ -467,6 +566,20 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
     emptySearchResponse,
   );
   const displayLocation = selectedLocation;
+  const searchableLocation = displayLocation === PUBLIC_CURRENT_LOCATION_LABEL ? PUBLIC_DEFAULT_LOCATION : displayLocation;
+  const submittedQuery = search.data ? filters.searchParams.get("q") ?? "" : "";
+  const homeDoctors = useMemo(
+    () => filterAndSortDoctorResults(search.data.doctors.items, submittedQuery, searchableLocation),
+    [search.data.doctors.items, searchableLocation, submittedQuery],
+  );
+  const homeClinics = useMemo(
+    () => filterAndSortClinicResults(search.data.clinics.items, submittedQuery, searchableLocation),
+    [search.data.clinics.items, searchableLocation, submittedQuery],
+  );
+  const homeSpecialities = useMemo(
+    () => filterAndSortSpecialities(search.data.specialities, submittedQuery),
+    [search.data.specialities, submittedQuery],
+  );
 
   useEffect(() => {
     setLocationDraft(selectedLocation);
@@ -525,7 +638,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
     event.preventDefault();
     const params = buildDirectorySearchParams({
       query: filters.query,
-      city: displayLocation,
+      city: searchableLocation,
       area: filters.area,
       page: 0,
       size: 6,
@@ -748,8 +861,12 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
         <DirectoryState
           loading={search.loading}
           error={search.error}
-          empty={search.data.doctors.items.length === 0 && search.data.clinics.items.length === 0 && search.data.specialities.length === 0}
-          emptyMessage={noPublicProfilesMessage}
+          empty={homeDoctors.length === 0 && homeClinics.length === 0 && homeSpecialities.length === 0}
+          emptyMessage={discoveryEmptyMessage({
+            query: submittedQuery || filters.searchParams.get("city") || filters.searchParams.get("area"),
+            selectedLocation: displayLocation,
+            defaultMessage: noPublicProfilesMessage,
+          })}
         >
           <div className="public-preview-grid">
             <article className="patient-panel">
@@ -758,7 +875,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
                 <Link to={`/doctors?${filters.searchParams.toString()}`}>View all</Link>
               </div>
               <div className="public-card-stack">
-                {search.data.doctors.items.slice(0, 3).map((doctor) => (
+                {homeDoctors.slice(0, 3).map((doctor) => (
                   <DoctorCard key={doctor.doctorSlug} doctor={doctor} session={session} />
                 ))}
               </div>
@@ -770,7 +887,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
                 <Link to={`/clinics?${filters.searchParams.toString()}`}>View all</Link>
               </div>
               <div className="public-card-stack">
-                {search.data.clinics.items.slice(0, 3).map((clinic) => (
+                {homeClinics.slice(0, 3).map((clinic) => (
                   <ClinicCard key={clinic.clinicSlug} clinic={clinic} session={session} />
                 ))}
               </div>
@@ -783,7 +900,7 @@ export function PublicHomePage({ session }: { session: PatientPortalSession | nu
               <Link to="/specialities">Browse all</Link>
             </div>
             <div className="chip-row">
-              {search.data.specialities.slice(0, 10).map((speciality) => (
+              {homeSpecialities.slice(0, 10).map((speciality) => (
                 <Link key={speciality.specialitySlug} className="chip" to={`/specialities/${speciality.specialitySlug}`}>
                   {speciality.speciality}
                 </Link>
@@ -813,6 +930,10 @@ export function PublicDoctorsPage({ session }: { session: PatientPortalSession |
     },
     emptyDoctorsPage,
   );
+  const visibleDoctors = useMemo(
+    () => filterAndSortDoctorResults(doctors.data.items, filters.query, filters.city || PUBLIC_DEFAULT_LOCATION),
+    [doctors.data.items, filters.city, filters.query],
+  );
 
   return (
     <section className="page-section">
@@ -840,11 +961,15 @@ export function PublicDoctorsPage({ session }: { session: PatientPortalSession |
       <DirectoryState
         loading={doctors.loading}
         error={doctors.error}
-        empty={doctors.data.items.length === 0}
-        emptyMessage={noPublicProfilesMessage}
+        empty={visibleDoctors.length === 0}
+        emptyMessage={discoveryEmptyMessage({
+          query: filters.query || filters.city || filters.area,
+          selectedLocation: filters.city,
+          defaultMessage: noPublicProfilesMessage,
+        })}
       >
         <div className="public-directory-grid">
-          {doctors.data.items.map((doctor) => (
+          {visibleDoctors.map((doctor) => (
             <DoctorCard key={doctor.doctorSlug} doctor={doctor} session={session} />
           ))}
         </div>
@@ -974,6 +1099,10 @@ export function PublicClinicsPage({ session }: { session: PatientPortalSession |
     },
     emptyClinicsPage,
   );
+  const visibleClinics = useMemo(
+    () => filterAndSortClinicResults(clinics.data.items, filters.query, filters.city || PUBLIC_DEFAULT_LOCATION),
+    [clinics.data.items, filters.city, filters.query],
+  );
 
   return (
     <section className="page-section">
@@ -998,11 +1127,15 @@ export function PublicClinicsPage({ session }: { session: PatientPortalSession |
       <DirectoryState
         loading={clinics.loading}
         error={clinics.error}
-        empty={clinics.data.items.length === 0}
-        emptyMessage={noPublicProfilesMessage}
+        empty={visibleClinics.length === 0}
+        emptyMessage={discoveryEmptyMessage({
+          query: filters.query || filters.city || filters.area,
+          selectedLocation: filters.city,
+          defaultMessage: noPublicProfilesMessage,
+        })}
       >
         <div className="public-directory-grid">
-          {clinics.data.items.map((clinic) => (
+          {visibleClinics.map((clinic) => (
             <ClinicCard key={clinic.clinicSlug} clinic={clinic} session={session} />
           ))}
         </div>
@@ -1111,6 +1244,10 @@ export function PublicSpecialitiesPage() {
     },
     [],
   );
+  const visibleSpecialities = useMemo(
+    () => filterAndSortSpecialities(specialities.data, filters.query),
+    [filters.query, specialities.data],
+  );
 
   return (
     <section className="page-section">
@@ -1141,17 +1278,30 @@ export function PublicSpecialitiesPage() {
       <DirectoryState
         loading={specialities.loading}
         error={specialities.error}
-        empty={specialities.data.length === 0}
-        emptyMessage={noPublicProfilesMessage}
+        empty={visibleSpecialities.length === 0}
+        emptyMessage={discoveryEmptyMessage({
+          query: filters.query || filters.city,
+          selectedLocation: filters.city,
+          defaultMessage: noPublicProfilesMessage,
+        })}
       >
         <div className="public-directory-grid speciality-directory-grid">
-          {specialities.data.map((speciality) => (
-            <Link key={speciality.specialitySlug} className="public-directory-card feature-card" to={`/specialities/${speciality.specialitySlug}`}>
+          {visibleSpecialities.map((speciality) => (
+            <article key={speciality.specialitySlug} className="public-directory-card feature-card speciality-card">
               <strong>{speciality.speciality}</strong>
               <p>
                 {speciality.doctorsCount} doctor{speciality.doctorsCount === 1 ? "" : "s"} across {speciality.clinicsCount} clinic{speciality.clinicsCount === 1 ? "" : "s"}.
               </p>
-            </Link>
+              <span>{speciality.doctorsCount > 0 ? "Search and book from this speciality." : "Public profile details will appear once available."}</span>
+              <div className="directory-action-row">
+                <Link className="secondary-button" to={`/specialities/${speciality.specialitySlug}`}>
+                  Search doctors
+                </Link>
+                <Link className="ghost-button" to="/patient/book-appointment">
+                  Book appointment
+                </Link>
+              </div>
+            </article>
           ))}
         </div>
       </DirectoryState>
@@ -1173,6 +1323,10 @@ export function PublicSpecialityDetailPage({ session }: { session: PatientPortal
       size: filters.size,
     },
     null,
+  );
+  const visibleDoctors = useMemo(
+    () => filterAndSortDoctorResults(detail.data?.doctors.items ?? [], filters.query, filters.city || PUBLIC_DEFAULT_LOCATION),
+    [detail.data?.doctors.items, filters.city, filters.query],
   );
 
   return (
@@ -1198,13 +1352,24 @@ export function PublicSpecialityDetailPage({ session }: { session: PatientPortal
       <DirectoryState
         loading={detail.loading}
         error={detail.error}
-        empty={!detail.data || detail.data.doctors.items.length === 0}
-        emptyMessage="No public doctors matched this speciality filter."
+        empty={!detail.data || visibleDoctors.length === 0}
+        emptyMessage={discoveryEmptyMessage({
+          query: filters.query || filters.city || filters.area,
+          selectedLocation: filters.city,
+          defaultMessage: "No public doctors matched this speciality filter.",
+        })}
       >
         {detail.data ? (
           <>
+            <div className="speciality-summary-card">
+              <strong>{detail.data.speciality}</strong>
+              <p>
+                {visibleDoctors.length} doctor{visibleDoctors.length === 1 ? "" : "s"} across visible clinics.
+              </p>
+              <span>Search by doctor, clinic, city, or symptom to narrow the list.</span>
+            </div>
             <div className="public-directory-grid">
-              {detail.data.doctors.items.map((doctor) => (
+              {visibleDoctors.map((doctor) => (
                 <DoctorCard key={doctor.doctorSlug} doctor={doctor} session={session} />
               ))}
             </div>

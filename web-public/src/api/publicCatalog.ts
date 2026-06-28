@@ -19,6 +19,7 @@ export type PublicDoctorSummaryResponse = {
   photoUrl: string | null;
   speciality: string | null;
   yearsOfExperience: number | null;
+  consultationFee?: number | string | null;
   languages: string[];
   clinicDisplayName: string;
   clinicSlug: string;
