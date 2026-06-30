@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.me.dto;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public record MeResponse(
@@ -14,6 +15,7 @@ public record MeResponse(
         String tenantRole,
         Set<String> permissions,
         TenantModulesResponse modules,
+        Map<String, Boolean> enabledModules,
         String correlationId,
         List<ActiveTenantMembershipResponse> memberships,
         List<ActiveTenantMembershipResponse> activeTenantMemberships
@@ -38,6 +40,7 @@ public record MeResponse(
             String role,
             String status,
             boolean active,
-            TenantModulesResponse modules
+            TenantModulesResponse modules,
+            Map<String, Boolean> enabledModules
     ) {}
 }

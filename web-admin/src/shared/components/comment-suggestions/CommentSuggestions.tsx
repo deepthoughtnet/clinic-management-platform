@@ -31,6 +31,7 @@ type CommentSuggestionsProps = {
   remarksError?: boolean;
   remarksHelperText?: React.ReactNode;
   remarksInputRef?: React.Ref<HTMLInputElement | HTMLTextAreaElement>;
+  dense?: boolean;
 };
 
 export default function CommentSuggestions({
@@ -49,6 +50,7 @@ export default function CommentSuggestions({
   remarksError = false,
   remarksHelperText,
   remarksInputRef,
+  dense = false,
 }: CommentSuggestionsProps) {
   const [query, setQuery] = React.useState("");
   const config = getCommentSuggestionCategoryConfig(category);
@@ -59,7 +61,7 @@ export default function CommentSuggestions({
   const showSearch = config.suggestions.length > 6;
 
   return (
-    <Stack spacing={1.25}>
+    <Stack spacing={dense ? 0.75 : 1.25}>
       <FormControl fullWidth size="small" error={reasonError}>
         <InputLabel id={`${category}-reason-label`}>{requiredReason ? <RequiredLabel text={reasonLabel} required /> : reasonLabel}</InputLabel>
         <Select
@@ -81,7 +83,7 @@ export default function CommentSuggestions({
       <TextField
         fullWidth
         multiline
-        minRows={3}
+        minRows={dense ? 2 : 3}
         size="small"
         label={remarksLabel}
         value={remarks}
@@ -105,7 +107,7 @@ export default function CommentSuggestions({
       {filteredSuggestions.length > 0 ? (
         <Box>
           <Typography variant="caption" color="text.secondary">Suggestions</Typography>
-          <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ mt: 0.5 }}>
+          <Stack direction="row" spacing={dense ? 0.5 : 0.75} useFlexGap flexWrap="wrap" sx={{ mt: dense ? 0.25 : 0.5 }}>
             {filteredSuggestions.map((suggestion) => (
               <Chip
                 key={suggestion}

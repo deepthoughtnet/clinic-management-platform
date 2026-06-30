@@ -1,4 +1,5 @@
 import { branding } from "../branding";
+import type { TenantModuleCode } from "../modules/moduleRegistry";
 
 export type NavItem = {
   key: string;
@@ -10,6 +11,8 @@ export type NavItem = {
   badge?: string;
   disabled?: boolean;
   future?: boolean;
+  moduleAny?: TenantModuleCode[];
+  moduleAll?: TenantModuleCode[];
 };
 
 export type NavGroup = {
@@ -20,6 +23,8 @@ export type NavGroup = {
   rolesAny?: string[];
   defaultExpanded?: boolean;
   items: NavItem[];
+  moduleAny?: TenantModuleCode[];
+  moduleAll?: TenantModuleCode[];
 };
 
 export const NAV_GROUPS: NavGroup[] = [
@@ -29,13 +34,13 @@ export const NAV_GROUPS: NavGroup[] = [
     requiresTenant: true,
     defaultExpanded: true,
     items: [
-      { key: "dashboard", label: "Dashboard", path: "/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_TECHNICIAN", "LAB_ASSISTANT"] },
-      { key: "day-board", label: "Day Board", path: "/appointments/day-board", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"] },
-      { key: "appointments", label: "Appointments", path: "/appointments", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"] },
-      { key: "notifications", label: "Notifications", path: "/notifications", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN"] },
-      { key: "queue", label: "My Queue", path: "/queue", requiresTenant: true, rolesAny: ["DOCTOR"] },
-      { key: "queue-ops", label: "Queue", path: "/queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST"] },
-      { key: "doctor-availability", label: "Doctor Availability", path: "/doctors/availability", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "AUDITOR"] },
+      { key: "dashboard", label: "Dashboard", path: "/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_TECHNICIAN", "LAB_ASSISTANT"], moduleAny: ["APPOINTMENTS", "CONSULTATION"] },
+      { key: "day-board", label: "Day Board", path: "/appointments/day-board", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"], moduleAny: ["APPOINTMENTS"] },
+      { key: "appointments", label: "Appointments", path: "/appointments", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"], moduleAny: ["APPOINTMENTS"] },
+      { key: "notifications", label: "Notifications", path: "/notifications", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN"], moduleAny: ["APPOINTMENTS"] },
+      { key: "queue", label: "My Queue", path: "/queue", requiresTenant: true, rolesAny: ["DOCTOR"], moduleAny: ["APPOINTMENTS"] },
+      { key: "queue-ops", label: "Queue", path: "/queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST"], moduleAny: ["APPOINTMENTS"] },
+      { key: "doctor-availability", label: "Doctor Availability", path: "/doctors/availability", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "AUDITOR"], moduleAny: ["APPOINTMENTS"] },
     ],
   },
   {
@@ -44,11 +49,10 @@ export const NAV_GROUPS: NavGroup[] = [
     requiresTenant: true,
     defaultExpanded: true,
     items: [
-      { key: "patients", label: "Patients", path: "/patients", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"] },
-      { key: "consultations", label: "Consultations", path: "/consultations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "AUDITOR"] },
-      { key: "prescriptions", label: "Prescriptions", path: "/prescriptions", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"] },
-      { key: "vaccinations", label: "Vaccinations", path: "/vaccinations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
-      { key: "laboratory", label: "Laboratory", path: "/lab", requiresTenant: true, rolesAny: ["PLATFORM_ADMIN", "CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_TECHNICIAN", "LAB_ASSISTANT"] },
+      { key: "patients", label: "Patients", path: "/patients", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"], moduleAny: ["APPOINTMENTS", "CONSULTATION"] },
+      { key: "consultations", label: "Consultations", path: "/consultations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "AUDITOR"], moduleAny: ["CONSULTATION"] },
+      { key: "vaccinations", label: "Vaccinations", path: "/vaccinations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"], moduleAny: ["VACCINATION"] },
+      { key: "laboratory", label: "Laboratory", path: "/lab", requiresTenant: true, rolesAny: ["PLATFORM_ADMIN", "CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_TECHNICIAN", "LAB_ASSISTANT"], moduleAny: ["LABORATORY"] },
     ],
   },
   {
@@ -56,14 +60,15 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Pharmacy",
     requiresTenant: true,
     items: [
-      { key: "pharmacy-dashboard", label: "Pharmacy Dashboard", path: "/pharmacy/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"] },
-      { key: "pharmacy-ops", label: "Operations", path: "/pharmacy/operations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
-      { key: "inventory", label: "Inventory", path: "/inventory", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"] },
-      { key: "reconciliation", label: "Reconciliation", path: "/pharmacy/operations?tab=reconciliation", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"] },
-      { key: "dispensing", label: "Dispensing", path: "/pharmacy/dispensing", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "AUDITOR"] },
-      { key: "pharmacy-pos", label: "Pharmacy POS", path: "/pharmacy/pos", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "AUDITOR"] },
-      { key: "stock-movements", label: "Stock Movements", path: "/pharmacy/stock-movements", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER"] },
-      { key: "medicine-master", label: "Medicine Master", path: "/pharmacy/medicines", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "AUDITOR", "DOCTOR", "BILLING_USER"] },
+      { key: "pharmacy-dashboard", label: "Pharmacy Dashboard", path: "/pharmacy/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY", "PRESCRIPTION", "BILLING"] },
+      { key: "prescription-register", label: "Prescription Register", path: "/prescriptions", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"], moduleAny: ["PRESCRIPTION"] },
+      { key: "dispensing", label: "Dispense Queue", path: "/pharmacy/dispensing", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAll: ["PRESCRIPTION", "INVENTORY"] },
+      { key: "pharmacy-pos", label: "POS Sale", path: "/pharmacy/pos", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "AUDITOR", "PHARMACY_POS_USER", "PHARMACY_INVENTORY_MANAGER"], moduleAny: ["PHARMACY_POS"] },
+      { key: "medicine-master", label: "Medicine Master", path: "/pharmacy/medicines", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY"] },
+      { key: "inventory", label: "Inventory", path: "/inventory", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY"] },
+      { key: "pharmacy-procurement", label: "Procurement", path: "/pharmacy/procurement", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACIST"], moduleAny: ["INVENTORY"] },
+      { key: "pharmacy-reconciliation", label: "Reconciliation", path: "/pharmacy/reconciliation", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACIST"], moduleAny: ["INVENTORY"] },
+      { key: "stock-movements", label: "Reports & Audit", path: "/pharmacy/stock-movements", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY"] },
     ],
   },
   {
@@ -71,11 +76,11 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Finance",
     requiresTenant: true,
     items: [
-      { key: "billing", label: "Billing", path: "/billing", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"] },
-      { key: "cash-counter", label: "Cash Counter", path: "/finance/cash-counter", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "BILLING_USER", "AUDITOR", "PLATFORM_ADMIN"] },
-      { key: "payments", label: "Payments", path: "/finance/payments", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"] },
-      { key: "refunds", label: "Refunds", path: "/finance/refunds", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"] },
-      { key: "reports", label: "Reports", path: "/reports", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "BILLING_USER", "AUDITOR", "PLATFORM_ADMIN"] },
+      { key: "billing", label: "Billing", path: "/billing", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"], moduleAny: ["BILLING"] },
+      { key: "cash-counter", label: "Cash Counter", path: "/finance/cash-counter", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "BILLING_USER", "AUDITOR", "PLATFORM_ADMIN"], moduleAny: ["BILLING"] },
+      { key: "payments", label: "Payments", path: "/finance/payments", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"], moduleAny: ["BILLING"] },
+      { key: "refunds", label: "Refunds", path: "/finance/refunds", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"], moduleAny: ["BILLING"] },
+      { key: "reports", label: "Reports", path: "/reports", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "BILLING_USER", "AUDITOR", "PLATFORM_ADMIN"], moduleAny: ["REPORTS"] },
     ],
   },
   {
@@ -85,20 +90,20 @@ export const NAV_GROUPS: NavGroup[] = [
     defaultExpanded: false,
     rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"],
     items: [
-      { key: "campaigns", label: "Campaigns", path: "/carepilot/campaigns", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
-      { key: "analytics", label: "Analytics", path: "/carepilot/analytics", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
-      { key: "ops-console", label: "Ops Console", path: "/carepilot/ops", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
-      { key: "messaging", label: "Messaging", path: "/carepilot/messaging", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
-      { key: "reminders", label: "Reminders", path: "/carepilot/reminders", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
-      { key: "patient-engagement", label: "Patient Engagement", path: "/carepilot/engagement", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"] },
-      { key: "leads", label: "Leads", path: "/carepilot/leads", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
-      { key: "webinar-automation", label: "Webinar Automation", path: "/carepilot/webinars", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
-      { key: "ai-calls", label: "AI Calls", path: "/carepilot/ai-calls", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"] },
-      { key: "ai-receptionist-active", label: "AI Receptionist · Active Conversations", path: "/carepilot/ai-receptionist/active-conversations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
-      { key: "ai-receptionist-callbacks", label: "AI Receptionist · Callback Queue", path: "/carepilot/ai-receptionist/callback-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
-      { key: "ai-receptionist-escalations", label: "AI Receptionist · Escalation Queue", path: "/carepilot/ai-receptionist/escalation-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
-      { key: "ai-receptionist-handoffs", label: "AI Receptionist · Appointment Handoffs", path: "/carepilot/ai-receptionist/appointment-handoffs", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
-      { key: "receptionist-queue", label: "Receptionist Queue", path: "/carepilot/receptionist-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
+      { key: "campaigns", label: "Campaigns", path: "/carepilot/campaigns", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "analytics", label: "Analytics", path: "/carepilot/analytics", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "ops-console", label: "Ops Console", path: "/carepilot/ops", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "messaging", label: "Messaging", path: "/carepilot/messaging", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
+      { key: "reminders", label: "Reminders", path: "/carepilot/reminders", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "patient-engagement", label: "Patient Engagement", path: "/carepilot/engagement", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "leads", label: "Leads", path: "/carepilot/leads", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "webinar-automation", label: "Webinar Automation", path: "/carepilot/webinars", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "ai-calls", label: "AI Calls", path: "/carepilot/ai-calls", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"], moduleAny: ["CAREPILOT"] },
+      { key: "ai-receptionist-active", label: "AI Receptionist · Active Conversations", path: "/carepilot/ai-receptionist/active-conversations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
+      { key: "ai-receptionist-callbacks", label: "AI Receptionist · Callback Queue", path: "/carepilot/ai-receptionist/callback-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
+      { key: "ai-receptionist-escalations", label: "AI Receptionist · Escalation Queue", path: "/carepilot/ai-receptionist/escalation-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
+      { key: "ai-receptionist-handoffs", label: "AI Receptionist · Appointment Handoffs", path: "/carepilot/ai-receptionist/appointment-handoffs", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
+      { key: "receptionist-queue", label: "Receptionist Queue", path: "/carepilot/receptionist-queue", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["CAREPILOT"] },
     ],
   },
   {
@@ -111,9 +116,9 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "templates", label: "Templates", path: "/admin/templates", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "notification-settings", label: "Notification Settings", path: "/admin/notification-settings", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "integrations", label: "Integrations", path: "/admin/integrations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
-      { key: "ai-ops", label: "AI Ops", path: "/admin/ai-ops", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
+      { key: "ai-ops", label: "AI Ops", path: "/admin/ai-ops", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["AI_COPILOT"] },
       { key: "platform-ops", label: "Platform Ops", path: "/admin/platform-ops", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
-      { key: "realtime-ai", label: "Realtime AI", path: "/admin/realtime-ai", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
+      { key: "realtime-ai", label: "Realtime AI", path: "/admin/realtime-ai", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"], moduleAny: ["AI_COPILOT"] },
       { key: "voice-test", label: "Voice Test", path: "/ai/voice-test", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "RECEPTIONIST", "PLATFORM_ADMIN"] },
     ],
   },

@@ -51,6 +51,7 @@ import { useAuth } from "../auth/useAuth";
 import { friendlyRoleLabel, hasTenantModule } from "../auth/moduleEntitlements";
 import { branding } from "../branding";
 import BrandMark from "../shared/components/branding/BrandMark";
+import { canAccessFeature, resolveEnabledTenantModules } from "../modules/moduleRegistry";
 
 const GROUP_STATE_STORAGE_KEY = "clinic_sidebar_group_state_v1";
 
@@ -62,8 +63,9 @@ export type SidebarNavProps = {
 };
 
 function isActivePath(current: string, path: string): boolean {
-  if (path === "/") return current === "/" || current === "/dashboard";
-  return current === path || current.startsWith(`${path}/`);
+  const normalizedPath = path.split("?")[0] || path;
+  if (normalizedPath === "/") return current === "/" || current === "/dashboard";
+  return current === normalizedPath || current.startsWith(`${normalizedPath}/`);
 }
 
 function iconFor(key: string): React.ReactNode {
@@ -91,12 +93,16 @@ function iconFor(key: string): React.ReactNode {
     vaccinations: <VaccinesRoundedIcon fontSize="small" />,
     inventory: <Inventory2RoundedIcon fontSize="small" />,
     "pharmacy-ops": <Inventory2RoundedIcon fontSize="small" />,
+    "pharmacy-operations": <Inventory2RoundedIcon fontSize="small" />,
     reports: <BarChartRoundedIcon fontSize="small" />,
     payments: <PaymentsRoundedIcon fontSize="small" />,
     refunds: <AutorenewRoundedIcon fontSize="small" />,
     dispensing: <LocalPharmacyRoundedIcon fontSize="small" />,
     "stock-movements": <Inventory2RoundedIcon fontSize="small" />,
     "medicine-master": <MedicationRoundedIcon fontSize="small" />,
+    "prescription-register": <ReceiptLongRoundedIcon fontSize="small" />,
+    "pharmacy-procurement": <Inventory2RoundedIcon fontSize="small" />,
+    "pharmacy-reconciliation": <Inventory2RoundedIcon fontSize="small" />,
     campaigns: <CampaignRoundedIcon fontSize="small" />,
     messaging: <MessageRoundedIcon fontSize="small" />,
     reminders: <NotificationsActiveRoundedIcon fontSize="small" />,
@@ -146,6 +152,25 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
   }, [auth.rolesUpper, auth.tenantRole, auth.activeTenantMemberships, auth.tenantId, isPlatformAdmin]);
 
   const carePilotEnabledForTenant = React.useMemo(() => hasTenantModule(auth, "carePilot"), [auth]);
+  const enabledTenantModules = React.useMemo(() => resolveEnabledTenantModules(auth), [auth]);
+  const isPharmacyOnlyTenant = React.useMemo(
+    () => Boolean(auth.tenantId)
+      && enabledTenantModules.has("INVENTORY")
+      && !enabledTenantModules.has("APPOINTMENTS")
+      && !enabledTenantModules.has("CONSULTATION")
+      && !enabledTenantModules.has("VACCINATION")
+      && !enabledTenantModules.has("LABORATORY"),
+    [auth.tenantId, enabledTenantModules],
+  );
+  const tenantRole = React.useMemo(() => (auth.tenantRole || auth.activeTenantMemberships.find((membership) => membership.tenantId === auth.tenantId)?.role || "").toUpperCase(), [auth.activeTenantMemberships, auth.tenantId, auth.tenantRole]);
+  const canUsePosSale = React.useMemo(
+    () => auth.hasPermission("billing.create") || auth.hasPermission("payment.collect") || auth.rolesUpper.includes("CLINIC_ADMIN"),
+    [auth],
+  );
+  const canSeeMedicineMaster = React.useMemo(
+    () => auth.permissions.includes("medicine.read") || auth.hasPermission("inventory.manage") || auth.rolesUpper.includes("CLINIC_ADMIN"),
+    [auth],
+  );
 
   const visibleGroups = React.useMemo(() => {
     const isTenantSelected = Boolean(auth.tenantId);
@@ -155,18 +180,31 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
       const groupRoleMatch = !group.rolesAny || group.rolesAny.some((role) => activeRoles.has(role));
       if (!groupRoleMatch && !(isPlatformAdmin && auth.tenantId)) return null;
       if (group.key === "carepilot" && !carePilotEnabledForTenant) return null;
+      if (group.key === "clinical" && isPharmacyOnlyTenant) return null;
 
       const items = group.items.filter((item) => {
         if (item.platformOnly && !isPlatformAdmin) return false;
         if (item.requiresTenant && !isTenantSelected) return false;
         if (item.rolesAny && item.rolesAny.length > 0 && !item.rolesAny.some((role) => activeRoles.has(role)) && !(isPlatformAdmin && auth.tenantId)) return false;
+        if (item.moduleAll && !item.moduleAll.every((moduleCode) => enabledTenantModules.has(moduleCode))) return false;
+        if (item.moduleAny && !item.moduleAny.some((moduleCode) => enabledTenantModules.has(moduleCode))) return false;
+        if (group.key === "pharmacy") {
+          const inventoryManagerAllowed = new Set(["pharmacy-dashboard", "medicine-master", "inventory", "pharmacy-procurement", "pharmacy-reconciliation", "stock-movements"]);
+          const posUserAllowed = new Set(["pharmacy-dashboard", "pharmacy-pos", "inventory", "stock-movements"]);
+          if (tenantRole === "PHARMACY_POS_USER" && !posUserAllowed.has(item.key)) return false;
+          if (tenantRole === "PHARMACY_INVENTORY_MANAGER" && !inventoryManagerAllowed.has(item.key) && !(item.key === "pharmacy-pos" && canUsePosSale)) return false;
+          if ((tenantRole === "PHARMACY_POS_USER" || tenantRole === "PHARMACY_INVENTORY_MANAGER") && item.key === "pharmacy-pos" && !canUsePosSale) return false;
+          if (item.key === "pharmacy-pos" && !canAccessFeature(auth, "pharmacy-pos")) return false;
+          if (item.key === "medicine-master" && !canSeeMedicineMaster) return false;
+          if (item.key === "pharmacy-pos" && activeRoles.has("PHARMACY_INVENTORY_MANAGER") && !canUsePosSale) return false;
+        }
         if ((group.key === "operations" || group.key === "clinical" || group.key === "pharmacy" || group.key === "finance" || group.key === "carepilot" || group.key === "administration") && isPlatformAdmin && !auth.tenantId) return false;
         return true;
       });
       if (items.length === 0) return null;
       return { ...group, items };
     }).filter(Boolean) as NavGroup[];
-  }, [activeRoles, auth.tenantId, isPlatformAdmin, carePilotEnabledForTenant]);
+  }, [activeRoles, auth.permissions, auth.rolesUpper, auth.tenantId, isPlatformAdmin, carePilotEnabledForTenant, canSeeMedicineMaster, canUsePosSale, enabledTenantModules]);
 
   const activeGroupKeys = React.useMemo(() => {
     return new Set(

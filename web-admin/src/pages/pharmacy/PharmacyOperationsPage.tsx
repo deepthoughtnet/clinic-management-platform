@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Autocomplete,
@@ -26,6 +26,10 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
+import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
+import RuleRoundedIcon from "@mui/icons-material/RuleRounded";
+import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
 import { useAuth } from "../../auth/useAuth";
 import RequiredLabel from "../../components/forms/RequiredLabel";
 import CommentSuggestions from "../../shared/components/comment-suggestions/CommentSuggestions";
@@ -96,7 +100,7 @@ import {
   type SupplierInvoiceInput,
 } from "../../api/clinicApi";
 
-type OpsTab = "suppliers" | "inward" | "reconciliation" | "procurement" | "analytics";
+type OpsTab = "suppliers" | "inward" | "reconciliation" | "procurement" | "physical-count" | "stock-adjustments" | "approval-review";
 type ProcurementTab = "po" | "invoice" | "grn";
 type MedicineOption = { medicine: Medicine };
 
@@ -230,11 +234,17 @@ function normalizeSupplierPayload(values: SupplierValues): SupplierInput {
 
 export default function PharmacyOperationsPage() {
   const auth = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const pageMode: "procurement" | "reconciliation" = location.pathname.includes("/reconciliation") ? "reconciliation" : "procurement";
+  const canManageOperations = auth.hasPermission("inventory.manage") || auth.rolesUpper.includes("CLINIC_ADMIN");
   const [tab, setTab] = React.useState<OpsTab>((() => {
-    const value = (searchParams.get("tab") || "inward") as OpsTab;
-    return ["suppliers", "inward", "reconciliation", "procurement", "analytics"].includes(value) ? value : "inward";
+    const value = (searchParams.get("tab") || "") as OpsTab;
+    if (["suppliers", "inward", "reconciliation", "procurement", "physical-count", "stock-adjustments", "approval-review"].includes(value)) {
+      return value;
+    }
+    return pageMode === "reconciliation" ? "reconciliation" : "procurement";
   })());
   const [procurementTab, setProcurementTab] = React.useState<ProcurementTab>("po");
   const [loading, setLoading] = React.useState(true);
@@ -378,11 +388,11 @@ export default function PharmacyOperationsPage() {
   React.useEffect(() => { void loadAll(); }, [loadAll]);
 
   React.useEffect(() => {
-    const value = (searchParams.get("tab") || "inward") as OpsTab;
-    if (["suppliers", "inward", "reconciliation", "procurement", "analytics"].includes(value)) {
+    const value = (searchParams.get("tab") || (pageMode === "reconciliation" ? "reconciliation" : "procurement")) as OpsTab;
+    if (["suppliers", "inward", "reconciliation", "procurement", "physical-count", "stock-adjustments", "approval-review"].includes(value)) {
       setTab(value);
     }
-  }, [searchParams]);
+  }, [pageMode, searchParams]);
 
   React.useEffect(() => {
     if (selectedReconciliation?.extractedRows?.length) {
@@ -845,15 +855,19 @@ export default function PharmacyOperationsPage() {
     setSheetFile(file);
   };
 
-  if (!auth.tenantId) return <Alert severity="info">Select a tenant to access Pharmacy Operations.</Alert>;
+  const showAnalytics = false;
+
+  if (!auth.tenantId) return <Alert severity="info">Select a tenant to access pharmacy procurement and reconciliation.</Alert>;
 
   return (
     <Stack spacing={2}>
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900 }}>Pharmacy Operations</Typography>
+          <Typography variant="h4" sx={{ fontWeight: 900 }}>{pageMode === "procurement" ? "Procurement" : "Reconciliation"}</Typography>
           <Typography variant="body2" color="text.secondary">
-            Compact inward stock, supplier coordination, vendor batch reconciliation, and procurement workflows.
+            {pageMode === "procurement"
+              ? "Manage supplier purchasing, invoices, and goods receipt for pharmacy stock."
+              : "Review stock differences, supplier bill variances, and approval workflows."}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1}>
@@ -862,8 +876,36 @@ export default function PharmacyOperationsPage() {
         </Stack>
       </Box>
 
+      <CompactFilterCard
+        title="Workflow guidance"
+        subtitle={pageMode === "procurement"
+          ? "Supplier → Purchase Order → Invoice → Goods Receipt → Stock Added"
+          : "Create Session → Upload/Enter Count → Review Differences → Submit → Approve → Posted"}
+      >
+        <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+          {(pageMode === "procurement"
+            ? ["Supplier", "Purchase Order", "Invoice", "Goods Receipt", "Stock Added"]
+            : ["Create Session", "Upload/Enter Count", "Review Differences", "Submit", "Approve", "Posted"]
+          ).map((step, index) => (
+            <Chip
+              key={step}
+              size="small"
+              label={`${index + 1}. ${step}`}
+              color={index === 0 ? "primary" : index === 4 || step === "Posted" ? "success" : "default"}
+              variant="outlined"
+              sx={compactChipSx}
+            />
+          ))}
+        </Stack>
+      </CompactFilterCard>
+
       {error ? <Alert severity="error">{error}</Alert> : null}
       {success ? <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert> : null}
+      {!canManageOperations ? (
+        <Alert severity="info">
+          Read-only procurement and reconciliation access is active for this role. Supplier, inward, procurement, and reconciliation write actions are hidden or disabled.
+        </Alert>
+      ) : null}
 
       <Grid container spacing={1.25}>
         <Grid size={{ xs: 6, md: 2.4 }}>
@@ -886,18 +928,27 @@ export default function PharmacyOperationsPage() {
       <Card variant="outlined">
         <CardContent sx={compactCardContentSx}>
           <Tabs value={tab} onChange={(_, value) => setTab(value as OpsTab)} variant="scrollable" scrollButtons="auto">
-            <Tab value="inward" label="Stock Inward" />
-            <Tab value="reconciliation" label="Vendor Reconciliation" />
-            <Tab value="suppliers" label="Suppliers" />
-            <Tab value="procurement" label="Procurement" />
-            <Tab value="analytics" label="Analytics" />
+            {pageMode === "procurement" ? (
+              <>
+                <Tab value="suppliers" label="Suppliers" />
+                <Tab value="inward" label="Goods Receipt" />
+                <Tab value="procurement" label="Purchase Orders / Invoices" />
+              </>
+            ) : (
+              <>
+                <Tab value="reconciliation" label="Supplier Bill Reconciliation" />
+                <Tab value="physical-count" label="Physical Count" />
+                <Tab value="stock-adjustments" label="Stock Adjustments" />
+                <Tab value="approval-review" label="Approval Review" />
+              </>
+            )}
           </Tabs>
         </CardContent>
       </Card>
 
       {loading ? <Box sx={{ minHeight: 240, display: "grid", placeItems: "center" }}><CircularProgress /></Box> : null}
 
-      {!loading && tab === "suppliers" ? (
+      {!loading && pageMode === "procurement" && tab === "suppliers" ? (
         <Grid container spacing={2}>
           <Grid size={{ xs: 12, lg: 4.2 }}>
             <CompactFilterCard
@@ -946,7 +997,7 @@ export default function PharmacyOperationsPage() {
                 </Grid>
               </Grid>
               <Stack direction="row" spacing={1}>
-                <Button size="small" variant="contained" onClick={() => void submitSupplier()} disabled={saving}>{supplierId ? "Update" : "Save supplier"}</Button>
+                <Button size="small" variant="contained" onClick={() => void submitSupplier()} disabled={!canManageOperations || saving}>{supplierId ? "Update" : "Save supplier"}</Button>
                 <Button size="small" onClick={() => { setSupplierForm(emptySupplier); setSupplierId(null); }}>Reset</Button>
               </Stack>
             </CompactFilterCard>
@@ -1021,7 +1072,7 @@ export default function PharmacyOperationsPage() {
         </Grid>
       ) : null}
 
-      {!loading && tab === "inward" ? (
+      {!loading && pageMode === "procurement" && tab === "inward" ? (
         <Grid container spacing={2}>
           <Grid size={{ xs: 12, lg: 4.5 }}>
             <CompactFilterCard
@@ -1127,7 +1178,7 @@ export default function PharmacyOperationsPage() {
                 <Grid size={{ xs: 12, md: 4 }}><TextField id="inward-selling-price" size="small" fullWidth type="number" label="Selling price" value={inwardForm.sellingPrice ?? ""} onChange={(e) => setInwardForm((s) => ({ ...s, sellingPrice: e.target.value ? Number(e.target.value) : null }))} error={Boolean(inwardFieldErrors.sellingPrice)} helperText={inwardFieldErrors.sellingPrice || "Optional, must be >= unit cost."} inputProps={{ min: 0, step: "0.01" }} /></Grid>
               </Grid>
               <Stack direction="row" spacing={1}>
-                <Button size="small" variant="contained" onClick={() => void submitInward()} disabled={saving}>Record inward</Button>
+              <Button size="small" variant="contained" onClick={() => void submitInward()} disabled={!canManageOperations || saving}>Record inward</Button>
                 <Button size="small" onClick={() => { setInwardForm(emptyInward); setInwardMedicineSearch(""); }}>Clear</Button>
               </Stack>
             </CompactFilterCard>
@@ -1188,7 +1239,7 @@ export default function PharmacyOperationsPage() {
         </Grid>
       ) : null}
 
-      {!loading && tab === "reconciliation" ? (
+      {!loading && pageMode === "reconciliation" && tab === "reconciliation" ? (
         <Stack spacing={2}>
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, xl: 4 }}>
@@ -1266,7 +1317,7 @@ export default function PharmacyOperationsPage() {
                       requiredReason={false}
                       maxRemarksLength={250}
                       reasonLabel="Review reason"
-                      remarksLabel="Draft note / invoice reference"
+                      remarksLabel="Supplier bill / invoice reference"
                       reasonError={Boolean(reconFieldErrors.reason)}
                       reasonHelperText={reconFieldErrors.reason}
                       remarksError={Boolean(reconFieldErrors.reason)}
@@ -1275,7 +1326,7 @@ export default function PharmacyOperationsPage() {
                   </Grid>
                   <Grid size={12}>
                     <Button size="small" variant="outlined" component="label">
-                      Upload vendor sheet / invoice
+                      Upload supplier bill / invoice
                       <input hidden type="file" accept=".pdf,image/*,.csv,.xls,.xlsx" onChange={handleSheetFileChange} />
                     </Button>
                     {sheetFile ? (
@@ -1286,7 +1337,7 @@ export default function PharmacyOperationsPage() {
                   </Grid>
                 </Grid>
                 <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                  <Button size="small" variant="contained" onClick={() => void createDraftReconciliation()} disabled={saving}>Save draft</Button>
+                  <Button size="small" variant="contained" onClick={() => void createDraftReconciliation()} disabled={!canManageOperations || saving}>Save Reconciliation Draft</Button>
                   <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/medicines")}>Open Medicine Master</Button>
                 </Stack>
                 <Typography variant="caption" color="text.secondary">
@@ -1299,10 +1350,17 @@ export default function PharmacyOperationsPage() {
               <Grid container spacing={2}>
                 <Grid size={{ xs: 12, lg: 8.6 }}>
                   <CompactFilterCard
-                    title="Reconciliation grid"
+                    title={<Stack direction="row" spacing={1} alignItems="center"><RuleRoundedIcon fontSize="small" color="primary" /><span>Review Differences</span></Stack>}
                     subtitle={selectedReconciliation ? `Reviewing ${selectedReconciliation.status.toLowerCase()} session for ${selectedReconciliation.medicineName || "stock item"}` : "Select a reconciliation session to review rows."}
-                    actions={<Button size="small" variant="outlined" onClick={() => void saveReviewedRows()} disabled={saving || !selectedReconciliationId || !reviewRows.length}>Save row review</Button>}
+                    actions={<Button size="small" variant="outlined" onClick={() => void saveReviewedRows()} disabled={!canManageOperations || saving || !selectedReconciliationId || !reviewRows.length}>Save Review</Button>}
                   >
+                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ mb: 1 }}>
+                      <Chip size="small" icon={<UploadFileRoundedIcon fontSize="small" />} label="1. Upload / Enter Count" color="info" variant="outlined" sx={compactChipSx} />
+                      <Chip size="small" icon={<RuleRoundedIcon fontSize="small" />} label="2. Review Differences" variant="outlined" sx={compactChipSx} />
+                      <Chip size="small" icon={<DescriptionRoundedIcon fontSize="small" />} label="3. Submit" variant="outlined" sx={compactChipSx} />
+                      <Chip size="small" icon={<Inventory2RoundedIcon fontSize="small" />} label="4. Approve" variant="outlined" sx={compactChipSx} />
+                      <Chip size="small" label="5. Posted" color="success" variant="outlined" sx={compactChipSx} />
+                    </Stack>
                     {selectedReconciliationRows.length === 0 ? (
                       <CompactEmptyState title="No extracted rows yet." subtitle="Upload a vendor sheet to start row-based review. Drafts without a sheet still appear in the session list below." />
                     ) : (
@@ -1364,7 +1422,7 @@ export default function PharmacyOperationsPage() {
                                       <Button size="small" onClick={() => navigate("/pharmacy/medicines")}>Map</Button>
                                       <Button size="small" onClick={() => navigate("/pharmacy/medicines")}>Create</Button>
                                       <Button size="small" onClick={() => setReviewRows((current) => current.map((item, idx) => idx === index ? { ...item, needsReview: false } : item))}>Accept</Button>
-                                      <Button size="small" color="inherit" onClick={() => setReviewRows((current) => current.map((item, idx) => idx === index ? { ...item, needsReview: true, notes: "Rejected during manual review" } : item))}>Reject</Button>
+                                      <Button size="small" color="inherit" disabled={!canManageOperations} onClick={() => setReviewRows((current) => current.map((item, idx) => idx === index ? { ...item, needsReview: true, notes: "Rejected during manual review" } : item))}>Reject</Button>
                                     </Stack>
                                   </TableCell>
                                 </TableRow>
@@ -1429,7 +1487,11 @@ export default function PharmacyOperationsPage() {
             )}
           >
             {reconciliations.length === 0 ? (
-              <CompactEmptyState title="No reconciliation sessions yet." subtitle="Create a draft, upload the vendor sheet, then review rows here." />
+              <CompactEmptyState
+                title="No reconciliation sessions yet."
+                subtitle="Create a reconciliation session when stock or supplier bill differs."
+                action={<Button size="small" variant="contained" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>Start Reconciliation</Button>}
+              />
             ) : (
               <TableContainer sx={{ ...stickyTableSx, maxHeight: 280 }}>
                 <Table stickyHeader size="small">
@@ -1461,20 +1523,20 @@ export default function PharmacyOperationsPage() {
                         <TableCell align="right">
                           <Stack direction="row" spacing={0.5} justifyContent="flex-end" useFlexGap flexWrap="wrap">
                             {["DRAFT", "REJECTED"].includes((row.status || "").toUpperCase()) ? (
-                              <Button size="small" onClick={(event) => { event.stopPropagation(); void submitRecon(row); }} disabled={saving}>Submit</Button>
+                              <Button size="small" onClick={(event) => { event.stopPropagation(); void submitRecon(row); }} disabled={!canManageOperations || saving}>Submit</Button>
                             ) : null}
                             {row.status === "SUBMITTED" ? (
                               currentUserId && row.createdBy === currentUserId ? (
                                 <Chip size="small" label="Maker cannot approve own reconciliation" color="warning" variant="outlined" sx={compactChipSx} />
                               ) : (
                                 <>
-                                  <Button size="small" onClick={(event) => { event.stopPropagation(); void approveRecon(row); }} disabled={saving}>Approve</Button>
-                                  <Button size="small" color="inherit" onClick={(event) => { event.stopPropagation(); void rejectRecon(row); }} disabled={saving}>Reject</Button>
+                                  <Button size="small" onClick={(event) => { event.stopPropagation(); void approveRecon(row); }} disabled={!canManageOperations || saving}>Approve</Button>
+                                  <Button size="small" color="inherit" onClick={(event) => { event.stopPropagation(); void rejectRecon(row); }} disabled={!canManageOperations || saving}>Reject</Button>
                                 </>
                               )
                             ) : null}
                             {row.status === "APPROVED" ? (
-                              <Button size="small" onClick={(event) => { event.stopPropagation(); void postRecon(row); }} disabled={saving}>Post</Button>
+                              <Button size="small" onClick={(event) => { event.stopPropagation(); void postRecon(row); }} disabled={!canManageOperations || saving}>Post</Button>
                             ) : null}
                           </Stack>
                         </TableCell>
@@ -1488,7 +1550,53 @@ export default function PharmacyOperationsPage() {
         </Stack>
       ) : null}
 
-      {!loading && tab === "procurement" ? (
+      {!loading && pageMode === "reconciliation" && tab === "physical-count" ? (
+        <CompactFilterCard
+          title="Physical Count"
+          subtitle="Use Inventory for physical counts against live batches, then return here for reconciliation approval."
+          actions={<Button size="small" variant="outlined" onClick={() => navigate("/inventory?tab=count")}>Open Physical Count</Button>}
+        >
+          <CompactEmptyState
+            title="Physical count lives in Inventory."
+            subtitle="Open the inventory physical count workflow to reconcile counted quantities before review."
+            action={<Button size="small" onClick={() => navigate("/inventory?tab=count")}>Open Inventory Count</Button>}
+          />
+        </CompactFilterCard>
+      ) : null}
+
+      {!loading && pageMode === "reconciliation" && tab === "stock-adjustments" ? (
+        <CompactFilterCard
+          title="Stock Adjustments"
+          subtitle="Use Inventory for stock adjustments, write-offs, and return posting."
+          actions={<Button size="small" variant="outlined" onClick={() => navigate("/inventory?tab=returns")}>Open Adjustments</Button>}
+        >
+          <CompactEmptyState
+            title="Stock adjustments are managed in Inventory."
+            subtitle="Open Inventory to post adjustments, write-offs, and batch-level corrections."
+            action={<Button size="small" onClick={() => navigate("/inventory")}>Open Inventory</Button>}
+          />
+        </CompactFilterCard>
+      ) : null}
+
+      {!loading && pageMode === "reconciliation" && tab === "approval-review" ? (
+        <Stack spacing={2}>
+          <CompactFilterCard
+            title="Approval Review"
+            subtitle="Queue review, approval, and posting actions for reconciliation sessions."
+          >
+            <Typography variant="body2" color="text.secondary">
+              Review submitted supplier bill differences, approve or reject sessions, and post finalized stock corrections.
+            </Typography>
+          </CompactFilterCard>
+          <CompactFilterCard title="Session queue" subtitle="Maker-checker sessions remain compact and actionable.">
+            <Typography variant="body2" color="text.secondary">
+              Open a reconciliation session above to review the latest supplier bill workflow and approval state.
+            </Typography>
+          </CompactFilterCard>
+        </Stack>
+      ) : null}
+
+      {!loading && pageMode === "procurement" && tab === "procurement" ? (
         <Grid container spacing={2}>
                 <Grid size={{ xs: 12, lg: 4.8 }}>
             <CompactFilterCard
@@ -1594,9 +1702,9 @@ export default function PharmacyOperationsPage() {
               </Grid>
 
               <Stack direction="row" spacing={1}>
-                {procurementTab === "po" ? <Button size="small" variant="contained" onClick={() => void savePurchaseOrder()} disabled={saving}>Save PO</Button> : null}
-                {procurementTab === "invoice" ? <Button size="small" variant="contained" onClick={() => void saveSupplierInvoice()} disabled={saving}>Save invoice</Button> : null}
-                {procurementTab === "grn" ? <Button size="small" variant="contained" onClick={() => void saveGoodsReceipt()} disabled={saving}>Save GRN</Button> : null}
+                {procurementTab === "po" ? <Button size="small" variant="contained" onClick={() => void savePurchaseOrder()} disabled={!canManageOperations || saving}>Save PO</Button> : null}
+                {procurementTab === "invoice" ? <Button size="small" variant="contained" onClick={() => void saveSupplierInvoice()} disabled={!canManageOperations || saving}>Save invoice</Button> : null}
+                {procurementTab === "grn" ? <Button size="small" variant="contained" onClick={() => void saveGoodsReceipt()} disabled={!canManageOperations || saving}>Save GRN</Button> : null}
               </Stack>
             </CompactFilterCard>
           </Grid>
@@ -1626,7 +1734,28 @@ export default function PharmacyOperationsPage() {
                       {procurementRecentRows.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={4}>
-                            <CompactEmptyState title={`No ${procurementTab.toUpperCase()} records yet.`} subtitle="Save a compact record from the left panel to populate this queue." />
+                            <CompactEmptyState
+                              title={
+                                procurementTab === "po"
+                                  ? "No purchase orders yet."
+                                  : procurementTab === "invoice"
+                                    ? "No supplier invoices yet."
+                                    : "No goods receipts yet."
+                              }
+                              subtitle={
+                                procurementTab === "po"
+                                  ? "Create a supplier and purchase order to receive stock."
+                                  : procurementTab === "invoice"
+                                    ? "Create a supplier invoice after the purchase order is ready."
+                                    : "Create a goods receipt once stock arrives."
+                              }
+                              action={(
+                                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                                  <Button size="small" variant="outlined" onClick={() => setTab("suppliers")}>Add Supplier</Button>
+                                  <Button size="small" variant="contained" onClick={() => { setProcurementTab("po"); setTab("procurement"); }}>Create PO</Button>
+                                </Stack>
+                              )}
+                            />
                           </TableCell>
                         </TableRow>
                       ) : procurementTab === "po" ? (
@@ -1709,7 +1838,7 @@ export default function PharmacyOperationsPage() {
         </Grid>
       ) : null}
 
-      {!loading && tab === "analytics" ? (
+      {showAnalytics && !loading ? (
         <Grid container spacing={2}>
           <Grid size={{ xs: 12, md: 6 }}>
             <CompactFilterCard title="Fast moving medicines" subtitle="Dense pharmacy demand view.">

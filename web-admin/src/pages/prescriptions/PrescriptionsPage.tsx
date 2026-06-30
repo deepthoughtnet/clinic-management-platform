@@ -14,6 +14,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from "@mui/material";
 
@@ -27,12 +28,19 @@ function statusColor(status: Prescription["status"]) {
     case "PRINTED":
     case "SENT":
       return "success";
+    case "CORRECTED":
+      return "info";
     case "DRAFT":
     case "PREVIEWED":
       return "warning";
     case "CANCELLED":
+    case "SUPERSEDED":
       return "default";
   }
+}
+
+function canDispensePrescription(status: Prescription["status"]): boolean {
+  return status === "FINALIZED" || status === "CORRECTED";
 }
 
 export default function PrescriptionsPage() {
@@ -132,9 +140,9 @@ export default function PrescriptionsPage() {
     <Stack spacing={3}>
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900, mb: 1 }}>Prescriptions</Typography>
+          <Typography variant="h4" sx={{ fontWeight: 900, mb: 1 }}>Prescription Register</Typography>
           <Typography variant="body2" color="text.secondary">
-            Recent prescriptions, print status, and send actions.
+            Recent prescriptions for view, print, and pharmacy handoff.
           </Typography>
         </Box>
       </Box>
@@ -175,7 +183,11 @@ export default function PrescriptionsPage() {
                         {isPharmacyRole ? (
                           <>
                             <Button size="small" disabled={workingId === row.id} onClick={() => void openPdf(row)}>View / Print</Button>
-                            <Button size="small" onClick={() => navigate("/pharmacy/dispensing")}>Dispense</Button>
+                            <Tooltip title={canDispensePrescription(row.status) ? "Open dispensing queue" : `Dispense is unavailable for ${row.status.toLowerCase()} prescriptions.`}>
+                              <span>
+                                <Button size="small" disabled={!canDispensePrescription(row.status)} onClick={() => navigate("/pharmacy/dispensing")}>Dispense</Button>
+                              </span>
+                            </Tooltip>
                           </>
                         ) : (
                           <>

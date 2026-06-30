@@ -21,7 +21,10 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import ClearRoundedIcon from "@mui/icons-material/ClearRounded";
+import LocalPharmacyRoundedIcon from "@mui/icons-material/LocalPharmacyRounded";
 import { useAuth } from "../../auth/useAuth";
+import { CompactStatCard } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import RequiredLabel from "../../components/forms/RequiredLabel";
 import CommentSuggestions from "../../shared/components/comment-suggestions/CommentSuggestions";
@@ -47,6 +50,7 @@ import {
 } from "@deepthoughtnet/form-validation-kit";
 import {
   QUEUE_FILTER_OPTIONS,
+  isActiveDispenseStatus,
   matchesDispensingSearch,
   normalizeDispensingSearch,
   queueRowMatchesFilter,
@@ -148,6 +152,7 @@ type QueueFilter =
   | "ALL"
   | "PENDING"
   | "PARTIAL"
+  | "OUT_OF_STOCK"
   | "FULLY_DISPENSED"
   | "BOUGHT_EXTERNALLY"
   | "PATIENT_DECLINED"
@@ -241,6 +246,15 @@ export default function DispensingPage() {
     void load();
   }, [load]);
 
+  React.useEffect(() => {
+    const value = new URLSearchParams(window.location.search).get("filter");
+    if (!value) return;
+    const next = value.toUpperCase() as QueueFilter;
+    if (["ACTIVE", "ALL", "PENDING", "PARTIAL", "FULLY_DISPENSED", "BOUGHT_EXTERNALLY", "PATIENT_DECLINED", "UNAVAILABLE_CLOSED", "CANCELLED", "EXPIRED"].includes(next)) {
+      setQueueFilter(next);
+    }
+  }, []);
+
   const decoratedRows = React.useMemo(() => rows.map((row) => ({ row, status: row.status })), [rows]);
 
   const selectedView = selected;
@@ -257,21 +271,35 @@ export default function DispensingPage() {
     const term = normalizeDispensingSearch(search);
     return decoratedRows
       .filter(({ row, status }) => {
+        if (queueFilter === "OUT_OF_STOCK") {
+          return aggregateAvailability(row.lines) === "OUT_OF_STOCK";
+        }
         return queueRowMatchesFilter(status, queueFilter);
       })
       .filter(({ row }) => matchesDispensingSearch(row, term))
       .map(({ row }) => row);
   }, [decoratedRows, queueFilter, search]);
+  const filteredWithoutSearch = React.useMemo(() => {
+    return decoratedRows
+      .filter(({ row, status }) => {
+        if (queueFilter === "OUT_OF_STOCK") {
+          return aggregateAvailability(row.lines) === "OUT_OF_STOCK";
+        }
+        return queueRowMatchesFilter(status, queueFilter);
+      })
+      .map(({ row }) => row);
+  }, [decoratedRows, queueFilter]);
 
   const summary = React.useMemo(() => {
     const statuses = decoratedRows.map(({ status }) => status);
     return {
-      queued: decoratedRows.length,
+      queued: statuses.filter((status) => isActiveDispenseStatus(status)).length,
       pending: statuses.filter((status) => status === "NOT_DISPENSED" || status === "READY_FOR_DISPENSE").length,
       partial: statuses.filter((status) => status === "PARTIALLY_DISPENSED").length,
       outOfStock: rows.filter((row) => aggregateAvailability(row.lines) === "OUT_OF_STOCK").length,
     };
   }, [decoratedRows, rows]);
+  const hiddenByCurrentFilterCount = React.useMemo(() => Math.max(0, filteredWithoutSearch.length - filtered.length), [filtered.length, filteredWithoutSearch.length]);
 
   const openDetails = async (prescriptionId: string) => {
     const accessToken = auth.accessToken;
@@ -457,7 +485,10 @@ export default function DispensingPage() {
       ) : null}
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900 }}>Dispensing</Typography>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <LocalPharmacyRoundedIcon fontSize="small" color="primary" />
+            <Typography variant="h4" sx={{ fontWeight: 900 }}>Dispense Queue</Typography>
+          </Stack>
           <Typography variant="body2" color="text.secondary">
             Dispense finalized prescriptions using live stock availability. Full, partial, and unavailable actions are tracked per medicine line.
           </Typography>
@@ -478,11 +509,11 @@ export default function DispensingPage() {
         ))}
       </Box>
 
-      <Grid container spacing={1.5}>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Queued</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{summary.queued}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Pending</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{summary.pending}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Partial</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{summary.partial}</Typography></CardContent></Card></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><Card><CardContent><Typography variant="caption" color="text.secondary">Out of stock</Typography><Typography variant="h5" sx={{ fontWeight: 900 }}>{summary.outOfStock}</Typography></CardContent></Card></Grid>
+      <Grid container spacing={1.25}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><CompactStatCard label="Queued" value={summary.queued} helper="Open queue items" onClick={() => setQueueFilter("ACTIVE")} /></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><CompactStatCard label="Pending" value={summary.pending} helper="Not yet dispensed" onClick={() => setQueueFilter("PENDING")} /></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><CompactStatCard label="Partial" value={summary.partial} helper="Partially dispensed" onClick={() => setQueueFilter("PARTIAL")} /></Grid>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}><CompactStatCard label="Out of stock" value={summary.outOfStock} helper="Rows with no inventory" onClick={() => setQueueFilter("OUT_OF_STOCK")} /></Grid>
       </Grid>
 
       {error ? <Alert severity="error">{error}</Alert> : null}
@@ -517,8 +548,25 @@ export default function DispensingPage() {
       {!loading ? (
         <Card>
           <CardContent>
+            {(queueFilter !== "ACTIVE" || search.trim()) ? (
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                <Chip size="small" label={`Filter: ${queueFilter}`} color="info" />
+                {search.trim() ? <Chip size="small" label={`Search: ${search.trim()}`} variant="outlined" /> : null}
+                <Button size="small" startIcon={<ClearRoundedIcon fontSize="small" />} onClick={() => { setQueueFilter("ACTIVE"); setSearch(""); setSearchError(null); }}>
+                  Clear filters
+                </Button>
+              </Stack>
+            ) : null}
             {filtered.length === 0 ? (
-              <Alert severity="info">No prescriptions match the current queue filter.</Alert>
+              hiddenByCurrentFilterCount > 0 ? (
+                <Stack spacing={1}>
+                  <Alert severity="info" action={<Button size="small" onClick={() => { setQueueFilter("ACTIVE"); setSearch(""); setSearchError(null); }}>Clear Filters</Button>}>
+                    Records exist but are hidden by current filters.
+                  </Alert>
+                </Stack>
+              ) : (
+                <Alert severity="info">No prescriptions match the current queue filter. Clear filters to return to active dispensing.</Alert>
+              )
             ) : (
               <Box sx={{ overflowX: "auto" }}>
                 <Table size="small" sx={{ minWidth: 980 }}>

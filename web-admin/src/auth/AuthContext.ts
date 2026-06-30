@@ -27,11 +27,13 @@ export type AuthContextValue = {
       carePilot?: boolean | null;
       aiCopilot?: boolean | null;
     } | null;
+    enabledModules?: Record<string, boolean> | null;
   }>;
   tenantModules: {
     carePilot?: boolean | null;
     aiCopilot?: boolean | null;
   } | null;
+  enabledTenantModules: Record<string, boolean> | null;
   accessToken: string | null;
   initError: string | null;
   selectTenant: (tenant: SelectedTenant | null) => void;

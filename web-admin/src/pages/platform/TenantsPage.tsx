@@ -52,7 +52,7 @@ import {
 } from "../../api/clinicApi";
 import AutocompleteTextInput from "../../components/forms/AutocompleteTextInput";
 
-const MODULE_CODES = ["APPOINTMENTS", "CONSULTATION", "PRESCRIPTION", "BILLING", "VACCINATION", "INVENTORY", "AI_COPILOT", "CAREPILOT"] as const;
+const MODULE_CODES = ["APPOINTMENTS", "CONSULTATION", "PRESCRIPTION", "BILLING", "VACCINATION", "INVENTORY", "LABORATORY", "REPORTS", "AI_COPILOT", "CAREPILOT"] as const;
 
 const EMPTY_FORM: CreateTenantFormValues = {
   clinicName: "",

@@ -20,6 +20,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useSearchParams } from "react-router-dom";
+import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactFilterCard, CompactStatCard, compactChipSx } from "../../components/compact/CompactUi";
 import {
@@ -88,8 +90,8 @@ function movementLabel(type: string) {
     EXPIRED: "Expired",
     CANCELLED_DISPENSE: "Cancelled Dispense",
     STOCK_IN: "Stock In",
-    ADJUSTMENT_IN: "Reconciliation In",
-    ADJUSTMENT_OUT: "Reconciliation Out",
+    ADJUSTMENT_IN: "Stock Reconciliation In",
+    ADJUSTMENT_OUT: "Stock Reconciliation Out",
     TRANSFER_IN: "Transfer In",
     TRANSFER_OUT: "Transfer Out",
   };
@@ -131,6 +133,7 @@ function mapMovementError(err: unknown) {
 
 export default function StockMovementsPage() {
   const auth = useAuth();
+  const [searchParams] = useSearchParams();
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [rows, setRows] = React.useState<InventoryTransaction[]>([]);
@@ -169,6 +172,16 @@ export default function StockMovementsPage() {
     void load();
   }, [load]);
 
+  React.useEffect(() => {
+    const movement = searchParams.get("movement");
+    if (!movement) return;
+    if (movement === "DISPENSED" || movement === "SALE" || movement === "ADJUSTMENT" || movement === "RECONCILIATION") {
+      setMovementType(movement);
+      if (movement === "DISPENSED") setChipFilter("DISPENSED");
+      if (movement === "RECONCILIATION") setChipFilter("RECONCILIATION");
+    }
+  }, [searchParams]);
+
   const medicineById = React.useMemo(() => new Map(medicines.map((m) => [m.id, m])), [medicines]);
   const stockById = React.useMemo(() => new Map(stocks.map((stock) => [stock.id, stock])), [stocks]);
 
@@ -205,7 +218,10 @@ export default function StockMovementsPage() {
     <Stack spacing={2}>
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900 }}>Stock Movements</Typography>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Inventory2RoundedIcon color="primary" />
+            <Typography variant="h4" sx={{ fontWeight: 900 }}>Stock Movements</Typography>
+          </Stack>
           <Typography variant="body2" color="text.secondary">
             Review operational stock activity with business references for sales, returns, purchases, and reconciliation.
           </Typography>

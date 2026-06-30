@@ -31,7 +31,7 @@ import {
 import ExpandMoreRounded from "@mui/icons-material/ExpandMoreRounded";
 import MoreHorizRounded from "@mui/icons-material/MoreHorizRounded";
 import { useAuth } from "../../auth/useAuth";
-import { CompactEmptyState, compactCardContentSx } from "../../components/compact/CompactUi";
+import { CompactEmptyState, compactAccordionSx, compactCardContentSx, compactFormGridSx, compactFormSx } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import RequiredLabel from "../../components/forms/RequiredLabel";
 import ConfigurableGrid, { type ConfigurableGridColumn } from "../../shared/components/configurable-grid/ConfigurableGrid";
@@ -44,12 +44,14 @@ import {
   deactivateMedicine,
   getMedicineImportTemplate,
   getMedicines,
+  getStocks,
   importMedicinesCsv,
   updateMedicine,
   type Medicine,
   type MedicineImportResult,
   type MedicineInput,
   type MedicineType,
+  type Stock,
 } from "../../api/clinicApi";
 import {
   buildMedicineTemplateCsv,
@@ -179,9 +181,25 @@ function formForRow(row: Medicine): MedicineInput {
   };
 }
 
+function utcDayNumber(dateValue: string) {
+  const [year, month, day] = dateValue.split("-").map((value) => Number(value));
+  return Date.UTC(year, month - 1, day);
+}
+
+function todayUtcDayNumber() {
+  const now = new Date();
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+}
+
+function daysUntil(dateValue: string | null | undefined) {
+  if (!dateValue) return Number.POSITIVE_INFINITY;
+  return Math.floor((utcDayNumber(dateValue) - todayUtcDayNumber()) / 86_400_000);
+}
+
 export default function MedicineMasterPage() {
   const auth = useAuth();
   const [rows, setRows] = React.useState<Medicine[]>([]);
+  const [stocks, setStocks] = React.useState<Stock[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -192,12 +210,19 @@ export default function MedicineMasterPage() {
   const [preview, setPreview] = React.useState<MedicineImportPreview | null>(null);
   const [previewFile, setPreviewFile] = React.useState<File | null>(null);
   const [importResult, setImportResult] = React.useState<MedicineImportResult | null>(null);
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [editing, setEditing] = React.useState<Medicine | null>(null);
   const [form, setForm] = React.useState<MedicineInput>(emptyForm);
   const [statusFilter, setStatusFilter] = React.useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [typeFilter, setTypeFilter] = React.useState<"ALL" | MedicineType>("ALL");
   const [categoryFilter, setCategoryFilter] = React.useState<string>("ALL");
+  const [inventoryFilter, setInventoryFilter] = React.useState<"ALL" | "LOW_STOCK" | "EXPIRING_SOON" | "OUT_OF_STOCK">("ALL");
+  const [barcodeFilter, setBarcodeFilter] = React.useState<"ALL" | "HAS_BARCODE" | "MISSING_BARCODE">("ALL");
+  const [quickFilter, setQuickFilter] = React.useState<"NONE" | "ACTIVE" | "LOW_STOCK" | "EXPIRING_SOON" | "MISSING_BARCODE" | "RECENTLY_ADDED">("NONE");
+  const [priceMin, setPriceMin] = React.useState("");
+  const [priceMax, setPriceMax] = React.useState("");
   const [actionAnchor, setActionAnchor] = React.useState<HTMLElement | null>(null);
   const [actionRow, setActionRow] = React.useState<Medicine | null>(null);
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
@@ -216,7 +241,12 @@ export default function MedicineMasterPage() {
     setLoading(true);
     setError(null);
     try {
-      setRows(await getMedicines(auth.accessToken, auth.tenantId));
+      const [medicineRows, stockRows] = await Promise.all([
+        getMedicines(auth.accessToken, auth.tenantId),
+        getStocks(auth.accessToken, auth.tenantId),
+      ]);
+      setRows(medicineRows);
+      setStocks(stockRows);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load medicines");
     } finally {
@@ -233,12 +263,33 @@ export default function MedicineMasterPage() {
       setEditorOpen(true);
       return;
     }
-    setEditorOpen(rows.length === 0);
+    setEditorOpen(false);
   }, [editing, rows.length]);
+
+  const stockByMedicineId = React.useMemo(() => {
+    const next = new Map<string, Stock[]>();
+    stocks.forEach((stock) => {
+      const current = next.get(stock.medicineId) || [];
+      current.push(stock);
+      next.set(stock.medicineId, current);
+    });
+    return next;
+  }, [stocks]);
 
   const filtered = React.useMemo(() => {
     const term = search.trim().toLowerCase();
+    const minPrice = priceMin.trim() ? Number(priceMin) : null;
+    const maxPrice = priceMax.trim() ? Number(priceMax) : null;
     return rows.filter((row) => {
+      const medicineStocks = stockByMedicineId.get(row.id) || [];
+      const totalStock = medicineStocks.reduce((sum, stock) => sum + stock.quantityOnHand, 0);
+      const lowStockHit = medicineStocks.some((stock) => stock.lowStockThreshold != null && stock.quantityOnHand <= stock.lowStockThreshold);
+      const expiringSoonHit = medicineStocks.some((stock) => {
+        const diffDays = daysUntil(stock.expiryDate);
+        return diffDays >= 0 && diffDays <= 30;
+      });
+      const hasBarcode = Boolean((row.barcode || "").trim());
+      const recentlyAdded = Date.now() - new Date(row.createdAt).getTime() <= 30 * 24 * 60 * 60 * 1000;
       const matchesTerm = !term || [
         row.medicineName,
         row.barcode,
@@ -260,12 +311,39 @@ export default function MedicineMasterPage() {
       const matchesStatus = statusFilter === "ALL" || (statusFilter === "ACTIVE" ? row.active : !row.active);
       const matchesType = typeFilter === "ALL" || row.medicineType === typeFilter;
       const matchesCategory = categoryFilter === "ALL" || (row.category || "Uncategorized") === categoryFilter;
-      return matchesTerm && matchesStatus && matchesType && matchesCategory;
+      const matchesInventory = inventoryFilter === "ALL"
+        || (inventoryFilter === "LOW_STOCK" && lowStockHit)
+        || (inventoryFilter === "EXPIRING_SOON" && expiringSoonHit)
+        || (inventoryFilter === "OUT_OF_STOCK" && totalStock <= 0);
+      const matchesBarcode = barcodeFilter === "ALL"
+        || (barcodeFilter === "HAS_BARCODE" && hasBarcode)
+        || (barcodeFilter === "MISSING_BARCODE" && !hasBarcode);
+      const matchesPrice = (minPrice == null || (row.defaultPrice ?? 0) >= minPrice)
+        && (maxPrice == null || (row.defaultPrice ?? 0) <= maxPrice);
+      const matchesQuick = quickFilter === "NONE"
+        || (quickFilter === "ACTIVE" && row.active)
+        || (quickFilter === "LOW_STOCK" && lowStockHit)
+        || (quickFilter === "EXPIRING_SOON" && expiringSoonHit)
+        || (quickFilter === "MISSING_BARCODE" && !hasBarcode)
+        || (quickFilter === "RECENTLY_ADDED" && recentlyAdded);
+      return matchesTerm && matchesStatus && matchesType && matchesCategory && matchesInventory && matchesBarcode && matchesPrice && matchesQuick;
     });
-  }, [categoryFilter, rows, search, statusFilter, typeFilter]);
+  }, [barcodeFilter, categoryFilter, inventoryFilter, priceMax, priceMin, quickFilter, rows, search, statusFilter, stockByMedicineId, typeFilter]);
 
   const activeCount = React.useMemo(() => rows.filter((row) => row.active).length, [rows]);
   const inactiveCount = rows.length - activeCount;
+  const lowStockCount = React.useMemo(
+    () => rows.filter((row) => (stockByMedicineId.get(row.id) || []).some((stock) => stock.lowStockThreshold != null && stock.quantityOnHand <= stock.lowStockThreshold)).length,
+    [rows, stockByMedicineId],
+  );
+  const expiringSoonCount = React.useMemo(
+    () => rows.filter((row) => (stockByMedicineId.get(row.id) || []).some((stock) => {
+      const diffDays = daysUntil(stock.expiryDate);
+      return diffDays >= 0 && diffDays <= 30;
+    })).length,
+    [rows, stockByMedicineId],
+  );
+  const missingBarcodeCount = React.useMemo(() => rows.filter((row) => !(row.barcode || "").trim()).length, [rows]);
   const categoryOptions = React.useMemo(
     () => Array.from(new Set(rows.map((row) => row.category || "Uncategorized"))).sort((a, b) => a.localeCompare(b)),
     [rows],
@@ -276,6 +354,7 @@ export default function MedicineMasterPage() {
     setForm(emptyForm);
     setFieldErrors({});
     setError(null);
+    setAdvancedOpen(false);
     setEditorOpen(true);
   }, []);
 
@@ -284,6 +363,7 @@ export default function MedicineMasterPage() {
     setForm(formForRow(row));
     setFieldErrors({});
     setError(null);
+    setAdvancedOpen(true);
     setEditorOpen(true);
   }, []);
 
@@ -292,8 +372,9 @@ export default function MedicineMasterPage() {
     setForm(emptyForm);
     setFieldErrors({});
     setError(null);
-    setEditorOpen(rows.length === 0);
-  }, [rows.length]);
+    setAdvancedOpen(false);
+    setEditorOpen(false);
+  }, []);
 
   const resetEditor = React.useCallback(() => {
     setForm(editing ? formForRow(editing) : emptyForm);
@@ -578,6 +659,9 @@ export default function MedicineMasterPage() {
             <Chip size="small" label={`${rows.length} total`} />
             <Chip size="small" color="success" variant="outlined" label={`${activeCount} active`} />
             <Chip size="small" variant="outlined" label={`${inactiveCount} inactive`} />
+            <Chip size="small" color={lowStockCount ? "error" : "default"} variant="outlined" label={`${lowStockCount} low stock`} />
+            <Chip size="small" color={expiringSoonCount ? "warning" : "default"} variant="outlined" label={`${expiringSoonCount} expiring soon`} />
+            <Chip size="small" color={missingBarcodeCount ? "warning" : "default"} variant="outlined" label={`${missingBarcodeCount} missing barcode`} />
             {canManage ? <Chip size="small" color="primary" variant="outlined" label="Manage enabled" /> : <Chip size="small" label="Read only" variant="outlined" />}
           </Stack>
         </Box>
@@ -598,75 +682,86 @@ export default function MedicineMasterPage() {
       ) : null}
 
       <Card>
-        <CardContent sx={{ py: 1.5 }}>
-          <Grid container spacing={1.25} alignItems="center">
-            <Grid size={{ xs: 12, md: 4 }}>
-              <TextField
-                fullWidth
-                size="small"
-                label="Search medicine catalog"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Name, barcode, brand, form, strength, manufacturer"
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 8 }}>
-              <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent={{ xs: "flex-start", md: "flex-end" }} useFlexGap>
-                <Chip
-                  size="small"
-                  label="Active"
-                  color={statusFilter === "ACTIVE" ? "success" : "default"}
-                  variant={statusFilter === "ACTIVE" ? "filled" : "outlined"}
-                  onClick={() => setStatusFilter((current) => current === "ACTIVE" ? "ALL" : "ACTIVE")}
-                />
-                <Chip
-                  size="small"
-                  label="Inactive"
-                  color={statusFilter === "INACTIVE" ? "warning" : "default"}
-                  variant={statusFilter === "INACTIVE" ? "filled" : "outlined"}
-                  onClick={() => setStatusFilter((current) => current === "INACTIVE" ? "ALL" : "INACTIVE")}
-                />
+        <CardContent sx={{ py: 1 }}>
+          <Stack spacing={1}>
+            <Grid container spacing={1} alignItems="center">
+              <Grid size={{ xs: 12, md: 5 }}>
                 <TextField
-                  select
+                  fullWidth
                   size="small"
-                  label="Type"
-                  value={typeFilter}
-                  onChange={(e) => setTypeFilter(e.target.value as "ALL" | MedicineType)}
-                  sx={{ minWidth: 130 }}
-                >
-                  <MenuItem value="ALL">All types</MenuItem>
-                  {medicineTypeOptions.map((option) => (
-                    <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
-                  ))}
-                </TextField>
-                <TextField
-                  select
-                  size="small"
-                  label="Category"
-                  value={categoryFilter}
-                  onChange={(e) => setCategoryFilter(e.target.value)}
-                  sx={{ minWidth: 150 }}
-                >
-                  <MenuItem value="ALL">All categories</MenuItem>
-                  {categoryOptions.map((option) => (
-                    <MenuItem key={option} value={option}>{option}</MenuItem>
-                  ))}
-                </TextField>
-                <ManageColumnsPopover
-                  columns={medicineColumns}
-                  visibleColumnIds={visibleColumnIds}
-                  onToggleColumn={toggleVisibleColumnId}
-                  onReset={resetVisibleColumnIds}
+                  label="Search medicine catalog"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Name, barcode, brand, form, strength, manufacturer"
                 />
-              </Stack>
+              </Grid>
+              <Grid size={{ xs: 12, md: 7 }}>
+                <Stack direction="row" spacing={0.75} flexWrap="wrap" justifyContent={{ xs: "flex-start", md: "flex-end" }} useFlexGap>
+                  <Chip size="small" label="Active" color={quickFilter === "ACTIVE" ? "success" : "default"} variant={quickFilter === "ACTIVE" ? "filled" : "outlined"} onClick={() => setQuickFilter((current) => current === "ACTIVE" ? "NONE" : "ACTIVE")} />
+                  <Chip size="small" label="Low stock" color={quickFilter === "LOW_STOCK" ? "error" : "default"} variant={quickFilter === "LOW_STOCK" ? "filled" : "outlined"} onClick={() => setQuickFilter((current) => current === "LOW_STOCK" ? "NONE" : "LOW_STOCK")} />
+                  <Chip size="small" label="Expiring soon" color={quickFilter === "EXPIRING_SOON" ? "warning" : "default"} variant={quickFilter === "EXPIRING_SOON" ? "filled" : "outlined"} onClick={() => setQuickFilter((current) => current === "EXPIRING_SOON" ? "NONE" : "EXPIRING_SOON")} />
+                  <Chip size="small" label="Missing barcode" color={quickFilter === "MISSING_BARCODE" ? "warning" : "default"} variant={quickFilter === "MISSING_BARCODE" ? "filled" : "outlined"} onClick={() => setQuickFilter((current) => current === "MISSING_BARCODE" ? "NONE" : "MISSING_BARCODE")} />
+                  <ManageColumnsPopover columns={medicineColumns} visibleColumnIds={visibleColumnIds} onToggleColumn={toggleVisibleColumnId} onReset={resetVisibleColumnIds} />
+                </Stack>
+              </Grid>
             </Grid>
-          </Grid>
+            <Accordion expanded={advancedFiltersOpen} onChange={(_, expanded) => setAdvancedFiltersOpen(expanded)} disableGutters sx={compactAccordionSx}>
+              <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Advanced filters</Typography>
+              </AccordionSummary>
+              <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
+                <Box sx={compactFormSx}>
+                  <Grid container spacing={1}>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ pt: 0.25 }}>
+                        <Chip size="small" label="Active" color={statusFilter === "ACTIVE" ? "success" : "default"} variant={statusFilter === "ACTIVE" ? "filled" : "outlined"} onClick={() => setStatusFilter((current) => current === "ACTIVE" ? "ALL" : "ACTIVE")} />
+                        <Chip size="small" label="Inactive" color={statusFilter === "INACTIVE" ? "warning" : "default"} variant={statusFilter === "INACTIVE" ? "filled" : "outlined"} onClick={() => setStatusFilter((current) => current === "INACTIVE" ? "ALL" : "INACTIVE")} />
+                      </Stack>
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                      <TextField select size="small" fullWidth label="Type" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as "ALL" | MedicineType)}>
+                        <MenuItem value="ALL">All types</MenuItem>
+                        {medicineTypeOptions.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+                      </TextField>
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                      <TextField select size="small" fullWidth label="Category" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+                        <MenuItem value="ALL">All categories</MenuItem>
+                        {categoryOptions.map((option) => <MenuItem key={option} value={option}>{option}</MenuItem>)}
+                      </TextField>
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                      <TextField select size="small" fullWidth label="Stock" value={inventoryFilter} onChange={(e) => setInventoryFilter(e.target.value as "ALL" | "LOW_STOCK" | "EXPIRING_SOON" | "OUT_OF_STOCK")}>
+                        <MenuItem value="ALL">All stock states</MenuItem>
+                        <MenuItem value="LOW_STOCK">Low stock</MenuItem>
+                        <MenuItem value="EXPIRING_SOON">Expiring soon</MenuItem>
+                        <MenuItem value="OUT_OF_STOCK">Out of stock</MenuItem>
+                      </TextField>
+                    </Grid>
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                      <TextField select size="small" fullWidth label="Barcode" value={barcodeFilter} onChange={(e) => setBarcodeFilter(e.target.value as "ALL" | "HAS_BARCODE" | "MISSING_BARCODE")}>
+                        <MenuItem value="ALL">Any barcode</MenuItem>
+                        <MenuItem value="HAS_BARCODE">Has barcode</MenuItem>
+                        <MenuItem value="MISSING_BARCODE">Missing barcode</MenuItem>
+                      </TextField>
+                    </Grid>
+                    <Grid size={{ xs: 6, sm: 3, md: 2 }}>
+                      <TextField size="small" fullWidth label="Min price" value={priceMin} onChange={(e) => setPriceMin(e.target.value)} inputProps={{ inputMode: "decimal" }} />
+                    </Grid>
+                    <Grid size={{ xs: 6, sm: 3, md: 2 }}>
+                      <TextField size="small" fullWidth label="Max price" value={priceMax} onChange={(e) => setPriceMax(e.target.value)} inputProps={{ inputMode: "decimal" }} />
+                    </Grid>
+                  </Grid>
+                </Box>
+              </AccordionDetails>
+            </Accordion>
+          </Stack>
         </CardContent>
       </Card>
 
       {canManage ? (
-        <Accordion expanded={editorOpen} onChange={(_, expanded) => setEditorOpen(expanded)} disableGutters sx={{ "&:before": { display: "none" }, borderRadius: 4, overflow: "hidden" }}>
-          <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 2, py: 0.5 }}>
+        <Accordion expanded={editorOpen} onChange={(_, expanded) => setEditorOpen(expanded)} disableGutters sx={compactAccordionSx}>
+          <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
             <Stack spacing={0.35}>
               <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
                 {editing ? `Editing: ${editing.medicineName}` : "Add Medicine"}
@@ -676,22 +771,22 @@ export default function MedicineMasterPage() {
               </Typography>
             </Stack>
           </AccordionSummary>
-          <AccordionDetails sx={{ px: 2, pb: 2, pt: 0 }}>
-            <Grid container spacing={1.25} sx={{ mt: 0.25 }}>
-              <Grid size={{ xs: 12, md: 6 }}>
+          <AccordionDetails sx={{ px: 1.5, pb: 1.5, pt: 0 }}>
+            <Grid container spacing={1} sx={[compactFormGridSx, compactFormSx]}>
+              <Grid size={{ xs: 12, lg: 4 }}>
                 <TextField
                   fullWidth
                   size="small"
                   label={<RequiredLabel text="Medicine name" required />}
                   value={form.medicineName}
                   error={Boolean(fieldErrors.medicineName)}
-                  helperText={fieldErrors.medicineName || " "}
+                  helperText={fieldErrors.medicineName}
                   inputRef={registerFieldRef("medicineName")}
                   inputProps={{ required: true, "aria-required": true }}
                   onChange={(e) => setForm((v) => ({ ...v, medicineName: e.target.value }))}
                 />
               </Grid>
-              <Grid size={{ xs: 12, md: 3 }}>
+              <Grid size={{ xs: 12, lg: 4 }}>
                 <TextField
                   fullWidth
                   select
@@ -699,7 +794,7 @@ export default function MedicineMasterPage() {
                   label={<RequiredLabel text="Type" required />}
                   value={form.medicineType}
                   error={Boolean(fieldErrors.medicineType)}
-                  helperText={fieldErrors.medicineType || " "}
+                  helperText={fieldErrors.medicineType}
                   inputRef={registerFieldRef("medicineType")}
                   inputProps={{ required: true, "aria-required": true }}
                   onChange={(e) => setForm((v) => ({ ...v, medicineType: e.target.value as MedicineType }))}
@@ -709,7 +804,7 @@ export default function MedicineMasterPage() {
                   ))}
                 </TextField>
               </Grid>
-              <Grid size={{ xs: 12, md: 3 }}>
+              <Grid size={{ xs: 12, lg: 4 }}>
                 <TextField
                   fullWidth
                   select
@@ -717,7 +812,7 @@ export default function MedicineMasterPage() {
                   label={<RequiredLabel text="Status" required />}
                   value={form.active ? "true" : "false"}
                   error={Boolean(fieldErrors.active)}
-                  helperText={fieldErrors.active || " "}
+                  helperText={fieldErrors.active}
                   inputRef={registerFieldRef("active")}
                   inputProps={{ required: true, "aria-required": true }}
                   onChange={(e) => setForm((v) => ({ ...v, active: e.target.value === "true" }))}
@@ -726,193 +821,80 @@ export default function MedicineMasterPage() {
                   <MenuItem value="false">Inactive</MenuItem>
                 </TextField>
               </Grid>
-              <Grid size={{ xs: 12, md: 4 }}>
-                <CodeScannerField
-                  size="small"
-                  label="Barcode"
-                  value={form.barcode || ""}
-                  error={Boolean(fieldErrors.barcode)}
-                  helperText={fieldErrors.barcode || " "}
-                  inputRef={registerFieldRef("barcode")}
-                  onChange={(next) => setForm((v) => ({ ...v, barcode: next || null }))}
-                  placeholder="Scan or enter barcode"
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 4 }}>
-                <CodeScannerField
-                  size="small"
-                  label="QR code"
-                  value={form.qrCode || ""}
-                  error={Boolean(fieldErrors.qrCode)}
-                  helperText={fieldErrors.qrCode || " "}
-                  inputRef={registerFieldRef("qrCode")}
-                  onChange={(next) => setForm((v) => ({ ...v, qrCode: next || null }))}
-                  placeholder="Scan or enter QR code"
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 4 }}>
-                <CodeScannerField
-                  size="small"
-                  label="External code"
-                  value={form.externalCode || ""}
-                  error={Boolean(fieldErrors.externalCode)}
-                  helperText={fieldErrors.externalCode || " "}
-                  inputRef={registerFieldRef("externalCode")}
-                  onChange={(next) => setForm((v) => ({ ...v, externalCode: next || null }))}
-                  placeholder="Scan or enter code"
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Generic name"
-                  value={form.genericName || ""}
-                  error={Boolean(fieldErrors.genericName)}
-                  helperText={fieldErrors.genericName || " "}
-                  inputRef={registerFieldRef("genericName")}
-                  onChange={(e) => setForm((v) => ({ ...v, genericName: e.target.value || null }))}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Brand name"
-                  value={form.brandName || ""}
-                  error={Boolean(fieldErrors.brandName)}
-                  helperText={fieldErrors.brandName || " "}
-                  inputRef={registerFieldRef("brandName")}
-                  onChange={(e) => setForm((v) => ({ ...v, brandName: e.target.value || null }))}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Category"
-                  value={form.category || ""}
-                  error={Boolean(fieldErrors.category)}
-                  helperText={fieldErrors.category || " "}
-                  inputRef={registerFieldRef("category")}
-                  onChange={(e) => setForm((v) => ({ ...v, category: e.target.value || null }))}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 4 }}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Form"
-                  value={form.dosageForm || ""}
-                  error={Boolean(fieldErrors.dosageForm)}
-                  helperText={fieldErrors.dosageForm || " "}
-                  inputRef={registerFieldRef("dosageForm")}
-                  onChange={(e) => setForm((v) => ({ ...v, dosageForm: e.target.value || null }))}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 4 }}>
+              <Grid size={{ xs: 12, lg: 4 }}>
                 <TextField
                   fullWidth
                   size="small"
                   label={<RequiredLabel text="Strength" required />}
                   value={form.strength || ""}
                   error={Boolean(fieldErrors.strength)}
-                  helperText={fieldErrors.strength || " "}
+                  helperText={fieldErrors.strength}
                   inputRef={registerFieldRef("strength")}
                   inputProps={{ required: true, "aria-required": true }}
                   onChange={(e) => setForm((v) => ({ ...v, strength: e.target.value || null }))}
                 />
               </Grid>
-              <Grid size={{ xs: 12, md: 4 }}>
+              <Grid size={{ xs: 12, lg: 4 }}>
                 <TextField
                   fullWidth
                   size="small"
                   label="Unit"
                   value={form.unit || ""}
                   error={Boolean(fieldErrors.unit)}
-                  helperText={fieldErrors.unit || " "}
+                  helperText={fieldErrors.unit}
                   inputRef={registerFieldRef("unit")}
                   onChange={(e) => setForm((v) => ({ ...v, unit: e.target.value || null }))}
                 />
               </Grid>
-              <Grid size={{ xs: 12, md: 6 }}>
+              <Grid size={{ xs: 12, lg: 4 }}>
                 <TextField
                   fullWidth
                   size="small"
-                  label="Manufacturer"
-                  value={form.manufacturer || ""}
-                  error={Boolean(fieldErrors.manufacturer)}
-                  helperText={fieldErrors.manufacturer || " "}
-                  inputRef={registerFieldRef("manufacturer")}
-                  onChange={(e) => setForm((v) => ({ ...v, manufacturer: e.target.value || null }))}
+                  label="Generic name"
+                  value={form.genericName || ""}
+                  error={Boolean(fieldErrors.genericName)}
+                  helperText={fieldErrors.genericName}
+                  inputRef={registerFieldRef("genericName")}
+                  onChange={(e) => setForm((v) => ({ ...v, genericName: e.target.value || null }))}
                 />
               </Grid>
-              <Grid size={{ xs: 12, md: 6 }}>
+              <Grid size={{ xs: 12, lg: 4 }}>
                 <TextField
                   fullWidth
                   size="small"
-                  label="Default dosage"
-                  value={form.defaultDosage || ""}
-                  error={Boolean(fieldErrors.defaultDosage)}
-                  helperText={fieldErrors.defaultDosage || " "}
-                  inputRef={registerFieldRef("defaultDosage")}
-                  onChange={(e) => setForm((v) => ({ ...v, defaultDosage: e.target.value || null }))}
+                  label="Brand name"
+                  value={form.brandName || ""}
+                  error={Boolean(fieldErrors.brandName)}
+                  helperText={fieldErrors.brandName}
+                  inputRef={registerFieldRef("brandName")}
+                  onChange={(e) => setForm((v) => ({ ...v, brandName: e.target.value || null }))}
                 />
               </Grid>
-              <Grid size={{ xs: 12, md: 6 }}>
+              <Grid size={{ xs: 12, lg: 4 }}>
                 <TextField
                   fullWidth
                   size="small"
-                  label="Default frequency"
-                  value={form.defaultFrequency || ""}
-                  error={Boolean(fieldErrors.defaultFrequency)}
-                  helperText={fieldErrors.defaultFrequency || " "}
-                  inputRef={registerFieldRef("defaultFrequency")}
-                  onChange={(e) => setForm((v) => ({ ...v, defaultFrequency: e.target.value || null }))}
+                  label="Category"
+                  value={form.category || ""}
+                  error={Boolean(fieldErrors.category)}
+                  helperText={fieldErrors.category}
+                  inputRef={registerFieldRef("category")}
+                  onChange={(e) => setForm((v) => ({ ...v, category: e.target.value || null }))}
                 />
               </Grid>
-              <Grid size={{ xs: 12, md: 3 }}>
+              <Grid size={{ xs: 12, lg: 4 }}>
                 <TextField
                   fullWidth
                   size="small"
-                  type="number"
-                  label="Default duration (days)"
-                  value={form.defaultDurationDays ?? ""}
-                  error={Boolean(fieldErrors.defaultDurationDays)}
-                  helperText={fieldErrors.defaultDurationDays || " "}
-                  inputRef={registerFieldRef("defaultDurationDays")}
-                  inputProps={{ min: 1, max: 365, step: 1 }}
-                  onChange={(e) => setForm((v) => ({ ...v, defaultDurationDays: e.target.value ? Number(e.target.value) : null }))}
+                  label="Form"
+                  value={form.dosageForm || ""}
+                  error={Boolean(fieldErrors.dosageForm)}
+                  helperText={fieldErrors.dosageForm}
+                  inputRef={registerFieldRef("dosageForm")}
+                  onChange={(e) => setForm((v) => ({ ...v, dosageForm: e.target.value || null }))}
                 />
               </Grid>
-              <Grid size={{ xs: 12, md: 3 }}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Default timing"
-                  value={form.defaultTiming || ""}
-                  error={Boolean(fieldErrors.defaultTiming)}
-                  helperText={fieldErrors.defaultTiming || " "}
-                  inputRef={registerFieldRef("defaultTiming")}
-                  onChange={(e) => setForm((v) => ({ ...v, defaultTiming: (e.target.value || null) as MedicineInput["defaultTiming"] }))}
-                  placeholder="BEFORE_FOOD / AFTER_FOOD / WITH_FOOD / ANYTIME"
-                />
-              </Grid>
-              <Grid size={12}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  multiline
-                  minRows={2}
-                  label="Default instructions"
-                  value={form.defaultInstructions || ""}
-                  error={Boolean(fieldErrors.defaultInstructions)}
-                  helperText={fieldErrors.defaultInstructions || " "}
-                  inputRef={registerFieldRef("defaultInstructions")}
-                  onChange={(e) => setForm((v) => ({ ...v, defaultInstructions: e.target.value || null }))}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 3 }}>
+              <Grid size={{ xs: 12, lg: 4 }}>
                 <TextField
                   fullWidth
                   size="small"
@@ -920,13 +902,13 @@ export default function MedicineMasterPage() {
                   label="Default price"
                   value={form.defaultPrice ?? ""}
                   error={Boolean(fieldErrors.defaultPrice)}
-                  helperText={fieldErrors.defaultPrice || " "}
+                  helperText={fieldErrors.defaultPrice}
                   inputRef={registerFieldRef("defaultPrice")}
                   inputProps={{ min: 0, max: 999999, step: 0.01 }}
                   onChange={(e) => setForm((v) => ({ ...v, defaultPrice: e.target.value ? Number(e.target.value) : null }))}
                 />
               </Grid>
-              <Grid size={{ xs: 12, md: 3 }}>
+              <Grid size={{ xs: 12, lg: 4 }}>
                 <TextField
                   fullWidth
                   size="small"
@@ -934,11 +916,138 @@ export default function MedicineMasterPage() {
                   label="Tax %"
                   value={form.taxRate ?? ""}
                   error={Boolean(fieldErrors.taxRate)}
-                  helperText={fieldErrors.taxRate || " "}
+                  helperText={fieldErrors.taxRate}
                   inputRef={registerFieldRef("taxRate")}
                   inputProps={{ min: 0, max: 100, step: 0.01 }}
                   onChange={(e) => setForm((v) => ({ ...v, taxRate: e.target.value ? Number(e.target.value) : null }))}
                 />
+              </Grid>
+              <Grid size={12}>
+                <Accordion expanded={advancedOpen} onChange={(_, expanded) => setAdvancedOpen(expanded)} disableGutters sx={compactAccordionSx}>
+                  <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
+                    <Stack spacing={0.2}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Advanced details</Typography>
+                      <Typography variant="caption" color="text.secondary">Manufacturer, dosage defaults, scan codes, and extended instructions.</Typography>
+                    </Stack>
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
+                    <Grid container spacing={1}>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <CodeScannerField
+                          size="small"
+                          label="Barcode"
+                          value={form.barcode || ""}
+                          error={Boolean(fieldErrors.barcode)}
+                          helperText={fieldErrors.barcode}
+                          inputRef={registerFieldRef("barcode")}
+                          onChange={(next) => setForm((v) => ({ ...v, barcode: next || null }))}
+                          placeholder="Scan or enter barcode"
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <CodeScannerField
+                          size="small"
+                          label="QR code"
+                          value={form.qrCode || ""}
+                          error={Boolean(fieldErrors.qrCode)}
+                          helperText={fieldErrors.qrCode}
+                          inputRef={registerFieldRef("qrCode")}
+                          onChange={(next) => setForm((v) => ({ ...v, qrCode: next || null }))}
+                          placeholder="Scan or enter QR code"
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <CodeScannerField
+                          size="small"
+                          label="External code"
+                          value={form.externalCode || ""}
+                          error={Boolean(fieldErrors.externalCode)}
+                          helperText={fieldErrors.externalCode}
+                          inputRef={registerFieldRef("externalCode")}
+                          onChange={(next) => setForm((v) => ({ ...v, externalCode: next || null }))}
+                          placeholder="Scan or enter code"
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Manufacturer"
+                          value={form.manufacturer || ""}
+                          error={Boolean(fieldErrors.manufacturer)}
+                          helperText={fieldErrors.manufacturer}
+                          inputRef={registerFieldRef("manufacturer")}
+                          onChange={(e) => setForm((v) => ({ ...v, manufacturer: e.target.value || null }))}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Default dosage"
+                          value={form.defaultDosage || ""}
+                          error={Boolean(fieldErrors.defaultDosage)}
+                          helperText={fieldErrors.defaultDosage}
+                          inputRef={registerFieldRef("defaultDosage")}
+                          onChange={(e) => setForm((v) => ({ ...v, defaultDosage: e.target.value || null }))}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Default frequency"
+                          value={form.defaultFrequency || ""}
+                          error={Boolean(fieldErrors.defaultFrequency)}
+                          helperText={fieldErrors.defaultFrequency}
+                          inputRef={registerFieldRef("defaultFrequency")}
+                          onChange={(e) => setForm((v) => ({ ...v, defaultFrequency: e.target.value || null }))}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 3 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          type="number"
+                          label="Default duration (days)"
+                          value={form.defaultDurationDays ?? ""}
+                          error={Boolean(fieldErrors.defaultDurationDays)}
+                          helperText={fieldErrors.defaultDurationDays}
+                          inputRef={registerFieldRef("defaultDurationDays")}
+                          inputProps={{ min: 1, max: 365, step: 1 }}
+                          onChange={(e) => setForm((v) => ({ ...v, defaultDurationDays: e.target.value ? Number(e.target.value) : null }))}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 3 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Default timing"
+                          value={form.defaultTiming || ""}
+                          error={Boolean(fieldErrors.defaultTiming)}
+                          helperText={fieldErrors.defaultTiming}
+                          inputRef={registerFieldRef("defaultTiming")}
+                          onChange={(e) => setForm((v) => ({ ...v, defaultTiming: (e.target.value || null) as MedicineInput["defaultTiming"] }))}
+                          placeholder="BEFORE_FOOD / AFTER_FOOD / WITH_FOOD / ANYTIME"
+                        />
+                      </Grid>
+                      <Grid size={12}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          multiline
+                          minRows={2}
+                          label="Default instructions"
+                          value={form.defaultInstructions || ""}
+                          error={Boolean(fieldErrors.defaultInstructions)}
+                          helperText={fieldErrors.defaultInstructions}
+                          inputRef={registerFieldRef("defaultInstructions")}
+                          onChange={(e) => setForm((v) => ({ ...v, defaultInstructions: e.target.value || null }))}
+                        />
+                      </Grid>
+                    </Grid>
+                  </AccordionDetails>
+                </Accordion>
               </Grid>
               <Grid size={12}>
                 <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
@@ -971,9 +1080,9 @@ export default function MedicineMasterPage() {
               toolbar={<Chip size="small" variant="outlined" label={`${filtered.length} visible medicines`} />}
               emptyState={(
                 <CompactEmptyState
-                  title={rows.length === 0 ? "No medicines in the catalogue yet." : "No medicines match the current filters."}
+                  title={rows.length === 0 ? "Add your first medicine to start building the catalogue." : "No medicines match the current filters."}
                   subtitle={rows.length === 0
-                    ? "Start with Add Medicine for a single entry, or upload the CSV template to seed the catalogue in bulk."
+                    ? "Create the first medicine manually or upload a CSV to seed the catalogue in bulk."
                     : "Clear or adjust the current search and filter combination to show matching medicine records."}
                   action={canManage ? (
                     <Stack direction="row" spacing={1}>

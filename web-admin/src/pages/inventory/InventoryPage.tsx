@@ -34,12 +34,14 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
+import MedicationRoundedIcon from "@mui/icons-material/MedicationRounded";
 import ExpandMoreRounded from "@mui/icons-material/ExpandMoreRounded";
 import CameraAltRoundedIcon from "@mui/icons-material/CameraAltRounded";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/useAuth";
-import { CompactEmptyState, CompactFilterCard, CompactStatCard, compactCardContentSx } from "../../components/compact/CompactUi";
+import { CompactEmptyState, CompactFilterCard, CompactStatCard, compactAccordionSx, compactCardContentSx, compactFormSx } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import CodeScannerDialog from "../../components/pharmacy/CodeScannerDialog";
 import RequiredLabel from "../../components/forms/RequiredLabel.js";
@@ -332,6 +334,8 @@ function focusFirstInventoryField(errorMap: FormErrorMap, idMap: Record<string, 
 export default function InventoryPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const canManageInventory = auth.hasPermission("inventory.manage") || auth.rolesUpper.includes("CLINIC_ADMIN");
   const [tab, setTab] = React.useState<(typeof TABS)[number]["value"]>("stocks");
   const [medicines, setMedicines] = React.useState<Medicine[]>([]);
   const [stocks, setStocks] = React.useState<Stock[]>([]);
@@ -351,7 +355,7 @@ export default function InventoryPage() {
   const [transferForm, setTransferForm] = React.useState({ medicineId: "", stockBatchId: "", fromLocationId: "", toLocationId: "", quantity: "", reason: "" });
   const [stockCountForm, setStockCountForm] = React.useState<StockCountFormState>(emptyStockCountForm());
   const [expiryReportMedicineId, setExpiryReportMedicineId] = React.useState("");
-  const [stockActionPanel, setStockActionPanel] = React.useState<"add" | "transaction" | "transfer" | "count">("add");
+  const [stockActionPanel, setStockActionPanel] = React.useState<"add" | "transaction" | "transfer" | "count" | null>(null);
   const [medicineSearchInput, setMedicineSearchInput] = React.useState("");
   const [quickMedicineOpen, setQuickMedicineOpen] = React.useState(false);
   const [quickMedicineForm, setQuickMedicineForm] = React.useState<MedicineInput>(emptyQuickMedicineForm());
@@ -620,6 +624,14 @@ export default function InventoryPage() {
       cancelled = true;
     };
   }, [auth.accessToken, auth.tenantId, loadAll]);
+
+  React.useEffect(() => {
+    const next = searchParams.get("tab");
+    if (!next) return;
+    if (TABS.some((item) => item.value === next)) {
+      setTab(next as (typeof TABS)[number]["value"]);
+    }
+  }, [searchParams]);
 
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
@@ -977,17 +989,26 @@ export default function InventoryPage() {
     <Stack spacing={3}>
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900, mb: 1 }}>
-            Inventory
-          </Typography>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+            <Inventory2RoundedIcon color="primary" />
+            <Typography variant="h4" sx={{ fontWeight: 900 }}>
+              Inventory
+            </Typography>
+          </Stack>
           <Typography variant="body2" color="text.secondary">
             Physical stock control, batch visibility, expiry monitoring, and inventory movements.
           </Typography>
         </Box>
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          {canManageInventory ? <Button variant="contained" size="small" onClick={() => setStockActionPanel("add")}>Add Stock Batch</Button> : null}
+          <Button variant="outlined" size="small" onClick={() => navigate("/pharmacy/procurement")}>Receive Stock</Button>
+          <Button variant="outlined" size="small" onClick={() => navigate("/pharmacy/medicines")}>Medicine Master</Button>
+        </Stack>
       </Box>
 
       {error ? <Alert severity="error">{error}</Alert> : null}
       {success ? <Alert severity="success">{success}</Alert> : null}
+      {!canManageInventory ? <Alert severity="info">Read-only inventory access is active for this role. Stock creation, adjustment, transfer, return, and write-off posting are hidden or disabled.</Alert> : null}
 
       <Card>
         <CardContent>
@@ -1034,15 +1055,20 @@ export default function InventoryPage() {
               actions={(
                 <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                   <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/medicines")}>Open Medicine Master</Button>
-                  <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/operations?tab=reconciliation")}>Open Reconciliation</Button>
+                  <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/reconciliation")}>Open Reconciliation</Button>
                 </Stack>
               )}
             >
               {medicines.length === 0 ? (
                 <CompactEmptyState
-                  title="No medicines available."
-                  subtitle="Create or upload medicines in Medicine Master before adding stock."
-                  action={<Button size="small" onClick={() => navigate("/pharmacy/medicines")}>Open Medicine Master</Button>}
+                  title="Add your first medicine to start building the catalogue."
+                  subtitle="Create the medicine master first, then receive stock to begin selling."
+                  action={(
+                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                      <Button size="small" variant="contained" onClick={() => navigate("/pharmacy/medicines")}>Add Medicine</Button>
+                      <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/medicines")}>Upload CSV</Button>
+                    </Stack>
+                  )}
                 />
               ) : (
                 <Typography variant="body2" color="text.secondary">
@@ -1053,24 +1079,24 @@ export default function InventoryPage() {
           </Grid>
 
           <Grid size={{ xs: 12, lg: 4.2 }}>
-            <Stack spacing={1.5}>
-              <Accordion expanded={stockActionPanel === "add"} onChange={(_, expanded) => setStockActionPanel(expanded ? "add" : "add")} disableGutters sx={{ "&:before": { display: "none" }, borderRadius: 4, overflow: "hidden" }}>
-                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 2, py: 0.5 }}>
+            <Stack spacing={1.25}>
+              <Accordion expanded={canManageInventory && stockActionPanel === "add"} onChange={(_, expanded) => setStockActionPanel(expanded ? "add" : null)} disableGutters disabled={!canManageInventory} sx={compactAccordionSx}>
+                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
                   <Stack spacing={0.4}>
                     <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                      {selectedStockId ? "Edit batch" : "Add batch"}
+                      {selectedStockId ? "Edit Stock Batch" : "Add Stock Batch"}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
                       Batch, expiry, and quantity are managed here. Medicine catalogue is maintained in Medicine Master.
                     </Typography>
                   </Stack>
                 </AccordionSummary>
-                <AccordionDetails sx={{ px: 2, pb: 2, pt: 0 }}>
-                  <Stack spacing={1.5}>
+                <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
+                  <Stack spacing={1}>
                     <Alert severity="info" sx={{ py: 0 }}>
                       Medicine not in catalogue? Create it here and continue adding this stock batch.
                     </Alert>
-                    <Grid container spacing={1.25}>
+                    <Grid container spacing={1}>
                       <Grid size={{ xs: 12, md: 8 }}>
                         <Autocomplete<MedicineAutocompleteOption, false, false, false>
                           options={medicineAutocompleteOptions}
@@ -1171,7 +1197,7 @@ export default function InventoryPage() {
                         />
                       </Grid>
                       <Grid size={{ xs: 12, md: 4 }}>
-                        <Button fullWidth variant="outlined" sx={{ height: 40 }} onClick={() => openQuickCreateMedicine(medicineSearchInput)} disabled={saving}>
+                        <Button fullWidth variant="outlined" startIcon={<MedicationRoundedIcon fontSize="small" />} sx={{ height: 40 }} onClick={() => openQuickCreateMedicine(medicineSearchInput)} disabled={!canManageInventory || saving}>
                           Quick Add Medicine
                         </Button>
                       </Grid>
@@ -1312,9 +1338,9 @@ export default function InventoryPage() {
                         onClick={async () => {
                           await saveStock();
                         }}
-                        disabled={saving}
+                        disabled={!canManageInventory || saving}
                       >
-                        {selectedStockId ? "Update batch" : "Add batch"}
+                        {selectedStockId ? "Update Stock Batch" : "Add Stock Batch"}
                       </Button>
                       <Button
                         variant="text"
@@ -1332,8 +1358,8 @@ export default function InventoryPage() {
                 </AccordionDetails>
               </Accordion>
 
-              <Accordion expanded={stockActionPanel === "transaction"} onChange={(_, expanded) => setStockActionPanel(expanded ? "transaction" : "add")} disableGutters sx={{ "&:before": { display: "none" }, borderRadius: 4, overflow: "hidden" }}>
-                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 2, py: 0.5 }}>
+              <Accordion expanded={canManageInventory && stockActionPanel === "transaction"} onChange={(_, expanded) => setStockActionPanel(expanded ? "transaction" : null)} disableGutters disabled={!canManageInventory} sx={compactAccordionSx}>
+                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
                   <Stack spacing={0.4}>
                     <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
                       Stock adjustment
@@ -1343,8 +1369,9 @@ export default function InventoryPage() {
                     </Typography>
                   </Stack>
                 </AccordionSummary>
-                <AccordionDetails sx={{ px: 2, pb: 2, pt: 0 }}>
-                  <Grid container spacing={1.25}>
+                <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
+                  <Box sx={compactFormSx}>
+                  <Grid container spacing={1}>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <FormControl fullWidth size="small">
                         <InputLabel id="transaction-medicine-label"><RequiredLabel text="Medicine" required /></InputLabel>
@@ -1397,15 +1424,16 @@ export default function InventoryPage() {
                       <TextField id="inventory-transaction-notes" size="small" fullWidth label="Notes" value={transactionForm.notes} onChange={(e) => setTransactionForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} error={Boolean(transactionFieldErrors.notes)} helperText={transactionFieldErrors.notes || "Optional for non-adjustment movements; required for adjustments."} />
                     </Grid>
                     <Grid size={12}>
-                      <Button onClick={() => void saveTransaction()} disabled={saving}>
+                      <Button onClick={() => void saveTransaction()} disabled={!canManageInventory || saving}>
                         Save transaction
                       </Button>
                     </Grid>
                   </Grid>
+                  </Box>
                 </AccordionDetails>
               </Accordion>
-              <Accordion expanded={stockActionPanel === "count"} onChange={(_, expanded) => setStockActionPanel(expanded ? "count" : "add")} disableGutters sx={{ "&:before": { display: "none" }, borderRadius: 4, overflow: "hidden" }}>
-                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 2, py: 0.5 }}>
+              <Accordion expanded={canManageInventory && stockActionPanel === "count"} onChange={(_, expanded) => setStockActionPanel(expanded ? "count" : null)} disableGutters disabled={!canManageInventory} sx={compactAccordionSx}>
+                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
                   <Stack spacing={0.4}>
                     <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
                       Physical stock count
@@ -1415,8 +1443,9 @@ export default function InventoryPage() {
                     </Typography>
                   </Stack>
                 </AccordionSummary>
-                <AccordionDetails sx={{ px: 2, pb: 2, pt: 0 }}>
-                  <Grid container spacing={1.25}>
+                <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
+                  <Box sx={compactFormSx}>
+                  <Grid container spacing={1}>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <FormControl fullWidth size="small">
                         <InputLabel id="count-medicine-label"><RequiredLabel text="Medicine" required /></InputLabel>
@@ -1533,7 +1562,7 @@ export default function InventoryPage() {
                         />
                         <Button
                           variant="contained"
-                          disabled={saving || !selectedCountStock || !stockCountForm.reason.trim() || stockCountForm.countedQuantity.trim() === "" || countVariance === 0}
+                          disabled={!canManageInventory || saving || !selectedCountStock || !stockCountForm.reason.trim() || stockCountForm.countedQuantity.trim() === "" || countVariance === 0}
                           onClick={async () => {
                             if (!auth.accessToken || !auth.tenantId || !selectedCountStock) {
                               setError("Select a batch before posting the stock count.");
@@ -1596,11 +1625,12 @@ export default function InventoryPage() {
                       </Stack>
                     </Grid>
                   </Grid>
+                  </Box>
                 </AccordionDetails>
               </Accordion>
 
-              <Accordion expanded={stockActionPanel === "transfer"} onChange={(_, expanded) => setStockActionPanel(expanded ? "transfer" : "add")} disableGutters sx={{ "&:before": { display: "none" }, borderRadius: 4, overflow: "hidden" }}>
-                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 2, py: 0.5 }}>
+              <Accordion expanded={canManageInventory && stockActionPanel === "transfer"} onChange={(_, expanded) => setStockActionPanel(expanded ? "transfer" : null)} disableGutters disabled={!canManageInventory} sx={compactAccordionSx}>
+                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
                   <Stack spacing={0.4}>
                     <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
                       Transfer stock
@@ -1610,8 +1640,9 @@ export default function InventoryPage() {
                     </Typography>
                   </Stack>
                 </AccordionSummary>
-                <AccordionDetails sx={{ px: 2, pb: 2, pt: 0 }}>
-                  <Grid container spacing={1.25}>
+                <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
+                  <Box sx={compactFormSx}>
+                  <Grid container spacing={1}>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <FormControl fullWidth size="small">
                         <InputLabel id="transfer-medicine-label">Medicine</InputLabel>
@@ -1673,6 +1704,7 @@ export default function InventoryPage() {
                     <Grid size={12}>
                       <Button
                         variant="outlined"
+                        disabled={!canManageInventory || saving}
                         onClick={async () => {
                           if (!auth.accessToken || !auth.tenantId) return;
                           if (!transferForm.medicineId || !transferForm.fromLocationId || !transferForm.toLocationId || !transferForm.quantity.trim()) {
@@ -1699,12 +1731,12 @@ export default function InventoryPage() {
                             setSaving(false);
                           }
                         }}
-                        disabled={saving}
                       >
                         Transfer
                       </Button>
                     </Grid>
                   </Grid>
+                  </Box>
                 </AccordionDetails>
               </Accordion>
             </Stack>
@@ -1772,12 +1804,16 @@ export default function InventoryPage() {
                   <Stack spacing={1.25}>
                     <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
                       <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                        Stock list
+                        Stock list / batches
                       </Typography>
                       <Chip size="small" label={`${visibleStocks.length} visible batches`} variant="outlined" />
                     </Box>
                     {visibleStocks.length === 0 ? (
-                      <CompactEmptyState title="No stock batches match this filter." subtitle="Adjust the location or code filter, or add a fresh batch from the quick actions panel." />
+                      <CompactEmptyState
+                        title="Receive stock before starting sales."
+                        subtitle="Adjust the filter or add a fresh batch from the quick actions panel."
+                        action={<Button size="small" onClick={() => navigate("/pharmacy/procurement")}>Receive Stock</Button>}
+                      />
                     ) : (
                       <TableContainer sx={{ maxHeight: 432 }}>
                         <Table size="small" stickyHeader>
@@ -1832,7 +1868,7 @@ export default function InventoryPage() {
                                   />
                                 </TableCell>
                                 <TableCell align="right">
-                                  <Button size="small" onClick={() => { editStock(stock); setStockActionPanel("add"); }}>
+                                  <Button size="small" disabled={!canManageInventory} onClick={() => { editStock(stock); setStockActionPanel("add"); }}>
                                     Edit
                                   </Button>
                                 </TableCell>
@@ -1856,7 +1892,10 @@ export default function InventoryPage() {
                       <Chip size="small" label={`${transactions.length} logged`} variant="outlined" />
                     </Box>
                     {transactions.length === 0 ? (
-                      <CompactEmptyState title="No inventory transactions yet." subtitle="Adjustments, purchases, dispenses, returns, and transfers will appear here once posted." />
+                      <CompactEmptyState
+                        title="No inventory movements yet."
+                        subtitle="Adjustments, purchases, dispenses, returns, and transfers will appear here once posted."
+                      />
                     ) : (
                       <TableContainer sx={{ maxHeight: 360 }}>
                         <Table size="small" stickyHeader>
@@ -1959,7 +1998,7 @@ export default function InventoryPage() {
                     <Chip size="small" color="success" label={`91+ days ${expiryBucketCounts["91+"] || 0}`} />
                   </Stack>
                   {expiryReportRows.length === 0 ? (
-                    <CompactEmptyState title="No expiry report rows found." subtitle="Adjust the medicine or location filter to inspect a different slice of inventory." />
+                    <CompactEmptyState title="No expiry rows found." subtitle="Adjust the medicine or location filter to inspect another slice of inventory." />
                   ) : (
                     <TableContainer sx={{ maxHeight: 420 }}>
                       <Table size="small" stickyHeader>
@@ -2066,9 +2105,47 @@ export default function InventoryPage() {
 
       {tab === "returns" ? (
         <Stack spacing={2}>
+          <CompactFilterCard
+            title="Returns & Write-Off History"
+            subtitle="Recent customer returns, vendor returns, and write-offs stay visible above the posting forms."
+            actions={(
+              <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                <Chip size="small" label={`Customer ${customerReturnHistory.length}`} variant="outlined" />
+                <Chip size="small" label={`Vendor ${vendorReturnHistory.length}`} variant="outlined" />
+                <Chip size="small" label={`Write-off ${writeOffHistory.length}`} variant="outlined" />
+              </Stack>
+            )}
+          >
+            <TableContainer sx={{ maxHeight: 280 }}>
+              <Table size="small" stickyHeader>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Medicine</TableCell>
+                    <TableCell>Type</TableCell>
+                    <TableCell align="right">Qty</TableCell>
+                    <TableCell>Reference</TableCell>
+                    <TableCell>Reason</TableCell>
+                    <TableCell>Adjusted by</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {[...customerReturnHistory, ...vendorReturnHistory, ...writeOffHistory].slice(0, 12).map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell>{medicineById.get(row.medicineId)?.medicineName || row.medicineId}</TableCell>
+                      <TableCell>{transactionLabel(row.transactionType)}</TableCell>
+                      <TableCell align="right">{row.quantity}</TableCell>
+                      <TableCell>{row.businessReference || row.referenceType || "-"}</TableCell>
+                      <TableCell>{row.reason || "-"}</TableCell>
+                      <TableCell>{row.adjustedByName || row.createdBy || "-"}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </CompactFilterCard>
           <Card>
-            <CardContent>
-              <Stack spacing={1.5}>
+            <CardContent sx={compactCardContentSx}>
+              <Stack spacing={1}>
                 <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
                   <Box>
                     <Typography variant="h6" sx={{ fontWeight: 800 }}>Customer Returns</Typography>
@@ -2076,12 +2153,13 @@ export default function InventoryPage() {
                   </Box>
                   <Chip size="small" label={`${customerReturnHistory.length} return movements`} variant="outlined" />
                 </Box>
-                <Grid container spacing={1.25}>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <TextField size="small" fullWidth label="Search sale / receipt" value={saleSearch} onChange={(e) => setSaleSearch(e.target.value)} />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <FormControl fullWidth size="small">
+                <Box sx={compactFormSx}>
+                <Grid container spacing={1}>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <TextField size="small" fullWidth label="Search sale / receipt" value={saleSearch} onChange={(e) => setSaleSearch(e.target.value)} />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl fullWidth size="small">
                       <InputLabel id="customer-return-sale-label"><RequiredLabel text="Sale / receipt" required /></InputLabel>
                       <Select
                         id="customer-return-sale"
@@ -2103,8 +2181,8 @@ export default function InventoryPage() {
                       </Select>
                     </FormControl>
                   </Grid>
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <FormControl fullWidth size="small">
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl fullWidth size="small">
                       <InputLabel id="customer-return-line-label"><RequiredLabel text="Medicine line" required /></InputLabel>
                       <Select
                         id="customer-return-line"
@@ -2164,23 +2242,6 @@ export default function InventoryPage() {
                     </FormControl>
                   </Grid>
                   <Grid size={{ xs: 12, md: 3 }}>
-                    <Box id="customer-return-reason" tabIndex={-1}>
-                      <CommentSuggestions
-                        category="INVENTORY_CUSTOMER_RETURN"
-                        selectedReason={customerReturnReason}
-                        remarks={customerReturnNotes}
-                        onReasonChange={setCustomerReturnReason}
-                        onRemarksChange={setCustomerReturnNotes}
-                        requiredReason
-                        maxRemarksLength={250}
-                        reasonLabel="Reason"
-                        remarksLabel="Notes"
-                        reasonHelperText={customerReturnFieldErrors.reason || "Required for customer return."}
-                        remarksHelperText={customerReturnFieldErrors.notes || `${customerReturnNotes.length}/250`}
-                      />
-                    </Box>
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 3 }}>
                     <TextField id="customer-return-reference" size="small" fullWidth label="Reference number" value={customerReturnReference} onChange={(e) => setCustomerReturnReference(e.target.value)} error={Boolean(customerReturnFieldErrors.referenceNumber)} helperText={customerReturnFieldErrors.referenceNumber || "Optional reference number."} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 3 }}>
@@ -2192,18 +2253,37 @@ export default function InventoryPage() {
                       </Select>
                     </FormControl>
                   </Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <Alert severity="info" sx={{ height: "100%", alignItems: "center" }}>
+                  <Grid size={{ xs: 12, md: 5 }}>
+                    <Box id="customer-return-reason" tabIndex={-1}>
+                      <CommentSuggestions
+                        category="INVENTORY_CUSTOMER_RETURN"
+                        selectedReason={customerReturnReason}
+                        remarks={customerReturnNotes}
+                        onReasonChange={setCustomerReturnReason}
+                        onRemarksChange={setCustomerReturnNotes}
+                        requiredReason
+                        dense
+                        maxRemarksLength={250}
+                        reasonLabel="Reason"
+                        remarksLabel="Notes"
+                        reasonHelperText={customerReturnFieldErrors.reason || "Required for customer return."}
+                        remarksHelperText={customerReturnFieldErrors.notes || `${customerReturnNotes.length}/250`}
+                      />
+                    </Box>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <Alert severity="info" sx={{ py: 0.5, minHeight: 40, alignItems: "center" }}>
                       {selectedCustomerSale?.paidAmount && selectedCustomerSale.paidAmount > 0
                         ? "Refund can be processed from Billing / Refunds."
                         : "No payment recorded. Return will only adjust inventory and history."}
                     </Alert>
                   </Grid>
                 </Grid>
-                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                </Box>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mt: 0.25 }}>
                   <Button
                     variant="contained"
-                    disabled={saving || !selectedCustomerSale || !selectedCustomerReturnItem}
+                    disabled={!canManageInventory || saving || !selectedCustomerSale || !selectedCustomerReturnItem}
                     onClick={() => void submitCustomerReturn()}
                   >
                     Process Customer Return
@@ -2256,7 +2336,7 @@ export default function InventoryPage() {
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, md: 6 }}>
               <Card>
-                <CardContent>
+                <CardContent sx={compactCardContentSx}>
                   <Stack spacing={1.5}>
                     <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
                       <Box>
@@ -2323,6 +2403,7 @@ export default function InventoryPage() {
                             onReasonChange={(value) => setVendorReturnForm((current) => ({ ...current, reason: value }))}
                             onRemarksChange={(value) => setVendorReturnForm((current) => ({ ...current, notes: value }))}
                             requiredReason
+                            dense
                             maxRemarksLength={250}
                             reasonLabel="Reason"
                             remarksLabel="Notes"
@@ -2332,7 +2413,7 @@ export default function InventoryPage() {
                         </Box>
                       </Grid>
                     </Grid>
-                    <Button variant="contained" disabled={saving} onClick={() => void submitVendorReturn()}>Post Vendor Return</Button>
+                    <Button variant="contained" disabled={!canManageInventory || saving} onClick={() => void submitVendorReturn()}>Post Vendor Return</Button>
                     {vendorReturnHistory.length ? (
                       <TableContainer sx={{ maxHeight: 240 }}>
                         <Table size="small" stickyHeader>
@@ -2364,8 +2445,8 @@ export default function InventoryPage() {
 
             <Grid size={{ xs: 12, md: 6 }}>
               <Card>
-                <CardContent>
-                  <Stack spacing={1.5}>
+                <CardContent sx={compactCardContentSx}>
+                    <Stack spacing={1}>
                     <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
                       <Box>
                         <Typography variant="h6" sx={{ fontWeight: 800 }}>Write-Offs</Typography>
@@ -2373,7 +2454,7 @@ export default function InventoryPage() {
                       </Box>
                       <Chip size="small" label={`${writeOffHistory.length} movements`} variant="outlined" />
                     </Box>
-                    <Grid container spacing={1.25}>
+                    <Grid container spacing={1}>
                       <Grid size={{ xs: 12, md: 5 }}>
                         <FormControl fullWidth size="small">
                           <InputLabel id="writeoff-medicine-label"><RequiredLabel text="Medicine" required /></InputLabel>
@@ -2428,6 +2509,7 @@ export default function InventoryPage() {
                             onReasonChange={(value) => setWriteOffForm((current) => ({ ...current, reason: value }))}
                             onRemarksChange={(value) => setWriteOffForm((current) => ({ ...current, notes: value }))}
                             requiredReason
+                            dense
                             maxRemarksLength={250}
                             reasonLabel="Reason"
                             remarksLabel="Notes"
@@ -2437,7 +2519,7 @@ export default function InventoryPage() {
                         </Box>
                       </Grid>
                     </Grid>
-                    <Button variant="contained" disabled={saving} onClick={() => void submitWriteOff()}>Post Write-Off</Button>
+                    <Button variant="contained" disabled={!canManageInventory || saving} onClick={() => void submitWriteOff()}>Post Write-Off</Button>
                     {writeOffHistory.length ? (
                       <TableContainer sx={{ maxHeight: 240 }}>
                         <Table size="small" stickyHeader>

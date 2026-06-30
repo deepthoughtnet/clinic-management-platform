@@ -7,6 +7,9 @@ public enum SaasModuleCode {
     BILLING,
     VACCINATION,
     INVENTORY,
+    PHARMACY_POS,
+    LABORATORY,
+    REPORTS,
     AI_COPILOT,
     CAREPILOT;
 

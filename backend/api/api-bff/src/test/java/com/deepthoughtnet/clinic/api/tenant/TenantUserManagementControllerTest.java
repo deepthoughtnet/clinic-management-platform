@@ -60,7 +60,7 @@ class TenantUserManagementControllerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "SERVICE_AGENT", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"})
+    @ValueSource(strings = {"CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "SERVICE_AGENT", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"})
     void clinicAdminCanCreateSupportedTenantRoles(String role) {
         when(tenantUserManagementService.createOrInvite(any())).thenReturn(record(role));
 

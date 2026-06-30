@@ -20,6 +20,9 @@ public class TenantModuleService {
             SaasModuleCode.BILLING.name(),
             SaasModuleCode.VACCINATION.name(),
             SaasModuleCode.INVENTORY.name(),
+            SaasModuleCode.PHARMACY_POS.name(),
+            SaasModuleCode.LABORATORY.name(),
+            SaasModuleCode.REPORTS.name(),
             SaasModuleCode.AI_COPILOT.name(),
             SaasModuleCode.CAREPILOT.name()
     );

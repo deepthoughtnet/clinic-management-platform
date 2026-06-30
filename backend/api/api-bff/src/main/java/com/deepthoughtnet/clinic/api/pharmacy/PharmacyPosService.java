@@ -360,7 +360,7 @@ public class PharmacyPosService {
         if (paidAmount.compareTo(ZERO) > 0 && request.paymentMode() == null) {
             throw new IllegalArgumentException("Payment mode is required when payment is entered.");
         }
-        PharmacyCashierShiftEntity activeShift = paidAmount.compareTo(ZERO) > 0 ? requireOpenShift(tenantId, actorAppUserId) : null;
+        PharmacyCashierShiftEntity activeShift = requireOpenShift(tenantId, actorAppUserId);
         if (request.paymentMode() != null && request.paymentMode() != PaymentMode.CASH && !StringUtils.hasText(request.paymentReference()) && paidAmount.compareTo(ZERO) > 0) {
             throw new IllegalArgumentException("Payment reference is required for non-cash payments.");
         }
@@ -934,7 +934,7 @@ public class PharmacyPosService {
 
     private PharmacyCashierShiftEntity requireOpenShift(UUID tenantId, UUID actorAppUserId) {
         return cashierShiftRepository.findByTenantIdAndCashierUserIdAndStatus(tenantId, actorAppUserId, "OPEN")
-                .orElseThrow(() -> new IllegalArgumentException("Open cashier shift required before collecting payment"));
+                .orElseThrow(() -> new IllegalArgumentException("Open cashier shift required before completing sale"));
     }
 
     private PharmacyPosBatchResponse toBatchResponse(StockEntity stock, InventoryLocationEntity location) {

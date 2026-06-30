@@ -125,6 +125,102 @@ class PharmacyPosControllerTest {
     }
 
     @Test
+    void pharmacyPosUserCanOpenShift() {
+        UUID tenantId = UUID.randomUUID();
+        PharmacyPosService service = mock(PharmacyPosService.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        PharmacyPosController controller = new PharmacyPosController(service, permissionChecker);
+        UUID actorId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("PHARMACY_POS_USER"), "PHARMACY_POS_USER", "cid"));
+        when(permissionChecker.hasPermission("billing.create")).thenReturn(false);
+        when(permissionChecker.hasPermission("payment.collect")).thenReturn(true);
+        when(permissionChecker.hasRole("CLINIC_ADMIN")).thenReturn(false);
+        when(service.openShift(eq(tenantId), eq(actorId), any())).thenReturn(
+                new PharmacyPosShiftResponse(UUID.randomUUID(), actorId, java.time.OffsetDateTime.now(), actorId, java.math.BigDecimal.ZERO,
+                        null, null, "OPEN", java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO,
+                        java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO,
+                        java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, null, null, java.time.OffsetDateTime.now(), java.time.OffsetDateTime.now())
+        );
+
+        controller.openShift(new PharmacyPosOpenShiftRequest(java.math.BigDecimal.ZERO, null));
+
+        verify(service).openShift(eq(tenantId), eq(actorId), any());
+    }
+
+    @Test
+    void inventoryManagerCannotCreateSaleWithoutCheckoutPermissions() {
+        UUID tenantId = UUID.randomUUID();
+        PharmacyPosService service = mock(PharmacyPosService.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        PharmacyPosController controller = new PharmacyPosController(service, permissionChecker);
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of("PHARMACY_INVENTORY_MANAGER"), "PHARMACY_INVENTORY_MANAGER", "cid"));
+        when(permissionChecker.hasPermission("billing.create")).thenReturn(false);
+
+        assertThatThrownBy(() -> controller.createSale(new PharmacyPosCreateSaleRequest(null, null, null, null, null, null, null, null, null, null, null, null, List.of())))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("pharmacy checkout permissions");
+    }
+
+    @Test
+    void posUserCannotCreateSaleWithoutCheckoutPermissions() {
+        UUID tenantId = UUID.randomUUID();
+        PharmacyPosService service = mock(PharmacyPosService.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        PharmacyPosController controller = new PharmacyPosController(service, permissionChecker);
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of("PHARMACY_POS_USER"), "PHARMACY_POS_USER", "cid"));
+        when(permissionChecker.hasPermission("billing.create")).thenReturn(false);
+        when(permissionChecker.hasPermission("payment.collect")).thenReturn(false);
+        when(permissionChecker.hasRole("CLINIC_ADMIN")).thenReturn(false);
+
+        assertThatThrownBy(() -> controller.createSale(new PharmacyPosCreateSaleRequest(null, null, null, null, null, null, null, null, null, null, null, null, List.of())))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("pharmacy checkout permissions");
+    }
+
+    @Test
+    void inventoryManagerCanCreateSaleWithPaymentCollectPermission() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        PharmacyPosService service = mock(PharmacyPosService.class);
+        PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        PharmacyPosController controller = new PharmacyPosController(service, permissionChecker);
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("PHARMACY_INVENTORY_MANAGER"), "PHARMACY_INVENTORY_MANAGER", "cid"));
+        when(permissionChecker.hasPermission("billing.create")).thenReturn(false);
+        when(permissionChecker.hasPermission("payment.collect")).thenReturn(true);
+        when(service.createSale(eq(tenantId), any(), eq(actorId))).thenReturn(
+                new PharmacyPosSaleResponse(
+                        UUID.randomUUID(),
+                        "SALE-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        java.time.OffsetDateTime.now(),
+                        java.math.BigDecimal.ZERO,
+                        java.math.BigDecimal.ZERO,
+                        java.math.BigDecimal.ZERO,
+                        java.math.BigDecimal.ZERO,
+                        java.math.BigDecimal.ZERO,
+                        java.math.BigDecimal.ZERO,
+                        "DRAFT",
+                        null,
+                        null,
+                        java.time.OffsetDateTime.now(),
+                        List.of(),
+                        List.of(),
+                        List.of()
+                )
+        );
+
+        controller.createSale(new PharmacyPosCreateSaleRequest(null, null, null, null, null, null, null, null, null, null, null, null, List.of()));
+
+        verify(service).createSale(eq(tenantId), any(), eq(actorId));
+    }
+
+    @Test
     void receptionistCannotOpenShift() {
         UUID tenantId = UUID.randomUUID();
         PharmacyPosService service = mock(PharmacyPosService.class);

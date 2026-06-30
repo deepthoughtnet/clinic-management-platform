@@ -24,15 +24,15 @@ class TenantUserManagementServiceTest {
 
     @Test
     void tenantUserServiceAcceptsNewCanonicalRoles() {
-        assertDoesNotThrow(() -> createService().createOrInvite(command("AGENT_OPERATOR")));
-        assertDoesNotThrow(() -> createService().createOrInvite(command("DECISIONING_MANAGER")));
-        assertDoesNotThrow(() -> createService().createOrInvite(command("DECISIONING_VIEWER")));
+        assertDoesNotThrow(() -> createService().createOrInvite(command("PHARMACIST")));
+        assertDoesNotThrow(() -> createService().createOrInvite(command("PHARMACY_INVENTORY_MANAGER")));
+        assertDoesNotThrow(() -> createService().createOrInvite(command("PHARMACY_POS_USER")));
     }
 
     @Test
     void createdMembershipKeepsRequestedRole() {
-        TenantUserRecord record = createService().createOrInvite(command("AGENT_OPERATOR"));
-        assertEquals("AGENT_OPERATOR", record.membershipRole());
+        TenantUserRecord record = createService().createOrInvite(command("PHARMACY_POS_USER"));
+        assertEquals("PHARMACY_POS_USER", record.membershipRole());
     }
 
     @Test

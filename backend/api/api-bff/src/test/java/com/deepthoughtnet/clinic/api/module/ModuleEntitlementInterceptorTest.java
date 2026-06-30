@@ -41,6 +41,25 @@ class ModuleEntitlementInterceptorTest {
     }
 
     @Test
+    void requiresReportsModuleForReportsPath() {
+        TenantSubscriptionService tenantSubscriptionService = mock(TenantSubscriptionService.class);
+        ModuleRouteRegistry registry = new ModuleRouteRegistry();
+        ModuleEntitlementInterceptor interceptor = new ModuleEntitlementInterceptor(tenantSubscriptionService, registry);
+        UUID tenantId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), UUID.randomUUID(), "sub", Set.of("CLINIC_ADMIN"), "CLINIC_ADMIN", "cid"));
+
+        var request = mock(jakarta.servlet.http.HttpServletRequest.class);
+        var response = mock(jakarta.servlet.http.HttpServletResponse.class);
+        when(request.getRequestURI()).thenReturn("/api/reports/summary");
+
+        interceptor.preHandle(request, response, new Object());
+
+        verify(tenantSubscriptionService).requireTenantActive(tenantId);
+        verify(tenantSubscriptionService).requireModuleEnabled(tenantId, "REPORTS");
+        verifyNoMoreInteractions(tenantSubscriptionService);
+    }
+
+    @Test
     void onlyChecksTenantActivityForUnmappedPath() {
         TenantSubscriptionService tenantSubscriptionService = mock(TenantSubscriptionService.class);
         ModuleRouteRegistry registry = new ModuleRouteRegistry();

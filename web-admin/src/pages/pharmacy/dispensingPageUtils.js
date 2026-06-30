@@ -13,6 +13,7 @@ export const QUEUE_FILTER_OPTIONS = [
   { value: "ALL", label: "All" },
   { value: "PENDING", label: "Pending" },
   { value: "PARTIAL", label: "Partial" },
+  { value: "OUT_OF_STOCK", label: "Out of stock" },
   { value: "FULLY_DISPENSED", label: "Fully Dispensed" },
   { value: "BOUGHT_EXTERNALLY", label: "Bought Outside" },
   { value: "PATIENT_DECLINED", label: "Patient Declined" },
@@ -58,6 +59,8 @@ export function queueRowMatchesFilter(status, filter) {
       return normalized === "NOT_DISPENSED" || normalized === "READY_FOR_DISPENSE";
     case "PARTIAL":
       return normalized === "PARTIALLY_DISPENSED";
+    case "OUT_OF_STOCK":
+      return false;
     case "FULLY_DISPENSED":
       return normalized === "FULLY_DISPENSED";
     case "BOUGHT_EXTERNALLY":

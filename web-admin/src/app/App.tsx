@@ -1,5 +1,5 @@
 import * as React from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Box, Button, Paper, Typography } from "@mui/material";
 
 import AppShell from "../layout/AppShell";
@@ -63,6 +63,7 @@ import EscalationQueuePage from "../products/carepilot/receptionist-queue/Escala
 import ReceptionistQueuePage from "../products/carepilot/receptionist-queue/ReceptionistQueuePage";
 import { hasTenantModule } from "../auth/moduleEntitlements";
 import { branding, productTitle } from "../branding";
+import { canAccessFeature, resolveTenantLandingPage, type AppFeatureId } from "../modules/moduleRegistry";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const auth = React.useContext(AuthContext);
@@ -152,11 +153,87 @@ function LoginPage() {
   );
 }
 
+function FeatureDisabledPage({
+  title = "Feature unavailable",
+  message = "This feature is not enabled for the selected tenant.",
+  actionLabel,
+  actionTo,
+}: {
+  title?: string;
+  message?: string;
+  actionLabel?: string;
+  actionTo?: string;
+}) {
+  return (
+    <Box sx={{ p: 3, maxWidth: 760 }}>
+      <Paper elevation={0} sx={{ p: 3, border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
+        <Typography variant="h6" sx={{ fontWeight: 900, mb: 1.5 }}>
+          {title}
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: actionTo ? 2 : 0 }}>
+          {message}
+        </Typography>
+        {actionTo ? (
+          <Button component={Link} to={actionTo} variant="contained">
+            {actionLabel || "Go back"}
+          </Button>
+        ) : null}
+      </Paper>
+    </Box>
+  );
+}
+
 function ModuleGate({ moduleKey, children }: { moduleKey: "carePilot" | "aiCopilot"; children: React.ReactNode }) {
   const auth = useAuth();
   if (!hasTenantModule(auth, moduleKey)) {
-    return <Navigate to="/dashboard" replace />;
+    return (
+      <FeatureDisabledPage
+        title="Module disabled"
+        message="This module is not enabled for the selected tenant."
+        actionLabel="Open Home"
+        actionTo={auth.rolesUpper.includes("PLATFORM_ADMIN") && !auth.tenantId ? "/platform/tenants" : "/"}
+      />
+    );
   }
+  return <>{children}</>;
+}
+
+function FeatureGate({
+  featureId,
+  children,
+  title,
+}: {
+  featureId: AppFeatureId;
+  children: React.ReactNode;
+  title?: string;
+}) {
+  const auth = useAuth();
+  const isPlatformAdmin = auth.rolesUpper.includes("PLATFORM_ADMIN");
+
+  if (!auth.tenantId) {
+    return (
+      <FeatureDisabledPage
+        title={title || "Tenant context required"}
+        message={isPlatformAdmin
+          ? "Select a tenant to open tenant modules, navigation, and dashboards."
+          : "No active tenant context is available for this session."}
+        actionLabel={isPlatformAdmin ? "Open Tenants" : "Open Home"}
+        actionTo={isPlatformAdmin ? "/platform/tenants" : "/"}
+      />
+    );
+  }
+
+  if (!canAccessFeature(auth, featureId)) {
+    return (
+      <FeatureDisabledPage
+        title={title || "Feature disabled"}
+        message="This page is not enabled for the selected tenant's subscribed modules."
+        actionLabel="Open Tenant Home"
+        actionTo="/"
+      />
+    );
+  }
+
   return <>{children}</>;
 }
 
@@ -179,13 +256,17 @@ function PlatformAdminGate({ children }: { children: React.ReactNode }) {
 
 function HomeRedirect() {
   const auth = useAuth();
-  const tenantRole = (auth.tenantRole || "").toUpperCase();
-  const isPharmacyRole = tenantRole === "PHARMA"
-    || tenantRole === "PHARMACY"
-    || tenantRole === "PHARMACIST"
-    || tenantRole === "PHARMACY_INVENTORY_MANAGER"
-    || tenantRole === "PHARMACY_POS_USER";
-  return <Navigate to={isPharmacyRole ? "/pharmacy/dashboard" : "/dashboard"} replace />;
+  if (auth.rolesUpper.includes("PLATFORM_ADMIN") && !auth.tenantId) {
+    return <Navigate to="/platform/tenants" replace />;
+  }
+  return <Navigate to={resolveTenantLandingPage(auth)} replace />;
+}
+
+function PharmacyOperationsLegacyRedirect() {
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const target = searchParams.get("tab") === "reconciliation" ? "/pharmacy/reconciliation" : "/pharmacy/procurement";
+  return <Navigate to={target} replace />;
 }
 
 function AuthedApp() {
@@ -200,41 +281,45 @@ function AuthedApp() {
       <AppShell>
         <Routes>
         <Route path="/" element={<HomeRedirect />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/pharmacy/dashboard" element={<PharmacyDashboardPage />} />
-        <Route path="/patients" element={<PatientsPage />} />
-        <Route path="/patients/new" element={<PatientFormPage mode="create" />} />
-        <Route path="/patients/:id" element={<PatientDetailPage />} />
-        <Route path="/patients/:id/edit" element={<PatientFormPage mode="edit" />} />
-        <Route path="/appointments" element={<AppointmentsPage />} />
-        <Route path="/appointments/day-board" element={<DayBoardPage />} />
-        <Route path="/queue" element={<QueuePage />} />
-        <Route path="/consultations" element={<ConsultationsPage />} />
+        <Route path="/dashboard" element={<FeatureGate featureId="clinic-dashboard" title="Clinic dashboard unavailable"><DashboardPage /></FeatureGate>} />
+        <Route path="/pharmacy/dashboard" element={<FeatureGate featureId="pharmacy-dashboard" title="Pharmacy dashboard unavailable"><PharmacyDashboardPage /></FeatureGate>} />
+        <Route path="/patients" element={<FeatureGate featureId="patients"><PatientsPage /></FeatureGate>} />
+        <Route path="/patients/new" element={<FeatureGate featureId="patients"><PatientFormPage mode="create" /></FeatureGate>} />
+        <Route path="/patients/:id" element={<FeatureGate featureId="patients"><PatientDetailPage /></FeatureGate>} />
+        <Route path="/patients/:id/edit" element={<FeatureGate featureId="patients"><PatientFormPage mode="edit" /></FeatureGate>} />
+        <Route path="/appointments" element={<FeatureGate featureId="appointments"><AppointmentsPage /></FeatureGate>} />
+        <Route path="/appointments/day-board" element={<FeatureGate featureId="day-board"><DayBoardPage /></FeatureGate>} />
+        <Route path="/queue" element={<FeatureGate featureId="queue"><QueuePage /></FeatureGate>} />
+        <Route path="/consultations" element={<FeatureGate featureId="consultations"><ConsultationsPage /></FeatureGate>} />
         <Route
           path="/consultations/:id"
           element={
-            <TenantRoleGate rolesAny={["DOCTOR"]}>
-              <ConsultationWorkspacePage />
-            </TenantRoleGate>
+            <FeatureGate featureId="consultations">
+              <TenantRoleGate rolesAny={["DOCTOR"]}>
+                <ConsultationWorkspacePage />
+              </TenantRoleGate>
+            </FeatureGate>
           }
         />
-        <Route path="/prescriptions" element={<PrescriptionsPage />} />
-        <Route path="/billing" element={<BillsPage />} />
-        <Route path="/finance/cash-counter" element={<CashCounterPage />} />
-        <Route path="/finance/payments" element={<PaymentsPage />} />
-        <Route path="/finance/refunds" element={<RefundsPage />} />
-        <Route path="/notifications" element={<NotificationsPage />} />
-        <Route path="/vaccinations" element={<VaccinationsPage />} />
-        <Route path="/inventory" element={<InventoryPage />} />
-        <Route path="/pharmacy/inventory" element={<InventoryPage />} />
-        <Route path="/pharmacy/operations" element={<PharmacyOperationsPage />} />
-        <Route path="/pharmacy/pos" element={<PharmacyPosPage />} />
-        <Route path="/pharmacy/medicine-master" element={<MedicineMasterPage />} />
-        <Route path="/pharmacy/medicines" element={<MedicineMasterPage />} />
-        <Route path="/pharmacy/stock-movements" element={<StockMovementsPage />} />
-        <Route path="/pharmacy/dispensing" element={<DispensingPage />} />
-        <Route path="/reports" element={<ReportsPage />} />
-        <Route path="/lab" element={<LabPage />} />
+        <Route path="/prescriptions" element={<FeatureGate featureId="prescriptions"><PrescriptionsPage /></FeatureGate>} />
+        <Route path="/billing" element={<FeatureGate featureId="billing"><BillsPage /></FeatureGate>} />
+        <Route path="/finance/cash-counter" element={<FeatureGate featureId="cash-counter"><CashCounterPage /></FeatureGate>} />
+        <Route path="/finance/payments" element={<FeatureGate featureId="payments"><PaymentsPage /></FeatureGate>} />
+        <Route path="/finance/refunds" element={<FeatureGate featureId="refunds"><RefundsPage /></FeatureGate>} />
+        <Route path="/notifications" element={<FeatureGate featureId="notifications"><NotificationsPage /></FeatureGate>} />
+        <Route path="/vaccinations" element={<FeatureGate featureId="vaccinations"><VaccinationsPage /></FeatureGate>} />
+        <Route path="/inventory" element={<FeatureGate featureId="inventory"><InventoryPage /></FeatureGate>} />
+        <Route path="/pharmacy/inventory" element={<FeatureGate featureId="inventory"><InventoryPage /></FeatureGate>} />
+        <Route path="/pharmacy/procurement" element={<FeatureGate featureId="pharmacy-procurement"><PharmacyOperationsPage /></FeatureGate>} />
+        <Route path="/pharmacy/reconciliation" element={<FeatureGate featureId="pharmacy-reconciliation"><PharmacyOperationsPage /></FeatureGate>} />
+        <Route path="/pharmacy/operations" element={<PharmacyOperationsLegacyRedirect />} />
+        <Route path="/pharmacy/pos" element={<FeatureGate featureId="pharmacy-pos"><PharmacyPosPage /></FeatureGate>} />
+        <Route path="/pharmacy/medicine-master" element={<FeatureGate featureId="pharmacy-medicines"><MedicineMasterPage /></FeatureGate>} />
+        <Route path="/pharmacy/medicines" element={<FeatureGate featureId="pharmacy-medicines"><MedicineMasterPage /></FeatureGate>} />
+        <Route path="/pharmacy/stock-movements" element={<FeatureGate featureId="pharmacy-stock-movements"><StockMovementsPage /></FeatureGate>} />
+        <Route path="/pharmacy/dispensing" element={<FeatureGate featureId="pharmacy-dispensing"><DispensingPage /></FeatureGate>} />
+        <Route path="/reports" element={<FeatureGate featureId="reports"><ReportsPage /></FeatureGate>} />
+        <Route path="/lab" element={<FeatureGate featureId="laboratory" title="Laboratory dashboard unavailable"><LabPage /></FeatureGate>} />
         <Route path="/platform/tenants" element={<PlatformAdminGate><TenantsPage /></PlatformAdminGate>} />
         <Route path="/platform/help" element={<PlatformAdminGate><HelpCmsPage /></PlatformAdminGate>} />
         <Route path="/platform/tenants/:tenantId" element={<TenantDetailPage />} />
@@ -266,9 +351,9 @@ function AuthedApp() {
         <Route path="/admin/ai-ops" element={<ModuleGate moduleKey="aiCopilot"><AiOpsPage /></ModuleGate>} />
         <Route path="/admin/platform-ops" element={<PlatformOpsPage />} />
         <Route path="/admin/realtime-ai" element={<ModuleGate moduleKey="aiCopilot"><RealtimeAiPage /></ModuleGate>} />
-                <Route path="/ai/voice-test" element={<VoiceTestPage />} />
-        <Route path="/doctors/availability" element={<DoctorAvailabilityPage />} />
-        <Route path="/doctors/:id" element={<DoctorDetailPage />} />
+        <Route path="/ai/voice-test" element={<ModuleGate moduleKey="aiCopilot"><VoiceTestPage /></ModuleGate>} />
+        <Route path="/doctors/availability" element={<FeatureGate featureId="doctor-availability"><DoctorAvailabilityPage /></FeatureGate>} />
+        <Route path="/doctors/:id" element={<FeatureGate featureId="appointments"><DoctorDetailPage /></FeatureGate>} />
         <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppShell>
@@ -280,6 +365,10 @@ function formatPageTitle(pathname: string): string {
   if (pathname === "/" || pathname === "/dashboard") return branding.productName;
   if (pathname === "/login") return `${branding.productName} Admin Console`;
   if (pathname.startsWith("/patient")) return "Patient Portal";
+  if (pathname === "/pharmacy/procurement") return "Procurement";
+  if (pathname === "/pharmacy/reconciliation") return "Reconciliation";
+  if (pathname === "/pharmacy/pos") return "POS Sale";
+  if (pathname.startsWith("/pharmacy/operations")) return "Procurement";
   const leaf = pathname.split("/").filter(Boolean).at(-1) || "Dashboard";
   return leaf.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }

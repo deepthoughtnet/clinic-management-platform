@@ -136,6 +136,9 @@ class RolePermissionMappingsTest {
                     Permissions.PRESCRIPTION_PRINT,
                     Permissions.MEDICINE_READ,
                     Permissions.BILLING_CREATE,
+                    Permissions.BILLING_READ,
+                    Permissions.BILLING_RECEIPT,
+                    Permissions.PAYMENT_COLLECT,
                     Permissions.INVENTORY_READ,
                     Permissions.INVENTORY_MANAGE,
                     Permissions.REPORT_READ
@@ -159,15 +162,23 @@ class RolePermissionMappingsTest {
         Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.PHARMACY_INVENTORY_MANAGER);
 
         assertThat(permissions).contains(
+                Permissions.DASHBOARD_READ,
+                Permissions.CLINIC_DASHBOARD_READ,
+                Permissions.PATIENT_READ,
+                Permissions.PRESCRIPTION_READ,
+                Permissions.PRESCRIPTION_PRINT,
+                Permissions.MEDICINE_READ,
                 Permissions.INVENTORY_READ,
                 Permissions.INVENTORY_CREATE,
                 Permissions.INVENTORY_UPDATE,
                 Permissions.INVENTORY_MANAGE,
-                Permissions.MEDICINE_READ
+                Permissions.REPORT_READ
         );
         assertThat(permissions).doesNotContain(
-                Permissions.PAYMENT_COLLECT,
-                Permissions.BILLING_RECEIPT
+                Permissions.BILLING_CREATE,
+                Permissions.BILLING_READ,
+                Permissions.BILLING_RECEIPT,
+                Permissions.PAYMENT_COLLECT
         );
     }
 
@@ -176,12 +187,18 @@ class RolePermissionMappingsTest {
         Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.PHARMACY_POS_USER);
 
         assertThat(permissions).contains(
+                Permissions.DASHBOARD_READ,
+                Permissions.CLINIC_DASHBOARD_READ,
+                Permissions.PATIENT_READ,
+                Permissions.PRESCRIPTION_READ,
+                Permissions.PRESCRIPTION_PRINT,
+                Permissions.MEDICINE_READ,
                 Permissions.BILLING_CREATE,
                 Permissions.BILLING_READ,
                 Permissions.BILLING_RECEIPT,
                 Permissions.PAYMENT_COLLECT,
-                Permissions.MEDICINE_READ,
-                Permissions.INVENTORY_READ
+                Permissions.INVENTORY_READ,
+                Permissions.REPORT_READ
         );
         assertThat(permissions).doesNotContain(
                 Permissions.INVENTORY_CREATE,

@@ -1,14 +1,18 @@
 package com.deepthoughtnet.clinic.api.me;
 
 import com.deepthoughtnet.clinic.api.me.dto.MeResponse;
+import com.deepthoughtnet.clinic.api.platform.service.TenantModuleService;
 import com.deepthoughtnet.clinic.identity.service.ActiveTenantMembershipService;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.ActiveTenantMembershipRecord;
 import com.deepthoughtnet.clinic.identity.service.model.TenantModulesRecord;
 import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -24,15 +28,18 @@ public class MeController {
     private final ActiveTenantMembershipService activeTenantMembershipService;
     private final PlatformTenantManagementService platformTenantManagementService;
     private final PermissionChecker permissionChecker;
+    private final TenantModuleService tenantModuleService;
 
     public MeController(
             ActiveTenantMembershipService activeTenantMembershipService,
             PlatformTenantManagementService platformTenantManagementService,
-            PermissionChecker permissionChecker
+            PermissionChecker permissionChecker,
+            TenantModuleService tenantModuleService
     ) {
         this.activeTenantMembershipService = activeTenantMembershipService;
         this.platformTenantManagementService = platformTenantManagementService;
         this.permissionChecker = permissionChecker;
+        this.tenantModuleService = tenantModuleService;
     }
 
     @GetMapping("/api/me")
@@ -58,6 +65,12 @@ public class MeController {
                     memberships.size()
             );
         }
+        Map<UUID, Map<String, Boolean>> tenantEnabledModules = new LinkedHashMap<>();
+        for (ActiveTenantMembershipRecord membership : memberships) {
+          if (membership.tenantId() != null) {
+              tenantEnabledModules.put(membership.tenantId(), tenantModuleService.findForTenant(membership.tenantId()));
+          }
+        }
         List<MeResponse.ActiveTenantMembershipResponse> activeMemberships = memberships.stream()
                 .map(membership -> new MeResponse.ActiveTenantMembershipResponse(
                         membership.tenantId() == null ? null : membership.tenantId().toString(),
@@ -66,7 +79,8 @@ public class MeController {
                         membership.role(),
                         membership.status(),
                         "ACTIVE".equalsIgnoreCase(membership.status()),
-                        toResponse(membership.modules())
+                        toResponse(membership.modules()),
+                        membership.tenantId() == null ? Map.of() : tenantEnabledModules.getOrDefault(membership.tenantId(), Map.of())
                 ))
                 .toList();
         String resolvedTenantId = ctx.tenantId() == null
@@ -87,6 +101,20 @@ public class MeController {
                         return null;
                     }
                 });
+        Map<String, Boolean> currentEnabledModules = activeMemberships.stream()
+                .filter(membership -> resolvedTenantId != null && resolvedTenantId.equals(membership.tenantId()))
+                .findFirst()
+                .map(MeResponse.ActiveTenantMembershipResponse::enabledModules)
+                .orElseGet(() -> {
+                    if (resolvedTenantId == null) {
+                        return Map.of();
+                    }
+                    try {
+                        return tenantModuleService.findForTenant(java.util.UUID.fromString(resolvedTenantId));
+                    } catch (IllegalArgumentException ex) {
+                        return Map.of();
+                    }
+                });
 
         return new MeResponse(
                 email,
@@ -99,6 +127,7 @@ public class MeController {
                 ctx.tenantRole(),
                 permissionChecker.currentPermissions(),
                 currentModules,
+                currentEnabledModules,
                 ctx.correlationId(),
                 activeMemberships,
                 activeMemberships

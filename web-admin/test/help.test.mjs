@@ -102,6 +102,17 @@ test("pharmacy pos route resolves to the pharmacy pos help page", () => {
   assert.equal(resolveHelpRouteByPageKey("POS")?.pageKey, "PHARMACY_POS");
 });
 
+test("pharmacy procurement and reconciliation routes resolve to dedicated help pages", () => {
+  const procurement = resolveHelpPageMeta("/pharmacy/procurement");
+  const reconciliation = resolveHelpPageMeta("/pharmacy/reconciliation");
+  assert.equal(procurement.pageKey, "PHARMACY_PROCUREMENT");
+  assert.equal(procurement.title, "Procurement");
+  assert.equal(reconciliation.pageKey, "PHARMACY_RECONCILIATION");
+  assert.equal(reconciliation.title, "Reconciliation");
+  assert.equal(resolveHelpRouteByPageKey("PROCUREMENT")?.path, "/pharmacy/procurement");
+  assert.equal(resolveHelpRouteByPageKey("RECONCILIATION")?.path, "/pharmacy/reconciliation");
+});
+
 test("pharmacy dashboard route resolves to the dashboard help page", () => {
   const meta = resolveHelpPageMeta("/pharmacy/dashboard");
   assert.equal(meta.pageKey, "PHARMACY_DASHBOARD");
@@ -141,6 +152,15 @@ test("reports route resolves to the reports help page", () => {
   assert.equal(resolveHelpRouteByPageKey("REPORTS")?.path, "/reports");
   assert.equal(resolveHelpRouteByPageKey("FINANCE_REPORTS")?.path, "/reports");
   assert.equal(resolveHelpRouteByPageKey("TENANT_REPORTS")?.path, "/reports");
+});
+
+test("top bar labels the new pharmacy routes clearly", () => {
+  const source = readSource("layout/TopBar.tsx");
+  assert.ok(source.includes('return "Prescription Register"'));
+  assert.ok(source.includes('return "Inventory"'));
+  assert.ok(source.includes('return "Procurement"'));
+  assert.ok(source.includes('return "Reconciliation"'));
+  assert.ok(source.includes('return "Reports & Audit"'));
 });
 
 test("left navigation labels the Engage section as ENGAGE", () => {

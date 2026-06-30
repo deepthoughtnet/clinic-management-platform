@@ -29,8 +29,15 @@ function formatPathLabel(pathname: string): string {
   if (pathname === "/") return "Dashboard";
   if (pathname === "/dashboard") return "Dashboard";
   if (pathname === "/pharmacy/dashboard") return "Pharmacy Dashboard";
-  if (pathname === "/pharmacy/pos") return "Pharmacy POS";
-  if (pathname.startsWith("/pharmacy/operations")) return "Pharmacy Operations";
+  if (pathname === "/lab") return "Laboratory Dashboard";
+  if (pathname === "/pharmacy/pos") return "POS Sale";
+  if (pathname === "/prescriptions") return "Prescription Register";
+  if (pathname === "/inventory") return "Inventory";
+  if (pathname === "/pharmacy/medicines" || pathname === "/pharmacy/medicine-master") return "Medicine Master";
+  if (pathname === "/pharmacy/procurement") return "Procurement";
+  if (pathname === "/pharmacy/reconciliation") return "Reconciliation";
+  if (pathname.startsWith("/pharmacy/operations")) return "Procurement";
+  if (pathname === "/pharmacy/stock-movements") return "Reports & Audit";
   if (pathname.startsWith("/platform/tenants")) return "Platform Tenants";
   if (pathname.startsWith("/platform/plans")) return "Plans / Modules";
   if (pathname.startsWith("/platform/users")) return "Users / Admins";

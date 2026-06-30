@@ -581,7 +581,7 @@ class PharmacyPosServiceTest {
                 PaymentMode.CASH, null, null, null,
                 List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("5.00"), BigDecimal.ZERO, BigDecimal.ZERO))
         ), actorId)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Open cashier shift required");
+                .hasMessageContaining("Open cashier shift required before completing sale");
     }
 
     @Test

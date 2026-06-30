@@ -1,6 +1,7 @@
 import type { AuthContextValue } from "./AuthContext";
+import { hasEnabledTenantModule, type TenantModuleCode } from "../modules/moduleRegistry";
 
-type ModuleFlag = "carePilot" | "aiCopilot";
+type ModuleFlag = "carePilot" | "aiCopilot" | TenantModuleCode;
 
 const ROLE_PRIORITY = [
   "PLATFORM_ADMIN",
@@ -59,15 +60,17 @@ function labelForRole(role: string): string {
 }
 
 export function hasTenantModule(
-  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "activeTenantMemberships">,
+  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships">,
   moduleKey: ModuleFlag,
 ): boolean {
-  if (!auth.tenantId) return false;
-  if (typeof auth.tenantModules?.[moduleKey] === "boolean") {
-    return auth.tenantModules[moduleKey] === true;
+  if (moduleKey === "carePilot") {
+    return hasEnabledTenantModule(auth, "CAREPILOT");
   }
-  const membership = auth.activeTenantMemberships.find((item) => item.tenantId === auth.tenantId);
-  return Boolean(membership?.modules?.[moduleKey]);
+  if (moduleKey === "aiCopilot") {
+    return hasEnabledTenantModule(auth, "AI_COPILOT");
+  }
+  if (!auth.tenantId) return false;
+  return hasEnabledTenantModule(auth, moduleKey);
 }
 
 export function friendlyRoleLabel(auth: Pick<AuthContextValue, "tenantRole" | "rolesUpper" | "activeTenantMemberships" | "tenantId">): string {

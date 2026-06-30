@@ -13,9 +13,9 @@ export const compactChipSx = {
 } as const;
 
 export const compactCardContentSx = {
-  p: 1.25,
+  p: 1.1,
   "&:last-child": {
-    pb: 1.25,
+    pb: 1.1,
   },
 } as const;
 
@@ -23,16 +23,70 @@ export const compactPanelSx = {
   borderRadius: 2,
 } as const;
 
+export const compactSectionSx = {
+  p: 1,
+} as const;
+
+export const compactFormSx = {
+  "& .MuiFormControl-root, & .MuiTextField-root": {
+    m: 0,
+  },
+  "& .MuiInputBase-root": {
+    minHeight: 38,
+  },
+  "& .MuiFormHelperText-root": {
+    mt: 0.25,
+    minHeight: 16,
+  },
+  "& .MuiAutocomplete-inputRoot": {
+    minHeight: 38,
+    py: 0.15,
+  },
+} as const;
+
+export const compactAccordionSx = {
+  border: "1px solid",
+  borderColor: "divider",
+  borderRadius: 2,
+  overflow: "hidden",
+  "&:before": {
+    display: "none",
+  },
+} as const;
+
+export const compactFormGridSx = {
+  mt: 0.25,
+} as const;
+
 type CompactStatCardProps = {
   label: string;
   value: React.ReactNode;
   tone?: ChipProps["color"];
   helper?: React.ReactNode;
+  onClick?: () => void;
 };
 
-export function CompactStatCard({ label, value, tone = "default", helper }: CompactStatCardProps) {
+export function CompactStatCard({ label, value, tone = "default", helper, onClick }: CompactStatCardProps) {
   return (
-    <Card variant="outlined" sx={{ height: "100%", ...compactPanelSx }}>
+    <Card
+      variant="outlined"
+      onClick={onClick}
+      onKeyDown={onClick ? (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      } : undefined}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      sx={{
+        height: "100%",
+        cursor: onClick ? "pointer" : "default",
+        transition: "box-shadow 120ms ease, transform 120ms ease",
+        "&:hover": onClick ? { boxShadow: 2, transform: "translateY(-1px)" } : undefined,
+        ...compactPanelSx,
+      }}
+    >
       <CardContent sx={compactCardContentSx}>
         <Stack spacing={0.35}>
           <Chip size="small" label={label} color={tone} variant="outlined" sx={compactChipSx} />
@@ -88,7 +142,7 @@ export function CompactEmptyState({ title, subtitle, action }: CompactEmptyState
   return (
     <Box
       sx={{
-        minHeight: 180,
+        minHeight: 160,
         display: "grid",
         placeItems: "center",
         textAlign: "center",

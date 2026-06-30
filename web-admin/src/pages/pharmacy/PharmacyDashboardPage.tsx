@@ -16,6 +16,11 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
+import LocalPharmacyRoundedIcon from "@mui/icons-material/LocalPharmacyRounded";
+import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
+import MedicationRoundedIcon from "@mui/icons-material/MedicationRounded";
+import AssessmentRoundedIcon from "@mui/icons-material/AssessmentRounded";
+import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
 
 import { useAuth } from "../../auth/useAuth";
 import {
@@ -30,12 +35,15 @@ import {
   getMedicines,
   getPharmacyAnalytics,
   getPharmacyDashboard,
+  getCurrentPharmacyPosShift,
+  listPharmacyPosSales,
   listReconciliations,
   type Medicine,
   type PharmacyAnalytics,
   type PharmacyDashboard,
   type PharmacyReconciliation,
 } from "../../api/clinicApi";
+import { isActiveDispenseStatus } from "./dispensingPageUtils.js";
 
 function formatDateTime(value: string | null | undefined): string {
   return value ? new Date(value).toLocaleString() : "-";
@@ -63,9 +71,11 @@ export default function PharmacyDashboardPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [dashboard, setDashboard] = React.useState<PharmacyDashboard | null>(null);
   const [analytics, setAnalytics] = React.useState<PharmacyAnalytics | null>(null);
-  const [queue, setQueue] = React.useState<Array<{ prescriptionId: string; prescriptionNumber: string; patientName: string | null; doctorName: string | null; prescriptionTimestamp: string | null; lines: Array<{ prescribedMedicineName: string; status: string; availabilityStatus: string; expiryStatus: string; }> }>>([]);
+  const [queue, setQueue] = React.useState<Array<{ prescriptionId: string; prescriptionNumber: string; patientName: string | null; doctorName: string | null; prescriptionTimestamp: string | null; status?: string | null; lines: Array<{ prescribedMedicineName: string; status: string; availabilityStatus: string; expiryStatus: string; }> }>>([]);
   const [reconciliations, setReconciliations] = React.useState<PharmacyReconciliation[]>([]);
   const [medicines, setMedicines] = React.useState<Medicine[]>([]);
+  const [salesCount, setSalesCount] = React.useState(0);
+  const [hasOpenShift, setHasOpenShift] = React.useState(false);
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) {
@@ -75,18 +85,22 @@ export default function PharmacyDashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [dashboardRow, analyticsRow, queueRows, reconciliationRows, medicineRows] = await Promise.all([
+      const [dashboardRow, analyticsRow, queueRows, reconciliationRows, medicineRows, saleRows] = await Promise.all([
         getPharmacyDashboard(auth.accessToken, auth.tenantId),
         getPharmacyAnalytics(auth.accessToken, auth.tenantId),
         getDispensingQueue(auth.accessToken, auth.tenantId),
         listReconciliations(auth.accessToken, auth.tenantId),
         getMedicines(auth.accessToken, auth.tenantId),
+        listPharmacyPosSales(auth.accessToken, auth.tenantId),
       ]);
+      const currentShift = await getCurrentPharmacyPosShift(auth.accessToken, auth.tenantId);
       setDashboard(dashboardRow);
       setAnalytics(analyticsRow);
       setQueue(queueRows);
       setReconciliations(reconciliationRows);
       setMedicines(medicineRows);
+      setSalesCount(saleRows.length);
+      setHasOpenShift(Boolean(currentShift));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load pharmacy dashboard");
     } finally {
@@ -103,19 +117,43 @@ export default function PharmacyDashboardPage() {
   }
 
   const medicineById = React.useMemo(() => new Map(medicines.map((medicine) => [medicine.id, medicine] as const)), [medicines]);
-  const readyToDispense = queue.filter((row) => row.lines.some((line) => line.status === "NOT_DISPENSED" || line.status === "PARTIALLY_DISPENSED"));
+  const readyToDispense = queue.filter((row) => isActiveDispenseStatus(row.status) || row.lines.some((line) => line.status === "NOT_DISPENSED" || line.status === "READY_FOR_DISPENSE" || line.status === "PARTIALLY_DISPENSED"));
   const lowStockMedicines = analytics?.lowStockMedicines ?? [];
   const expiringSoon = analytics?.expiryRiskMedicines ?? [];
   const pendingReconciliations = reconciliations.filter((row) => ["PENDING", "REVIEWED", "SUBMITTED"].includes((row.status || "").toUpperCase()));
   const pendingApproval = reconciliations.filter((row) => (row.status || "").toUpperCase() === "PENDING").length;
   const reviewReady = reconciliations.filter((row) => (row.status || "").toUpperCase() === "REVIEWED").length;
   const recentMovements = dashboard?.recentStockMovements?.slice(0, 5) ?? [];
+  const pendingDispenseCount = queue.filter((row) => isActiveDispenseStatus(row.status) || row.lines.some((line) => line.status === "NOT_DISPENSED" || line.status === "READY_FOR_DISPENSE" || line.status === "PARTIALLY_DISPENSED")).length;
+  const dispensedTodayCount = dashboard?.todayDispensedCount ?? 0;
+  const isBrandNewTenant = !loading && (medicines.length === 0 || (dashboard?.stockBatchesCount ?? 0) === 0 || salesCount === 0);
+  const tenantRole = (auth.tenantRole || "").toUpperCase();
+  const setupSteps = React.useMemo(() => ([
+    { label: "Create staff", done: Boolean(auth.tenantId), action: () => navigate("/settings/users-roles"), cta: "Users & Roles" },
+    { label: "Add medicines", done: medicines.length > 0, action: () => navigate("/pharmacy/medicines"), cta: "Medicine Master" },
+    { label: "Receive stock", done: (dashboard?.stockBatchesCount ?? 0) > 0, action: () => navigate("/pharmacy/procurement"), cta: "Receive Stock" },
+    { label: "Open POS shift", done: hasOpenShift, action: () => navigate("/pharmacy/pos"), cta: "Open POS" },
+    { label: "Complete first sale", done: salesCount > 0, action: () => navigate("/pharmacy/pos"), cta: "POS Sale" },
+  ]), [auth.tenantId, dashboard?.stockBatchesCount, hasOpenShift, medicines.length, navigate, salesCount]);
+  const setupDoneCount = setupSteps.filter((step) => step.done).length;
+  const setupProgress = Math.round((setupDoneCount / setupSteps.length) * 100);
+  const quickActions = React.useMemo(() => ([
+    { label: "Add Medicine", icon: <MedicationRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/medicines") },
+    { label: "Receive Stock", icon: <Inventory2RoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/procurement") },
+    { label: "POS Sale", icon: <LocalPharmacyRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/pos") },
+    { label: "Procurement", icon: <AssessmentRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/procurement") },
+    { label: "Reconciliation", icon: <AssessmentRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/reconciliation") },
+    { label: "Reports & Audit", icon: <ReceiptLongRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/stock-movements") },
+  ]), [navigate]);
 
   return (
     <Stack spacing={1.5}>
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.25, flexWrap: "wrap", alignItems: "flex-start" }}>
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 900, lineHeight: 1.1 }}>Pharmacy Dashboard</Typography>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.25 }}>
+            <LocalPharmacyRoundedIcon fontSize="small" color="primary" />
+            <Typography variant="h4" sx={{ fontWeight: 900, lineHeight: 1.1 }}>Pharmacy Dashboard</Typography>
+          </Stack>
           <Typography variant="body2" color="text.secondary">
             Fast dispensing, stock health, and reconciliation oversight for pharmacy operations.
           </Typography>
@@ -125,13 +163,49 @@ export default function PharmacyDashboardPage() {
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 
+      {isBrandNewTenant ? (
+        <CompactFilterCard
+          title="Pharmacy Setup"
+          subtitle="Complete these steps to start selling."
+          actions={<Chip size="small" label={`${setupDoneCount}/${setupSteps.length} complete • ${setupProgress}%`} variant="outlined" />}
+        >
+          <Grid container spacing={1}>
+            {setupSteps.map((step, index) => (
+              <Grid key={step.label} size={{ xs: 12, md: 6 }}>
+                <Card variant="outlined">
+                  <CardContent sx={{ p: 1 }}>
+                    <Stack spacing={0.5}>
+                      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                          <Chip size="small" label={index + 1} color={step.done ? "success" : "primary"} sx={compactChipSx} />
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>{step.label}</Typography>
+                        </Box>
+                        <Chip size="small" label={step.done ? "Done" : "Pending"} color={step.done ? "success" : "default"} variant="outlined" sx={compactChipSx} />
+                      </Box>
+                      <Button size="small" variant={step.done ? "outlined" : "contained"} onClick={step.action}>
+                        {step.cta}
+                      </Button>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+            <Button size="small" variant="contained" onClick={() => navigate("/pharmacy/medicines")}>Add Medicine</Button>
+            <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/procurement")}>Receive Stock</Button>
+            <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/pos")}>Open POS</Button>
+          </Stack>
+        </CompactFilterCard>
+      ) : null}
+
       <Grid container spacing={1.25}>
-        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Ready to dispense" value={readyToDispense.length} tone="info" helper="Prescriptions waiting for issue" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Pending dispense" value={dashboard?.pendingDispensingCount ?? 0} tone="warning" helper="Not yet dispensed" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Today dispensed" value={dashboard?.todayDispensedCount ?? 0} tone="success" helper="Dispense transactions today" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Low stock" value={lowStockMedicines.length} tone="warning" helper="Medicines below threshold" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Expiring soon" value={expiringSoon.length} tone="error" helper="Batches within expiry window" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Reconciliation" value={pendingApproval + reviewReady} tone="info" helper="Pending approval / review" /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Ready to dispense" value={readyToDispense.length} tone="info" helper="Prescriptions waiting for issue" onClick={() => navigate("/pharmacy/dispensing?filter=ACTIVE")} /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Pending dispense" value={pendingDispenseCount} tone="warning" helper="Not yet dispensed" onClick={() => navigate("/pharmacy/dispensing?filter=PENDING")} /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Today dispensed" value={dispensedTodayCount} tone="success" helper="Dispense transactions today" onClick={() => navigate("/pharmacy/stock-movements?movement=DISPENSED")} /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Low stock" value={lowStockMedicines.length} tone="warning" helper="Medicines below threshold" onClick={() => navigate("/inventory?tab=low-stock")} /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Expiring soon" value={expiringSoon.length} tone="error" helper="Batches within expiry window" onClick={() => navigate("/inventory?tab=expiry-report")} /></Grid>
+        <Grid size={{ xs: 12, sm: 6, lg: 2 }}><CompactStatCard label="Reconciliation" value={pendingApproval + reviewReady} tone="info" helper="Pending approval / review" onClick={() => navigate("/pharmacy/reconciliation")} /></Grid>
       </Grid>
 
       <CompactFilterCard
@@ -139,17 +213,23 @@ export default function PharmacyDashboardPage() {
         subtitle="Primary pharmacy workflow: dispense, check stock, review movements, and manage the medicine catalogue."
       >
         <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-          <Button variant="contained" size="small" onClick={() => navigate("/pharmacy/dispensing")}>Open Dispensing</Button>
-          <Button variant="outlined" size="small" onClick={() => navigate("/inventory")}>Open Inventory</Button>
-          <Button variant="outlined" size="small" onClick={() => navigate("/pharmacy/stock-movements")}>Open Stock Movements</Button>
-          <Button variant="outlined" size="small" onClick={() => navigate("/pharmacy/medicines")}>Open Medicine Master</Button>
-          <Button variant="outlined" size="small" onClick={() => navigate("/pharmacy/operations?tab=reconciliation")}>Open Reconciliation</Button>
+          {quickActions.map((item, index) => (
+            <Button
+              key={item.label}
+              variant={index === 0 ? "contained" : "outlined"}
+              size="small"
+              startIcon={item.icon}
+              onClick={item.action}
+            >
+              {item.label}
+            </Button>
+          ))}
         </Stack>
       </CompactFilterCard>
 
       {loading ? null : (
         <Grid container spacing={1.5}>
-          <Grid size={{ xs: 12, xl: 7 }}>
+        <Grid size={{ xs: 12, xl: 7 }}>
             <Card variant="outlined">
               <CardContent sx={compactCardContentSx}>
                 <Stack spacing={1}>

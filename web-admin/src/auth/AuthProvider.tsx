@@ -18,6 +18,7 @@ type MeResponse = {
     carePilot?: boolean | null;
     aiCopilot?: boolean | null;
   } | null;
+  enabledModules?: Record<string, boolean> | null;
   memberships?: Array<{
     tenantId?: string | null;
     id?: string | null;
@@ -32,6 +33,7 @@ type MeResponse = {
       carePilot?: boolean | null;
       aiCopilot?: boolean | null;
     } | null;
+    enabledModules?: Record<string, boolean> | null;
   }> | null;
   activeTenantMemberships?: Array<{
     tenantId?: string | null;
@@ -47,6 +49,7 @@ type MeResponse = {
       carePilot?: boolean | null;
       aiCopilot?: boolean | null;
     } | null;
+    enabledModules?: Record<string, boolean> | null;
   }> | null;
 };
 type ActiveMembership = {
@@ -59,6 +62,7 @@ type ActiveMembership = {
     carePilot?: boolean | null;
     aiCopilot?: boolean | null;
   } | null;
+  enabledModules?: Record<string, boolean> | null;
 };
 
 const SELECTED_TENANT_STORAGE_KEY = "clinic_selected_tenant";
@@ -147,7 +151,17 @@ type Membership = {
     carePilot?: boolean | null;
     aiCopilot?: boolean | null;
   } | null;
+  enabledModules?: Record<string, boolean> | null;
 };
+
+function normalizeEnabledModules(modules: Record<string, boolean> | null | undefined) {
+  if (!modules || typeof modules !== "object") return null;
+  const next = Object.entries(modules).reduce<Record<string, boolean>>((acc, [key, value]) => {
+    acc[key.trim().toUpperCase()] = value === true;
+    return acc;
+  }, {});
+  return Object.keys(next).length ? next : null;
+}
 
 function normalizeMemberships(me: MeResponse): Membership[] {
   const source = ((me.activeTenantMemberships && me.activeTenantMemberships.length > 0)
@@ -184,6 +198,7 @@ function normalizeMemberships(me: MeResponse): Membership[] {
           aiCopilot: (membership.modules as { aiCopilot?: boolean | null }).aiCopilot ?? null,
         }
         : null,
+      enabledModules: normalizeEnabledModules((membership.enabledModules as Record<string, boolean> | null | undefined) ?? null),
     };
     if (!isValidClinicTenantShape(normalizedMembership)) continue;
     normalized.push(normalizedMembership);
@@ -203,6 +218,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const [tenantRole, setTenantRole] = React.useState<string | null>(null);
   const [activeTenantMemberships, setActiveTenantMemberships] = React.useState<ActiveMembership[]>([]);
   const [tenantModules, setTenantModules] = React.useState<{ carePilot?: boolean | null; aiCopilot?: boolean | null } | null>(null);
+  const [enabledTenantModules, setEnabledTenantModules] = React.useState<Record<string, boolean> | null>(null);
   const [initError, setInitError] = React.useState<string | null>(null);
   const [initVersion, setInitVersion] = React.useState(0);
 
@@ -235,6 +251,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     setTenantRole(null);
     setActiveTenantMemberships([]);
     setTenantModules(null);
+    setEnabledTenantModules(null);
   }, []);
 
   const refreshTenantContext = React.useCallback(async (tenant: SelectedTenant | null, tokenOverride?: string | null) => {
@@ -263,6 +280,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       setAppUserId(me.appUserId || null);
       setTenantRole(me.tenantRole || null);
       setTenantModules(me.modules || null);
+      setEnabledTenantModules(normalizeEnabledModules(me.enabledModules));
       setPermissions((me.permissions || []).map((permission) => permission.toLowerCase()));
       setInitError(null);
       console.info("[auth] tenant context refresh completed", {
@@ -398,6 +416,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
                 setAppUserId(effectiveMe.appUserId || null);
                 setTenantRole(effectiveMe.tenantRole || null);
                 setTenantModules(effectiveMe.modules || null);
+                setEnabledTenantModules(normalizeEnabledModules(effectiveMe.enabledModules));
                 setPermissions((effectiveMe.permissions || []).map((permission) => permission.toLowerCase()));
                 storeSelectedTenant(resolved);
                 console.info("[auth] tenant bootstrap completed", {
@@ -470,6 +489,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       tenantRole,
       activeTenantMemberships,
       tenantModules,
+      enabledTenantModules,
       accessToken,
       initError,
       selectTenant: (tenant) => {
@@ -502,7 +522,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         }
       },
     }),
-    [initialized, authenticated, username, rolesUpper, permissions, selectedTenant, activeTenantMemberships, tenantModules, accessToken, initError, appUserId, tenantRole, clearSession, refreshTenantContext]
+    [initialized, authenticated, username, rolesUpper, permissions, selectedTenant, activeTenantMemberships, tenantModules, enabledTenantModules, accessToken, initError, appUserId, tenantRole, clearSession, refreshTenantContext]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

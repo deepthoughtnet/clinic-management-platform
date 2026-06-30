@@ -27,7 +27,9 @@ export const HELP_PAGE_ROUTES = [
   { path: "/pharmacy/dispensing", pageKey: "PHARMACY_DISPENSING", cmsPageKey: "DISPENSING", title: "Dispensing" },
   { path: "/dispensing", pageKey: "PHARMACY_DISPENSING", cmsPageKey: "DISPENSING", title: "Dispensing" },
   { path: "/pharmacy/pos", pageKey: "PHARMACY_POS", cmsPageKey: "PHARMACY_POS", title: "Pharmacy POS" },
-  { path: "/pharmacy/operations", pageKey: "PHARMACY_OPERATIONS", cmsPageKey: "PHARMACY_OPERATIONS", title: "Pharmacy Operations" },
+  { path: "/pharmacy/procurement", pageKey: "PHARMACY_PROCUREMENT", cmsPageKey: "PHARMACY_PROCUREMENT", title: "Procurement" },
+  { path: "/pharmacy/reconciliation", pageKey: "PHARMACY_RECONCILIATION", cmsPageKey: "PHARMACY_RECONCILIATION", title: "Reconciliation" },
+  { path: "/pharmacy/operations", pageKey: "PHARMACY_OPERATIONS", cmsPageKey: "PHARMACY_OPERATIONS", title: "Procurement" },
   { path: "/reports", pageKey: "REPORTS", cmsPageKey: "REPORTS", title: "Reports" },
   { path: "/laboratory", pageKey: "LABORATORY", cmsPageKey: "LABORATORY", title: "Laboratory" },
   { path: "/lab", pageKey: "LABORATORY", cmsPageKey: "LABORATORY", title: "Laboratory" },
@@ -145,6 +147,12 @@ export function resolveHelpRouteByPageKey(pageKey) {
   }
   if (normalized === "POS") {
     return HELP_PAGE_ROUTES.find((route) => route.path === "/pharmacy/pos") || null;
+  }
+  if (normalized === "PHARMACY_PROCUREMENT" || normalized === "PROCUREMENT") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/pharmacy/procurement") || null;
+  }
+  if (normalized === "PHARMACY_RECONCILIATION" || normalized === "RECONCILIATION") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/pharmacy/reconciliation") || null;
   }
   if (normalized === "LAB" || normalized === "LAB_OPERATIONS") {
     return HELP_PAGE_ROUTES.find((route) => route.path === "/laboratory") || null;

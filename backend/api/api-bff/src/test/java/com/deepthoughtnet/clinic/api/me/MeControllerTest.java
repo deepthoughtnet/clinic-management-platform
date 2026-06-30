@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.me.dto.MeResponse;
+import com.deepthoughtnet.clinic.api.platform.service.TenantModuleService;
 import com.deepthoughtnet.clinic.api.security.PermissionChecker;
 import com.deepthoughtnet.clinic.identity.service.ActiveTenantMembershipService;
 import com.deepthoughtnet.clinic.identity.service.PlatformTenantManagementService;
@@ -49,7 +50,9 @@ class MeControllerTest {
         ActiveTenantMembershipService membershipService = mock(ActiveTenantMembershipService.class);
         PlatformTenantManagementService tenantService = mock(PlatformTenantManagementService.class);
         PermissionChecker permissionChecker = mock(PermissionChecker.class);
+        TenantModuleService tenantModuleService = mock(TenantModuleService.class);
         when(permissionChecker.currentPermissions()).thenReturn(Set.of("dashboard.read"));
+        when(tenantModuleService.findForTenant(tenantId)).thenReturn(java.util.Map.of("APPOINTMENTS", true, "CONSULTATION", true));
         when(membershipService.listActiveMemberships(sub.toString(), "clinic.admin@clinic.local")).thenReturn(List.of(
                 new ActiveTenantMembershipRecord(
                         tenantId,
@@ -61,12 +64,14 @@ class MeControllerTest {
                 )
         ));
 
-        MeController controller = new MeController(membershipService, tenantService, permissionChecker);
+        MeController controller = new MeController(membershipService, tenantService, permissionChecker, tenantModuleService);
         MeResponse response = controller.me();
 
         assertThat(response.tenantId()).isEqualTo(tenantId.toString());
         assertThat(response.activeTenantMemberships()).hasSize(1);
         assertThat(response.memberships()).hasSize(1);
         assertThat(response.activeTenantMemberships().get(0).tenantId()).isEqualTo(tenantId.toString());
+        assertThat(response.enabledModules()).containsEntry("APPOINTMENTS", true);
+        assertThat(response.activeTenantMemberships().get(0).enabledModules()).containsEntry("CONSULTATION", true);
     }
 }

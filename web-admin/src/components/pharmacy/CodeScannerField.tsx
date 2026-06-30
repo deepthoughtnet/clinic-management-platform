@@ -61,12 +61,13 @@ export default function CodeScannerField({
       <CodeScannerDialog
         open={open}
         title={`Scan ${labelText}`}
-        description="Point the camera at a barcode or QR code. You can also type the code manually below."
+        description="Point the camera at a barcode or QR code. If camera access is blocked, upload an image or enter the code manually."
         value={value}
         onClose={() => setOpen(false)}
         onDetected={(code) => onChange(code.trim())}
         manualLabel="Scan or enter code"
         manualPlaceholder="barcode / QR code"
+        uploadLabel="Upload code image"
       />
     </>
   );

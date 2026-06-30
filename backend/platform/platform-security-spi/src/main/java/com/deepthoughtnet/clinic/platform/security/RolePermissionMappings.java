@@ -296,6 +296,9 @@ public final class RolePermissionMappings {
             Permissions.PRESCRIPTION_PRINT,
             Permissions.MEDICINE_READ,
             Permissions.BILLING_CREATE,
+            Permissions.BILLING_READ,
+            Permissions.BILLING_RECEIPT,
+            Permissions.PAYMENT_COLLECT,
             Permissions.INVENTORY_READ,
             Permissions.INVENTORY_MANAGE,
             Permissions.REPORT_READ

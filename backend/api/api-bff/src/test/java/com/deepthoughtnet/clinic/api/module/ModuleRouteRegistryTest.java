@@ -17,6 +17,24 @@ class ModuleRouteRegistryTest {
     }
 
     @Test
+    void mapsLaboratoryApiPathToLaboratoryModule() {
+        ModuleRouteRegistry registry = new ModuleRouteRegistry();
+
+        String moduleKey = registry.moduleForPath("/api/lab/orders");
+
+        assertThat(moduleKey).isEqualTo(SaasModuleCode.LABORATORY.name());
+    }
+
+    @Test
+    void mapsReportsApiPathToReportsModule() {
+        ModuleRouteRegistry registry = new ModuleRouteRegistry();
+
+        String moduleKey = registry.moduleForPath("/api/reports/summary");
+
+        assertThat(moduleKey).isEqualTo(SaasModuleCode.REPORTS.name());
+    }
+
+    @Test
     void returnsNullForUnknownPath() {
         ModuleRouteRegistry registry = new ModuleRouteRegistry();
 

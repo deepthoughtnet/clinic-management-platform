@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -33,16 +34,23 @@ type CodeScannerDialogProps = {
   onDetected: (code: string) => void | Promise<void>;
   manualLabel?: string;
   manualPlaceholder?: string;
+  uploadLabel?: string;
 };
+
+function supportsSecureLocalCamera() {
+  if (typeof window === "undefined") return false;
+  const hostname = window.location.hostname;
+  return window.isSecureContext || hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
 
 function cameraUnavailableMessage(name?: string) {
   if (name === "NotAllowedError" || name === "SecurityError") {
-    return "Camera access is required for scanning. You can enter the code manually.";
+    return "Camera permission required. You can also upload an image.";
   }
   if (name === "NotFoundError" || name === "OverconstrainedError" || name === "DevicesNotFoundError") {
-    return "No camera found. Please enter the code manually.";
+    return "No camera found. Camera permission required. You can also upload an image.";
   }
-  return "Unable to start the camera. You can enter the code manually.";
+  return "Unable to start the camera. Camera permission required. You can also upload an image.";
 }
 
 export default function CodeScannerDialog({
@@ -54,15 +62,18 @@ export default function CodeScannerDialog({
   onDetected,
   manualLabel = "Manual entry",
   manualPlaceholder = "barcode / QR code",
+  uploadLabel = "Upload image",
 }: CodeScannerDialogProps) {
   const [cameraState, setCameraState] = React.useState<"idle" | "starting" | "scanning" | "error">("idle");
   const [scanError, setScanError] = React.useState<string | null>(null);
   const [manualCode, setManualCode] = React.useState(value || "");
   const [lastScannedCode, setLastScannedCode] = React.useState<string | null>(null);
   const [scanStatus, setScanStatus] = React.useState("Align the code inside the frame.");
+  const [uploadingImage, setUploadingImage] = React.useState(false);
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const controlsRef = React.useRef<IScannerControls | null>(null);
   const handledRef = React.useRef(false);
+  const uploadInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const stopScanner = React.useCallback(() => {
     handledRef.current = false;
@@ -103,9 +114,15 @@ export default function CodeScannerDialog({
       setScanStatus("Starting camera...");
       setCameraState("starting");
 
+      if (!supportsSecureLocalCamera()) {
+        setCameraState("error");
+        setScanError("Camera permission required. You can also upload an image.");
+        return;
+      }
+
       if (!navigator.mediaDevices?.getUserMedia) {
         setCameraState("error");
-        setScanError("No camera found. Please enter the code manually.");
+        setScanError("Camera permission required. You can also upload an image.");
         return;
       }
 
@@ -124,7 +141,7 @@ export default function CodeScannerDialog({
         reader.possibleFormats = SCAN_FORMATS;
         if (!videoRef.current) {
           setCameraState("error");
-          setScanError("Unable to start the camera. You can enter the code manually.");
+          setScanError("Unable to start the camera. Camera permission required. You can also upload an image.");
           return;
         }
         setCameraState("scanning");
@@ -172,6 +189,43 @@ export default function CodeScannerDialog({
     };
   }, [closeDialog, open, stopScanner]);
 
+  const handleImageUpload = React.useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setUploadingImage(true);
+    setScanError(null);
+    setScanStatus("Scanning uploaded image...");
+    stopScanner();
+
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const hints = new Map<DecodeHintType, unknown>([
+        [DecodeHintType.POSSIBLE_FORMATS, SCAN_FORMATS],
+        [DecodeHintType.TRY_HARDER, true],
+      ]);
+      const reader = new BrowserMultiFormatReader(hints);
+      const result = await reader.decodeFromImageUrl(objectUrl);
+      const code = result.getText().trim();
+      if (!code) {
+        setScanError("No barcode or QR code was detected in the uploaded image.");
+        setScanStatus("No code detected.");
+        return;
+      }
+      setLastScannedCode(code);
+      setManualCode(code);
+      setScanStatus(`Detected code: ${code}`);
+      acceptCode(code);
+    } catch {
+      setScanError("No barcode or QR code was detected in the uploaded image.");
+      setScanStatus("No code detected.");
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+      setUploadingImage(false);
+    }
+  }, [acceptCode, stopScanner]);
+
   return (
     <Dialog open={open} onClose={closeDialog} fullWidth maxWidth="sm">
       <DialogTitle>{title}</DialogTitle>
@@ -179,6 +233,11 @@ export default function CodeScannerDialog({
         <Stack spacing={2} sx={{ pt: 1 }}>
           {description ? <Typography variant="body2" color="text.secondary">{description}</Typography> : null}
           {scanError ? <Alert severity="error">{scanError}</Alert> : null}
+          {!scanError ? (
+            <Alert severity="info" sx={{ py: 0 }}>
+              Camera permission required. You can also upload an image.
+            </Alert>
+          ) : null}
           <Box
             sx={{
               position: "relative",
@@ -202,7 +261,37 @@ export default function CodeScannerDialog({
                 {cameraState === "starting" ? "Starting camera..." : "Manual entry available"}
               </Typography>
             ) : null}
+            {uploadingImage ? (
+              <Stack
+                spacing={1}
+                alignItems="center"
+                sx={{
+                  position: "absolute",
+                  inset: 0,
+                  justifyContent: "center",
+                  bgcolor: "rgba(0, 0, 0, 0.58)",
+                }}
+              >
+                <CircularProgress size={28} color="inherit" />
+                <Typography variant="body2" color="common.white">Reading uploaded image...</Typography>
+              </Stack>
+            ) : null}
           </Box>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            <Button variant="outlined" onClick={() => uploadInputRef.current?.click()} disabled={uploadingImage}>
+              {uploadLabel}
+            </Button>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              hidden
+              accept="image/*"
+              onChange={handleImageUpload}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ alignSelf: "center" }}>
+              Upload a barcode or QR image when camera access is blocked or unavailable.
+            </Typography>
+          </Stack>
           <Stack spacing={0.5}>
             <Typography variant="caption" color="text.secondary">
               Last scanned code
