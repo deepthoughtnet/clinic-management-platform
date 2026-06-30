@@ -31,7 +31,7 @@ import {
 import ExpandMoreRounded from "@mui/icons-material/ExpandMoreRounded";
 import MoreHorizRounded from "@mui/icons-material/MoreHorizRounded";
 import { useAuth } from "../../auth/useAuth";
-import { CompactEmptyState, compactAccordionSx, compactCardContentSx, compactFormGridSx, compactFormSx } from "../../components/compact/CompactUi";
+import { CompactEmptyState, WorkflowGuide, compactAccordionSx, compactCardContentSx, compactFormGridSx, compactFormSx } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import RequiredLabel from "../../components/forms/RequiredLabel";
 import ConfigurableGrid, { type ConfigurableGridColumn } from "../../shared/components/configurable-grid/ConfigurableGrid";
@@ -680,6 +680,18 @@ export default function MedicineMasterPage() {
           Read-only access is available for auditors and other limited roles. Add Medicine and CSV upload are restricted to Clinic Admin and Pharmacy roles with inventory manage permission.
         </Alert>
       ) : null}
+
+      <WorkflowGuide
+        title="Medicine Workflow"
+        subtitle="Maintain the catalogue first, then receive stock and dispense against live batches."
+        steps={[
+          { label: "Search / Filter" },
+          { label: "Add Medicine", tone: "primary" },
+          { label: "Advanced Details" },
+          { label: "Stock Entry" },
+          { label: "Dispense / POS" },
+        ]}
+      />
 
       <Card>
         <CardContent sx={{ py: 1 }}>

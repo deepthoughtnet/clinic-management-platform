@@ -1,5 +1,5 @@
 import * as React from "react";
-import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Box, Button, Paper, Typography } from "@mui/material";
 
 import AppShell from "../layout/AppShell";
@@ -265,82 +265,112 @@ function HomeRedirect() {
 function PharmacyOperationsLegacyRedirect() {
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
-  const target = searchParams.get("tab") === "reconciliation" ? "/pharmacy/reconciliation" : "/pharmacy/procurement";
+  const target = searchParams.get("tab") === "reconciliation"
+    ? "/pharmacy/reconciliation"
+    : "/pharmacy/procurement";
   return <Navigate to={target} replace />;
+}
+
+function PathnameKeyedRoute({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  return <React.Fragment key={location.pathname}>{children}</React.Fragment>;
 }
 
 function AuthedApp() {
   const location = useLocation();
+  const navigate = useNavigate();
 
   React.useEffect(() => {
     document.title = `${formatPageTitle(location.pathname)} | ${branding.productName}`;
   }, [location.pathname]);
+
+  React.useEffect(() => {
+    if (location.pathname === "/pharmacy/procurement") return;
+    if (!location.search) return;
+
+    const nextSearch = new URLSearchParams(location.search);
+    let changed = false;
+    for (const key of ["workspace", "workflow", "focus", "mode"]) {
+      if (nextSearch.has(key)) {
+        nextSearch.delete(key);
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+    navigate({
+      pathname: location.pathname,
+      search: nextSearch.toString() ? `?${nextSearch.toString()}` : "",
+    }, { replace: true });
+  }, [location.pathname, location.search, navigate]);
 
   return (
     <HelpProvider>
       <AppShell>
         <Routes>
         <Route path="/" element={<HomeRedirect />} />
-        <Route path="/dashboard" element={<FeatureGate featureId="clinic-dashboard" title="Clinic dashboard unavailable"><DashboardPage /></FeatureGate>} />
-        <Route path="/pharmacy/dashboard" element={<FeatureGate featureId="pharmacy-dashboard" title="Pharmacy dashboard unavailable"><PharmacyDashboardPage /></FeatureGate>} />
-        <Route path="/patients" element={<FeatureGate featureId="patients"><PatientsPage /></FeatureGate>} />
-        <Route path="/patients/new" element={<FeatureGate featureId="patients"><PatientFormPage mode="create" /></FeatureGate>} />
-        <Route path="/patients/:id" element={<FeatureGate featureId="patients"><PatientDetailPage /></FeatureGate>} />
-        <Route path="/patients/:id/edit" element={<FeatureGate featureId="patients"><PatientFormPage mode="edit" /></FeatureGate>} />
-        <Route path="/appointments" element={<FeatureGate featureId="appointments"><AppointmentsPage /></FeatureGate>} />
-        <Route path="/appointments/day-board" element={<FeatureGate featureId="day-board"><DayBoardPage /></FeatureGate>} />
-        <Route path="/queue" element={<FeatureGate featureId="queue"><QueuePage /></FeatureGate>} />
-        <Route path="/consultations" element={<FeatureGate featureId="consultations"><ConsultationsPage /></FeatureGate>} />
+        <Route path="/dashboard" element={<PathnameKeyedRoute><FeatureGate featureId="clinic-dashboard" title="Clinic dashboard unavailable"><DashboardPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/dashboard" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-dashboard" title="Pharmacy dashboard unavailable"><PharmacyDashboardPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/patients" element={<PathnameKeyedRoute><FeatureGate featureId="patients"><PatientsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/patients/new" element={<PathnameKeyedRoute><FeatureGate featureId="patients"><PatientFormPage mode="create" /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/patients/:id" element={<PathnameKeyedRoute><FeatureGate featureId="patients"><PatientDetailPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/patients/:id/edit" element={<PathnameKeyedRoute><FeatureGate featureId="patients"><PatientFormPage mode="edit" /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/appointments" element={<PathnameKeyedRoute><FeatureGate featureId="appointments"><AppointmentsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/appointments/day-board" element={<PathnameKeyedRoute><FeatureGate featureId="day-board"><DayBoardPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/queue" element={<PathnameKeyedRoute><FeatureGate featureId="queue"><QueuePage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/consultations" element={<PathnameKeyedRoute><FeatureGate featureId="consultations"><ConsultationsPage /></FeatureGate></PathnameKeyedRoute>} />
         <Route
           path="/consultations/:id"
           element={
-            <FeatureGate featureId="consultations">
-              <TenantRoleGate rolesAny={["DOCTOR"]}>
-                <ConsultationWorkspacePage />
-              </TenantRoleGate>
-            </FeatureGate>
+            <PathnameKeyedRoute>
+              <FeatureGate featureId="consultations">
+                <TenantRoleGate rolesAny={["DOCTOR"]}>
+                  <ConsultationWorkspacePage />
+                </TenantRoleGate>
+              </FeatureGate>
+            </PathnameKeyedRoute>
           }
         />
-        <Route path="/prescriptions" element={<FeatureGate featureId="prescriptions"><PrescriptionsPage /></FeatureGate>} />
-        <Route path="/billing" element={<FeatureGate featureId="billing"><BillsPage /></FeatureGate>} />
-        <Route path="/finance/cash-counter" element={<FeatureGate featureId="cash-counter"><CashCounterPage /></FeatureGate>} />
-        <Route path="/finance/payments" element={<FeatureGate featureId="payments"><PaymentsPage /></FeatureGate>} />
-        <Route path="/finance/refunds" element={<FeatureGate featureId="refunds"><RefundsPage /></FeatureGate>} />
-        <Route path="/notifications" element={<FeatureGate featureId="notifications"><NotificationsPage /></FeatureGate>} />
-        <Route path="/vaccinations" element={<FeatureGate featureId="vaccinations"><VaccinationsPage /></FeatureGate>} />
-        <Route path="/inventory" element={<FeatureGate featureId="inventory"><InventoryPage /></FeatureGate>} />
-        <Route path="/pharmacy/inventory" element={<FeatureGate featureId="inventory"><InventoryPage /></FeatureGate>} />
-        <Route path="/pharmacy/procurement" element={<FeatureGate featureId="pharmacy-procurement"><PharmacyOperationsPage /></FeatureGate>} />
-        <Route path="/pharmacy/reconciliation" element={<FeatureGate featureId="pharmacy-reconciliation"><PharmacyOperationsPage /></FeatureGate>} />
+        <Route path="/prescriptions" element={<PathnameKeyedRoute><FeatureGate featureId="prescriptions"><PrescriptionsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/billing" element={<PathnameKeyedRoute><FeatureGate featureId="billing"><BillsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/finance/cash-counter" element={<PathnameKeyedRoute><FeatureGate featureId="cash-counter"><CashCounterPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/finance/payments" element={<PathnameKeyedRoute><FeatureGate featureId="payments"><PaymentsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/finance/refunds" element={<PathnameKeyedRoute><FeatureGate featureId="refunds"><RefundsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/notifications" element={<PathnameKeyedRoute><FeatureGate featureId="notifications"><NotificationsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/vaccinations" element={<PathnameKeyedRoute><FeatureGate featureId="vaccinations"><VaccinationsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/inventory" element={<PathnameKeyedRoute><FeatureGate featureId="inventory"><InventoryPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/inventory" element={<PathnameKeyedRoute><FeatureGate featureId="inventory"><InventoryPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/procurement" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-procurement"><PharmacyOperationsPage mode="procurement" /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/reconciliation" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-reconciliation"><PharmacyOperationsPage mode="reconciliation" /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/pharmacy/operations" element={<PharmacyOperationsLegacyRedirect />} />
-        <Route path="/pharmacy/pos" element={<FeatureGate featureId="pharmacy-pos"><PharmacyPosPage /></FeatureGate>} />
-        <Route path="/pharmacy/medicine-master" element={<FeatureGate featureId="pharmacy-medicines"><MedicineMasterPage /></FeatureGate>} />
-        <Route path="/pharmacy/medicines" element={<FeatureGate featureId="pharmacy-medicines"><MedicineMasterPage /></FeatureGate>} />
-        <Route path="/pharmacy/stock-movements" element={<FeatureGate featureId="pharmacy-stock-movements"><StockMovementsPage /></FeatureGate>} />
-        <Route path="/pharmacy/dispensing" element={<FeatureGate featureId="pharmacy-dispensing"><DispensingPage /></FeatureGate>} />
-        <Route path="/reports" element={<FeatureGate featureId="reports"><ReportsPage /></FeatureGate>} />
-        <Route path="/lab" element={<FeatureGate featureId="laboratory" title="Laboratory dashboard unavailable"><LabPage /></FeatureGate>} />
-        <Route path="/platform/tenants" element={<PlatformAdminGate><TenantsPage /></PlatformAdminGate>} />
-        <Route path="/platform/help" element={<PlatformAdminGate><HelpCmsPage /></PlatformAdminGate>} />
-        <Route path="/platform/tenants/:tenantId" element={<TenantDetailPage />} />
-        <Route path="/platform/plans" element={<PlansModulesPage />} />
-        <Route path="/carepilot/campaigns" element={<ModuleGate moduleKey="carePilot"><CampaignsPage /></ModuleGate>} />
-        <Route path="/carepilot/analytics" element={<ModuleGate moduleKey="carePilot"><AnalyticsPage /></ModuleGate>} />
-        <Route path="/carepilot/ops" element={<ModuleGate moduleKey="carePilot"><OpsConsolePage /></ModuleGate>} />
-        <Route path="/carepilot/messaging" element={<ModuleGate moduleKey="carePilot"><MessagingPage /></ModuleGate>} />
-        <Route path="/carepilot/engagement" element={<ModuleGate moduleKey="carePilot"><PatientEngagementPage /></ModuleGate>} />
-        <Route path="/carepilot/reminders" element={<ModuleGate moduleKey="carePilot"><RemindersPage /></ModuleGate>} />
-        <Route path="/carepilot/leads" element={<ModuleGate moduleKey="carePilot"><LeadsPage /></ModuleGate>} />
-        <Route path="/carepilot/webinars" element={<ModuleGate moduleKey="carePilot"><WebinarsPage /></ModuleGate>} />
-        <Route path="/carepilot/ai-calls" element={<ModuleGate moduleKey="carePilot"><AiCallsPage /></ModuleGate>} />
-        <Route path="/carepilot/ai-receptionist/active-conversations" element={<ModuleGate moduleKey="carePilot"><ActiveConversationsPage /></ModuleGate>} />
-        <Route path="/carepilot/ai-receptionist/callback-queue" element={<ModuleGate moduleKey="carePilot"><CallbackQueuePage /></ModuleGate>} />
-        <Route path="/carepilot/ai-receptionist/escalation-queue" element={<ModuleGate moduleKey="carePilot"><EscalationQueuePage /></ModuleGate>} />
-        <Route path="/carepilot/ai-receptionist/appointment-handoffs" element={<ModuleGate moduleKey="carePilot"><AppointmentHandoffsPage /></ModuleGate>} />
-        <Route path="/carepilot/receptionist-queue" element={<ModuleGate moduleKey="carePilot"><ReceptionistQueuePage /></ModuleGate>} />
+        <Route path="/pharmacy/pos" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-pos"><PharmacyPosPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/medicine-master" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-medicines"><MedicineMasterPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/medicines" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-medicines"><MedicineMasterPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/stock-movements" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-stock-movements"><StockMovementsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/dispensing" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-dispensing"><DispensingPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/reports" element={<PathnameKeyedRoute><FeatureGate featureId="reports"><ReportsPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/lab" element={<PathnameKeyedRoute><FeatureGate featureId="laboratory" title="Laboratory dashboard unavailable"><LabPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/platform/tenants" element={<PathnameKeyedRoute><PlatformAdminGate><TenantsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/help" element={<PathnameKeyedRoute><PlatformAdminGate><HelpCmsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
+        <Route path="/platform/tenants/:tenantId" element={<PathnameKeyedRoute><TenantDetailPage /></PathnameKeyedRoute>} />
+        <Route path="/platform/plans" element={<PathnameKeyedRoute><PlansModulesPage /></PathnameKeyedRoute>} />
+        <Route path="/carepilot/campaigns" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><CampaignsPage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/analytics" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><AnalyticsPage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/ops" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><OpsConsolePage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/messaging" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><MessagingPage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/engagement" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><PatientEngagementPage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/reminders" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><RemindersPage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/leads" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><LeadsPage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/webinars" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><WebinarsPage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/ai-calls" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><AiCallsPage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/ai-receptionist/active-conversations" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><ActiveConversationsPage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/ai-receptionist/callback-queue" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><CallbackQueuePage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/ai-receptionist/escalation-queue" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><EscalationQueuePage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/ai-receptionist/appointment-handoffs" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><AppointmentHandoffsPage /></ModuleGate></PathnameKeyedRoute>} />
+        <Route path="/carepilot/receptionist-queue" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><ReceptionistQueuePage /></ModuleGate></PathnameKeyedRoute>} />
         <Route
           path="/platform/users"
-          element={<PlaceholderPage title="Users / Admins" description="Platform user administration can be enabled when backend APIs are exposed." />}
+          element={<PathnameKeyedRoute><PlaceholderPage title="Users / Admins" description="Platform user administration can be enabled when backend APIs are exposed." /></PathnameKeyedRoute>}
         />
         <Route path="/settings" element={<Navigate to="/settings/clinic-profile" replace />} />
         <Route path="/settings/clinic-profile" element={<ClinicProfilePage />} />
@@ -364,11 +394,11 @@ function AuthedApp() {
 function formatPageTitle(pathname: string): string {
   if (pathname === "/" || pathname === "/dashboard") return branding.productName;
   if (pathname === "/login") return `${branding.productName} Admin Console`;
-  if (pathname.startsWith("/patient")) return "Patient Portal";
+  if (pathname === "/patients" || pathname.startsWith("/patients/")) return "Patient Portal";
   if (pathname === "/pharmacy/procurement") return "Procurement";
   if (pathname === "/pharmacy/reconciliation") return "Reconciliation";
   if (pathname === "/pharmacy/pos") return "POS Sale";
-  if (pathname.startsWith("/pharmacy/operations")) return "Procurement";
+  if (pathname === "/pharmacy/operations") return "Procurement";
   const leaf = pathname.split("/").filter(Boolean).at(-1) || "Dashboard";
   return leaf.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }

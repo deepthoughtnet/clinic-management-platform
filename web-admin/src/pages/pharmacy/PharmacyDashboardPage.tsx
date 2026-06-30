@@ -37,11 +37,13 @@ import {
   getPharmacyDashboard,
   getCurrentPharmacyPosShift,
   listPharmacyPosSales,
+  listSuppliers,
   listReconciliations,
   type Medicine,
   type PharmacyAnalytics,
   type PharmacyDashboard,
   type PharmacyReconciliation,
+  type Supplier,
 } from "../../api/clinicApi";
 import { isActiveDispenseStatus } from "./dispensingPageUtils.js";
 
@@ -74,6 +76,7 @@ export default function PharmacyDashboardPage() {
   const [queue, setQueue] = React.useState<Array<{ prescriptionId: string; prescriptionNumber: string; patientName: string | null; doctorName: string | null; prescriptionTimestamp: string | null; status?: string | null; lines: Array<{ prescribedMedicineName: string; status: string; availabilityStatus: string; expiryStatus: string; }> }>>([]);
   const [reconciliations, setReconciliations] = React.useState<PharmacyReconciliation[]>([]);
   const [medicines, setMedicines] = React.useState<Medicine[]>([]);
+  const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
   const [salesCount, setSalesCount] = React.useState(0);
   const [hasOpenShift, setHasOpenShift] = React.useState(false);
 
@@ -85,13 +88,14 @@ export default function PharmacyDashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [dashboardRow, analyticsRow, queueRows, reconciliationRows, medicineRows, saleRows] = await Promise.all([
+      const [dashboardRow, analyticsRow, queueRows, reconciliationRows, medicineRows, saleRows, supplierRows] = await Promise.all([
         getPharmacyDashboard(auth.accessToken, auth.tenantId),
         getPharmacyAnalytics(auth.accessToken, auth.tenantId),
         getDispensingQueue(auth.accessToken, auth.tenantId),
         listReconciliations(auth.accessToken, auth.tenantId),
         getMedicines(auth.accessToken, auth.tenantId),
         listPharmacyPosSales(auth.accessToken, auth.tenantId),
+        listSuppliers(auth.accessToken, auth.tenantId),
       ]);
       const currentShift = await getCurrentPharmacyPosShift(auth.accessToken, auth.tenantId);
       setDashboard(dashboardRow);
@@ -100,6 +104,7 @@ export default function PharmacyDashboardPage() {
       setReconciliations(reconciliationRows);
       setMedicines(medicineRows);
       setSalesCount(saleRows.length);
+      setSuppliers(supplierRows);
       setHasOpenShift(Boolean(currentShift));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load pharmacy dashboard");
@@ -127,11 +132,12 @@ export default function PharmacyDashboardPage() {
   const pendingDispenseCount = queue.filter((row) => isActiveDispenseStatus(row.status) || row.lines.some((line) => line.status === "NOT_DISPENSED" || line.status === "READY_FOR_DISPENSE" || line.status === "PARTIALLY_DISPENSED")).length;
   const dispensedTodayCount = dashboard?.todayDispensedCount ?? 0;
   const isBrandNewTenant = !loading && (medicines.length === 0 || (dashboard?.stockBatchesCount ?? 0) === 0 || salesCount === 0);
+  const supplierCount = suppliers.length;
   const tenantRole = (auth.tenantRole || "").toUpperCase();
   const setupSteps = React.useMemo(() => ([
     { label: "Create staff", done: Boolean(auth.tenantId), action: () => navigate("/settings/users-roles"), cta: "Users & Roles" },
     { label: "Add medicines", done: medicines.length > 0, action: () => navigate("/pharmacy/medicines"), cta: "Medicine Master" },
-    { label: "Receive stock", done: (dashboard?.stockBatchesCount ?? 0) > 0, action: () => navigate("/pharmacy/procurement"), cta: "Receive Stock" },
+    { label: "Receive via Procurement", done: (dashboard?.stockBatchesCount ?? 0) > 0, action: () => navigate("/pharmacy/procurement"), cta: "Receive via Procurement" },
     { label: "Open POS shift", done: hasOpenShift, action: () => navigate("/pharmacy/pos"), cta: "Open POS" },
     { label: "Complete first sale", done: salesCount > 0, action: () => navigate("/pharmacy/pos"), cta: "POS Sale" },
   ]), [auth.tenantId, dashboard?.stockBatchesCount, hasOpenShift, medicines.length, navigate, salesCount]);
@@ -139,12 +145,15 @@ export default function PharmacyDashboardPage() {
   const setupProgress = Math.round((setupDoneCount / setupSteps.length) * 100);
   const quickActions = React.useMemo(() => ([
     { label: "Add Medicine", icon: <MedicationRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/medicines") },
-    { label: "Receive Stock", icon: <Inventory2RoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/procurement") },
+    { label: "Add Supplier", icon: <Inventory2RoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/procurement?workspace=suppliers&focus=supplier") },
+    { label: "Create PO", icon: <AssessmentRoundedIcon fontSize="small" />, action: () => navigate(supplierCount === 0 ? "/pharmacy/procurement?workspace=suppliers&focus=supplier" : "/pharmacy/procurement?workspace=purchase-orders") },
+    { label: "Receive via Procurement", icon: <Inventory2RoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/procurement?workspace=purchase-orders") },
+    { label: "Direct Goods Receipt", icon: <Inventory2RoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/procurement?workspace=goods-receipt&mode=direct") },
     { label: "POS Sale", icon: <LocalPharmacyRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/pos") },
     { label: "Procurement", icon: <AssessmentRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/procurement") },
     { label: "Reconciliation", icon: <AssessmentRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/reconciliation") },
     { label: "Reports & Audit", icon: <ReceiptLongRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/stock-movements") },
-  ]), [navigate]);
+  ]), [navigate, supplierCount]);
 
   return (
     <Stack spacing={1.5}>
@@ -193,7 +202,8 @@ export default function PharmacyDashboardPage() {
           </Grid>
           <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
             <Button size="small" variant="contained" onClick={() => navigate("/pharmacy/medicines")}>Add Medicine</Button>
-            <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/procurement")}>Receive Stock</Button>
+            <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/procurement?workspace=purchase-orders")}>Receive via Procurement</Button>
+            <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/procurement?workspace=goods-receipt&mode=direct")}>Direct Goods Receipt</Button>
             <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/pos")}>Open POS</Button>
           </Stack>
         </CompactFilterCard>

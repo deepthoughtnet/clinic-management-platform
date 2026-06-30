@@ -49,6 +49,7 @@ import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
 import MedicalServicesRoundedIcon from "@mui/icons-material/MedicalServicesRounded";
 import ShoppingCartCheckoutRoundedIcon from "@mui/icons-material/ShoppingCartCheckoutRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
+import { WorkflowGuide } from "../../components/compact/CompactUi";
 import CodeScannerDialog from "../../components/pharmacy/CodeScannerDialog";
 import RequiredLabel from "../../components/forms/RequiredLabel.js";
 import { useNavigate } from "react-router-dom";
@@ -1649,6 +1650,18 @@ export default function PharmacyPosPage() {
       {saleValidationMessage ? <Alert severity="warning" sx={{ py: 0.5 }}>{saleValidationMessage}</Alert> : null}
       {cartHasStockIssue ? <Alert severity="warning">Some cart line values need correction. Review the highlighted fields before completing the sale.</Alert> : null}
 
+      <WorkflowGuide
+        title="POS Workflow"
+        subtitle="Search medicine, build the cart, then complete checkout only after a shift is open."
+        steps={[
+          { label: "Search" },
+          { label: "Cart" },
+          { label: "Checkout", helper: "Paid Amount inside" },
+          { label: "Shift" },
+          { label: "Receipt" },
+        ]}
+      />
+
       <Grid container spacing={1.25}>
         <Grid size={{ xs: 12, lg: 8.4 }}>
           <Stack spacing={1.25}>
@@ -1774,7 +1787,7 @@ export default function PharmacyPosPage() {
                               {!loading && canManageInventory ? (
                                 <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                                   <Button size="small" variant="contained" onClick={() => navigate("/pharmacy/medicines")}>Add Medicine</Button>
-                                  <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/procurement")}>Receive Stock</Button>
+                                  <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/procurement")}>Receive via Procurement</Button>
                                 </Stack>
                               ) : null}
                             </Stack>

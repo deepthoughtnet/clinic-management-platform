@@ -58,6 +58,86 @@ export const compactFormGridSx = {
   mt: 0.25,
 } as const;
 
+export type WorkflowGuideStep = {
+  label: React.ReactNode;
+  helper?: React.ReactNode;
+  tone?: ChipProps["color"];
+};
+
+type WorkflowGuideProps = {
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
+  steps: WorkflowGuideStep[];
+};
+
+export function WorkflowGuide({ title, subtitle, steps }: WorkflowGuideProps) {
+  return (
+    <CompactFilterCard title={title} subtitle={subtitle}>
+      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
+        {steps.map((step, index) => (
+          <React.Fragment key={typeof step.label === "string" ? `${step.label}-${index}` : index}>
+            {index > 0 ? (
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, px: 0.25 }}>
+                →
+              </Typography>
+            ) : null}
+            <Box sx={{ display: "grid", justifyItems: "center", gap: 0.25 }}>
+              <Chip size="small" label={step.label} color={step.tone || "default"} variant="outlined" sx={compactChipSx} />
+              {step.helper ? (
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.1, textAlign: "center" }}>
+                  {step.helper}
+                </Typography>
+              ) : null}
+            </Box>
+          </React.Fragment>
+        ))}
+      </Stack>
+    </CompactFilterCard>
+  );
+}
+
+export type WorkflowDependency = {
+  key: string;
+  label: React.ReactNode;
+  isMet: boolean;
+  cta?: React.ReactNode;
+  helper?: React.ReactNode;
+};
+
+type WorkflowDependencyGateProps = {
+  requirements: WorkflowDependency[];
+  title?: React.ReactNode;
+  subtitle?: React.ReactNode;
+  children: React.ReactNode;
+};
+
+export function WorkflowDependencyGate({ requirements, title = "Workflow prerequisites", subtitle, children }: WorkflowDependencyGateProps) {
+  const unmet = requirements.filter((requirement) => !requirement.isMet);
+  if (!unmet.length) {
+    return <>{children}</>;
+  }
+
+  return (
+    <CompactFilterCard title={title} subtitle={subtitle}>
+      <Stack spacing={0.75}>
+        {unmet.map((requirement) => (
+          <Stack key={requirement.key} spacing={0.35}>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>
+              {requirement.label}
+            </Typography>
+            {requirement.helper ? (
+              <Typography variant="caption" color="text.secondary">
+                {requirement.helper}
+              </Typography>
+            ) : null}
+            {requirement.cta}
+          </Stack>
+        ))}
+      </Stack>
+    </CompactFilterCard>
+  );
+}
+
 type CompactStatCardProps = {
   label: string;
   value: React.ReactNode;

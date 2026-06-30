@@ -65,7 +65,19 @@ export type SidebarNavProps = {
 function isActivePath(current: string, path: string): boolean {
   const normalizedPath = path.split("?")[0] || path;
   if (normalizedPath === "/") return current === "/" || current === "/dashboard";
-  return current === normalizedPath || current.startsWith(`${normalizedPath}/`);
+
+  const prefixMatchPaths = new Set([
+    "/patients",
+    "/appointments",
+    "/consultations",
+    "/platform/tenants",
+  ]);
+
+  if (prefixMatchPaths.has(normalizedPath)) {
+    return current === normalizedPath || current.startsWith(`${normalizedPath}/`);
+  }
+
+  return current === normalizedPath;
 }
 
 function iconFor(key: string): React.ReactNode {

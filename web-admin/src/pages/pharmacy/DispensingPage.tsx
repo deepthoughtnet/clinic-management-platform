@@ -24,7 +24,7 @@ import {
 import ClearRoundedIcon from "@mui/icons-material/ClearRounded";
 import LocalPharmacyRoundedIcon from "@mui/icons-material/LocalPharmacyRounded";
 import { useAuth } from "../../auth/useAuth";
-import { CompactStatCard } from "../../components/compact/CompactUi";
+import { CompactStatCard, WorkflowGuide } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import RequiredLabel from "../../components/forms/RequiredLabel";
 import CommentSuggestions from "../../shared/components/comment-suggestions/CommentSuggestions";
@@ -515,6 +515,18 @@ export default function DispensingPage() {
         <Grid size={{ xs: 12, sm: 6, md: 3 }}><CompactStatCard label="Partial" value={summary.partial} helper="Partially dispensed" onClick={() => setQueueFilter("PARTIAL")} /></Grid>
         <Grid size={{ xs: 12, sm: 6, md: 3 }}><CompactStatCard label="Out of stock" value={summary.outOfStock} helper="Rows with no inventory" onClick={() => setQueueFilter("OUT_OF_STOCK")} /></Grid>
       </Grid>
+
+      <WorkflowGuide
+        title="Dispense Workflow"
+        subtitle="Move from queue review to line-level dispense actions and final status posting."
+        steps={[
+          { label: "Queued" },
+          { label: "Review" },
+          { label: "Dispense" },
+          { label: "Audit" },
+          { label: "Posted" },
+        ]}
+      />
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 

@@ -32,6 +32,7 @@ import {
   TableRow,
   TableContainer,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
@@ -41,7 +42,7 @@ import CameraAltRoundedIcon from "@mui/icons-material/CameraAltRounded";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/useAuth";
-import { CompactEmptyState, CompactFilterCard, CompactStatCard, compactAccordionSx, compactCardContentSx, compactFormSx } from "../../components/compact/CompactUi";
+import { CompactEmptyState, CompactFilterCard, CompactStatCard, WorkflowGuide, compactAccordionSx, compactCardContentSx, compactFormSx } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import CodeScannerDialog from "../../components/pharmacy/CodeScannerDialog";
 import RequiredLabel from "../../components/forms/RequiredLabel.js";
@@ -49,7 +50,6 @@ import CommentSuggestions from "../../shared/components/comment-suggestions/Comm
 import { FieldHelpTooltip } from "../../shared/components/help";
 import { getFieldHelpText } from "../../shared/components/help/fieldHelpCatalog";
 import {
-  inventoryBatchCreateSchema,
   inventoryBatchEditSchema,
   inventoryCustomerReturnSchema,
   inventoryPhysicalCountSchema,
@@ -61,7 +61,6 @@ import {
 import {
   createInventoryTransaction,
   createMedicine,
-  createStock,
   getInventoryLocations,
   getInventoryTransactions,
   getLowStock,
@@ -378,6 +377,7 @@ export default function InventoryPage() {
   const [vendorReturnFieldErrors, setVendorReturnFieldErrors] = React.useState<FormErrorMap>({});
   const [writeOffFieldErrors, setWriteOffFieldErrors] = React.useState<FormErrorMap>({});
   const [quickMedicineFieldErrors, setQuickMedicineFieldErrors] = React.useState<FormErrorMap>({});
+  const addStockBatchRef = React.useRef<HTMLDivElement | null>(null);
 
   const medicineById = React.useMemo(() => new Map(medicines.map((medicine) => [medicine.id, medicine])), [medicines]);
   const medicineAutocompleteOptions = React.useMemo<MedicineAutocompleteOption[]>(
@@ -642,7 +642,11 @@ export default function InventoryPage() {
       setError("Select a medicine before saving stock.");
       return;
     }
-    const parsedStock = (selectedStockId ? inventoryBatchEditSchema : inventoryBatchCreateSchema).safeParse(stockInput(stockForm));
+    if (!selectedStockId) {
+      openDirectGoodsReceipt();
+      return;
+    }
+    const parsedStock = inventoryBatchEditSchema.safeParse(stockInput(stockForm));
     if (!parsedStock.success) {
       const fieldErrors = zodFieldErrors(parsedStock.error);
       setStockFieldErrors(fieldErrors);
@@ -684,11 +688,7 @@ export default function InventoryPage() {
     setStockFieldErrors({});
     try {
       const body = stockInput(stockForm);
-      if (selectedStockId) {
-        await updateStock(auth.accessToken, auth.tenantId, selectedStockId, body);
-      } else {
-        await createStock(auth.accessToken, auth.tenantId, body);
-      }
+      await updateStock(auth.accessToken, auth.tenantId, selectedStockId, body);
       setStockForm(emptyStockForm());
       setSelectedStockId(null);
       setMedicineSearchInput("");
@@ -984,6 +984,9 @@ export default function InventoryPage() {
     () => ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "DROP", "DROPS", "OINTMENT", "SACHET"].includes(selectedMedicineForStock?.medicineType || ""),
     [selectedMedicineForStock?.medicineType],
   );
+  const openDirectGoodsReceipt = React.useCallback(() => {
+    navigate("/pharmacy/procurement?workspace=goods-receipt&mode=direct");
+  }, [navigate]);
 
   return (
     <Stack spacing={3}>
@@ -1000,8 +1003,16 @@ export default function InventoryPage() {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-          {canManageInventory ? <Button variant="contained" size="small" onClick={() => setStockActionPanel("add")}>Add Stock Batch</Button> : null}
-          <Button variant="outlined" size="small" onClick={() => navigate("/pharmacy/procurement")}>Receive Stock</Button>
+          <Tooltip title="Purchase medicines from suppliers using Purchase Orders, Invoices and Goods Receipt.">
+            <span>
+              <Button variant="outlined" size="small" onClick={() => navigate("/pharmacy/procurement?workspace=purchase-orders")}>Receive via Procurement</Button>
+            </span>
+          </Tooltip>
+          <Tooltip title="Receive medicines directly without Purchase Order. Used for opening stock, emergency purchase, migration, local distributor, or donation.">
+            <span>
+              <Button variant="outlined" size="small" onClick={openDirectGoodsReceipt}>Direct Goods Receipt</Button>
+            </span>
+          </Tooltip>
           <Button variant="outlined" size="small" onClick={() => navigate("/pharmacy/medicines")}>Medicine Master</Button>
         </Stack>
       </Box>
@@ -1025,6 +1036,19 @@ export default function InventoryPage() {
           <CircularProgress />
         </Box>
       ) : null}
+
+      <WorkflowGuide
+        title="Inventory Workflow"
+        subtitle="Inventory updates automatically after GRN. Use procurement for planned purchases or direct goods receipt for exception stock."
+        steps={[
+          { label: "Medicine Master" },
+          { label: "Receive via Procurement", helper: "or Direct Goods Receipt", tone: "primary" },
+          { label: "Inventory Batch" },
+          { label: "Dispensing / POS" },
+          { label: "Stock Movement" },
+          { label: "Reconciliation", tone: "info" },
+        ]}
+      />
 
       {tab === "stocks" ? (
         <Grid container spacing={2}>
@@ -1062,7 +1086,7 @@ export default function InventoryPage() {
               {medicines.length === 0 ? (
                 <CompactEmptyState
                   title="Add your first medicine to start building the catalogue."
-                  subtitle="Create the medicine master first, then receive stock to begin selling."
+                  subtitle="Create the medicine master first, then add stock through procurement or direct goods receipt."
                   action={(
                     <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                       <Button size="small" variant="contained" onClick={() => navigate("/pharmacy/medicines")}>Add Medicine</Button>
@@ -1079,22 +1103,42 @@ export default function InventoryPage() {
           </Grid>
 
           <Grid size={{ xs: 12, lg: 4.2 }}>
-            <Stack spacing={1.25}>
+            <Stack spacing={1.25} ref={addStockBatchRef}>
+              <CompactFilterCard
+                title="How stock reaches inventory"
+                subtitle="Single source of truth: receipts create inventory batches automatically."
+              >
+                <Stack spacing={0.5}>
+                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                    Purchase Order → Invoice → Goods Receipt
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Planned supplier purchasing updates stock once GRN is posted.
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 700, pt: 0.5 }}>
+                    Direct Goods Receipt
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Opening stock, emergency purchase, donation, and migration can be receipted without a purchase order.
+                  </Typography>
+                </Stack>
+              </CompactFilterCard>
+
               <Accordion expanded={canManageInventory && stockActionPanel === "add"} onChange={(_, expanded) => setStockActionPanel(expanded ? "add" : null)} disableGutters disabled={!canManageInventory} sx={compactAccordionSx}>
                 <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
                   <Stack spacing={0.4}>
                     <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                      {selectedStockId ? "Edit Stock Batch" : "Add Stock Batch"}
+                      {selectedStockId ? "Edit Stock Batch" : "Batch management"}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      Batch, expiry, and quantity are managed here. Medicine catalogue is maintained in Medicine Master.
+                      Batch metadata can be edited here. New batches are created automatically from GRN.
                     </Typography>
                   </Stack>
                 </AccordionSummary>
                 <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
                   <Stack spacing={1}>
                     <Alert severity="info" sx={{ py: 0 }}>
-                      Medicine not in catalogue? Create it here and continue adding this stock batch.
+                      New inventory batches are created by GRN. Use this workspace to adjust batch metadata, thresholds, and status.
                     </Alert>
                     <Grid container spacing={1}>
                       <Grid size={{ xs: 12, md: 8 }}>
@@ -1338,9 +1382,9 @@ export default function InventoryPage() {
                         onClick={async () => {
                           await saveStock();
                         }}
-                        disabled={!canManageInventory || saving}
+                        disabled={!canManageInventory || saving || !selectedStockId}
                       >
-                        {selectedStockId ? "Update Stock Batch" : "Add Stock Batch"}
+                        {selectedStockId ? "Update Batch" : "Open Direct Goods Receipt"}
                       </Button>
                       <Button
                         variant="text"
@@ -1354,6 +1398,11 @@ export default function InventoryPage() {
                       </Button>
                       {currentStock ? <Chip size="small" label={`${currentStock.medicineName} • ${currentStock.batchNumber || "No batch"}`} variant="outlined" /> : null}
                     </Box>
+                    {!selectedStockId ? (
+                      <Alert severity="warning" sx={{ py: 0 }}>
+                        Batch creation is handled by Goods Receipt. Select an existing batch to edit, or use Direct Goods Receipt for new inventory.
+                      </Alert>
+                    ) : null}
                   </Stack>
                 </AccordionDetails>
               </Accordion>
@@ -1808,11 +1857,22 @@ export default function InventoryPage() {
                       </Typography>
                       <Chip size="small" label={`${visibleStocks.length} visible batches`} variant="outlined" />
                     </Box>
-                    {visibleStocks.length === 0 ? (
+                    {stocks.length === 0 ? (
                       <CompactEmptyState
-                        title="Receive stock before starting sales."
-                        subtitle="Adjust the filter or add a fresh batch from the quick actions panel."
-                        action={<Button size="small" onClick={() => navigate("/pharmacy/procurement")}>Receive Stock</Button>}
+                        title="No inventory available."
+                        subtitle="Choose how you would like to add stock."
+                        action={(
+                          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="center">
+                        <Button size="small" variant="contained" onClick={() => navigate("/pharmacy/procurement?workspace=purchase-orders")}>Receive via Procurement</Button>
+                        <Button size="small" variant="outlined" onClick={openDirectGoodsReceipt}>Direct Goods Receipt</Button>
+                          </Stack>
+                        )}
+                      />
+                    ) : visibleStocks.length === 0 ? (
+                      <CompactEmptyState
+                        title="No matching stock batches."
+                        subtitle="Adjust the filter or search to show the batches already in inventory."
+                        action={<Button size="small" onClick={() => { setSelectedLocationId(""); setStockSearch(""); }}>Clear filters</Button>}
                       />
                     ) : (
                       <TableContainer sx={{ maxHeight: 432 }}>
