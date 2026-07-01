@@ -137,7 +137,7 @@ export default function PharmacyDashboardPage() {
   const setupSteps = React.useMemo(() => ([
     { label: "Create staff", done: Boolean(auth.tenantId), action: () => navigate("/settings/users-roles"), cta: "Users & Roles" },
     { label: "Add medicines", done: medicines.length > 0, action: () => navigate("/pharmacy/medicines"), cta: "Medicine Master" },
-    { label: "Receive via Procurement", done: (dashboard?.stockBatchesCount ?? 0) > 0, action: () => navigate("/pharmacy/procurement"), cta: "Receive via Procurement" },
+    { label: "Receive via Procurement", done: (dashboard?.stockBatchesCount ?? 0) > 0, action: () => navigate("/pharmacy/procurement?workspace=suppliers&focus=supplier"), cta: "Receive via Procurement" },
     { label: "Open POS shift", done: hasOpenShift, action: () => navigate("/pharmacy/pos"), cta: "Open POS" },
     { label: "Complete first sale", done: salesCount > 0, action: () => navigate("/pharmacy/pos"), cta: "POS Sale" },
   ]), [auth.tenantId, dashboard?.stockBatchesCount, hasOpenShift, medicines.length, navigate, salesCount]);
@@ -150,7 +150,7 @@ export default function PharmacyDashboardPage() {
     { label: "Receive via Procurement", icon: <Inventory2RoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/procurement?workspace=purchase-orders") },
     { label: "Direct Goods Receipt", icon: <Inventory2RoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/procurement?workspace=goods-receipt&mode=direct") },
     { label: "POS Sale", icon: <LocalPharmacyRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/pos") },
-    { label: "Procurement", icon: <AssessmentRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/procurement") },
+    { label: "Procurement", icon: <AssessmentRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/procurement?workspace=suppliers&focus=supplier") },
     { label: "Reconciliation", icon: <AssessmentRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/reconciliation") },
     { label: "Reports & Audit", icon: <ReceiptLongRoundedIcon fontSize="small" />, action: () => navigate("/pharmacy/stock-movements") },
   ]), [navigate, supplierCount]);

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Badge,
   Box,
@@ -109,12 +109,14 @@ function iconFor(key: string): React.ReactNode {
     reports: <BarChartRoundedIcon fontSize="small" />,
     payments: <PaymentsRoundedIcon fontSize="small" />,
     refunds: <AutorenewRoundedIcon fontSize="small" />,
-    dispensing: <LocalPharmacyRoundedIcon fontSize="small" />,
-    "stock-movements": <Inventory2RoundedIcon fontSize="small" />,
+    "dispense-queue": <LocalPharmacyRoundedIcon fontSize="small" />,
+    "reports-audit": <Inventory2RoundedIcon fontSize="small" />,
     "medicine-master": <MedicationRoundedIcon fontSize="small" />,
     "prescription-register": <ReceiptLongRoundedIcon fontSize="small" />,
-    "pharmacy-procurement": <Inventory2RoundedIcon fontSize="small" />,
-    "pharmacy-reconciliation": <Inventory2RoundedIcon fontSize="small" />,
+    "pharmacy-procure": <Inventory2RoundedIcon fontSize="small" />,
+    "pharmacy-reconcile": <Inventory2RoundedIcon fontSize="small" />,
+    "pharmacy-procure-test": <Inventory2RoundedIcon fontSize="small" />,
+    "pharmacy-reconcile-test": <Inventory2RoundedIcon fontSize="small" />,
     campaigns: <CampaignRoundedIcon fontSize="small" />,
     messaging: <MessageRoundedIcon fontSize="small" />,
     reminders: <NotificationsActiveRoundedIcon fontSize="small" />,
@@ -152,6 +154,7 @@ function roleDefaultExpanded(roles: Set<string>, groupKey: string): boolean {
 
 export default function SidebarNav({ open, variant, width, onClose }: SidebarNavProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   const auth = useAuth();
   const isPlatformAdmin = auth.rolesUpper.includes("PLATFORM_ADMIN");
   const compact = variant === "permanent" && !open;
@@ -201,8 +204,8 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
         if (item.moduleAll && !item.moduleAll.every((moduleCode) => enabledTenantModules.has(moduleCode))) return false;
         if (item.moduleAny && !item.moduleAny.some((moduleCode) => enabledTenantModules.has(moduleCode))) return false;
         if (group.key === "pharmacy") {
-          const inventoryManagerAllowed = new Set(["pharmacy-dashboard", "medicine-master", "inventory", "pharmacy-procurement", "pharmacy-reconciliation", "stock-movements"]);
-          const posUserAllowed = new Set(["pharmacy-dashboard", "pharmacy-pos", "inventory", "stock-movements"]);
+          const inventoryManagerAllowed = new Set(["pharmacy-dashboard", "medicine-master", "inventory", "pharmacy-procurement", "pharmacy-reconciliation", "reports-audit"]);
+          const posUserAllowed = new Set(["pharmacy-dashboard", "pharmacy-pos", "inventory", "reports-audit"]);
           if (tenantRole === "PHARMACY_POS_USER" && !posUserAllowed.has(item.key)) return false;
           if (tenantRole === "PHARMACY_INVENTORY_MANAGER" && !inventoryManagerAllowed.has(item.key) && !(item.key === "pharmacy-pos" && canUsePosSale)) return false;
           if ((tenantRole === "PHARMACY_POS_USER" || tenantRole === "PHARMACY_INVENTORY_MANAGER") && item.key === "pharmacy-pos" && !canUsePosSale) return false;
@@ -292,9 +295,14 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
     const content = (
       <ListItemButton
         key={item.key}
-        component={item.disabled || !item.path ? "button" : NavLink}
-        to={item.disabled || !item.path ? undefined : item.path}
-        onClick={item.disabled ? undefined : (variant === "temporary" ? onClose : undefined)}
+        component="button"
+        type="button"
+        onClick={(event) => {
+          if (item.disabled || !item.path) return;
+          event.preventDefault();
+          navigate(item.path);
+          if (variant === "temporary") onClose?.();
+        }}
         disabled={item.disabled}
         sx={{
           mx: 1,

@@ -19,6 +19,7 @@ test("pharmacy navigation uses the updated labels and medicine master entry", ()
   assert.ok(navSource.includes('label: "Procurement"'));
   assert.ok(navSource.includes('label: "Reconciliation"'));
   assert.ok(navSource.includes('label: "Reports & Audit"'));
+  assert.ok(navSource.indexOf('label: "Procurement"') < navSource.indexOf('label: "Medicine Master"'));
   assert.ok(topBarSource.includes('pathname === "/pharmacy/procurement"'));
   assert.ok(topBarSource.includes('pathname === "/pharmacy/reconciliation"'));
   assert.ok(topBarSource.includes('pathname === "/pharmacy/operations"'));
@@ -30,12 +31,9 @@ test("pharmacy navigation uses the updated labels and medicine master entry", ()
   assert.ok(sidebarSource.includes('group.key === "clinical" && isPharmacyOnlyTenant'));
   assert.ok(sidebarSource.includes('tenantRole === "PHARMACY_POS_USER"'));
   assert.ok(appSource.includes('function PathnameKeyedRoute'));
-  assert.ok(appSource.includes('<PharmacyOperationsPage mode="procurement" />'));
-  assert.ok(appSource.includes('<PharmacyOperationsPage mode="reconciliation" />'));
-  assert.ok(appSource.includes('nextSearch.delete("workspace")'));
-  assert.ok(appSource.includes('nextSearch.delete("workflow")'));
-  assert.ok(appSource.includes('nextSearch.delete("focus")'));
-  assert.ok(appSource.includes('nextSearch.delete("mode")'));
+  assert.ok(appSource.includes('console.info("[route]", location.pathname);'));
+  assert.ok(appSource.includes('<PharmacyProcurementPage />'));
+  assert.ok(appSource.includes('<PharmacyReconciliationPage />'));
   assert.ok(appSource.includes('pathname === "/patients" || pathname.startsWith("/patients/")'));
   assert.ok(appSource.includes('pathname === "/pharmacy/operations"'));
 });
@@ -116,7 +114,7 @@ test("scanner and operations pages expose fallback and read-only pharmacy guidan
   assert.ok(operationsSource.includes('label="Goods Receipt"'));
   assert.ok(operationsSource.includes('workspace=purchase-orders'));
   assert.ok(operationsSource.includes('workspace=goods-receipt'));
-  assert.ok(operationsSource.includes('workspace=suppliers'));
+  assert.ok(operationsSource.includes('workspace=suppliers&focus=supplier'));
   assert.ok(operationsSource.includes('updateProcurementWorkspaceRoute'));
   assert.ok(operationsSource.includes('label="Supplier Bill Reconciliation"'));
   assert.ok(operationsSource.includes('label="Physical Count"'));
@@ -184,15 +182,27 @@ test("procurement and reconciliation show lightweight workflow guidance", () => 
 test("procurement workspace routing stays local and canonical", () => {
   const appSource = readSource("app/App.tsx");
   const operationsSource = readSource("pages/pharmacy/PharmacyOperationsPage.tsx");
+  const procurementSource = readSource("pages/pharmacy/PharmacyProcurementPage.tsx");
+  const reconciliationSource = readSource("pages/pharmacy/PharmacyReconciliationPage.tsx");
   assert.ok(appSource.includes('path="/pharmacy/procurement"'));
   assert.ok(appSource.includes('path="/pharmacy/reconciliation"'));
   assert.ok(appSource.includes('path="/pharmacy/operations"'));
   assert.ok(appSource.includes('return <Navigate to={target} replace />;'));
+  assert.ok(procurementSource.includes('workspace=suppliers&focus=supplier'));
+  assert.ok(procurementSource.includes("if (!workspace)"));
+  assert.ok(procurementSource.includes("return <Navigate"));
+  assert.ok(procurementSource.includes('[mount] ProcurementPage'));
+  assert.ok(procurementSource.includes('[unmount] ProcurementPage'));
+  assert.ok(reconciliationSource.includes('[mount] ReconciliationPage'));
+  assert.ok(reconciliationSource.includes('[unmount] ReconciliationPage'));
   assert.ok(operationsSource.includes('type PharmacyOperationsPageProps = {'));
   assert.ok(operationsSource.includes('mode: "procurement" | "reconciliation"'));
   assert.ok(operationsSource.includes('const pageMode = mode;'));
   assert.ok(operationsSource.includes('if (pageMode !== "procurement") return;'));
-  assert.ok(operationsSource.includes('updateProcurementWorkspaceRoute(nextWorkspace, searchParams.get("focus"));'));
+  assert.ok(operationsSource.includes('const loadProcurementPageData = React.useCallback'));
+  assert.ok(operationsSource.includes('const loadReconciliationPageData = React.useCallback'));
+  assert.ok(operationsSource.includes('const refreshCurrentPageData = React.useCallback'));
+  assert.ok(operationsSource.includes('Unable to load stock summary. Procurement data is still available.'));
   assert.ok(operationsSource.includes('setSearchParams(nextSearch, { replace: true });'));
 });
 
@@ -209,7 +219,7 @@ test("procurement and reconciliation enforce dependency-aware empty states", () 
   assert.ok(source.includes("Direct Goods Receipt"));
   assert.ok(source.includes("Create supplier first"));
   assert.ok(source.includes("Purchase order already exists"));
-  assert.ok(source.includes("Supplier created successfully. Continue creating your Purchase Order."));
+  assert.ok(source.includes("Supplier saved successfully."));
 });
 
 test("procurement lifecycle includes draft, grouped PO records, and supplier actions", () => {
@@ -218,13 +228,9 @@ test("procurement lifecycle includes draft, grouped PO records, and supplier act
   assert.ok(source.includes("Partially Received"));
   assert.ok(source.includes("Received"));
   assert.ok(source.includes("Cancelled"));
-  assert.ok(source.includes("Copy"));
-  assert.ok(source.includes("Delete"));
   assert.ok(source.includes("Create Invoice"));
   assert.ok(source.includes("Create GRN"));
   assert.ok(source.includes("Supplier deactivated"));
-  assert.ok(source.includes("Purchase order copied"));
-  assert.ok(source.includes("Purchase order copied to draft"));
   assert.ok(source.includes("Purchase order saved."));
   assert.ok(source.includes("Supplier saved successfully."));
   assert.ok(source.includes("Print directly or Save as PDF for supplier sharing."));

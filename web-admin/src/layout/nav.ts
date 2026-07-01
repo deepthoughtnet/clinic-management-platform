@@ -62,13 +62,13 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "pharmacy-dashboard", label: "Pharmacy Dashboard", path: "/pharmacy/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY", "PRESCRIPTION", "BILLING"] },
       { key: "prescription-register", label: "Prescription Register", path: "/prescriptions", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST"], moduleAny: ["PRESCRIPTION"] },
-      { key: "dispensing", label: "Dispense Queue", path: "/pharmacy/dispensing", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAll: ["PRESCRIPTION", "INVENTORY"] },
+      { key: "dispense-queue", label: "Dispense Queue", path: "/pharmacy/dispensing", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAll: ["PRESCRIPTION", "INVENTORY"] },
       { key: "pharmacy-pos", label: "POS Sale", path: "/pharmacy/pos", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "AUDITOR", "PHARMACY_POS_USER", "PHARMACY_INVENTORY_MANAGER"], moduleAny: ["PHARMACY_POS"] },
+      { key: "pharmacy-procure", label: "Procure", path: "/pharmacy/procure", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACIST"], moduleAny: ["INVENTORY"] },
+      { key: "pharmacy-reconcile", label: "Reconcile", path: "/pharmacy/reconcile", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACIST"], moduleAny: ["INVENTORY"] },
       { key: "medicine-master", label: "Medicine Master", path: "/pharmacy/medicines", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY"] },
       { key: "inventory", label: "Inventory", path: "/inventory", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY"] },
-      { key: "pharmacy-procurement", label: "Procurement", path: "/pharmacy/procurement", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACIST"], moduleAny: ["INVENTORY"] },
-      { key: "pharmacy-reconciliation", label: "Reconciliation", path: "/pharmacy/reconciliation", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMACY_INVENTORY_MANAGER", "PHARMACIST"], moduleAny: ["INVENTORY"] },
-      { key: "stock-movements", label: "Reports & Audit", path: "/pharmacy/stock-movements", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY"] },
+      { key: "reports-audit", label: "Reports & Audit", path: "/pharmacy/stock-movements", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PHARMA", "PHARMACY", "PHARMACIST", "BILLING_USER", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"], moduleAny: ["INVENTORY"] },
     ],
   },
   {

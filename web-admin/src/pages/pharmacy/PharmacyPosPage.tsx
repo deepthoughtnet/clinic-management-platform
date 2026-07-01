@@ -1787,7 +1787,7 @@ export default function PharmacyPosPage() {
                               {!loading && canManageInventory ? (
                                 <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                                   <Button size="small" variant="contained" onClick={() => navigate("/pharmacy/medicines")}>Add Medicine</Button>
-                                  <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/procurement")}>Receive via Procurement</Button>
+                                  <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/procurement?workspace=suppliers&focus=supplier")}>Receive via Procurement</Button>
                                 </Stack>
                               ) : null}
                             </Stack>

@@ -34,6 +34,8 @@ export const HELP_PAGE_ROUTES: HelpPageRoute[] = [
   { path: "/pharmacy/dispensing", pageKey: "PHARMACY_DISPENSING", cmsPageKey: "DISPENSING", title: "Dispensing" },
   { path: "/dispensing", pageKey: "PHARMACY_DISPENSING", cmsPageKey: "DISPENSING", title: "Dispensing" },
   { path: "/pharmacy/pos", pageKey: "PHARMACY_POS", cmsPageKey: "PHARMACY_POS", title: "Pharmacy POS" },
+  { path: "/pharmacy/procure", pageKey: "PHARMACY_PROCURE", cmsPageKey: "PHARMACY_PROCURE", title: "Procure" },
+  { path: "/pharmacy/reconcile", pageKey: "PHARMACY_RECONCILE", cmsPageKey: "PHARMACY_RECONCILE", title: "Reconcile" },
   { path: "/pharmacy/procurement", pageKey: "PHARMACY_PROCUREMENT", cmsPageKey: "PHARMACY_PROCUREMENT", title: "Procurement" },
   { path: "/pharmacy/reconciliation", pageKey: "PHARMACY_RECONCILIATION", cmsPageKey: "PHARMACY_RECONCILIATION", title: "Reconciliation" },
   { path: "/pharmacy/operations", pageKey: "PHARMACY_OPERATIONS", cmsPageKey: "PHARMACY_OPERATIONS", title: "Procurement" },
@@ -154,6 +156,12 @@ export function resolveHelpRouteByPageKey(pageKey: string): HelpPageRoute | null
   }
   if (normalized === "POS") {
     return HELP_PAGE_ROUTES.find((route) => route.path === "/pharmacy/pos") || null;
+  }
+  if (normalized === "PROCURE" || normalized === "PHARMACY_PROCURE") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/pharmacy/procure") || null;
+  }
+  if (normalized === "RECONCILE" || normalized === "PHARMACY_RECONCILE") {
+    return HELP_PAGE_ROUTES.find((route) => route.path === "/pharmacy/reconcile") || null;
   }
   if (normalized === "PHARMACY_PROCUREMENT" || normalized === "PROCUREMENT") {
     return HELP_PAGE_ROUTES.find((route) => route.path === "/pharmacy/procurement") || null;

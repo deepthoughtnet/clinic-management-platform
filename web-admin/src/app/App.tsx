@@ -38,7 +38,12 @@ import PharmacyDashboardPage from "../pages/pharmacy/PharmacyDashboardPage";
 import MedicineMasterPage from "../pages/pharmacy/MedicineMasterPage";
 import StockMovementsPage from "../pages/pharmacy/StockMovementsPage";
 import DispensingPage from "../pages/pharmacy/DispensingPage";
-import PharmacyOperationsPage from "../pages/pharmacy/PharmacyOperationsPage";
+import PharmacyProcurePage from "../pages/pharmacy/PharmacyProcurePage";
+import PharmacyProcureTestPage from "../pages/pharmacy/PharmacyProcureTestPage";
+import PharmacyProcurementPage from "../pages/pharmacy/PharmacyProcurementPage";
+import PharmacyReconcilePage from "../pages/pharmacy/PharmacyReconcilePage";
+import PharmacyReconcileTestPage from "../pages/pharmacy/PharmacyReconcileTestPage";
+import PharmacyReconciliationPage from "../pages/pharmacy/PharmacyReconciliationPage";
 import PharmacyPosPage from "../pages/pharmacy/PharmacyPosPage";
 import ReportsPage from "../pages/reports/ReportsPage";
 import VaccinationsPage from "../pages/vaccinations/VaccinationsPage";
@@ -278,31 +283,10 @@ function PathnameKeyedRoute({ children }: { children: React.ReactNode }) {
 
 function AuthedApp() {
   const location = useLocation();
-  const navigate = useNavigate();
 
   React.useEffect(() => {
     document.title = `${formatPageTitle(location.pathname)} | ${branding.productName}`;
   }, [location.pathname]);
-
-  React.useEffect(() => {
-    if (location.pathname === "/pharmacy/procurement") return;
-    if (!location.search) return;
-
-    const nextSearch = new URLSearchParams(location.search);
-    let changed = false;
-    for (const key of ["workspace", "workflow", "focus", "mode"]) {
-      if (nextSearch.has(key)) {
-        nextSearch.delete(key);
-        changed = true;
-      }
-    }
-
-    if (!changed) return;
-    navigate({
-      pathname: location.pathname,
-      search: nextSearch.toString() ? `?${nextSearch.toString()}` : "",
-    }, { replace: true });
-  }, [location.pathname, location.search, navigate]);
 
   return (
     <HelpProvider>
@@ -340,8 +324,12 @@ function AuthedApp() {
         <Route path="/vaccinations" element={<PathnameKeyedRoute><FeatureGate featureId="vaccinations"><VaccinationsPage /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/inventory" element={<PathnameKeyedRoute><FeatureGate featureId="inventory"><InventoryPage /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/pharmacy/inventory" element={<PathnameKeyedRoute><FeatureGate featureId="inventory"><InventoryPage /></FeatureGate></PathnameKeyedRoute>} />
-        <Route path="/pharmacy/procurement" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-procurement"><PharmacyOperationsPage mode="procurement" /></FeatureGate></PathnameKeyedRoute>} />
-        <Route path="/pharmacy/reconciliation" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-reconciliation"><PharmacyOperationsPage mode="reconciliation" /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/procure" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-procurement" title="Procure unavailable"><PharmacyProcurePage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/procure-test" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-procurement" title="Procure unavailable"><PharmacyProcureTestPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/reconcile" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-reconciliation" title="Reconcile unavailable"><PharmacyReconcilePage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/reconcile-test" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-reconciliation" title="Reconcile unavailable"><PharmacyReconcileTestPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/procurement" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-procurement"><PharmacyProcurementPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/pharmacy/reconciliation" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-reconciliation"><PharmacyReconciliationPage /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/pharmacy/operations" element={<PharmacyOperationsLegacyRedirect />} />
         <Route path="/pharmacy/pos" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-pos"><PharmacyPosPage /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/pharmacy/medicine-master" element={<PathnameKeyedRoute><FeatureGate featureId="pharmacy-medicines"><MedicineMasterPage /></FeatureGate></PathnameKeyedRoute>} />
@@ -395,6 +383,10 @@ function formatPageTitle(pathname: string): string {
   if (pathname === "/" || pathname === "/dashboard") return branding.productName;
   if (pathname === "/login") return `${branding.productName} Admin Console`;
   if (pathname === "/patients" || pathname.startsWith("/patients/")) return "Patient Portal";
+  if (pathname === "/pharmacy/procure") return "Procure";
+  if (pathname === "/pharmacy/reconcile") return "Reconcile";
+  if (pathname === "/pharmacy/procure-test") return "Procure Test";
+  if (pathname === "/pharmacy/reconcile-test") return "Reconcile Test";
   if (pathname === "/pharmacy/procurement") return "Procurement";
   if (pathname === "/pharmacy/reconciliation") return "Reconciliation";
   if (pathname === "/pharmacy/pos") return "POS Sale";

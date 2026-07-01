@@ -66,7 +66,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </Box>
 
         <Box sx={{ height: 84, flexShrink: 0 }} />
-        <Box sx={{ flex: 1, p: { xs: 2, md: 3 } }}>{children}</Box>
+        <Box key={location.pathname} sx={{ flex: 1, p: { xs: 2, md: 3 } }}>{children}</Box>
         <Box className="no-print">
           <Footer />
         </Box>

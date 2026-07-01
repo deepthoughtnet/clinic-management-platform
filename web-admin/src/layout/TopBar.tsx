@@ -34,6 +34,10 @@ function formatPathLabel(pathname: string): string {
   if (pathname === "/prescriptions") return "Prescription Register";
   if (pathname === "/inventory") return "Inventory";
   if (pathname === "/pharmacy/medicines" || pathname === "/pharmacy/medicine-master") return "Medicine Master";
+  if (pathname === "/pharmacy/procure") return "Procure";
+  if (pathname === "/pharmacy/reconcile") return "Reconcile";
+  if (pathname === "/pharmacy/procure-test") return "Procure Test";
+  if (pathname === "/pharmacy/reconcile-test") return "Reconcile Test";
   if (pathname === "/pharmacy/procurement") return "Procurement";
   if (pathname === "/pharmacy/reconciliation") return "Reconciliation";
   if (pathname === "/pharmacy/operations") return "Procurement";

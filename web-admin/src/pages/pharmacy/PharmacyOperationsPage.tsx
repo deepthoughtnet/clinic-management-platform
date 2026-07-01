@@ -5,6 +5,7 @@ import {
   Autocomplete,
   Box,
   Button,
+  ButtonBase,
   Card,
   CardContent,
   Dialog,
@@ -108,7 +109,7 @@ import {
 } from "../../api/clinicApi";
 
 type OpsTab = "suppliers" | "goods-receipt" | "reconciliation" | "procurement" | "physical-count" | "stock-adjustments" | "approval-review";
-type ProcurementWorkspace = "suppliers" | "purchase-orders" | "invoices" | "goods-receipt";
+type ProcurementWorkspace = "suppliers" | "purchase-orders" | "supplier-invoices" | "goods-receipt";
 type ProcurementTab = "po" | "invoice" | "grn";
 type SupplierEditorMode = "create" | "edit" | "view";
 type PurchaseOrderEditorMode = "create" | "edit" | "view";
@@ -322,12 +323,12 @@ function procurementLineKey(item: ProcurementWorkflowItem) {
 }
 
 function normalizeProcurementWorkspace(value: string | null, workflow: string | null): ProcurementWorkspace | null {
-  if (value === "suppliers" || value === "purchase-orders" || value === "invoices" || value === "goods-receipt") return value;
+  if (value === "suppliers" || value === "purchase-orders" || value === "supplier-invoices" || value === "goods-receipt") return value;
   if (value === "procurement") return "purchase-orders";
-  if (value === "supplier-invoices") return "invoices";
-  if (value === "invoice") return "invoices";
+  if (value === "invoices") return "supplier-invoices";
+  if (value === "invoice") return "supplier-invoices";
   if (value === "grn") return "goods-receipt";
-  if (workflow === "invoice") return "invoices";
+  if (workflow === "invoice") return "supplier-invoices";
   if (workflow === "grn") return "goods-receipt";
   return null;
 }
@@ -337,7 +338,7 @@ function defaultProcurementWorkspace(supplierCount: number): ProcurementWorkspac
 }
 
 function workspaceFromPurchaseOrderTab(value: ProcurementTab): ProcurementWorkspace {
-  if (value === "invoice") return "invoices";
+  if (value === "invoice") return "supplier-invoices";
   if (value === "grn") return "goods-receipt";
   return "purchase-orders";
 }
@@ -402,6 +403,14 @@ type PharmacyOperationsPageProps = {
   mode: "procurement" | "reconciliation";
 };
 
+function deriveReconciliationTab(searchParams: URLSearchParams): OpsTab {
+  const nextTab = searchParams.get("tab");
+  if (nextTab === "physical-count") return "physical-count";
+  if (nextTab === "stock-adjustments") return "stock-adjustments";
+  if (nextTab === "approval-review") return "approval-review";
+  return "reconciliation";
+}
+
 export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageProps) {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -409,19 +418,16 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
   const pageMode = mode;
   const goodsReceiptMode: "po" | "direct" = searchParams.get("mode") === "direct" ? "direct" : "po";
   const canManageOperations = auth.hasPermission("inventory.manage") || auth.rolesUpper.includes("CLINIC_ADMIN");
-  const [tab, setTab] = React.useState<OpsTab>(() => {
-    const nextTab = searchParams.get("tab");
-    if (nextTab === "reconciliation") return "reconciliation";
-    return pageMode === "reconciliation" ? "reconciliation" : "procurement";
-  });
-  const [workspace, setWorkspace] = React.useState<ProcurementWorkspace>(() => {
+  const [tab, setTab] = React.useState<OpsTab>("reconciliation");
+  const [supplierCountForWorkspaceFallback, setSupplierCountForWorkspaceFallback] = React.useState(0);
+  const workspace = React.useMemo<ProcurementWorkspace>(() => {
     const explicit = normalizeProcurementWorkspace(searchParams.get("workspace"), searchParams.get("workflow"));
     if (explicit) return explicit;
     const legacyTab = searchParams.get("tab");
     const legacyWorkspace = normalizeProcurementWorkspace(legacyTab, searchParams.get("workflow"));
     if (legacyWorkspace) return legacyWorkspace;
-    return defaultProcurementWorkspace(0);
-  });
+    return defaultProcurementWorkspace(supplierCountForWorkspaceFallback);
+  }, [searchParams, supplierCountForWorkspaceFallback]);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -490,10 +496,11 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
   const [poItems, setPoItems] = React.useState<ProcurementWorkflowItem[]>([]);
   const [poItemEditIndex, setPoItemEditIndex] = React.useState<number | null>(null);
   const procurementTab: ProcurementTab = React.useMemo(() => {
-    if (workspace === "invoices") return "invoice";
+    if (workspace === "supplier-invoices") return "invoice";
     if (workspace === "goods-receipt") return "grn";
     return "po";
   }, [workspace]);
+  const loadRevisionRef = React.useRef(0);
 
   const activeMedicines = React.useMemo(() => medicines.filter((m) => m.active), [medicines]);
   const currentUserId = auth.appUserId || null;
@@ -666,46 +673,170 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
     }));
   }
 
-  const loadAll = React.useCallback(async () => {
+  const logApiCall = React.useCallback(function <T>(pageName: string, endpoint: string, loader: () => Promise<T>): Promise<T> {
+    console.info("[api]", pageName, endpoint);
+    return loader();
+  }, []);
+
+  const loadProcurementPageData = React.useCallback(async (options: { includeMedicines: boolean; includeInventory: boolean }) => {
     if (!auth.accessToken || !auth.tenantId) return;
+    const revision = ++loadRevisionRef.current;
     setLoading(true);
     setError(null);
     try {
-      const [dashboardRow, analyticsRow, supplierRows, reconRows, medicineRows, stockRows, locationRows, poRows, invoiceRows, grnRows] = await Promise.all([
-        getPharmacyDashboard(auth.accessToken, auth.tenantId),
-        getPharmacyAnalytics(auth.accessToken, auth.tenantId),
-        listSuppliers(auth.accessToken, auth.tenantId),
-        listReconciliations(auth.accessToken, auth.tenantId),
-        getMedicines(auth.accessToken, auth.tenantId),
-        getStocks(auth.accessToken, auth.tenantId),
-        getInventoryLocations(auth.accessToken, auth.tenantId),
-        getPurchaseOrders(auth.accessToken, auth.tenantId),
-        getSupplierInvoices(auth.accessToken, auth.tenantId),
-        getGoodsReceipts(auth.accessToken, auth.tenantId),
+      const loadErrors: string[] = [];
+      const settle = async <T,>(endpoint: string, promise: Promise<T>, fallbackMessage?: string): Promise<T | null> => {
+        try {
+          return await promise;
+        } catch (err) {
+          loadErrors.push(fallbackMessage || (err instanceof Error ? err.message : `Failed to load ${endpoint}`));
+          return null;
+        }
+      };
+      const [dashboardRow, analyticsRow, supplierRows, poRows, invoiceRows, grnRows, medicineRows, stockRows, locationRows] = await Promise.all([
+        settle("/api/pharmacy/dashboard", logApiCall("ProcurementPage", "/api/pharmacy/dashboard", () => getPharmacyDashboard(auth.accessToken!, auth.tenantId!)), "Unable to load procurement dashboard. Procurement data is still available."),
+        settle("/api/pharmacy/analytics", logApiCall("ProcurementPage", "/api/pharmacy/analytics", () => getPharmacyAnalytics(auth.accessToken!, auth.tenantId!)), "Unable to load procurement summary. Procurement data is still available."),
+        settle("/api/pharmacy/suppliers", logApiCall("ProcurementPage", "/api/pharmacy/suppliers", () => listSuppliers(auth.accessToken!, auth.tenantId!)), "Unable to load suppliers. Procurement data is still available."),
+        settle("/api/pharmacy/purchase-orders", logApiCall("ProcurementPage", "/api/pharmacy/purchase-orders", () => getPurchaseOrders(auth.accessToken!, auth.tenantId!)), "Unable to load purchase orders. Procurement data is still available."),
+        settle("/api/pharmacy/supplier-invoices", logApiCall("ProcurementPage", "/api/pharmacy/supplier-invoices", () => getSupplierInvoices(auth.accessToken!, auth.tenantId!)), "Unable to load supplier invoices. Procurement data is still available."),
+        settle("/api/pharmacy/goods-receipts", logApiCall("ProcurementPage", "/api/pharmacy/goods-receipts", () => getGoodsReceipts(auth.accessToken!, auth.tenantId!)), "Unable to load goods receipts. Procurement data is still available."),
+        options.includeMedicines
+          ? settle("/api/medicines", logApiCall("ProcurementPage", "/api/medicines", () => getMedicines(auth.accessToken!, auth.tenantId!)), "Unable to load medicine catalogue. Procurement data is still available.")
+          : Promise.resolve<Medicine[] | null>(null),
+        options.includeInventory
+          ? settle("/api/inventory/stocks", logApiCall("ProcurementPage", "/api/inventory/stocks", () => getStocks(auth.accessToken!, auth.tenantId!)), "Unable to load stock summary. Procurement data is still available.")
+          : Promise.resolve<Stock[] | null>(null),
+        options.includeInventory
+          ? settle("/api/inventory/locations", logApiCall("ProcurementPage", "/api/inventory/locations", () => getInventoryLocations(auth.accessToken!, auth.tenantId!)), "Unable to load inventory locations. Procurement data is still available.")
+          : Promise.resolve<InventoryLocation[] | null>(null),
       ]);
+      if (revision !== loadRevisionRef.current) return;
       setDashboard(dashboardRow);
       setAnalytics(analyticsRow);
-      setSuppliers(supplierRows);
-      setReconciliations(reconRows);
-      setMedicines(medicineRows);
-      setStocks(stockRows);
-      setLocations(locationRows);
-      setPurchaseOrders(poRows);
-      setSupplierInvoices(invoiceRows);
-      setGoodsReceipts(grnRows);
-      setSelectedLocationId((current) => current || locationRows.find((location) => location.defaultLocation)?.id || "");
-      setGrnForm((current) => ({ ...current, locationId: current.locationId || locationRows.find((location) => location.defaultLocation)?.id || "" }));
-      if (!selectedReconciliationId && reconRows.length) {
-        setSelectedReconciliationId(reconRows[0].id);
+      setSuppliers(supplierRows ?? []);
+      setPurchaseOrders(poRows ?? []);
+      setSupplierInvoices(invoiceRows ?? []);
+      setGoodsReceipts(grnRows ?? []);
+      if (medicineRows) setMedicines(medicineRows);
+      if (stockRows) setStocks(stockRows);
+      if (locationRows) {
+        setLocations(locationRows);
+        setSelectedLocationId((current) => current || locationRows.find((location) => location.defaultLocation)?.id || "");
+        setGrnForm((current) => ({ ...current, locationId: current.locationId || locationRows.find((location) => location.defaultLocation)?.id || "" }));
+      }
+      if (loadErrors.length) {
+        setError(loadErrors[0]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load pharmacy operations");
+      if (revision === loadRevisionRef.current) {
+        setError(err instanceof Error ? err.message : "Failed to load procurement data");
+      }
     } finally {
-      setLoading(false);
+      if (revision === loadRevisionRef.current) {
+        setLoading(false);
+      }
     }
-  }, [auth.accessToken, auth.tenantId, selectedReconciliationId]);
+  }, [auth.accessToken, auth.tenantId, logApiCall]);
 
-  React.useEffect(() => { void loadAll(); }, [loadAll]);
+  const loadReconciliationPageData = React.useCallback(async (options: { includeFormData: boolean; includeInventory: boolean }) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    const revision = ++loadRevisionRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const loadErrors: string[] = [];
+      const settle = async <T,>(promise: Promise<T>, fallbackMessage: string): Promise<T | null> => {
+        try {
+          return await promise;
+        } catch {
+          loadErrors.push(fallbackMessage);
+          return null;
+        }
+      };
+      const baseResults = await Promise.all([
+        settle(logApiCall("ReconciliationPage", "/api/pharmacy/reconciliations", () => listReconciliations(auth.accessToken!, auth.tenantId!)), "Unable to load reconciliations. Reconciliation data is still available."),
+        options.includeFormData
+          ? settle(logApiCall("ReconciliationPage", "/api/pharmacy/suppliers", () => listSuppliers(auth.accessToken!, auth.tenantId!)), "Unable to load suppliers. Reconciliation data is still available.")
+          : Promise.resolve<Supplier[] | null>(null),
+        options.includeFormData
+          ? settle(logApiCall("ReconciliationPage", "/api/medicines", () => getMedicines(auth.accessToken!, auth.tenantId!)), "Unable to load medicine catalogue. Reconciliation data is still available.")
+          : Promise.resolve<Medicine[] | null>(null),
+        options.includeInventory
+          ? settle(logApiCall("ReconciliationPage", "/api/inventory/stocks", () => getStocks(auth.accessToken!, auth.tenantId!)), "Unable to load stock summary. Reconciliation data is still available.")
+          : Promise.resolve<Stock[] | null>(null),
+        options.includeInventory
+          ? settle(logApiCall("ReconciliationPage", "/api/inventory/locations", () => getInventoryLocations(auth.accessToken!, auth.tenantId!)), "Unable to load inventory locations. Reconciliation data is still available.")
+          : Promise.resolve<InventoryLocation[] | null>(null),
+      ]);
+      if (revision !== loadRevisionRef.current) return;
+      const [reconRows, supplierRows, medicineRows, stockRows, locationRows] = baseResults;
+      const nextReconciliations = reconRows ?? [];
+      setReconciliations(nextReconciliations);
+      if (supplierRows) setSuppliers(supplierRows);
+      if (medicineRows) setMedicines(medicineRows);
+      if (stockRows) setStocks(stockRows);
+      if (locationRows) {
+        setLocations(locationRows);
+        setSelectedLocationId((current) => current || locationRows.find((location) => location.defaultLocation)?.id || "");
+      }
+      if (nextReconciliations.length) {
+        setSelectedReconciliationId((current) => current || nextReconciliations[0].id);
+      }
+      if (loadErrors.length) {
+        setError(loadErrors[0]);
+      }
+    } catch (err) {
+      if (revision === loadRevisionRef.current) {
+        setError(err instanceof Error ? err.message : "Failed to load reconciliation data");
+      }
+    } finally {
+      if (revision === loadRevisionRef.current) {
+        setLoading(false);
+      }
+    }
+  }, [auth.accessToken, auth.tenantId, logApiCall]);
+
+  React.useEffect(() => {
+    setSupplierCountForWorkspaceFallback(supplierCount);
+  }, [supplierCount]);
+
+  React.useEffect(() => {
+    if (pageMode !== "reconciliation") {
+      setTab("reconciliation");
+      return;
+    }
+    setTab(deriveReconciliationTab(searchParams));
+  }, [pageMode, searchParams]);
+
+  React.useEffect(() => {
+    if (pageMode !== "procurement") return;
+    void loadProcurementPageData({
+      includeMedicines: workspace !== "suppliers",
+      includeInventory: workspace === "goods-receipt",
+    });
+  }, [loadProcurementPageData, pageMode, workspace]);
+
+  React.useEffect(() => {
+    if (pageMode !== "reconciliation") return;
+    void loadReconciliationPageData({
+      includeFormData: tab !== "approval-review",
+      includeInventory: tab !== "approval-review",
+    });
+  }, [loadReconciliationPageData, pageMode, tab]);
+
+  const refreshCurrentPageData = React.useCallback(async () => {
+    if (pageMode === "procurement") {
+      await loadProcurementPageData({
+        includeMedicines: workspace !== "suppliers",
+        includeInventory: workspace === "goods-receipt",
+      });
+      return;
+    }
+    await loadReconciliationPageData({
+      includeFormData: tab !== "approval-review",
+      includeInventory: tab !== "approval-review",
+    });
+  }, [loadProcurementPageData, loadReconciliationPageData, pageMode, tab, workspace]);
 
   React.useEffect(() => {
     if (!auth.tenantId) return;
@@ -728,17 +859,18 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
     nextSearch.set("workspace", nextWorkspace);
     nextSearch.delete("tab");
     nextSearch.delete("workflow");
-    if (focus) {
-      nextSearch.set("focus", focus);
+    const nextFocus = nextWorkspace === "suppliers" ? (focus ?? "supplier") : focus;
+    console.log("[PROCUREMENT_TAB_CLICK]", nextWorkspace);
+    if (nextFocus) {
+      nextSearch.set("focus", nextFocus);
     } else {
       nextSearch.delete("focus");
     }
     if (nextWorkspace !== "goods-receipt") {
       nextSearch.delete("mode");
     }
-    setSearchParams(nextSearch, { replace: true });
-    setWorkspace(nextWorkspace);
-  }, [searchParams, setSearchParams]);
+    navigate(`/pharmacy/procurement?${nextSearch.toString()}`, { replace: false });
+  }, [navigate, searchParams]);
   const updateProcurementRoute = updateProcurementWorkspaceRoute;
 
   const updateGoodsReceiptMode = React.useCallback((mode: "po" | "direct") => {
@@ -752,33 +884,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
       nextSearch.delete("mode");
     }
     setSearchParams(nextSearch, { replace: true });
-    setWorkspace("goods-receipt");
   }, [searchParams, setSearchParams]);
-
-  const supplierWorkspacePreferred = React.useMemo(() => {
-    const explicit = searchParams.has("workspace") || searchParams.has("tab") || searchParams.has("workflow");
-    return !explicit;
-  }, [searchParams]);
-
-  React.useEffect(() => {
-    if (pageMode !== "procurement" || loading || !supplierWorkspacePreferred) return;
-    const nextWorkspace = defaultProcurementWorkspace(supplierCount);
-    if (workspace !== nextWorkspace) {
-      updateProcurementWorkspaceRoute(nextWorkspace);
-    }
-  }, [loading, pageMode, supplierCount, supplierWorkspacePreferred, updateProcurementWorkspaceRoute, workspace]);
-
-  React.useEffect(() => {
-    if (pageMode !== "procurement") return;
-    const nextWorkspace = normalizeProcurementWorkspace(searchParams.get("workspace") || searchParams.get("tab"), searchParams.get("workflow"));
-    if (!nextWorkspace) return;
-    if (workspace !== nextWorkspace) {
-      setWorkspace(nextWorkspace);
-    }
-    if (searchParams.get("workspace") !== nextWorkspace) {
-      updateProcurementWorkspaceRoute(nextWorkspace, searchParams.get("focus"));
-    }
-  }, [pageMode, searchParams, updateProcurementWorkspaceRoute, workspace]);
 
   React.useEffect(() => {
     if (pageMode !== "procurement" || workspace !== "suppliers") return;
@@ -1085,7 +1191,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
       syncInvoiceFromPurchaseOrder(record.sourceIds[0]);
     }
     setInvoiceEditorOpen(true);
-    updateProcurementWorkspaceRoute("invoices", null);
+    updateProcurementWorkspaceRoute("supplier-invoices", null);
   }, [syncInvoiceFromPurchaseOrder, updateProcurementWorkspaceRoute]);
 
   const queuePurchaseOrderForGoodsReceipt = React.useCallback((record: PurchaseOrderWorkspaceRecord) => {
@@ -1344,7 +1450,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
       if (!supplierId) {
         updateProcurementWorkspaceRoute("purchase-orders");
       }
-      await loadAll();
+      await refreshCurrentPageData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save supplier");
     } finally {
@@ -1364,7 +1470,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
       setInwardMedicineSearch("");
       setInwardFieldErrors(emptyErrors());
       setSuccess("Direct goods receipt posted and inventory updated.");
-      await loadAll();
+      await refreshCurrentPageData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to record stock inward");
     } finally {
@@ -1386,7 +1492,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
       setReconRemarks("");
       setSheetFile(null);
       setSuccess(sheetFile ? "Reconciliation draft created and vendor sheet uploaded" : "Reconciliation draft created");
-      await loadAll();
+      await refreshCurrentPageData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create reconciliation draft");
     } finally {
@@ -1425,7 +1531,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
         reviewNote: "Row review completed from compact reconciliation workspace",
       });
       setSuccess("Reconciliation rows reviewed");
-      await loadAll();
+      await refreshCurrentPageData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save reviewed rows");
     } finally {
@@ -1440,7 +1546,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
     try {
       await submitReconciliationApi(auth.accessToken, auth.tenantId, row.id);
       setSuccess("Reconciliation submitted for review");
-      await loadAll();
+      await refreshCurrentPageData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit reconciliation");
     } finally {
@@ -1455,7 +1561,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
     try {
       await approveReconciliation(auth.accessToken, auth.tenantId, row.id, { reason: row.reason || null });
       setSuccess("Reconciliation approved");
-      await loadAll();
+      await refreshCurrentPageData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to approve reconciliation");
     } finally {
@@ -1470,7 +1576,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
     try {
       await rejectReconciliation(auth.accessToken, auth.tenantId, row.id, { reason: row.reason || "Reconciliation rejected" });
       setSuccess("Reconciliation rejected");
-      await loadAll();
+      await refreshCurrentPageData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reject reconciliation");
     } finally {
@@ -1489,7 +1595,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
         reason: row.reason || "Stock count adjustment",
       });
       setSuccess("Reconciliation posted");
-      await loadAll();
+      await refreshCurrentPageData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to post reconciliation");
     } finally {
@@ -1513,7 +1619,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
       setSuccess("Purchase order saved.");
       resetPurchaseOrderEditor();
       setPoEditorOpen(false);
-      await loadAll();
+      await refreshCurrentPageData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save purchase order");
     } finally {
@@ -1545,7 +1651,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
       setInvoiceVariance("");
       setInvoiceFieldErrors(emptyErrors());
       setInvoiceEditorOpen(false);
-      await loadAll();
+      await refreshCurrentPageData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save supplier invoice");
     } finally {
@@ -1565,7 +1671,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
       setGrnForm({ supplierId: "", purchaseOrderId: null, supplierInvoiceId: null, receiptNumber: "", receivedAt: "", locationId: "", items: [], approvalNote: null });
       setGrnFieldErrors(emptyErrors());
       setGrnEditorOpen(false);
-      await loadAll();
+      await refreshCurrentPageData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save goods receipt");
     } finally {
@@ -1573,7 +1679,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
     }
   };
 
-  const procurementRecentRows = workspace === "purchase-orders" ? purchaseOrders : workspace === "invoices" ? supplierInvoices : goodsReceipts;
+  const procurementRecentRows = workspace === "purchase-orders" ? purchaseOrders : workspace === "supplier-invoices" ? supplierInvoices : goodsReceipts;
   const isPurchaseOrderWorkspace = workspace === "purchase-orders";
   const hasEmptyProcurementRecords = isPurchaseOrderWorkspace ? purchaseOrderWorkspaceRecords.length === 0 : procurementRecentRows.length === 0;
   const activePurchaseOrderActionRow = React.useMemo(
@@ -1619,7 +1725,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
         </Box>
         <Stack direction="row" spacing={1}>
           <Button size="small" variant="outlined" onClick={() => navigate("/inventory")}>Open Inventory</Button>
-          <Button size="small" variant="outlined" onClick={() => void loadAll()}>Refresh</Button>
+          <Button size="small" variant="outlined" onClick={() => void refreshCurrentPageData()}>Refresh</Button>
         </Stack>
       </Box>
 
@@ -1643,7 +1749,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                   (index === 0 && workspace === "suppliers") ||
                   (index === 1 && workspace === "purchase-orders") ||
                   (index === 2 && workspace === "purchase-orders" && purchaseOrders.length > 0) ||
-                  (index === 3 && workspace === "invoices") ||
+                  (index === 3 && workspace === "supplier-invoices") ||
                   (index === 4 && workspace === "goods-receipt") ||
                   (index === 5 && goodsReceipts.length > 0)
                     ? "primary"
@@ -1689,34 +1795,77 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
 
       <Card variant="outlined">
         <CardContent sx={compactCardContentSx}>
-          <Tabs
-            value={pageMode === "procurement" ? workspace : tab}
-            onChange={(_, value) => {
-              if (pageMode === "procurement") {
-                updateProcurementWorkspaceRoute(value as ProcurementWorkspace, null);
-                return;
-              }
-              setTab(value as OpsTab);
-            }}
-            variant="scrollable"
-            scrollButtons="auto"
-          >
-            {pageMode === "procurement" ? (
-              <>
-                <Tab value="suppliers" label="Suppliers" />
-                <Tab value="purchase-orders" label="Purchase Orders" />
-                <Tab value="invoices" label="Supplier Invoices" />
-                <Tab value="goods-receipt" label="Goods Receipt" />
-              </>
-            ) : (
-              <>
-                <Tab value="reconciliation" label="Supplier Bill Reconciliation" />
-                <Tab value="physical-count" label="Physical Count" />
-                <Tab value="stock-adjustments" label="Stock Adjustments" />
-                <Tab value="approval-review" label="Approval Review" />
-              </>
-            )}
-          </Tabs>
+          {pageMode === "procurement" ? (
+            <Box
+              role="tablist"
+              aria-label="Procurement workspaces"
+              sx={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 1,
+              }}
+            >
+              {([
+                { value: "suppliers", label: "Suppliers", focus: "supplier" },
+                { value: "purchase-orders", label: "Purchase Orders" },
+                { value: "supplier-invoices", label: "Supplier Invoices" },
+                { value: "goods-receipt", label: "Goods Receipt" },
+              ] as Array<{ value: ProcurementWorkspace; label: string; focus?: string }>).map((item) => {
+                const selected = workspace === item.value;
+                const focus = item.value === "suppliers" ? (item.focus ?? "supplier") : null;
+                return (
+                  <ButtonBase
+                    key={item.value}
+                    role="tab"
+                    aria-selected={selected}
+                    tabIndex={0}
+                    onClick={() => updateProcurementWorkspaceRoute(item.value, focus)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      updateProcurementWorkspaceRoute(item.value, focus);
+                    }}
+                    sx={{
+                      px: 1.5,
+                      py: 1,
+                      borderRadius: 999,
+                      border: "1px solid",
+                      borderColor: selected ? "primary.main" : "divider",
+                      bgcolor: selected ? "action.selected" : "background.paper",
+                      color: selected ? "primary.main" : "text.secondary",
+                      fontWeight: selected ? 800 : 600,
+                      cursor: "pointer",
+                      transition: "background-color 120ms ease, border-color 120ms ease, color 120ms ease",
+                      "&:hover": {
+                        bgcolor: selected ? "action.selected" : "action.hover",
+                      },
+                      "&:focus-visible": {
+                        outline: "2px solid",
+                        outlineColor: "primary.main",
+                        outlineOffset: 2,
+                      },
+                    }}
+                  >
+                    {item.label}
+                  </ButtonBase>
+                );
+              })}
+            </Box>
+          ) : (
+            <Tabs
+              value={tab}
+              onChange={(_, value) => {
+                setTab(value as OpsTab);
+              }}
+              variant="scrollable"
+              scrollButtons="auto"
+            >
+              <Tab value="reconciliation" label="Supplier Bill Reconciliation" />
+              <Tab value="physical-count" label="Physical Count" />
+              <Tab value="stock-adjustments" label="Stock Adjustments" />
+              <Tab value="approval-review" label="Approval Review" />
+            </Tabs>
+          )}
         </CardContent>
       </Card>
 
@@ -1888,7 +2037,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                                         active: !row.active,
                                       });
                                       setSuccess(row.active ? "Supplier deactivated" : "Supplier activated");
-                                      await loadAll();
+                                      await refreshCurrentPageData();
                                     } catch (err) {
                                       setError(err instanceof Error ? err.message : "Failed to update supplier status");
                                     } finally {
@@ -2603,7 +2752,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
         </Stack>
       ) : null}
 
-      {!loading && pageMode === "procurement" && (workspace === "purchase-orders" || workspace === "invoices" || workspace === "goods-receipt") ? (
+      {!loading && pageMode === "procurement" && (workspace === "purchase-orders" || workspace === "supplier-invoices" || workspace === "goods-receipt") ? (
         <Grid container spacing={2}>
                 <Grid size={{ xs: 12, lg: 4.8 }}>
             <CompactFilterCard
@@ -2988,7 +3137,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                                   setError(null);
                                   try {
                                     await confirmGoodsReceipt(auth.accessToken, auth.tenantId, row.id, row.approvalNote || "Variance approved");
-                                    await loadAll();
+                                    await refreshCurrentPageData();
                                     setSuccess("GRN confirmed");
                                   } catch (err) {
                                     setError(err instanceof Error ? err.message : "Failed to confirm GRN");
