@@ -83,6 +83,15 @@ public class PurchaseOrderEntity {
         return entity;
     }
 
+    public void upsertHeaderAndItems(UUID supplierId, String poNumber, LocalDate orderDate, LocalDate expectedDeliveryDate, String itemsJson) {
+        this.supplierId = supplierId;
+        this.poNumber = poNumber;
+        this.orderDate = orderDate;
+        this.expectedDeliveryDate = expectedDeliveryDate;
+        this.itemsJson = itemsJson;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public void review(String matchingStatus, String varianceSummary, String approvalNote) {
         this.matchingStatus = matchingStatus;
         this.varianceSummary = varianceSummary;

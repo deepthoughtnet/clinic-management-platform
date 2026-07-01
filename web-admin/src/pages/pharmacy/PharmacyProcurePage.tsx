@@ -35,12 +35,28 @@ import {
 
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactFilterCard, CompactStatCard, WorkflowGuide, compactCardContentSx } from "../../components/compact/CompactUi";
-import { createSupplier, getMedicines, listSuppliers, updateSupplier, type Medicine, type Supplier, type SupplierInput } from "../../api/clinicApi";
+import {
+  createPurchaseOrder,
+  cancelPurchaseOrder,
+  createSupplier,
+  getMedicines,
+  getPurchaseOrder,
+  getPurchaseOrders,
+  listSuppliers,
+  updateSupplier,
+  type Medicine,
+  type ProcurementLineInput,
+  type PurchaseOrder,
+  type PurchaseOrderInput,
+  type Supplier,
+  type SupplierInput,
+} from "../../api/clinicApi";
 import { firstZodError, hasDuplicateSupplierName, indianMobileNumber, mapZodErrors, normalizeIndianMobileInput, optionalGstin, supplierSchema } from "@deepthoughtnet/form-validation-kit";
 
 type Workspace = "suppliers" | "purchase-orders" | "supplier-invoices" | "goods-receipt";
 type SupplierStatus = "ALL" | "Active" | "Inactive";
 type PurchaseOrderStatusFilter = "ALL" | PurchaseOrderRow["status"];
+type PurchaseOrderEditorMode = "view" | "edit";
 
 type SupplierFormState = {
   supplierName: string;
@@ -60,9 +76,10 @@ type PurchaseOrderRow = {
   supplierName: string;
   orderDate: string;
   expectedDelivery: string;
-  status: "Draft" | "Generated" | "Cancelled";
+  status: "Draft" | "Generated" | "Sent" | "Received" | "Closed" | "Cancelled";
   cancelReason: string | null;
   items: PurchaseOrderLineState[];
+  approvalNote: string | null;
   totalQty: number;
   subtotal: number;
   totalGst: number;
@@ -73,6 +90,7 @@ type PurchaseOrderRow = {
 type PurchaseOrderLineState = {
   medicineId: string;
   medicineName: string;
+  unit: string;
   quantity: string;
   unitPrice: string;
   gst: string;
@@ -123,7 +141,7 @@ const EMPTY_SUPPLIER: SupplierFormState = {
   active: true,
 };
 
-const emptyPoLine: PurchaseOrderLineState = { medicineId: "", medicineName: "", quantity: "", unitPrice: "", gst: "", discount: "" };
+const emptyPoLine: PurchaseOrderLineState = { medicineId: "", medicineName: "", unit: "", quantity: "", unitPrice: "", gst: "", discount: "" };
 const emptyPoForm: PurchaseOrderFormState = { supplierId: "", poNumber: "", orderDate: "", expectedDelivery: "", notes: "" };
 const emptyInvoiceForm = { supplierId: "", purchaseOrderId: "", invoiceNumber: "", invoiceDate: "", amount: "" };
 const emptyGrnForm = { supplierId: "", purchaseOrderId: "", receiptNumber: "", receivedAt: "", receivedQty: "", batch: "", expiry: "" };
@@ -353,29 +371,187 @@ function computePurchaseOrderLineTotal(line: PurchaseOrderLineState) {
 
 function normalizePurchaseOrderLine(item: unknown): PurchaseOrderLineState {
   const source = item as Record<string, unknown> | null | undefined;
+  const medicineSource = source?.medicine as Record<string, unknown> | string | null | undefined;
+  const medicineName = typeof source?.medicineName === "string"
+    ? source.medicineName
+    : typeof source?.displayName === "string"
+      ? source.displayName
+      : typeof source?.name === "string"
+        ? source.name
+        : typeof medicineSource === "string"
+          ? medicineSource
+          : typeof medicineSource === "object" && medicineSource
+            ? String((medicineSource as Record<string, unknown>).medicineName || (medicineSource as Record<string, unknown>).displayName || (medicineSource as Record<string, unknown>).name || "")
+            : "";
   return {
-    medicineId: typeof source?.medicineId === "string" ? source.medicineId : "",
-    medicineName: typeof source?.medicineName === "string"
-      ? source.medicineName
-      : typeof source?.medicine === "string"
-        ? source.medicine
+    medicineId: typeof source?.medicineId === "string"
+      ? source.medicineId
+      : typeof medicineSource === "object" && medicineSource && typeof (medicineSource as Record<string, unknown>).id === "string"
+        ? String((medicineSource as Record<string, unknown>).id)
         : "",
+    medicineName,
+    unit: typeof source?.unit === "string"
+      ? source.unit
+      : typeof source?.uom === "string"
+        ? source.uom
+        : typeof source?.medicineUnit === "string"
+          ? source.medicineUnit
+          : "",
     quantity: String(typeof source?.quantity === "number" ? source.quantity : typeof source?.qty === "number" ? source.qty : source?.quantity ?? source?.qty ?? ""),
-    unitPrice: String(typeof source?.unitPrice === "number" ? source.unitPrice : typeof source?.unitCost === "number" ? source.unitCost : source?.unitPrice ?? source?.unitCost ?? ""),
-    gst: String(typeof source?.gst === "number" ? source.gst : source?.gst ?? ""),
-    discount: String(typeof source?.discount === "number" ? source.discount : source?.discount ?? ""),
+    unitPrice: String(typeof source?.unitPrice === "number" ? source.unitPrice : typeof source?.unitCost === "number" ? source.unitCost : typeof source?.price === "number" ? source.price : source?.unitPrice ?? source?.unitCost ?? source?.price ?? ""),
+    gst: String(typeof source?.gst === "number" ? source.gst : typeof source?.gstPercent === "number" ? source.gstPercent : typeof source?.taxPercent === "number" ? source.taxPercent : source?.gst ?? source?.gstPercent ?? source?.taxPercent ?? ""),
+    discount: String(typeof source?.discount === "number" ? source.discount : typeof source?.discountAmount === "number" ? source.discountAmount : source?.discount ?? source?.discountAmount ?? ""),
   };
 }
 
-function poFormToLines(lines: PurchaseOrderLineState[]) {
-  return lines.map((line) => ({
-    medicineId: line.medicineId,
-    medicineName: line.medicineName,
-    quantity: line.quantity,
-    unitPrice: line.unitPrice,
-    gst: line.gst,
-    discount: line.discount,
-  }));
+function generatePurchaseOrderNumber(existing: Array<{ poNumber: string }>): string {
+  const year = new Date().getFullYear();
+  const sequence = existing.length + 1;
+  return `PO-${year}-${String(sequence).padStart(6, "0")}`;
+}
+
+function encodePurchaseOrderApprovalNote(status: PurchaseOrderRow["status"], cancelReason: string) {
+  if (status === "Cancelled") {
+    return cancelReason.trim() ? `CANCELLED:${cancelReason.trim()}` : "CANCELLED";
+  }
+  return status.toUpperCase();
+}
+
+function parsePurchaseOrderApprovalNote(note: string | null | undefined): {
+  status: PurchaseOrderRow["status"];
+  cancelReason: string | null;
+} {
+  const normalized = (note || "").trim().toUpperCase();
+  if (normalized.startsWith("CANCELLED")) {
+    const reasonIndex = note?.indexOf(":") ?? -1;
+    return {
+      status: "Cancelled",
+      cancelReason: reasonIndex >= 0 ? (note?.slice(reasonIndex + 1).trim() || null) : null,
+    };
+  }
+  if (normalized === "GENERATED") {
+    return { status: "Generated", cancelReason: null };
+  }
+  if (normalized === "SENT") {
+    return { status: "Sent", cancelReason: null };
+  }
+  if (normalized === "RECEIVED") {
+    return { status: "Received", cancelReason: null };
+  }
+  if (normalized === "CLOSED") {
+    return { status: "Closed", cancelReason: null };
+  }
+  return { status: "Draft", cancelReason: null };
+}
+
+function purchaseOrderStatusChipProps(status: PurchaseOrderRow["status"]) {
+  if (status === "Generated") {
+    return { label: "Generated", color: "success" as const };
+  }
+  if (status === "Sent") {
+    return { label: "Sent", color: "info" as const };
+  }
+  if (status === "Received") {
+    return { label: "Received", color: "success" as const };
+  }
+  if (status === "Closed") {
+    return { label: "Closed", color: "default" as const };
+  }
+  if (status === "Cancelled") {
+    return { label: "Cancelled", color: "default" as const };
+  }
+  return { label: "Draft", color: "warning" as const };
+}
+
+function mapBackendPurchaseOrderLine(item: unknown, medicineById?: Map<string, Medicine>): PurchaseOrderLineState {
+  const source = item as Record<string, unknown> | null | undefined;
+  const medicineId = typeof source?.medicineId === "string" ? source.medicineId : "";
+  const medicineFromCache = medicineId ? medicineById?.get(medicineId) ?? null : null;
+  const medicineLabel = typeof source?.medicineName === "string"
+    ? source.medicineName
+    : medicineFromCache?.medicineName || "";
+  const unit = typeof source?.unit === "string"
+    ? source.unit
+    : typeof source?.expectedUnit === "string"
+      ? source.expectedUnit
+      : medicineFromCache?.unit || "";
+  const quantity = String(typeof source?.quantity === "number" ? source.quantity : typeof source?.qty === "number" ? source.qty : source?.quantity ?? source?.qty ?? "");
+  const unitPrice = String(
+    typeof source?.unitCost === "number" ? source.unitCost
+      : typeof source?.expectedUnitCost === "number" ? source.expectedUnitCost
+        : typeof source?.price === "number" ? source.price
+          : source?.unitCost ?? source?.expectedUnitCost ?? source?.price ?? "",
+  );
+  const gst = String(
+    typeof source?.gstPercent === "number" ? source.gstPercent
+      : typeof source?.taxPercent === "number" ? source.taxPercent
+        : typeof source?.gst === "number" ? source.gst
+          : source?.gstPercent ?? source?.taxPercent ?? source?.gst ?? "",
+  );
+  const discount = String(
+    typeof source?.discount === "number" ? source.discount
+      : typeof source?.discountAmount === "number" ? source.discountAmount
+        : source?.discount ?? source?.discountAmount ?? "",
+  );
+  return {
+    medicineId,
+    medicineName: medicineLabel,
+    unit,
+    quantity,
+    unitPrice,
+    gst,
+    discount,
+  };
+}
+
+function mapBackendPurchaseOrder(record: PurchaseOrder, medicineById?: Map<string, Medicine>): PurchaseOrderRow {
+  let items: PurchaseOrderLineState[] = [];
+  try {
+    const parsed = JSON.parse(record.itemsJson || "[]") as Array<Record<string, unknown>>;
+    items = parsed.map((item) => mapBackendPurchaseOrderLine(item, medicineById));
+  } catch {
+    items = [];
+  }
+  const statusInfo = parsePurchaseOrderApprovalNote(record.approvalNote);
+  const totals = computePurchaseOrderTotals(items);
+  return {
+    id: record.id,
+    poNumber: record.poNumber,
+    supplierId: record.supplierId,
+    supplierName: record.supplierName || "",
+    orderDate: record.orderDate,
+    expectedDelivery: record.expectedDeliveryDate || "",
+    status: statusInfo.status,
+    cancelReason: statusInfo.cancelReason,
+    items,
+    approvalNote: record.approvalNote,
+    totalQty: totals.totalQty,
+    subtotal: totals.subtotal,
+    totalGst: totals.totalGst,
+    totalValue: totals.totalValue,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function mapPurchaseOrderLineToApi(line: PurchaseOrderLineState): ProcurementLineInput {
+  const parsed = purchaseOrderLineSchema.parse(line);
+  const unitPrice = parsed.unitPrice;
+  const taxPercent = parsed.gst;
+  return {
+    medicineId: parsed.medicineId || null,
+    medicineName: parsed.medicineName || null,
+    quantity: parsed.quantity,
+    expectedUnitCost: unitPrice,
+    unitCost: unitPrice,
+    taxPercent,
+    batchNumber: null,
+    expiryDate: null,
+    sellingPrice: null,
+  };
+}
+
+function logPo(payloadLabel: string, value: unknown) {
+  console.log(`[${payloadLabel}]`, value);
 }
 
 function medicineMatchesQuery(medicine: Medicine, query: string) {
@@ -433,6 +609,9 @@ export default function PharmacyProcurePage() {
   const [medicineCatalog, setMedicineCatalog] = React.useState<Medicine[]>([]);
   const [loadingMedicines, setLoadingMedicines] = React.useState(false);
   const [purchaseOrders, setPurchaseOrders] = React.useState<PurchaseOrderRow[]>([]);
+  const [loadingPurchaseOrders, setLoadingPurchaseOrders] = React.useState(true);
+  const [purchaseOrderError, setPurchaseOrderError] = React.useState<string | null>(null);
+  const [purchaseOrderSuccess, setPurchaseOrderSuccess] = React.useState<string | null>(null);
   const [invoices, setInvoices] = React.useState<SupplierInvoiceRow[]>([]);
   const [grns, setGrns] = React.useState<GoodsReceiptRow[]>([]);
   const [poForm, setPoForm] = React.useState<PurchaseOrderFormState>(emptyPoForm);
@@ -450,20 +629,40 @@ export default function PharmacyProcurePage() {
   const [grnForm, setGrnForm] = React.useState(emptyGrnForm);
 
   const supplierById = React.useMemo(() => new Map(suppliers.map((supplier) => [supplier.id, supplier])), [suppliers]);
+  const medicineById = React.useMemo(() => new Map(medicineCatalog.map((medicine) => [medicine.id, medicine])), [medicineCatalog]);
   const poById = React.useMemo(() => new Map(purchaseOrders.map((po) => [po.id, po])), [purchaseOrders]);
+  const [selectedPurchaseOrder, setSelectedPurchaseOrder] = React.useState<PurchaseOrderRow | null>(null);
+  const [poEditorMode, setPoEditorMode] = React.useState<PurchaseOrderEditorMode>("edit");
   const currentPurchaseOrder = React.useMemo(
-    () => (editingPoId ? purchaseOrders.find((row) => row.id === editingPoId) || null : null),
-    [editingPoId, purchaseOrders],
+    () => selectedPurchaseOrder || (editingPoId ? purchaseOrders.find((row) => row.id === editingPoId) || null : null),
+    [editingPoId, purchaseOrders, selectedPurchaseOrder],
   );
   const purchaseOrderTotals = React.useMemo(() => computePurchaseOrderTotals(poLines), [poLines]);
   const purchaseOrderStatus = currentPurchaseOrder?.status || "Draft";
-  const purchaseOrderStatusColor = purchaseOrderStatus === "Generated" ? "success" : purchaseOrderStatus === "Cancelled" ? "default" : "warning";
+  const purchaseOrderStatusColor = purchaseOrderStatus === "Generated"
+    ? "success"
+    : purchaseOrderStatus === "Sent"
+      ? "info"
+      : purchaseOrderStatus === "Received"
+        ? "success"
+        : purchaseOrderStatus === "Cancelled" || purchaseOrderStatus === "Closed"
+          ? "default"
+          : "warning";
   const purchaseOrderStatusLabel = purchaseOrderStatus === "Generated"
     ? "🟢 Generated"
-    : purchaseOrderStatus === "Cancelled"
-      ? "⚫ Cancelled"
-      : "🟡 Draft";
+    : purchaseOrderStatus === "Sent"
+      ? "🔵 Sent"
+      : purchaseOrderStatus === "Received"
+        ? "✅ Received"
+        : purchaseOrderStatus === "Closed"
+          ? "⚪ Closed"
+          : purchaseOrderStatus === "Cancelled"
+            ? "⚫ Cancelled"
+            : "🟡 Draft";
   const purchaseOrderTimestamp = currentPurchaseOrder?.status === "Generated" ? currentPurchaseOrder.updatedAt : null;
+  const purchaseOrderNumberDisplay = purchaseOrderStatus === "Generated" || purchaseOrderStatus === "Sent" || purchaseOrderStatus === "Received" || purchaseOrderStatus === "Closed" ? poForm.poNumber : "";
+  const purchaseOrderCanEdit = purchaseOrderStatus === "Draft" && poEditorMode === "edit";
+  const purchaseOrderCanCancel = purchaseOrderStatus !== "Cancelled" && Boolean(editingPoId);
   const filteredPurchaseOrders = React.useMemo(() => {
     const term = poSearch.trim().toLowerCase();
     return purchaseOrders.filter((po) => {
@@ -500,6 +699,26 @@ export default function PharmacyProcurePage() {
   React.useEffect(() => {
     void loadSuppliers();
   }, [loadSuppliers]);
+
+  const loadPurchaseOrders = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setLoadingPurchaseOrders(true);
+    setPurchaseOrderError(null);
+    try {
+      const rows = await getPurchaseOrders(auth.accessToken, auth.tenantId);
+      logPo("PO_LIST_RESPONSE", rows);
+      setPurchaseOrders(rows.map((row) => mapBackendPurchaseOrder(row, medicineById)));
+    } catch (err) {
+      setPurchaseOrders([]);
+      setPurchaseOrderError(err instanceof Error ? err.message : "Failed to load purchase orders");
+    } finally {
+      setLoadingPurchaseOrders(false);
+    }
+  }, [auth.accessToken, auth.tenantId, medicineById]);
+
+  React.useEffect(() => {
+    void loadPurchaseOrders();
+  }, [loadPurchaseOrders]);
 
   React.useEffect(() => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -652,23 +871,92 @@ export default function PharmacyProcurePage() {
     setPoLines([{ ...emptyPoLine }]);
     setPoFieldErrors({});
     setEditingPoId(null);
+    setSelectedPurchaseOrder(null);
+    setPoEditorMode("edit");
     setCancelReason("");
     setCancelError(null);
+    setPurchaseOrderError(null);
+    setPurchaseOrderSuccess(null);
   }, []);
 
+  const loadPurchaseOrderDetail = React.useCallback(async (
+    id: string,
+    selectedListRow?: PurchaseOrderRow | null,
+    requestedMode: PurchaseOrderEditorMode = "view",
+  ) => {
+    if (!auth.accessToken || !auth.tenantId) return null;
+    logPo("PO_DETAIL_REQUEST", id);
+    try {
+      const detail = await getPurchaseOrder(auth.accessToken, auth.tenantId, id);
+      logPo("PO_DETAIL_RESPONSE", detail);
+      const mapped = mapBackendPurchaseOrder(detail, medicineById);
+      setSelectedPurchaseOrder(mapped);
+      setEditingPoId(mapped.id);
+      setPoEditorMode(mapped.status === "Draft" ? requestedMode : "view");
+      setPoForm({
+        supplierId: mapped.supplierId,
+        poNumber: mapped.poNumber,
+        orderDate: mapped.orderDate,
+        expectedDelivery: mapped.expectedDelivery,
+        notes: "",
+      });
+      setPoLines(mapped.items.length ? mapped.items : []);
+      setPoFieldErrors({});
+      setCancelError(null);
+      logPo("PO_MAPPED_FORM", {
+        selectedListRow,
+        mappedEditorState: mapped,
+      });
+      return mapped;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load purchase order";
+      setPurchaseOrderError(message);
+      if (selectedListRow) {
+        const fallback = mapBackendPurchaseOrder({
+          id: selectedListRow.id,
+          tenantId: "",
+          supplierId: selectedListRow.supplierId,
+          supplierName: selectedListRow.supplierName,
+          poNumber: selectedListRow.poNumber,
+          orderDate: selectedListRow.orderDate,
+          expectedDeliveryDate: selectedListRow.expectedDelivery,
+          itemsJson: JSON.stringify(poLines.map(mapPurchaseOrderLineToApi)),
+          matchingStatus: selectedListRow.status,
+          varianceSummary: null,
+          approvalNote: selectedListRow.approvalNote,
+          createdAt: selectedListRow.updatedAt,
+          updatedAt: selectedListRow.updatedAt,
+        } as PurchaseOrder, medicineById);
+        setSelectedPurchaseOrder(fallback);
+        setEditingPoId(fallback.id);
+        setPoEditorMode(fallback.status === "Draft" ? requestedMode : "view");
+        setPoForm({
+          supplierId: fallback.supplierId,
+          poNumber: fallback.poNumber,
+          orderDate: fallback.orderDate,
+          expectedDelivery: fallback.expectedDelivery,
+          notes: "",
+        });
+        setPoLines(fallback.items.length ? fallback.items : []);
+        logPo("PO_MAPPED_FORM", {
+          selectedListRow,
+          mappedEditorState: fallback,
+        });
+        return fallback;
+      }
+      return null;
+    }
+  }, [auth.accessToken, auth.tenantId, medicineById, poLines]);
+
+  const openPurchaseOrderForView = React.useCallback((po: PurchaseOrderRow) => {
+    logPo("PO_OPEN_SELECTED", po);
+    void loadPurchaseOrderDetail(po.id, po, "view");
+  }, [loadPurchaseOrderDetail]);
+
   const openPurchaseOrderForEdit = React.useCallback((po: PurchaseOrderRow) => {
-    setEditingPoId(po.id);
-    setPoForm({
-      supplierId: po.supplierId,
-      poNumber: po.poNumber,
-      orderDate: po.orderDate,
-      expectedDelivery: po.expectedDelivery,
-      notes: "",
-    });
-    setPoLines(po.items.length ? po.items.map((item) => normalizePurchaseOrderLine(item)) : [{ ...emptyPoLine }]);
-    setPoFieldErrors({});
-    setCancelError(null);
-  }, []);
+    logPo("PO_OPEN_SELECTED", po);
+    void loadPurchaseOrderDetail(po.id, po, "edit");
+  }, [loadPurchaseOrderDetail]);
 
   const validatePurchaseOrderForm = React.useCallback(() => {
     const parsed = purchaseOrderFormSchema.safeParse({
@@ -683,7 +971,8 @@ export default function PharmacyProcurePage() {
     return parsed.data;
   }, [poForm, poLines]);
 
-  const upsertPurchaseOrder = React.useCallback((status: PurchaseOrderRow["status"]) => {
+  const persistPurchaseOrder = React.useCallback(async (status: PurchaseOrderRow["status"]) => {
+    if (!auth.accessToken || !auth.tenantId) return null;
     const validated = validatePurchaseOrderForm();
     if (!validated) {
       return null;
@@ -697,54 +986,39 @@ export default function PharmacyProcurePage() {
       setPoFieldErrors({ _form: "Save a valid draft before generating a PO." });
       return null;
     }
-    const totals = computePurchaseOrderTotals(poLines);
-    const nextRow: PurchaseOrderRow = {
-      id: editingPoId || `po-${Date.now()}`,
-      poNumber: validated.poNumber || `PO-${purchaseOrders.length + 1}`,
+    const existing = editingPoId ? purchaseOrders.find((row) => row.id === editingPoId) : null;
+    const poNumber = existing?.poNumber || validated.poNumber || generatePurchaseOrderNumber(purchaseOrders);
+    const payload: PurchaseOrderInput = {
       supplierId: validated.supplierId,
-      supplierName: supplier.supplierName,
+      poNumber,
       orderDate: validated.orderDate,
-      expectedDelivery: validated.expectedDelivery,
-      status,
-      cancelReason: status === "Cancelled" ? cancelReason.trim() || null : null,
-      items: poFormToLines(poLines),
-      totalQty: totals.totalQty,
-      subtotal: totals.subtotal,
-      totalGst: totals.totalGst,
-      totalValue: totals.totalValue,
-      updatedAt: new Date().toISOString(),
+      expectedDeliveryDate: validated.expectedDelivery || null,
+      items: poLines.map(mapPurchaseOrderLineToApi),
+      approvalNote: encodePurchaseOrderApprovalNote(status, status === "Cancelled" ? cancelReason : ""),
     };
-    setPurchaseOrders((current) => {
-      const next = current.filter((row) => row.id !== nextRow.id);
-      return [nextRow, ...next];
-    });
-    setEditingPoId(nextRow.id);
-    setPoFieldErrors({});
-    return nextRow;
-  }, [cancelReason, editingPoId, poForm, poLines, purchaseOrders.length, suppliers, validatePurchaseOrderForm]);
+    logPo("PO_SAVE_PAYLOAD", payload);
+    setPurchaseOrderError(null);
+    try {
+      const saved = await createPurchaseOrder(auth.accessToken, auth.tenantId, payload);
+      logPo("PO_SAVE_RESPONSE", saved);
+      await loadPurchaseOrders();
+      await loadPurchaseOrderDetail(saved.id);
+      setPurchaseOrderSuccess(status === "Generated" ? "Purchase order generated." : status === "Cancelled" ? "Purchase order cancelled." : "Purchase order draft saved.");
+      return saved;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save purchase order";
+      setPurchaseOrderError(message);
+      return null;
+    }
+  }, [auth.accessToken, auth.tenantId, cancelReason, loadPurchaseOrderDetail, loadPurchaseOrders, poLines, purchaseOrders, suppliers, validatePurchaseOrderForm]);
 
   const savePurchaseOrderDraft = React.useCallback(() => {
-    const saved = upsertPurchaseOrder("Draft");
-    if (saved) {
-      setPoFieldErrors({});
-      setCancelError(null);
-      setSupplierSuccess("Purchase order draft saved.");
-    }
-  }, [upsertPurchaseOrder]);
+    void persistPurchaseOrder("Draft");
+  }, [persistPurchaseOrder]);
 
   const generatePurchaseOrder = React.useCallback(() => {
-    const validated = validatePurchaseOrderForm();
-    if (!validated) return;
-    const current = editingPoId ? purchaseOrders.find((row) => row.id === editingPoId) : null;
-    if (!current || current.status !== "Draft") {
-      setPoFieldErrors({ _form: "Save a valid draft before generating a PO." });
-      return;
-    }
-    const saved = upsertPurchaseOrder("Generated");
-    if (saved) {
-      setSupplierSuccess("Purchase order generated.");
-    }
-  }, [editingPoId, purchaseOrders, upsertPurchaseOrder, validatePurchaseOrderForm]);
+    void persistPurchaseOrder("Generated");
+  }, [persistPurchaseOrder]);
 
   const openCancelPurchaseOrder = React.useCallback(() => {
     if (!editingPoId) {
@@ -765,15 +1039,73 @@ export default function PharmacyProcurePage() {
       setCancelError("Cancel reason is required.");
       return;
     }
-    const validated = validatePurchaseOrderForm();
-    if (!validated) return;
-    const saved = upsertPurchaseOrder("Cancelled");
-    if (saved) {
-      setCancelDialogOpen(false);
-      setCancelReason("");
-      setSupplierSuccess("Purchase order cancelled.");
+    if (!auth.accessToken || !auth.tenantId) return;
+    setPurchaseOrderError(null);
+    logPo("PO_SAVE_PAYLOAD", { id: editingPoId, status: "Cancelled", reason: cancelReason.trim() });
+    void cancelPurchaseOrder(auth.accessToken, auth.tenantId, editingPoId, cancelReason.trim())
+      .then((response) => {
+        logPo("PO_SAVE_RESPONSE", response);
+        return loadPurchaseOrders().then(() => loadPurchaseOrderDetail(response.id));
+      })
+      .then(() => {
+        setCancelDialogOpen(false);
+        setCancelReason("");
+        setPurchaseOrderSuccess("Purchase order cancelled.");
+      })
+      .catch((err) => {
+        setPurchaseOrderError(err instanceof Error ? err.message : "Failed to cancel purchase order");
+      });
+  }, [auth.accessToken, auth.tenantId, cancelReason, editingPoId, loadPurchaseOrderDetail, loadPurchaseOrders]);
+
+  const clearPurchaseOrderFilters = React.useCallback(() => {
+    setPoSearch("");
+    setPoStatusFilter("ALL");
+    setPoSupplierFilter("ALL");
+  }, []);
+
+  const handleViewPurchaseOrderFromDrawer = React.useCallback((po: PurchaseOrderRow) => {
+    openPurchaseOrderForView(po);
+    setPoDrawerOpen(false);
+  }, [openPurchaseOrderForView]);
+
+  const handleEditPurchaseOrderFromDrawer = React.useCallback((po: PurchaseOrderRow) => {
+    openPurchaseOrderForEdit(po);
+    setPoDrawerOpen(false);
+  }, [openPurchaseOrderForEdit]);
+
+  const handleGeneratePurchaseOrderFromDrawer = React.useCallback(async (po: PurchaseOrderRow) => {
+    const mapped = await loadPurchaseOrderDetail(po.id, po, "edit");
+    if (!mapped) return;
+    setPoDrawerOpen(false);
+    const payload: PurchaseOrderInput = {
+      supplierId: mapped.supplierId,
+      poNumber: mapped.poNumber,
+      orderDate: mapped.orderDate,
+      expectedDeliveryDate: mapped.expectedDelivery || null,
+      items: mapped.items.map(mapPurchaseOrderLineToApi),
+      approvalNote: encodePurchaseOrderApprovalNote("Generated", ""),
+    };
+    logPo("PO_SAVE_PAYLOAD", payload);
+    setPurchaseOrderError(null);
+    try {
+      const saved = await createPurchaseOrder(auth.accessToken!, auth.tenantId!, payload);
+      logPo("PO_SAVE_RESPONSE", saved);
+      await loadPurchaseOrders();
+      await loadPurchaseOrderDetail(saved.id, null, "view");
+      setPurchaseOrderSuccess("Purchase order generated.");
+    } catch (err) {
+      setPurchaseOrderError(err instanceof Error ? err.message : "Failed to generate purchase order");
     }
-  }, [cancelReason, editingPoId, upsertPurchaseOrder, validatePurchaseOrderForm]);
+  }, [auth.accessToken, auth.tenantId, loadPurchaseOrderDetail, loadPurchaseOrders]);
+
+  const handleCancelPurchaseOrderFromDrawer = React.useCallback((po: PurchaseOrderRow) => {
+    setEditingPoId(po.id);
+    setSelectedPurchaseOrder(po);
+    setPoEditorMode("view");
+    setCancelReason("");
+    setCancelError(null);
+    setCancelDialogOpen(true);
+  }, []);
 
   const currentSupplierCount = suppliers.length;
   const currentPurchaseOrderCount = purchaseOrders.length;
@@ -1056,6 +1388,17 @@ export default function PharmacyProcurePage() {
 
       {workspace === "purchase-orders" ? (
         <Stack spacing={2}>
+          {purchaseOrderSuccess ? <Alert severity="success" onClose={() => setPurchaseOrderSuccess(null)}>{purchaseOrderSuccess}</Alert> : null}
+          {purchaseOrderError ? <Alert severity="error" onClose={() => setPurchaseOrderError(null)}>{purchaseOrderError}</Alert> : null}
+          {!purchaseOrderCanEdit ? (
+            <Alert severity={purchaseOrderStatus === "Cancelled" ? "warning" : "info"}>
+              {purchaseOrderStatus === "Generated" || purchaseOrderStatus === "Sent" || purchaseOrderStatus === "Received" || purchaseOrderStatus === "Closed"
+                ? "This purchase order is in read-only mode. Use the drawer actions for printing, sending, history, or cancellation."
+                : purchaseOrderStatus === "Cancelled"
+                  ? "Cancelled purchase orders are read-only."
+                  : "This draft is open in read-only view mode. Use Edit from the drawer to update it."}
+            </Alert>
+          ) : null}
           <Card variant="outlined">
             <CardContent sx={compactCardContentSx}>
               <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
@@ -1126,7 +1469,7 @@ export default function PharmacyProcurePage() {
                 <Grid size={{ xs: 12, md: 6 }}>
                   <FormControl size="small" error={Boolean(poFieldErrors.supplierId)} fullWidth>
                     <InputLabel>Supplier</InputLabel>
-                    <Select label="Supplier" value={poForm.supplierId} onChange={(e) => setPoForm((current) => ({ ...current, supplierId: e.target.value }))}>
+                    <Select label="Supplier" value={poForm.supplierId} onChange={(e) => setPoForm((current) => ({ ...current, supplierId: e.target.value }))} disabled={!purchaseOrderCanEdit}>
                       {suppliers.map((supplier) => <MenuItem key={supplier.id} value={supplier.id}>{supplier.supplierName}</MenuItem>)}
                     </Select>
                     {poFieldErrors.supplierId ? <Typography variant="caption" color="error">{poFieldErrors.supplierId}</Typography> : null}
@@ -1136,7 +1479,7 @@ export default function PharmacyProcurePage() {
                   <TextField
                     size="small"
                     label="PO number"
-                    value={poForm.poNumber}
+                    value={purchaseOrderNumberDisplay}
                     placeholder={purchaseOrderStatus === "Generated" ? "" : "Auto-generated when Purchase Order is Generated"}
                     InputProps={{ readOnly: true }}
                     helperText={poFieldErrors.poNumber || (purchaseOrderStatus === "Generated" ? "Immutable generated PO number." : "Auto-generated when Purchase Order is Generated.")}
@@ -1145,19 +1488,19 @@ export default function PharmacyProcurePage() {
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField size="small" label="PO date *" type="date" InputLabelProps={{ shrink: true }} value={poForm.orderDate} onChange={(e) => setPoForm((current) => ({ ...current, orderDate: e.target.value }))} helperText={poFieldErrors.orderDate} error={Boolean(poFieldErrors.orderDate)} fullWidth />
+                  <TextField size="small" label="PO date *" type="date" InputLabelProps={{ shrink: true }} value={poForm.orderDate} onChange={(e) => setPoForm((current) => ({ ...current, orderDate: e.target.value }))} helperText={poFieldErrors.orderDate} error={Boolean(poFieldErrors.orderDate)} fullWidth disabled={!purchaseOrderCanEdit} />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField size="small" label="Expected delivery date *" type="date" InputLabelProps={{ shrink: true }} value={poForm.expectedDelivery} onChange={(e) => setPoForm((current) => ({ ...current, expectedDelivery: e.target.value }))} helperText={poFieldErrors.expectedDelivery} error={Boolean(poFieldErrors.expectedDelivery)} fullWidth />
+                  <TextField size="small" label="Expected delivery date *" type="date" InputLabelProps={{ shrink: true }} value={poForm.expectedDelivery} onChange={(e) => setPoForm((current) => ({ ...current, expectedDelivery: e.target.value }))} helperText={poFieldErrors.expectedDelivery} error={Boolean(poFieldErrors.expectedDelivery)} fullWidth disabled={!purchaseOrderCanEdit} />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField size="small" label="Reference / Notes" value={poForm.notes} onChange={(e) => setPoForm((current) => ({ ...current, notes: e.target.value }))} fullWidth />
+                  <TextField size="small" label="Reference / Notes" value={poForm.notes} onChange={(e) => setPoForm((current) => ({ ...current, notes: e.target.value }))} fullWidth disabled={!purchaseOrderCanEdit} />
                 </Grid>
               </Grid>
 
               <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Items</Typography>
-                <Button size="small" variant="outlined" onClick={addPoLine}>Add Row</Button>
+                <Button size="small" variant="outlined" onClick={addPoLine} disabled={!purchaseOrderCanEdit}>Add Row</Button>
               </Box>
               {poFieldErrors.items ? <Alert severity="error">{poFieldErrors.items}</Alert> : null}
 
@@ -1188,38 +1531,41 @@ export default function PharmacyProcurePage() {
                               <Autocomplete
                                 options={medicineOptions}
                                 value={selectedMedicine}
-                                inputValue={line.medicineName}
+                                inputValue={line.medicineName || selectedMedicine?.medicineName || ""}
                                 loading={loadingMedicines}
+                                disabled={!purchaseOrderCanEdit}
                                 onChange={(_, value) => {
                                   updatePoLine(index, {
                                     medicineId: value?.id || "",
                                     medicineName: value?.medicineName || "",
+                                    unit: value?.unit || "",
                                   });
                                 }}
                                 onInputChange={(_, value, reason) => {
                                   if (reason === "clear") {
-                                    updatePoLine(index, { medicineId: "", medicineName: "" });
+                                    updatePoLine(index, { medicineId: "", medicineName: "", unit: "" });
                                     return;
                                   }
                                   if (reason === "input") {
-                                    updatePoLine(index, { medicineId: "", medicineName: value });
+                                    updatePoLine(index, { medicineId: "", medicineName: value, unit: "" });
                                     return;
                                   }
                                   updatePoLine(index, { medicineName: value });
                                 }}
                                 getOptionLabel={(option) => option.medicineName}
                                 isOptionEqualToValue={(option, value) => option.id === value.id}
-                                renderInput={(params) => (
-                                  <TextField
-                                    {...params}
-                                    size="small"
-                                    label="Medicine *"
-                                    placeholder="Type medicine name to search"
-                                    error={Boolean(poFieldErrors[`items.${index}.medicineId`])}
-                                    helperText={poFieldErrors[`items.${index}.medicineId`] || "Select from Medicine Master."}
-                                  />
-                                )}
-                              />
+                                  renderInput={(params) => (
+                                    <TextField
+                                      {...params}
+                                      size="small"
+                                      label="Medicine *"
+                                      placeholder="Type medicine name to search"
+                                      error={Boolean(poFieldErrors[`items.${index}.medicineId`])}
+                                      helperText={poFieldErrors[`items.${index}.medicineId`] || "Select from Medicine Master."}
+                                      disabled={!purchaseOrderCanEdit}
+                                    />
+                                  )}
+                                />
                               {showCreateMedicine ? (
                                 <Button size="small" variant="text" sx={{ alignSelf: "flex-start" }} disabled>
                                   + Create Medicine
@@ -1238,11 +1584,12 @@ export default function PharmacyProcurePage() {
                               placeholder="Qty"
                               inputProps={{ min: 1, step: 1 }}
                               sx={poQuantityFieldSx}
+                              disabled={!purchaseOrderCanEdit}
                             />
                           </TableCell>
                           <TableCell sx={{ py: 0.5 }}>
                             <Typography variant="body2" sx={{ fontWeight: 700, textAlign: "right" }}>
-                              {selectedMedicine?.unit || "-"}
+                              {selectedMedicine?.unit || line.unit || "-"}
                             </Typography>
                           </TableCell>
                           <TableCell sx={{ py: 0.5 }}>
@@ -1256,6 +1603,7 @@ export default function PharmacyProcurePage() {
                               placeholder="0.00"
                               inputProps={{ min: 0.01, step: "0.01" }}
                               sx={{ width: 120, ...poMoneyFieldSx }}
+                              disabled={!purchaseOrderCanEdit}
                             />
                           </TableCell>
                           <TableCell sx={{ py: 0.5 }}>
@@ -1269,26 +1617,28 @@ export default function PharmacyProcurePage() {
                               placeholder="GST %"
                               inputProps={{ min: 0, max: 28, step: "0.01" }}
                               sx={{ width: 80, ...poMoneyFieldSx }}
+                              disabled={!purchaseOrderCanEdit}
                             />
                           </TableCell>
-                            <TableCell sx={{ py: 0.5 }}>
-                              <TextField
-                                size="small"
-                                type="number"
-                                value={line.discount}
-                                onChange={(e) => updatePoLine(index, { discount: e.target.value })}
-                                error={Boolean(poFieldErrors[`items.${index}.discount`])}
-                                helperText={poFieldErrors[`items.${index}.discount`]}
-                                placeholder="Discount"
-                                inputProps={{ min: 0, step: "0.01" }}
-                                sx={{ width: 120, ...poMoneyFieldSx }}
-                              />
+                          <TableCell sx={{ py: 0.5 }}>
+                            <TextField
+                              size="small"
+                              type="number"
+                              value={line.discount}
+                              onChange={(e) => updatePoLine(index, { discount: e.target.value })}
+                              error={Boolean(poFieldErrors[`items.${index}.discount`])}
+                              helperText={poFieldErrors[`items.${index}.discount`]}
+                              placeholder="Discount"
+                              inputProps={{ min: 0, step: "0.01" }}
+                              sx={{ width: 120, ...poMoneyFieldSx }}
+                              disabled={!purchaseOrderCanEdit}
+                            />
                           </TableCell>
                           <TableCell align="right" sx={{ py: 0.5, whiteSpace: "nowrap" }}>
                             {lineTotal == null ? "-" : `INR ${lineTotal.toFixed(2)}`}
                           </TableCell>
                           <TableCell align="right" sx={{ py: 0.5 }}>
-                            <Button size="small" color="inherit" onClick={() => removePoLine(index)} disabled={poLines.length === 1}>Remove</Button>
+                            <Button size="small" color="inherit" onClick={() => removePoLine(index)} disabled={!purchaseOrderCanEdit || poLines.length === 1}>Remove</Button>
                           </TableCell>
                         </TableRow>
                       );
@@ -1313,11 +1663,18 @@ export default function PharmacyProcurePage() {
               <Card variant="outlined" sx={{ position: "sticky", bottom: 0, zIndex: 1, bgcolor: "background.paper" }}>
                 <CardContent sx={{ p: 1.5 }}>
                   <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center" justifyContent="space-between">
-                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                      <Button size="small" variant="contained" onClick={savePurchaseOrderDraft}>Save Draft</Button>
-                      <Button size="small" variant="outlined" onClick={generatePurchaseOrder}>Generate PO</Button>
-                      <Button size="small" variant="outlined" color="inherit" onClick={openCancelPurchaseOrder}>Cancel</Button>
-                    </Stack>
+                    {purchaseOrderCanEdit ? (
+                      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                        <Button size="small" variant="contained" onClick={savePurchaseOrderDraft}>Save Draft</Button>
+                        <Button size="small" variant="outlined" onClick={generatePurchaseOrder}>Generate PO</Button>
+                        {purchaseOrderCanCancel ? <Button size="small" variant="outlined" color="inherit" onClick={openCancelPurchaseOrder}>Cancel</Button> : null}
+                      </Stack>
+                    ) : (
+                      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                        <Button size="small" variant="outlined" color="inherit" onClick={() => setPoDrawerOpen(true)}>Open Purchase Orders</Button>
+                        {purchaseOrderCanCancel ? <Button size="small" variant="outlined" color="inherit" onClick={openCancelPurchaseOrder}>Cancel</Button> : null}
+                      </Stack>
+                    )}
                     <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                       <Button size="small" variant="outlined" disabled>Print</Button>
                       <Button size="small" variant="outlined" disabled>Email</Button>
@@ -1359,6 +1716,9 @@ export default function PharmacyProcurePage() {
                 <MenuItem value="ALL">All</MenuItem>
                 <MenuItem value="Draft">Draft</MenuItem>
                 <MenuItem value="Generated">Generated</MenuItem>
+                <MenuItem value="Sent">Sent</MenuItem>
+                <MenuItem value="Received">Received</MenuItem>
+                <MenuItem value="Closed">Closed</MenuItem>
                 <MenuItem value="Cancelled">Cancelled</MenuItem>
               </Select>
             </FormControl>
@@ -1371,48 +1731,85 @@ export default function PharmacyProcurePage() {
                 ))}
               </Select>
             </FormControl>
+            <Button size="small" variant="outlined" onClick={clearPurchaseOrderFilters}>Clear filters</Button>
           </Stack>
 
           <Divider />
 
           <Box sx={{ overflowY: "auto", flex: 1, pr: 0.5 }}>
-            {filteredPurchaseOrders.length ? (
+            {loadingPurchaseOrders ? (
+              <Box sx={{ display: "grid", placeItems: "center", minHeight: 180 }}>
+                <Typography variant="body2" color="text.secondary">Loading purchase orders...</Typography>
+              </Box>
+            ) : filteredPurchaseOrders.length ? (
               <Stack spacing={1}>
-                {filteredPurchaseOrders.map((po) => (
-                  <ButtonBase
-                    key={po.id}
-                    onClick={() => {
-                      openPurchaseOrderForEdit(po);
-                      setPoDrawerOpen(false);
-                    }}
-                    sx={{
-                      width: "100%",
-                      textAlign: "left",
-                      display: "block",
-                      border: "1px solid",
-                      borderColor: po.id === editingPoId ? "primary.main" : "divider",
-                      borderRadius: 2,
-                      p: 1.25,
-                      bgcolor: po.id === editingPoId ? "action.selected" : "background.paper",
-                    }}
-                  >
-                    <Stack spacing={0.5}>
-                      <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                        <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{po.poNumber}</Typography>
-                        <Chip
-                          size="small"
-                          label={po.status === "Generated" ? "Generated" : po.status === "Cancelled" ? "Cancelled" : "Draft"}
-                          color={po.status === "Generated" ? "success" : po.status === "Cancelled" ? "default" : "warning"}
-                        />
-                      </Stack>
-                      <Typography variant="body2" color="text.secondary">{po.supplierName}</Typography>
-                      <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                        <Typography variant="caption" color="text.secondary">{po.orderDate}</Typography>
-                        <Typography variant="body2" sx={{ fontWeight: 700 }}>INR {po.totalValue.toFixed(2)}</Typography>
-                      </Stack>
-                    </Stack>
-                  </ButtonBase>
-                ))}
+                {filteredPurchaseOrders.map((po) => {
+                  const statusChip = purchaseOrderStatusChipProps(po.status);
+                  const showDraftActions = po.status === "Draft";
+                  const showGeneratedActions = po.status === "Generated";
+                  const showSentActions = po.status === "Sent";
+                  const showClosedActions = po.status === "Received" || po.status === "Closed";
+                  const showCancelledActions = po.status === "Cancelled";
+                  return (
+                    <Card
+                      key={po.id}
+                      variant="outlined"
+                      sx={{
+                        borderColor: po.id === editingPoId ? "primary.main" : "divider",
+                        bgcolor: po.id === editingPoId ? "action.selected" : "background.paper",
+                      }}
+                    >
+                      <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
+                        <Stack spacing={1}>
+                          <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{po.poNumber}</Typography>
+                            <Chip size="small" label={statusChip.label} color={statusChip.color} />
+                          </Stack>
+                          <Typography variant="body2" color="text.secondary">{po.supplierName}</Typography>
+                          <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                            <Typography variant="caption" color="text.secondary">{po.orderDate}</Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 700 }}>INR {po.totalValue.toFixed(2)}</Typography>
+                          </Stack>
+                          <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                            <Button size="small" variant="outlined" onClick={() => handleViewPurchaseOrderFromDrawer(po)}>View</Button>
+                            {showDraftActions ? (
+                              <>
+                                <Button size="small" variant="outlined" onClick={() => handleEditPurchaseOrderFromDrawer(po)}>Edit</Button>
+                                <Button size="small" variant="contained" onClick={() => void handleGeneratePurchaseOrderFromDrawer(po)}>Generate</Button>
+                                <Button size="small" variant="outlined" color="inherit" onClick={() => handleCancelPurchaseOrderFromDrawer(po)}>Cancel</Button>
+                              </>
+                            ) : null}
+                            {showGeneratedActions ? (
+                              <>
+                                <Button size="small" variant="outlined" disabled>Print</Button>
+                                <Button size="small" variant="outlined" disabled>Download PDF</Button>
+                                <Button size="small" variant="outlined" disabled>Send</Button>
+                                <Button size="small" variant="outlined" color="inherit" onClick={() => handleCancelPurchaseOrderFromDrawer(po)}>Cancel</Button>
+                              </>
+                            ) : null}
+                            {showSentActions ? (
+                              <>
+                                <Button size="small" variant="outlined" disabled>Print</Button>
+                                <Button size="small" variant="outlined" disabled>Download PDF</Button>
+                                <Button size="small" variant="outlined" color="inherit" onClick={() => handleCancelPurchaseOrderFromDrawer(po)}>Cancel</Button>
+                              </>
+                            ) : null}
+                            {showClosedActions ? (
+                              <>
+                                <Button size="small" variant="outlined" disabled>Print</Button>
+                                <Button size="small" variant="outlined" disabled>Download PDF</Button>
+                                <Button size="small" variant="outlined" disabled>Activity History</Button>
+                              </>
+                            ) : null}
+                            {showCancelledActions ? (
+                              <Button size="small" variant="outlined" disabled>Activity History</Button>
+                            ) : null}
+                          </Stack>
+                        </Stack>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </Stack>
             ) : (
               <CompactEmptyState

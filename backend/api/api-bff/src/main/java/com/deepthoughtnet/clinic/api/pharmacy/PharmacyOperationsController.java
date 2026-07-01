@@ -196,6 +196,12 @@ public class PharmacyOperationsController {
         return service.listPurchaseOrders(RequestContextHolder.requireTenantId());
     }
 
+    @GetMapping("/purchase-orders/{id}")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage') or @permissionChecker.hasPermission('report.read')")
+    public PurchaseOrderRecord getPurchaseOrder(@PathVariable UUID id) {
+        return service.getPurchaseOrder(RequestContextHolder.requireTenantId(), id);
+    }
+
     @PostMapping("/purchase-orders")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
@@ -203,6 +209,14 @@ public class PharmacyOperationsController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return service.savePurchaseOrder(tenantId, request, actorAppUserId);
+    }
+
+    @PostMapping("/purchase-orders/{id}/cancel")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public PurchaseOrderRecord cancelPurchaseOrder(@PathVariable UUID id, @RequestBody(required = false) String reason) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.cancelPurchaseOrder(tenantId, id, reason, actorAppUserId);
     }
 
     @GetMapping("/supplier-invoices")

@@ -639,6 +639,14 @@ public class PharmacyOperationsService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public PurchaseOrderRecord getPurchaseOrder(UUID tenantId, UUID id) {
+        PurchaseOrderEntity entity = purchaseOrderRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
+        SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, entity.getSupplierId()).orElse(null);
+        return toRecord(entity, supplier);
+    }
+
     @Transactional
     public PurchaseOrderRecord savePurchaseOrder(UUID tenantId, PurchaseOrderRequest request, UUID actorAppUserId) {
         if (request == null || request.supplierId() == null || !StringUtils.hasText(request.poNumber()) || !StringUtils.hasText(request.orderDate())) {
@@ -651,7 +659,28 @@ public class PharmacyOperationsService {
         String itemsJson = serializeItems(request.items());
         PurchaseOrderEntity entity = purchaseOrderRepository.findByTenantIdAndPoNumberIgnoreCase(tenantId, request.poNumber())
                 .orElseGet(() -> PurchaseOrderEntity.create(tenantId, supplier.getId(), normalize(request.poNumber()), parseDate(request.orderDate(), "orderDate"), parseDate(request.expectedDeliveryDate(), "expectedDeliveryDate"), itemsJson, actorAppUserId));
+        entity.upsertHeaderAndItems(
+                supplier.getId(),
+                normalize(request.poNumber()),
+                parseDate(request.orderDate(), "orderDate"),
+                parseDate(request.expectedDeliveryDate(), "expectedDeliveryDate"),
+                itemsJson
+        );
         entity.review(matchStatusForPurchaseOrder(itemsJson, null), null, normalizeNullable(request.approvalNote()));
+        PurchaseOrderEntity saved = purchaseOrderRepository.save(entity);
+        return toRecord(saved, supplier);
+    }
+
+    @Transactional
+    public PurchaseOrderRecord cancelPurchaseOrder(UUID tenantId, UUID id, String reason, UUID actorAppUserId) {
+        if (!StringUtils.hasText(reason)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cancel reason is required");
+        }
+        PurchaseOrderEntity entity = purchaseOrderRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
+        SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, entity.getSupplierId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        entity.review("CANCELLED", entity.getVarianceSummary(), normalizeNullable("CANCELLED:" + reason.trim()));
         PurchaseOrderEntity saved = purchaseOrderRepository.save(entity);
         return toRecord(saved, supplier);
     }

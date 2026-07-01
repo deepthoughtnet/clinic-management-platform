@@ -3494,8 +3494,16 @@ export async function getPurchaseOrders(token: string, tenantId: string) {
   return httpGet<PurchaseOrder[]>("/api/pharmacy/purchase-orders", { token, tenantId });
 }
 
+export async function getPurchaseOrder(token: string, tenantId: string, id: string) {
+  return httpGet<PurchaseOrder>(`/api/pharmacy/purchase-orders/${id}`, { token, tenantId });
+}
+
 export async function createPurchaseOrder(token: string, tenantId: string, body: PurchaseOrderInput) {
   return httpPost<PurchaseOrder>("/api/pharmacy/purchase-orders", body, { token, tenantId });
+}
+
+export async function cancelPurchaseOrder(token: string, tenantId: string, id: string, reason: string) {
+  return httpPost<PurchaseOrder>(`/api/pharmacy/purchase-orders/${id}/cancel`, reason, { token, tenantId });
 }
 
 export async function getSupplierInvoices(token: string, tenantId: string) {
