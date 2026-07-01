@@ -16,6 +16,7 @@ import com.deepthoughtnet.clinic.inventory.db.InventoryLocationRepository;
 import com.deepthoughtnet.clinic.inventory.db.MedicineEntity;
 import com.deepthoughtnet.clinic.inventory.db.MedicineRepository;
 import com.deepthoughtnet.clinic.inventory.db.PharmacyReconciliationRepository;
+import com.deepthoughtnet.clinic.inventory.db.PurchaseOrderEntity;
 import com.deepthoughtnet.clinic.inventory.db.PurchaseOrderRepository;
 import com.deepthoughtnet.clinic.inventory.db.StockRepository;
 import com.deepthoughtnet.clinic.inventory.db.SupplierEntity;
@@ -59,6 +60,7 @@ class PharmacyOperationsServiceGoodsReceiptTest {
     private InventoryLocationRepository locationRepository;
     private MedicineRepository medicineRepository;
     private StockRepository stockRepository;
+    private PurchaseOrderRepository purchaseOrderRepository;
     private PharmacyOperationsService service;
 
     @BeforeEach
@@ -69,7 +71,7 @@ class PharmacyOperationsServiceGoodsReceiptTest {
         supplierRepository = mock(SupplierRepository.class);
         PharmacyReconciliationRepository reconciliationRepository = mock(PharmacyReconciliationRepository.class);
         locationRepository = mock(InventoryLocationRepository.class);
-        PurchaseOrderRepository purchaseOrderRepository = mock(PurchaseOrderRepository.class);
+        purchaseOrderRepository = mock(PurchaseOrderRepository.class);
         SupplierInvoiceRepository supplierInvoiceRepository = mock(SupplierInvoiceRepository.class);
         goodsReceiptRepository = mock(GoodsReceiptRepository.class);
         PrescriptionDispensingService dispensingService = mock(PrescriptionDispensingService.class);
@@ -153,6 +155,46 @@ class PharmacyOperationsServiceGoodsReceiptTest {
         assertThat(tx.referenceId()).isEqualTo(receipt.getId());
         assertThat(saved.receiptNumber()).isEqualTo("GRN-1001");
         assertThat(saved.matchingStatus()).isEqualTo("CONFIRMED");
+    }
+
+    @Test
+    void confirmGoodsReceiptUpdatesPurchaseOrderStatusToPartiallyReceived() {
+        UUID purchaseOrderId = UUID.randomUUID();
+        PurchaseOrderEntity purchaseOrder = PurchaseOrderEntity.create(
+                TENANT_ID,
+                SUPPLIER_ID,
+                "PO-2026-000001",
+                LocalDate.parse("2026-05-20"),
+                LocalDate.parse("2026-05-25"),
+                "[{\"medicineId\":\"%s\",\"medicineName\":\"Paracetamol 500\",\"quantity\":20,\"expectedUnitCost\":1.25,\"unitCost\":1.25,\"taxPercent\":12}]".formatted(MEDICINE_ID),
+                ACTOR_ID
+        );
+        purchaseOrder.review("MATCHED", null, "GENERATED");
+        GoodsReceiptEntity receipt = GoodsReceiptEntity.create(
+                TENANT_ID,
+                SUPPLIER_ID,
+                purchaseOrderId,
+                null,
+                "GRN-1002",
+                OffsetDateTime.parse("2026-05-23T10:15:30Z"),
+                LOCATION_ID,
+                "[{\"medicineId\":\"%s\",\"medicineName\":\"Paracetamol 500\",\"quantity\":12,\"expectedUnitCost\":null,\"unitCost\":1.25,\"taxPercent\":null,\"batchNumber\":\"PARA-B001\",\"expiryDate\":\"2026-12-31\",\"sellingPrice\":1.75,\"locationId\":\"%s\"}]".formatted(MEDICINE_ID, LOCATION_ID),
+                ACTOR_ID
+        );
+
+        when(goodsReceiptRepository.findByTenantIdAndId(TENANT_ID, receipt.getId())).thenReturn(Optional.of(receipt));
+        when(goodsReceiptRepository.findByTenantIdAndPurchaseOrderIdOrderByCreatedAtAsc(TENANT_ID, purchaseOrderId)).thenReturn(List.of(receipt));
+        when(goodsReceiptRepository.save(any(GoodsReceiptEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(purchaseOrderRepository.findByTenantIdAndId(TENANT_ID, purchaseOrderId)).thenReturn(Optional.of(purchaseOrder));
+        when(purchaseOrderRepository.save(any(PurchaseOrderEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(stockRepository.findByTenantIdAndMedicineIdAndLocationId(TENANT_ID, MEDICINE_ID, LOCATION_ID)).thenReturn(List.of());
+        when(inventoryService.createStock(eq(TENANT_ID), any(StockUpsertCommand.class), eq(ACTOR_ID))).thenReturn(
+                new StockRecord(UUID.randomUUID(), TENANT_ID, MEDICINE_ID, LOCATION_ID, "Main Pharmacy", "Paracetamol 500", "TABLET", null, null, null, "PARA-B001", "GRN-1002", LocalDate.parse("2026-12-31"), LocalDate.parse("2026-05-23"), "Apex Pharma", 12, 0, null, new BigDecimal("1.25"), new BigDecimal("1.25"), new BigDecimal("1.75"), true, OffsetDateTime.now(), OffsetDateTime.now())
+        );
+
+        service.confirmGoodsReceipt(TENANT_ID, receipt.getId(), "verified", ACTOR_ID);
+
+        assertThat(purchaseOrder.getApprovalNote()).isEqualTo("PARTIALLY_RECEIVED");
     }
 
     private static final class NoOpTransactionManager implements PlatformTransactionManager {

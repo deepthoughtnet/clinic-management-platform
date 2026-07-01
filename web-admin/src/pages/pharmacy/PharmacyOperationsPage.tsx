@@ -468,7 +468,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
   const [poLifecycleMeta, setPoLifecycleMeta] = React.useState<Record<string, LocalPurchaseOrderMeta>>({});
   const [editingDraftId, setEditingDraftId] = React.useState<string | null>(null);
   const [editingPurchaseOrderNumber, setEditingPurchaseOrderNumber] = React.useState<string | null>(null);
-  const [invoiceForm, setInvoiceForm] = React.useState<SupplierInvoiceInput>({ supplierId: "", purchaseOrderId: null, invoiceNumber: "", invoiceDate: "", taxAmount: null, totalAmount: null, items: [], approvalNote: null });
+  const [invoiceForm, setInvoiceForm] = React.useState<SupplierInvoiceInput>({ supplierId: "", purchaseOrderId: null, invoiceNumber: "", invoiceDate: "", invoiceAmount: 0, taxAmount: null, discountAmount: null, totalAmount: null, items: [], varianceReason: null, approvalNote: null });
   const [invoiceFieldErrors, setInvoiceFieldErrors] = React.useState<FormErrors>(emptyErrors);
   const [invoiceDiscount, setInvoiceDiscount] = React.useState("");
   const [invoiceFreight, setInvoiceFreight] = React.useState("");
@@ -1644,10 +1644,13 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
       ].filter(Boolean);
       await createSupplierInvoice(auth.accessToken, auth.tenantId, {
         ...parsed,
+        invoiceAmount: parsed.totalAmount ?? 0,
+        discountAmount: invoiceDiscount.trim() ? Number(invoiceDiscount) : null,
+        varianceReason: invoiceVariance.trim() || null,
         approvalNote: noteParts.length ? noteParts.join(" | ") : parsed.approvalNote,
       });
       setSuccess("Supplier invoice saved successfully.");
-      setInvoiceForm({ supplierId: "", purchaseOrderId: null, invoiceNumber: "", invoiceDate: "", taxAmount: null, totalAmount: null, items: [], approvalNote: null });
+      setInvoiceForm({ supplierId: "", purchaseOrderId: null, invoiceNumber: "", invoiceDate: "", invoiceAmount: 0, taxAmount: null, discountAmount: null, totalAmount: null, items: [], varianceReason: null, approvalNote: null });
       setInvoiceDiscount("");
       setInvoiceFreight("");
       setInvoiceVariance("");
@@ -2848,7 +2851,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                       </Alert>
                       <Stack direction="row" spacing={1}>
                         <Button size="small" variant="contained" onClick={() => void saveSupplierInvoice()} disabled={!canManageOperations || saving || !purchaseOrders.length}>Save invoice</Button>
-                        <Button size="small" onClick={() => { setInvoiceForm({ supplierId: "", purchaseOrderId: null, invoiceNumber: "", invoiceDate: "", taxAmount: null, totalAmount: null, items: [], approvalNote: null }); setInvoiceDiscount(""); setInvoiceFreight(""); setInvoiceVariance(""); }}>Clear</Button>
+                        <Button size="small" onClick={() => { setInvoiceForm({ supplierId: "", purchaseOrderId: null, invoiceNumber: "", invoiceDate: "", invoiceAmount: 0, taxAmount: null, discountAmount: null, totalAmount: null, items: [], varianceReason: null, approvalNote: null }); setInvoiceDiscount(""); setInvoiceFreight(""); setInvoiceVariance(""); }}>Clear</Button>
                       </Stack>
                     </Stack>
                   )

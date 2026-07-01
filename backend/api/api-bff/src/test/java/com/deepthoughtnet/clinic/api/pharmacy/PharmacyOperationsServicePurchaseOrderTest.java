@@ -114,6 +114,9 @@ class PharmacyOperationsServicePurchaseOrderTest {
                         new BigDecimal("12"),
                         null,
                         null,
+                        null,
+                        null,
+                        null,
                         null
                 )),
                 "DRAFT"

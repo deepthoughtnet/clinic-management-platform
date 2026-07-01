@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface GoodsReceiptRepository extends JpaRepository<GoodsReceiptEntity, UUID> {
     List<GoodsReceiptEntity> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
+    List<GoodsReceiptEntity> findByTenantIdAndPurchaseOrderIdOrderByCreatedAtAsc(UUID tenantId, UUID purchaseOrderId);
     Optional<GoodsReceiptEntity> findByTenantIdAndId(UUID tenantId, UUID id);
     List<GoodsReceiptEntity> findByTenantIdAndIdIn(UUID tenantId, Collection<UUID> ids);
     Optional<GoodsReceiptEntity> findByTenantIdAndReceiptNumberIgnoreCase(UUID tenantId, String receiptNumber);

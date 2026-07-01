@@ -1719,6 +1719,9 @@ export type ProcurementLineInput = {
   batchNumber: string | null;
   expiryDate: string | null;
   sellingPrice: number | null;
+  unit?: string | null;
+  locationId?: string | null;
+  remarks?: string | null;
 };
 
 export type PurchaseOrderInput = {
@@ -1751,11 +1754,16 @@ export type SupplierInvoiceInput = {
   purchaseOrderId: string | null;
   invoiceNumber: string;
   invoiceDate: string;
+  invoiceAmount: number;
   taxAmount: number | null;
+  discountAmount: number | null;
   totalAmount: number | null;
   items: ProcurementLineInput[];
+  varianceReason: string | null;
   approvalNote: string | null;
 };
+
+export type SupplierInvoiceStatus = "DRAFT" | "MATCHED" | "APPROVED_FOR_PAYMENT" | "PAID" | "CANCELLED";
 
 export type SupplierInvoice = {
   id: string;
@@ -1765,14 +1773,30 @@ export type SupplierInvoice = {
   purchaseOrderId: string | null;
   invoiceNumber: string;
   invoiceDate: string;
+  invoiceAmount: number | null;
   taxAmount: number | null;
+  discountAmount: number | null;
   totalAmount: number | null;
+  status: SupplierInvoiceStatus;
   itemsJson: string;
   matchingStatus: string;
+  varianceAmount: number | null;
+  varianceReason: string | null;
   varianceSummary: string | null;
+  cancelReason: string | null;
+  attachmentFileName: string | null;
+  attachmentMediaType: string | null;
+  attachmentSizeBytes: number | null;
   approvalNote: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type SupplierInvoiceAttachment = {
+  invoiceId: string;
+  fileName: string;
+  mediaType: string;
+  sizeBytes: number | null;
 };
 
 export type GoodsReceiptInput = {
@@ -3512,6 +3536,28 @@ export async function getSupplierInvoices(token: string, tenantId: string) {
 
 export async function createSupplierInvoice(token: string, tenantId: string, body: SupplierInvoiceInput) {
   return httpPost<SupplierInvoice>("/api/pharmacy/supplier-invoices", body, { token, tenantId });
+}
+
+export async function updateSupplierInvoice(token: string, tenantId: string, id: string, body: SupplierInvoiceInput) {
+  return httpPut<SupplierInvoice>(`/api/pharmacy/supplier-invoices/${id}`, body, { token, tenantId });
+}
+
+export async function matchSupplierInvoice(token: string, tenantId: string, id: string) {
+  return httpPost<SupplierInvoice>(`/api/pharmacy/supplier-invoices/${id}/match`, {}, { token, tenantId });
+}
+
+export async function approveSupplierInvoiceForPayment(token: string, tenantId: string, id: string) {
+  return httpPost<SupplierInvoice>(`/api/pharmacy/supplier-invoices/${id}/approve-for-payment`, {}, { token, tenantId });
+}
+
+export async function cancelSupplierInvoice(token: string, tenantId: string, id: string, reason: string) {
+  return httpPost<SupplierInvoice>(`/api/pharmacy/supplier-invoices/${id}/cancel`, { reason }, { token, tenantId });
+}
+
+export async function uploadSupplierInvoiceAttachment(token: string, tenantId: string, id: string, file: File) {
+  const formData = new FormData();
+  formData.set("file", file);
+  return httpPostForm<SupplierInvoiceAttachment>(`/api/pharmacy/supplier-invoices/${id}/attachment`, formData, { token, tenantId });
 }
 
 export async function getGoodsReceipts(token: string, tenantId: string) {

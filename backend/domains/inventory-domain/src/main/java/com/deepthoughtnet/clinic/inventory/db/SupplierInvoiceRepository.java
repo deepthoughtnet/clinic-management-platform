@@ -9,5 +9,7 @@ public interface SupplierInvoiceRepository extends JpaRepository<SupplierInvoice
     List<SupplierInvoiceEntity> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
     Optional<SupplierInvoiceEntity> findByTenantIdAndId(UUID tenantId, UUID id);
     Optional<SupplierInvoiceEntity> findByTenantIdAndInvoiceNumberIgnoreCase(UUID tenantId, String invoiceNumber);
+    boolean existsByTenantIdAndSupplierIdAndInvoiceNumberIgnoreCase(UUID tenantId, UUID supplierId, String invoiceNumber);
+    boolean existsByTenantIdAndSupplierIdAndInvoiceNumberIgnoreCaseAndIdNot(UUID tenantId, UUID supplierId, String invoiceNumber, UUID id);
     boolean existsByTenantIdAndInvoiceNumberIgnoreCaseAndIdNot(UUID tenantId, String invoiceNumber, UUID id);
 }

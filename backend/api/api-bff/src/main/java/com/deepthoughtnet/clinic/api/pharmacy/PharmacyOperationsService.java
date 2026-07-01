@@ -76,6 +76,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @Service
 public class PharmacyOperationsService {
     private static final int EXPIRY_WARNING_DAYS = 30;
+    private static final long SUPPLIER_INVOICE_ATTACHMENT_MAX_SIZE_BYTES = 10L * 1024L * 1024L;
     private static final Logger log = LoggerFactory.getLogger(PharmacyOperationsService.class);
     private static final Pattern SUPPLIER_NAME_PATTERN = Pattern.compile(".*[A-Za-z0-9].*");
     private static final Pattern GSTIN_PATTERN = Pattern.compile("^\\d{2}[A-Z]{5}\\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]$");
@@ -693,22 +694,139 @@ public class PharmacyOperationsService {
     }
 
     @Transactional
-    public SupplierInvoiceRecord saveSupplierInvoice(UUID tenantId, SupplierInvoiceRequest request, UUID actorAppUserId) {
-        if (request == null || request.supplierId() == null || !StringUtils.hasText(request.invoiceNumber()) || !StringUtils.hasText(request.invoiceDate())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier, invoice number, and invoice date are required");
+    public SupplierInvoiceRecord saveSupplierInvoice(UUID tenantId, UUID id, SupplierInvoiceRequest request, UUID actorAppUserId) {
+        if (request == null || request.supplierId() == null || request.purchaseOrderId() == null || !StringUtils.hasText(request.invoiceNumber()) || !StringUtils.hasText(request.invoiceDate())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier, related PO, invoice number, and invoice date are required");
         }
         SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, request.supplierId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
         ensureActiveSupplier(supplier, "Inactive supplier cannot be used for procurement");
-        PurchaseOrderEntity po = request.purchaseOrderId() == null ? null : purchaseOrderRepository.findByTenantIdAndId(tenantId, request.purchaseOrderId())
+        PurchaseOrderEntity po = purchaseOrderRepository.findByTenantIdAndId(tenantId, request.purchaseOrderId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
+        if (!supplier.getId().equals(po.getSupplierId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier must match the related purchase order");
+        }
         validateSupplierInvoice(tenantId, request);
         String itemsJson = serializeItems(request.items());
-        SupplierInvoiceEntity entity = supplierInvoiceRepository.findByTenantIdAndInvoiceNumberIgnoreCase(tenantId, request.invoiceNumber())
-                .orElseGet(() -> SupplierInvoiceEntity.create(tenantId, supplier.getId(), po == null ? null : po.getId(), normalize(request.invoiceNumber()), parseDate(request.invoiceDate(), "invoiceDate"), request.taxAmount(), request.totalAmount(), itemsJson, actorAppUserId));
-        entity.review(matchStatusForInvoice(po, itemsJson), varianceSummaryForInvoice(po, itemsJson), normalizeNullable(request.approvalNote()));
+        String normalizedInvoiceNumber = normalize(request.invoiceNumber());
+        BigDecimal varianceAmount = varianceAmountForInvoice(po, request.totalAmount());
+        String varianceReason = normalizeNullable(request.varianceReason());
+        SupplierInvoiceEntity entity;
+        if (id == null) {
+            if (supplierInvoiceRepository.existsByTenantIdAndSupplierIdAndInvoiceNumberIgnoreCase(tenantId, supplier.getId(), normalizedInvoiceNumber)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Supplier invoice already exists");
+            }
+            entity = SupplierInvoiceEntity.create(
+                    tenantId,
+                    supplier.getId(),
+                    po.getId(),
+                    normalizedInvoiceNumber,
+                    parseDate(request.invoiceDate(), "invoiceDate"),
+                    request.invoiceAmount(),
+                    request.taxAmount(),
+                    request.discountAmount(),
+                    request.totalAmount(),
+                    itemsJson,
+                    actorAppUserId
+            );
+        } else {
+            entity = supplierInvoiceRepository.findByTenantIdAndId(tenantId, id)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier invoice not found"));
+            ensureSupplierInvoiceEditable(entity);
+            if (supplierInvoiceRepository.existsByTenantIdAndSupplierIdAndInvoiceNumberIgnoreCaseAndIdNot(tenantId, supplier.getId(), normalizedInvoiceNumber, id)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Supplier invoice already exists");
+            }
+            entity.update(
+                    supplier.getId(),
+                    po.getId(),
+                    normalizedInvoiceNumber,
+                    parseDate(request.invoiceDate(), "invoiceDate"),
+                    request.invoiceAmount(),
+                    request.taxAmount(),
+                    request.discountAmount(),
+                    request.totalAmount(),
+                    itemsJson,
+                    varianceReason,
+                    normalizeNullable(request.approvalNote())
+            );
+        }
+        entity.review(
+                matchStatusForInvoice(po, itemsJson),
+                varianceAmount,
+                varianceReason,
+                varianceSummaryForInvoice(po, itemsJson),
+                normalizeNullable(request.approvalNote())
+        );
         SupplierInvoiceEntity saved = supplierInvoiceRepository.save(entity);
         return toRecord(saved, supplier);
+    }
+
+    @Transactional
+    public SupplierInvoiceRecord matchSupplierInvoice(UUID tenantId, UUID id, UUID actorAppUserId) {
+        SupplierInvoiceEntity entity = supplierInvoiceRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier invoice not found"));
+        ensureSupplierInvoiceStatus(entity, "DRAFT");
+        entity.markMatched();
+        SupplierInvoiceEntity saved = supplierInvoiceRepository.save(entity);
+        SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        audit("pharmacy.supplier-invoice.matched", "SUPPLIER_INVOICE", tenantId, saved.getId(), actorAppUserId, "Matched supplier invoice", Map.of("status", saved.getStatus()));
+        return toRecord(saved, supplier);
+    }
+
+    @Transactional
+    public SupplierInvoiceRecord approveSupplierInvoiceForPayment(UUID tenantId, UUID id, UUID actorAppUserId) {
+        SupplierInvoiceEntity entity = supplierInvoiceRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier invoice not found"));
+        ensureSupplierInvoiceStatus(entity, "MATCHED");
+        entity.approveForPayment();
+        SupplierInvoiceEntity saved = supplierInvoiceRepository.save(entity);
+        SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        audit("pharmacy.supplier-invoice.approved-for-payment", "SUPPLIER_INVOICE", tenantId, saved.getId(), actorAppUserId, "Approved supplier invoice for payment", Map.of("status", saved.getStatus()));
+        return toRecord(saved, supplier);
+    }
+
+    @Transactional
+    public SupplierInvoiceRecord cancelSupplierInvoice(UUID tenantId, UUID id, SupplierInvoiceCancelRequest request, UUID actorAppUserId) {
+        SupplierInvoiceEntity entity = supplierInvoiceRepository.findByTenantIdAndId(tenantId, id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier invoice not found"));
+        if ("PAID".equalsIgnoreCase(entity.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Paid invoices cannot be cancelled");
+        }
+        if ("CANCELLED".equalsIgnoreCase(entity.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Supplier invoice is already cancelled");
+        }
+        String reason = request == null ? null : normalizeNullable(request.reason());
+        if (!StringUtils.hasText(reason)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cancellation reason is required");
+        }
+        entity.cancel(reason);
+        SupplierInvoiceEntity saved = supplierInvoiceRepository.save(entity);
+        SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
+        audit("pharmacy.supplier-invoice.cancelled", "SUPPLIER_INVOICE", tenantId, saved.getId(), actorAppUserId, "Cancelled supplier invoice", Map.of("reason", reason));
+        return toRecord(saved, supplier);
+    }
+
+    @Transactional
+    public SupplierInvoiceAttachmentResponse uploadSupplierInvoiceAttachment(UUID tenantId, UUID invoiceId, MultipartFile file, UUID actorAppUserId) throws Exception {
+        SupplierInvoiceEntity entity = supplierInvoiceRepository.findByTenantIdAndId(tenantId, invoiceId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier invoice not found"));
+        ensureSupplierInvoiceEditable(entity);
+        validateSupplierInvoiceAttachment(file);
+        String fileName = sanitizeSupplierInvoiceFilename(file.getOriginalFilename());
+        String mediaType = normalizeSupplierInvoiceAttachmentMediaType(file.getContentType(), fileName);
+        byte[] bytes = file.getBytes();
+        String storageKey = storageService.buildDocumentStorageKey(tenantId, "supplier-invoice-" + entity.getInvoiceNumber() + "-" + fileName);
+        storageService.putObject(storageKey, mediaType, bytes);
+        if (StringUtils.hasText(entity.getAttachmentStorageKey())) {
+            storageService.deleteObjectQuietly(entity.getAttachmentStorageKey());
+        }
+        entity.attachDocument(fileName, mediaType, storageKey, (long) bytes.length);
+        supplierInvoiceRepository.save(entity);
+        audit("pharmacy.supplier-invoice.attachment-uploaded", "SUPPLIER_INVOICE", tenantId, entity.getId(), actorAppUserId, "Uploaded supplier invoice attachment", Map.of("fileName", fileName, "sizeBytes", bytes.length));
+        return new SupplierInvoiceAttachmentResponse(entity.getId(), fileName, mediaType, (long) bytes.length);
     }
 
     @Transactional(readOnly = true)
@@ -734,7 +852,8 @@ public class PharmacyOperationsService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
         SupplierInvoiceEntity invoice = request.supplierInvoiceId() == null ? null : supplierInvoiceRepository.findByTenantIdAndId(tenantId, request.supplierInvoiceId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier invoice not found"));
-        InventoryLocationEntity location = locationRepository.findByTenantIdAndId(tenantId, resolveLocationId(tenantId, request.locationId()))
+        UUID defaultLocationId = resolveLocationId(tenantId, request.locationId());
+        InventoryLocationEntity location = locationRepository.findByTenantIdAndId(tenantId, defaultLocationId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Location not found"));
         validateGoodsReceipt(tenantId, request);
         String itemsJson = serializeItems(request.items());
@@ -762,10 +881,13 @@ public class PharmacyOperationsService {
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Medicine not found"));
             ensureActiveMedicine(medicine, "Inactive medicine cannot receive stock");
             validateProcurementLine(tenantId, item);
-            StockEntity existing = findStockBatch(tenantId, medicine.getId(), location.getId(), item.batchNumber(), entity.getReceiptNumber()).orElse(null);
+            UUID lineLocationId = item.locationId() != null ? item.locationId() : entity.getLocationId();
+            InventoryLocationEntity lineLocation = locationRepository.findByTenantIdAndId(tenantId, lineLocationId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Location not found"));
+            StockEntity existing = findStockBatch(tenantId, medicine.getId(), lineLocation.getId(), item.batchNumber(), entity.getReceiptNumber()).orElse(null);
             StockUpsertCommand command = new StockUpsertCommand(
                     medicine.getId(),
-                    location.getId(),
+                    lineLocation.getId(),
                     null,
                     null,
                     null,
@@ -790,7 +912,7 @@ public class PharmacyOperationsService {
                     new InventoryTransactionCommand(
                             medicine.getId(),
                             stock.id(),
-                            location.getId(),
+                            lineLocation.getId(),
                             null,
                             InventoryTransactionType.PURCHASE,
                             item.quantity(),
@@ -806,6 +928,9 @@ public class PharmacyOperationsService {
         entity.confirm(actorAppUserId);
         entity.review(entity.getMatchingStatus(), entity.getVarianceSummary(), normalizeNullable(approvalNote));
         GoodsReceiptEntity saved = goodsReceiptRepository.save(entity);
+        if (entity.getPurchaseOrderId() != null) {
+            updatePurchaseOrderReceiptStatus(tenantId, entity.getPurchaseOrderId());
+        }
         return toRecord(saved, supplier, location);
     }
 
@@ -1340,14 +1465,32 @@ public class PharmacyOperationsService {
 
     private void validateSupplierInvoice(UUID tenantId, SupplierInvoiceRequest request) {
         validateProcurementHeader(request.invoiceNumber(), request.invoiceDate(), null, "Invoice number", "invoice date");
+        if (request.supplierId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier is required");
+        }
+        if (request.purchaseOrderId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Related PO is required");
+        }
+        if (request.invoiceAmount() == null || request.invoiceAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invoice amount must be greater than zero");
+        }
         if (request.taxAmount() != null && request.taxAmount().compareTo(BigDecimal.ZERO) < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tax amount cannot be negative");
         }
-        if (request.totalAmount() != null && request.totalAmount().compareTo(BigDecimal.ZERO) < 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Total amount cannot be negative");
+        if (request.discountAmount() != null && request.discountAmount().compareTo(BigDecimal.ZERO) < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Discount amount cannot be negative");
+        }
+        if (request.totalAmount() == null || request.totalAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Total amount must be greater than zero");
         }
         if (request.items() == null || request.items().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add at least one procurement line");
+        }
+        PurchaseOrderEntity purchaseOrder = purchaseOrderRepository.findByTenantIdAndId(tenantId, request.purchaseOrderId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
+        BigDecimal varianceAmount = varianceAmountForInvoice(purchaseOrder, request.totalAmount());
+        if (varianceAmount.compareTo(BigDecimal.ZERO) != 0 && !StringUtils.hasText(request.varianceReason())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Variance reason is required when invoice amount differs from PO amount");
         }
         for (ProcurementLineRequest item : request.items()) {
             validateProcurementLine(tenantId, item);
@@ -1356,14 +1499,57 @@ public class PharmacyOperationsService {
 
     private void validateGoodsReceipt(UUID tenantId, GoodsReceiptRequest request) {
         validateProcurementHeader(request.receiptNumber(), request.receivedAt(), null, "Receipt number", "receivedAt");
-        if (request.locationId() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Location is required");
-        }
         if (request.items() == null || request.items().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add at least one procurement line");
         }
+        PurchaseOrderEntity purchaseOrder = request.purchaseOrderId() == null
+                ? null
+                : purchaseOrderRepository.findByTenantIdAndId(tenantId, request.purchaseOrderId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
+        Map<UUID, Integer> orderedQuantities = purchaseOrder == null
+                ? Map.of()
+                : aggregateLineQuantities(deserializeItems(purchaseOrder.getItemsJson()));
+        Map<UUID, Integer> receivedQuantities = purchaseOrder == null
+                ? Map.of()
+                : goodsReceiptRepository.findByTenantIdAndPurchaseOrderIdOrderByCreatedAtAsc(tenantId, purchaseOrder.getId()).stream()
+                .filter(receipt -> receipt.getConfirmedAt() != null)
+                .flatMap(receipt -> deserializeItems(receipt.getItemsJson()).stream())
+                .filter(item -> item != null && item.medicineId() != null)
+                .collect(Collectors.toMap(ProcurementLineRequest::medicineId, ProcurementLineRequest::quantity, Integer::sum));
+        Map<UUID, Integer> requestedQuantities = aggregateLineQuantities(request.items());
+        boolean hasReceivableLine = false;
         for (ProcurementLineRequest item : request.items()) {
             validateProcurementLine(tenantId, item);
+            if (item.quantity() <= 0) {
+                continue;
+            }
+            hasReceivableLine = true;
+            if (!StringUtils.hasText(item.batchNumber())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Batch number is required for received items");
+            }
+            if (!StringUtils.hasText(item.expiryDate())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Expiry date is required for received items");
+            }
+            UUID lineLocationId = item.locationId() != null ? item.locationId() : request.locationId();
+            if (lineLocationId == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Location is required for received items");
+            }
+            locationRepository.findByTenantIdAndId(tenantId, lineLocationId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Location not found"));
+            if (purchaseOrder != null && item.medicineId() != null) {
+                int orderedQuantity = orderedQuantities.getOrDefault(item.medicineId(), 0);
+                int alreadyReceived = receivedQuantities.getOrDefault(item.medicineId(), 0);
+                int pending = Math.max(orderedQuantity - alreadyReceived, 0);
+                if (pending == 0) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No pending quantity remains for " + item.medicineName());
+                }
+                if (requestedQuantities.getOrDefault(item.medicineId(), 0) > pending) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receive quantity cannot exceed pending quantity for " + item.medicineName());
+                }
+            }
+        }
+        if (!hasReceivableLine) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add at least one received line with quantity greater than zero");
         }
     }
 
@@ -1952,6 +2138,51 @@ public class PharmacyOperationsService {
         return Stream.of(fromPo, fromInvoice, priceVariance).filter(StringUtils::hasText).filter(value -> !"OK".equals(value)).collect(Collectors.joining(" | "));
     }
 
+    private void updatePurchaseOrderReceiptStatus(UUID tenantId, UUID purchaseOrderId) {
+        PurchaseOrderEntity purchaseOrder = purchaseOrderRepository.findByTenantIdAndId(tenantId, purchaseOrderId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
+        if (isPurchaseOrderCancelled(purchaseOrder.getApprovalNote())) {
+            return;
+        }
+        List<ProcurementLineRequest> poItems = deserializeItems(purchaseOrder.getItemsJson());
+        Map<UUID, Integer> orderedQuantities = aggregateLineQuantities(poItems);
+        Map<UUID, Integer> receivedQuantities = goodsReceiptRepository.findByTenantIdAndPurchaseOrderIdOrderByCreatedAtAsc(tenantId, purchaseOrderId).stream()
+                .filter(receipt -> receipt.getConfirmedAt() != null)
+                .flatMap(receipt -> deserializeItems(receipt.getItemsJson()).stream())
+                .filter(item -> item != null && item.medicineId() != null)
+                .collect(Collectors.toMap(
+                        ProcurementLineRequest::medicineId,
+                        ProcurementLineRequest::quantity,
+                        Integer::sum
+                ));
+
+        boolean anyReceived = receivedQuantities.values().stream().anyMatch(quantity -> quantity != null && quantity > 0);
+        boolean allReceived = !orderedQuantities.isEmpty() && orderedQuantities.entrySet().stream()
+                .allMatch(entry -> receivedQuantities.getOrDefault(entry.getKey(), 0) >= entry.getValue());
+        String status = allReceived ? "RECEIVED" : anyReceived ? "PARTIALLY_RECEIVED" : normalizePurchaseOrderStatus(purchaseOrder.getApprovalNote());
+        purchaseOrder.review(
+                matchStatusForPurchaseOrder(purchaseOrder.getItemsJson(), null),
+                purchaseOrder.getVarianceSummary(),
+                normalizeNullable(status)
+        );
+        purchaseOrderRepository.save(purchaseOrder);
+    }
+
+    private Map<UUID, Integer> aggregateLineQuantities(List<ProcurementLineRequest> items) {
+        return items.stream()
+                .filter(item -> item != null && item.medicineId() != null)
+                .collect(Collectors.toMap(ProcurementLineRequest::medicineId, ProcurementLineRequest::quantity, Integer::sum, LinkedHashMap::new));
+    }
+
+    private boolean isPurchaseOrderCancelled(String approvalNote) {
+        return normalizePurchaseOrderStatus(approvalNote).startsWith("CANCELLED");
+    }
+
+    private String normalizePurchaseOrderStatus(String approvalNote) {
+        String normalized = normalizeNullable(approvalNote);
+        return normalized == null ? "DRAFT" : normalized.trim().toUpperCase(Locale.ROOT);
+    }
+
     private String compareQuantities(List<ProcurementLineRequest> expected, List<ProcurementLineRequest> received) {
         Map<UUID, Integer> expectedQty = expected.stream().filter(item -> item.medicineId() != null).collect(Collectors.toMap(ProcurementLineRequest::medicineId, ProcurementLineRequest::quantity, Integer::sum));
         Map<UUID, Integer> receivedQty = received.stream().filter(item -> item.medicineId() != null).collect(Collectors.toMap(ProcurementLineRequest::medicineId, ProcurementLineRequest::quantity, Integer::sum));
@@ -1992,7 +2223,32 @@ public class PharmacyOperationsService {
     }
 
     private SupplierInvoiceRecord toRecord(SupplierInvoiceEntity entity, SupplierEntity supplier) {
-        return new SupplierInvoiceRecord(entity.getId(), entity.getTenantId(), entity.getSupplierId(), supplier == null ? null : supplier.getSupplierName(), entity.getPurchaseOrderId(), entity.getInvoiceNumber(), entity.getInvoiceDate() == null ? null : entity.getInvoiceDate().toString(), entity.getTaxAmount(), entity.getTotalAmount(), entity.getItemsJson(), entity.getMatchingStatus(), entity.getVarianceSummary(), entity.getApprovalNote(), entity.getCreatedAt(), entity.getUpdatedAt());
+        return new SupplierInvoiceRecord(
+                entity.getId(),
+                entity.getTenantId(),
+                entity.getSupplierId(),
+                supplier == null ? null : supplier.getSupplierName(),
+                entity.getPurchaseOrderId(),
+                entity.getInvoiceNumber(),
+                entity.getInvoiceDate() == null ? null : entity.getInvoiceDate().toString(),
+                entity.getInvoiceAmount(),
+                entity.getTaxAmount(),
+                entity.getDiscountAmount(),
+                entity.getTotalAmount(),
+                entity.getStatus(),
+                entity.getItemsJson(),
+                entity.getMatchingStatus(),
+                entity.getVarianceAmount(),
+                entity.getVarianceReason(),
+                entity.getVarianceSummary(),
+                entity.getCancelReason(),
+                entity.getAttachmentFileName(),
+                entity.getAttachmentMediaType(),
+                entity.getAttachmentSizeBytes(),
+                entity.getApprovalNote(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt()
+        );
     }
 
     private GoodsReceiptRecord toRecord(GoodsReceiptEntity entity, SupplierEntity supplier, InventoryLocationEntity location) {
@@ -2022,6 +2278,91 @@ public class PharmacyOperationsService {
                 .filter(stock -> (batchNumber != null && batchNumber.equalsIgnoreCase(normalizeNullable(stock.getBatchNumber())))
                         || (purchaseReferenceNumber != null && purchaseReferenceNumber.equalsIgnoreCase(normalizeNullable(stock.getPurchaseReferenceNumber()))))
                 .findFirst();
+    }
+
+    private BigDecimal varianceAmountForInvoice(PurchaseOrderEntity purchaseOrder, BigDecimal invoiceTotalAmount) {
+        BigDecimal poTotalAmount = procurementTotal(deserializeItems(purchaseOrder.getItemsJson()));
+        return invoiceTotalAmount.subtract(poTotalAmount).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal procurementTotal(List<ProcurementLineRequest> items) {
+        return items.stream()
+                .filter(Objects::nonNull)
+                .map(item -> {
+                    BigDecimal quantity = BigDecimal.valueOf(item.quantity());
+                    BigDecimal unitCost = item.unitCost() != null ? item.unitCost() : item.expectedUnitCost() == null ? BigDecimal.ZERO : item.expectedUnitCost();
+                    BigDecimal subTotal = unitCost.multiply(quantity);
+                    BigDecimal taxPercent = item.taxPercent() == null ? BigDecimal.ZERO : item.taxPercent();
+                    BigDecimal taxAmount = subTotal.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+                    return subTotal.add(taxAmount);
+                })
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private void ensureSupplierInvoiceEditable(SupplierInvoiceEntity entity) {
+        if (!"DRAFT".equalsIgnoreCase(entity.getStatus()) && !"MATCHED".equalsIgnoreCase(entity.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only draft or matched invoices can be edited");
+        }
+    }
+
+    private void ensureSupplierInvoiceStatus(SupplierInvoiceEntity entity, String expectedStatus) {
+        if (!expectedStatus.equalsIgnoreCase(entity.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Supplier invoice is not in " + expectedStatus.toLowerCase(Locale.ROOT).replace('_', ' ') + " status");
+        }
+    }
+
+    private void validateSupplierInvoiceAttachment(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invoice attachment is required");
+        }
+        if (file.getSize() > SUPPLIER_INVOICE_ATTACHMENT_MAX_SIZE_BYTES) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invoice attachment must be 10 MB or smaller");
+        }
+        String fileName = sanitizeSupplierInvoiceFilename(file.getOriginalFilename());
+        String mediaType = normalizeSupplierInvoiceAttachmentMediaType(file.getContentType(), fileName);
+        if (!isAllowedSupplierInvoiceAttachment(fileName, mediaType)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only PDF, JPG, JPEG, and PNG invoice attachments are allowed");
+        }
+    }
+
+    private boolean isAllowedSupplierInvoiceAttachment(String fileName, String mediaType) {
+        String lowerFileName = fileName.toLowerCase(Locale.ROOT);
+        return (lowerFileName.endsWith(".pdf") && "application/pdf".equals(mediaType))
+                || (lowerFileName.endsWith(".jpg") && "image/jpeg".equals(mediaType))
+                || (lowerFileName.endsWith(".jpeg") && "image/jpeg".equals(mediaType))
+                || (lowerFileName.endsWith(".png") && "image/png".equals(mediaType));
+    }
+
+    private String sanitizeSupplierInvoiceFilename(String fileName) {
+        String value = normalize(fileName);
+        if (value.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Filename is required");
+        }
+        String normalized = value.replace('\\', '/');
+        int index = normalized.lastIndexOf('/');
+        return index >= 0 ? normalized.substring(index + 1) : normalized;
+    }
+
+    private String normalizeSupplierInvoiceAttachmentMediaType(String mediaType, String fileName) {
+        String normalized = mediaType == null ? "" : mediaType.trim().toLowerCase(Locale.ROOT);
+        if ("image/jpg".equals(normalized)) {
+            return "image/jpeg";
+        }
+        if (StringUtils.hasText(normalized)) {
+            return normalized;
+        }
+        String lowerFileName = fileName.toLowerCase(Locale.ROOT);
+        if (lowerFileName.endsWith(".pdf")) {
+            return "application/pdf";
+        }
+        if (lowerFileName.endsWith(".jpg") || lowerFileName.endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
+        if (lowerFileName.endsWith(".png")) {
+            return "image/png";
+        }
+        return "application/octet-stream";
     }
 
     private record MedicineImportOutcome(String status, String message, UUID medicineId, UUID stockId, String medicineName) {

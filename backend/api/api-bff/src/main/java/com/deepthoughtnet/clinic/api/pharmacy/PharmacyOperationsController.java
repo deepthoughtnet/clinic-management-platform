@@ -231,7 +231,47 @@ public class PharmacyOperationsController {
     public SupplierInvoiceRecord createSupplierInvoice(@RequestBody SupplierInvoiceRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return service.saveSupplierInvoice(tenantId, request, actorAppUserId);
+        return service.saveSupplierInvoice(tenantId, null, request, actorAppUserId);
+    }
+
+    @PutMapping("/supplier-invoices/{id}")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public SupplierInvoiceRecord updateSupplierInvoice(@PathVariable UUID id, @RequestBody SupplierInvoiceRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.saveSupplierInvoice(tenantId, id, request, actorAppUserId);
+    }
+
+    @PostMapping("/supplier-invoices/{id}/match")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public SupplierInvoiceRecord matchSupplierInvoice(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.matchSupplierInvoice(tenantId, id, actorAppUserId);
+    }
+
+    @PostMapping("/supplier-invoices/{id}/approve-for-payment")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public SupplierInvoiceRecord approveSupplierInvoiceForPayment(@PathVariable UUID id) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.approveSupplierInvoiceForPayment(tenantId, id, actorAppUserId);
+    }
+
+    @PostMapping("/supplier-invoices/{id}/cancel")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public SupplierInvoiceRecord cancelSupplierInvoice(@PathVariable UUID id, @RequestBody SupplierInvoiceCancelRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.cancelSupplierInvoice(tenantId, id, request, actorAppUserId);
+    }
+
+    @PostMapping("/supplier-invoices/{id}/attachment")
+    @PreAuthorize("@permissionChecker.hasPermission('inventory.manage')")
+    public SupplierInvoiceAttachmentResponse uploadSupplierInvoiceAttachment(@PathVariable UUID id, @RequestParam("file") MultipartFile file) throws Exception {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return service.uploadSupplierInvoiceAttachment(tenantId, id, file, actorAppUserId);
     }
 
     @GetMapping("/goods-receipts")

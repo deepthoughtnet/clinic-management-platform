@@ -81,7 +81,10 @@ record ProcurementLineRequest(
         BigDecimal taxPercent,
         String batchNumber,
         String expiryDate,
-        BigDecimal sellingPrice
+        BigDecimal sellingPrice,
+        String unit,
+        UUID locationId,
+        String remarks
 ) {
 }
 
@@ -117,10 +120,26 @@ record SupplierInvoiceRequest(
         UUID purchaseOrderId,
         String invoiceNumber,
         String invoiceDate,
+        BigDecimal invoiceAmount,
         BigDecimal taxAmount,
+        BigDecimal discountAmount,
         BigDecimal totalAmount,
         List<ProcurementLineRequest> items,
+        String varianceReason,
         String approvalNote
+) {
+}
+
+record SupplierInvoiceCancelRequest(
+        String reason
+) {
+}
+
+record SupplierInvoiceAttachmentResponse(
+        UUID invoiceId,
+        String fileName,
+        String mediaType,
+        Long sizeBytes
 ) {
 }
 
@@ -132,11 +151,20 @@ record SupplierInvoiceRecord(
         UUID purchaseOrderId,
         String invoiceNumber,
         String invoiceDate,
+        BigDecimal invoiceAmount,
         BigDecimal taxAmount,
+        BigDecimal discountAmount,
         BigDecimal totalAmount,
+        String status,
         String itemsJson,
         String matchingStatus,
+        BigDecimal varianceAmount,
+        String varianceReason,
         String varianceSummary,
+        String cancelReason,
+        String attachmentFileName,
+        String attachmentMediaType,
+        Long attachmentSizeBytes,
         String approvalNote,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt

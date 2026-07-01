@@ -30,28 +30,49 @@ import {
   TableRow,
   TableContainer,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactFilterCard, CompactStatCard, WorkflowGuide, compactCardContentSx } from "../../components/compact/CompactUi";
 import {
+  approveSupplierInvoiceForPayment,
+  cancelSupplierInvoice,
+  createSupplierInvoice,
   createPurchaseOrder,
+  createGoodsReceipt,
   cancelPurchaseOrder,
+  confirmGoodsReceipt,
+  createMedicine,
   createSupplier,
+  getGoodsReceipts,
+  getInventoryLocations,
   getMedicines,
   getPurchaseOrder,
   getPurchaseOrders,
+  getSupplierInvoices,
   listSuppliers,
+  matchSupplierInvoice,
+  updateSupplierInvoice,
   updateSupplier,
+  uploadSupplierInvoiceAttachment,
+  type GoodsReceipt,
+  type GoodsReceiptInput,
+  type InventoryLocation,
   type Medicine,
   type ProcurementLineInput,
   type PurchaseOrder,
   type PurchaseOrderInput,
+  type SupplierInvoice,
+  type SupplierInvoiceInput,
+  type SupplierInvoiceStatus,
   type Supplier,
   type SupplierInput,
+  type MedicineInput,
+  type MedicineType,
 } from "../../api/clinicApi";
-import { firstZodError, hasDuplicateSupplierName, indianMobileNumber, mapZodErrors, normalizeIndianMobileInput, optionalGstin, supplierSchema } from "@deepthoughtnet/form-validation-kit";
+import { firstZodError, hasDuplicateMedicineMaster, hasDuplicateSupplierName, indianMobileNumber, mapZodErrors, medicineMasterSchema, normalizeIndianMobileInput, optionalGstin, supplierSchema } from "@deepthoughtnet/form-validation-kit";
 
 type Workspace = "suppliers" | "purchase-orders" | "supplier-invoices" | "goods-receipt";
 type SupplierStatus = "ALL" | "Active" | "Inactive";
@@ -76,7 +97,7 @@ type PurchaseOrderRow = {
   supplierName: string;
   orderDate: string;
   expectedDelivery: string;
-  status: "Draft" | "Generated" | "Sent" | "Received" | "Closed" | "Cancelled";
+  status: "Draft" | "Generated" | "Sent" | "Partially Received" | "Received" | "Closed" | "Cancelled";
   cancelReason: string | null;
   items: PurchaseOrderLineState[];
   approvalNote: string | null;
@@ -109,18 +130,83 @@ type SupplierInvoiceRow = {
   id: string;
   invoiceNumber: string;
   supplierId: string;
-  purchaseOrderId: string;
-  amount: number;
-  status: "Pending" | "Matched" | "Variance";
+  supplierName: string;
+  purchaseOrderId: string | null;
+  invoiceDate: string;
+  invoiceAmount: number;
+  gstAmount: number;
+  discountAmount: number;
+  totalAmount: number;
+  status: SupplierInvoiceStatus;
+  matchingStatus: string;
+  varianceAmount: number;
+  varianceReason: string | null;
+  varianceSummary: string | null;
+  cancelReason: string | null;
+  attachmentFileName: string | null;
+  attachmentMediaType: string | null;
+  attachmentSizeBytes: number | null;
+  notes: string | null;
 };
+
+type SupplierInvoiceFormState = {
+  supplierId: string;
+  purchaseOrderId: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  invoiceAmount: string;
+  gstAmount: string;
+  discount: string;
+  varianceReason: string;
+  notes: string;
+};
+
+type SupplierInvoiceEditorMode = "create" | "view" | "edit";
 
 type GoodsReceiptRow = {
   id: string;
   receiptNumber: string;
   supplierId: string;
+  supplierName: string;
   purchaseOrderId: string;
-  receivedQty: number;
+  poNumber: string;
+  receivedAt: string;
+  itemsReceived: number;
+  totalReceivedQty: number;
   status: "Pending" | "Posted";
+  locationName: string;
+  lines: GoodsReceiptLineState[];
+  confirmedAt: string | null;
+};
+
+type GoodsReceiptLineState = {
+  medicineId: string;
+  medicineName: string;
+  unit: string;
+  orderedQty: number;
+  alreadyReceivedQty: number;
+  pendingQty: number;
+  receiveQty: string;
+  batchNumber: string;
+  expiryDate: string;
+  locationId: string;
+  locationName: string;
+  remarks: string;
+  lineStatus: "Pending" | "Ready" | "Partial" | "Complete";
+  unitPrice: number | null;
+  gstPercent: number | null;
+  sellingPrice: number | null;
+};
+
+type GrnFormState = {
+  supplierId: string;
+  purchaseOrderId: string;
+  supplierInvoiceId: string;
+  receiptNumber: string;
+  receivedAt: string;
+  poNumber: string;
+  poDate: string;
+  lines: GoodsReceiptLineState[];
 };
 
 const WORKSPACES: Array<{ value: Workspace; label: string }> = [
@@ -143,8 +229,60 @@ const EMPTY_SUPPLIER: SupplierFormState = {
 
 const emptyPoLine: PurchaseOrderLineState = { medicineId: "", medicineName: "", unit: "", quantity: "", unitPrice: "", gst: "", discount: "" };
 const emptyPoForm: PurchaseOrderFormState = { supplierId: "", poNumber: "", orderDate: "", expectedDelivery: "", notes: "" };
-const emptyInvoiceForm = { supplierId: "", purchaseOrderId: "", invoiceNumber: "", invoiceDate: "", amount: "" };
-const emptyGrnForm = { supplierId: "", purchaseOrderId: "", receiptNumber: "", receivedAt: "", receivedQty: "", batch: "", expiry: "" };
+const emptyInvoiceForm: SupplierInvoiceFormState = {
+  supplierId: "",
+  purchaseOrderId: "",
+  invoiceNumber: "",
+  invoiceDate: "",
+  invoiceAmount: "",
+  gstAmount: "",
+  discount: "",
+  varianceReason: "",
+  notes: "",
+};
+const emptyGrnForm: GrnFormState = { supplierId: "", purchaseOrderId: "", supplierInvoiceId: "", receiptNumber: "", receivedAt: "", poNumber: "", poDate: "", lines: [] };
+const emptyQuickMedicineForm: MedicineInput = {
+  medicineName: "",
+  medicineType: "TABLET",
+  barcode: null,
+  qrCode: null,
+  externalCode: null,
+  genericName: null,
+  brandName: null,
+  category: null,
+  dosageForm: null,
+  strength: null,
+  unit: null,
+  manufacturer: null,
+  defaultDosage: null,
+  defaultFrequency: null,
+  defaultDurationDays: null,
+  defaultTiming: null,
+  defaultInstructions: null,
+  defaultPrice: null,
+  taxRate: null,
+  active: true,
+};
+
+const medicineTypeOptions: Array<{ value: MedicineType; label: string }> = [
+  { value: "TABLET", label: "Tablet" },
+  { value: "CAPSULE", label: "Capsule" },
+  { value: "SYRUP", label: "Syrup" },
+  { value: "INJECTION", label: "Injection" },
+  { value: "DROP", label: "Drop" },
+  { value: "OINTMENT", label: "Ointment" },
+  { value: "OTHER", label: "Other" },
+];
+
+const SUPPLIER_INVOICE_VARIANCE_REASONS = [
+  "supplier rounding difference",
+  "freight/packing charge",
+  "item price difference",
+  "GST correction",
+  "manual correction",
+] as const;
+
+const SUPPLIER_INVOICE_UPLOAD_MAX_SIZE_BYTES = 10 * 1024 * 1024;
 
 const poQuantityFieldSx = {
   width: 88,
@@ -311,6 +449,92 @@ const purchaseOrderFormSchema = z.object({
   });
 });
 
+const supplierInvoiceFormSchema = z.object({
+  supplierId: z.string().trim().min(1, "Supplier is required."),
+  purchaseOrderId: z.string().trim().min(1, "Related PO is required."),
+  invoiceNumber: z.preprocess(
+    (value) => typeof value === "string" ? value.trim() : "",
+    z.string()
+      .min(1, "Invoice number is required.")
+      .max(60, "Invoice number must be 60 characters or fewer.")
+      .regex(/^[A-Za-z0-9/_ -]+$/, "Invoice number can include letters, numbers, dashes, slashes, underscores, and spaces."),
+  ),
+  invoiceDate: dateValue("Invoice date is required."),
+  invoiceAmount: moneyValue(999999999, "Invoice amount must be greater than zero.", false),
+  gstAmount: optionalMoneyValue(999999999, "GST amount must be zero or greater."),
+  discount: optionalMoneyValue(999999999, "Discount must be zero or greater."),
+  varianceReason: optionalPoText(250, "Variance reason must be 250 characters or fewer."),
+  notes: optionalPoText(500, "Notes must be 500 characters or fewer."),
+}).superRefine((value, ctx) => {
+  const variance = Math.round(((value.invoiceAmount + value.gstAmount - value.discount) * 100)) / 100;
+  if (!Number.isFinite(variance)) {
+    return;
+  }
+  if (!String(value.purchaseOrderId || "").trim()) {
+    return;
+  }
+  if (value.varianceReason == null) {
+    return;
+  }
+});
+
+function numberFromUnknown(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function stringFromUnknown(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function goodsReceiptLineStatus(pendingQty: number, receiveQty: number) {
+  if (pendingQty <= 0) return "Complete" as const;
+  if (receiveQty > 0 && receiveQty >= pendingQty) return "Complete" as const;
+  if (receiveQty > 0) return "Partial" as const;
+  return "Pending" as const;
+}
+
+function parseGoodsReceiptItems(
+  itemsJson: string,
+  medicineById?: Map<string, Medicine>,
+  locationsById?: Map<string, InventoryLocation>,
+): GoodsReceiptLineState[] {
+  try {
+    const parsed = JSON.parse(itemsJson || "[]") as Array<Record<string, unknown>>;
+    return parsed.map((item) => {
+      const medicineId = stringFromUnknown(item.medicineId);
+      const locationId = stringFromUnknown(item.locationId);
+      const medicine = medicineId ? medicineById?.get(medicineId) ?? null : null;
+      const location = locationId ? locationsById?.get(locationId) ?? null : null;
+      const quantity = numberFromUnknown(item.quantity ?? item.qty);
+      return {
+        medicineId,
+        medicineName: stringFromUnknown(item.medicineName) || medicine?.medicineName || "",
+        unit: stringFromUnknown(item.unit) || medicine?.unit || "",
+        orderedQty: 0,
+        alreadyReceivedQty: 0,
+        pendingQty: 0,
+        receiveQty: String(quantity || ""),
+        batchNumber: stringFromUnknown(item.batchNumber),
+        expiryDate: stringFromUnknown(item.expiryDate),
+        locationId,
+        locationName: location?.locationName || "",
+        remarks: stringFromUnknown(item.remarks),
+        lineStatus: quantity > 0 ? "Complete" : "Pending",
+        unitPrice: item.unitCost == null ? numberFromUnknown(item.expectedUnitCost) || null : numberFromUnknown(item.unitCost),
+        gstPercent: item.taxPercent == null ? null : numberFromUnknown(item.taxPercent),
+        sellingPrice: item.sellingPrice == null ? null : numberFromUnknown(item.sellingPrice),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 function parseWorkspace(value: string | null): Workspace {
   if (value === "purchase-orders" || value === "supplier-invoices" || value === "goods-receipt") return value;
   return "suppliers";
@@ -435,6 +659,9 @@ function parsePurchaseOrderApprovalNote(note: string | null | undefined): {
   if (normalized === "SENT") {
     return { status: "Sent", cancelReason: null };
   }
+  if (normalized === "PARTIALLY RECEIVED" || normalized === "PARTIALLY_RECEIVED") {
+    return { status: "Partially Received", cancelReason: null };
+  }
   if (normalized === "RECEIVED") {
     return { status: "Received", cancelReason: null };
   }
@@ -451,6 +678,9 @@ function purchaseOrderStatusChipProps(status: PurchaseOrderRow["status"]) {
   if (status === "Sent") {
     return { label: "Sent", color: "info" as const };
   }
+  if (status === "Partially Received") {
+    return { label: "Partially Received", color: "info" as const };
+  }
   if (status === "Received") {
     return { label: "Received", color: "success" as const };
   }
@@ -461,6 +691,95 @@ function purchaseOrderStatusChipProps(status: PurchaseOrderRow["status"]) {
     return { label: "Cancelled", color: "default" as const };
   }
   return { label: "Draft", color: "warning" as const };
+}
+
+function escapePrintHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatPurchaseOrderDate(value: string) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+}
+
+function renderPurchaseOrderPrintDocument(clinicName: string, purchaseOrder: PurchaseOrderRow) {
+  const totals = computePurchaseOrderTotals(purchaseOrder.items);
+  const rows = purchaseOrder.items.map((item, index) => {
+    const lineTotal = computePurchaseOrderLineTotal(item) ?? 0;
+    return `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${escapePrintHtml(item.medicineName || "-")}</td>
+        <td>${escapePrintHtml(item.unit || "-")}</td>
+        <td style="text-align:right">${escapePrintHtml(item.quantity || "0")}</td>
+        <td style="text-align:right">${Number(item.unitPrice || 0).toFixed(2)}</td>
+        <td style="text-align:right">${Number(item.gst || 0).toFixed(2)}</td>
+        <td style="text-align:right">${Number(item.discount || 0).toFixed(2)}</td>
+        <td style="text-align:right">${lineTotal.toFixed(2)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  return `<!doctype html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>${escapePrintHtml(purchaseOrder.poNumber || "Purchase Order")}</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
+        h1 { margin: 0 0 8px; font-size: 24px; }
+        h2 { margin: 0; font-size: 18px; }
+        .meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
+        .meta-card { border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; }
+        .label { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; }
+        .value { font-size: 14px; font-weight: 700; margin-top: 4px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #d1d5db; padding: 8px; font-size: 12px; vertical-align: top; }
+        th { background: #f3f4f6; text-align: left; }
+        .summary { margin-top: 20px; margin-left: auto; width: 320px; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; }
+        .summary-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+        .summary-row.total { font-weight: 800; font-size: 15px; border-top: 1px solid #d1d5db; margin-top: 8px; padding-top: 10px; }
+      </style>
+    </head>
+    <body>
+      <h1>${escapePrintHtml(clinicName)}</h1>
+      <h2>Purchase Order</h2>
+      <div class="meta">
+        <div class="meta-card"><div class="label">Supplier</div><div class="value">${escapePrintHtml(purchaseOrder.supplierName || "-")}</div></div>
+        <div class="meta-card"><div class="label">PO Number</div><div class="value">${escapePrintHtml(purchaseOrder.poNumber || "-")}</div></div>
+        <div class="meta-card"><div class="label">PO Date</div><div class="value">${escapePrintHtml(formatPurchaseOrderDate(purchaseOrder.orderDate))}</div></div>
+        <div class="meta-card"><div class="label">Expected Delivery</div><div class="value">${escapePrintHtml(formatPurchaseOrderDate(purchaseOrder.expectedDelivery))}</div></div>
+        <div class="meta-card"><div class="label">Status</div><div class="value">${escapePrintHtml(purchaseOrder.status)}</div></div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Medicine</th>
+            <th>Unit</th>
+            <th style="text-align:right">Qty</th>
+            <th style="text-align:right">Unit Price</th>
+            <th style="text-align:right">GST %</th>
+            <th style="text-align:right">Discount</th>
+            <th style="text-align:right">Line Total</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="summary">
+        <div class="summary-row"><span>Subtotal</span><span>INR ${totals.subtotal.toFixed(2)}</span></div>
+        <div class="summary-row"><span>GST</span><span>INR ${totals.totalGst.toFixed(2)}</span></div>
+        <div class="summary-row"><span>Discount</span><span>INR ${totals.totalDiscount.toFixed(2)}</span></div>
+        <div class="summary-row total"><span>Grand Total</span><span>INR ${totals.totalValue.toFixed(2)}</span></div>
+      </div>
+    </body>
+  </html>`;
 }
 
 function mapBackendPurchaseOrderLine(item: unknown, medicineById?: Map<string, Medicine>): PurchaseOrderLineState {
@@ -533,6 +852,93 @@ function mapBackendPurchaseOrder(record: PurchaseOrder, medicineById?: Map<strin
   };
 }
 
+function mapInvoiceMatchingStatus(status: string | null | undefined) {
+  return (status || "").trim().toUpperCase() || "PENDING";
+}
+
+function supplierInvoiceStatusLabel(status: SupplierInvoiceStatus) {
+  switch (status) {
+    case "DRAFT":
+      return { label: "Draft", color: "warning" as const };
+    case "MATCHED":
+      return { label: "Matched", color: "info" as const };
+    case "APPROVED_FOR_PAYMENT":
+      return { label: "Approved for Payment", color: "success" as const };
+    case "PAID":
+      return { label: "Paid", color: "success" as const };
+    case "CANCELLED":
+      return { label: "Cancelled", color: "default" as const };
+    default:
+      return { label: status, color: "default" as const };
+  }
+}
+
+function supplierInvoiceMatchLabel(status: string) {
+  if (status === "MATCHED") return { label: "Match OK", color: "success" as const };
+  if (status === "REVIEW_REQUIRED") return { label: "Variance", color: "warning" as const };
+  if (status === "MISSING_PO") return { label: "Missing PO", color: "default" as const };
+  return { label: status || "Pending", color: "default" as const };
+}
+
+function mapBackendSupplierInvoice(record: SupplierInvoice): SupplierInvoiceRow {
+  const totalAmount = typeof record.totalAmount === "number" ? record.totalAmount : 0;
+  const gstAmount = typeof record.taxAmount === "number" ? record.taxAmount : 0;
+  const invoiceAmount = typeof record.invoiceAmount === "number" ? record.invoiceAmount : totalAmount;
+  const discountAmount = typeof record.discountAmount === "number" ? record.discountAmount : 0;
+  const varianceAmount = typeof record.varianceAmount === "number" ? record.varianceAmount : 0;
+  return {
+    id: record.id,
+    invoiceNumber: record.invoiceNumber,
+    supplierId: record.supplierId,
+    supplierName: record.supplierName || "",
+    purchaseOrderId: record.purchaseOrderId,
+    invoiceDate: record.invoiceDate,
+    invoiceAmount,
+    gstAmount,
+    discountAmount,
+    totalAmount,
+    status: record.status,
+    matchingStatus: mapInvoiceMatchingStatus(record.matchingStatus),
+    varianceAmount,
+    varianceReason: record.varianceReason,
+    varianceSummary: record.varianceSummary,
+    cancelReason: record.cancelReason,
+    attachmentFileName: record.attachmentFileName,
+    attachmentMediaType: record.attachmentMediaType,
+    attachmentSizeBytes: record.attachmentSizeBytes,
+    notes: record.approvalNote,
+  };
+}
+
+function mapBackendGoodsReceipt(
+  record: GoodsReceipt,
+  purchaseOrders: PurchaseOrderRow[],
+  medicineById?: Map<string, Medicine>,
+  locationsById?: Map<string, InventoryLocation>,
+): GoodsReceiptRow {
+  const lines = parseGoodsReceiptItems(record.itemsJson, medicineById, locationsById).map((line) => ({
+    ...line,
+    locationId: line.locationId || record.locationId,
+    locationName: line.locationName || record.locationName || "",
+  }));
+  const po = purchaseOrders.find((candidate) => candidate.id === record.purchaseOrderId) ?? null;
+  return {
+    id: record.id,
+    receiptNumber: record.receiptNumber,
+    supplierId: record.supplierId,
+    supplierName: record.supplierName || "",
+    purchaseOrderId: record.purchaseOrderId || "",
+    poNumber: po?.poNumber || "",
+    receivedAt: record.receivedAt,
+    itemsReceived: lines.filter((line) => numberFromUnknown(line.receiveQty) > 0).length,
+    totalReceivedQty: lines.reduce((sum, line) => sum + numberFromUnknown(line.receiveQty), 0),
+    status: record.confirmedAt ? "Posted" : "Pending",
+    locationName: record.locationName || "",
+    lines,
+    confirmedAt: record.confirmedAt,
+  };
+}
+
 function mapPurchaseOrderLineToApi(line: PurchaseOrderLineState): ProcurementLineInput {
   const parsed = purchaseOrderLineSchema.parse(line);
   const unitPrice = parsed.unitPrice;
@@ -547,11 +953,25 @@ function mapPurchaseOrderLineToApi(line: PurchaseOrderLineState): ProcurementLin
     batchNumber: null,
     expiryDate: null,
     sellingPrice: null,
+    unit: line.unit || null,
+    locationId: null,
+    remarks: null,
   };
 }
 
 function logPo(payloadLabel: string, value: unknown) {
   console.log(`[${payloadLabel}]`, value);
+}
+
+function mapMedicineSaveError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Failed to save medicine";
+  const normalized = message.toLowerCase();
+  if (normalized.includes("medicinename")) return "Medicine name is required.";
+  if (normalized.includes("medicinetype")) return "Medicine type is required.";
+  if (normalized.includes("medicine already exists")) return "A medicine with this name already exists.";
+  if (normalized.includes("barcode already exists")) return "This barcode is already linked to another medicine.";
+  if (normalized.includes("external code already exists")) return "This external code is already linked to another medicine.";
+  return message;
 }
 
 function medicineMatchesQuery(medicine: Medicine, query: string) {
@@ -613,7 +1033,31 @@ export default function PharmacyProcurePage() {
   const [purchaseOrderError, setPurchaseOrderError] = React.useState<string | null>(null);
   const [purchaseOrderSuccess, setPurchaseOrderSuccess] = React.useState<string | null>(null);
   const [invoices, setInvoices] = React.useState<SupplierInvoiceRow[]>([]);
+  const [loadingInvoices, setLoadingInvoices] = React.useState(true);
+  const [invoiceError, setInvoiceError] = React.useState<string | null>(null);
+  const [invoiceSuccess, setInvoiceSuccess] = React.useState<string | null>(null);
+  const [invoiceFieldErrors, setInvoiceFieldErrors] = React.useState<Record<string, string>>({});
+  const [savingInvoice, setSavingInvoice] = React.useState(false);
+  const [uploadingInvoiceAttachment, setUploadingInvoiceAttachment] = React.useState(false);
+  const [selectedInvoiceId, setSelectedInvoiceId] = React.useState<string | null>(null);
+  const [invoiceEditorMode, setInvoiceEditorMode] = React.useState<SupplierInvoiceEditorMode>("create");
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = React.useState<"ALL" | SupplierInvoiceStatus>("ALL");
+  const [invoiceSupplierFilter, setInvoiceSupplierFilter] = React.useState<string>("ALL");
+  const [invoicePoFilter, setInvoicePoFilter] = React.useState<string>("ALL");
+  const [invoiceDateFromFilter, setInvoiceDateFromFilter] = React.useState("");
+  const [invoiceDateToFilter, setInvoiceDateToFilter] = React.useState("");
+  const [invoiceVarianceOnly, setInvoiceVarianceOnly] = React.useState(false);
+  const [invoiceCancelDialogOpen, setInvoiceCancelDialogOpen] = React.useState(false);
+  const [invoiceCancelReason, setInvoiceCancelReason] = React.useState("");
+  const [invoiceCancelError, setInvoiceCancelError] = React.useState<string | null>(null);
   const [grns, setGrns] = React.useState<GoodsReceiptRow[]>([]);
+  const [loadingGrns, setLoadingGrns] = React.useState(true);
+  const [grnError, setGrnError] = React.useState<string | null>(null);
+  const [grnSuccess, setGrnSuccess] = React.useState<string | null>(null);
+  const [grnFieldErrors, setGrnFieldErrors] = React.useState<Record<string, string>>({});
+  const [savingGrn, setSavingGrn] = React.useState(false);
+  const [inventoryLocations, setInventoryLocations] = React.useState<InventoryLocation[]>([]);
+  const [selectedGrn, setSelectedGrn] = React.useState<GoodsReceiptRow | null>(null);
   const [poForm, setPoForm] = React.useState<PurchaseOrderFormState>(emptyPoForm);
   const [poLines, setPoLines] = React.useState<PurchaseOrderLineState[]>([{ ...emptyPoLine }]);
   const [poFieldErrors, setPoFieldErrors] = React.useState<Record<string, string>>({});
@@ -625,12 +1069,19 @@ export default function PharmacyProcurePage() {
   const [cancelDialogOpen, setCancelDialogOpen] = React.useState(false);
   const [cancelReason, setCancelReason] = React.useState("");
   const [cancelError, setCancelError] = React.useState<string | null>(null);
+  const [quickMedicineOpen, setQuickMedicineOpen] = React.useState(false);
+  const [quickMedicineForm, setQuickMedicineForm] = React.useState<MedicineInput>(emptyQuickMedicineForm);
+  const [quickMedicineFieldErrors, setQuickMedicineFieldErrors] = React.useState<Record<string, string>>({});
+  const [quickMedicineRowIndex, setQuickMedicineRowIndex] = React.useState<number | null>(null);
+  const [savingQuickMedicine, setSavingQuickMedicine] = React.useState(false);
   const [invoiceForm, setInvoiceForm] = React.useState(emptyInvoiceForm);
   const [grnForm, setGrnForm] = React.useState(emptyGrnForm);
+  const invoiceAttachmentInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const supplierById = React.useMemo(() => new Map(suppliers.map((supplier) => [supplier.id, supplier])), [suppliers]);
   const medicineById = React.useMemo(() => new Map(medicineCatalog.map((medicine) => [medicine.id, medicine])), [medicineCatalog]);
   const poById = React.useMemo(() => new Map(purchaseOrders.map((po) => [po.id, po])), [purchaseOrders]);
+  const locationById = React.useMemo(() => new Map(inventoryLocations.map((location) => [location.id, location])), [inventoryLocations]);
   const [selectedPurchaseOrder, setSelectedPurchaseOrder] = React.useState<PurchaseOrderRow | null>(null);
   const [poEditorMode, setPoEditorMode] = React.useState<PurchaseOrderEditorMode>("edit");
   const currentPurchaseOrder = React.useMemo(
@@ -720,6 +1171,58 @@ export default function PharmacyProcurePage() {
     void loadPurchaseOrders();
   }, [loadPurchaseOrders]);
 
+  const loadSupplierInvoices = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setLoadingInvoices(true);
+    setInvoiceError(null);
+    try {
+      const rows = await getSupplierInvoices(auth.accessToken, auth.tenantId);
+      setInvoices(rows.map(mapBackendSupplierInvoice));
+    } catch (err) {
+      setInvoices([]);
+      setInvoiceError(err instanceof Error ? err.message : "Failed to load supplier invoices");
+    } finally {
+      setLoadingInvoices(false);
+    }
+  }, [auth.accessToken, auth.tenantId]);
+
+  React.useEffect(() => {
+    void loadSupplierInvoices();
+  }, [loadSupplierInvoices]);
+
+  const loadInventoryLocations = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    try {
+      const rows = await getInventoryLocations(auth.accessToken, auth.tenantId);
+      setInventoryLocations(rows);
+    } catch {
+      setInventoryLocations([]);
+    }
+  }, [auth.accessToken, auth.tenantId]);
+
+  React.useEffect(() => {
+    void loadInventoryLocations();
+  }, [loadInventoryLocations]);
+
+  const loadGoodsReceiptRows = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setLoadingGrns(true);
+    setGrnError(null);
+    try {
+      const rows = await getGoodsReceipts(auth.accessToken, auth.tenantId);
+      setGrns(rows.map((row) => mapBackendGoodsReceipt(row, purchaseOrders, medicineById, locationById)));
+    } catch (err) {
+      setGrns([]);
+      setGrnError(err instanceof Error ? err.message : "Failed to load goods receipts");
+    } finally {
+      setLoadingGrns(false);
+    }
+  }, [auth.accessToken, auth.tenantId, locationById, medicineById, purchaseOrders]);
+
+  React.useEffect(() => {
+    void loadGoodsReceiptRows();
+  }, [loadGoodsReceiptRows]);
+
   React.useEffect(() => {
     if (!auth.accessToken || !auth.tenantId) return;
     let cancelled = false;
@@ -757,6 +1260,88 @@ export default function PharmacyProcurePage() {
       return matchesStatus && matchesSearch;
     });
   }, [supplierSearch, supplierStatusFilter, suppliers]);
+
+  const eligibleInvoicePurchaseOrders = React.useMemo(
+    () => purchaseOrders.filter((po) => po.status === "Generated" || po.status === "Sent" || po.status === "Partially Received"),
+    [purchaseOrders],
+  );
+  const selectedInvoice = React.useMemo(
+    () => selectedInvoiceId ? invoices.find((invoice) => invoice.id === selectedInvoiceId) ?? null : null,
+    [invoices, selectedInvoiceId],
+  );
+  const invoiceReadOnly = invoiceEditorMode === "view" || selectedInvoice?.status === "APPROVED_FOR_PAYMENT" || selectedInvoice?.status === "PAID" || selectedInvoice?.status === "CANCELLED";
+  const invoiceCanEdit = selectedInvoice != null && (selectedInvoice.status === "DRAFT" || selectedInvoice.status === "MATCHED");
+  const invoiceCanUpload = selectedInvoice != null && invoiceCanEdit;
+  const invoicePurchaseOrderOptions = React.useMemo(() => {
+    if (!selectedInvoice?.purchaseOrderId) return eligibleInvoicePurchaseOrders;
+    const current = purchaseOrders.find((po) => po.id === selectedInvoice.purchaseOrderId);
+    if (!current || eligibleInvoicePurchaseOrders.some((po) => po.id === current.id)) {
+      return eligibleInvoicePurchaseOrders;
+    }
+    return [current, ...eligibleInvoicePurchaseOrders];
+  }, [eligibleInvoicePurchaseOrders, purchaseOrders, selectedInvoice?.purchaseOrderId]);
+
+  const eligibleGoodsReceiptPurchaseOrders = React.useMemo(
+    () => purchaseOrders.filter((po) => po.status === "Generated" || po.status === "Sent" || po.status === "Partially Received"),
+    [purchaseOrders],
+  );
+
+  const receivedQtyByPoMedicine = React.useMemo(() => {
+    const grouped = new Map<string, number>();
+    grns
+      .filter((grn) => grn.status === "Posted")
+      .forEach((grn) => {
+        grn.lines.forEach((line) => {
+          if (!line.medicineId) return;
+          const key = `${grn.purchaseOrderId}:${line.medicineId}`;
+          grouped.set(key, (grouped.get(key) || 0) + numberFromUnknown(line.receiveQty));
+        });
+      });
+    return grouped;
+  }, [grns]);
+
+  const selectedInvoicePurchaseOrder = React.useMemo(
+    () => invoicePurchaseOrderOptions.find((po) => po.id === invoiceForm.purchaseOrderId) ?? null,
+    [invoiceForm.purchaseOrderId, invoicePurchaseOrderOptions],
+  );
+
+  const selectedInvoiceItems = React.useMemo(
+    () => selectedInvoicePurchaseOrder?.items ?? [],
+    [selectedInvoicePurchaseOrder],
+  );
+
+  const selectedInvoicePoTotal = React.useMemo(
+    () => selectedInvoicePurchaseOrder?.totalValue ?? 0,
+    [selectedInvoicePurchaseOrder],
+  );
+
+  const invoiceComputedPayable = React.useMemo(() => {
+    const amount = Number(invoiceForm.invoiceAmount || 0);
+    const gstAmount = Number(invoiceForm.gstAmount || 0);
+    const discount = Number(invoiceForm.discount || 0);
+    return Math.max(0, amount + gstAmount - discount);
+  }, [invoiceForm.discount, invoiceForm.gstAmount, invoiceForm.invoiceAmount]);
+
+  const invoiceVsPoDifference = React.useMemo(() => {
+    if (!selectedInvoicePurchaseOrder) return null;
+    return invoiceComputedPayable - selectedInvoicePoTotal;
+  }, [invoiceComputedPayable, selectedInvoicePoTotal, selectedInvoicePurchaseOrder]);
+  const filteredInvoices = React.useMemo(() => {
+    return invoices.filter((invoice) => {
+      if (invoiceStatusFilter !== "ALL" && invoice.status !== invoiceStatusFilter) return false;
+      if (invoiceSupplierFilter !== "ALL" && invoice.supplierId !== invoiceSupplierFilter) return false;
+      if (invoicePoFilter !== "ALL" && (invoice.purchaseOrderId || "") !== invoicePoFilter) return false;
+      if (invoiceVarianceOnly && Math.abs(invoice.varianceAmount) < 0.005) return false;
+      if (invoiceDateFromFilter && invoice.invoiceDate < invoiceDateFromFilter) return false;
+      if (invoiceDateToFilter && invoice.invoiceDate > invoiceDateToFilter) return false;
+      return true;
+    });
+  }, [invoiceDateFromFilter, invoiceDateToFilter, invoicePoFilter, invoiceStatusFilter, invoiceSupplierFilter, invoiceVarianceOnly, invoices]);
+
+  const selectedGrnPurchaseOrder = React.useMemo(
+    () => eligibleGoodsReceiptPurchaseOrders.find((po) => po.id === grnForm.purchaseOrderId) ?? null,
+    [eligibleGoodsReceiptPurchaseOrders, grnForm.purchaseOrderId],
+  );
 
   const updateWorkspace = (next: Workspace) => {
     navigate(`/pharmacy/procure?workspace=${next}${next === "suppliers" ? "&focus=supplier" : ""}`);
@@ -1063,6 +1648,20 @@ export default function PharmacyProcurePage() {
     setPoSupplierFilter("ALL");
   }, []);
 
+  const openPrintWindow = React.useCallback((purchaseOrder: PurchaseOrderRow) => {
+    const printWindow = window.open("", "_blank", "noopener,noreferrer,width=1024,height=768");
+    if (!printWindow) {
+      setPurchaseOrderError("Unable to open print preview. Allow popups and try again.");
+      return;
+    }
+    const clinicName = auth.tenantName || auth.selectedTenant?.name || "Clinic";
+    printWindow.document.open();
+    printWindow.document.write(renderPurchaseOrderPrintDocument(clinicName, purchaseOrder));
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  }, [auth.selectedTenant?.name, auth.tenantName]);
+
   const handleViewPurchaseOrderFromDrawer = React.useCallback((po: PurchaseOrderRow) => {
     openPurchaseOrderForView(po);
     setPoDrawerOpen(false);
@@ -1107,10 +1706,11 @@ export default function PharmacyProcurePage() {
     setCancelDialogOpen(true);
   }, []);
 
-  const currentSupplierCount = suppliers.length;
-  const currentPurchaseOrderCount = purchaseOrders.length;
-  const currentInvoiceCount = invoices.length;
-  const currentGrnCount = grns.length;
+  const handlePrintPurchaseOrderFromDrawer = React.useCallback(async (po: PurchaseOrderRow) => {
+    const mapped = await loadPurchaseOrderDetail(po.id, po, "view");
+    if (!mapped) return;
+    openPrintWindow(mapped);
+  }, [loadPurchaseOrderDetail, openPrintWindow]);
 
   const addPoLine = () => setPoLines((current) => [...current, { ...emptyPoLine }]);
   const removePoLine = (index: number) => setPoLines((current) => current.length <= 1 ? current : current.filter((_, rowIndex) => rowIndex !== index));
@@ -1118,29 +1718,429 @@ export default function PharmacyProcurePage() {
     setPoLines((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
   }, []);
 
-  const saveInvoice = () => {
-    setInvoices((current) => [{
-      id: `inv-${Date.now()}`,
-      invoiceNumber: invoiceForm.invoiceNumber || `INV-${current.length + 1}`,
-      supplierId: invoiceForm.supplierId || suppliers[0]?.id || "",
-      purchaseOrderId: invoiceForm.purchaseOrderId || purchaseOrders[0]?.id || "",
-      amount: Number(invoiceForm.amount || 0),
-      status: "Pending",
-    }, ...current]);
-    setInvoiceForm(emptyInvoiceForm);
-  };
+  const openQuickCreateMedicine = React.useCallback((rowIndex: number, seedText: string) => {
+    setQuickMedicineRowIndex(rowIndex);
+    setQuickMedicineForm({
+      ...emptyQuickMedicineForm,
+      medicineName: seedText.trim(),
+      active: true,
+    });
+    setQuickMedicineFieldErrors({});
+    setPurchaseOrderError(null);
+    setQuickMedicineOpen(true);
+  }, []);
 
-  const saveGrn = () => {
-    setGrns((current) => [{
-      id: `grn-${Date.now()}`,
-      receiptNumber: grnForm.receiptNumber || `GRN-${current.length + 1}`,
-      supplierId: grnForm.supplierId || suppliers[0]?.id || "",
-      purchaseOrderId: grnForm.purchaseOrderId || purchaseOrders[0]?.id || "",
-      receivedQty: Number(grnForm.receivedQty || 0),
-      status: "Posted",
-    }, ...current]);
-    setGrnForm(emptyGrnForm);
-  };
+  const saveQuickMedicine = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId || quickMedicineRowIndex == null) return;
+    const parsed = medicineMasterSchema.safeParse(quickMedicineForm);
+    if (!parsed.success) {
+      const fieldErrors = mapZodErrors(parsed.error);
+      setQuickMedicineFieldErrors(fieldErrors);
+      setPurchaseOrderError(firstZodError(parsed.error));
+      return;
+    }
+    if (hasDuplicateMedicineMaster(parsed.data, medicineCatalog, null)) {
+      setQuickMedicineFieldErrors({ medicineName: "A medicine with this name already exists." });
+      setPurchaseOrderError("A medicine with this name already exists.");
+      return;
+    }
+    setSavingQuickMedicine(true);
+    setPurchaseOrderError(null);
+    try {
+      const created = await createMedicine(auth.accessToken, auth.tenantId, parsed.data);
+      setMedicineCatalog((current) => [...current, created].sort((left, right) => left.medicineName.localeCompare(right.medicineName)));
+      updatePoLine(quickMedicineRowIndex, {
+        medicineId: created.id,
+        medicineName: created.medicineName,
+        unit: created.unit || "",
+      });
+      setQuickMedicineOpen(false);
+      setQuickMedicineRowIndex(null);
+      setQuickMedicineForm(emptyQuickMedicineForm);
+      setQuickMedicineFieldErrors({});
+      setPurchaseOrderSuccess("Medicine created and selected.");
+    } catch (err) {
+      const message = mapMedicineSaveError(err);
+      setPurchaseOrderError(message);
+      setQuickMedicineFieldErrors((current) => ({
+        ...current,
+        medicineName: message.toLowerCase().includes("name") || message.toLowerCase().includes("exists") ? message : current.medicineName || "",
+      }));
+    } finally {
+      setSavingQuickMedicine(false);
+    }
+  }, [auth.accessToken, auth.tenantId, medicineCatalog, quickMedicineForm, quickMedicineRowIndex, updatePoLine]);
+
+  React.useEffect(() => {
+    if (!selectedInvoicePurchaseOrder) {
+      setInvoiceForm((current) => current.supplierId ? { ...current, supplierId: "" } : current);
+      return;
+    }
+    setInvoiceForm((current) => current.supplierId === selectedInvoicePurchaseOrder.supplierId
+      ? current
+      : { ...current, supplierId: selectedInvoicePurchaseOrder.supplierId });
+  }, [selectedInvoicePurchaseOrder]);
+
+  const resetInvoiceForm = React.useCallback(() => {
+    setInvoiceForm(emptyInvoiceForm);
+    setInvoiceFieldErrors({});
+    setInvoiceError(null);
+    setSelectedInvoiceId(null);
+    setInvoiceEditorMode("create");
+    setInvoiceSuccess(null);
+    setInvoiceCancelDialogOpen(false);
+    setInvoiceCancelReason("");
+    setInvoiceCancelError(null);
+    if (invoiceAttachmentInputRef.current) {
+      invoiceAttachmentInputRef.current.value = "";
+    }
+  }, []);
+
+  const loadInvoiceIntoForm = React.useCallback((invoice: SupplierInvoiceRow, mode: SupplierInvoiceEditorMode) => {
+    setSelectedInvoiceId(invoice.id);
+    setInvoiceEditorMode(mode);
+    setInvoiceFieldErrors({});
+    setInvoiceError(null);
+    setInvoiceSuccess(null);
+    setInvoiceForm({
+      supplierId: invoice.supplierId,
+      purchaseOrderId: invoice.purchaseOrderId || "",
+      invoiceNumber: invoice.invoiceNumber,
+      invoiceDate: invoice.invoiceDate,
+      invoiceAmount: invoice.invoiceAmount ? String(invoice.invoiceAmount) : "",
+      gstAmount: invoice.gstAmount ? String(invoice.gstAmount) : "0",
+      discount: invoice.discountAmount ? String(invoice.discountAmount) : "0",
+      varianceReason: invoice.varianceReason || "",
+      notes: invoice.notes || "",
+    });
+  }, []);
+
+  const resetGrnForm = React.useCallback(() => {
+    setGrnForm({
+      ...emptyGrnForm,
+      receivedAt: new Date().toISOString().slice(0, 10),
+    });
+    setGrnFieldErrors({});
+    setGrnError(null);
+    setGrnSuccess(null);
+  }, []);
+
+  const syncGrnFromPurchaseOrder = React.useCallback((purchaseOrderId: string) => {
+    const po = eligibleGoodsReceiptPurchaseOrders.find((candidate) => candidate.id === purchaseOrderId) ?? null;
+    if (!po) {
+      setGrnForm((current) => ({ ...current, purchaseOrderId: "", supplierId: "", poNumber: "", poDate: "", lines: [] }));
+      return;
+    }
+    const defaultLocationId = inventoryLocations[0]?.id || "";
+    setGrnForm((current) => ({
+      ...current,
+      purchaseOrderId: po.id,
+      supplierId: po.supplierId,
+      poNumber: po.poNumber,
+      poDate: po.orderDate,
+      lines: po.items.map((item) => {
+        const orderedQty = numberFromUnknown(item.quantity);
+        const alreadyReceivedQty = receivedQtyByPoMedicine.get(`${po.id}:${item.medicineId}`) || 0;
+        const pendingQty = Math.max(orderedQty - alreadyReceivedQty, 0);
+        return {
+          medicineId: item.medicineId,
+          medicineName: item.medicineName,
+          unit: item.unit,
+          orderedQty,
+          alreadyReceivedQty,
+          pendingQty,
+          receiveQty: "",
+          batchNumber: "",
+          expiryDate: "",
+          locationId: defaultLocationId,
+          locationName: locationById.get(defaultLocationId)?.locationName || "",
+          remarks: "",
+          lineStatus: goodsReceiptLineStatus(pendingQty, 0),
+          unitPrice: item.unitPrice ? Number(item.unitPrice) : null,
+          gstPercent: item.gst ? Number(item.gst) : null,
+          sellingPrice: null,
+        };
+      }),
+      receiptNumber: current.receiptNumber,
+      receivedAt: current.receivedAt || new Date().toISOString().slice(0, 10),
+    }));
+    setGrnFieldErrors({});
+    setGrnError(null);
+  }, [eligibleGoodsReceiptPurchaseOrders, inventoryLocations, locationById, receivedQtyByPoMedicine]);
+
+  const updateGrnLine = React.useCallback((index: number, patch: Partial<GoodsReceiptLineState>) => {
+    setGrnForm((current) => ({
+      ...current,
+      lines: current.lines.map((line, rowIndex) => {
+        if (rowIndex !== index) return line;
+        const next = { ...line, ...patch };
+        const receiveQty = numberFromUnknown(next.receiveQty);
+        return {
+          ...next,
+          locationName: next.locationId ? locationById.get(next.locationId)?.locationName || "" : "",
+          lineStatus: goodsReceiptLineStatus(next.pendingQty, receiveQty),
+        };
+      }),
+    }));
+  }, [locationById]);
+
+  React.useEffect(() => {
+    if (!grnForm.purchaseOrderId || !selectedGrnPurchaseOrder) return;
+    syncGrnFromPurchaseOrder(grnForm.purchaseOrderId);
+  }, [grnForm.purchaseOrderId, selectedGrnPurchaseOrder, syncGrnFromPurchaseOrder]);
+
+  const validateGrnForm = React.useCallback(() => {
+    const errors: Record<string, string> = {};
+    if (!grnForm.purchaseOrderId) errors.purchaseOrderId = "Purchase order is required.";
+    if (!grnForm.receivedAt) errors.receivedAt = "GRN date is required.";
+    const activeLines = grnForm.lines.filter((line) => numberFromUnknown(line.receiveQty) > 0);
+    if (!activeLines.length) {
+      errors.lines = "At least one row must have receive quantity greater than zero.";
+    }
+    activeLines.forEach((line, index) => {
+      const receiveQty = numberFromUnknown(line.receiveQty);
+      if (receiveQty <= 0) errors[`lines.${index}.receiveQty`] = "Receive quantity must be greater than zero.";
+      if (receiveQty > line.pendingQty) errors[`lines.${index}.receiveQty`] = "Receive quantity cannot exceed pending quantity.";
+      if (!line.batchNumber.trim()) errors[`lines.${index}.batchNumber`] = "Batch number is required.";
+      if (!line.expiryDate) errors[`lines.${index}.expiryDate`] = "Expiry date is required.";
+      if (line.expiryDate && line.expiryDate < new Date().toISOString().slice(0, 10)) {
+        errors[`lines.${index}.expiryDate`] = "Expiry date cannot be in the past.";
+      }
+      if (!line.locationId) errors[`lines.${index}.locationId`] = "Location is required.";
+    });
+    setGrnFieldErrors(errors);
+    if (Object.keys(errors).length) {
+      setGrnError(errors.lines || Object.values(errors)[0] || "Fix the highlighted GRN errors.");
+      return null;
+    }
+    return {
+      supplierId: grnForm.supplierId,
+      purchaseOrderId: grnForm.purchaseOrderId,
+      supplierInvoiceId: null,
+      receiptNumber: grnForm.receiptNumber.trim() || `GRN-${Date.now()}`,
+      receivedAt: grnForm.receivedAt,
+      locationId: activeLines[0]?.locationId || "",
+      items: activeLines.map((line) => ({
+        medicineId: line.medicineId || null,
+        medicineName: line.medicineName || null,
+        quantity: numberFromUnknown(line.receiveQty),
+        expectedUnitCost: line.unitPrice,
+        unitCost: line.unitPrice,
+        taxPercent: line.gstPercent,
+        batchNumber: line.batchNumber.trim() || null,
+        expiryDate: line.expiryDate || null,
+        sellingPrice: line.sellingPrice,
+        unit: line.unit || null,
+        locationId: line.locationId || null,
+        remarks: line.remarks.trim() || null,
+      })),
+      approvalNote: null,
+    } satisfies GoodsReceiptInput;
+  }, [grnForm]);
+
+  const saveGrn = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    const payload = validateGrnForm();
+    if (!payload) return;
+    setSavingGrn(true);
+    setGrnError(null);
+    setGrnSuccess(null);
+    try {
+      const saved = await createGoodsReceipt(auth.accessToken, auth.tenantId, payload);
+      await confirmGoodsReceipt(auth.accessToken, auth.tenantId, saved.id, "Posted from procurement");
+      await Promise.all([loadGoodsReceiptRows(), loadPurchaseOrders()]);
+      resetGrnForm();
+      setGrnSuccess("Goods receipt posted and inventory updated.");
+    } catch (err) {
+      setGrnError(err instanceof Error ? err.message : "Failed to post goods receipt");
+    } finally {
+      setSavingGrn(false);
+    }
+  }, [auth.accessToken, auth.tenantId, loadGoodsReceiptRows, loadPurchaseOrders, resetGrnForm, validateGrnForm]);
+
+  React.useEffect(() => {
+    if (!grnForm.receivedAt) {
+      setGrnForm((current) => current.receivedAt ? current : { ...current, receivedAt: new Date().toISOString().slice(0, 10) });
+    }
+  }, [grnForm.receivedAt]);
+
+  const currentSupplierCount = suppliers.length;
+  const currentPurchaseOrderCount = purchaseOrders.length;
+  const currentInvoiceCount = invoices.length;
+  const currentGrnCount = grns.length;
+
+  const saveInvoice = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    const availablePurchaseOrders = invoicePurchaseOrderOptions;
+    if (!availablePurchaseOrders.length) {
+      setInvoiceError("No purchase orders available for invoice matching.");
+      setInvoiceFieldErrors({ purchaseOrderId: "No purchase orders available for invoice matching." });
+      return;
+    }
+    const parsed = supplierInvoiceFormSchema.safeParse(invoiceForm);
+    if (!parsed.success) {
+      const errors = mapZodErrors(parsed.error);
+      setInvoiceFieldErrors(errors);
+      setInvoiceError(firstZodError(parsed.error));
+      return;
+    }
+    const selectedPo = availablePurchaseOrders.find((po) => po.id === parsed.data.purchaseOrderId);
+    if (!selectedPo) {
+      setInvoiceFieldErrors({ purchaseOrderId: "Select an active purchase order." });
+      setInvoiceError("Select an active purchase order.");
+      return;
+    }
+    const supplier = supplierById.get(parsed.data.supplierId);
+    if (!supplier) {
+      setInvoiceFieldErrors({ supplierId: "Supplier is required." });
+      setInvoiceError("Supplier is required.");
+      return;
+    }
+    const totalAmount = Math.max(0, parsed.data.invoiceAmount + parsed.data.gstAmount - parsed.data.discount);
+    const variance = Number((totalAmount - selectedPo.totalValue).toFixed(2));
+    if (variance !== 0 && !parsed.data.varianceReason?.trim()) {
+      setInvoiceFieldErrors({ varianceReason: "Variance reason is required when invoice amount differs from PO amount." });
+      setInvoiceError("Variance reason is required when invoice amount differs from PO amount.");
+      return;
+    }
+    const duplicate = invoices.some((invoice) => (
+      invoice.id !== selectedInvoiceId
+      && invoice.supplierId === parsed.data.supplierId
+      && invoice.invoiceNumber.trim().toLowerCase() === parsed.data.invoiceNumber.trim().toLowerCase()
+    ));
+    if (duplicate) {
+      const errors = { invoiceNumber: "Supplier already has an invoice with this number." };
+      setInvoiceFieldErrors(errors);
+      setInvoiceError("Supplier invoice already exists.");
+      return;
+    }
+
+    const payload: SupplierInvoiceInput = {
+      supplierId: parsed.data.supplierId,
+      purchaseOrderId: parsed.data.purchaseOrderId,
+      invoiceNumber: parsed.data.invoiceNumber,
+      invoiceDate: parsed.data.invoiceDate,
+      invoiceAmount: parsed.data.invoiceAmount,
+      taxAmount: parsed.data.gstAmount,
+      discountAmount: parsed.data.discount,
+      totalAmount,
+      items: selectedPo.items.map(mapPurchaseOrderLineToApi),
+      varianceReason: parsed.data.varianceReason?.trim() || null,
+      approvalNote: parsed.data.notes ?? null,
+    };
+
+    setSavingInvoice(true);
+    setInvoiceError(null);
+    setInvoiceSuccess(null);
+    try {
+      const saved = selectedInvoiceId
+        ? await updateSupplierInvoice(auth.accessToken, auth.tenantId, selectedInvoiceId, payload)
+        : await createSupplierInvoice(auth.accessToken, auth.tenantId, payload);
+      setInvoiceSuccess(selectedInvoiceId ? "Supplier invoice updated." : "Supplier invoice saved.");
+      await loadSupplierInvoices();
+      loadInvoiceIntoForm(mapBackendSupplierInvoice(saved), selectedInvoiceId ? invoiceEditorMode : "edit");
+      setInvoices((current) => {
+        const next = current.some((invoice) => invoice.id === saved.id)
+          ? current.map((invoice) => invoice.id === saved.id ? mapBackendSupplierInvoice(saved) : invoice)
+          : [mapBackendSupplierInvoice(saved), ...current];
+        return next;
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save supplier invoice";
+      const normalized = message.toLowerCase();
+      if (normalized.includes("already exists") || normalized.includes("duplicate")) {
+        setInvoiceFieldErrors({ invoiceNumber: "Supplier already has an invoice with this number." });
+      }
+      setInvoiceError(message);
+    } finally {
+      setSavingInvoice(false);
+    }
+  }, [auth.accessToken, auth.tenantId, invoicePurchaseOrderOptions, invoiceForm, invoices, loadSupplierInvoices, loadInvoiceIntoForm, selectedInvoiceId, supplierById, invoiceEditorMode]);
+
+  const handleMatchInvoice = React.useCallback(async (invoice: SupplierInvoiceRow) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    try {
+      const saved = await matchSupplierInvoice(auth.accessToken, auth.tenantId, invoice.id);
+      const next = mapBackendSupplierInvoice(saved);
+      setInvoices((current) => current.map((item) => item.id === next.id ? next : item));
+      loadInvoiceIntoForm(next, "view");
+      setInvoiceSuccess("Supplier invoice matched.");
+    } catch (err) {
+      setInvoiceError(err instanceof Error ? err.message : "Failed to match supplier invoice");
+    }
+  }, [auth.accessToken, auth.tenantId, loadInvoiceIntoForm]);
+
+  const handleApproveInvoice = React.useCallback(async (invoice: SupplierInvoiceRow) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    try {
+      const saved = await approveSupplierInvoiceForPayment(auth.accessToken, auth.tenantId, invoice.id);
+      const next = mapBackendSupplierInvoice(saved);
+      setInvoices((current) => current.map((item) => item.id === next.id ? next : item));
+      loadInvoiceIntoForm(next, "view");
+      setInvoiceSuccess("Supplier invoice approved for payment.");
+    } catch (err) {
+      setInvoiceError(err instanceof Error ? err.message : "Failed to approve supplier invoice");
+    }
+  }, [auth.accessToken, auth.tenantId, loadInvoiceIntoForm]);
+
+  const handleOpenCancelInvoice = React.useCallback((invoice: SupplierInvoiceRow) => {
+    setSelectedInvoiceId(invoice.id);
+    setInvoiceCancelDialogOpen(true);
+    setInvoiceCancelReason("");
+    setInvoiceCancelError(null);
+  }, []);
+
+  const handleConfirmCancelInvoice = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId || !selectedInvoiceId) return;
+    if (!invoiceCancelReason.trim()) {
+      setInvoiceCancelError("Cancellation reason is required.");
+      return;
+    }
+    try {
+      const saved = await cancelSupplierInvoice(auth.accessToken, auth.tenantId, selectedInvoiceId, invoiceCancelReason.trim());
+      const next = mapBackendSupplierInvoice(saved);
+      setInvoices((current) => current.map((item) => item.id === next.id ? next : item));
+      loadInvoiceIntoForm(next, "view");
+      setInvoiceCancelDialogOpen(false);
+      setInvoiceCancelReason("");
+      setInvoiceCancelError(null);
+      setInvoiceSuccess("Supplier invoice cancelled.");
+    } catch (err) {
+      setInvoiceCancelError(err instanceof Error ? err.message : "Failed to cancel supplier invoice");
+    }
+  }, [auth.accessToken, auth.tenantId, invoiceCancelReason, loadInvoiceIntoForm, selectedInvoiceId]);
+
+  const handleUploadInvoiceAttachment = React.useCallback(async (file: File | null) => {
+    if (!auth.accessToken || !auth.tenantId || !selectedInvoiceId || !file) return;
+    const lowerName = file.name.toLowerCase();
+    const allowed = lowerName.endsWith(".pdf") || lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") || lowerName.endsWith(".png");
+    if (!allowed) {
+      setInvoiceError("Only PDF, JPG, JPEG, and PNG invoice attachments are allowed.");
+      return;
+    }
+    if (file.size > SUPPLIER_INVOICE_UPLOAD_MAX_SIZE_BYTES) {
+      setInvoiceError("Invoice attachment must be 10 MB or smaller.");
+      return;
+    }
+    setUploadingInvoiceAttachment(true);
+    try {
+      const uploaded = await uploadSupplierInvoiceAttachment(auth.accessToken, auth.tenantId, selectedInvoiceId, file);
+      setInvoices((current) => current.map((invoice) => invoice.id === selectedInvoiceId ? {
+        ...invoice,
+        attachmentFileName: uploaded.fileName,
+        attachmentMediaType: uploaded.mediaType,
+        attachmentSizeBytes: uploaded.sizeBytes,
+      } : invoice));
+      setInvoiceSuccess("Invoice attachment uploaded.");
+    } catch (err) {
+      setInvoiceError(err instanceof Error ? err.message : "Failed to upload invoice attachment");
+    } finally {
+      setUploadingInvoiceAttachment(false);
+      if (invoiceAttachmentInputRef.current) {
+        invoiceAttachmentInputRef.current.value = "";
+      }
+    }
+  }, [auth.accessToken, auth.tenantId, selectedInvoiceId]);
 
   if (!auth.tenantId) {
     return <Alert severity="info">Select a tenant to access procurement.</Alert>;
@@ -1567,8 +2567,14 @@ export default function PharmacyProcurePage() {
                                   )}
                                 />
                               {showCreateMedicine ? (
-                                <Button size="small" variant="text" sx={{ alignSelf: "flex-start" }} disabled>
-                                  + Create Medicine
+                                <Button
+                                  size="small"
+                                  variant="text"
+                                  sx={{ alignSelf: "flex-start" }}
+                                  onClick={() => openQuickCreateMedicine(index, line.medicineName)}
+                                  disabled={!purchaseOrderCanEdit}
+                                >
+                                  + Create New Medicine
                                 </Button>
                               ) : null}
                             </Stack>
@@ -1750,6 +2756,9 @@ export default function PharmacyProcurePage() {
                   const showSentActions = po.status === "Sent";
                   const showClosedActions = po.status === "Received" || po.status === "Closed";
                   const showCancelledActions = po.status === "Cancelled";
+                  const disabledPdfTooltip = "PDF download will be available after document template setup.";
+                  const disabledSendTooltip = "Send PO will be available after supplier email setup.";
+                  const disabledHistoryTooltip = "Activity history will be available after audit timeline setup.";
                   return (
                     <Card
                       key={po.id}
@@ -1781,28 +2790,40 @@ export default function PharmacyProcurePage() {
                             ) : null}
                             {showGeneratedActions ? (
                               <>
-                                <Button size="small" variant="outlined" disabled>Print</Button>
-                                <Button size="small" variant="outlined" disabled>Download PDF</Button>
-                                <Button size="small" variant="outlined" disabled>Send</Button>
+                                <Button size="small" variant="outlined" onClick={() => void handlePrintPurchaseOrderFromDrawer(po)}>Print</Button>
+                                <Tooltip title={disabledPdfTooltip}>
+                                  <span><Button size="small" variant="outlined" disabled>Download PDF</Button></span>
+                                </Tooltip>
+                                <Tooltip title={disabledSendTooltip}>
+                                  <span><Button size="small" variant="outlined" disabled>Send</Button></span>
+                                </Tooltip>
                                 <Button size="small" variant="outlined" color="inherit" onClick={() => handleCancelPurchaseOrderFromDrawer(po)}>Cancel</Button>
                               </>
                             ) : null}
                             {showSentActions ? (
                               <>
-                                <Button size="small" variant="outlined" disabled>Print</Button>
-                                <Button size="small" variant="outlined" disabled>Download PDF</Button>
+                                <Button size="small" variant="outlined" onClick={() => void handlePrintPurchaseOrderFromDrawer(po)}>Print</Button>
+                                <Tooltip title={disabledPdfTooltip}>
+                                  <span><Button size="small" variant="outlined" disabled>Download PDF</Button></span>
+                                </Tooltip>
                                 <Button size="small" variant="outlined" color="inherit" onClick={() => handleCancelPurchaseOrderFromDrawer(po)}>Cancel</Button>
                               </>
                             ) : null}
                             {showClosedActions ? (
                               <>
-                                <Button size="small" variant="outlined" disabled>Print</Button>
-                                <Button size="small" variant="outlined" disabled>Download PDF</Button>
-                                <Button size="small" variant="outlined" disabled>Activity History</Button>
+                                <Button size="small" variant="outlined" onClick={() => void handlePrintPurchaseOrderFromDrawer(po)}>Print</Button>
+                                <Tooltip title={disabledPdfTooltip}>
+                                  <span><Button size="small" variant="outlined" disabled>Download PDF</Button></span>
+                                </Tooltip>
+                                <Tooltip title={disabledHistoryTooltip}>
+                                  <span><Button size="small" variant="outlined" disabled>Activity History</Button></span>
+                                </Tooltip>
                               </>
                             ) : null}
                             {showCancelledActions ? (
-                              <Button size="small" variant="outlined" disabled>Activity History</Button>
+                              <Tooltip title={disabledHistoryTooltip}>
+                                <span><Button size="small" variant="outlined" disabled>Activity History</Button></span>
+                              </Tooltip>
                             ) : null}
                           </Stack>
                         </Stack>
@@ -1844,103 +2865,814 @@ export default function PharmacyProcurePage() {
         </DialogActions>
       </Dialog>
 
+      <Dialog open={quickMedicineOpen} onClose={() => !savingQuickMedicine && setQuickMedicineOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Create new medicine</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ pt: 1 }}>
+            <TextField
+              size="small"
+              label="Medicine name *"
+              value={quickMedicineForm.medicineName}
+              onChange={(e) => setQuickMedicineForm((current) => ({ ...current, medicineName: e.target.value }))}
+              error={Boolean(quickMedicineFieldErrors.medicineName)}
+              helperText={quickMedicineFieldErrors.medicineName}
+              autoFocus
+            />
+            <FormControl size="small" fullWidth error={Boolean(quickMedicineFieldErrors.medicineType)}>
+              <InputLabel>Medicine type</InputLabel>
+              <Select
+                label="Medicine type"
+                value={quickMedicineForm.medicineType}
+                onChange={(e) => setQuickMedicineForm((current) => ({ ...current, medicineType: e.target.value as MedicineType }))}
+              >
+                {medicineTypeOptions.map((option) => (
+                  <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Grid container spacing={1}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  size="small"
+                  label="Generic name"
+                  value={quickMedicineForm.genericName || ""}
+                  onChange={(e) => setQuickMedicineForm((current) => ({ ...current, genericName: e.target.value || null }))}
+                  error={Boolean(quickMedicineFieldErrors.genericName)}
+                  helperText={quickMedicineFieldErrors.genericName}
+                  fullWidth
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  size="small"
+                  label="Brand name"
+                  value={quickMedicineForm.brandName || ""}
+                  onChange={(e) => setQuickMedicineForm((current) => ({ ...current, brandName: e.target.value || null }))}
+                  error={Boolean(quickMedicineFieldErrors.brandName)}
+                  helperText={quickMedicineFieldErrors.brandName}
+                  fullWidth
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <TextField
+                  size="small"
+                  label="Strength"
+                  value={quickMedicineForm.strength || ""}
+                  onChange={(e) => setQuickMedicineForm((current) => ({ ...current, strength: e.target.value || null }))}
+                  error={Boolean(quickMedicineFieldErrors.strength)}
+                  helperText={quickMedicineFieldErrors.strength}
+                  fullWidth
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <TextField
+                  size="small"
+                  label="Unit"
+                  value={quickMedicineForm.unit || ""}
+                  onChange={(e) => setQuickMedicineForm((current) => ({ ...current, unit: e.target.value || null }))}
+                  error={Boolean(quickMedicineFieldErrors.unit)}
+                  helperText={quickMedicineFieldErrors.unit}
+                  fullWidth
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <TextField
+                  size="small"
+                  label="Category"
+                  value={quickMedicineForm.category || ""}
+                  onChange={(e) => setQuickMedicineForm((current) => ({ ...current, category: e.target.value || null }))}
+                  error={Boolean(quickMedicineFieldErrors.category)}
+                  helperText={quickMedicineFieldErrors.category}
+                  fullWidth
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  size="small"
+                  label="Manufacturer"
+                  value={quickMedicineForm.manufacturer || ""}
+                  onChange={(e) => setQuickMedicineForm((current) => ({ ...current, manufacturer: e.target.value || null }))}
+                  error={Boolean(quickMedicineFieldErrors.manufacturer)}
+                  helperText={quickMedicineFieldErrors.manufacturer}
+                  fullWidth
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 3 }}>
+                <TextField
+                  size="small"
+                  label="Default price"
+                  type="number"
+                  value={quickMedicineForm.defaultPrice ?? ""}
+                  onChange={(e) => setQuickMedicineForm((current) => ({ ...current, defaultPrice: e.target.value === "" ? null : Number(e.target.value) }))}
+                  error={Boolean(quickMedicineFieldErrors.defaultPrice)}
+                  helperText={quickMedicineFieldErrors.defaultPrice}
+                  fullWidth
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 3 }}>
+                <TextField
+                  size="small"
+                  label="Tax rate"
+                  type="number"
+                  value={quickMedicineForm.taxRate ?? ""}
+                  onChange={(e) => setQuickMedicineForm((current) => ({ ...current, taxRate: e.target.value === "" ? null : Number(e.target.value) }))}
+                  error={Boolean(quickMedicineFieldErrors.taxRate)}
+                  helperText={quickMedicineFieldErrors.taxRate}
+                  fullWidth
+                />
+              </Grid>
+            </Grid>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setQuickMedicineOpen(false)} disabled={savingQuickMedicine}>Close</Button>
+          <Button variant="contained" onClick={() => void saveQuickMedicine()} disabled={savingQuickMedicine}>
+            {savingQuickMedicine ? "Saving..." : "Save medicine"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {workspace === "supplier-invoices" ? (
         <Grid container spacing={2}>
           <Grid size={{ xs: 12, lg: 5 }}>
-            <CompactFilterCard title="Supplier invoice" subtitle="Match an invoice to an existing PO." actions={<Button size="small" variant="contained" onClick={saveInvoice}>Save invoice</Button>}>
-              <Stack spacing={1}>
-                <FormControl size="small">
-                  <InputLabel>Purchase order</InputLabel>
-                  <Select label="Purchase order" value={invoiceForm.purchaseOrderId} onChange={(e) => setInvoiceForm((current) => ({ ...current, purchaseOrderId: e.target.value }))}>
-                    {purchaseOrders.map((po) => <MenuItem key={po.id} value={po.id}>{po.poNumber}</MenuItem>)}
-                  </Select>
-                </FormControl>
-                <TextField size="small" label="Supplier invoice number" value={invoiceForm.invoiceNumber} onChange={(e) => setInvoiceForm((current) => ({ ...current, invoiceNumber: e.target.value }))} />
-                <TextField size="small" label="Invoice date" type="date" InputLabelProps={{ shrink: true }} value={invoiceForm.invoiceDate} onChange={(e) => setInvoiceForm((current) => ({ ...current, invoiceDate: e.target.value }))} />
-                <TextField size="small" label="Invoice amount" value={invoiceForm.amount} onChange={(e) => setInvoiceForm((current) => ({ ...current, amount: e.target.value }))} />
+            <CompactFilterCard
+              title="Supplier invoice"
+              subtitle={invoiceEditorMode === "create" ? "Create a supplier invoice and match it to an active purchase order." : "View or update supplier invoice details before payment approval."}
+              actions={(
+                <Stack direction="row" spacing={1}>
+                  <input
+                    ref={invoiceAttachmentInputRef}
+                    type="file"
+                    hidden
+                    accept="application/pdf,image/png,image/jpeg"
+                    onChange={(event) => void handleUploadInvoiceAttachment(event.target.files?.[0] ?? null)}
+                  />
+                  <Tooltip title={
+                    invoiceCanUpload
+                      ? "Attach a PDF or image copy of the supplier invoice."
+                      : selectedInvoice == null
+                        ? "Save the invoice first, then upload the attachment."
+                        : "Attachments can only be updated while the invoice is in Draft or Matched status."
+                  }>
+                    <span>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={!invoiceCanUpload || uploadingInvoiceAttachment}
+                        onClick={() => invoiceAttachmentInputRef.current?.click()}
+                      >
+                        {uploadingInvoiceAttachment ? "Uploading..." : "Upload invoice document"}
+                      </Button>
+                    </span>
+                  </Tooltip>
+                  <Button size="small" variant="outlined" onClick={resetInvoiceForm}>New invoice</Button>
+                  <Button size="small" variant="contained" onClick={() => void saveInvoice()} disabled={savingInvoice || !invoicePurchaseOrderOptions.length || invoiceReadOnly}>
+                    {savingInvoice ? "Saving..." : selectedInvoiceId ? "Save changes" : "Save invoice"}
+                  </Button>
+                </Stack>
+              )}
+            >
+              <Stack spacing={1.5}>
+                {invoiceSuccess ? <Alert severity="success" onClose={() => setInvoiceSuccess(null)}>{invoiceSuccess}</Alert> : null}
+                {invoiceError ? <Alert severity="error" onClose={() => setInvoiceError(null)}>{invoiceError}</Alert> : null}
+                {!invoicePurchaseOrderOptions.length ? (
+                  <CompactEmptyState
+                    title="No purchase orders available for invoice matching."
+                    subtitle="Only Generated, Sent, or Partially Received POs can be linked to supplier invoices."
+                    action={<Button size="small" variant="contained" onClick={() => updateWorkspace("purchase-orders")}>Create PO</Button>}
+                  />
+                ) : (
+                  <>
+                    {selectedInvoice ? (
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        <Chip size="small" {...supplierInvoiceStatusLabel(selectedInvoice.status)} />
+                        <Chip size="small" {...supplierInvoiceMatchLabel(selectedInvoice.matchingStatus)} />
+                        {Math.abs(selectedInvoice.varianceAmount) > 0.004 ? <Chip size="small" color="warning" label={`Variance INR ${selectedInvoice.varianceAmount.toFixed(2)}`} /> : null}
+                        {selectedInvoice.attachmentFileName ? <Chip size="small" label={selectedInvoice.attachmentFileName} /> : null}
+                      </Stack>
+                    ) : null}
+                    {selectedInvoice?.status === "APPROVED_FOR_PAYMENT" ? <Alert severity="info">Approved invoices are read-only until payment posting is available.</Alert> : null}
+                    {selectedInvoice?.status === "PAID" ? <Alert severity="info">Paid invoices are read-only.</Alert> : null}
+                    {selectedInvoice?.status === "CANCELLED" ? <Alert severity="warning">Cancelled invoices remain visible for audit and cannot be edited.</Alert> : null}
+                    <FormControl size="small" fullWidth error={Boolean(invoiceFieldErrors.purchaseOrderId)}>
+                      <InputLabel>Related PO</InputLabel>
+                      <Select
+                        label="Related PO"
+                        value={invoiceForm.purchaseOrderId}
+                        onChange={(e) => setInvoiceForm((current) => ({ ...current, purchaseOrderId: e.target.value }))}
+                        disabled={invoiceReadOnly}
+                      >
+                        {invoicePurchaseOrderOptions.map((po) => (
+                          <MenuItem key={po.id} value={po.id}>{po.poNumber} • {po.supplierName}</MenuItem>
+                        ))}
+                      </Select>
+                      {invoiceFieldErrors.purchaseOrderId ? <Typography variant="caption" color="error">{invoiceFieldErrors.purchaseOrderId}</Typography> : null}
+                    </FormControl>
+
+                    <FormControl size="small" fullWidth error={Boolean(invoiceFieldErrors.supplierId)}>
+                      <InputLabel>Supplier</InputLabel>
+                      <Select label="Supplier" value={invoiceForm.supplierId} disabled>
+                        {suppliers.map((supplier) => (
+                          <MenuItem key={supplier.id} value={supplier.id}>{supplier.supplierName}</MenuItem>
+                        ))}
+                      </Select>
+                      <Typography variant="caption" color={invoiceFieldErrors.supplierId ? "error" : "text.secondary"}>
+                        {invoiceFieldErrors.supplierId || "Auto-populated from the selected purchase order."}
+                      </Typography>
+                    </FormControl>
+
+                    <TextField
+                      size="small"
+                      label="Invoice number"
+                      value={invoiceForm.invoiceNumber}
+                      onChange={(e) => setInvoiceForm((current) => ({ ...current, invoiceNumber: e.target.value }))}
+                      disabled={invoiceReadOnly}
+                      error={Boolean(invoiceFieldErrors.invoiceNumber)}
+                      helperText={invoiceFieldErrors.invoiceNumber}
+                    />
+                    <TextField
+                      size="small"
+                      label="Invoice date"
+                      type="date"
+                      InputLabelProps={{ shrink: true }}
+                      value={invoiceForm.invoiceDate}
+                      onChange={(e) => setInvoiceForm((current) => ({ ...current, invoiceDate: e.target.value }))}
+                      disabled={invoiceReadOnly}
+                      error={Boolean(invoiceFieldErrors.invoiceDate)}
+                      helperText={invoiceFieldErrors.invoiceDate}
+                    />
+                    <Grid container spacing={1}>
+                      <Grid size={{ xs: 12, sm: 4 }}>
+                        <TextField
+                          size="small"
+                          type="number"
+                          fullWidth
+                          label="Invoice amount"
+                          value={invoiceForm.invoiceAmount}
+                          onChange={(e) => setInvoiceForm((current) => ({ ...current, invoiceAmount: e.target.value }))}
+                          disabled={invoiceReadOnly}
+                          error={Boolean(invoiceFieldErrors.invoiceAmount)}
+                          helperText={invoiceFieldErrors.invoiceAmount}
+                          inputProps={{ min: 0.01, step: "0.01" }}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 4 }}>
+                        <TextField
+                          size="small"
+                          type="number"
+                          fullWidth
+                          label="GST amount"
+                          value={invoiceForm.gstAmount}
+                          onChange={(e) => setInvoiceForm((current) => ({ ...current, gstAmount: e.target.value }))}
+                          disabled={invoiceReadOnly}
+                          error={Boolean(invoiceFieldErrors.gstAmount)}
+                          helperText={invoiceFieldErrors.gstAmount}
+                          inputProps={{ min: 0, step: "0.01" }}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 4 }}>
+                        <TextField
+                          size="small"
+                          type="number"
+                          fullWidth
+                          label="Discount"
+                          value={invoiceForm.discount}
+                          onChange={(e) => setInvoiceForm((current) => ({ ...current, discount: e.target.value }))}
+                          disabled={invoiceReadOnly}
+                          error={Boolean(invoiceFieldErrors.discount)}
+                          helperText={invoiceFieldErrors.discount || "Optional."}
+                          inputProps={{ min: 0, step: "0.01" }}
+                        />
+                      </Grid>
+                    </Grid>
+                    <Autocomplete
+                      freeSolo
+                      options={[...SUPPLIER_INVOICE_VARIANCE_REASONS]}
+                      value={invoiceForm.varianceReason}
+                      onInputChange={(_, value) => setInvoiceForm((current) => ({ ...current, varianceReason: value }))}
+                      disabled={invoiceReadOnly || invoiceVsPoDifference == null || invoiceVsPoDifference === 0}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          size="small"
+                          label={invoiceVsPoDifference == null || invoiceVsPoDifference === 0 ? "Variance reason" : "Variance reason *"}
+                          error={Boolean(invoiceFieldErrors.varianceReason)}
+                          helperText={
+                            invoiceFieldErrors.varianceReason
+                            || (invoiceVsPoDifference == null || invoiceVsPoDifference === 0
+                              ? "Required only when invoice amount differs from the PO amount."
+                              : "Required because invoice amount differs from the PO amount.")
+                          }
+                        />
+                      )}
+                    />
+                    <TextField
+                      size="small"
+                      label="Notes"
+                      multiline
+                      minRows={2}
+                      value={invoiceForm.notes}
+                      onChange={(e) => setInvoiceForm((current) => ({ ...current, notes: e.target.value }))}
+                      disabled={invoiceReadOnly}
+                      error={Boolean(invoiceFieldErrors.notes)}
+                      helperText={invoiceFieldErrors.notes}
+                    />
+
+                    {selectedInvoicePurchaseOrder ? (
+                      <Card variant="outlined">
+                        <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+                          <Stack spacing={1}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>PO match summary</Typography>
+                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                              <Chip size="small" label={`PO total: INR ${selectedInvoicePoTotal.toFixed(2)}`} />
+                              <Chip size="small" label={`Invoice amount: INR ${invoiceComputedPayable.toFixed(2)}`} />
+                              <Chip
+                                size="small"
+                                color={invoiceVsPoDifference === 0 ? "success" : "warning"}
+                                label={`Variance: INR ${(invoiceVsPoDifference || 0).toFixed(2)}`}
+                              />
+                            </Stack>
+                            {invoiceVsPoDifference !== 0 && invoiceVsPoDifference != null ? (
+                              <Typography variant="caption" color="warning.main">
+                                Variance is calculated as Invoice Amount - PO Amount. A variance reason is required.
+                              </Typography>
+                            ) : null}
+                            <Typography variant="caption" color="text.secondary">
+                              {selectedInvoiceItems.length} PO items will be linked to this supplier invoice.
+                            </Typography>
+                            {selectedInvoice?.attachmentFileName ? <Typography variant="caption" color="text.secondary">Attachment: {selectedInvoice.attachmentFileName}</Typography> : null}
+                            {selectedInvoice?.cancelReason ? <Typography variant="caption" color="text.secondary">Cancellation reason: {selectedInvoice.cancelReason}</Typography> : null}
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    ) : null}
+                  </>
+                )}
               </Stack>
             </CompactFilterCard>
           </Grid>
           <Grid size={{ xs: 12, lg: 7 }}>
-            <CompactFilterCard title="Invoice list" subtitle="Matched and pending invoices.">
-              {invoices.length ? (
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Invoice</TableCell>
-                      <TableCell>Purchase order</TableCell>
-                      <TableCell>Status</TableCell>
-                      <TableCell align="right">Amount</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {invoices.map((invoice) => (
-                      <TableRow key={invoice.id}>
-                        <TableCell>{invoice.invoiceNumber}</TableCell>
-                        <TableCell>{poById.get(invoice.purchaseOrderId)?.poNumber || "-"}</TableCell>
-                        <TableCell>{invoice.status}</TableCell>
-                        <TableCell align="right">{invoice.amount}</TableCell>
+            <Stack spacing={2}>
+              {selectedInvoicePurchaseOrder ? (
+                <CompactFilterCard title="Related PO items" subtitle="PO items linked to the selected supplier invoice.">
+                  <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Medicine</TableCell>
+                          <TableCell align="right">Qty</TableCell>
+                          <TableCell align="right">Unit Price</TableCell>
+                          <TableCell align="right">GST %</TableCell>
+                          <TableCell align="right">Line Total</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {selectedInvoiceItems.map((item, index) => {
+                          const lineTotal = computePurchaseOrderLineTotal(item) ?? 0;
+                          return (
+                            <TableRow key={`${item.medicineId || item.medicineName}-${index}`}>
+                              <TableCell>{item.medicineName || "-"}</TableCell>
+                              <TableCell align="right">{item.quantity || "0"}</TableCell>
+                              <TableCell align="right">INR {Number(item.unitPrice || 0).toFixed(2)}</TableCell>
+                              <TableCell align="right">{Number(item.gst || 0).toFixed(2)}</TableCell>
+                              <TableCell align="right">INR {lineTotal.toFixed(2)}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CompactFilterCard>
+              ) : null}
+              <CompactFilterCard
+                title="Invoice list"
+                subtitle="Draft, matched, approved, paid, and cancelled supplier invoices."
+                actions={<Button size="small" variant="outlined" onClick={() => {
+                  setInvoiceStatusFilter("ALL");
+                  setInvoiceSupplierFilter("ALL");
+                  setInvoicePoFilter("ALL");
+                  setInvoiceDateFromFilter("");
+                  setInvoiceDateToFilter("");
+                  setInvoiceVarianceOnly(false);
+                }}>Clear filters</Button>}
+              >
+                <Grid container spacing={1} sx={{ mb: 1.5 }}>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl size="small" fullWidth>
+                      <InputLabel>Status</InputLabel>
+                      <Select label="Status" value={invoiceStatusFilter} onChange={(e) => setInvoiceStatusFilter(e.target.value as "ALL" | SupplierInvoiceStatus)}>
+                        <MenuItem value="ALL">All</MenuItem>
+                        <MenuItem value="DRAFT">Draft</MenuItem>
+                        <MenuItem value="MATCHED">Matched</MenuItem>
+                        <MenuItem value="APPROVED_FOR_PAYMENT">Approved for Payment</MenuItem>
+                        <MenuItem value="PAID">Paid</MenuItem>
+                        <MenuItem value="CANCELLED">Cancelled</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl size="small" fullWidth>
+                      <InputLabel>Supplier</InputLabel>
+                      <Select label="Supplier" value={invoiceSupplierFilter} onChange={(e) => setInvoiceSupplierFilter(e.target.value)}>
+                        <MenuItem value="ALL">All</MenuItem>
+                        {suppliers.map((supplier) => <MenuItem key={supplier.id} value={supplier.id}>{supplier.supplierName}</MenuItem>)}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl size="small" fullWidth>
+                      <InputLabel>Related PO</InputLabel>
+                      <Select label="Related PO" value={invoicePoFilter} onChange={(e) => setInvoicePoFilter(e.target.value)}>
+                        <MenuItem value="ALL">All</MenuItem>
+                        {purchaseOrders.map((po) => <MenuItem key={po.id} value={po.id}>{po.poNumber}</MenuItem>)}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 3 }}>
+                    <TextField size="small" type="date" label="From" InputLabelProps={{ shrink: true }} value={invoiceDateFromFilter} onChange={(e) => setInvoiceDateFromFilter(e.target.value)} fullWidth />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 3 }}>
+                    <TextField size="small" type="date" label="To" InputLabelProps={{ shrink: true }} value={invoiceDateToFilter} onChange={(e) => setInvoiceDateToFilter(e.target.value)} fullWidth />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 3 }}>
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ height: "100%" }}>
+                      <Switch checked={invoiceVarianceOnly} onChange={(e) => setInvoiceVarianceOnly(e.target.checked)} />
+                      <Typography variant="body2">Variance only</Typography>
+                    </Stack>
+                  </Grid>
+                </Grid>
+                {loadingInvoices ? (
+                  <Box sx={{ display: "grid", placeItems: "center", minHeight: 180 }}>
+                    <Typography variant="body2" color="text.secondary">Loading supplier invoices...</Typography>
+                  </Box>
+                ) : filteredInvoices.length ? (
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Invoice number</TableCell>
+                        <TableCell>Supplier</TableCell>
+                        <TableCell>Related PO</TableCell>
+                        <TableCell>Invoice date</TableCell>
+                        <TableCell align="right">Amount</TableCell>
+                        <TableCell>Status</TableCell>
+                        <TableCell>Attachment</TableCell>
+                        <TableCell>Actions</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              ) : (
-                <CompactEmptyState title="No supplier invoices" subtitle="Create an invoice to match to a PO." />
-              )}
-            </CompactFilterCard>
+                    </TableHead>
+                    <TableBody>
+                      {filteredInvoices.map((invoice) => (
+                        <TableRow key={invoice.id}>
+                          <TableCell>{invoice.invoiceNumber}</TableCell>
+                          <TableCell>{invoice.supplierName || supplierById.get(invoice.supplierId)?.supplierName || "-"}</TableCell>
+                          <TableCell>{invoice.purchaseOrderId ? poById.get(invoice.purchaseOrderId)?.poNumber || "-" : "-"}</TableCell>
+                          <TableCell>{invoice.invoiceDate}</TableCell>
+                          <TableCell align="right">
+                            <Stack spacing={0.25} sx={{ alignItems: "flex-end" }}>
+                              <Typography variant="body2">INR {invoice.totalAmount.toFixed(2)}</Typography>
+                              {Math.abs(invoice.varianceAmount) > 0.004 ? <Typography variant="caption" color="warning.main">Var {invoice.varianceAmount.toFixed(2)}</Typography> : null}
+                            </Stack>
+                          </TableCell>
+                          <TableCell>
+                            <Stack spacing={0.5}>
+                              <Chip size="small" {...supplierInvoiceStatusLabel(invoice.status)} />
+                              <Chip size="small" {...supplierInvoiceMatchLabel(invoice.matchingStatus)} />
+                            </Stack>
+                          </TableCell>
+                          <TableCell>{invoice.attachmentFileName || "-"}</TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                              <Button size="small" variant="outlined" onClick={() => loadInvoiceIntoForm(invoice, "view")}>View</Button>
+                              {(invoice.status === "DRAFT" || invoice.status === "MATCHED") ? <Button size="small" variant="outlined" onClick={() => loadInvoiceIntoForm(invoice, "edit")}>Edit</Button> : null}
+                              {invoice.status === "DRAFT" ? <Button size="small" variant="outlined" onClick={() => void handleMatchInvoice(invoice)}>Match</Button> : null}
+                              {invoice.status === "MATCHED" ? <Button size="small" variant="outlined" onClick={() => void handleApproveInvoice(invoice)}>Approve for Payment</Button> : null}
+                              {invoice.status === "APPROVED_FOR_PAYMENT" ? (
+                                <Tooltip title="Payment posting will be available after billing/payment integration.">
+                                  <span><Button size="small" variant="outlined" disabled>Mark Paid</Button></span>
+                                </Tooltip>
+                              ) : null}
+                              {(invoice.status === "DRAFT" || invoice.status === "MATCHED" || invoice.status === "APPROVED_FOR_PAYMENT") ? <Button size="small" variant="outlined" color="inherit" onClick={() => handleOpenCancelInvoice(invoice)}>Cancel</Button> : null}
+                            </Stack>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <CompactEmptyState title="No supplier invoices" subtitle="No invoices match the current filters." />
+                )}
+              </CompactFilterCard>
+            </Stack>
           </Grid>
         </Grid>
       ) : null}
 
+      <Dialog open={invoiceCancelDialogOpen} onClose={() => setInvoiceCancelDialogOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Cancel supplier invoice</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ pt: 1 }}>
+            <Typography variant="body2" color="text.secondary">Cancelled invoices remain visible in filters and audit history.</Typography>
+            <TextField
+              label="Cancellation reason *"
+              value={invoiceCancelReason}
+              onChange={(e) => setInvoiceCancelReason(e.target.value)}
+              multiline
+              minRows={3}
+              fullWidth
+              error={Boolean(invoiceCancelError)}
+              helperText={invoiceCancelError}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setInvoiceCancelDialogOpen(false)}>Close</Button>
+          <Button variant="contained" color="error" onClick={() => void handleConfirmCancelInvoice()}>Cancel invoice</Button>
+        </DialogActions>
+      </Dialog>
+
       {workspace === "goods-receipt" ? (
         <Grid container spacing={2}>
-          <Grid size={{ xs: 12, lg: 5 }}>
-            <CompactFilterCard title="Goods receipt" subtitle="Receive stock against an existing PO." actions={<Button size="small" variant="contained" onClick={saveGrn}>Post GRN</Button>}>
-              <Stack spacing={1}>
-                <FormControl size="small">
-                  <InputLabel>Purchase order</InputLabel>
-                  <Select label="Purchase order" value={grnForm.purchaseOrderId} onChange={(e) => setGrnForm((current) => ({ ...current, purchaseOrderId: e.target.value }))}>
-                    {purchaseOrders.map((po) => <MenuItem key={po.id} value={po.id}>{po.poNumber}</MenuItem>)}
-                  </Select>
-                </FormControl>
-                <TextField size="small" label="Receipt number" value={grnForm.receiptNumber} onChange={(e) => setGrnForm((current) => ({ ...current, receiptNumber: e.target.value }))} />
-                <TextField size="small" label="Received at" type="date" InputLabelProps={{ shrink: true }} value={grnForm.receivedAt} onChange={(e) => setGrnForm((current) => ({ ...current, receivedAt: e.target.value }))} />
-                <TextField size="small" label="Received quantity" value={grnForm.receivedQty} onChange={(e) => setGrnForm((current) => ({ ...current, receivedQty: e.target.value }))} />
-                <TextField size="small" label="Batch" value={grnForm.batch} onChange={(e) => setGrnForm((current) => ({ ...current, batch: e.target.value }))} />
-                <TextField size="small" label="Expiry" type="date" InputLabelProps={{ shrink: true }} value={grnForm.expiry} onChange={(e) => setGrnForm((current) => ({ ...current, expiry: e.target.value }))} />
+          <Grid size={{ xs: 12 }}>
+            <CompactFilterCard
+              title="Goods receipt"
+              subtitle="Select an eligible purchase order, capture received line items, and post inventory in one step."
+              actions={(
+                <Stack direction="row" spacing={1}>
+                  <Button size="small" variant="outlined" onClick={resetGrnForm}>Clear</Button>
+                  <Button size="small" variant="contained" onClick={() => void saveGrn()} disabled={savingGrn || !eligibleGoodsReceiptPurchaseOrders.length}>
+                    {savingGrn ? "Posting..." : "Post GRN"}
+                  </Button>
+                </Stack>
+              )}
+            >
+              <Stack spacing={1.5}>
+                {grnSuccess ? <Alert severity="success" onClose={() => setGrnSuccess(null)}>{grnSuccess}</Alert> : null}
+                {grnError ? <Alert severity="error" onClose={() => setGrnError(null)}>{grnError}</Alert> : null}
+                {!eligibleGoodsReceiptPurchaseOrders.length ? (
+                  <CompactEmptyState
+                    title="No purchase orders available for goods receipt."
+                    subtitle="Only Generated, Sent, or Partially Received POs can be received."
+                    action={<Button size="small" variant="contained" onClick={() => updateWorkspace("purchase-orders")}>Create PO</Button>}
+                  />
+                ) : (
+                  <>
+                    <Grid container spacing={1}>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <FormControl size="small" fullWidth error={Boolean(grnFieldErrors.purchaseOrderId)}>
+                          <InputLabel>Purchase order</InputLabel>
+                          <Select
+                            label="Purchase order"
+                            value={grnForm.purchaseOrderId}
+                            onChange={(e) => syncGrnFromPurchaseOrder(e.target.value)}
+                          >
+                            {eligibleGoodsReceiptPurchaseOrders.map((po) => (
+                              <MenuItem key={po.id} value={po.id}>{po.poNumber} • {po.supplierName}</MenuItem>
+                            ))}
+                          </Select>
+                          {grnFieldErrors.purchaseOrderId ? <Typography variant="caption" color="error">{grnFieldErrors.purchaseOrderId}</Typography> : null}
+                        </FormControl>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 3 }}>
+                        <TextField
+                          size="small"
+                          label="GRN number"
+                          value={grnForm.receiptNumber}
+                          onChange={(e) => setGrnForm((current) => ({ ...current, receiptNumber: e.target.value }))}
+                          placeholder="Auto-generated on post"
+                          fullWidth
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 2.5 }}>
+                        <TextField
+                          size="small"
+                          label="GRN date"
+                          type="date"
+                          InputLabelProps={{ shrink: true }}
+                          value={grnForm.receivedAt}
+                          onChange={(e) => setGrnForm((current) => ({ ...current, receivedAt: e.target.value }))}
+                          error={Boolean(grnFieldErrors.receivedAt)}
+                          helperText={grnFieldErrors.receivedAt}
+                          fullWidth
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 2.5 }}>
+                        <TextField size="small" label="Supplier" value={selectedGrnPurchaseOrder?.supplierName || ""} InputProps={{ readOnly: true }} fullWidth />
+                      </Grid>
+                    </Grid>
+
+                    {selectedGrnPurchaseOrder ? (
+                      <>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                          <Chip size="small" label={`PO ${grnForm.poNumber || selectedGrnPurchaseOrder.poNumber}`} />
+                          <Chip size="small" label={`PO date ${grnForm.poDate || selectedGrnPurchaseOrder.orderDate}`} />
+                          <Chip size="small" color="info" label={`Lines ${grnForm.lines.filter((line) => line.pendingQty > 0).length}`} />
+                          <Chip size="small" color="success" label={`Receive qty ${grnForm.lines.reduce((sum, line) => sum + numberFromUnknown(line.receiveQty), 0)}`} />
+                        </Stack>
+
+                        {grnFieldErrors.lines ? <Alert severity="error">{grnFieldErrors.lines}</Alert> : null}
+
+                        <TableContainer sx={{ maxHeight: 420, overflowX: "auto", border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
+                          <Table size="small" stickyHeader sx={{ minWidth: 1280 }}>
+                            <TableHead>
+                              <TableRow>
+                                <TableCell sx={{ minWidth: 220 }}>Medicine</TableCell>
+                                <TableCell align="right">Ordered Qty</TableCell>
+                                <TableCell align="right">Already Received</TableCell>
+                                <TableCell align="right">Pending Qty</TableCell>
+                                <TableCell align="right">Receive Qty</TableCell>
+                                <TableCell>Batch No</TableCell>
+                                <TableCell>Expiry Date</TableCell>
+                                <TableCell>Location</TableCell>
+                                <TableCell>Remarks</TableCell>
+                                <TableCell>Line Status</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {grnForm.lines.map((line, index) => (
+                                <TableRow key={`${line.medicineId}-${index}`} hover>
+                                  <TableCell>
+                                    <Stack spacing={0.25}>
+                                      <Typography variant="body2" sx={{ fontWeight: 700 }}>{line.medicineName || "-"}</Typography>
+                                      <Typography variant="caption" color="text.secondary">{line.unit || "Unit not set"}</Typography>
+                                    </Stack>
+                                  </TableCell>
+                                  <TableCell align="right">{line.orderedQty}</TableCell>
+                                  <TableCell align="right">{line.alreadyReceivedQty}</TableCell>
+                                  <TableCell align="right">{line.pendingQty}</TableCell>
+                                  <TableCell align="right">
+                                    <TextField
+                                      size="small"
+                                      type="number"
+                                      value={line.receiveQty}
+                                      onChange={(e) => updateGrnLine(index, { receiveQty: e.target.value })}
+                                      error={Boolean(grnFieldErrors[`lines.${index}.receiveQty`])}
+                                      helperText={grnFieldErrors[`lines.${index}.receiveQty`]}
+                                      sx={{ width: 100, ...poMoneyFieldSx }}
+                                      inputProps={{ min: 0, max: line.pendingQty, step: 1 }}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <TextField
+                                      size="small"
+                                      value={line.batchNumber}
+                                      onChange={(e) => updateGrnLine(index, { batchNumber: e.target.value })}
+                                      error={Boolean(grnFieldErrors[`lines.${index}.batchNumber`])}
+                                      helperText={grnFieldErrors[`lines.${index}.batchNumber`]}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <TextField
+                                      size="small"
+                                      type="date"
+                                      InputLabelProps={{ shrink: true }}
+                                      value={line.expiryDate}
+                                      onChange={(e) => updateGrnLine(index, { expiryDate: e.target.value })}
+                                      error={Boolean(grnFieldErrors[`lines.${index}.expiryDate`])}
+                                      helperText={grnFieldErrors[`lines.${index}.expiryDate`]}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <FormControl size="small" error={Boolean(grnFieldErrors[`lines.${index}.locationId`])} sx={{ minWidth: 160 }}>
+                                      <Select
+                                        displayEmpty
+                                        value={line.locationId}
+                                        onChange={(e) => updateGrnLine(index, { locationId: e.target.value })}
+                                      >
+                                        <MenuItem value="">Select location</MenuItem>
+                                        {inventoryLocations.map((location) => (
+                                          <MenuItem key={location.id} value={location.id}>{location.locationName}</MenuItem>
+                                        ))}
+                                      </Select>
+                                    </FormControl>
+                                    {grnFieldErrors[`lines.${index}.locationId`] ? <Typography variant="caption" color="error">{grnFieldErrors[`lines.${index}.locationId`]}</Typography> : null}
+                                  </TableCell>
+                                  <TableCell>
+                                    <TextField
+                                      size="small"
+                                      value={line.remarks}
+                                      onChange={(e) => updateGrnLine(index, { remarks: e.target.value })}
+                                      placeholder="Optional"
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <Chip size="small" label={line.lineStatus} color={line.lineStatus === "Complete" ? "success" : line.lineStatus === "Partial" ? "info" : "default"} variant="outlined" />
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </>
+                    ) : (
+                      <CompactEmptyState title="Select a purchase order to load GRN items." subtitle="Ordered quantity, already received quantity, pending quantity, and required stock fields will appear here." />
+                    )}
+                  </>
+                )}
               </Stack>
             </CompactFilterCard>
           </Grid>
-          <Grid size={{ xs: 12, lg: 7 }}>
-            <CompactFilterCard title="GRN list" subtitle="Posted receipts update inventory later in the real workflow.">
-              {grns.length ? (
+          <Grid size={{ xs: 12 }}>
+            <CompactFilterCard title="GRN list" subtitle="Posted goods receipts update inventory automatically and keep PO receipt progress in sync.">
+              {loadingGrns ? (
+                <Box sx={{ display: "grid", placeItems: "center", minHeight: 180 }}>
+                  <Typography variant="body2" color="text.secondary">Loading goods receipts...</Typography>
+                </Box>
+              ) : grns.length ? (
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell>Receipt</TableCell>
-                      <TableCell>Purchase order</TableCell>
+                      <TableCell>GRN number</TableCell>
+                      <TableCell>PO number</TableCell>
+                      <TableCell>Supplier</TableCell>
+                      <TableCell>GRN date</TableCell>
+                      <TableCell align="right">Items received</TableCell>
+                      <TableCell align="right">Total qty</TableCell>
                       <TableCell>Status</TableCell>
-                      <TableCell align="right">Qty</TableCell>
+                      <TableCell align="right">Action</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {grns.map((grn) => (
                       <TableRow key={grn.id}>
                         <TableCell>{grn.receiptNumber}</TableCell>
-                        <TableCell>{poById.get(grn.purchaseOrderId)?.poNumber || "-"}</TableCell>
+                        <TableCell>{grn.poNumber || poById.get(grn.purchaseOrderId)?.poNumber || "-"}</TableCell>
+                        <TableCell>{grn.supplierName || supplierById.get(grn.supplierId)?.supplierName || "-"}</TableCell>
+                        <TableCell>{grn.receivedAt ? grn.receivedAt.slice(0, 10) : "-"}</TableCell>
+                        <TableCell align="right">{grn.itemsReceived}</TableCell>
+                        <TableCell align="right">{grn.totalReceivedQty}</TableCell>
                         <TableCell>{grn.status}</TableCell>
-                        <TableCell align="right">{grn.receivedQty}</TableCell>
+                        <TableCell align="right">
+                          <Button size="small" onClick={() => setSelectedGrn(grn)}>View</Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               ) : (
-                <CompactEmptyState title="No goods receipts" subtitle="Post a GRN to continue." />
+                <CompactEmptyState title="No goods receipts" subtitle="Post a GRN to update inventory and supplier purchase progress." />
               )}
             </CompactFilterCard>
           </Grid>
         </Grid>
       ) : null}
+
+      <Dialog open={Boolean(selectedGrn)} onClose={() => setSelectedGrn(null)} fullWidth maxWidth="lg">
+        <DialogTitle>Goods Receipt Detail</DialogTitle>
+        <DialogContent dividers>
+          {selectedGrn ? (
+            <Stack spacing={1.5}>
+              <Grid container spacing={1}>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField size="small" label="Supplier" value={selectedGrn.supplierName} InputProps={{ readOnly: true }} fullWidth />
+                </Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField size="small" label="PO number" value={selectedGrn.poNumber || "-"} InputProps={{ readOnly: true }} fullWidth />
+                </Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField size="small" label="GRN number" value={selectedGrn.receiptNumber} InputProps={{ readOnly: true }} fullWidth />
+                </Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField size="small" label="Date" value={selectedGrn.receivedAt ? selectedGrn.receivedAt.slice(0, 10) : ""} InputProps={{ readOnly: true }} fullWidth />
+                </Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField size="small" label="Status" value={selectedGrn.status} InputProps={{ readOnly: true }} fullWidth />
+                </Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField size="small" label="Posted at" value={selectedGrn.confirmedAt ? new Date(selectedGrn.confirmedAt).toLocaleString() : "-"} InputProps={{ readOnly: true }} fullWidth />
+                </Grid>
+              </Grid>
+              <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
+                <Table size="small" stickyHeader>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Medicine</TableCell>
+                      <TableCell align="right">Received Qty</TableCell>
+                      <TableCell>Batch</TableCell>
+                      <TableCell>Expiry</TableCell>
+                      <TableCell>Location</TableCell>
+                      <TableCell>Remarks</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {selectedGrn.lines.map((line, index) => (
+                      <TableRow key={`${line.medicineId}-${index}`}>
+                        <TableCell>{line.medicineName || "-"}</TableCell>
+                        <TableCell align="right">{numberFromUnknown(line.receiveQty)}</TableCell>
+                        <TableCell>{line.batchNumber || "-"}</TableCell>
+                        <TableCell>{line.expiryDate || "-"}</TableCell>
+                        <TableCell>{line.locationName || locationById.get(line.locationId)?.locationName || "-"}</TableCell>
+                        <TableCell>{line.remarks || "-"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSelectedGrn(null)}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 }
