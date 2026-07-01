@@ -23,7 +23,9 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +42,7 @@ class InventoryServiceImplStockTest {
     private InventoryLocationRepository locationRepository;
     private AuditEventPublisher auditEventPublisher;
     private List<InventoryTransactionEntity> savedTransactions;
+    private Map<UUID, StockEntity> savedStocks;
     private InventoryServiceImpl service;
 
     @BeforeEach
@@ -50,6 +53,7 @@ class InventoryServiceImplStockTest {
         locationRepository = mock(InventoryLocationRepository.class);
         auditEventPublisher = mock(AuditEventPublisher.class);
         savedTransactions = new ArrayList<>();
+        savedStocks = new LinkedHashMap<>();
 
         MedicineEntity medicine = mock(MedicineEntity.class);
         when(medicine.getId()).thenReturn(MEDICINE_ID);
@@ -66,7 +70,12 @@ class InventoryServiceImplStockTest {
 
         when(medicineRepository.findByTenantIdAndId(TENANT_ID, MEDICINE_ID)).thenReturn(Optional.of(medicine));
         when(locationRepository.findByTenantIdAndId(TENANT_ID, LOCATION_ID)).thenReturn(Optional.of(location));
-        when(stockRepository.save(any(StockEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(stockRepository.save(any(StockEntity.class))).thenAnswer(invocation -> {
+            StockEntity entity = invocation.getArgument(0);
+            savedStocks.put(entity.getId(), entity);
+            return entity;
+        });
+        when(stockRepository.findByTenantIdAndId(org.mockito.ArgumentMatchers.eq(TENANT_ID), any(UUID.class))).thenAnswer(invocation -> Optional.ofNullable(savedStocks.get(invocation.getArgument(1))));
         when(stockRepository.findByTenantIdAndBarcodeIgnoreCase(any(), any())).thenReturn(Optional.empty());
         when(stockRepository.findByTenantIdAndQrCodeIgnoreCase(any(), any())).thenReturn(Optional.empty());
         when(stockRepository.findByTenantIdAndExternalCodeIgnoreCase(any(), any())).thenReturn(Optional.empty());
@@ -166,10 +175,10 @@ class InventoryServiceImplStockTest {
                 null,
                 "BNEG",
                 null,
-                null,
+                LocalDate.now().plusDays(30),
                 null,
                 "Acme Pharma",
-                5,
+                null,
                 -1,
                 5,
                 new BigDecimal("10.00"),
@@ -181,6 +190,59 @@ class InventoryServiceImplStockTest {
         assertThatThrownBy(() -> service.createStock(TENANT_ID, invalid, ACTOR_ID))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("quantityOnHand must be positive");
+    }
+
+    @Test
+    void purchaseCanCreateStockFromZeroOnHandUsingReceivedQuantity() {
+        when(stockRepository.findByTenantIdAndMedicineIdAndLocationIdAndBatchNumberIgnoreCase(TENANT_ID, MEDICINE_ID, LOCATION_ID, "B100"))
+                .thenReturn(Optional.empty());
+
+        StockRecord created = service.createStock(TENANT_ID, new StockUpsertCommand(
+                MEDICINE_ID,
+                LOCATION_ID,
+                "890100000100",
+                null,
+                null,
+                "B100",
+                "GRN-100",
+                LocalDate.now().plusDays(30),
+                LocalDate.now(),
+                "Acme Pharma",
+                100,
+                0,
+                5,
+                new BigDecimal("10.00"),
+                new BigDecimal("10.00"),
+                new BigDecimal("12.00"),
+                true
+        ), ACTOR_ID);
+
+        executePurchase(created.id(), 100, "GRN-100");
+
+        assertThat(savedStocks.get(created.id()).getQuantityOnHand()).isEqualTo(100);
+        assertThat(savedTransactions).singleElement().satisfies(tx -> {
+            assertThat(tx.getTransactionType()).isEqualTo("PURCHASE");
+            assertThat(tx.getBeforeQuantity()).isEqualTo(0);
+            assertThat(tx.getAfterQuantity()).isEqualTo(100);
+            assertThat(tx.getQuantity()).isEqualTo(100);
+        });
+    }
+
+    @Test
+    void purchaseAddsReceivedQuantityToExistingStock() {
+        StockEntity existing = StockEntity.create(TENANT_ID, MEDICINE_ID, LOCATION_ID);
+        existing.update(LOCATION_ID, "890100000075", null, null, "B075", "GRN-025", LocalDate.now().plusDays(30), null, "Acme Pharma", 25, 25, 5, new BigDecimal("10.00"), new BigDecimal("10.00"), new BigDecimal("12.00"), true);
+        savedStocks.put(existing.getId(), existing);
+
+        executePurchase(existing.getId(), 75, "GRN-075");
+
+        assertThat(savedStocks.get(existing.getId()).getQuantityOnHand()).isEqualTo(100);
+        assertThat(savedTransactions).singleElement().satisfies(tx -> {
+            assertThat(tx.getTransactionType()).isEqualTo("PURCHASE");
+            assertThat(tx.getBeforeQuantity()).isEqualTo(25);
+            assertThat(tx.getAfterQuantity()).isEqualTo(100);
+            assertThat(tx.getQuantity()).isEqualTo(75);
+        });
     }
 
     @Test
@@ -332,6 +394,64 @@ class InventoryServiceImplStockTest {
         ), ACTOR_ID))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Batch expired and cannot be sold or dispensed.");
+    }
+
+    @Test
+    void saleWithoutStockBatchStillFails() {
+        assertThatThrownBy(() -> service.createTransaction(TENANT_ID, new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand(
+                MEDICINE_ID,
+                null,
+                LOCATION_ID,
+                null,
+                com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.SALE,
+                1,
+                "Sale",
+                "SALE",
+                UUID.randomUUID(),
+                ACTOR_ID,
+                "No batch"
+        ), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("stockBatchId is required");
+    }
+
+    @Test
+    void saleGreaterThanAvailableStockFails() {
+        StockEntity existing = StockEntity.create(TENANT_ID, MEDICINE_ID, LOCATION_ID);
+        existing.update(LOCATION_ID, "890100000200", null, null, "B200", "REF-200", LocalDate.now().plusDays(30), null, "Acme Pharma", 10, 10, 5, new BigDecimal("10.00"), new BigDecimal("10.00"), new BigDecimal("12.00"), true);
+        savedStocks.put(existing.getId(), existing);
+
+        assertThatThrownBy(() -> service.createTransaction(TENANT_ID, new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand(
+                MEDICINE_ID,
+                existing.getId(),
+                LOCATION_ID,
+                null,
+                com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.SALE,
+                11,
+                "Sale",
+                "SALE",
+                UUID.randomUUID(),
+                ACTOR_ID,
+                "Too much"
+        ), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Insufficient stock available.");
+    }
+
+    private void executePurchase(UUID stockId, int quantity, String reference) {
+        service.createTransaction(TENANT_ID, new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand(
+                MEDICINE_ID,
+                stockId,
+                LOCATION_ID,
+                null,
+                com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.PURCHASE,
+                quantity,
+                "GRN",
+                "GRN",
+                UUID.randomUUID(),
+                ACTOR_ID,
+                reference
+        ), ACTOR_ID);
     }
 
     private StockUpsertCommand stockCommand(String batchNumber, String barcode) {

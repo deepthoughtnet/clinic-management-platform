@@ -156,7 +156,7 @@ public class SupplierInvoiceEntity {
     }
 
     public void approveForPayment() {
-        this.status = "APPROVED_FOR_PAYMENT";
+        this.status = "READY_FOR_PAYMENT";
         this.updatedAt = OffsetDateTime.now();
     }
 

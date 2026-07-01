@@ -153,7 +153,7 @@ class PharmacyOperationsServiceSupplierInvoiceTest {
     }
 
     @Test
-    void lifecycleTransitionsMoveDraftToMatchedThenApprovedForPayment() {
+    void lifecycleTransitionsMoveDraftToMatchedThenReadyForPayment() {
         SupplierInvoiceEntity invoice = SupplierInvoiceEntity.create(
                 TENANT_ID,
                 SUPPLIER_ID,
@@ -173,7 +173,7 @@ class PharmacyOperationsServiceSupplierInvoiceTest {
         SupplierInvoiceRecord approved = service.approveSupplierInvoiceForPayment(TENANT_ID, invoice.getId(), ACTOR_ID);
 
         assertThat(matched.status()).isEqualTo("MATCHED");
-        assertThat(approved.status()).isEqualTo("APPROVED_FOR_PAYMENT");
+        assertThat(approved.status()).isEqualTo("READY_FOR_PAYMENT");
     }
 
     @Test

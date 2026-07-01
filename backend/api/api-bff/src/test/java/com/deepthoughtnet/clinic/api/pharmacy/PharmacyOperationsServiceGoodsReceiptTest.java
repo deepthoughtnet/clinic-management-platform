@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.pharmacy;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -21,6 +22,7 @@ import com.deepthoughtnet.clinic.inventory.db.PurchaseOrderRepository;
 import com.deepthoughtnet.clinic.inventory.db.StockRepository;
 import com.deepthoughtnet.clinic.inventory.db.SupplierEntity;
 import com.deepthoughtnet.clinic.inventory.db.SupplierRepository;
+import com.deepthoughtnet.clinic.inventory.db.SupplierInvoiceEntity;
 import com.deepthoughtnet.clinic.inventory.db.SupplierInvoiceRepository;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand;
@@ -46,6 +48,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 class PharmacyOperationsServiceGoodsReceiptTest {
     private static final UUID TENANT_ID = UUID.randomUUID();
@@ -61,6 +64,7 @@ class PharmacyOperationsServiceGoodsReceiptTest {
     private MedicineRepository medicineRepository;
     private StockRepository stockRepository;
     private PurchaseOrderRepository purchaseOrderRepository;
+    private SupplierInvoiceRepository supplierInvoiceRepository;
     private PharmacyOperationsService service;
 
     @BeforeEach
@@ -72,7 +76,7 @@ class PharmacyOperationsServiceGoodsReceiptTest {
         PharmacyReconciliationRepository reconciliationRepository = mock(PharmacyReconciliationRepository.class);
         locationRepository = mock(InventoryLocationRepository.class);
         purchaseOrderRepository = mock(PurchaseOrderRepository.class);
-        SupplierInvoiceRepository supplierInvoiceRepository = mock(SupplierInvoiceRepository.class);
+        supplierInvoiceRepository = mock(SupplierInvoiceRepository.class);
         goodsReceiptRepository = mock(GoodsReceiptRepository.class);
         PrescriptionDispensingService dispensingService = mock(PrescriptionDispensingService.class);
         ObjectStorageService storageService = mock(ObjectStorageService.class);
@@ -83,6 +87,7 @@ class PharmacyOperationsServiceGoodsReceiptTest {
         SupplierEntity supplier = mock(SupplierEntity.class);
         when(supplier.getId()).thenReturn(SUPPLIER_ID);
         when(supplier.getSupplierName()).thenReturn("Apex Pharma");
+        when(supplier.isActive()).thenReturn(true);
         when(supplierRepository.findByTenantIdAndId(TENANT_ID, SUPPLIER_ID)).thenReturn(Optional.of(supplier));
 
         InventoryLocationEntity location = mock(InventoryLocationEntity.class);
@@ -195,6 +200,109 @@ class PharmacyOperationsServiceGoodsReceiptTest {
         service.confirmGoodsReceipt(TENANT_ID, receipt.getId(), "verified", ACTOR_ID);
 
         assertThat(purchaseOrder.getApprovalNote()).isEqualTo("PARTIALLY_RECEIVED");
+        verify(supplierInvoiceRepository, never()).save(any(SupplierInvoiceEntity.class));
+    }
+
+    @Test
+    void confirmGoodsReceiptAdvancesLinkedMatchedInvoiceToReadyForPaymentWhenFullyReceived() {
+        UUID purchaseOrderId = UUID.randomUUID();
+        PurchaseOrderEntity purchaseOrder = PurchaseOrderEntity.create(
+                TENANT_ID,
+                SUPPLIER_ID,
+                "PO-2026-000003",
+                LocalDate.parse("2026-05-20"),
+                LocalDate.parse("2026-05-25"),
+                "[{\"medicineId\":\"%s\",\"medicineName\":\"Paracetamol 500\",\"quantity\":20,\"expectedUnitCost\":1.25,\"unitCost\":1.25,\"taxPercent\":12}]".formatted(MEDICINE_ID),
+                ACTOR_ID
+        );
+        purchaseOrder.review("MATCHED", null, "GENERATED");
+        SupplierInvoiceEntity invoice = SupplierInvoiceEntity.create(
+                TENANT_ID,
+                SUPPLIER_ID,
+                purchaseOrderId,
+                "INV-2001",
+                LocalDate.parse("2026-05-23"),
+                new BigDecimal("25.00"),
+                BigDecimal.ZERO,
+                BigDecimal.ZERO,
+                new BigDecimal("25.00"),
+                "[{\"medicineId\":\"%s\",\"medicineName\":\"Paracetamol 500\",\"quantity\":20,\"expectedUnitCost\":1.25,\"unitCost\":1.25,\"taxPercent\":12}]".formatted(MEDICINE_ID),
+                ACTOR_ID
+        );
+        invoice.review("MATCHED", BigDecimal.ZERO, null, null, null);
+        GoodsReceiptEntity receipt = GoodsReceiptEntity.create(
+                TENANT_ID,
+                SUPPLIER_ID,
+                purchaseOrderId,
+                invoice.getId(),
+                "GRN-2001",
+                OffsetDateTime.parse("2026-05-23T10:15:30Z"),
+                LOCATION_ID,
+                "[{\"medicineId\":\"%s\",\"medicineName\":\"Paracetamol 500\",\"quantity\":20,\"expectedUnitCost\":null,\"unitCost\":1.25,\"taxPercent\":null,\"batchNumber\":\"PARA-B001\",\"expiryDate\":\"2026-12-31\",\"sellingPrice\":1.75,\"locationId\":\"%s\"}]".formatted(MEDICINE_ID, LOCATION_ID),
+                ACTOR_ID
+        );
+
+        when(goodsReceiptRepository.findByTenantIdAndId(TENANT_ID, receipt.getId())).thenReturn(Optional.of(receipt));
+        when(goodsReceiptRepository.findByTenantIdAndPurchaseOrderIdOrderByCreatedAtAsc(TENANT_ID, purchaseOrderId)).thenReturn(List.of(receipt));
+        when(goodsReceiptRepository.save(any(GoodsReceiptEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(purchaseOrderRepository.findByTenantIdAndId(TENANT_ID, purchaseOrderId)).thenReturn(Optional.of(purchaseOrder));
+        when(purchaseOrderRepository.save(any(PurchaseOrderEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(supplierInvoiceRepository.findByTenantIdAndId(TENANT_ID, invoice.getId())).thenReturn(Optional.of(invoice));
+        when(supplierInvoiceRepository.save(any(SupplierInvoiceEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(stockRepository.findByTenantIdAndMedicineIdAndLocationId(TENANT_ID, MEDICINE_ID, LOCATION_ID)).thenReturn(List.of());
+        when(inventoryService.createStock(eq(TENANT_ID), any(StockUpsertCommand.class), eq(ACTOR_ID))).thenReturn(
+                new StockRecord(UUID.randomUUID(), TENANT_ID, MEDICINE_ID, LOCATION_ID, "Main Pharmacy", "Paracetamol 500", "TABLET", null, null, null, "PARA-B001", "GRN-2001", LocalDate.parse("2026-12-31"), LocalDate.parse("2026-05-23"), "Apex Pharma", 20, 0, null, new BigDecimal("1.25"), new BigDecimal("1.25"), new BigDecimal("1.75"), true, OffsetDateTime.now(), OffsetDateTime.now())
+        );
+
+        service.confirmGoodsReceipt(TENANT_ID, receipt.getId(), "verified", ACTOR_ID);
+
+        assertThat(invoice.getStatus()).isEqualTo("READY_FOR_PAYMENT");
+        verify(supplierInvoiceRepository).save(any(SupplierInvoiceEntity.class));
+    }
+
+    @Test
+    void saveGoodsReceiptRejectsCancelledPurchaseOrder() {
+        UUID purchaseOrderId = UUID.randomUUID();
+        PurchaseOrderEntity purchaseOrder = PurchaseOrderEntity.create(
+                TENANT_ID,
+                SUPPLIER_ID,
+                "PO-2026-000004",
+                LocalDate.parse("2026-05-20"),
+                LocalDate.parse("2026-05-25"),
+                "[{\"medicineId\":\"%s\",\"medicineName\":\"Paracetamol 500\",\"quantity\":20,\"expectedUnitCost\":1.25,\"unitCost\":1.25,\"taxPercent\":12}]".formatted(MEDICINE_ID),
+                ACTOR_ID
+        );
+        purchaseOrder.review("MATCHED", null, "CANCELLED:supplier request");
+        when(purchaseOrderRepository.findByTenantIdAndId(TENANT_ID, purchaseOrderId)).thenReturn(Optional.of(purchaseOrder));
+
+        assertThatThrownBy(() -> service.saveGoodsReceipt(
+                TENANT_ID,
+                new GoodsReceiptRequest(
+                        SUPPLIER_ID,
+                        purchaseOrderId,
+                        null,
+                        "GRN-3001",
+                        "2026-05-23",
+                        LOCATION_ID,
+                        List.of(new ProcurementLineRequest(
+                                MEDICINE_ID,
+                                "Paracetamol 500",
+                                10,
+                                null,
+                                new BigDecimal("1.25"),
+                                BigDecimal.ZERO,
+                                "PARA-B001",
+                                "2026-12-31",
+                                new BigDecimal("1.75"),
+                                null,
+                                LOCATION_ID,
+                                null
+                        )),
+                        null
+                ),
+                ACTOR_ID
+        )).isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Cancelled purchase order cannot receive goods");
     }
 
     private static final class NoOpTransactionManager implements PlatformTransactionManager {

@@ -169,14 +169,16 @@ type GoodsReceiptRow = {
   supplierId: string;
   supplierName: string;
   purchaseOrderId: string;
+  supplierInvoiceId: string | null;
   poNumber: string;
   receivedAt: string;
   itemsReceived: number;
   totalReceivedQty: number;
-  status: "Pending" | "Posted";
+  status: "Pending" | "Posted" | "Reversed";
   locationName: string;
   lines: GoodsReceiptLineState[];
   confirmedAt: string | null;
+  createdAt: string;
 };
 
 type GoodsReceiptLineState = {
@@ -673,13 +675,13 @@ function parsePurchaseOrderApprovalNote(note: string | null | undefined): {
 
 function purchaseOrderStatusChipProps(status: PurchaseOrderRow["status"]) {
   if (status === "Generated") {
-    return { label: "Generated", color: "success" as const };
+    return { label: "Generated", color: "info" as const };
   }
   if (status === "Sent") {
-    return { label: "Sent", color: "info" as const };
+    return { label: "Sent", color: "secondary" as const };
   }
   if (status === "Partially Received") {
-    return { label: "Partially Received", color: "info" as const };
+    return { label: "Partially Received", color: "warning" as const };
   }
   if (status === "Received") {
     return { label: "Received", color: "success" as const };
@@ -688,9 +690,19 @@ function purchaseOrderStatusChipProps(status: PurchaseOrderRow["status"]) {
     return { label: "Closed", color: "default" as const };
   }
   if (status === "Cancelled") {
-    return { label: "Cancelled", color: "default" as const };
+    return { label: "Cancelled", color: "error" as const };
   }
-  return { label: "Draft", color: "warning" as const };
+  return { label: "Draft", color: "default" as const };
+}
+
+function grnStatusChipProps(status: GoodsReceiptRow["status"]) {
+  if (status === "Posted") {
+    return { label: "Posted", color: "success" as const };
+  }
+  if (status === "Reversed") {
+    return { label: "Reversed", color: "default" as const };
+  }
+  return { label: "Pending", color: "default" as const };
 }
 
 function escapePrintHtml(value: string) {
@@ -862,8 +874,9 @@ function supplierInvoiceStatusLabel(status: SupplierInvoiceStatus) {
       return { label: "Draft", color: "warning" as const };
     case "MATCHED":
       return { label: "Matched", color: "info" as const };
+    case "READY_FOR_PAYMENT":
     case "APPROVED_FOR_PAYMENT":
-      return { label: "Approved for Payment", color: "success" as const };
+      return { label: "Ready for Payment", color: "success" as const };
     case "PAID":
       return { label: "Paid", color: "success" as const };
     case "CANCELLED":
@@ -928,6 +941,7 @@ function mapBackendGoodsReceipt(
     supplierId: record.supplierId,
     supplierName: record.supplierName || "",
     purchaseOrderId: record.purchaseOrderId || "",
+    supplierInvoiceId: record.supplierInvoiceId,
     poNumber: po?.poNumber || "",
     receivedAt: record.receivedAt,
     itemsReceived: lines.filter((line) => numberFromUnknown(line.receiveQty) > 0).length,
@@ -936,6 +950,7 @@ function mapBackendGoodsReceipt(
     locationName: record.locationName || "",
     lines,
     confirmedAt: record.confirmedAt,
+    createdAt: record.createdAt,
   };
 }
 
@@ -1262,14 +1277,14 @@ export default function PharmacyProcurePage() {
   }, [supplierSearch, supplierStatusFilter, suppliers]);
 
   const eligibleInvoicePurchaseOrders = React.useMemo(
-    () => purchaseOrders.filter((po) => po.status === "Generated" || po.status === "Sent" || po.status === "Partially Received"),
+    () => purchaseOrders.filter((po) => po.status === "Generated" || po.status === "Sent" || po.status === "Partially Received" || po.status === "Received"),
     [purchaseOrders],
   );
   const selectedInvoice = React.useMemo(
     () => selectedInvoiceId ? invoices.find((invoice) => invoice.id === selectedInvoiceId) ?? null : null,
     [invoices, selectedInvoiceId],
   );
-  const invoiceReadOnly = invoiceEditorMode === "view" || selectedInvoice?.status === "APPROVED_FOR_PAYMENT" || selectedInvoice?.status === "PAID" || selectedInvoice?.status === "CANCELLED";
+  const invoiceReadOnly = invoiceEditorMode === "view" || selectedInvoice?.status === "READY_FOR_PAYMENT" || selectedInvoice?.status === "APPROVED_FOR_PAYMENT" || selectedInvoice?.status === "PAID" || selectedInvoice?.status === "CANCELLED";
   const invoiceCanEdit = selectedInvoice != null && (selectedInvoice.status === "DRAFT" || selectedInvoice.status === "MATCHED");
   const invoiceCanUpload = selectedInvoice != null && invoiceCanEdit;
   const invoicePurchaseOrderOptions = React.useMemo(() => {
@@ -1328,7 +1343,11 @@ export default function PharmacyProcurePage() {
   }, [invoiceComputedPayable, selectedInvoicePoTotal, selectedInvoicePurchaseOrder]);
   const filteredInvoices = React.useMemo(() => {
     return invoices.filter((invoice) => {
-      if (invoiceStatusFilter !== "ALL" && invoice.status !== invoiceStatusFilter) return false;
+      if (
+        invoiceStatusFilter !== "ALL"
+        && invoice.status !== invoiceStatusFilter
+        && !(invoiceStatusFilter === "READY_FOR_PAYMENT" && invoice.status === "APPROVED_FOR_PAYMENT")
+      ) return false;
       if (invoiceSupplierFilter !== "ALL" && invoice.supplierId !== invoiceSupplierFilter) return false;
       if (invoicePoFilter !== "ALL" && (invoice.purchaseOrderId || "") !== invoicePoFilter) return false;
       if (invoiceVarianceOnly && Math.abs(invoice.varianceAmount) < 0.005) return false;
@@ -1342,6 +1361,25 @@ export default function PharmacyProcurePage() {
     () => eligibleGoodsReceiptPurchaseOrders.find((po) => po.id === grnForm.purchaseOrderId) ?? null,
     [eligibleGoodsReceiptPurchaseOrders, grnForm.purchaseOrderId],
   );
+  const selectedGrnInvoice = React.useMemo(
+    () => selectedGrn?.supplierInvoiceId ? invoices.find((invoice) => invoice.id === selectedGrn.supplierInvoiceId) ?? null : null,
+    [invoices, selectedGrn?.supplierInvoiceId],
+  );
+  const relatedGrnByInvoiceId = React.useMemo(
+    () => new Map(grns.filter((grn) => Boolean(grn.supplierInvoiceId)).map((grn) => [grn.supplierInvoiceId as string, grn])),
+    [grns],
+  );
+  const relatedGrnByPurchaseOrderId = React.useMemo(
+    () => new Map(grns.filter((grn) => Boolean(grn.purchaseOrderId)).map((grn) => [grn.purchaseOrderId, grn])),
+    [grns],
+  );
+  const relatedInvoiceByPurchaseOrderId = React.useMemo(
+    () => new Map(invoices.filter((invoice) => Boolean(invoice.purchaseOrderId)).map((invoice) => [invoice.purchaseOrderId as string, invoice])),
+    [invoices],
+  );
+  const openInventoryForReference = React.useCallback((reference: string) => {
+    navigate(`/inventory?tab=stocks&ref=${encodeURIComponent(reference)}`);
+  }, [navigate]);
 
   const updateWorkspace = (next: Workspace) => {
     navigate(`/pharmacy/procure?workspace=${next}${next === "suppliers" ? "&focus=supplier" : ""}`);
@@ -1814,6 +1852,21 @@ export default function PharmacyProcurePage() {
       notes: invoice.notes || "",
     });
   }, []);
+  const openPurchaseOrderReference = React.useCallback(async (purchaseOrderId: string | null | undefined) => {
+    if (!purchaseOrderId) return;
+    const po = purchaseOrders.find((candidate) => candidate.id === purchaseOrderId) ?? null;
+    if (!po) return;
+    await loadPurchaseOrderDetail(po.id, po, "view");
+    setPoDrawerOpen(true);
+    navigate("/pharmacy/procure?workspace=purchase-orders");
+  }, [loadPurchaseOrderDetail, navigate, purchaseOrders]);
+  const openInvoiceReference = React.useCallback((invoiceId: string | null | undefined) => {
+    if (!invoiceId) return;
+    const invoice = invoices.find((candidate) => candidate.id === invoiceId) ?? null;
+    if (!invoice) return;
+    loadInvoiceIntoForm(invoice, "view");
+    navigate("/pharmacy/procure?workspace=supplier-invoices");
+  }, [invoices, loadInvoiceIntoForm, navigate]);
 
   const resetGrnForm = React.useCallback(() => {
     setGrnForm({
@@ -1948,15 +2001,15 @@ export default function PharmacyProcurePage() {
     try {
       const saved = await createGoodsReceipt(auth.accessToken, auth.tenantId, payload);
       await confirmGoodsReceipt(auth.accessToken, auth.tenantId, saved.id, "Posted from procurement");
-      await Promise.all([loadGoodsReceiptRows(), loadPurchaseOrders()]);
+      await Promise.all([loadGoodsReceiptRows(), loadPurchaseOrders(), loadSupplierInvoices()]);
       resetGrnForm();
-      setGrnSuccess("Goods receipt posted and inventory updated.");
+      setGrnSuccess("GRN confirmed. Inventory updated. Invoice moved to Ready for Payment.");
     } catch (err) {
       setGrnError(err instanceof Error ? err.message : "Failed to post goods receipt");
     } finally {
       setSavingGrn(false);
     }
-  }, [auth.accessToken, auth.tenantId, loadGoodsReceiptRows, loadPurchaseOrders, resetGrnForm, validateGrnForm]);
+  }, [auth.accessToken, auth.tenantId, loadGoodsReceiptRows, loadPurchaseOrders, loadSupplierInvoices, resetGrnForm, validateGrnForm]);
 
   React.useEffect(() => {
     if (!grnForm.receivedAt) {
@@ -1964,10 +2017,20 @@ export default function PharmacyProcurePage() {
     }
   }, [grnForm.receivedAt]);
 
+  React.useEffect(() => {
+    if (workspace !== "goods-receipt") return;
+    const receiptRef = searchParams.get("receipt");
+    if (!receiptRef) return;
+    const match = grns.find((grn) => grn.id === receiptRef || grn.receiptNumber === receiptRef) ?? null;
+    if (match) {
+      setSelectedGrn(match);
+    }
+  }, [grns, searchParams, workspace]);
+
   const currentSupplierCount = suppliers.length;
-  const currentPurchaseOrderCount = purchaseOrders.length;
-  const currentInvoiceCount = invoices.length;
-  const currentGrnCount = grns.length;
+  const currentPurchaseOrderCount = purchaseOrders.filter((po) => po.status === "Generated" || po.status === "Sent" || po.status === "Partially Received").length;
+  const currentInvoiceCount = invoices.filter((invoice) => invoice.status === "READY_FOR_PAYMENT" || invoice.status === "APPROVED_FOR_PAYMENT").length;
+  const currentGrnCount = grns.filter((grn) => (grn.receivedAt || "").slice(0, 10) === new Date().toISOString().slice(0, 10)).length;
 
   const saveInvoice = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -2077,7 +2140,7 @@ export default function PharmacyProcurePage() {
       const next = mapBackendSupplierInvoice(saved);
       setInvoices((current) => current.map((item) => item.id === next.id ? next : item));
       loadInvoiceIntoForm(next, "view");
-      setInvoiceSuccess("Supplier invoice approved for payment.");
+      setInvoiceSuccess("Supplier invoice moved to Ready for Payment.");
     } catch (err) {
       setInvoiceError(err instanceof Error ? err.message : "Failed to approve supplier invoice");
     }
@@ -2175,13 +2238,13 @@ export default function PharmacyProcurePage() {
           <CompactStatCard label="Suppliers" value={currentSupplierCount} helper="Master records" />
         </Grid>
         <Grid size={{ xs: 6, md: 3 }}>
-          <CompactStatCard label="Purchase Orders" value={currentPurchaseOrderCount} helper="PO workflow" />
+          <CompactStatCard label="Open Purchase Orders" value={currentPurchaseOrderCount} helper="Generated, sent, partially received" />
         </Grid>
         <Grid size={{ xs: 6, md: 3 }}>
-          <CompactStatCard label="Supplier Invoices" value={currentInvoiceCount} helper="Matching queue" />
+          <CompactStatCard label="Invoices Awaiting Payment" value={currentInvoiceCount} helper="Ready for payment" />
         </Grid>
         <Grid size={{ xs: 6, md: 3 }}>
-          <CompactStatCard label="Goods Receipt" value={currentGrnCount} helper="Receiving queue" />
+          <CompactStatCard label="Today's GRNs" value={currentGrnCount} helper="Goods receipts today" />
         </Grid>
       </Grid>
 
@@ -2398,6 +2461,13 @@ export default function PharmacyProcurePage() {
                   ? "Cancelled purchase orders are read-only."
                   : "This draft is open in read-only view mode. Use Edit from the drawer to update it."}
             </Alert>
+          ) : null}
+          {currentPurchaseOrder ? (
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+              <Chip size="small" {...purchaseOrderStatusChipProps(currentPurchaseOrder.status)} />
+              {relatedInvoiceByPurchaseOrderId.get(currentPurchaseOrder.id) ? <Button size="small" variant="outlined" onClick={() => openInvoiceReference(relatedInvoiceByPurchaseOrderId.get(currentPurchaseOrder.id)?.id || null)}>Linked Invoice</Button> : null}
+              {relatedGrnByPurchaseOrderId.get(currentPurchaseOrder.id) ? <Button size="small" variant="outlined" onClick={() => setSelectedGrn(relatedGrnByPurchaseOrderId.get(currentPurchaseOrder.id) ?? null)}>Linked GRN</Button> : null}
+            </Stack>
           ) : null}
           <Card variant="outlined">
             <CardContent sx={compactCardContentSx}>
@@ -3038,7 +3108,7 @@ export default function PharmacyProcurePage() {
                 {!invoicePurchaseOrderOptions.length ? (
                   <CompactEmptyState
                     title="No purchase orders available for invoice matching."
-                    subtitle="Only Generated, Sent, or Partially Received POs can be linked to supplier invoices."
+                    subtitle="Only Generated, Sent, Partially Received, or Received POs can be linked to supplier invoices."
                     action={<Button size="small" variant="contained" onClick={() => updateWorkspace("purchase-orders")}>Create PO</Button>}
                   />
                 ) : (
@@ -3049,9 +3119,11 @@ export default function PharmacyProcurePage() {
                         <Chip size="small" {...supplierInvoiceMatchLabel(selectedInvoice.matchingStatus)} />
                         {Math.abs(selectedInvoice.varianceAmount) > 0.004 ? <Chip size="small" color="warning" label={`Variance INR ${selectedInvoice.varianceAmount.toFixed(2)}`} /> : null}
                         {selectedInvoice.attachmentFileName ? <Chip size="small" label={selectedInvoice.attachmentFileName} /> : null}
+                        {selectedInvoice.purchaseOrderId ? <Button size="small" variant="outlined" onClick={() => void openPurchaseOrderReference(selectedInvoice.purchaseOrderId)}>Linked PO</Button> : null}
+                        {relatedGrnByInvoiceId.get(selectedInvoice.id) ? <Button size="small" variant="outlined" onClick={() => setSelectedGrn(relatedGrnByInvoiceId.get(selectedInvoice.id) ?? null)}>Linked GRN</Button> : null}
                       </Stack>
                     ) : null}
-                    {selectedInvoice?.status === "APPROVED_FOR_PAYMENT" ? <Alert severity="info">Approved invoices are read-only until payment posting is available.</Alert> : null}
+                    {selectedInvoice?.status === "READY_FOR_PAYMENT" || selectedInvoice?.status === "APPROVED_FOR_PAYMENT" ? <Alert severity="info">Ready for Payment invoices are read-only until payment posting is available.</Alert> : null}
                     {selectedInvoice?.status === "PAID" ? <Alert severity="info">Paid invoices are read-only.</Alert> : null}
                     {selectedInvoice?.status === "CANCELLED" ? <Alert severity="warning">Cancelled invoices remain visible for audit and cannot be edited.</Alert> : null}
                     <FormControl size="small" fullWidth error={Boolean(invoiceFieldErrors.purchaseOrderId)}>
@@ -3246,7 +3318,7 @@ export default function PharmacyProcurePage() {
               ) : null}
               <CompactFilterCard
                 title="Invoice list"
-                subtitle="Draft, matched, approved, paid, and cancelled supplier invoices."
+                subtitle="Draft, matched, Ready for Payment, paid, and cancelled supplier invoices."
                 actions={<Button size="small" variant="outlined" onClick={() => {
                   setInvoiceStatusFilter("ALL");
                   setInvoiceSupplierFilter("ALL");
@@ -3264,7 +3336,7 @@ export default function PharmacyProcurePage() {
                         <MenuItem value="ALL">All</MenuItem>
                         <MenuItem value="DRAFT">Draft</MenuItem>
                         <MenuItem value="MATCHED">Matched</MenuItem>
-                        <MenuItem value="APPROVED_FOR_PAYMENT">Approved for Payment</MenuItem>
+                        <MenuItem value="READY_FOR_PAYMENT">Ready for Payment</MenuItem>
                         <MenuItem value="PAID">Paid</MenuItem>
                         <MenuItem value="CANCELLED">Cancelled</MenuItem>
                       </Select>
@@ -3345,12 +3417,12 @@ export default function PharmacyProcurePage() {
                               {(invoice.status === "DRAFT" || invoice.status === "MATCHED") ? <Button size="small" variant="outlined" onClick={() => loadInvoiceIntoForm(invoice, "edit")}>Edit</Button> : null}
                               {invoice.status === "DRAFT" ? <Button size="small" variant="outlined" onClick={() => void handleMatchInvoice(invoice)}>Match</Button> : null}
                               {invoice.status === "MATCHED" ? <Button size="small" variant="outlined" onClick={() => void handleApproveInvoice(invoice)}>Approve for Payment</Button> : null}
-                              {invoice.status === "APPROVED_FOR_PAYMENT" ? (
+                              {invoice.status === "READY_FOR_PAYMENT" || invoice.status === "APPROVED_FOR_PAYMENT" ? (
                                 <Tooltip title="Payment posting will be available after billing/payment integration.">
                                   <span><Button size="small" variant="outlined" disabled>Mark Paid</Button></span>
                                 </Tooltip>
                               ) : null}
-                              {(invoice.status === "DRAFT" || invoice.status === "MATCHED" || invoice.status === "APPROVED_FOR_PAYMENT") ? <Button size="small" variant="outlined" color="inherit" onClick={() => handleOpenCancelInvoice(invoice)}>Cancel</Button> : null}
+                              {(invoice.status === "DRAFT" || invoice.status === "MATCHED" || invoice.status === "READY_FOR_PAYMENT" || invoice.status === "APPROVED_FOR_PAYMENT") ? <Button size="small" variant="outlined" color="inherit" onClick={() => handleOpenCancelInvoice(invoice)}>Cancel</Button> : null}
                             </Stack>
                           </TableCell>
                         </TableRow>
@@ -3593,15 +3665,22 @@ export default function PharmacyProcurePage() {
                   <TableBody>
                     {grns.map((grn) => (
                       <TableRow key={grn.id}>
-                        <TableCell>{grn.receiptNumber}</TableCell>
-                        <TableCell>{grn.poNumber || poById.get(grn.purchaseOrderId)?.poNumber || "-"}</TableCell>
+                        <TableCell>
+                          <Button size="small" onClick={() => setSelectedGrn(grn)} sx={{ px: 0, minWidth: 0 }}>{grn.receiptNumber}</Button>
+                        </TableCell>
+                        <TableCell>
+                          {grn.purchaseOrderId ? <Button size="small" onClick={() => void openPurchaseOrderReference(grn.purchaseOrderId)} sx={{ px: 0, minWidth: 0 }}>{grn.poNumber || poById.get(grn.purchaseOrderId)?.poNumber || "-"}</Button> : "-"}
+                        </TableCell>
                         <TableCell>{grn.supplierName || supplierById.get(grn.supplierId)?.supplierName || "-"}</TableCell>
                         <TableCell>{grn.receivedAt ? grn.receivedAt.slice(0, 10) : "-"}</TableCell>
                         <TableCell align="right">{grn.itemsReceived}</TableCell>
                         <TableCell align="right">{grn.totalReceivedQty}</TableCell>
-                        <TableCell>{grn.status}</TableCell>
+                        <TableCell><Chip size="small" {...grnStatusChipProps(grn.status)} /></TableCell>
                         <TableCell align="right">
-                          <Button size="small" onClick={() => setSelectedGrn(grn)}>View</Button>
+                          <Stack direction="row" spacing={1} justifyContent="flex-end" useFlexGap flexWrap="wrap">
+                            <Button size="small" onClick={() => setSelectedGrn(grn)}>View GRN</Button>
+                            {grn.status === "Posted" ? <Button size="small" variant="outlined" onClick={() => openInventoryForReference(grn.receiptNumber)}>View Inventory</Button> : null}
+                          </Stack>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -3620,6 +3699,12 @@ export default function PharmacyProcurePage() {
         <DialogContent dividers>
           {selectedGrn ? (
             <Stack spacing={1.5}>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                <Chip size="small" {...grnStatusChipProps(selectedGrn.status)} />
+                {selectedGrn.purchaseOrderId ? <Button size="small" variant="outlined" onClick={() => void openPurchaseOrderReference(selectedGrn.purchaseOrderId)}>Linked PO</Button> : null}
+                {selectedGrnInvoice ? <Button size="small" variant="outlined" onClick={() => openInvoiceReference(selectedGrnInvoice.id)}>Linked Invoice</Button> : null}
+                {selectedGrn.status === "Posted" ? <Button size="small" variant="outlined" onClick={() => openInventoryForReference(selectedGrn.receiptNumber)}>View Inventory</Button> : null}
+              </Stack>
               <Grid container spacing={1}>
                 <Grid size={{ xs: 12, md: 4 }}>
                   <TextField size="small" label="Supplier" value={selectedGrn.supplierName} InputProps={{ readOnly: true }} fullWidth />
@@ -3631,20 +3716,40 @@ export default function PharmacyProcurePage() {
                   <TextField size="small" label="GRN number" value={selectedGrn.receiptNumber} InputProps={{ readOnly: true }} fullWidth />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField size="small" label="Date" value={selectedGrn.receivedAt ? selectedGrn.receivedAt.slice(0, 10) : ""} InputProps={{ readOnly: true }} fullWidth />
+                  <TextField size="small" label="GRN date" value={selectedGrn.receivedAt ? selectedGrn.receivedAt.slice(0, 10) : ""} InputProps={{ readOnly: true }} fullWidth />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
                   <TextField size="small" label="Status" value={selectedGrn.status} InputProps={{ readOnly: true }} fullWidth />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField size="small" label="Linked invoice" value={selectedGrnInvoice?.invoiceNumber || "-"} InputProps={{ readOnly: true }} fullWidth />
+                </Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField size="small" label="Received by" value="-" InputProps={{ readOnly: true }} fullWidth />
+                </Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField size="small" label="Posted by" value={selectedGrn.confirmedAt ? "System" : "-"} InputProps={{ readOnly: true }} fullWidth />
+                </Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <TextField size="small" label="Created" value={selectedGrn.createdAt ? new Date(selectedGrn.createdAt).toLocaleString() : "-"} InputProps={{ readOnly: true }} fullWidth />
+                </Grid>
+                <Grid size={{ xs: 12, md: 4 }}>
                   <TextField size="small" label="Posted at" value={selectedGrn.confirmedAt ? new Date(selectedGrn.confirmedAt).toLocaleString() : "-"} InputProps={{ readOnly: true }} fullWidth />
                 </Grid>
               </Grid>
+              <CompactFilterCard title="Timeline" subtitle="GRN posting milestones remain read-only for audit.">
+                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                  <Chip size="small" label={`Created ${selectedGrn.createdAt ? new Date(selectedGrn.createdAt).toLocaleString() : "-"}`} variant="outlined" />
+                  <Chip size="small" label={`Posted ${selectedGrn.confirmedAt ? new Date(selectedGrn.confirmedAt).toLocaleString() : "Pending"}`} color={selectedGrn.confirmedAt ? "success" : "default"} variant="outlined" />
+                  <Chip size="small" label={`Inventory Updated ${selectedGrn.confirmedAt ? new Date(selectedGrn.confirmedAt).toLocaleString() : "Pending"}`} color={selectedGrn.confirmedAt ? "success" : "default"} variant="outlined" />
+                </Stack>
+              </CompactFilterCard>
               <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
                 <Table size="small" stickyHeader>
                   <TableHead>
                     <TableRow>
                       <TableCell>Medicine</TableCell>
+                      <TableCell align="right">Ordered Qty</TableCell>
                       <TableCell align="right">Received Qty</TableCell>
                       <TableCell>Batch</TableCell>
                       <TableCell>Expiry</TableCell>
@@ -3656,6 +3761,7 @@ export default function PharmacyProcurePage() {
                     {selectedGrn.lines.map((line, index) => (
                       <TableRow key={`${line.medicineId}-${index}`}>
                         <TableCell>{line.medicineName || "-"}</TableCell>
+                        <TableCell align="right">{line.orderedQty}</TableCell>
                         <TableCell align="right">{numberFromUnknown(line.receiveQty)}</TableCell>
                         <TableCell>{line.batchNumber || "-"}</TableCell>
                         <TableCell>{line.expiryDate || "-"}</TableCell>
@@ -3670,6 +3776,9 @@ export default function PharmacyProcurePage() {
           ) : null}
         </DialogContent>
         <DialogActions>
+          <Tooltip title="Reverse GRN will be available after approval workflow setup.">
+            <span><Button disabled>Reverse GRN</Button></span>
+          </Tooltip>
           <Button onClick={() => setSelectedGrn(null)}>Close</Button>
         </DialogActions>
       </Dialog>

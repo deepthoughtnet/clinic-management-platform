@@ -778,8 +778,13 @@ public class PharmacyOperationsService {
     public SupplierInvoiceRecord approveSupplierInvoiceForPayment(UUID tenantId, UUID id, UUID actorAppUserId) {
         SupplierInvoiceEntity entity = supplierInvoiceRepository.findByTenantIdAndId(tenantId, id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier invoice not found"));
-        ensureSupplierInvoiceStatus(entity, "MATCHED");
-        entity.approveForPayment();
+        String status = normalizeNullable(entity.getStatus());
+        if (!"MATCHED".equalsIgnoreCase(status) && !"READY_FOR_PAYMENT".equalsIgnoreCase(status)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Supplier invoice is not in matched status");
+        }
+        if (!"READY_FOR_PAYMENT".equalsIgnoreCase(status)) {
+            entity.approveForPayment();
+        }
         SupplierInvoiceEntity saved = supplierInvoiceRepository.save(entity);
         SupplierEntity supplier = supplierRepository.findByTenantIdAndId(tenantId, saved.getSupplierId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
@@ -928,8 +933,12 @@ public class PharmacyOperationsService {
         entity.confirm(actorAppUserId);
         entity.review(entity.getMatchingStatus(), entity.getVarianceSummary(), normalizeNullable(approvalNote));
         GoodsReceiptEntity saved = goodsReceiptRepository.save(entity);
+        boolean allReceived = false;
         if (entity.getPurchaseOrderId() != null) {
-            updatePurchaseOrderReceiptStatus(tenantId, entity.getPurchaseOrderId());
+            allReceived = updatePurchaseOrderReceiptStatus(tenantId, entity.getPurchaseOrderId());
+        }
+        if (allReceived && entity.getSupplierInvoiceId() != null) {
+            updateSupplierInvoicePaymentStatusAfterGoodsReceipt(tenantId, entity);
         }
         return toRecord(saved, supplier, location);
     }
@@ -1506,6 +1515,9 @@ public class PharmacyOperationsService {
                 ? null
                 : purchaseOrderRepository.findByTenantIdAndId(tenantId, request.purchaseOrderId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
+        if (purchaseOrder != null && isPurchaseOrderCancelled(purchaseOrder.getApprovalNote())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cancelled purchase order cannot receive goods");
+        }
         Map<UUID, Integer> orderedQuantities = purchaseOrder == null
                 ? Map.of()
                 : aggregateLineQuantities(deserializeItems(purchaseOrder.getItemsJson()));
@@ -2138,11 +2150,11 @@ public class PharmacyOperationsService {
         return Stream.of(fromPo, fromInvoice, priceVariance).filter(StringUtils::hasText).filter(value -> !"OK".equals(value)).collect(Collectors.joining(" | "));
     }
 
-    private void updatePurchaseOrderReceiptStatus(UUID tenantId, UUID purchaseOrderId) {
+    private boolean updatePurchaseOrderReceiptStatus(UUID tenantId, UUID purchaseOrderId) {
         PurchaseOrderEntity purchaseOrder = purchaseOrderRepository.findByTenantIdAndId(tenantId, purchaseOrderId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Purchase order not found"));
         if (isPurchaseOrderCancelled(purchaseOrder.getApprovalNote())) {
-            return;
+            return false;
         }
         List<ProcurementLineRequest> poItems = deserializeItems(purchaseOrder.getItemsJson());
         Map<UUID, Integer> orderedQuantities = aggregateLineQuantities(poItems);
@@ -2166,6 +2178,7 @@ public class PharmacyOperationsService {
                 normalizeNullable(status)
         );
         purchaseOrderRepository.save(purchaseOrder);
+        return allReceived;
     }
 
     private Map<UUID, Integer> aggregateLineQuantities(List<ProcurementLineRequest> items) {
@@ -2304,6 +2317,36 @@ public class PharmacyOperationsService {
         if (!"DRAFT".equalsIgnoreCase(entity.getStatus()) && !"MATCHED".equalsIgnoreCase(entity.getStatus())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only draft or matched invoices can be edited");
         }
+    }
+
+    private void updateSupplierInvoicePaymentStatusAfterGoodsReceipt(UUID tenantId, GoodsReceiptEntity receipt) {
+        if (receipt.getSupplierInvoiceId() == null || receipt.getPurchaseOrderId() == null) {
+            return;
+        }
+        SupplierInvoiceEntity invoice = supplierInvoiceRepository.findByTenantIdAndId(tenantId, receipt.getSupplierInvoiceId())
+                .orElse(null);
+        if (invoice == null) {
+            return;
+        }
+        if (invoice.getPurchaseOrderId() != null && !invoice.getPurchaseOrderId().equals(receipt.getPurchaseOrderId())) {
+            return;
+        }
+        if (!isReadyForPaymentCandidate(invoice)) {
+            return;
+        }
+        invoice.approveForPayment();
+        supplierInvoiceRepository.save(invoice);
+    }
+
+    private boolean isReadyForPaymentCandidate(SupplierInvoiceEntity invoice) {
+        if (invoice == null) {
+            return false;
+        }
+        String invoiceStatus = normalizeNullable(invoice.getStatus());
+        if ("CANCELLED".equalsIgnoreCase(invoiceStatus) || "PAID".equalsIgnoreCase(invoiceStatus)) {
+            return false;
+        }
+        return "MATCHED".equalsIgnoreCase(normalizeNullable(invoice.getMatchingStatus()));
     }
 
     private void ensureSupplierInvoiceStatus(SupplierInvoiceEntity entity, String expectedStatus) {

@@ -1763,7 +1763,7 @@ export type SupplierInvoiceInput = {
   approvalNote: string | null;
 };
 
-export type SupplierInvoiceStatus = "DRAFT" | "MATCHED" | "APPROVED_FOR_PAYMENT" | "PAID" | "CANCELLED";
+export type SupplierInvoiceStatus = "DRAFT" | "MATCHED" | "READY_FOR_PAYMENT" | "APPROVED_FOR_PAYMENT" | "PAID" | "CANCELLED";
 
 export type SupplierInvoice = {
   id: string;

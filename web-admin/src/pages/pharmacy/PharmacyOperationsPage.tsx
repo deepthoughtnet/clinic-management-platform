@@ -106,6 +106,7 @@ import {
   type SupplierInput,
   type SupplierInvoice,
   type SupplierInvoiceInput,
+  type SupplierInvoiceStatus,
 } from "../../api/clinicApi";
 
 type OpsTab = "suppliers" | "goods-receipt" | "reconciliation" | "procurement" | "physical-count" | "stock-adjustments" | "approval-review";
@@ -149,6 +150,24 @@ type PurchaseOrderWorkspaceRecord = {
   isDraft: boolean;
   sourceIds: string[];
 };
+
+function supplierInvoiceStatusInfo(status: SupplierInvoiceStatus) {
+  switch (status) {
+    case "DRAFT":
+      return { label: "Draft", color: "warning" as const };
+    case "MATCHED":
+      return { label: "Matched", color: "info" as const };
+    case "READY_FOR_PAYMENT":
+    case "APPROVED_FOR_PAYMENT":
+      return { label: "Ready for Payment", color: "success" as const };
+    case "PAID":
+      return { label: "Paid", color: "success" as const };
+    case "CANCELLED":
+      return { label: "Cancelled", color: "default" as const };
+    default:
+      return { label: status, color: "default" as const };
+  }
+}
 
 const emptySupplier: SupplierInput = {
   supplierName: "",
@@ -643,8 +662,19 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
     });
   }, [goodsReceiptsByPoId, poDrafts, poLifecycleMeta, purchaseOrders, suppliers]);
 
+  const eligibleInvoicePurchaseOrders = React.useMemo(
+    () => purchaseOrderWorkspaceRecords.filter((row) => !row.isDraft && (row.status === "Generated" || row.status === "Sent" || row.status === "Partially Received" || row.status === "Received")),
+    [purchaseOrderWorkspaceRecords],
+  );
+  const eligibleGoodsReceiptPurchaseOrders = React.useMemo(
+    () => purchaseOrderWorkspaceRecords.filter((row) => !row.isDraft && (row.status === "Generated" || row.status === "Sent" || row.status === "Partially Received")),
+    [purchaseOrderWorkspaceRecords],
+  );
+
   function syncInvoiceFromPurchaseOrder(purchaseOrderId: string) {
-    const purchaseOrder = purchaseOrderId ? purchaseOrders.find((row) => row.id === purchaseOrderId) ?? null : null;
+    const purchaseOrderRecord = purchaseOrderId ? eligibleInvoicePurchaseOrders.find((row) => row.id === purchaseOrderId) ?? null : null;
+    const sourceId = purchaseOrderRecord?.sourceIds[0] || purchaseOrderId;
+    const purchaseOrder = sourceId ? purchaseOrders.find((row) => row.id === sourceId) ?? null : null;
     const nextItems = parseProcurementItems(purchaseOrder?.itemsJson);
     setInvoiceForm((current) => ({
       ...current,
@@ -655,7 +685,9 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
   }
 
   function syncGoodsReceiptFromPurchaseOrder(purchaseOrderId: string) {
-    const purchaseOrder = purchaseOrderId ? purchaseOrders.find((row) => row.id === purchaseOrderId) ?? null : null;
+    const purchaseOrderRecord = purchaseOrderId ? eligibleGoodsReceiptPurchaseOrders.find((row) => row.id === purchaseOrderId) ?? null : null;
+    const sourceId = purchaseOrderRecord?.sourceIds[0] || purchaseOrderId;
+    const purchaseOrder = sourceId ? purchaseOrders.find((row) => row.id === sourceId) ?? null : null;
     const nextItems = parseProcurementItems(purchaseOrder?.itemsJson).map((item) => ({
       ...item,
       quantity: Math.max(Number(item.quantity || 0), 1),
@@ -2171,7 +2203,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                     </Stack>
                   </Stack>
                 )
-              ) : !purchaseOrders.length ? (
+              ) : !eligibleGoodsReceiptPurchaseOrders.length ? (
                 <CompactEmptyState
                   title="No purchase orders are available for goods receipt."
                   subtitle="Create a purchase order before posting GRN or receiving stock."
@@ -2183,7 +2215,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                     <InputLabel id="grn-po-label"><RequiredLabel text="Purchase order" required /></InputLabel>
                     <Select id="grn-po" labelId="grn-po-label" label="Purchase order" value={grnForm.purchaseOrderId || ""} onChange={(e) => syncGoodsReceiptFromPurchaseOrder(String(e.target.value))} required inputProps={{ "aria-required": true }}>
                       <MenuItem value="">Select purchase order</MenuItem>
-                      {purchaseOrders.map((po) => <MenuItem key={po.id} value={po.id}>{po.poNumber} • {po.supplierName || "Supplier pending"}</MenuItem>)}
+                      {eligibleGoodsReceiptPurchaseOrders.map((po) => <MenuItem key={po.id} value={po.id}>{po.poNumber} • {po.supplierName || "Supplier pending"}</MenuItem>)}
                     </Select>
                   </FormControl>
                   <Alert severity="info" sx={{ py: 0 }}>
@@ -2809,7 +2841,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                   ) : null}
 
                 {procurementTab === "invoice" ? (
-                  !purchaseOrders.length ? (
+                  !eligibleInvoicePurchaseOrders.length ? (
                     <CompactEmptyState
                       title="No purchase orders are available for invoice matching."
                       subtitle="Create a purchase order before linking supplier invoices."
@@ -2833,7 +2865,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                             <InputLabel id="invoice-po-label">Purchase order</InputLabel>
                             <Select id="invoice-po" labelId="invoice-po-label" label="Purchase order" value={invoiceForm.purchaseOrderId || ""} onChange={(e) => syncInvoiceFromPurchaseOrder(String(e.target.value))}>
                               <MenuItem value="">Select purchase order</MenuItem>
-                              {purchaseOrders.map((po) => <MenuItem key={po.id} value={po.id}>{po.poNumber}</MenuItem>)}
+                              {eligibleInvoicePurchaseOrders.map((po) => <MenuItem key={po.id} value={po.id}>{po.poNumber}</MenuItem>)}
                             </Select>
                           </FormControl>
                         </Grid>
@@ -2850,7 +2882,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                         {invoiceForm.purchaseOrderId ? `Invoice linked to PO. ${selectedInvoicePurchaseOrderItems.length} PO line items linked to the invoice.` : "Select a purchase order to auto-link line items."}
                       </Alert>
                       <Stack direction="row" spacing={1}>
-                        <Button size="small" variant="contained" onClick={() => void saveSupplierInvoice()} disabled={!canManageOperations || saving || !purchaseOrders.length}>Save invoice</Button>
+                        <Button size="small" variant="contained" onClick={() => void saveSupplierInvoice()} disabled={!canManageOperations || saving || !eligibleInvoicePurchaseOrders.length}>Save invoice</Button>
                         <Button size="small" onClick={() => { setInvoiceForm({ supplierId: "", purchaseOrderId: null, invoiceNumber: "", invoiceDate: "", invoiceAmount: 0, taxAmount: null, discountAmount: null, totalAmount: null, items: [], varianceReason: null, approvalNote: null }); setInvoiceDiscount(""); setInvoiceFreight(""); setInvoiceVariance(""); }}>Clear</Button>
                       </Stack>
                     </Stack>
@@ -2858,7 +2890,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                 ) : null}
 
                 {procurementTab === "grn" ? (
-                  !purchaseOrders.length ? (
+                  !eligibleGoodsReceiptPurchaseOrders.length ? (
                     <CompactEmptyState
                       title="No purchase orders are available for goods receipt."
                       subtitle="Create a purchase order before posting GRN or receiving stock."
@@ -2870,7 +2902,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                         <InputLabel id="grn-po-workspace-label"><RequiredLabel text="Purchase order" required /></InputLabel>
                         <Select id="grn-po-workspace" labelId="grn-po-workspace-label" label="Purchase order" value={grnForm.purchaseOrderId || ""} onChange={(e) => syncGoodsReceiptFromPurchaseOrder(String(e.target.value))} required inputProps={{ "aria-required": true }}>
                           <MenuItem value="">Select purchase order</MenuItem>
-                          {purchaseOrders.map((po) => <MenuItem key={po.id} value={po.id}>{po.poNumber} • {po.supplierName || "Supplier pending"}</MenuItem>)}
+                          {eligibleGoodsReceiptPurchaseOrders.map((po) => <MenuItem key={po.id} value={po.id}>{po.poNumber} • {po.supplierName || "Supplier pending"}</MenuItem>)}
                         </Select>
                       </FormControl>
                       <Alert severity="info" sx={{ py: 0 }}>
@@ -3116,7 +3148,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                               </Stack>
                             </TableCell>
                             <TableCell>{formatDate(row.invoiceDate)}</TableCell>
-                            <TableCell><Chip size="small" label={row.matchingStatus || "Draft"} sx={compactChipSx} /></TableCell>
+                            <TableCell><Chip size="small" {...supplierInvoiceStatusInfo(row.status)} sx={compactChipSx} /></TableCell>
                             <TableCell align="right">-</TableCell>
                           </TableRow>
                         ))
@@ -3146,7 +3178,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                                   try {
                                     await confirmGoodsReceipt(auth.accessToken, auth.tenantId, row.id, row.approvalNote || "Variance approved");
                                     await refreshCurrentPageData();
-                                    setSuccess("GRN confirmed");
+                                    setSuccess("GRN confirmed. Inventory updated. Invoice moved to Ready for Payment.");
                                   } catch (err) {
                                     setError(err instanceof Error ? err.message : "Failed to confirm GRN");
                                   } finally {

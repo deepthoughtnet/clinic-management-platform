@@ -633,6 +633,13 @@ export default function InventoryPage() {
     }
   }, [searchParams]);
 
+  React.useEffect(() => {
+    const ref = searchParams.get("ref");
+    if (!ref) return;
+    setTab("stocks");
+    setStockSearch(ref);
+  }, [searchParams]);
+
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
   }
@@ -1909,7 +1916,13 @@ export default function InventoryPage() {
                                 <TableCell>
                                   <Stack spacing={0.2}>
                                     <Typography variant="body2">{stock.batchNumber || "-"}</Typography>
-                                    <Typography variant="caption" color="text.secondary">{stock.purchaseReferenceNumber || "-"}</Typography>
+                                    {stock.purchaseReferenceNumber ? (
+                                      <Button size="small" sx={{ px: 0, minWidth: 0, justifyContent: "flex-start" }} onClick={() => navigate(`/pharmacy/procure?workspace=goods-receipt&receipt=${encodeURIComponent(stock.purchaseReferenceNumber || "")}`)}>
+                                        {stock.purchaseReferenceNumber}
+                                      </Button>
+                                    ) : (
+                                      <Typography variant="caption" color="text.secondary">-</Typography>
+                                    )}
                                   </Stack>
                                 </TableCell>
                                 <TableCell>
@@ -1983,7 +1996,13 @@ export default function InventoryPage() {
                                 <TableCell>
                                   <Stack spacing={0.2}>
                                     <Typography variant="caption" color="text.secondary">{transaction.referenceType || "-"}</Typography>
-                                    <Typography variant="body2">{transaction.referenceId || "-"}</Typography>
+                                    {transaction.businessReference ? (
+                                      <Button size="small" sx={{ px: 0, minWidth: 0, justifyContent: "flex-start" }} onClick={() => navigate(`/pharmacy/procure?workspace=goods-receipt&receipt=${encodeURIComponent(transaction.businessReference || "")}`)}>
+                                        {transaction.businessReference}
+                                      </Button>
+                                    ) : (
+                                      <Typography variant="body2">{transaction.referenceId || "-"}</Typography>
+                                    )}
                                   </Stack>
                                 </TableCell>
                                 <TableCell>{transaction.adjustedByName || transaction.createdBy || "-"}</TableCell>

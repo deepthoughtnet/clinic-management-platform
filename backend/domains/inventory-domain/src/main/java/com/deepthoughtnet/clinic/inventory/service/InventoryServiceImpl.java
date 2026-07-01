@@ -550,7 +550,7 @@ public class InventoryServiceImpl implements InventoryService {
         MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, command.medicineId())
                 .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
         if (!medicine.isActive()) throw new IllegalArgumentException("Cannot add stock for an inactive medicine.");
-        if (creating && command.quantityOnHand() <= 0) throw new IllegalArgumentException("quantityOnHand must be positive");
+        if (creating && effectiveCreatedQuantity(command) <= 0) throw new IllegalArgumentException("quantityOnHand must be positive");
         if (!creating && command.quantityOnHand() < 0) throw new IllegalArgumentException("quantityOnHand cannot be negative");
         if (command.quantityReceived() != null && command.quantityReceived() < 0) throw new IllegalArgumentException("quantityReceived cannot be negative");
         if (!StringUtils.hasText(command.batchNumber())) throw new IllegalArgumentException("batchNumber is required");
@@ -622,6 +622,13 @@ public class InventoryServiceImpl implements InventoryService {
                     .filter(stock -> currentStockId == null || !stock.getId().equals(currentStockId))
                     .ifPresent(stock -> { throw new IllegalArgumentException("Stock external code already exists"); });
         }
+    }
+
+    private int effectiveCreatedQuantity(StockUpsertCommand command) {
+        if (command.quantityOnHand() > 0) {
+            return command.quantityOnHand();
+        }
+        return command.quantityReceived() == null ? 0 : command.quantityReceived();
     }
 
     private void validateTransaction(UUID tenantId, InventoryTransactionCommand command) {
