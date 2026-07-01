@@ -46,6 +46,7 @@ import {
   getMedicines,
   getStocks,
   importMedicinesCsv,
+  searchMedicines,
   updateMedicine,
   type Medicine,
   type MedicineImportResult,
@@ -199,8 +200,10 @@ function daysUntil(dateValue: string | null | undefined) {
 export default function MedicineMasterPage() {
   const auth = useAuth();
   const [rows, setRows] = React.useState<Medicine[]>([]);
+  const [searchResults, setSearchResults] = React.useState<Medicine[] | null>(null);
   const [stocks, setStocks] = React.useState<Stock[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [searching, setSearching] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [search, setSearch] = React.useState("");
@@ -259,6 +262,24 @@ export default function MedicineMasterPage() {
   }, [load]);
 
   React.useEffect(() => {
+    const term = search.trim();
+    if (!auth.accessToken || !auth.tenantId) return;
+    if (term.length < 3) {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const handle = window.setTimeout(() => {
+      void searchMedicines(auth.accessToken!, auth.tenantId!, term)
+        .then((value) => setSearchResults(value))
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [auth.accessToken, auth.tenantId, search]);
+
+  React.useEffect(() => {
     if (editing) {
       setEditorOpen(true);
       return;
@@ -277,10 +298,11 @@ export default function MedicineMasterPage() {
   }, [stocks]);
 
   const filtered = React.useMemo(() => {
+    const source = searchResults ?? rows;
     const term = search.trim().toLowerCase();
     const minPrice = priceMin.trim() ? Number(priceMin) : null;
     const maxPrice = priceMax.trim() ? Number(priceMax) : null;
-    return rows.filter((row) => {
+    return source.filter((row) => {
       const medicineStocks = stockByMedicineId.get(row.id) || [];
       const totalStock = medicineStocks.reduce((sum, stock) => sum + stock.quantityOnHand, 0);
       const lowStockHit = medicineStocks.some((stock) => stock.lowStockThreshold != null && stock.quantityOnHand <= stock.lowStockThreshold);
@@ -328,7 +350,9 @@ export default function MedicineMasterPage() {
         || (quickFilter === "RECENTLY_ADDED" && recentlyAdded);
       return matchesTerm && matchesStatus && matchesType && matchesCategory && matchesInventory && matchesBarcode && matchesPrice && matchesQuick;
     });
-  }, [barcodeFilter, categoryFilter, inventoryFilter, priceMax, priceMin, quickFilter, rows, search, statusFilter, stockByMedicineId, typeFilter]);
+  }, [barcodeFilter, categoryFilter, inventoryFilter, priceMax, priceMin, quickFilter, rows, search, searchResults, statusFilter, stockByMedicineId, typeFilter]);
+
+  const visibleRows = React.useMemo(() => filtered.slice(0, 50), [filtered]);
 
   const activeCount = React.useMemo(() => rows.filter((row) => row.active).length, [rows]);
   const inactiveCount = rows.length - activeCount;
@@ -705,6 +729,7 @@ export default function MedicineMasterPage() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Name, barcode, brand, form, strength, manufacturer"
+                  helperText={search.trim().length >= 3 ? (searching ? "Searching medicines…" : "Showing matching medicines.") : "Type 3+ characters to search. Initial results are capped at 50."}
                 />
               </Grid>
               <Grid size={{ xs: 12, md: 7 }}>
@@ -1087,9 +1112,9 @@ export default function MedicineMasterPage() {
               subtitle="Configure which catalogue columns you want to keep visible for faster day-to-day use."
               columns={medicineColumns}
               visibleColumnIds={visibleColumnIds}
-              rows={filtered}
+              rows={visibleRows}
               getRowKey={(row) => row.id}
-              toolbar={<Chip size="small" variant="outlined" label={`${filtered.length} visible medicines`} />}
+              toolbar={<Chip size="small" variant="outlined" label={`${visibleRows.length} visible medicines`} />}
               emptyState={(
                 <CompactEmptyState
                   title={rows.length === 0 ? "Add your first medicine to start building the catalogue." : "No medicines match the current filters."}

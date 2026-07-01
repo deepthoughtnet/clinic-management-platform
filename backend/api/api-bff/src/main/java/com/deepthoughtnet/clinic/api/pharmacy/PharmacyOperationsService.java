@@ -299,14 +299,14 @@ public class PharmacyOperationsService {
         validateSupplier(request);
         SupplierEntity entity;
         if (id == null) {
-            ensureUniqueSupplier(tenantId, request.supplierName(), null);
+            ensureUniqueSupplier(tenantId, request, null);
             entity = SupplierEntity.create(tenantId, normalize(request.supplierName()));
         } else {
             entity = supplierRepository.findByTenantIdAndId(tenantId, id)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found"));
-            ensureUniqueSupplier(tenantId, request.supplierName(), id);
+            ensureUniqueSupplier(tenantId, request, id);
         }
-        entity.update(normalize(request.supplierName()), normalizeNullable(request.contactPerson()), normalizeNullable(request.phone()), normalizeNullable(request.email()), normalizeNullable(request.gstNumber()), normalizeNullable(request.address()), request.active());
+        entity.update(normalize(request.supplierName()), normalizeNullable(request.contactPerson()), normalizePhone(request.phone()), normalizeNullable(request.email()), normalizeNullable(request.gstNumber()), normalizeNullable(request.address()), normalizeNullable(request.notes()), request.active());
         SupplierEntity saved = supplierRepository.save(entity);
         return toRecord(saved);
     }
@@ -1046,7 +1046,7 @@ public class PharmacyOperationsService {
     }
 
     private SupplierRecord toRecord(SupplierEntity entity) {
-        return new SupplierRecord(entity.getId(), entity.getTenantId(), entity.getSupplierName(), entity.getContactPerson(), entity.getPhone(), entity.getEmail(), entity.getGstNumber(), entity.getAddress(), entity.isActive(), entity.getCreatedAt(), entity.getUpdatedAt());
+        return new SupplierRecord(entity.getId(), entity.getTenantId(), entity.getSupplierName(), entity.getContactPerson(), entity.getPhone(), entity.getEmail(), entity.getGstNumber(), entity.getAddress(), entity.getNotes(), entity.isActive(), entity.getCreatedAt(), entity.getUpdatedAt());
     }
 
     private PharmacyReconciliationRecord toRecord(PharmacyReconciliationEntity entity, MedicineEntity medicine, SupplierEntity supplier) {
@@ -1152,17 +1152,20 @@ public class PharmacyOperationsService {
         if (!StringUtils.hasText(supplierName)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier name is required");
         }
-        if (supplierName.length() < 2 || supplierName.length() > 100 || !SUPPLIER_NAME_PATTERN.matcher(supplierName).matches()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier name must be 2 to 100 characters and include a letter or number");
+        if (supplierName.length() < 3 || supplierName.length() > 80 || !SUPPLIER_NAME_PATTERN.matcher(supplierName).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Supplier name must be 3 to 80 characters and include a letter or number");
         }
         if (StringUtils.hasText(request.gstNumber()) && !GSTIN_PATTERN.matcher(request.gstNumber().trim().toUpperCase(Locale.ROOT)).matches()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "GSTIN must be a valid 15-character Indian GST number");
         }
-        if (StringUtils.hasText(request.contactPerson()) && (!LETTER_OR_NUMBER_PATTERN.matcher(request.contactPerson().trim()).matches() || request.contactPerson().trim().length() > 60)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Contact person must be 60 characters or fewer and include a letter or number");
+        if (StringUtils.hasText(request.contactPerson()) && (!LETTER_OR_NUMBER_PATTERN.matcher(request.contactPerson().trim()).matches() || request.contactPerson().trim().length() > 80)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Contact person must be 80 characters or fewer and include a letter or number");
         }
-        if (StringUtils.hasText(request.phone()) && !INDIAN_MOBILE_PATTERN.matcher(request.phone().trim()).matches()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Mobile must be a valid 10-digit Indian mobile number");
+        if (!StringUtils.hasText(request.phone())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Phone is required");
+        }
+        if (!INDIAN_MOBILE_PATTERN.matcher(normalizePhone(request.phone())).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Phone must be a valid 10-digit Indian mobile number");
         }
         if (StringUtils.hasText(request.email()) && request.email().trim().length() > 120) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email must be 120 characters or fewer");
@@ -1173,6 +1176,45 @@ public class PharmacyOperationsService {
         if (StringUtils.hasText(request.address()) && request.address().trim().length() > 250) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Address must be 250 characters or fewer");
         }
+        if (StringUtils.hasText(request.notes()) && request.notes().trim().length() > 500) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Notes must be 500 characters or fewer");
+        }
+    }
+
+    private void ensureUniqueSupplier(UUID tenantId, SupplierUpsertRequest request, UUID id) {
+        String normalizedName = normalize(request.supplierName());
+        String normalizedGst = StringUtils.hasText(request.gstNumber()) ? request.gstNumber().trim().toUpperCase(Locale.ROOT) : null;
+        String normalizedPhone = normalizePhone(request.phone());
+        String normalizedEmail = StringUtils.hasText(request.email()) ? request.email().trim() : null;
+        boolean duplicateName = id == null
+                ? supplierRepository.findByTenantIdAndSupplierNameIgnoreCase(tenantId, normalizedName).isPresent()
+                : supplierRepository.existsByTenantIdAndSupplierNameIgnoreCaseAndIdNot(tenantId, normalizedName, id);
+        boolean duplicateGst = StringUtils.hasText(normalizedGst)
+                && (id == null
+                ? supplierRepository.findByTenantIdAndGstNumberIgnoreCase(tenantId, normalizedGst).isPresent()
+                : supplierRepository.existsByTenantIdAndGstNumberIgnoreCaseAndIdNot(tenantId, normalizedGst, id));
+        boolean duplicatePhone = StringUtils.hasText(normalizedPhone)
+                && (id == null
+                ? supplierRepository.findByTenantIdAndPhone(tenantId, normalizedPhone).isPresent()
+                : supplierRepository.existsByTenantIdAndPhoneAndIdNot(tenantId, normalizedPhone, id));
+        boolean duplicateEmail = StringUtils.hasText(normalizedEmail)
+                && (id == null
+                ? supplierRepository.findByTenantIdAndEmailIgnoreCase(tenantId, normalizedEmail).isPresent()
+                : supplierRepository.existsByTenantIdAndEmailIgnoreCaseAndIdNot(tenantId, normalizedEmail, id));
+        if (duplicateName || duplicateGst || duplicatePhone || duplicateEmail) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Supplier already exists");
+        }
+    }
+
+    private String normalizePhone(String phone) {
+        if (!StringUtils.hasText(phone)) {
+            return null;
+        }
+        String digits = phone.replaceAll("[^0-9]", "");
+        if (digits.length() == 12 && digits.startsWith("91")) {
+            digits = digits.substring(2);
+        }
+        return digits;
     }
 
     private void ensureUniqueSupplier(UUID tenantId, String supplierName, UUID id) {

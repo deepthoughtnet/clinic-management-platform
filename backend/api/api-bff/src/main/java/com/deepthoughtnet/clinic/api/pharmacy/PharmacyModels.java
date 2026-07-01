@@ -16,6 +16,7 @@ record SupplierUpsertRequest(
         String email,
         String gstNumber,
         String address,
+        String notes,
         boolean active
 ) {
 }
@@ -184,6 +185,7 @@ record SupplierRecord(
         String email,
         String gstNumber,
         String address,
+        String notes,
         boolean active,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt

@@ -1559,6 +1559,7 @@ export type Supplier = {
   email: string | null;
   gstNumber: string | null;
   address: string | null;
+  notes: string | null;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -1571,6 +1572,7 @@ export type SupplierInput = {
   email: string | null;
   gstNumber: string | null;
   address: string | null;
+  notes: string | null;
   active: boolean;
 };
 

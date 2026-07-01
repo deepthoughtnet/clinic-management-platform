@@ -157,6 +157,7 @@ const emptySupplier: SupplierInput = {
   email: null,
   gstNumber: null,
   address: null,
+  notes: null,
   active: true,
 };
 
@@ -274,6 +275,7 @@ function normalizeSupplierPayload(values: SupplierValues): SupplierInput {
     email: values.email ?? null,
     gstNumber: values.gstNumber ?? null,
     address: values.address ?? null,
+    notes: null,
     active: values.active,
   };
 }
@@ -1993,6 +1995,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                                       email: row.email,
                                       gstNumber: row.gstNumber,
                                       address: row.address,
+                                      notes: row.notes ?? null,
                                       active: row.active,
                                     });
                                     setSupplierNotes("");
@@ -2011,6 +2014,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                                       email: row.email,
                                       gstNumber: row.gstNumber,
                                       address: row.address,
+                                      notes: row.notes ?? null,
                                       active: row.active,
                                     });
                                     setSupplierNotes("");
@@ -2034,6 +2038,7 @@ export default function PharmacyOperationsPage({ mode }: PharmacyOperationsPageP
                                         email: row.email,
                                         gstNumber: row.gstNumber,
                                         address: row.address,
+                                        notes: row.notes,
                                         active: !row.active,
                                       });
                                       setSuccess(row.active ? "Supplier deactivated" : "Supplier activated");

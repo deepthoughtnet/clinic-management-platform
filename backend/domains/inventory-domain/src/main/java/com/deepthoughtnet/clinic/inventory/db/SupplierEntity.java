@@ -47,6 +47,9 @@ public class SupplierEntity {
     @Column(columnDefinition = "text")
     private String address;
 
+    @Column(name = "notes", columnDefinition = "text")
+    private String notes;
+
     @Column(nullable = false)
     private boolean active = true;
 
@@ -74,13 +77,14 @@ public class SupplierEntity {
         return entity;
     }
 
-    public void update(String supplierName, String contactPerson, String phone, String email, String gstNumber, String address, boolean active) {
+    public void update(String supplierName, String contactPerson, String phone, String email, String gstNumber, String address, String notes, boolean active) {
         this.supplierName = supplierName;
         this.contactPerson = contactPerson;
         this.phone = phone;
         this.email = email;
         this.gstNumber = gstNumber;
         this.address = address;
+        this.notes = notes;
         this.active = active;
         this.updatedAt = OffsetDateTime.now();
     }
@@ -93,6 +97,7 @@ public class SupplierEntity {
     public String getEmail() { return email; }
     public String getGstNumber() { return gstNumber; }
     public String getAddress() { return address; }
+    public String getNotes() { return notes; }
     public boolean isActive() { return active; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
