@@ -155,7 +155,7 @@ public class PharmacyPosService {
         requireId(medicineId, "medicineId");
         InventoryLocationEntity location = ensureDefaultLocation(tenantId);
         return sortForFefo(stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, medicineId, location.getId())).stream()
-                .filter(stock -> stock.isActive() && stock.getQuantityOnHand() > 0 && !isExpired(stock))
+                .filter(stock -> stock.isActive() && stock.getQuantityOnHand() > 0 && !isExpired(stock) && isCommerciallyReady(stock))
                 .map(stock -> toBatchResponse(stock, location))
                 .toList();
     }
@@ -814,7 +814,11 @@ public class PharmacyPosService {
         List<StockEntity> allBatches = sortForFefo(stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, line.medicineId(), locationId));
         List<StockEntity> batches = stockRepository.findSellableBatchesForUpdate(tenantId, locationId, line.medicineId()).stream()
                 .filter(stock -> !isExpired(stock))
+                .filter(this::isCommerciallyReady)
                 .toList();
+        if (batches.isEmpty() && allBatches.stream().anyMatch(stock -> stock.isActive() && stock.getQuantityOnHand() > 0 && !isExpired(stock) && !isCommerciallyReady(stock))) {
+            throw new IllegalArgumentException("Batch setup incomplete. Please update MRP and reorder level in Inventory before sale.");
+        }
         if (batches.isEmpty() && allBatches.stream().anyMatch(stock -> stock.isActive() && stock.getQuantityOnHand() > 0 && isExpired(stock))) {
             throw new IllegalArgumentException("Batch expired and cannot be sold or dispensed.");
         }
@@ -854,6 +858,7 @@ public class PharmacyPosService {
                 .filter(StockEntity::isActive)
                 .filter(stock -> stock.getQuantityOnHand() > 0)
                 .filter(stock -> !isExpired(stock))
+                .filter(this::isCommerciallyReady)
                 .toList();
         int totalAvailable = usable.stream().mapToInt(StockEntity::getQuantityOnHand).sum();
         LocalDate earliest = usable.stream().map(StockEntity::getExpiryDate).filter(java.util.Objects::nonNull).min(LocalDate::compareTo).orElse(null);
@@ -1164,6 +1169,10 @@ public class PharmacyPosService {
 
     private boolean isExpired(StockEntity stock) {
         return stock.getExpiryDate() != null && stock.getExpiryDate().isBefore(LocalDate.now());
+    }
+
+    private boolean isCommerciallyReady(StockEntity stock) {
+        return stock.getSellingPrice() != null && stock.getLowStockThreshold() != null;
     }
 
     private String patientName(PatientEntity patient) {

@@ -239,6 +239,53 @@ function stockInput(form: StockFormState): StockInput {
   };
 }
 
+function normalizeInventoryText(value: string | null | undefined) {
+  return (value || "").trim();
+}
+
+function parseOptionalNumberInput(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const numeric = Number(trimmed);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function batchSetupMissingFromValues(sellingPrice: number | null | undefined, lowStockThreshold: number | null | undefined) {
+  const missing: string[] = [];
+  if (sellingPrice == null) missing.push("Missing MRP");
+  if (lowStockThreshold == null) missing.push("Missing Reorder Level");
+  return missing;
+}
+
+function batchSetupMissing(stock: Pick<Stock, "sellingPrice" | "lowStockThreshold">) {
+  return batchSetupMissingFromValues(stock.sellingPrice, stock.lowStockThreshold);
+}
+
+function stockUpdateInputFromRecord(
+  stock: Stock,
+  overrides: Partial<Pick<StockInput, "locationId" | "barcode" | "qrCode" | "externalCode" | "batchNumber" | "purchaseReferenceNumber" | "expiryDate" | "quantityOnHand" | "lowStockThreshold" | "unitCost" | "sellingPrice" | "active">> = {},
+): StockInput {
+  return {
+    medicineId: stock.medicineId,
+    locationId: overrides.locationId ?? stock.locationId ?? null,
+    barcode: overrides.barcode ?? stock.barcode ?? null,
+    qrCode: overrides.qrCode ?? stock.qrCode ?? null,
+    externalCode: overrides.externalCode ?? stock.externalCode ?? null,
+    batchNumber: overrides.batchNumber ?? stock.batchNumber ?? null,
+    purchaseReferenceNumber: overrides.purchaseReferenceNumber ?? stock.purchaseReferenceNumber ?? null,
+    expiryDate: overrides.expiryDate ?? stock.expiryDate ?? null,
+    purchaseDate: stock.purchaseDate ?? null,
+    supplierName: stock.supplierName ?? null,
+    quantityReceived: stock.quantityReceived ?? null,
+    quantityOnHand: overrides.quantityOnHand ?? stock.quantityOnHand,
+    lowStockThreshold: overrides.lowStockThreshold ?? stock.lowStockThreshold ?? null,
+    unitCost: overrides.unitCost ?? stock.unitCost ?? null,
+    purchasePrice: stock.purchasePrice ?? null,
+    sellingPrice: overrides.sellingPrice ?? stock.sellingPrice ?? null,
+    active: overrides.active ?? stock.active,
+  };
+}
+
 function transactionInput(form: TransactionFormState): InventoryTransactionInput {
   return {
     medicineId: form.medicineId,
@@ -349,6 +396,7 @@ export default function InventoryPage() {
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
+  const [deepLinkBanner, setDeepLinkBanner] = React.useState<string | null>(null);
   const [stockSearch, setStockSearch] = React.useState("");
   const [stockSearchScannerOpen, setStockSearchScannerOpen] = React.useState(false);
   const [transferForm, setTransferForm] = React.useState({ medicineId: "", stockBatchId: "", fromLocationId: "", toLocationId: "", quantity: "", reason: "" });
@@ -377,7 +425,9 @@ export default function InventoryPage() {
   const [vendorReturnFieldErrors, setVendorReturnFieldErrors] = React.useState<FormErrorMap>({});
   const [writeOffFieldErrors, setWriteOffFieldErrors] = React.useState<FormErrorMap>({});
   const [quickMedicineFieldErrors, setQuickMedicineFieldErrors] = React.useState<FormErrorMap>({});
+  const [setupQueueEdits, setSetupQueueEdits] = React.useState<Record<string, { sellingPrice: string; lowStockThreshold: string }>>({});
   const addStockBatchRef = React.useRef<HTMLDivElement | null>(null);
+  const handledReferenceRef = React.useRef("");
 
   const medicineById = React.useMemo(() => new Map(medicines.map((medicine) => [medicine.id, medicine])), [medicines]);
   const medicineAutocompleteOptions = React.useMemo<MedicineAutocompleteOption[]>(
@@ -398,6 +448,10 @@ export default function InventoryPage() {
       return matchesLocation && matchesTerm;
     });
   }, [stocks, stockSearch, selectedLocationId]);
+  const incompleteSetupStocks = React.useMemo(
+    () => visibleStocks.filter((stock) => batchSetupMissing(stock).length > 0),
+    [visibleStocks],
+  );
   const expiringSoonCount = React.useMemo(() => stocks.filter((stock) => {
     const diff = daysUntil(stock.expiryDate);
     return diff >= 0 && diff <= 30;
@@ -515,6 +569,29 @@ export default function InventoryPage() {
       }));
     }
   }, [selectedCountStock]);
+
+  React.useEffect(() => {
+    setSetupQueueEdits((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const stock of incompleteSetupStocks) {
+        if (!next[stock.id]) {
+          next[stock.id] = {
+            sellingPrice: stock.sellingPrice?.toString() || "",
+            lowStockThreshold: stock.lowStockThreshold?.toString() || "",
+          };
+          changed = true;
+        }
+      }
+      for (const key of Object.keys(next)) {
+        if (!stocks.some((stock) => stock.id === key && batchSetupMissing(stock).length > 0)) {
+          delete next[key];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [incompleteSetupStocks, stocks]);
 
   React.useEffect(() => {
     if (stockCountForm.stockBatchId && !countableStocks.some((stock) => stock.id === stockCountForm.stockBatchId)) {
@@ -640,6 +717,20 @@ export default function InventoryPage() {
     setStockSearch(ref);
   }, [searchParams]);
 
+  React.useEffect(() => {
+    const source = searchParams.get("source");
+    const reference = searchParams.get("reference");
+    if (!source && !reference) return;
+    const key = `${source || ""}:${reference || ""}`;
+    if (handledReferenceRef.current === key) return;
+    handledReferenceRef.current = key;
+    setDeepLinkBanner(reference ? `Opened from reconciliation for ${source || "reference"}: ${reference}` : "Opened from reconciliation.");
+    if (!searchParams.get("ref") && reference) {
+      setTab("stocks");
+      setStockSearch(reference);
+    }
+  }, [searchParams]);
+
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
   }
@@ -700,10 +791,108 @@ export default function InventoryPage() {
       setSelectedStockId(null);
       setMedicineSearchInput("");
       await loadAll();
-      setSuccess("Stock saved");
+      setSuccess("Batch metadata saved.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to save stock";
       setError(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveSetupRow = async (stockId: string) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    const stock = stocks.find((row) => row.id === stockId);
+    if (!stock) {
+      setError("Selected batch could not be found.");
+      return;
+    }
+    const draft = setupQueueEdits[stockId] ?? {
+      sellingPrice: stock.sellingPrice?.toString() || "",
+      lowStockThreshold: stock.lowStockThreshold?.toString() || "",
+    };
+    const sellingPrice = parseOptionalNumberInput(draft.sellingPrice);
+    const lowStockThreshold = parseOptionalNumberInput(draft.lowStockThreshold);
+    if (draft.sellingPrice.trim() && sellingPrice == null) {
+      setError("MRP must be a valid number.");
+      return;
+    }
+    if (draft.lowStockThreshold.trim() && lowStockThreshold == null) {
+      setError("Reorder level must be a valid number.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await updateStock(
+        auth.accessToken,
+        auth.tenantId,
+        stockId,
+        stockUpdateInputFromRecord(stock, {
+          sellingPrice,
+          lowStockThreshold,
+        }),
+      );
+      await loadAll();
+      setSuccess(`Batch metadata saved for ${stock.medicineName}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save batch setup metadata.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveAllSetupRows = async () => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    const dirtyRows = incompleteSetupStocks
+      .map((stock) => {
+        const draft = setupQueueEdits[stock.id] ?? {
+          sellingPrice: stock.sellingPrice?.toString() || "",
+          lowStockThreshold: stock.lowStockThreshold?.toString() || "",
+        };
+        const draftSellingPrice = draft.sellingPrice.trim();
+        const draftLowStock = draft.lowStockThreshold.trim();
+        const dirty = draftSellingPrice !== (stock.sellingPrice?.toString() || "")
+          || draftLowStock !== (stock.lowStockThreshold?.toString() || "");
+        return { stock, draft, dirty };
+      })
+      .filter((row) => row.dirty);
+    if (!dirtyRows.length) {
+      setError("No setup changes are pending.");
+      return;
+    }
+
+    for (const row of dirtyRows) {
+      if (row.draft.sellingPrice.trim() && parseOptionalNumberInput(row.draft.sellingPrice) == null) {
+        setError(`MRP must be a valid number for ${row.stock.medicineName}.`);
+        return;
+      }
+      if (row.draft.lowStockThreshold.trim() && parseOptionalNumberInput(row.draft.lowStockThreshold) == null) {
+        setError(`Reorder level must be a valid number for ${row.stock.medicineName}.`);
+        return;
+      }
+    }
+
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      for (const row of dirtyRows) {
+        await updateStock(
+          auth.accessToken,
+          auth.tenantId,
+          row.stock.id,
+          stockUpdateInputFromRecord(row.stock, {
+            sellingPrice: parseOptionalNumberInput(row.draft.sellingPrice),
+            lowStockThreshold: parseOptionalNumberInput(row.draft.lowStockThreshold),
+          }),
+        );
+      }
+      await loadAll();
+      setSuccess(`Batch setup metadata saved for ${dirtyRows.length} batch${dirtyRows.length === 1 ? "" : "es"}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save batch setup metadata.");
     } finally {
       setSaving(false);
     }
@@ -983,6 +1172,20 @@ export default function InventoryPage() {
     [selectedStockId, transactions],
   );
   const currentStockHasMovements = currentStockMovementCount > 0;
+  const editingExistingBatch = Boolean(selectedStockId && currentStock);
+  const canEditBatchLocation = Boolean(editingExistingBatch && !currentStockHasMovements);
+  const metadataDirty = React.useMemo(() => {
+    if (!currentStock) return false;
+    return (
+      normalizeInventoryText(stockForm.barcode) !== normalizeInventoryText(currentStock.barcode)
+      || normalizeInventoryText(stockForm.qrCode) !== normalizeInventoryText(currentStock.qrCode)
+      || normalizeInventoryText(stockForm.externalCode) !== normalizeInventoryText(currentStock.externalCode)
+      || normalizeInventoryText(stockForm.lowStockThreshold) !== normalizeInventoryText(currentStock.lowStockThreshold?.toString() || "")
+      || normalizeInventoryText(stockForm.sellingPrice) !== normalizeInventoryText(currentStock.sellingPrice?.toString() || "")
+      || stockForm.active !== currentStock.active
+      || (canEditBatchLocation && normalizeInventoryText(stockForm.locationId) !== normalizeInventoryText(currentStock.locationId || ""))
+    );
+  }, [canEditBatchLocation, currentStock, stockForm.active, stockForm.barcode, stockForm.externalCode, stockForm.locationId, stockForm.lowStockThreshold, stockForm.qrCode, stockForm.sellingPrice]);
   const selectedMedicineForStock = React.useMemo(
     () => medicines.find((medicine) => medicine.id === stockForm.medicineId) ?? null,
     [medicines, stockForm.medicineId],
@@ -1026,6 +1229,7 @@ export default function InventoryPage() {
 
       {error ? <Alert severity="error">{error}</Alert> : null}
       {success ? <Alert severity="success">{success}</Alert> : null}
+      {deepLinkBanner ? <Alert severity="info" onClose={() => setDeepLinkBanner(null)}>{deepLinkBanner}</Alert> : null}
       {!canManageInventory ? <Alert severity="info">Read-only inventory access is active for this role. Stock creation, adjustment, transfer, return, and write-off posting are hidden or disabled.</Alert> : null}
 
       <Card>
@@ -1245,6 +1449,7 @@ export default function InventoryPage() {
                               FormHelperTextProps={{ sx: { minHeight: 20 } }}
                             />
                           )}
+                          disabled={editingExistingBatch}
                         />
                       </Grid>
                       <Grid size={{ xs: 12, md: 4 }}>
@@ -1263,6 +1468,7 @@ export default function InventoryPage() {
                             value={stockForm.locationId}
                             onChange={(e) => setStockForm((current) => ({ ...current, locationId: String(e.target.value) }))}
                             required
+                            disabled={editingExistingBatch && !canEditBatchLocation}
                             error={Boolean(stockFieldErrors.locationId)}
                             inputProps={{ id: "inventory-stock-location", "aria-required": true }}
                           >
@@ -1284,13 +1490,22 @@ export default function InventoryPage() {
                           value={stockForm.batchNumber}
                           onChange={(e) => setStockForm((current) => ({ ...current, batchNumber: e.target.value }))}
                           required
+                          InputProps={{ readOnly: editingExistingBatch }}
                           error={Boolean(stockFieldErrors.batchNumber)}
-                          helperText={stockFieldErrors.batchNumber || getFieldHelpText("batchNumber")}
+                          helperText={stockFieldErrors.batchNumber || (editingExistingBatch ? "Batch number is controlled by the receiving document and cannot be edited here." : getFieldHelpText("batchNumber"))}
                           inputProps={{ "aria-required": true, maxLength: 30 }}
                         />
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <TextField size="small" fullWidth label="Purchase reference" value={stockForm.purchaseReferenceNumber} onChange={(e) => setStockForm((current) => ({ ...current, purchaseReferenceNumber: e.target.value }))} />
+                        <TextField
+                          size="small"
+                          fullWidth
+                          label="Purchase reference"
+                          value={stockForm.purchaseReferenceNumber}
+                          onChange={(e) => setStockForm((current) => ({ ...current, purchaseReferenceNumber: e.target.value }))}
+                          InputProps={{ readOnly: editingExistingBatch }}
+                          helperText={editingExistingBatch ? "Purchase reference is captured by GRN or Direct Goods Receipt and is read-only here." : "Reference from GRN or Direct Goods Receipt."}
+                        />
                       </Grid>
                       <Grid size={{ xs: 12 }}>
                         <Grid container spacing={1.25}>
@@ -1315,9 +1530,10 @@ export default function InventoryPage() {
                           value={stockForm.expiryDate}
                           onChange={(e) => setStockForm((current) => ({ ...current, expiryDate: e.target.value }))}
                           InputLabelProps={{ shrink: true }}
+                          InputProps={{ readOnly: editingExistingBatch }}
                           required
                           error={Boolean(stockFieldErrors.expiryDate)}
-                          helperText={stockFieldErrors.expiryDate || getFieldHelpText("expiryDate")}
+                          helperText={stockFieldErrors.expiryDate || (editingExistingBatch ? "Expiry is captured at receipt time and should be corrected through the receiving workflow if required." : getFieldHelpText("expiryDate"))}
                           inputProps={{ "aria-required": true }}
                         />
                       </Grid>
@@ -1329,9 +1545,10 @@ export default function InventoryPage() {
                           label={<FieldHelpTooltip label="Quantity on hand" required helpText={getFieldHelpText("quantityOnHand")} />}
                           value={stockForm.quantityOnHand}
                           onChange={(e) => setStockForm((current) => ({ ...current, quantityOnHand: e.target.value }))}
+                          InputProps={{ readOnly: editingExistingBatch }}
                           required
                           error={Boolean(stockFieldErrors.quantityOnHand)}
-                          helperText={stockFieldErrors.quantityOnHand || getFieldHelpText("quantityOnHand")}
+                          helperText={stockFieldErrors.quantityOnHand || (editingExistingBatch ? "Quantity is controlled by GRN, Direct Goods Receipt, Stock Adjustment, or Physical Count adjustment." : getFieldHelpText("quantityOnHand"))}
                           inputProps={{ "aria-required": true, inputMode: "numeric" }}
                         />
                       </Grid>
@@ -1344,7 +1561,7 @@ export default function InventoryPage() {
                           value={stockForm.lowStockThreshold}
                           onChange={(e) => setStockForm((current) => ({ ...current, lowStockThreshold: e.target.value }))}
                           error={Boolean(stockFieldErrors.lowStockThreshold)}
-                          helperText={stockFieldErrors.lowStockThreshold || getFieldHelpText("reorderLevel")}
+                          helperText={stockFieldErrors.lowStockThreshold || "Editable in Inventory. Used for low-stock alerts and reorder planning."}
                           inputProps={{ inputMode: "numeric" }}
                         />
                       </Grid>
@@ -1365,8 +1582,9 @@ export default function InventoryPage() {
                           label={<FieldHelpTooltip label="Purchase rate" helpText={getFieldHelpText("purchaseRate")} />}
                           value={stockForm.unitCost}
                           onChange={(e) => setStockForm((current) => ({ ...current, unitCost: e.target.value }))}
+                          InputProps={{ readOnly: editingExistingBatch }}
                           error={Boolean(stockFieldErrors.unitCost)}
-                          helperText={stockFieldErrors.unitCost || getFieldHelpText("purchaseRate")}
+                          helperText={stockFieldErrors.unitCost || (editingExistingBatch ? "Purchase rate is captured by GRN or Direct Goods Receipt and is read-only here." : getFieldHelpText("purchaseRate"))}
                           inputProps={{ inputMode: "decimal" }}
                         />
                       </Grid>
@@ -1379,7 +1597,7 @@ export default function InventoryPage() {
                           value={stockForm.sellingPrice}
                           onChange={(e) => setStockForm((current) => ({ ...current, sellingPrice: e.target.value }))}
                           error={Boolean(stockFieldErrors.sellingPrice)}
-                          helperText={stockFieldErrors.sellingPrice || getFieldHelpText("mrp")}
+                          helperText={stockFieldErrors.sellingPrice || "Editable in Inventory. GRN captures purchase cost; MRP can be maintained here for POS/billing."}
                           inputProps={{ inputMode: "decimal" }}
                         />
                       </Grid>
@@ -1389,9 +1607,9 @@ export default function InventoryPage() {
                         onClick={async () => {
                           await saveStock();
                         }}
-                        disabled={!canManageInventory || saving || !selectedStockId}
+                        disabled={!canManageInventory || saving || (editingExistingBatch ? !metadataDirty : false)}
                       >
-                        {selectedStockId ? "Update Batch" : "Open Direct Goods Receipt"}
+                        {editingExistingBatch ? "Save Batch Metadata" : "Open Direct Goods Receipt"}
                       </Button>
                       <Button
                         variant="text"
@@ -1405,6 +1623,11 @@ export default function InventoryPage() {
                       </Button>
                       {currentStock ? <Chip size="small" label={`${currentStock.medicineName} • ${currentStock.batchNumber || "No batch"}`} variant="outlined" /> : null}
                     </Box>
+                    {editingExistingBatch ? (
+                      <Alert severity="info" sx={{ py: 0 }}>
+                        GRN owns receiving facts. Inventory owns editable metadata such as reorder level, MRP, status, barcode, QR code, and external code.
+                      </Alert>
+                    ) : null}
                     {!selectedStockId ? (
                       <Alert severity="warning" sx={{ py: 0 }}>
                         Batch creation is handled by Goods Receipt. Select an existing batch to edit, or use Direct Goods Receipt for new inventory.
@@ -1492,14 +1715,15 @@ export default function InventoryPage() {
                 <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
                   <Stack spacing={0.4}>
                     <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                      Physical stock count
+                      Quick Count Correction
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      Compare system quantity with a counted quantity and post a variance adjustment with audit reason.
+                      Correct a batch immediately when the counted quantity differs from system stock, with a reasoned audit entry.
                     </Typography>
                   </Stack>
                 </AccordionSummary>
                 <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
+                  <Stack spacing={1.5}>
                   <Box sx={compactFormSx}>
                   <Grid container spacing={1}>
                     <Grid size={{ xs: 12, md: 6 }}>
@@ -1676,12 +1900,50 @@ export default function InventoryPage() {
                             }
                           }}
                         >
-                          Post count
+                          Post count correction
                         </Button>
                       </Stack>
                     </Grid>
                   </Grid>
                   </Box>
+                  <Card variant="outlined">
+                    <CardContent sx={compactCardContentSx}>
+                      <Stack spacing={1}>
+                        <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                            Physical Count Sessions
+                          </Typography>
+                          <Chip size="small" label="Future workflow" variant="outlined" />
+                        </Box>
+                        <Typography variant="body2" color="text.secondary">
+                          Session-based counting will be added here after multi-item count workflow is implemented. Quick Count Correction remains the immediate variance tool.
+                        </Typography>
+                        <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>Session</TableCell>
+                                <TableCell>Location</TableCell>
+                                <TableCell>Created By</TableCell>
+                                <TableCell align="right">Items Counted</TableCell>
+                                <TableCell align="right">Variance Items</TableCell>
+                                <TableCell>Status</TableCell>
+                                <TableCell align="right">Action</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              <TableRow>
+                                <TableCell colSpan={7}>
+                                  <Typography variant="body2" color="text.secondary">No physical count sessions available yet.</Typography>
+                                </TableCell>
+                              </TableRow>
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                  </Stack>
                 </AccordionDetails>
               </Accordion>
 
@@ -1891,13 +2153,17 @@ export default function InventoryPage() {
                               <TableCell>Batch</TableCell>
                               <TableCell>Expiry</TableCell>
                               <TableCell align="right">Qty</TableCell>
-                              <TableCell align="right">Threshold</TableCell>
-                              <TableCell>Status</TableCell>
+                              <TableCell align="right">Reorder Level</TableCell>
+                              <TableCell>Setup Status</TableCell>
+                              <TableCell>Operational Status</TableCell>
                               <TableCell align="right">Actions</TableCell>
                             </TableRow>
                           </TableHead>
                           <TableBody>
-                            {visibleStocks.map((stock) => (
+                            {visibleStocks.map((stock) => {
+                              const setupMissing = batchSetupMissing(stock);
+                              const setupComplete = setupMissing.length === 0;
+                              return (
                               <TableRow key={stock.id} hover selected={stock.id === selectedStockId} sx={{ "& td": { py: 0.85, verticalAlign: "top" } }}>
                                 <TableCell>
                                   <Stack spacing={0.2}>
@@ -1936,6 +2202,18 @@ export default function InventoryPage() {
                                 <TableCell>
                                   <Chip
                                     size="small"
+                                    label={setupComplete ? "Complete" : "Incomplete"}
+                                    color={setupComplete ? "success" : "warning"}
+                                  />
+                                  {!setupComplete ? (
+                                    <Typography variant="caption" display="block" color="text.secondary">
+                                      {setupMissing.join(" • ")}
+                                    </Typography>
+                                  ) : null}
+                                </TableCell>
+                                <TableCell>
+                                  <Chip
+                                    size="small"
                                     label={stock.expiryDate && daysUntil(stock.expiryDate) < 0 ? "EXPIRED" : stock.active ? "Active" : "Inactive"}
                                     color={stock.expiryDate && daysUntil(stock.expiryDate) < 0 ? "error" : stock.active ? statusColor(stock.quantityOnHand, stock.lowStockThreshold) : "default"}
                                   />
@@ -1946,7 +2224,135 @@ export default function InventoryPage() {
                                   </Button>
                                 </TableCell>
                               </TableRow>
-                            ))}
+                            );})}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
+                  </Stack>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent sx={compactCardContentSx}>
+                  <Stack spacing={1.25}>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                      <Box>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                          Batch Setup Queue
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          GRN creates received stock. Inventory completes commercial setup for POS readiness by maintaining MRP and reorder level.
+                        </Typography>
+                      </Box>
+                      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                        <Chip size="small" label={`${incompleteSetupStocks.length} incomplete`} color={incompleteSetupStocks.length ? "warning" : "success"} variant={incompleteSetupStocks.length ? "filled" : "outlined"} />
+                        <Button size="small" variant="contained" disabled={!canManageInventory || saving || !incompleteSetupStocks.some((stock) => {
+                          const draft = setupQueueEdits[stock.id] ?? { sellingPrice: stock.sellingPrice?.toString() || "", lowStockThreshold: stock.lowStockThreshold?.toString() || "" };
+                          return draft.sellingPrice.trim() !== (stock.sellingPrice?.toString() || "")
+                            || draft.lowStockThreshold.trim() !== (stock.lowStockThreshold?.toString() || "");
+                        })} onClick={() => void saveAllSetupRows()}>
+                          Save All
+                        </Button>
+                      </Stack>
+                    </Box>
+                    {incompleteSetupStocks.length === 0 ? (
+                      <CompactEmptyState
+                        title="All visible batches are commercially ready."
+                        subtitle="MRP and reorder level are already maintained for the current inventory filters."
+                      />
+                    ) : (
+                      <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, maxWidth: "100%" }}>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>Medicine</TableCell>
+                              <TableCell>Batch</TableCell>
+                              <TableCell>Location</TableCell>
+                              <TableCell>Expiry</TableCell>
+                              <TableCell align="right">Qty</TableCell>
+                              <TableCell align="right">MRP</TableCell>
+                              <TableCell align="right">Reorder Level</TableCell>
+                              <TableCell>Setup Status</TableCell>
+                              <TableCell align="right">Action</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {incompleteSetupStocks.map((stock) => {
+                              const draft = setupQueueEdits[stock.id] ?? {
+                                sellingPrice: stock.sellingPrice?.toString() || "",
+                                lowStockThreshold: stock.lowStockThreshold?.toString() || "",
+                              };
+                              const draftMissing = batchSetupMissingFromValues(parseOptionalNumberInput(draft.sellingPrice), parseOptionalNumberInput(draft.lowStockThreshold));
+                              const dirty = draft.sellingPrice.trim() !== (stock.sellingPrice?.toString() || "")
+                                || draft.lowStockThreshold.trim() !== (stock.lowStockThreshold?.toString() || "");
+                              return (
+                                <TableRow key={stock.id} sx={{ "& td": { verticalAlign: "top" } }}>
+                                  <TableCell>{stock.medicineName}</TableCell>
+                                  <TableCell>
+                                    <Stack spacing={0.2}>
+                                      <Typography variant="body2">{stock.batchNumber || "-"}</Typography>
+                                      <Typography variant="caption" color="text.secondary">
+                                        {stock.purchaseReferenceNumber || "No purchase reference"} • Rate {stock.unitCost != null ? formatCurrency(stock.unitCost) : "-"}
+                                      </Typography>
+                                    </Stack>
+                                  </TableCell>
+                                  <TableCell>{stock.locationName || "Main Pharmacy"}</TableCell>
+                                  <TableCell>{stock.expiryDate || "-"}</TableCell>
+                                  <TableCell align="right">{stock.quantityOnHand}</TableCell>
+                                  <TableCell align="right">
+                                    <TextField
+                                      size="small"
+                                      value={draft.sellingPrice}
+                                      onChange={(event) => setSetupQueueEdits((current) => ({
+                                        ...current,
+                                        [stock.id]: {
+                                          sellingPrice: event.target.value,
+                                          lowStockThreshold: current[stock.id]?.lowStockThreshold ?? draft.lowStockThreshold,
+                                        },
+                                      }))}
+                                      inputProps={{ inputMode: "decimal" }}
+                                      placeholder="MRP"
+                                      disabled={!canManageInventory || saving}
+                                    />
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <TextField
+                                      size="small"
+                                      value={draft.lowStockThreshold}
+                                      onChange={(event) => setSetupQueueEdits((current) => ({
+                                        ...current,
+                                        [stock.id]: {
+                                          sellingPrice: current[stock.id]?.sellingPrice ?? draft.sellingPrice,
+                                          lowStockThreshold: event.target.value,
+                                        },
+                                      }))}
+                                      inputProps={{ inputMode: "numeric" }}
+                                      placeholder="Reorder"
+                                      disabled={!canManageInventory || saving}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <Chip size="small" label={draftMissing.length === 0 ? "Complete" : "Incomplete"} color={draftMissing.length === 0 ? "success" : "warning"} />
+                                    {draftMissing.length ? (
+                                      <Typography variant="caption" display="block" color="text.secondary">
+                                        {draftMissing.join(" • ")}
+                                      </Typography>
+                                    ) : null}
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <Stack direction="row" spacing={0.75} justifyContent="flex-end" useFlexGap flexWrap="wrap">
+                                      <Button size="small" disabled={!canManageInventory || saving || !dirty} onClick={() => void saveSetupRow(stock.id)}>
+                                        Save Row
+                                      </Button>
+                                      <Button size="small" variant="outlined" disabled={!canManageInventory} onClick={() => { editStock(stock); setStockActionPanel("add"); }}>
+                                        Edit Details
+                                      </Button>
+                                    </Stack>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
                           </TableBody>
                         </Table>
                       </TableContainer>

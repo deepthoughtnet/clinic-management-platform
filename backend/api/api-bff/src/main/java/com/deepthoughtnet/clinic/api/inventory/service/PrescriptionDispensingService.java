@@ -234,10 +234,14 @@ public class PrescriptionDispensingService {
         List<StockEntity> fefo = activeStockRows.stream()
                 .filter(stock -> stock.getQuantityOnHand() > 0)
                 .filter(stock -> !isExpired(stock))
+                .filter(this::isCommerciallyReady)
                 .toList();
         if (fefo.isEmpty()) {
             if (activeStockRows.isEmpty()) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "No inventory batch exists for this medicine. The prescription is still valid; add stock before dispensing.");
+            }
+            if (activeStockRows.stream().anyMatch(stock -> stock.getQuantityOnHand() > 0 && !isExpired(stock) && !isCommerciallyReady(stock))) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Batch setup incomplete. Please update MRP and reorder level in Inventory before sale.");
             }
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This medicine has no sellable stock. The prescription is still valid; replenish stock before dispensing.");
         }
@@ -614,7 +618,7 @@ public class PrescriptionDispensingService {
         if (active.isEmpty()) {
             return new StockAvailability(0, "NO_INVENTORY", "NONE", null);
         }
-        List<StockEntity> usable = active.stream().filter(stock -> !isExpired(stock)).toList();
+        List<StockEntity> usable = active.stream().filter(stock -> !isExpired(stock)).filter(this::isCommerciallyReady).toList();
         int availableQuantity = usable.stream().mapToInt(StockEntity::getQuantityOnHand).sum();
         if (availableQuantity <= 0) {
             boolean hasExpired = active.stream().anyMatch(this::isExpired);
@@ -664,6 +668,12 @@ public class PrescriptionDispensingService {
 
     private boolean isExpired(StockEntity stock) {
         return stock != null && stock.getExpiryDate() != null && stock.getExpiryDate().isBefore(LocalDate.now());
+    }
+
+    private boolean isCommerciallyReady(StockEntity stock) {
+        return stock != null
+                && stock.getSellingPrice() != null
+                && stock.getLowStockThreshold() != null;
     }
 
     private String normalize(String v) {

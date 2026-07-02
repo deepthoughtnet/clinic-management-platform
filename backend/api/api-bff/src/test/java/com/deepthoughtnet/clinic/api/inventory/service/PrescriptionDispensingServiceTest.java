@@ -209,6 +209,22 @@ class PrescriptionDispensingServiceTest {
     }
 
     @Test
+    void dispenseBlocksCommerciallyIncompleteBatch() {
+        StockEntity batch = stock(5, LocalDate.now().plusDays(10));
+        batch.update(batch.getBarcode(), batch.getQrCode(), batch.getExternalCode(), batch.getBatchNumber(), batch.getPurchaseReferenceNumber(), batch.getExpiryDate(), batch.getPurchaseDate(), batch.getSupplierName(), batch.getQuantityReceived(), batch.getQuantityOnHand(), null, batch.getUnitCost(), batch.getPurchasePrice(), null, batch.isActive());
+
+        assertThatThrownBy(() -> service.dispense(
+                TENANT_ID,
+                PRESCRIPTION_ID,
+                new DispenseRequest(null, "Amoxicillin", medicineId, 1, null, false, "FULL_DISPENSE", null, null),
+                ACTOR_ID,
+                false
+        ))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(error -> assertThat(((ResponseStatusException) error).getReason()).contains("Batch setup incomplete"));
+    }
+
+    @Test
     void dispenseDeductsStockOnlyOncePerBatch() {
         StockEntity batch = stock(3, LocalDate.now().plusDays(10));
 
@@ -435,7 +451,7 @@ class PrescriptionDispensingServiceTest {
 
     private StockEntity stock(int quantityOnHand, LocalDate expiryDate) {
         StockEntity entity = StockEntity.create(TENANT_ID, medicineId, DEFAULT_LOCATION_ID);
-        entity.update("B1", null, null, "B1", null, expiryDate, null, null, quantityOnHand, quantityOnHand, 5, null, null, null, true);
+        entity.update("B1", null, null, "B1", null, expiryDate, null, null, quantityOnHand, quantityOnHand, 5, new java.math.BigDecimal("12.00"), new java.math.BigDecimal("12.00"), new java.math.BigDecimal("15.00"), true);
         stockRows.add(entity);
         return entity;
     }

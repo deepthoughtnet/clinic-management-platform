@@ -1,6 +1,6 @@
 import * as React from "react";
 import { z } from "zod";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -1027,6 +1027,7 @@ function isSupplierDuplicate(values: z.infer<typeof supplierFormSchema>, supplie
 
 export default function PharmacyProcurePage() {
   const auth = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const workspace = parseWorkspace(searchParams.get("workspace"));
@@ -1099,6 +1100,8 @@ export default function PharmacyProcurePage() {
   const locationById = React.useMemo(() => new Map(inventoryLocations.map((location) => [location.id, location])), [inventoryLocations]);
   const [selectedPurchaseOrder, setSelectedPurchaseOrder] = React.useState<PurchaseOrderRow | null>(null);
   const [poEditorMode, setPoEditorMode] = React.useState<PurchaseOrderEditorMode>("edit");
+  const [deepLinkNotice, setDeepLinkNotice] = React.useState<string | null>(null);
+  const handledDeepLinkRef = React.useRef<{ po: string; grn: string; invoice: string }>({ po: "", grn: "", invoice: "" });
   const currentPurchaseOrder = React.useMemo(
     () => selectedPurchaseOrder || (editingPoId ? purchaseOrders.find((row) => row.id === editingPoId) || null : null),
     [editingPoId, purchaseOrders, selectedPurchaseOrder],
@@ -1382,7 +1385,7 @@ export default function PharmacyProcurePage() {
   }, [navigate]);
 
   const updateWorkspace = (next: Workspace) => {
-    navigate(`/pharmacy/procure?workspace=${next}${next === "suppliers" ? "&focus=supplier" : ""}`);
+    navigate(`/pharmacy/procurement?workspace=${next}${next === "suppliers" ? "&focus=supplier" : ""}`);
   };
 
   const resetSupplierForm = React.useCallback(() => {
@@ -1858,14 +1861,14 @@ export default function PharmacyProcurePage() {
     if (!po) return;
     await loadPurchaseOrderDetail(po.id, po, "view");
     setPoDrawerOpen(true);
-    navigate("/pharmacy/procure?workspace=purchase-orders");
+    navigate("/pharmacy/procurement?workspace=purchase-orders");
   }, [loadPurchaseOrderDetail, navigate, purchaseOrders]);
   const openInvoiceReference = React.useCallback((invoiceId: string | null | undefined) => {
     if (!invoiceId) return;
     const invoice = invoices.find((candidate) => candidate.id === invoiceId) ?? null;
     if (!invoice) return;
     loadInvoiceIntoForm(invoice, "view");
-    navigate("/pharmacy/procure?workspace=supplier-invoices");
+    navigate("/pharmacy/procurement?workspace=supplier-invoices");
   }, [invoices, loadInvoiceIntoForm, navigate]);
 
   const resetGrnForm = React.useCallback(() => {
@@ -2018,14 +2021,61 @@ export default function PharmacyProcurePage() {
   }, [grnForm.receivedAt]);
 
   React.useEffect(() => {
+    if (location.pathname !== "/pharmacy/procurement") return;
     if (workspace !== "goods-receipt") return;
-    const receiptRef = searchParams.get("receipt");
+    const receiptRef = searchParams.get("grn") || searchParams.get("receipt");
     if (!receiptRef) return;
+    const deepLinkKey = `${workspace}:${receiptRef}`;
+    if (handledDeepLinkRef.current.grn === deepLinkKey || loadingGrns) return;
+    handledDeepLinkRef.current.grn = deepLinkKey;
     const match = grns.find((grn) => grn.id === receiptRef || grn.receiptNumber === receiptRef) ?? null;
     if (match) {
       setSelectedGrn(match);
+      setDeepLinkNotice(`Opened from reconciliation for GRN: ${match.receiptNumber}`);
+    } else {
+      setDeepLinkNotice(`Opened from reconciliation for GRN: ${receiptRef}`);
     }
-  }, [grns, searchParams, workspace]);
+  }, [grns, loadingGrns, location.pathname, searchParams, workspace]);
+
+  React.useEffect(() => {
+    if (location.pathname !== "/pharmacy/procurement") return;
+    if (workspace !== "purchase-orders") return;
+    const poRef = searchParams.get("po");
+    if (!poRef) return;
+    const deepLinkKey = `${workspace}:${poRef}`;
+    if (handledDeepLinkRef.current.po === deepLinkKey || loadingPurchaseOrders) return;
+    handledDeepLinkRef.current.po = deepLinkKey;
+    const match = purchaseOrders.find((po) => po.id === poRef || po.poNumber === poRef) ?? null;
+    if (!match) {
+      setDeepLinkNotice(`Selected from reconciliation: ${poRef}`);
+      return;
+    }
+    void loadPurchaseOrderDetail(match.id, match, "view")
+      .then(() => {
+        setPoDrawerOpen(false);
+        setDeepLinkNotice(`Selected from reconciliation: ${match.poNumber}`);
+      })
+      .catch(() => {
+        setDeepLinkNotice(`Selected from reconciliation: ${poRef}`);
+      });
+  }, [loadPurchaseOrderDetail, loadingPurchaseOrders, location.pathname, purchaseOrders, searchParams, workspace]);
+
+  React.useEffect(() => {
+    if (location.pathname !== "/pharmacy/procurement") return;
+    if (workspace !== "supplier-invoices") return;
+    const invoiceRef = searchParams.get("invoice");
+    if (!invoiceRef) return;
+    const deepLinkKey = `${workspace}:${invoiceRef}`;
+    if (handledDeepLinkRef.current.invoice === deepLinkKey || loadingInvoices) return;
+    handledDeepLinkRef.current.invoice = deepLinkKey;
+    const match = invoices.find((invoice) => invoice.id === invoiceRef || invoice.invoiceNumber === invoiceRef) ?? null;
+    if (!match) {
+      setDeepLinkNotice(`Selected from reconciliation: ${invoiceRef}`);
+      return;
+    }
+    loadInvoiceIntoForm(match, "view");
+    setDeepLinkNotice(`Selected from reconciliation: ${match.invoiceNumber}`);
+  }, [invoices, loadInvoiceIntoForm, loadingInvoices, location.pathname, searchParams, workspace]);
 
   const currentSupplierCount = suppliers.length;
   const currentPurchaseOrderCount = purchaseOrders.filter((po) => po.status === "Generated" || po.status === "Sent" || po.status === "Partially Received").length;
@@ -2289,6 +2339,7 @@ export default function PharmacyProcurePage() {
 
       {supplierSuccess ? <Alert severity="success" onClose={() => setSupplierSuccess(null)}>{supplierSuccess}</Alert> : null}
       {supplierError ? <Alert severity="error" onClose={() => setSupplierError(null)}>{supplierError}</Alert> : null}
+      {deepLinkNotice ? <Alert severity="info" onClose={() => setDeepLinkNotice(null)}>{deepLinkNotice}</Alert> : null}
 
       {workspace === "suppliers" ? (
         <Grid container spacing={2}>

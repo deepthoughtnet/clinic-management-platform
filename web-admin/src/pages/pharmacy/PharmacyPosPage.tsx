@@ -70,6 +70,7 @@ import {
   getPharmacyPosAvailableBatches,
   getPharmacyPosPrescriptionDownloadUrl,
   getPharmacyPosReceiptPdf,
+  getStocks,
   listPharmacyPosSales,
   listPharmacyPosShifts,
   openPharmacyPosShift,
@@ -84,6 +85,7 @@ import {
   type PharmacyPosPrescriptionUpload,
   type PharmacyPosSale,
   type PharmacyPosShift,
+  type Stock,
 } from "../../api/clinicApi";
 import { useAuth } from "../../auth/useAuth";
 
@@ -127,6 +129,7 @@ const HELD_CART_STORAGE_KEY = "pharmacy-pos-held-cart";
 const STICKY_TOP = 76;
 const PRESCRIPTION_MAX_BYTES = 10 * 1024 * 1024;
 const POS_LOW_STOCK_THRESHOLD = 5;
+const BATCH_SETUP_INCOMPLETE_MESSAGE = "Batch setup incomplete. Please update MRP and reorder level in Inventory before sale.";
 
 const panelSx = {
   border: "1px solid",
@@ -399,6 +402,7 @@ export default function PharmacyPosPage() {
   const [stockFilter, setStockFilter] = React.useState<StockFilter>("IN_STOCK");
   const [hideUnavailable, setHideUnavailable] = React.useState(true);
   const [batchPreview, setBatchPreview] = React.useState<Record<string, PharmacyPosBatch[]>>({});
+  const [inventoryStocks, setInventoryStocks] = React.useState<Stock[]>([]);
   const [cart, setCart] = React.useState<CartLine[]>([]);
   const [heldDraft, setHeldDraft] = React.useState<HeldDraft | null>(null);
 
@@ -716,6 +720,24 @@ export default function PharmacyPosPage() {
   }, [canAccessPos, tenantId, token]);
 
   React.useEffect(() => {
+    let cancelled = false;
+    if (!token || !tenantId || !canAccessPos) {
+      setInventoryStocks([]);
+      return;
+    }
+    void getStocks(token, tenantId)
+      .then((rows) => {
+        if (!cancelled) setInventoryStocks(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setInventoryStocks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canAccessPos, tenantId, token]);
+
+  React.useEffect(() => {
     searchInputRef.current?.focus();
     try {
       const raw = window.sessionStorage.getItem(HELD_CART_STORAGE_KEY);
@@ -934,7 +956,13 @@ export default function PharmacyPosPage() {
 
   const addMedicine = React.useCallback(async (medicine: PharmacyPosMedicine) => {
     if (medicine.totalAvailableQuantity <= 0) {
-      setError("Out of stock. Add stock before sale.");
+      const hasIncompleteSetup = inventoryStocks.some((stock) =>
+        stock.medicineId === medicine.medicineId
+        && stock.active
+        && stock.quantityOnHand > 0
+        && (stock.sellingPrice == null || stock.lowStockThreshold == null),
+      );
+      setError(hasIncompleteSetup ? BATCH_SETUP_INCOMPLETE_MESSAGE : "Out of stock. Add stock before sale.");
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
       return false;
     }
@@ -985,7 +1013,7 @@ export default function PharmacyPosPage() {
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
     }
     return true;
-  }, [batchPreview, tenantId, token]);
+  }, [batchPreview, inventoryStocks, tenantId, token]);
 
   const handleScannedCode = React.useCallback(async (rawValue: string, mode: CodeScanMode) => {
     if (!token || !tenantId) {

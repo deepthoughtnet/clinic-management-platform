@@ -281,6 +281,19 @@ class PharmacyPosServiceTest {
     }
 
     @Test
+    void availableBatchesExcludeCommerciallyIncompleteStock() {
+        MedicineEntity medicine = medicine("Paracetamol");
+        StockEntity incomplete = stock(medicine.getId(), "SETUP", LocalDate.now().plusDays(14), 8, "12.00");
+        incomplete.update(location.getId(), null, null, null, "SETUP", null, LocalDate.now().plusDays(14), LocalDate.now(), "Supplier", 8, 8, null, new BigDecimal("1.00"), new BigDecimal("2.00"), null, true);
+        when(stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, medicine.getId(), location.getId()))
+                .thenReturn(List.of(incomplete));
+
+        List<PharmacyPosBatchResponse> batches = service.availableBatches(tenantId, medicine.getId());
+
+        assertThat(batches).isEmpty();
+    }
+
+    @Test
     void createSaleBlocksWhenStockIsInsufficient() {
         MedicineEntity medicine = medicine("Ibuprofen");
         when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
@@ -525,6 +538,24 @@ class PharmacyPosServiceTest {
                 List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("3.00"), BigDecimal.ZERO, BigDecimal.ZERO))
         ), actorId)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Batch expired and cannot be sold or dispensed.");
+    }
+
+    @Test
+    void createSaleBlocksCommerciallyIncompleteBatch() {
+        MedicineEntity medicine = medicine("Cetirizine");
+        StockEntity incomplete = stock(medicine.getId(), "SETUP", LocalDate.now().plusDays(20), 10, "3.00");
+        incomplete.update(location.getId(), null, null, null, "SETUP", null, LocalDate.now().plusDays(20), LocalDate.now(), "Supplier", 10, 10, null, new BigDecimal("1.00"), new BigDecimal("2.00"), null, true);
+        when(medicineRepository.findByTenantIdAndId(tenantId, medicine.getId())).thenReturn(Optional.of(medicine));
+        when(stockRepository.findByTenantIdAndMedicineIdAndLocationId(tenantId, medicine.getId(), location.getId()))
+                .thenReturn(List.of(incomplete));
+        when(stockRepository.findSellableBatchesForUpdate(tenantId, location.getId(), medicine.getId()))
+                .thenReturn(List.of(incomplete));
+
+        assertThatThrownBy(() -> service.createSale(tenantId, new PharmacyPosCreateSaleRequest(
+                null, "Walk-in", null, null, OffsetDateTime.now(), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, null, null, null,
+                List.of(new PharmacyPosSaleLineRequest(medicine.getId(), 1, new BigDecimal("3.00"), BigDecimal.ZERO, BigDecimal.ZERO))
+        ), actorId)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Batch setup incomplete");
     }
 
     @Test
