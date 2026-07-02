@@ -98,6 +98,38 @@ function movementLabel(type: string) {
   return labels[type] || type;
 }
 
+function parseNoteFields(notes: string | null | undefined) {
+  const fields: Record<string, string> = {};
+  (notes || "")
+    .split("•")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .forEach((part) => {
+      const separator = part.indexOf(":");
+      if (separator === -1) return;
+      const key = part.slice(0, separator).trim().toLowerCase();
+      const value = part.slice(separator + 1).trim();
+      if (key && value && !fields[key]) {
+        fields[key] = value;
+      }
+    });
+  return fields;
+}
+
+function movementDisplayLabel(row: InventoryTransaction) {
+  if (row.referenceType === "PHYSICAL_COUNT") {
+    return "Physical Count";
+  }
+  return movementLabel(row.transactionType);
+}
+
+function movementDisplayTone(row: InventoryTransaction) {
+  if (row.referenceType === "PHYSICAL_COUNT") {
+    return "info" as const;
+  }
+  return movementChip(row.transactionType);
+}
+
 function movementMatchesChip(row: InventoryTransaction, chip: string) {
   switch (chip) {
     case "":
@@ -325,11 +357,13 @@ export default function StockMovementsPage() {
                     {filtered.map((row) => {
                       const medicine = medicineById.get(row.medicineId);
                       const batchLabel = row.batchNumber?.trim() || "Batch not mapped";
+                      const parsedNotes = parseNoteFields(row.notes);
+                      const sessionName = parsedNotes.session || row.reason || row.businessReference || "Inventory movement";
                       return (
                         <TableRow key={row.id} hover>
                           <TableCell>{new Date(row.createdAt).toLocaleString()}</TableCell>
                           <TableCell>{medicine?.medicineName || "Unknown medicine"}</TableCell>
-                          <TableCell><Chip size="small" label={movementLabel(row.transactionType)} color={movementChip(row.transactionType)} /></TableCell>
+                          <TableCell><Chip size="small" label={movementDisplayLabel(row)} color={movementDisplayTone(row)} /></TableCell>
                           <TableCell>
                             {row.stockBatchId ? (
                               <Button size="small" variant="text" sx={{ minWidth: 0, p: 0 }} onClick={() => setSelectedBatchId(row.stockBatchId)}>
@@ -340,7 +374,12 @@ export default function StockMovementsPage() {
                           <TableCell align="right">{row.beforeQuantity ?? "-"}</TableCell>
                           <TableCell align="right">{row.afterQuantity ?? "-"}</TableCell>
                           <TableCell align="right">{row.quantity}</TableCell>
-                          <TableCell>{row.businessReference || movementLabel(row.transactionType)}</TableCell>
+                          <TableCell>
+                            <Stack spacing={0.2}>
+                              <Typography variant="body2">{sessionName}</Typography>
+                              <Typography variant="caption" color="text.secondary">{row.referenceType || movementLabel(row.transactionType)}</Typography>
+                            </Stack>
+                          </TableCell>
                           <TableCell>{row.adjustedByName || "System action"}</TableCell>
                           <TableCell>{row.notes || row.reason || "-"}</TableCell>
                         </TableRow>
@@ -385,10 +424,15 @@ export default function StockMovementsPage() {
                     <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
                       <Stack spacing={0.5}>
                         <Stack direction="row" justifyContent="space-between" spacing={1}>
-                          <Chip size="small" label={movementLabel(row.transactionType)} color={movementChip(row.transactionType)} />
+                          <Chip size="small" label={movementDisplayLabel(row)} color={movementDisplayTone(row)} />
                           <Typography variant="caption" color="text.secondary">{new Date(row.createdAt).toLocaleString()}</Typography>
                         </Stack>
-                        <Typography variant="body2">{row.businessReference || movementLabel(row.transactionType)}</Typography>
+                        <Typography variant="body2">{parseNoteFields(row.notes).session || row.businessReference || movementLabel(row.transactionType)}</Typography>
+                        {row.referenceType === "PHYSICAL_COUNT" ? (
+                          <Typography variant="caption" color="text.secondary">
+                            Session {parseNoteFields(row.notes).session || "-"} · Reason {parseNoteFields(row.notes).reason || row.reason || "-"} · Posted by {parseNoteFields(row.notes)["posted by"] || row.adjustedByName || "System"}
+                          </Typography>
+                        ) : null}
                         <Typography variant="caption" color="text.secondary">
                           Qty {row.quantity} | Before {row.beforeQuantity ?? "-"} | After {row.afterQuantity ?? "-"}
                         </Typography>

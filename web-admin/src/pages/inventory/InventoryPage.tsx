@@ -9,13 +9,17 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   CircularProgress,
+  Divider,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  Drawer,
   FormControl,
+  FormControlLabel,
   Grid,
   IconButton,
   InputAdornment,
@@ -42,7 +46,7 @@ import CameraAltRoundedIcon from "@mui/icons-material/CameraAltRounded";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/useAuth";
-import { CompactEmptyState, CompactFilterCard, CompactStatCard, WorkflowGuide, compactAccordionSx, compactCardContentSx, compactFormSx } from "../../components/compact/CompactUi";
+import { CompactEmptyState, CompactFilterCard, CompactStatCard, OperationalTableCard, WorkflowGuide, compactAccordionSx, compactCardContentSx, compactFormSx } from "../../components/compact/CompactUi";
 import CodeScannerField from "../../components/pharmacy/CodeScannerField";
 import CodeScannerDialog from "../../components/pharmacy/CodeScannerDialog";
 import RequiredLabel from "../../components/forms/RequiredLabel.js";
@@ -105,6 +109,7 @@ type TransactionFormState = {
   stockBatchId: string;
   transactionType: InventoryTransactionType;
   quantity: string;
+  reason: string;
   referenceType: string;
   referenceId: string;
   notes: string;
@@ -117,6 +122,89 @@ type StockCountFormState = {
   countedQuantity: string;
   reason: string;
   remarks: string;
+};
+
+type PhysicalCountScope = "ENTIRE_INVENTORY" | "CATEGORY" | "SELECTED_MEDICINES";
+type PhysicalCountReason = "MONTHLY_COUNT" | "QUARTERLY_AUDIT" | "CYCLE_COUNT" | "ANNUAL_AUDIT";
+type PhysicalCountSessionStatus = "DRAFT" | "IN_PROGRESS" | "SUBMITTED" | "REVIEWED" | "APPROVED" | "POSTED" | "REJECTED";
+type PhysicalCountWorkspaceMode = "continue" | "review" | "view";
+type PhysicalCountLineStatus = "PENDING" | "MATCHED" | "SHORT" | "EXCESS";
+type PhysicalCountTimelineState = "completed" | "current" | "pending";
+
+type PhysicalCountReviewChecklist = {
+  randomSampleVerified: boolean;
+  largeVariancesInvestigated: boolean;
+  batchVerificationComplete: boolean;
+  supportingRemarksAdded: boolean;
+};
+
+type PhysicalCountAuditFields = {
+  createdBy: string;
+  createdAt: string;
+  startedBy: string | null;
+  startedAt: string | null;
+  lastUpdatedAt: string | null;
+  submittedBy: string | null;
+  submittedAt: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  reviewer: string | null;
+  reviewedDate: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  approvalNotes: string;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string;
+  returnedBy: string | null;
+  returnedAt: string | null;
+  returnReason: string;
+  postedBy: string | null;
+  postedAt: string | null;
+  sessionDuration: string | null;
+  generalNotes: string;
+  counterNotes: string;
+  reviewerNotes: string;
+  auditNotes: string;
+  reviewChecklist: PhysicalCountReviewChecklist;
+};
+
+type PhysicalCountSessionFormState = {
+  sessionName: string;
+  locationId: string;
+  scope: PhysicalCountScope;
+  category: string;
+  selectedMedicineIds: string[];
+  reason: PhysicalCountReason;
+};
+
+type PhysicalCountSessionLine = {
+  id: string;
+  medicineId: string;
+  medicineName: string;
+  batchNumber: string;
+  locationId: string;
+  locationName: string;
+  stockBatchId: string;
+  systemQty: number;
+  countedQty: string;
+  reason: string;
+  reviewerRemarks: string;
+  flagged: boolean;
+  reviewed: boolean;
+};
+
+type PhysicalCountSession = {
+  id: string;
+  sessionName: string;
+  locationId: string;
+  locationName: string;
+  scope: PhysicalCountScope;
+  scopeLabel: string;
+  reason: PhysicalCountReason;
+  status: PhysicalCountSessionStatus;
+  lines: PhysicalCountSessionLine[];
+  audit: PhysicalCountAuditFields;
 };
 
 type FormErrorMap = Record<string, string>;
@@ -144,6 +232,16 @@ const TRANSACTION_TYPES: InventoryTransactionType[] = [
   "STOCK_IN",
   "ADJUSTMENT_IN",
   "ADJUSTMENT_OUT",
+];
+const STOCK_ADJUSTMENT_OPTIONS: Array<{ value: InventoryTransactionType; label: string; helper: string }> = [
+  { value: "OPENING", label: "Opening Balance", helper: "Use for opening stock or initial stock setup." },
+  { value: "ADJUSTMENT_IN", label: "Increase", helper: "Adds stock to the selected batch." },
+  { value: "ADJUSTMENT_OUT", label: "Decrease", helper: "Removes stock from the selected batch." },
+  { value: "ADJUSTMENT", label: "Correction", helper: "Manual correction using current adjustment engine." },
+  { value: "WRITE_OFF", label: "Damage", helper: "Reduces stock for damaged units." },
+  { value: "EXPIRED", label: "Expiry", helper: "Reduces stock for expired units." },
+  { value: "VENDOR_RETURN_OUT", label: "Vendor Return", helper: "Reduces stock for items sent back to supplier." },
+  { value: "CUSTOMER_RETURN_IN", label: "Customer Return", helper: "Adds stock back for reusable customer returns." },
 ];
 const MEDICINE_TYPES: MedicineType[] = ["TABLET", "CAPSULE", "SYRUP", "INJECTION", "DROP", "OINTMENT", "OTHER"];
 
@@ -175,6 +273,7 @@ function emptyTransactionForm(): TransactionFormState {
     stockBatchId: "",
     transactionType: "OPENING",
     quantity: "",
+    reason: "",
     referenceType: "",
     referenceId: "",
     notes: "",
@@ -189,6 +288,59 @@ function emptyStockCountForm(): StockCountFormState {
     countedQuantity: "",
     reason: "",
     remarks: "",
+  };
+}
+
+function emptyPhysicalCountSessionForm(): PhysicalCountSessionFormState {
+  return {
+    sessionName: "",
+    locationId: "",
+    scope: "ENTIRE_INVENTORY",
+    category: "",
+    selectedMedicineIds: [],
+    reason: "MONTHLY_COUNT",
+  };
+}
+
+function emptyPhysicalCountReviewChecklist(): PhysicalCountReviewChecklist {
+  return {
+    randomSampleVerified: false,
+    largeVariancesInvestigated: false,
+    batchVerificationComplete: false,
+    supportingRemarksAdded: false,
+  };
+}
+
+function emptyPhysicalCountAuditFields(createdBy: string): PhysicalCountAuditFields {
+  return {
+    createdBy,
+    createdAt: new Date().toISOString(),
+    startedBy: null,
+    startedAt: null,
+    lastUpdatedAt: null,
+    submittedBy: null,
+    submittedAt: null,
+    reviewedBy: null,
+    reviewedAt: null,
+    reviewer: null,
+    reviewedDate: null,
+    approvedBy: null,
+    approvedAt: null,
+    approvalNotes: "",
+    rejectedBy: null,
+    rejectedAt: null,
+    rejectionReason: "",
+    returnedBy: null,
+    returnedAt: null,
+    returnReason: "",
+    postedBy: null,
+    postedAt: null,
+    sessionDuration: null,
+    generalNotes: "",
+    counterNotes: "",
+    reviewerNotes: "",
+    auditNotes: "",
+    reviewChecklist: emptyPhysicalCountReviewChecklist(),
   };
 }
 
@@ -292,11 +444,36 @@ function transactionInput(form: TransactionFormState): InventoryTransactionInput
     stockBatchId: form.stockBatchId.trim() || null,
     transactionType: form.transactionType,
     quantity: Number(form.quantity || "0"),
-    reason: form.notes.trim() || null,
+    reason: form.reason.trim() || null,
     referenceType: form.referenceType.trim() || null,
     referenceId: form.referenceId.trim() || null,
-    notes: form.notes.trim() || null,
+    notes: [form.reason.trim() || null, form.notes.trim() || null].filter(Boolean).join(" • ") || null,
   };
+}
+
+function stockAdjustmentActionLabel(type: InventoryTransactionType) {
+  return STOCK_ADJUSTMENT_OPTIONS.find((option) => option.value === type)?.label || transactionLabel(type);
+}
+
+function stockAdjustmentNextQuantity(currentQty: number, type: InventoryTransactionType, quantity: number) {
+  switch (type) {
+    case "ADJUSTMENT_OUT":
+    case "WRITE_OFF":
+    case "EXPIRED":
+    case "VENDOR_RETURN_OUT":
+      return currentQty - quantity;
+    case "OPENING":
+    case "ADJUSTMENT":
+    case "ADJUSTMENT_IN":
+    case "CUSTOMER_RETURN_IN":
+      return currentQty + quantity;
+    default:
+      return currentQty + quantity;
+  }
+}
+
+function stockAdjustmentIsDecrease(type: InventoryTransactionType) {
+  return ["ADJUSTMENT_OUT", "WRITE_OFF", "EXPIRED", "VENDOR_RETURN_OUT"].includes(type);
 }
 
 function statusColor(quantity: number, threshold: number | null) {
@@ -325,6 +502,388 @@ function transactionLabel(type: InventoryTransactionType) {
     TRANSFER_OUT: "Transfer Out",
   };
   return labels[type] || type;
+}
+
+function physicalCountReasonLabel(reason: PhysicalCountReason) {
+  const labels: Record<PhysicalCountReason, string> = {
+    MONTHLY_COUNT: "Monthly Count",
+    QUARTERLY_AUDIT: "Quarterly Audit",
+    CYCLE_COUNT: "Cycle Count",
+    ANNUAL_AUDIT: "Annual Audit",
+  };
+  return labels[reason];
+}
+
+function physicalCountScopeLabel(scope: PhysicalCountScope) {
+  const labels: Record<PhysicalCountScope, string> = {
+    ENTIRE_INVENTORY: "Entire Inventory",
+    CATEGORY: "Category",
+    SELECTED_MEDICINES: "Selected Medicines",
+  };
+  return labels[scope];
+}
+
+function physicalCountStatusColor(status: PhysicalCountSessionStatus) {
+  switch (status) {
+    case "IN_PROGRESS":
+      return "warning" as const;
+    case "SUBMITTED":
+      return "info" as const;
+    case "REVIEWED":
+    case "APPROVED":
+      return "success" as const;
+    case "POSTED":
+      return "primary" as const;
+    case "REJECTED":
+      return "error" as const;
+    case "DRAFT":
+    default:
+      return "default" as const;
+  }
+}
+
+function physicalCountStatusLabel(status: PhysicalCountSessionStatus) {
+  switch (status) {
+    case "IN_PROGRESS":
+      return "In Progress";
+    case "SUBMITTED":
+      return "Submitted";
+    case "REVIEWED":
+      return "Reviewed";
+    case "APPROVED":
+      return "Approved";
+    case "POSTED":
+      return "Posted";
+    case "REJECTED":
+      return "Rejected";
+    case "DRAFT":
+    default:
+      return "Draft";
+  }
+}
+
+function physicalCountLineDifference(line: Pick<PhysicalCountSessionLine, "countedQty" | "systemQty">) {
+  const trimmed = line.countedQty.trim();
+  if (!trimmed) return null;
+  const countedQty = Number(trimmed);
+  if (!Number.isFinite(countedQty)) return null;
+  return countedQty - line.systemQty;
+}
+
+function physicalCountLineStatus(line: Pick<PhysicalCountSessionLine, "countedQty" | "systemQty">): PhysicalCountLineStatus {
+  const difference = physicalCountLineDifference(line);
+  if (difference == null) return "PENDING";
+  if (difference === 0) return "MATCHED";
+  return difference < 0 ? "SHORT" : "EXCESS";
+}
+
+function physicalCountLineStatusColor(status: PhysicalCountLineStatus) {
+  switch (status) {
+    case "MATCHED":
+      return "success" as const;
+    case "SHORT":
+      return "warning" as const;
+    case "EXCESS":
+      return "info" as const;
+    case "PENDING":
+    default:
+      return "default" as const;
+  }
+}
+
+function physicalCountLineStatusLabel(status: PhysicalCountLineStatus) {
+  switch (status) {
+    case "MATCHED":
+      return "Matched";
+    case "SHORT":
+      return "Short";
+    case "EXCESS":
+      return "Excess";
+    case "PENDING":
+    default:
+      return "Pending";
+  }
+}
+
+function physicalCountCompletionPercent(lines: PhysicalCountSessionLine[]) {
+  if (!lines.length) return 0;
+  const counted = lines.filter((line) => physicalCountLineDifference(line) != null).length;
+  return Math.round((counted / lines.length) * 100);
+}
+
+function physicalCountLargeVarianceCount(lines: PhysicalCountSessionLine[]) {
+  return lines.filter((line) => {
+    const difference = physicalCountLineDifference(line);
+    return difference != null && Math.abs(difference) >= 10;
+  }).length;
+}
+
+function physicalCountDurationLabel(startedAt: string | null, endAt: string | null) {
+  if (!startedAt || !endAt) return null;
+  const durationMs = new Date(endAt).getTime() - new Date(startedAt).getTime();
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return null;
+  const minutes = Math.round(durationMs / (1000 * 60));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+function physicalCountRecommendation(status: PhysicalCountSessionStatus) {
+  switch (status) {
+    case "DRAFT":
+      return "Start counting to capture physical quantities.";
+    case "IN_PROGRESS":
+      return "Complete pending items before submitting.";
+    case "SUBMITTED":
+      return "Review variances and mark the session reviewed.";
+    case "REVIEWED":
+      return "Reviewed and ready for approval.";
+    case "APPROVED":
+      return "Approved and ready to post stock adjustments.";
+    case "POSTED":
+      return "Posted to inventory and audit trail completed.";
+    case "REJECTED":
+      return "Rejected. Review the reason before creating a new session.";
+    default:
+      return "";
+  }
+}
+
+function physicalCountTimeline(session: PhysicalCountSession): Array<{ label: string; state: PhysicalCountTimelineState; at: string | null }> {
+  const steps = [
+    { label: "Created", at: session.audit.createdAt },
+    { label: "Counting Started", at: session.audit.startedAt },
+    { label: "Last Saved", at: session.audit.lastUpdatedAt },
+    { label: "Submitted", at: session.audit.submittedAt },
+    { label: "Reviewed", at: session.audit.reviewedAt },
+    { label: "Approved", at: session.audit.approvedAt },
+    { label: "Returned for Recount", at: session.audit.returnedAt },
+    { label: "Rejected", at: session.audit.rejectedAt },
+    { label: "Posted", at: session.audit.postedAt },
+  ];
+  const currentLabel = session.status === "DRAFT"
+    ? "Created"
+    : session.status === "IN_PROGRESS"
+      ? (session.audit.returnedAt ? "Returned for Recount" : (session.audit.lastUpdatedAt ? "Last Saved" : "Counting Started"))
+      : session.status === "SUBMITTED"
+        ? "Submitted"
+        : session.status === "REVIEWED"
+          ? "Reviewed"
+          : session.status === "APPROVED"
+            ? "Approved"
+            : session.status === "REJECTED"
+              ? "Rejected"
+              : "Posted";
+  return steps.map((step, index) => ({
+    label: step.label,
+    at: step.at,
+    state: step.at
+      ? "completed"
+      : step.label === currentLabel
+        ? "current"
+        : "pending",
+  }));
+}
+
+function formatInventoryDateTime(value: string) {
+  return new Date(value).toLocaleString();
+}
+
+function buildPhysicalCountSessionLines(
+  stocks: Stock[],
+  medicines: Medicine[],
+  locations: InventoryLocation[],
+  form: PhysicalCountSessionFormState,
+) {
+  const categoriesByMedicineId = new Map(medicines.map((medicine) => [medicine.id, normalizeInventoryText(medicine.category).toLowerCase()]));
+  return stocks
+    .filter((stock) => stock.locationId === form.locationId)
+    .filter((stock) => {
+      if (form.scope === "ENTIRE_INVENTORY") return true;
+      if (form.scope === "CATEGORY") {
+        return categoriesByMedicineId.get(stock.medicineId) === normalizeInventoryText(form.category).toLowerCase();
+      }
+      if (form.scope === "SELECTED_MEDICINES") {
+        return form.selectedMedicineIds.includes(stock.medicineId);
+      }
+      return true;
+    })
+    .map((stock) => ({
+      id: `line-${stock.id}`,
+      medicineId: stock.medicineId,
+      medicineName: stock.medicineName,
+      batchNumber: stock.batchNumber || "No batch",
+      locationId: stock.locationId || "",
+      locationName: stock.locationName || locations.find((location) => location.id === stock.locationId)?.locationName || "Main Pharmacy",
+      stockBatchId: stock.id,
+      systemQty: stock.quantityOnHand,
+      countedQty: "",
+      reason: "",
+      reviewerRemarks: "",
+      flagged: false,
+      reviewed: false,
+    }));
+}
+
+function buildDemoPhysicalCountSessions(
+  stocks: Stock[],
+  medicines: Medicine[],
+  locations: InventoryLocation[],
+  createdBy: string,
+) {
+  if (!stocks.length || !locations.length) {
+    return [] as PhysicalCountSession[];
+  }
+  const defaultLocation = locations.find((location) => location.defaultLocation) || locations[0];
+  const secondaryLocation = locations.find((location) => location.id !== defaultLocation.id) || defaultLocation;
+
+  const monthlyLines = buildPhysicalCountSessionLines(stocks, medicines, locations, {
+    sessionName: "Monthly Main Pharmacy Count",
+    locationId: defaultLocation.id,
+    scope: "ENTIRE_INVENTORY",
+    category: "",
+    selectedMedicineIds: [],
+    reason: "MONTHLY_COUNT",
+  }).slice(0, 6).map((line, index) => ({
+    ...line,
+    countedQty: index % 3 === 0 ? String(line.systemQty) : index % 3 === 1 ? String(Math.max(0, line.systemQty - 2)) : String(line.systemQty + 1),
+    reason: index % 3 === 0 ? "" : index % 3 === 1 ? "Shelf shortage" : "Additional loose units found",
+  }));
+
+  const cycleLines = buildPhysicalCountSessionLines(stocks, medicines, locations, {
+    sessionName: "Cycle Count Fast Movers",
+    locationId: secondaryLocation.id,
+    scope: "ENTIRE_INVENTORY",
+    category: "",
+    selectedMedicineIds: [],
+    reason: "CYCLE_COUNT",
+  }).slice(0, 5).map((line, index) => ({
+    ...line,
+    countedQty: index < 2 ? String(line.systemQty) : "",
+    reason: index < 2 ? "Verified on rack" : "",
+  }));
+
+  const submittedLines = monthlyLines.slice(0, Math.min(monthlyLines.length, 4)).map((line, index) => ({
+    ...line,
+    countedQty: index % 2 === 0 ? String(line.systemQty) : String(Math.max(0, line.systemQty - 1)),
+    reason: index % 2 === 0 ? "Checked" : "Damaged pack on shelf",
+  }));
+
+  const sessions: PhysicalCountSession[] = [
+    {
+      id: "physical-count-demo-draft",
+      sessionName: "Annual Audit Preparation",
+      locationId: defaultLocation.id,
+      locationName: defaultLocation.locationName,
+      scope: "ENTIRE_INVENTORY",
+      scopeLabel: physicalCountScopeLabel("ENTIRE_INVENTORY"),
+      reason: "ANNUAL_AUDIT",
+      status: "DRAFT",
+      lines: buildPhysicalCountSessionLines(stocks, medicines, locations, {
+        sessionName: "Annual Audit Preparation",
+        locationId: defaultLocation.id,
+        scope: "ENTIRE_INVENTORY",
+        category: "",
+        selectedMedicineIds: [],
+        reason: "ANNUAL_AUDIT",
+      }).slice(0, 4),
+      audit: {
+        ...emptyPhysicalCountAuditFields(createdBy),
+        createdAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 2)).toISOString(),
+        generalNotes: "Annual count scope drafted for audit preparation.",
+      },
+    },
+    {
+      id: "physical-count-demo-progress",
+      sessionName: "Cycle Count Fast Movers",
+      locationId: secondaryLocation.id,
+      locationName: secondaryLocation.locationName,
+      scope: "ENTIRE_INVENTORY",
+      scopeLabel: physicalCountScopeLabel("ENTIRE_INVENTORY"),
+      reason: "CYCLE_COUNT",
+      status: "IN_PROGRESS",
+      lines: cycleLines,
+      audit: {
+        ...emptyPhysicalCountAuditFields(createdBy),
+        createdAt: new Date(Date.now() - (1000 * 60 * 60 * 10)).toISOString(),
+        startedBy: createdBy,
+        startedAt: new Date(Date.now() - (1000 * 60 * 60 * 9)).toISOString(),
+        lastUpdatedAt: new Date(Date.now() - (1000 * 60 * 30)).toISOString(),
+        sessionDuration: "8h 30m",
+        counterNotes: "Fast-moving items started by afternoon shift.",
+      },
+    },
+    {
+      id: "physical-count-demo-submitted",
+      sessionName: "Monthly Main Pharmacy Count",
+      locationId: defaultLocation.id,
+      locationName: defaultLocation.locationName,
+      scope: "ENTIRE_INVENTORY",
+      scopeLabel: physicalCountScopeLabel("ENTIRE_INVENTORY"),
+      reason: "MONTHLY_COUNT",
+      status: "SUBMITTED",
+      lines: submittedLines.map((line, index) => ({
+        ...line,
+        reviewerRemarks: index % 2 === 0 ? "Variance explanation sufficient." : "",
+        flagged: index % 2 === 1,
+        reviewed: false,
+      })),
+      audit: {
+        ...emptyPhysicalCountAuditFields(createdBy),
+        createdAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 12)).toISOString(),
+        startedBy: createdBy,
+        startedAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 11)).toISOString(),
+        lastUpdatedAt: new Date(Date.now() - (1000 * 60 * 60 * 24)).toISOString(),
+        submittedBy: createdBy,
+        submittedAt: new Date(Date.now() - (1000 * 60 * 60 * 22)).toISOString(),
+        sessionDuration: "13h",
+        generalNotes: "Monthly count ready for review.",
+        counterNotes: "Variance notes added against damaged shelf stock.",
+      },
+    },
+    {
+      id: "physical-count-demo-reviewed",
+      sessionName: "Quarterly Audit OTC Shelf",
+      locationId: defaultLocation.id,
+      locationName: defaultLocation.locationName,
+      scope: "ENTIRE_INVENTORY",
+      scopeLabel: physicalCountScopeLabel("ENTIRE_INVENTORY"),
+      reason: "QUARTERLY_AUDIT",
+      status: "REVIEWED",
+      lines: monthlyLines.slice(0, 3).map((line, index) => ({
+        ...line,
+        countedQty: index === 0 ? String(line.systemQty) : String(Math.max(0, line.systemQty - 1)),
+        reason: index === 0 ? "Matched" : "Pack opened",
+        reviewerRemarks: "Reviewed against shelf note.",
+        flagged: index === 1,
+        reviewed: true,
+      })),
+      audit: {
+        ...emptyPhysicalCountAuditFields(createdBy),
+        createdAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 18)).toISOString(),
+        startedBy: createdBy,
+        startedAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 17)).toISOString(),
+        lastUpdatedAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 16)).toISOString(),
+        submittedBy: createdBy,
+        submittedAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 15)).toISOString(),
+        reviewedBy: createdBy,
+        reviewedAt: new Date(Date.now() - (1000 * 60 * 60 * 24 * 14)).toISOString(),
+        reviewer: createdBy,
+        reviewedDate: new Date(Date.now() - (1000 * 60 * 60 * 24 * 14)).toISOString(),
+        sessionDuration: "3h",
+        reviewerNotes: "Variance sample reviewed and accepted for next phase.",
+        auditNotes: "Ready for approval workflow in Batch 3.",
+        reviewChecklist: {
+          randomSampleVerified: true,
+          largeVariancesInvestigated: true,
+          batchVerificationComplete: true,
+          supportingRemarksAdded: true,
+        },
+      },
+    },
+  ];
+  return sessions.filter((session) => session.lines.length > 0);
 }
 
 function utcDayNumber(dateValue: string) {
@@ -390,6 +949,7 @@ export default function InventoryPage() {
   const [locations, setLocations] = React.useState<InventoryLocation[]>([]);
   const [stockForm, setStockForm] = React.useState<StockFormState>(emptyStockForm());
   const [transactionForm, setTransactionForm] = React.useState<TransactionFormState>(emptyTransactionForm());
+  const [transactionSearchInput, setTransactionSearchInput] = React.useState("");
   const [selectedStockId, setSelectedStockId] = React.useState<string | null>(null);
   const [selectedLocationId, setSelectedLocationId] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -402,10 +962,21 @@ export default function InventoryPage() {
   const [transferForm, setTransferForm] = React.useState({ medicineId: "", stockBatchId: "", fromLocationId: "", toLocationId: "", quantity: "", reason: "" });
   const [stockCountForm, setStockCountForm] = React.useState<StockCountFormState>(emptyStockCountForm());
   const [expiryReportMedicineId, setExpiryReportMedicineId] = React.useState("");
-  const [stockActionPanel, setStockActionPanel] = React.useState<"add" | "transaction" | "transfer" | "count" | null>(null);
+  const [stockActionPanel, setStockActionPanel] = React.useState<"add" | "transaction" | "transfer" | null>(null);
   const [medicineSearchInput, setMedicineSearchInput] = React.useState("");
   const [quickMedicineOpen, setQuickMedicineOpen] = React.useState(false);
   const [quickMedicineForm, setQuickMedicineForm] = React.useState<MedicineInput>(emptyQuickMedicineForm());
+  const [physicalCountSessions, setPhysicalCountSessions] = React.useState<PhysicalCountSession[]>([]);
+  const [physicalCountForm, setPhysicalCountForm] = React.useState<PhysicalCountSessionFormState>(emptyPhysicalCountSessionForm());
+  const [physicalCountWorkspaceSessionId, setPhysicalCountWorkspaceSessionId] = React.useState<string | null>(null);
+  const [physicalCountWorkspaceMode, setPhysicalCountWorkspaceMode] = React.useState<PhysicalCountWorkspaceMode>("continue");
+  const [physicalCountWorkspaceLineId, setPhysicalCountWorkspaceLineId] = React.useState<string | null>(null);
+  const [physicalCountSearch, setPhysicalCountSearch] = React.useState("");
+  const [physicalCountBatchSearch, setPhysicalCountBatchSearch] = React.useState("");
+  const [physicalCountCreateOpen, setPhysicalCountCreateOpen] = React.useState(true);
+  const [physicalCountQuickOpen, setPhysicalCountQuickOpen] = React.useState(true);
+  const [physicalCountDrawerSessionId, setPhysicalCountDrawerSessionId] = React.useState<string | null>(null);
+  const [physicalCountDrawerMode, setPhysicalCountDrawerMode] = React.useState<"view" | "review">("view");
   const [sales, setSales] = React.useState<PharmacyPosSale[]>([]);
   const [saleSearch, setSaleSearch] = React.useState("");
   const [customerReturnSaleId, setCustomerReturnSaleId] = React.useState("");
@@ -430,6 +1001,11 @@ export default function InventoryPage() {
   const handledReferenceRef = React.useRef("");
 
   const medicineById = React.useMemo(() => new Map(medicines.map((medicine) => [medicine.id, medicine])), [medicines]);
+  const inventoryActorLabel = auth.username || auth.appUserId || "Inventory User";
+  const medicineCategories = React.useMemo(
+    () => Array.from(new Set(medicines.map((medicine) => normalizeInventoryText(medicine.category)).filter(Boolean))).sort((left, right) => left.localeCompare(right)),
+    [medicines],
+  );
   const medicineAutocompleteOptions = React.useMemo<MedicineAutocompleteOption[]>(
     () => medicines.map((medicine) => ({ kind: "existing", medicine })),
     [medicines],
@@ -475,6 +1051,140 @@ export default function InventoryPage() {
     }
     return countedQuantityValue - selectedCountStock.quantityOnHand;
   }, [selectedCountStock, stockCountForm.countedQuantity]);
+  const physicalCountWorkspaceSession = React.useMemo(
+    () => physicalCountSessions.find((session) => session.id === physicalCountWorkspaceSessionId) || null,
+    [physicalCountSessions, physicalCountWorkspaceSessionId],
+  );
+  const physicalCountDrawerSession = React.useMemo(
+    () => physicalCountSessions.find((session) => session.id === physicalCountDrawerSessionId) || null,
+    [physicalCountDrawerSessionId, physicalCountSessions],
+  );
+  const physicalCountWorkspaceLines = React.useMemo(() => {
+    if (!physicalCountWorkspaceSession) return [] as PhysicalCountSessionLine[];
+    const medicineTerm = physicalCountSearch.trim().toLowerCase();
+    const batchTerm = physicalCountBatchSearch.trim().toLowerCase();
+    return physicalCountWorkspaceSession.lines.filter((line) => {
+      const matchesMedicine = !medicineTerm || line.medicineName.toLowerCase().includes(medicineTerm);
+      const matchesBatch = !batchTerm || line.batchNumber.toLowerCase().includes(batchTerm);
+      return matchesMedicine && matchesBatch;
+    });
+  }, [physicalCountBatchSearch, physicalCountSearch, physicalCountWorkspaceSession]);
+  const physicalCountWorkspaceLineIndex = React.useMemo(
+    () => physicalCountWorkspaceLines.findIndex((line) => line.id === physicalCountWorkspaceLineId),
+    [physicalCountWorkspaceLineId, physicalCountWorkspaceLines],
+  );
+  const physicalCountWorkspaceLine = React.useMemo(
+    () => physicalCountWorkspaceLines.find((line) => line.id === physicalCountWorkspaceLineId) || physicalCountWorkspaceLines[0] || null,
+    [physicalCountWorkspaceLineId, physicalCountWorkspaceLines],
+  );
+  const physicalCountDashboard = React.useMemo(() => {
+    return {
+      draft: physicalCountSessions.filter((session) => session.status === "DRAFT").length,
+      inProgress: physicalCountSessions.filter((session) => session.status === "IN_PROGRESS").length,
+      submitted: physicalCountSessions.filter((session) => session.status === "SUBMITTED").length,
+      reviewed: physicalCountSessions.filter((session) => session.status === "REVIEWED").length,
+      largeVariances: physicalCountSessions.reduce((sum, session) => sum + physicalCountLargeVarianceCount(session.lines), 0),
+    };
+  }, [physicalCountSessions]);
+  const physicalCountInventorySummary = React.useMemo(() => {
+    const postedSessions = physicalCountSessions.filter((session) => session.status === "POSTED");
+    const pendingSessions = physicalCountSessions.filter((session) => session.status !== "POSTED" && session.status !== "REJECTED");
+    const latestPostedSession = [...postedSessions].sort((left, right) => {
+      const leftDate = left.audit.postedAt || left.audit.reviewedAt || left.audit.submittedAt || left.audit.lastUpdatedAt || left.audit.createdAt;
+      const rightDate = right.audit.postedAt || right.audit.reviewedAt || right.audit.submittedAt || right.audit.lastUpdatedAt || right.audit.createdAt;
+      return rightDate.localeCompare(leftDate);
+    })[0] || null;
+    const latestAdjustmentTransaction = [...transactions]
+      .filter((transaction) => transaction.referenceType === "PHYSICAL_COUNT" || transaction.notes?.includes("Source: PHYSICAL_COUNT"))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] || null;
+    const now = new Date();
+    const postedThisMonth = postedSessions.filter((session) => {
+      const postedAt = session.audit.postedAt || session.audit.reviewedAt || session.audit.lastUpdatedAt || session.audit.createdAt;
+      const postedDate = new Date(postedAt);
+      return postedDate.getUTCFullYear() === now.getUTCFullYear() && postedDate.getUTCMonth() === now.getUTCMonth();
+    }).length;
+    const varianceAdjusted = postedSessions.reduce((sum, session) => sum + session.lines.reduce((lineSum, line) => {
+      const difference = physicalCountLineDifference(line);
+      return lineSum + Math.abs(difference ?? 0);
+    }, 0), 0);
+    const totalCountedMedicines = postedSessions.reduce((sum, session) => sum + session.lines.filter((line) => physicalCountLineDifference(line) != null).length, 0);
+    return {
+      lastPhysicalCount: latestPostedSession ? (latestPostedSession.audit.postedAt || latestPostedSession.audit.reviewedAt || latestPostedSession.audit.createdAt) : null,
+      pendingCountSessions: pendingSessions.length,
+      postedThisMonth,
+      varianceAdjusted,
+      lastAdjustmentDate: latestAdjustmentTransaction?.createdAt || latestPostedSession?.audit.postedAt || null,
+      sessionsCreated: physicalCountSessions.length,
+      sessionsPosted: postedSessions.length,
+      varianceItems: postedSessions.reduce((sum, session) => sum + physicalCountLargeVarianceCount(session.lines), 0),
+      totalCountedMedicines,
+    };
+  }, [physicalCountSessions, transactions]);
+  const physicalCountDrawerSummary = React.useMemo(() => {
+    if (!physicalCountDrawerSession) {
+      return { totalMedicines: 0, matched: 0, variance: 0, missingQty: 0, excessQty: 0, counted: 0, pending: 0, largeVariance: 0, completionPercent: 0, short: 0, excess: 0 };
+    }
+    return physicalCountDrawerSession.lines.reduce((acc, line) => {
+      const difference = physicalCountLineDifference(line);
+      acc.totalMedicines += 1;
+      if (difference == null) {
+        acc.pending += 1;
+        return acc;
+      }
+      acc.counted += 1;
+      if (difference === 0) {
+        acc.matched += 1;
+      } else {
+        acc.variance += 1;
+        if (difference < 0) {
+          acc.short += 1;
+          acc.missingQty += Math.abs(difference);
+        }
+        if (difference > 0) {
+          acc.excess += 1;
+          acc.excessQty += difference;
+        }
+        if (Math.abs(difference) >= 10) {
+          acc.largeVariance += 1;
+        }
+      }
+      return acc;
+    }, {
+      totalMedicines: 0,
+      matched: 0,
+      variance: 0,
+      missingQty: 0,
+      excessQty: 0,
+      counted: 0,
+      pending: 0,
+      largeVariance: 0,
+      completionPercent: physicalCountCompletionPercent(physicalCountDrawerSession.lines),
+      short: 0,
+      excess: 0,
+    });
+  }, [physicalCountDrawerSession]);
+  const physicalCountSessionSummary = React.useMemo(() => {
+    if (!physicalCountWorkspaceSession) {
+      return { totalMedicines: 0, matched: 0, variance: 0, missingQty: 0, excessQty: 0, counted: 0, pending: 0 };
+    }
+    return physicalCountWorkspaceSession.lines.reduce((acc, line) => {
+      const difference = physicalCountLineDifference(line);
+      acc.totalMedicines += 1;
+      if (difference == null) {
+        acc.pending += 1;
+        return acc;
+      }
+      acc.counted += 1;
+      if (difference === 0) {
+        acc.matched += 1;
+      } else {
+        acc.variance += 1;
+        if (difference < 0) acc.missingQty += Math.abs(difference);
+        if (difference > 0) acc.excessQty += difference;
+      }
+      return acc;
+    }, { totalMedicines: 0, matched: 0, variance: 0, missingQty: 0, excessQty: 0, counted: 0, pending: 0 });
+  }, [physicalCountWorkspaceSession]);
   const expiryReportRows = React.useMemo(() => {
     const term = expiryReportMedicineId.trim().toLowerCase();
     return stocks
@@ -516,6 +1226,50 @@ export default function InventoryPage() {
     () => stocks.filter((stock) => !transactionForm.medicineId || stock.medicineId === transactionForm.medicineId),
     [stocks, transactionForm.medicineId],
   );
+  const transactionSearchResults = React.useMemo(() => {
+    const term = transactionSearchInput.trim().toLowerCase();
+    if (term.length < 2) return [] as Stock[];
+    return stocks.filter((stock) => {
+      const medicine = medicineById.get(stock.medicineId);
+      return [
+        stock.medicineName,
+        medicine?.genericName,
+        stock.batchNumber,
+        stock.barcode,
+        stock.qrCode,
+        stock.externalCode,
+        stock.purchaseReferenceNumber,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term));
+    }).slice(0, 15);
+  }, [medicineById, stocks, transactionSearchInput]);
+  const selectedTransactionStock = React.useMemo(
+    () => stocks.find((stock) => stock.id === transactionForm.stockBatchId) ?? null,
+    [stocks, transactionForm.stockBatchId],
+  );
+  const transactionBatchOptions = React.useMemo(() => {
+    if (selectedTransactionStock) {
+      return stocks.filter((stock) => stock.medicineId === selectedTransactionStock.medicineId);
+    }
+    if (transactionForm.medicineId) {
+      return stocks.filter((stock) => stock.medicineId === transactionForm.medicineId);
+    }
+    return [] as Stock[];
+  }, [selectedTransactionStock, stocks, transactionForm.medicineId]);
+  const selectedTransactionMedicine = React.useMemo(
+    () => medicineById.get(selectedTransactionStock?.medicineId || transactionForm.medicineId || "") ?? null,
+    [medicineById, selectedTransactionStock?.medicineId, transactionForm.medicineId],
+  );
+  const transactionSetupMissing = React.useMemo(
+    () => selectedTransactionStock ? batchSetupMissing(selectedTransactionStock) : [],
+    [selectedTransactionStock],
+  );
+  const transactionAdjustmentQuantity = React.useMemo(() => Number(transactionForm.quantity || "0"), [transactionForm.quantity]);
+  const transactionAdjustmentNextQty = React.useMemo(() => {
+    if (!selectedTransactionStock || !Number.isFinite(transactionAdjustmentQuantity) || transactionAdjustmentQuantity <= 0) return null;
+    return stockAdjustmentNextQuantity(selectedTransactionStock.quantityOnHand, transactionForm.transactionType, transactionAdjustmentQuantity);
+  }, [selectedTransactionStock, transactionAdjustmentQuantity, transactionForm.transactionType]);
   const filteredTransferStocks = React.useMemo(
     () => stocks.filter((stock) => !transferForm.medicineId || stock.medicineId === transferForm.medicineId),
     [stocks, transferForm.medicineId],
@@ -571,6 +1325,22 @@ export default function InventoryPage() {
   }, [selectedCountStock]);
 
   React.useEffect(() => {
+    setPhysicalCountForm((current) => {
+      if (current.locationId || !locations.length) return current;
+      return {
+        ...current,
+        locationId: selectedLocationId || locations.find((location) => location.defaultLocation)?.id || locations[0]?.id || "",
+      };
+    });
+  }, [locations, selectedLocationId]);
+
+  React.useEffect(() => {
+    if (!physicalCountSessions.length && stocks.length && locations.length) {
+      setPhysicalCountSessions(buildDemoPhysicalCountSessions(stocks, medicines, locations, inventoryActorLabel));
+    }
+  }, [inventoryActorLabel, locations, medicines, physicalCountSessions.length, stocks]);
+
+  React.useEffect(() => {
     setSetupQueueEdits((current) => {
       const next = { ...current };
       let changed = false;
@@ -598,6 +1368,16 @@ export default function InventoryPage() {
       setStockCountForm((current) => ({ ...current, stockBatchId: "", countedQuantity: "" }));
     }
   }, [countableStocks, stockCountForm.stockBatchId]);
+
+  React.useEffect(() => {
+    if (!physicalCountWorkspaceLines.length) {
+      setPhysicalCountWorkspaceLineId(null);
+      return;
+    }
+    if (!physicalCountWorkspaceLineId || !physicalCountWorkspaceLines.some((line) => line.id === physicalCountWorkspaceLineId)) {
+      setPhysicalCountWorkspaceLineId(physicalCountWorkspaceLines[0].id);
+    }
+  }, [physicalCountWorkspaceLineId, physicalCountWorkspaceLines]);
 
   const openQuickCreateMedicine = React.useCallback((seedText = "") => {
     setQuickMedicineForm((current) => ({
@@ -734,6 +1514,360 @@ export default function InventoryPage() {
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
   }
+
+  const updatePhysicalCountSession = (
+    sessionId: string,
+    updater: (session: PhysicalCountSession) => PhysicalCountSession,
+  ) => {
+    setPhysicalCountSessions((current) => current.map((session) => session.id === sessionId ? updater(session) : session));
+  };
+
+  const updatePhysicalCountSessionLine = (
+    sessionId: string,
+    lineId: string,
+    patch: Partial<Pick<PhysicalCountSessionLine, "countedQty" | "reason" | "reviewerRemarks" | "flagged" | "reviewed">>,
+  ) => {
+    updatePhysicalCountSession(sessionId, (session) => {
+      const nextLines = session.lines.map((line) => line.id === lineId ? { ...line, ...patch } : line);
+      const now = new Date().toISOString();
+      const startedAt = session.audit.startedAt ?? now;
+      const startedBy = session.audit.startedBy ?? inventoryActorLabel;
+      return {
+        ...session,
+        status: session.status === "DRAFT" ? "IN_PROGRESS" : session.status,
+        lines: nextLines,
+        audit: {
+          ...session.audit,
+          startedAt,
+          startedBy,
+          lastUpdatedAt: now,
+          sessionDuration: physicalCountDurationLabel(startedAt, now),
+        },
+      };
+    });
+  };
+
+  const updatePhysicalCountSessionNotes = (
+    sessionId: string,
+    patch: Partial<Pick<PhysicalCountAuditFields, "generalNotes" | "counterNotes" | "reviewerNotes" | "auditNotes" | "approvalNotes" | "rejectionReason" | "returnReason">>,
+  ) => {
+    updatePhysicalCountSession(sessionId, (session) => ({
+      ...session,
+      audit: {
+        ...session.audit,
+        ...patch,
+        lastUpdatedAt: new Date().toISOString(),
+      },
+    }));
+  };
+
+  const updatePhysicalCountReviewChecklist = (sessionId: string, key: keyof PhysicalCountReviewChecklist, value: boolean) => {
+    updatePhysicalCountSession(sessionId, (session) => ({
+      ...session,
+      audit: {
+        ...session.audit,
+        reviewChecklist: {
+          ...session.audit.reviewChecklist,
+          [key]: value,
+        },
+        lastUpdatedAt: new Date().toISOString(),
+      },
+    }));
+  };
+
+  const openPhysicalCountDrawer = (sessionId: string, mode: "view" | "review") => {
+    setPhysicalCountDrawerSessionId(sessionId);
+    setPhysicalCountDrawerMode(mode);
+  };
+
+  const openPhysicalCountWorkspace = (sessionId: string, mode: PhysicalCountWorkspaceMode) => {
+    setPhysicalCountWorkspaceSessionId(sessionId);
+    setPhysicalCountWorkspaceMode(mode);
+    setPhysicalCountSearch("");
+    setPhysicalCountBatchSearch("");
+    updatePhysicalCountSession(sessionId, (session) => {
+      if (mode !== "continue") return session;
+      if (session.status !== "DRAFT") return session;
+      const now = new Date().toISOString();
+      return {
+        ...session,
+        status: "IN_PROGRESS",
+        audit: {
+          ...session.audit,
+          startedBy: session.audit.startedBy ?? inventoryActorLabel,
+          startedAt: session.audit.startedAt ?? now,
+          lastUpdatedAt: session.audit.lastUpdatedAt ?? now,
+          sessionDuration: physicalCountDurationLabel(session.audit.startedAt ?? now, now),
+        },
+      };
+    });
+  };
+
+  const savePhysicalCountSessionDraft = (nextMessage = "Physical count session saved locally. Inventory quantity is unchanged.") => {
+    setError(null);
+    setSuccess(nextMessage);
+  };
+
+  const createPhysicalCountSession = () => {
+    if (!physicalCountForm.sessionName.trim()) {
+      setError("Enter a session name.");
+      return;
+    }
+    if (!physicalCountForm.locationId) {
+      setError("Select a location.");
+      return;
+    }
+    if (physicalCountForm.scope === "CATEGORY" && !physicalCountForm.category.trim()) {
+      setError("Select a category for this count session.");
+      return;
+    }
+    if (physicalCountForm.scope === "SELECTED_MEDICINES" && !physicalCountForm.selectedMedicineIds.length) {
+      setError("Select at least one medicine for this count session.");
+      return;
+    }
+
+    const lines = buildPhysicalCountSessionLines(stocks, medicines, locations, physicalCountForm);
+    if (!lines.length) {
+      setError("No stock batches match the selected location and scope.");
+      return;
+    }
+
+    const locationName = locations.find((location) => location.id === physicalCountForm.locationId)?.locationName || "Main Pharmacy";
+    const scopeDetail = physicalCountForm.scope === "CATEGORY"
+      ? `${physicalCountScopeLabel(physicalCountForm.scope)}: ${physicalCountForm.category.trim()}`
+      : physicalCountForm.scope === "SELECTED_MEDICINES"
+        ? `${physicalCountScopeLabel(physicalCountForm.scope)}: ${physicalCountForm.selectedMedicineIds.length} medicines`
+        : physicalCountScopeLabel(physicalCountForm.scope);
+
+    const createdSession: PhysicalCountSession = {
+      id: `physical-count-${Date.now()}`,
+      sessionName: physicalCountForm.sessionName.trim(),
+      locationId: physicalCountForm.locationId,
+      locationName,
+      scope: physicalCountForm.scope,
+      scopeLabel: scopeDetail,
+      reason: physicalCountForm.reason,
+      status: "DRAFT",
+      lines,
+      audit: emptyPhysicalCountAuditFields(inventoryActorLabel),
+    };
+
+    setPhysicalCountSessions((current) => [createdSession, ...current]);
+    setPhysicalCountForm({
+      ...emptyPhysicalCountSessionForm(),
+      locationId: physicalCountForm.locationId,
+    });
+    setPhysicalCountCreateOpen(false);
+    setError(null);
+    setSuccess(`Session created locally. System quantities were captured for ${lines.length} batch${lines.length === 1 ? "" : "es"} for comparison.`);
+  };
+
+  const submitPhysicalCountSession = () => {
+    if (!physicalCountWorkspaceSession) {
+      setError("Open a session before submitting it.");
+      return;
+    }
+    if (physicalCountWorkspaceSession.status !== "IN_PROGRESS") {
+      setError("Only in-progress sessions can be submitted.");
+      return;
+    }
+    const counted = physicalCountWorkspaceSession.lines.filter((line) => physicalCountLineDifference(line) != null).length;
+    if (counted !== physicalCountWorkspaceSession.lines.length) {
+      setError("Complete pending counted quantities before submitting this session.");
+      return;
+    }
+    updatePhysicalCountSession(physicalCountWorkspaceSession.id, (session) => {
+      const now = new Date().toISOString();
+      return {
+        ...session,
+        status: "SUBMITTED",
+        audit: {
+          ...session.audit,
+          submittedBy: inventoryActorLabel,
+          submittedAt: now,
+          lastUpdatedAt: now,
+          sessionDuration: physicalCountDurationLabel(session.audit.startedAt, now),
+        },
+      };
+    });
+    setError(null);
+    setSuccess("Physical count session submitted in local workflow only. Inventory quantity is unchanged.");
+  };
+
+  const markPhysicalCountSessionReviewed = () => {
+    if (!physicalCountDrawerSession || physicalCountDrawerSession.status !== "SUBMITTED") {
+      setError("Only submitted sessions can be marked reviewed.");
+      return;
+    }
+    updatePhysicalCountSession(physicalCountDrawerSession.id, (session) => {
+      const now = new Date().toISOString();
+      return {
+        ...session,
+        status: "REVIEWED",
+        lines: session.lines.map((line) => ({ ...line, reviewed: true })),
+        audit: {
+          ...session.audit,
+          reviewedBy: inventoryActorLabel,
+          reviewedAt: now,
+          reviewer: inventoryActorLabel,
+          reviewedDate: now,
+          lastUpdatedAt: now,
+          sessionDuration: physicalCountDurationLabel(session.audit.startedAt, now),
+        },
+      };
+    });
+    setError(null);
+    setSuccess("Physical count session marked reviewed in local workflow only. Inventory quantity is unchanged.");
+  };
+
+  const approvePhysicalCountSession = () => {
+    if (!physicalCountDrawerSession || physicalCountDrawerSession.status !== "REVIEWED") {
+      setError("Only reviewed sessions can be approved.");
+      return;
+    }
+    const now = new Date().toISOString();
+    updatePhysicalCountSession(physicalCountDrawerSession.id, (session) => ({
+      ...session,
+      status: "APPROVED",
+      audit: {
+        ...session.audit,
+        approvedBy: inventoryActorLabel,
+        approvedAt: now,
+        lastUpdatedAt: now,
+      },
+    }));
+    setError(null);
+    setSuccess("Physical count session approved. Inventory quantity is unchanged until posting.");
+  };
+
+  const rejectPhysicalCountSession = () => {
+    if (!physicalCountDrawerSession || physicalCountDrawerSession.status !== "REVIEWED") {
+      setError("Only reviewed sessions can be rejected.");
+      return;
+    }
+    if (!physicalCountDrawerSession.audit.rejectionReason.trim()) {
+      setError("Enter a rejection reason before rejecting this session.");
+      return;
+    }
+    const now = new Date().toISOString();
+    updatePhysicalCountSession(physicalCountDrawerSession.id, (session) => ({
+      ...session,
+      status: "REJECTED",
+      audit: {
+        ...session.audit,
+        rejectedBy: inventoryActorLabel,
+        rejectedAt: now,
+        lastUpdatedAt: now,
+      },
+    }));
+    setError(null);
+    setSuccess("Physical count session rejected. Inventory quantity is unchanged.");
+  };
+
+  const returnPhysicalCountSessionForRecount = () => {
+    if (!physicalCountDrawerSession || physicalCountDrawerSession.status !== "REVIEWED") {
+      setError("Only reviewed sessions can be returned for recount.");
+      return;
+    }
+    if (!physicalCountDrawerSession.audit.returnReason.trim()) {
+      setError("Enter a return reason before sending this session back for recount.");
+      return;
+    }
+    const now = new Date().toISOString();
+    updatePhysicalCountSession(physicalCountDrawerSession.id, (session) => ({
+      ...session,
+      status: "IN_PROGRESS",
+      audit: {
+        ...session.audit,
+        returnedBy: inventoryActorLabel,
+        returnedAt: now,
+        lastUpdatedAt: now,
+      },
+    }));
+    setError(null);
+    setSuccess("Physical count session returned for recount. Inventory quantity is unchanged.");
+  };
+
+  const postPhysicalCountAdjustments = async () => {
+    if (!auth.accessToken || !auth.tenantId || !physicalCountDrawerSession) {
+      setError("Open an approved session before posting.");
+      return;
+    }
+    if (physicalCountDrawerSession.status !== "APPROVED") {
+      setError("Only approved sessions can be posted.");
+      return;
+    }
+    if (physicalCountDrawerSession.audit.postedAt) {
+      setError("This session has already been posted.");
+      return;
+    }
+    const varianceLines = physicalCountDrawerSession.lines.filter((line) => {
+      const difference = physicalCountLineDifference(line);
+      return difference != null && difference !== 0;
+    });
+    for (const line of physicalCountDrawerSession.lines) {
+      const difference = physicalCountLineDifference(line);
+      if (difference == null) {
+        setError(`Counted quantity is missing for ${line.medicineName}.`);
+        return;
+      }
+      if (difference !== 0 && !line.reason.trim()) {
+        setError(`Reason is required for variance line ${line.medicineName} / ${line.batchNumber}.`);
+        return;
+      }
+    }
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      for (const line of varianceLines) {
+        const difference = physicalCountLineDifference(line) ?? 0;
+        const movementType: InventoryTransactionType = difference > 0 ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT";
+        const beforeQty = line.systemQty;
+        const afterQty = line.systemQty + difference;
+        await createInventoryTransaction(auth.accessToken, auth.tenantId, {
+          medicineId: line.medicineId,
+          stockBatchId: line.stockBatchId,
+          transactionType: movementType,
+          quantity: Math.abs(difference),
+          reason: `Physical Count ${physicalCountDrawerSession.sessionName}`,
+          referenceType: "PHYSICAL_COUNT",
+          referenceId: physicalCountDrawerSession.id,
+          notes: [
+            `Source: PHYSICAL_COUNT`,
+            `Session: ${physicalCountDrawerSession.sessionName}`,
+            `Location: ${physicalCountDrawerSession.locationName}`,
+            `Scope: ${physicalCountDrawerSession.scopeLabel}`,
+            `Batch: ${line.batchNumber}`,
+            `Before Qty: ${beforeQty}`,
+            `After Qty: ${afterQty}`,
+            `Adjustment Qty: ${Math.abs(difference)}`,
+            `Reason: ${line.reason.trim()}`,
+            `Posted By: ${inventoryActorLabel}`,
+            `Posted At: ${new Date().toISOString()}`,
+            line.reviewerRemarks.trim() || null,
+          ].filter(Boolean).join(" • "),
+        });
+      }
+      const now = new Date().toISOString();
+      updatePhysicalCountSession(physicalCountDrawerSession.id, (session) => ({
+        ...session,
+        status: "POSTED",
+        audit: {
+          ...session.audit,
+          postedBy: inventoryActorLabel,
+          postedAt: now,
+          lastUpdatedAt: now,
+        },
+      }));
+      await loadAll();
+      setSuccess(`Physical count variances posted for ${varianceLines.length} line${varianceLines.length === 1 ? "" : "s"}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to post physical count adjustments.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const saveStock = async () => {
     if (!auth.accessToken || !auth.tenantId || !stockForm.medicineId) {
@@ -918,6 +2052,21 @@ export default function InventoryPage() {
     });
   };
 
+  const startStockAdjustment = (stock: Stock) => {
+    setTab("stocks");
+    setStockActionPanel("transaction");
+    setTransactionSearchInput([
+      stock.medicineName,
+      stock.batchNumber || "No batch",
+      stock.locationName || "Main Pharmacy",
+    ].join(" • "));
+    setTransactionForm((current) => ({
+      ...current,
+      medicineId: stock.medicineId,
+      stockBatchId: stock.id,
+    }));
+  };
+
   React.useEffect(() => {
     if (!stockForm.medicineId) {
       return;
@@ -928,12 +2077,55 @@ export default function InventoryPage() {
     }
   }, [medicines, medicineSearchInput, stockForm.medicineId]);
 
+  React.useEffect(() => {
+    if (transactionBatchOptions.length === 1 && transactionForm.stockBatchId !== transactionBatchOptions[0].id) {
+      setTransactionForm((current) => ({
+        ...current,
+        medicineId: transactionBatchOptions[0].medicineId,
+        stockBatchId: transactionBatchOptions[0].id,
+      }));
+    }
+  }, [transactionBatchOptions, transactionForm.stockBatchId]);
+
   const saveTransaction = async () => {
-    if (!auth.accessToken || !auth.tenantId || !transactionForm.medicineId || !transactionForm.quantity.trim()) {
-      setError("Select a medicine and quantity before saving a transaction.");
+    if (!auth.accessToken || !auth.tenantId || !transactionForm.medicineId || !transactionForm.stockBatchId || !transactionForm.quantity.trim()) {
+      setError("Select an inventory batch and quantity before saving a transaction.");
       return;
     }
-    const parsedTransaction = inventoryTransactionFormSchema.safeParse(transactionForm);
+    if (!transactionForm.reason.trim()) {
+      setTransactionFieldErrors({ notes: "Reason is required for this stock movement." });
+      setError("Enter a reason before saving a transaction.");
+      return;
+    }
+    if (transactionForm.reason.trim().length > 60) {
+      setTransactionFieldErrors({ notes: "Reason must be 60 characters or fewer." });
+      setError("Reason must be 60 characters or fewer.");
+      return;
+    }
+    if (transactionForm.notes.trim().length > 250) {
+      setTransactionFieldErrors({ notes: "Notes must be 250 characters or fewer." });
+      setError("Notes must be 250 characters or fewer.");
+      return;
+    }
+    if (!selectedTransactionStock) {
+      setError("Select a valid stock batch before saving a transaction.");
+      return;
+    }
+    const quantity = Number(transactionForm.quantity);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      setTransactionFieldErrors({ quantity: "Quantity must be a positive whole number." });
+      setError("Quantity must be a positive whole number.");
+      return;
+    }
+    if (stockAdjustmentIsDecrease(transactionForm.transactionType) && quantity > selectedTransactionStock.quantityOnHand) {
+      setTransactionFieldErrors({ quantity: "Quantity cannot exceed current stock for this movement." });
+      setError("Quantity cannot exceed current stock for this movement.");
+      return;
+    }
+    const parsedTransaction = inventoryTransactionFormSchema.safeParse({
+      ...transactionForm,
+      notes: transactionForm.reason.trim(),
+    });
     if (!parsedTransaction.success) {
       const fieldErrors = zodFieldErrors(parsedTransaction.error);
       setTransactionFieldErrors(fieldErrors);
@@ -955,6 +2147,7 @@ export default function InventoryPage() {
     try {
       await createInventoryTransaction(auth.accessToken, auth.tenantId, transactionInput(transactionForm));
       setTransactionForm(emptyTransactionForm());
+      setTransactionSearchInput("");
       await loadAll();
       setSuccess("Inventory transaction saved");
     } catch (err) {
@@ -1171,6 +2364,45 @@ export default function InventoryPage() {
     () => (selectedStockId ? transactions.filter((transaction) => transaction.stockBatchId === selectedStockId).length : 0),
     [selectedStockId, transactions],
   );
+  const currentStockHistory = React.useMemo(() => {
+    if (!currentStock) {
+      return [] as Array<{ label: string; tone: "default" | "success" | "warning" | "info" | "primary"; helper: string }>;
+    }
+    const batchTransactions = transactions
+      .filter((transaction) => transaction.stockBatchId === currentStock.id)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const receivedTransaction = batchTransactions.find((transaction) => ["OPENING", "PURCHASE", "STOCK_IN", "CUSTOMER_RETURN_IN"].includes(transaction.transactionType)) || null;
+    const physicalCountTransaction = batchTransactions.find((transaction) => transaction.referenceType === "PHYSICAL_COUNT" || transaction.notes?.includes("Source: PHYSICAL_COUNT")) || null;
+    const adjustmentTransaction = batchTransactions.find((transaction) => transaction.transactionType === "ADJUSTMENT" || transaction.transactionType === "ADJUSTMENT_IN" || transaction.transactionType === "ADJUSTMENT_OUT") || null;
+    const setupComplete = batchSetupMissing(currentStock).length === 0;
+    return [
+      {
+        label: "GRN",
+        tone: receivedTransaction ? "success" as const : "default" as const,
+        helper: receivedTransaction?.businessReference || receivedTransaction?.reason || "Goods receipt created the batch",
+      },
+      {
+        label: "Commercial Setup",
+        tone: setupComplete ? "success" as const : "warning" as const,
+        helper: setupComplete ? "MRP and reorder level are maintained" : "Commercial setup is incomplete",
+      },
+      {
+        label: "Physical Count",
+        tone: physicalCountTransaction ? "info" as const : "default" as const,
+        helper: physicalCountTransaction ? "Posted physical count adjustment exists" : "No posted physical count adjustment yet",
+      },
+      {
+        label: "Stock Adjustment",
+        tone: adjustmentTransaction ? "warning" as const : "default" as const,
+        helper: adjustmentTransaction ? "Manual or operational adjustment recorded" : "No manual adjustment recorded",
+      },
+      {
+        label: "Current Quantity",
+        tone: "primary" as const,
+        helper: `${currentStock.quantityOnHand} units on hand`,
+      },
+    ];
+  }, [currentStock, transactions]);
   const currentStockHasMovements = currentStockMovementCount > 0;
   const editingExistingBatch = Boolean(selectedStockId && currentStock);
   const canEditBatchLocation = Boolean(editingExistingBatch && !currentStockHasMovements);
@@ -1651,40 +2883,148 @@ export default function InventoryPage() {
                 <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
                   <Box sx={compactFormSx}>
                   <Grid container spacing={1}>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel id="transaction-medicine-label"><RequiredLabel text="Medicine" required /></InputLabel>
-                        <Select id="inventory-transaction-medicine" labelId="transaction-medicine-label" label="Medicine" value={transactionForm.medicineId} onChange={(e) => setTransactionForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))} required error={Boolean(transactionFieldErrors.medicineId)} inputProps={{ "aria-required": true }}>
-                          <MenuItem value="">Select medicine</MenuItem>
-                          {medicines.map((medicine) => (
-                            <MenuItem key={medicine.id} value={medicine.id}>
-                              {medicine.medicineName}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
+                    <Grid size={12}>
+                      <Autocomplete
+                        freeSolo
+                        options={transactionSearchResults}
+                        size="small"
+                        value={selectedTransactionStock}
+                        inputValue={transactionSearchInput}
+                        open={transactionSearchInput.trim().length >= 2}
+                        isOptionEqualToValue={(option, value) => option.id === value.id}
+                        filterOptions={(options) => options.slice(0, 15)}
+                        onInputChange={(_, value, reason) => {
+                          setTransactionSearchInput(value);
+                          if (reason === "clear") {
+                            setTransactionForm((current) => ({ ...current, medicineId: "", stockBatchId: "", quantity: "", reason: "", referenceType: "", referenceId: "", notes: "" }));
+                          }
+                        }}
+                        onChange={(_, stock) => {
+                          if (!stock || typeof stock === "string") {
+                            setTransactionForm((current) => ({ ...current, medicineId: "", stockBatchId: "" }));
+                            return;
+                          }
+                          setTransactionSearchInput([
+                            stock.medicineName,
+                            stock.batchNumber || "No batch",
+                            stock.locationName || "Main Pharmacy",
+                          ].join(" • "));
+                          setTransactionForm((current) => ({
+                            ...current,
+                            medicineId: stock.medicineId,
+                            stockBatchId: stock.id,
+                          }));
+                        }}
+                        getOptionLabel={(option) => typeof option === "string"
+                          ? option
+                          : [option.medicineName, option.batchNumber || "No batch", option.locationName || "Main Pharmacy"].join(" • ")}
+                        noOptionsText={transactionSearchInput.trim().length < 2 ? "Type at least 2 characters to search inventory." : "No inventory item found."}
+                        ListboxProps={{
+                          style: { maxHeight: 360, overflowY: "auto" },
+                        }}
+                        renderOption={(props, stock) => {
+                          const setupMissing = batchSetupMissing(stock);
+                          return (
+                            <Box component="li" {...props}>
+                              <Stack spacing={0.25} sx={{ width: "100%" }}>
+                                <Stack direction="row" justifyContent="space-between" spacing={1} useFlexGap flexWrap="wrap">
+                                  <Typography variant="body2" sx={{ fontWeight: 700 }}>{stock.medicineName}</Typography>
+                                  <Chip size="small" label={`Qty ${stock.quantityOnHand}`} variant="outlined" />
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary">
+                                  Batch {stock.batchNumber || "No batch"} • {stock.locationName || "Main Pharmacy"} • Expiry {stock.expiryDate || "No expiry"}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {setupMissing.length === 0 ? "Setup complete" : `Setup incomplete • ${setupMissing.join(" • ")}`}
+                                </Typography>
+                              </Stack>
+                            </Box>
+                          );
+                        }}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            id="inventory-transaction-medicine"
+                            label={<RequiredLabel text="Find Inventory Item" required />}
+                            placeholder="Search medicine, generic, batch, barcode, QR, external code, GRN"
+                            error={Boolean(transactionFieldErrors.medicineId || transactionFieldErrors.stockBatchId)}
+                            helperText={transactionFieldErrors.medicineId || transactionFieldErrors.stockBatchId || "Search by medicine, generic name, batch, barcode, QR code, external code, or reference."}
+                          />
+                        )}
+                      />
                     </Grid>
+                    {transactionBatchOptions.length > 1 ? (
+                      <Grid size={12}>
+                        <Stack spacing={0.75}>
+                          <Typography variant="caption" color="text.secondary">Select batch</Typography>
+                          <Grid container spacing={1}>
+                            {transactionBatchOptions.map((stock) => {
+                              const selected = stock.id === transactionForm.stockBatchId;
+                              return (
+                                <Grid key={stock.id} size={{ xs: 12, md: 6 }}>
+                                  <Card variant="outlined" sx={{ borderColor: selected ? "primary.main" : "divider", boxShadow: selected ? 1 : 0 }}>
+                                    <CardContent sx={compactCardContentSx}>
+                                      <Stack spacing={0.4}>
+                                        <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                          <Typography variant="body2" sx={{ fontWeight: 700 }}>{stock.batchNumber || "No batch"}</Typography>
+                                          <Chip size="small" label={stock.expiryDate && daysUntil(stock.expiryDate) < 0 ? "Expired" : stock.active ? "Active" : "Inactive"} color={stock.expiryDate && daysUntil(stock.expiryDate) < 0 ? "error" : stock.active ? statusColor(stock.quantityOnHand, stock.lowStockThreshold) : "default"} />
+                                        </Stack>
+                                        <Typography variant="caption" color="text.secondary">{stock.locationName || "Main Pharmacy"} • Qty {stock.quantityOnHand}</Typography>
+                                        <Typography variant="caption" color="text.secondary">Expiry {stock.expiryDate || "No expiry"} • {stock.purchaseReferenceNumber || "No GRN/reference"}</Typography>
+                                        <Button size="small" variant={selected ? "contained" : "outlined"} onClick={() => setTransactionForm((current) => ({ ...current, medicineId: stock.medicineId, stockBatchId: stock.id }))}>
+                                          {selected ? "Selected" : "Select Batch"}
+                                        </Button>
+                                      </Stack>
+                                    </CardContent>
+                                  </Card>
+                                </Grid>
+                              );
+                            })}
+                          </Grid>
+                        </Stack>
+                      </Grid>
+                    ) : null}
+                    {!selectedTransactionStock && transactionForm.medicineId && transactionBatchOptions.length === 0 ? (
+                      <Grid size={12}>
+                        <Alert severity="warning" sx={{ py: 0 }}>
+                          No available batch for this medicine.
+                        </Alert>
+                      </Grid>
+                    ) : null}
+                    {selectedTransactionStock ? (
+                      <Grid size={12}>
+                        <Card variant="outlined">
+                          <CardContent sx={compactCardContentSx}>
+                            <Grid container spacing={1}>
+                              <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label="Medicine" value={selectedTransactionStock.medicineName} InputProps={{ readOnly: true }} /></Grid>
+                              <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label="Batch" value={selectedTransactionStock.batchNumber || "No batch"} InputProps={{ readOnly: true }} /></Grid>
+                              <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label="Location" value={selectedTransactionStock.locationName || "Main Pharmacy"} InputProps={{ readOnly: true }} /></Grid>
+                              <Grid size={{ xs: 12, md: 3 }}><TextField size="small" fullWidth label="Current Qty" value={String(selectedTransactionStock.quantityOnHand)} InputProps={{ readOnly: true }} /></Grid>
+                              <Grid size={{ xs: 12, md: 3 }}><TextField size="small" fullWidth label="Expiry" value={selectedTransactionStock.expiryDate || "No expiry"} InputProps={{ readOnly: true }} /></Grid>
+                              <Grid size={{ xs: 12, md: 3 }}><TextField size="small" fullWidth label="Operational Status" value={selectedTransactionStock.expiryDate && daysUntil(selectedTransactionStock.expiryDate) < 0 ? "Expired" : selectedTransactionStock.active ? "Active" : "Inactive"} InputProps={{ readOnly: true }} /></Grid>
+                              <Grid size={{ xs: 12, md: 3 }}><TextField size="small" fullWidth label="Setup Status" value={transactionSetupMissing.length === 0 ? "Complete" : "Incomplete"} InputProps={{ readOnly: true }} /></Grid>
+                              <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label="Purchase Reference / GRN" value={selectedTransactionStock.purchaseReferenceNumber || "-"} InputProps={{ readOnly: true }} /></Grid>
+                              <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label="MRP" value={selectedTransactionStock.sellingPrice != null ? String(selectedTransactionStock.sellingPrice) : "-"} InputProps={{ readOnly: true }} /></Grid>
+                              <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label="Reorder Level" value={selectedTransactionStock.lowStockThreshold != null ? String(selectedTransactionStock.lowStockThreshold) : "-"} InputProps={{ readOnly: true }} /></Grid>
+                            </Grid>
+                            {transactionSetupMissing.length ? (
+                              <Alert severity="warning" sx={{ mt: 1, py: 0 }}>
+                                Commercial setup incomplete. Stock can be adjusted, but POS sale remains blocked until setup is complete.
+                              </Alert>
+                            ) : null}
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    ) : null}
+                    {selectedTransactionStock ? (
+                      <>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <FormControl fullWidth size="small">
-                        <InputLabel id="transaction-stock-label">Stock batch</InputLabel>
-                        <Select id="inventory-transaction-batch" labelId="transaction-stock-label" label="Stock batch" value={transactionForm.stockBatchId} onChange={(e) => setTransactionForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))} error={Boolean(transactionFieldErrors.stockBatchId)}>
-                          <MenuItem value="">Select batch</MenuItem>
-                          {filteredTransactionStocks.map((stock) => (
-                            <MenuItem key={stock.id} value={stock.id}>
-                              {(stock.batchNumber || "No batch")} • {stock.locationName || "Main Pharmacy"}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                        {transactionFieldErrors.stockBatchId ? <Typography variant="caption" color="error">{transactionFieldErrors.stockBatchId}</Typography> : null}
-                      </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel id="transaction-type-label">Type</InputLabel>
-                        <Select labelId="transaction-type-label" label="Type" value={transactionForm.transactionType} onChange={(e) => setTransactionForm((current) => ({ ...current, transactionType: String(e.target.value) as InventoryTransactionType }))}>
-                          {TRANSACTION_TYPES.map((type) => (
-                            <MenuItem key={type} value={type}>
-                              {transactionLabel(type)}
+                        <InputLabel id="transaction-type-label">Adjustment Type</InputLabel>
+                        <Select labelId="transaction-type-label" label="Adjustment Type" value={transactionForm.transactionType} onChange={(e) => setTransactionForm((current) => ({ ...current, transactionType: String(e.target.value) as InventoryTransactionType }))}>
+                          {STOCK_ADJUSTMENT_OPTIONS.map((type) => (
+                            <MenuItem key={type.value} value={type.value}>
+                              {type.label}
                             </MenuItem>
                           ))}
                         </Select>
@@ -1694,259 +3034,48 @@ export default function InventoryPage() {
                       <TextField id="inventory-transaction-quantity" size="small" fullWidth label={<RequiredLabel text="Quantity" required />} value={transactionForm.quantity} onChange={(e) => setTransactionForm((current) => ({ ...current, quantity: e.target.value }))} required error={Boolean(transactionFieldErrors.quantity)} helperText={transactionFieldErrors.quantity || "Positive whole number."} inputProps={{ min: 1, step: 1, "aria-required": true }} />
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField id="inventory-transaction-reason" size="small" fullWidth label={<RequiredLabel text="Reason" required />} value={transactionForm.reason} onChange={(e) => setTransactionForm((current) => ({ ...current, reason: e.target.value }))} required error={Boolean(transactionFieldErrors.notes)} helperText={transactionFieldErrors.notes || "Required for audit trail."} inputProps={{ "aria-required": true, maxLength: 60 }} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
                       <TextField id="inventory-transaction-reference-type" size="small" fullWidth label="Reference type" value={transactionForm.referenceType} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceType: e.target.value }))} error={Boolean(transactionFieldErrors.referenceType)} helperText={transactionFieldErrors.referenceType || "Optional reference type."} />
                     </Grid>
                     <Grid size={{ xs: 12, md: 6 }}>
                       <TextField id="inventory-transaction-reference-id" size="small" fullWidth label="Reference ID" value={transactionForm.referenceId} onChange={(e) => setTransactionForm((current) => ({ ...current, referenceId: e.target.value }))} error={Boolean(transactionFieldErrors.referenceId)} helperText={transactionFieldErrors.referenceId || "Optional UUID reference identifier."} />
                     </Grid>
                     <Grid size={12}>
-                      <TextField id="inventory-transaction-notes" size="small" fullWidth label="Notes" value={transactionForm.notes} onChange={(e) => setTransactionForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} error={Boolean(transactionFieldErrors.notes)} helperText={transactionFieldErrors.notes || "Optional for non-adjustment movements; required for adjustments."} />
+                      <TextField id="inventory-transaction-notes" size="small" fullWidth label="Notes" value={transactionForm.notes} onChange={(e) => setTransactionForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} helperText="Optional operational note." />
                     </Grid>
                     <Grid size={12}>
-                      <Button onClick={() => void saveTransaction()} disabled={!canManageInventory || saving}>
-                        Save transaction
+                      <Alert severity="info" sx={{ py: 0 }}>
+                        Transfer uses the dedicated Transfer stock workflow because destination location is required.
+                      </Alert>
+                    </Grid>
+                    {transactionAdjustmentNextQty !== null ? (
+                      <Grid size={12}>
+                        <Card variant="outlined">
+                          <CardContent sx={compactCardContentSx}>
+                            <Stack spacing={0.5}>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Review before save</Typography>
+                              <Typography variant="body2">You are about to {stockAdjustmentIsDecrease(transactionForm.transactionType) ? "decrease" : "increase"} stock.</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {selectedTransactionStock.medicineName} • Batch {selectedTransactionStock.batchNumber || "No batch"} • Current Qty {selectedTransactionStock.quantityOnHand} • Adjustment Qty {transactionForm.quantity || "0"} • New Qty {transactionAdjustmentNextQty} • Reason {transactionForm.reason || "-"}
+                              </Typography>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    ) : null}
+                    <Grid size={12}>
+                      <Button onClick={() => void saveTransaction()} disabled={!canManageInventory || saving || !selectedTransactionStock}>
+                        Confirm & Save
                       </Button>
                     </Grid>
+                      </>
+                    ) : null}
                   </Grid>
                   </Box>
                 </AccordionDetails>
               </Accordion>
-              <Accordion expanded={canManageInventory && stockActionPanel === "count"} onChange={(_, expanded) => setStockActionPanel(expanded ? "count" : null)} disableGutters disabled={!canManageInventory} sx={compactAccordionSx}>
-                <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
-                  <Stack spacing={0.4}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                      Quick Count Correction
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Correct a batch immediately when the counted quantity differs from system stock, with a reasoned audit entry.
-                    </Typography>
-                  </Stack>
-                </AccordionSummary>
-                <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
-                  <Stack spacing={1.5}>
-                  <Box sx={compactFormSx}>
-                  <Grid container spacing={1}>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel id="count-medicine-label"><RequiredLabel text="Medicine" required /></InputLabel>
-                        <Select
-                          id="inventory-count-medicine"
-                          labelId="count-medicine-label"
-                          label="Medicine"
-                          value={stockCountForm.medicineId}
-                          onChange={(e) => setStockCountForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))}
-                          required
-                          error={Boolean(countFieldErrors.medicineId)}
-                          inputProps={{ "aria-required": true }}
-                        >
-                          <MenuItem value="">Select medicine</MenuItem>
-                          {medicines.map((medicine) => (
-                            <MenuItem key={medicine.id} value={medicine.id}>{medicine.medicineName}</MenuItem>
-                          ))}
-                        </Select>
-                        {countFieldErrors.medicineId ? <Typography variant="caption" color="error">{countFieldErrors.medicineId}</Typography> : null}
-                      </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel id="count-location-label"><RequiredLabel text="Location" required /></InputLabel>
-                        <Select
-                          id="inventory-count-location"
-                          labelId="count-location-label"
-                          label="Location"
-                          value={stockCountForm.locationId}
-                          onChange={(e) => setStockCountForm((current) => ({ ...current, locationId: String(e.target.value), stockBatchId: "" }))}
-                          required
-                          error={Boolean(countFieldErrors.locationId)}
-                          inputProps={{ "aria-required": true }}
-                        >
-                          <MenuItem value="">All locations</MenuItem>
-                          {locations.map((location) => (
-                            <MenuItem key={location.id} value={location.id}>{location.locationName}</MenuItem>
-                          ))}
-                        </Select>
-                        {countFieldErrors.locationId ? <Typography variant="caption" color="error">{countFieldErrors.locationId}</Typography> : null}
-                      </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel id="count-batch-label"><RequiredLabel text="Batch" required /></InputLabel>
-                        <Select
-                          id="inventory-count-batch"
-                          labelId="count-batch-label"
-                          label="Batch"
-                          value={stockCountForm.stockBatchId}
-                          onChange={(e) => setStockCountForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}
-                          required
-                          error={Boolean(countFieldErrors.stockBatchId)}
-                          inputProps={{ "aria-required": true }}
-                        >
-                          <MenuItem value="">Select batch</MenuItem>
-                          {countableStocks.map((stock) => (
-                            <MenuItem key={stock.id} value={stock.id}>
-                              {(stock.batchNumber || "No batch")} • {stock.locationName || "Main Pharmacy"} • Qty {stock.quantityOnHand}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                        {countFieldErrors.stockBatchId ? <Typography variant="caption" color="error">{countFieldErrors.stockBatchId}</Typography> : null}
-                      </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField
-                        size="small"
-                        fullWidth
-                        label="System quantity"
-                        value={selectedCountStock ? selectedCountStock.quantityOnHand : ""}
-                        InputProps={{ readOnly: true }}
-                        helperText="Quantity currently recorded in the system."
-                      />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <TextField
-                        id="inventory-count-quantity"
-                        size="small"
-                        fullWidth
-                        type="number"
-                        label={<RequiredLabel text="Physical count" required />}
-                        value={stockCountForm.countedQuantity}
-                        onChange={(e) => setStockCountForm((current) => ({ ...current, countedQuantity: e.target.value }))}
-                        required
-                        error={Boolean(countFieldErrors.physicalQuantity)}
-                        helperText={countFieldErrors.physicalQuantity || "Enter the counted quantity from shelves."}
-                        inputProps={{ min: 0, step: 1, "aria-required": true }}
-                      />
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 6 }}>
-                      <Box id="inventory-count-reason" tabIndex={-1}>
-                        <CommentSuggestions
-                          category="INVENTORY_ADJUSTMENT"
-                          selectedReason={stockCountForm.reason}
-                          remarks={stockCountForm.remarks}
-                          onReasonChange={(value) => setStockCountForm((current) => ({ ...current, reason: value }))}
-                          onRemarksChange={(value) => setStockCountForm((current) => ({ ...current, remarks: value }))}
-                          requiredReason
-                          maxRemarksLength={250}
-                          reasonLabel="Adjustment reason"
-                          remarksLabel="Remarks"
-                          reasonHelperText={countFieldErrors.reason || "Reason is required for audit trail."}
-                          remarksHelperText={countFieldErrors.remarks || `${stockCountForm.remarks.length}/250`}
-                        />
-                      </Box>
-                    </Grid>
-                    <Grid size={12}>
-                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                        <Chip
-                          size="small"
-                          label={countVariance === null ? "Variance: -" : `Variance: ${countVariance > 0 ? "+" : ""}${countVariance}`}
-                          color={countVariance === null ? "default" : countVariance === 0 ? "default" : countVariance > 0 ? "success" : "warning"}
-                        />
-                        <Button
-                          variant="contained"
-                          disabled={!canManageInventory || saving || !selectedCountStock || !stockCountForm.reason.trim() || stockCountForm.countedQuantity.trim() === "" || countVariance === 0}
-                          onClick={async () => {
-                            if (!auth.accessToken || !auth.tenantId || !selectedCountStock) {
-                              setError("Select a batch before posting the stock count.");
-                              return;
-                            }
-                            const parsedCount = inventoryPhysicalCountSchema.safeParse({
-                              stockBatchId: selectedCountStock.id,
-                              medicineId: selectedCountStock.medicineId,
-                              locationId: selectedCountStock.locationId || selectedLocationId || "",
-                              physicalQuantity: stockCountForm.countedQuantity,
-                              reason: stockCountForm.reason,
-                              remarks: stockCountForm.remarks,
-                            });
-                            if (!parsedCount.success) {
-                              const fieldErrors = zodFieldErrors(parsedCount.error);
-                              setCountFieldErrors(fieldErrors);
-                              setError(parsedCount.error.issues[0]?.message || "Stock count could not be posted.");
-                              focusFirstInventoryField(fieldErrors, {
-                                medicineId: "inventory-count-medicine",
-                                locationId: "inventory-count-location",
-                                stockBatchId: "inventory-count-batch",
-                                physicalQuantity: "inventory-count-quantity",
-                                reason: "inventory-count-reason",
-                              });
-                              return;
-                            }
-                            const counted = Number(stockCountForm.countedQuantity);
-                            const variance = counted - selectedCountStock.quantityOnHand;
-                            if (variance === 0) {
-                              setError("No variance to post for this stock count.");
-                              return;
-                            }
-                            setSaving(true);
-                            setError(null);
-                            setSuccess(null);
-                            setCountFieldErrors({});
-                            try {
-                              await createInventoryTransaction(auth.accessToken, auth.tenantId, {
-                                medicineId: selectedCountStock.medicineId,
-                                stockBatchId: selectedCountStock.id,
-                                transactionType: variance > 0 ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT",
-                                quantity: Math.abs(variance),
-                                reason: `Physical stock count: ${stockCountForm.reason.trim()}`,
-                                referenceType: "PHYSICAL_STOCK_COUNT",
-                                referenceId: selectedCountStock.id,
-                                notes: `System ${selectedCountStock.quantityOnHand}, counted ${counted}, variance ${variance > 0 ? "+" : ""}${variance}${stockCountForm.remarks.trim() ? ` • ${stockCountForm.remarks.trim()}` : ""}`,
-                              });
-                              await loadAll();
-                              setSuccess(`Physical stock count posted. Variance ${variance > 0 ? "+" : ""}${variance}.`);
-                              setStockCountForm(emptyStockCountForm());
-                            } catch (err) {
-                              setError(err instanceof Error ? err.message : "Failed to post stock count");
-                            } finally {
-                              setSaving(false);
-                            }
-                          }}
-                        >
-                          Post count correction
-                        </Button>
-                      </Stack>
-                    </Grid>
-                  </Grid>
-                  </Box>
-                  <Card variant="outlined">
-                    <CardContent sx={compactCardContentSx}>
-                      <Stack spacing={1}>
-                        <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
-                            Physical Count Sessions
-                          </Typography>
-                          <Chip size="small" label="Future workflow" variant="outlined" />
-                        </Box>
-                        <Typography variant="body2" color="text.secondary">
-                          Session-based counting will be added here after multi-item count workflow is implemented. Quick Count Correction remains the immediate variance tool.
-                        </Typography>
-                        <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>Session</TableCell>
-                                <TableCell>Location</TableCell>
-                                <TableCell>Created By</TableCell>
-                                <TableCell align="right">Items Counted</TableCell>
-                                <TableCell align="right">Variance Items</TableCell>
-                                <TableCell>Status</TableCell>
-                                <TableCell align="right">Action</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              <TableRow>
-                                <TableCell colSpan={7}>
-                                  <Typography variant="body2" color="text.secondary">No physical count sessions available yet.</Typography>
-                                </TableCell>
-                              </TableRow>
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-                      </Stack>
-                    </CardContent>
-                  </Card>
-                  </Stack>
-                </AccordionDetails>
-              </Accordion>
-
               <Accordion expanded={canManageInventory && stockActionPanel === "transfer"} onChange={(_, expanded) => setStockActionPanel(expanded ? "transfer" : null)} disableGutters disabled={!canManageInventory} sx={compactAccordionSx}>
                 <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
                   <Stack spacing={0.4}>
@@ -2117,315 +3246,1378 @@ export default function InventoryPage() {
                 manualPlaceholder="barcode / QR / batch / reference"
               />
 
-              <Card>
-                <CardContent sx={compactCardContentSx}>
-                  <Stack spacing={1.25}>
-                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                        Stock list / batches
-                      </Typography>
-                      <Chip size="small" label={`${visibleStocks.length} visible batches`} variant="outlined" />
-                    </Box>
-                    {stocks.length === 0 ? (
-                      <CompactEmptyState
-                        title="No inventory available."
-                        subtitle="Choose how you would like to add stock."
-                        action={(
-                          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="center">
+              <OperationalTableCard
+                title="Stock list / batches"
+                countLabel={`${visibleStocks.length} visible batches`}
+                emptyState={stocks.length === 0 ? (
+                  <CompactEmptyState
+                    title="No inventory available."
+                    subtitle="Choose how you would like to add stock."
+                    action={(
+                      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="center">
                         <Button size="small" variant="contained" onClick={() => navigate("/pharmacy/procurement?workspace=purchase-orders")}>Receive via Procurement</Button>
                         <Button size="small" variant="outlined" onClick={openDirectGoodsReceipt}>Direct Goods Receipt</Button>
-                          </Stack>
-                        )}
-                      />
-                    ) : visibleStocks.length === 0 ? (
-                      <CompactEmptyState
-                        title="No matching stock batches."
-                        subtitle="Adjust the filter or search to show the batches already in inventory."
-                        action={<Button size="small" onClick={() => { setSelectedLocationId(""); setStockSearch(""); }}>Clear filters</Button>}
-                      />
-                    ) : (
-                      <TableContainer sx={{ maxHeight: 432 }}>
-                        <Table size="small" stickyHeader>
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>Medicine</TableCell>
-                              <TableCell>Location</TableCell>
-                              <TableCell>Batch</TableCell>
-                              <TableCell>Expiry</TableCell>
-                              <TableCell align="right">Qty</TableCell>
-                              <TableCell align="right">Reorder Level</TableCell>
-                              <TableCell>Setup Status</TableCell>
-                              <TableCell>Operational Status</TableCell>
-                              <TableCell align="right">Actions</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {visibleStocks.map((stock) => {
-                              const setupMissing = batchSetupMissing(stock);
-                              const setupComplete = setupMissing.length === 0;
-                              return (
-                              <TableRow key={stock.id} hover selected={stock.id === selectedStockId} sx={{ "& td": { py: 0.85, verticalAlign: "top" } }}>
-                                <TableCell>
-                                  <Stack spacing={0.2}>
-                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                      {stock.medicineName}
-                                    </Typography>
-                                    <Typography variant="caption" color="text.secondary">
-                                      {stock.medicineType}
-                                    </Typography>
-                                    <Typography variant="caption" color="text.secondary">
-                                      {stock.barcode || stock.externalCode || stock.qrCode || stock.purchaseReferenceNumber || "-"}
-                                    </Typography>
-                                  </Stack>
-                                </TableCell>
-                                <TableCell>{stock.locationName || "Main Pharmacy"}</TableCell>
-                                <TableCell>
-                                  <Stack spacing={0.2}>
-                                    <Typography variant="body2">{stock.batchNumber || "-"}</Typography>
-                                    {stock.purchaseReferenceNumber ? (
-                                      <Button size="small" sx={{ px: 0, minWidth: 0, justifyContent: "flex-start" }} onClick={() => navigate(`/pharmacy/procure?workspace=goods-receipt&receipt=${encodeURIComponent(stock.purchaseReferenceNumber || "")}`)}>
-                                        {stock.purchaseReferenceNumber}
-                                      </Button>
-                                    ) : (
-                                      <Typography variant="caption" color="text.secondary">-</Typography>
-                                    )}
-                                  </Stack>
-                                </TableCell>
-                                <TableCell>
-                                  <Stack spacing={0.3}>
-                                    <Chip size="small" label={expiryState(stock.expiryDate).label} color={expiryState(stock.expiryDate).color} />
-                                    <Typography variant="caption" color="text.secondary">{stock.expiryDate || "No expiry date"}</Typography>
-                                  </Stack>
-                                </TableCell>
-                                <TableCell align="right">{stock.quantityOnHand}</TableCell>
-                                <TableCell align="right">{stock.lowStockThreshold ?? "-"}</TableCell>
-                                <TableCell>
-                                  <Chip
-                                    size="small"
-                                    label={setupComplete ? "Complete" : "Incomplete"}
-                                    color={setupComplete ? "success" : "warning"}
-                                  />
-                                  {!setupComplete ? (
-                                    <Typography variant="caption" display="block" color="text.secondary">
-                                      {setupMissing.join(" • ")}
-                                    </Typography>
-                                  ) : null}
-                                </TableCell>
-                                <TableCell>
-                                  <Chip
-                                    size="small"
-                                    label={stock.expiryDate && daysUntil(stock.expiryDate) < 0 ? "EXPIRED" : stock.active ? "Active" : "Inactive"}
-                                    color={stock.expiryDate && daysUntil(stock.expiryDate) < 0 ? "error" : stock.active ? statusColor(stock.quantityOnHand, stock.lowStockThreshold) : "default"}
-                                  />
-                                </TableCell>
-                                <TableCell align="right">
-                                  <Button size="small" disabled={!canManageInventory} onClick={() => { editStock(stock); setStockActionPanel("add"); }}>
-                                    Edit
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            );})}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
-                    )}
-                  </Stack>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent sx={compactCardContentSx}>
-                  <Stack spacing={1.25}>
-                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-                      <Box>
-                        <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                          Batch Setup Queue
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          GRN creates received stock. Inventory completes commercial setup for POS readiness by maintaining MRP and reorder level.
-                        </Typography>
-                      </Box>
-                      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                        <Chip size="small" label={`${incompleteSetupStocks.length} incomplete`} color={incompleteSetupStocks.length ? "warning" : "success"} variant={incompleteSetupStocks.length ? "filled" : "outlined"} />
-                        <Button size="small" variant="contained" disabled={!canManageInventory || saving || !incompleteSetupStocks.some((stock) => {
-                          const draft = setupQueueEdits[stock.id] ?? { sellingPrice: stock.sellingPrice?.toString() || "", lowStockThreshold: stock.lowStockThreshold?.toString() || "" };
-                          return draft.sellingPrice.trim() !== (stock.sellingPrice?.toString() || "")
-                            || draft.lowStockThreshold.trim() !== (stock.lowStockThreshold?.toString() || "");
-                        })} onClick={() => void saveAllSetupRows()}>
-                          Save All
-                        </Button>
                       </Stack>
-                    </Box>
-                    {incompleteSetupStocks.length === 0 ? (
-                      <CompactEmptyState
-                        title="All visible batches are commercially ready."
-                        subtitle="MRP and reorder level are already maintained for the current inventory filters."
-                      />
-                    ) : (
-                      <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, maxWidth: "100%" }}>
-                        <Table size="small">
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>Medicine</TableCell>
-                              <TableCell>Batch</TableCell>
-                              <TableCell>Location</TableCell>
-                              <TableCell>Expiry</TableCell>
-                              <TableCell align="right">Qty</TableCell>
-                              <TableCell align="right">MRP</TableCell>
-                              <TableCell align="right">Reorder Level</TableCell>
-                              <TableCell>Setup Status</TableCell>
-                              <TableCell align="right">Action</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {incompleteSetupStocks.map((stock) => {
-                              const draft = setupQueueEdits[stock.id] ?? {
-                                sellingPrice: stock.sellingPrice?.toString() || "",
-                                lowStockThreshold: stock.lowStockThreshold?.toString() || "",
-                              };
-                              const draftMissing = batchSetupMissingFromValues(parseOptionalNumberInput(draft.sellingPrice), parseOptionalNumberInput(draft.lowStockThreshold));
-                              const dirty = draft.sellingPrice.trim() !== (stock.sellingPrice?.toString() || "")
-                                || draft.lowStockThreshold.trim() !== (stock.lowStockThreshold?.toString() || "");
-                              return (
-                                <TableRow key={stock.id} sx={{ "& td": { verticalAlign: "top" } }}>
-                                  <TableCell>{stock.medicineName}</TableCell>
-                                  <TableCell>
-                                    <Stack spacing={0.2}>
-                                      <Typography variant="body2">{stock.batchNumber || "-"}</Typography>
-                                      <Typography variant="caption" color="text.secondary">
-                                        {stock.purchaseReferenceNumber || "No purchase reference"} • Rate {stock.unitCost != null ? formatCurrency(stock.unitCost) : "-"}
-                                      </Typography>
-                                    </Stack>
-                                  </TableCell>
-                                  <TableCell>{stock.locationName || "Main Pharmacy"}</TableCell>
-                                  <TableCell>{stock.expiryDate || "-"}</TableCell>
-                                  <TableCell align="right">{stock.quantityOnHand}</TableCell>
-                                  <TableCell align="right">
-                                    <TextField
-                                      size="small"
-                                      value={draft.sellingPrice}
-                                      onChange={(event) => setSetupQueueEdits((current) => ({
-                                        ...current,
-                                        [stock.id]: {
-                                          sellingPrice: event.target.value,
-                                          lowStockThreshold: current[stock.id]?.lowStockThreshold ?? draft.lowStockThreshold,
-                                        },
-                                      }))}
-                                      inputProps={{ inputMode: "decimal" }}
-                                      placeholder="MRP"
-                                      disabled={!canManageInventory || saving}
-                                    />
-                                  </TableCell>
-                                  <TableCell align="right">
-                                    <TextField
-                                      size="small"
-                                      value={draft.lowStockThreshold}
-                                      onChange={(event) => setSetupQueueEdits((current) => ({
-                                        ...current,
-                                        [stock.id]: {
-                                          sellingPrice: current[stock.id]?.sellingPrice ?? draft.sellingPrice,
-                                          lowStockThreshold: event.target.value,
-                                        },
-                                      }))}
-                                      inputProps={{ inputMode: "numeric" }}
-                                      placeholder="Reorder"
-                                      disabled={!canManageInventory || saving}
-                                    />
-                                  </TableCell>
-                                  <TableCell>
-                                    <Chip size="small" label={draftMissing.length === 0 ? "Complete" : "Incomplete"} color={draftMissing.length === 0 ? "success" : "warning"} />
-                                    {draftMissing.length ? (
-                                      <Typography variant="caption" display="block" color="text.secondary">
-                                        {draftMissing.join(" • ")}
-                                      </Typography>
-                                    ) : null}
-                                  </TableCell>
-                                  <TableCell align="right">
-                                    <Stack direction="row" spacing={0.75} justifyContent="flex-end" useFlexGap flexWrap="wrap">
-                                      <Button size="small" disabled={!canManageInventory || saving || !dirty} onClick={() => void saveSetupRow(stock.id)}>
-                                        Save Row
-                                      </Button>
-                                      <Button size="small" variant="outlined" disabled={!canManageInventory} onClick={() => { editStock(stock); setStockActionPanel("add"); }}>
-                                        Edit Details
-                                      </Button>
-                                    </Stack>
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
                     )}
-                  </Stack>
-                </CardContent>
-              </Card>
+                  />
+                ) : visibleStocks.length === 0 ? (
+                  <CompactEmptyState
+                    title="No matching stock batches."
+                    subtitle="Adjust the filter or search to show the batches already in inventory."
+                    action={<Button size="small" onClick={() => { setSelectedLocationId(""); setStockSearch(""); }}>Clear filters</Button>}
+                  />
+                ) : undefined}
+              >
+                <Table size="small" stickyHeader>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Medicine</TableCell>
+                      <TableCell>Location</TableCell>
+                      <TableCell>Batch</TableCell>
+                      <TableCell>Expiry</TableCell>
+                      <TableCell align="right">Qty</TableCell>
+                      <TableCell align="right">Reorder Level</TableCell>
+                      <TableCell>Setup Status</TableCell>
+                      <TableCell>Operational Status</TableCell>
+                      <TableCell align="right">Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {visibleStocks.map((stock) => {
+                      const setupMissing = batchSetupMissing(stock);
+                      const setupComplete = setupMissing.length === 0;
+                      return (
+                        <TableRow key={stock.id} hover selected={stock.id === selectedStockId} sx={{ "& td": { py: 0.85, verticalAlign: "top" } }}>
+                          <TableCell>
+                            <Stack spacing={0.2}>
+                              <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                {stock.medicineName}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {stock.medicineType}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {stock.barcode || stock.externalCode || stock.qrCode || stock.purchaseReferenceNumber || "-"}
+                              </Typography>
+                            </Stack>
+                          </TableCell>
+                          <TableCell>{stock.locationName || "Main Pharmacy"}</TableCell>
+                          <TableCell>
+                            <Stack spacing={0.2}>
+                              <Typography variant="body2">{stock.batchNumber || "-"}</Typography>
+                              {stock.purchaseReferenceNumber ? (
+                                <Button size="small" sx={{ px: 0, minWidth: 0, justifyContent: "flex-start" }} onClick={() => navigate(`/pharmacy/procure?workspace=goods-receipt&receipt=${encodeURIComponent(stock.purchaseReferenceNumber || "")}`)}>
+                                  {stock.purchaseReferenceNumber}
+                                </Button>
+                              ) : (
+                                <Typography variant="caption" color="text.secondary">-</Typography>
+                              )}
+                            </Stack>
+                          </TableCell>
+                          <TableCell>
+                            <Stack spacing={0.3}>
+                              <Chip size="small" label={expiryState(stock.expiryDate).label} color={expiryState(stock.expiryDate).color} />
+                              <Typography variant="caption" color="text.secondary">{stock.expiryDate || "No expiry date"}</Typography>
+                            </Stack>
+                          </TableCell>
+                          <TableCell align="right">{stock.quantityOnHand}</TableCell>
+                          <TableCell align="right">{stock.lowStockThreshold ?? "-"}</TableCell>
+                          <TableCell>
+                            <Chip
+                              size="small"
+                              label={setupComplete ? "Complete" : "Incomplete"}
+                              color={setupComplete ? "success" : "warning"}
+                            />
+                            {!setupComplete ? (
+                              <Typography variant="caption" display="block" color="text.secondary">
+                                {setupMissing.join(" • ")}
+                              </Typography>
+                            ) : null}
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              size="small"
+                              label={stock.expiryDate && daysUntil(stock.expiryDate) < 0 ? "EXPIRED" : stock.active ? "Active" : "Inactive"}
+                              color={stock.expiryDate && daysUntil(stock.expiryDate) < 0 ? "error" : stock.active ? statusColor(stock.quantityOnHand, stock.lowStockThreshold) : "default"}
+                            />
+                          </TableCell>
+                          <TableCell align="right">
+                            <Stack direction="row" spacing={0.5} justifyContent="flex-end" useFlexGap flexWrap="wrap">
+                              <Button size="small" disabled={!canManageInventory} onClick={() => { editStock(stock); setStockActionPanel("add"); }}>
+                                Edit Batch
+                              </Button>
+                              <Button size="small" variant="outlined" disabled={!canManageInventory} onClick={() => startStockAdjustment(stock)}>
+                                Adjust Stock
+                              </Button>
+                              <Tooltip title="Quick Count remains available in the Physical Count tab.">
+                                <span><Button size="small" variant="outlined" disabled>Quick Count</Button></span>
+                              </Tooltip>
+                              <Tooltip title="Use the dedicated transfer workflow below.">
+                                <span><Button size="small" variant="outlined" disabled>Transfer</Button></span>
+                              </Tooltip>
+                              <Tooltip title="Use Returns & Write-offs for controlled write-off workflow.">
+                                <span><Button size="small" variant="outlined" disabled>Write Off</Button></span>
+                              </Tooltip>
+                              <Tooltip title="Batch-level transaction drill-down will be added after stock movement filtering is wired.">
+                                <span><Button size="small" variant="outlined" disabled>View Transactions</Button></span>
+                              </Tooltip>
+                            </Stack>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </OperationalTableCard>
 
-              <Card>
-                <CardContent sx={compactCardContentSx}>
-                  <Stack spacing={1.25}>
-                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                        Inventory transactions
-                      </Typography>
-                      <Chip size="small" label={`${transactions.length} logged`} variant="outlined" />
-                    </Box>
-                    {transactions.length === 0 ? (
-                      <CompactEmptyState
-                        title="No inventory movements yet."
-                        subtitle="Adjustments, purchases, dispenses, returns, and transfers will appear here once posted."
-                      />
-                    ) : (
-                      <TableContainer sx={{ maxHeight: 360 }}>
-                        <Table size="small" stickyHeader>
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>Medicine</TableCell>
-                              <TableCell>Type</TableCell>
-                              <TableCell align="right">Before</TableCell>
-                              <TableCell align="right">After</TableCell>
-                              <TableCell align="right">Quantity</TableCell>
-                              <TableCell>Reference</TableCell>
-                              <TableCell>Adjusted by</TableCell>
-                              <TableCell>Notes</TableCell>
-                              <TableCell>Created</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {transactions.map((transaction) => (
-                              <TableRow key={transaction.id} sx={{ "& td": { py: 0.8, verticalAlign: "top" } }}>
-                                <TableCell>{medicineById.get(transaction.medicineId)?.medicineName || transaction.medicineId}</TableCell>
-                                <TableCell>{transactionLabel(transaction.transactionType)}</TableCell>
-                                <TableCell align="right">{transaction.beforeQuantity ?? "-"}</TableCell>
-                                <TableCell align="right">{transaction.afterQuantity ?? "-"}</TableCell>
-                                <TableCell align="right">{transaction.quantity}</TableCell>
-                                <TableCell>
-                                  <Stack spacing={0.2}>
-                                    <Typography variant="caption" color="text.secondary">{transaction.referenceType || "-"}</Typography>
-                                    {transaction.businessReference ? (
-                                      <Button size="small" sx={{ px: 0, minWidth: 0, justifyContent: "flex-start" }} onClick={() => navigate(`/pharmacy/procure?workspace=goods-receipt&receipt=${encodeURIComponent(transaction.businessReference || "")}`)}>
-                                        {transaction.businessReference}
-                                      </Button>
-                                    ) : (
-                                      <Typography variant="body2">{transaction.referenceId || "-"}</Typography>
-                                    )}
-                                  </Stack>
-                                </TableCell>
-                                <TableCell>{transaction.adjustedByName || transaction.createdBy || "-"}</TableCell>
-                                <TableCell sx={{ maxWidth: 240 }}>{transaction.notes || "-"}</TableCell>
-                                <TableCell>{new Date(transaction.createdAt).toLocaleString()}</TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
-                    )}
-                  </Stack>
-                </CardContent>
-              </Card>
+              <OperationalTableCard
+                title="Batch Setup Queue"
+                subtitle="GRN creates received stock. Inventory completes commercial setup for POS readiness by maintaining MRP and reorder level."
+                countLabel={`${incompleteSetupStocks.length} incomplete`}
+                actions={(
+                  <Button size="small" variant="contained" disabled={!canManageInventory || saving || !incompleteSetupStocks.some((stock) => {
+                    const draft = setupQueueEdits[stock.id] ?? { sellingPrice: stock.sellingPrice?.toString() || "", lowStockThreshold: stock.lowStockThreshold?.toString() || "" };
+                    return draft.sellingPrice.trim() !== (stock.sellingPrice?.toString() || "")
+                      || draft.lowStockThreshold.trim() !== (stock.lowStockThreshold?.toString() || "");
+                  })} onClick={() => void saveAllSetupRows()}>
+                    Save All
+                  </Button>
+                )}
+                emptyState={incompleteSetupStocks.length === 0 ? (
+                  <CompactEmptyState
+                    title="All visible batches are commercially ready."
+                    subtitle="MRP and reorder level are already maintained for the current inventory filters."
+                  />
+                ) : undefined}
+              >
+                <Table size="small" stickyHeader>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Medicine</TableCell>
+                      <TableCell>Batch</TableCell>
+                      <TableCell>Location</TableCell>
+                      <TableCell>Expiry</TableCell>
+                      <TableCell align="right">Qty</TableCell>
+                      <TableCell align="right">MRP</TableCell>
+                      <TableCell align="right">Reorder Level</TableCell>
+                      <TableCell>Setup Status</TableCell>
+                      <TableCell align="right">Action</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {incompleteSetupStocks.map((stock) => {
+                      const draft = setupQueueEdits[stock.id] ?? {
+                        sellingPrice: stock.sellingPrice?.toString() || "",
+                        lowStockThreshold: stock.lowStockThreshold?.toString() || "",
+                      };
+                      const draftMissing = batchSetupMissingFromValues(parseOptionalNumberInput(draft.sellingPrice), parseOptionalNumberInput(draft.lowStockThreshold));
+                      const dirty = draft.sellingPrice.trim() !== (stock.sellingPrice?.toString() || "")
+                        || draft.lowStockThreshold.trim() !== (stock.lowStockThreshold?.toString() || "");
+                      return (
+                        <TableRow key={stock.id} sx={{ "& td": { verticalAlign: "top" } }}>
+                          <TableCell>{stock.medicineName}</TableCell>
+                          <TableCell>
+                            <Stack spacing={0.2}>
+                              <Typography variant="body2">{stock.batchNumber || "-"}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {stock.purchaseReferenceNumber || "No purchase reference"} • Rate {stock.unitCost != null ? formatCurrency(stock.unitCost) : "-"}
+                              </Typography>
+                            </Stack>
+                          </TableCell>
+                          <TableCell>{stock.locationName || "Main Pharmacy"}</TableCell>
+                          <TableCell>{stock.expiryDate || "-"}</TableCell>
+                          <TableCell align="right">{stock.quantityOnHand}</TableCell>
+                          <TableCell align="right">
+                            <TextField
+                              size="small"
+                              value={draft.sellingPrice}
+                              onChange={(event) => setSetupQueueEdits((current) => ({
+                                ...current,
+                                [stock.id]: {
+                                  sellingPrice: event.target.value,
+                                  lowStockThreshold: current[stock.id]?.lowStockThreshold ?? draft.lowStockThreshold,
+                                },
+                              }))}
+                              inputProps={{ inputMode: "decimal" }}
+                              placeholder="MRP"
+                              disabled={!canManageInventory || saving}
+                            />
+                          </TableCell>
+                          <TableCell align="right">
+                            <TextField
+                              size="small"
+                              value={draft.lowStockThreshold}
+                              onChange={(event) => setSetupQueueEdits((current) => ({
+                                ...current,
+                                [stock.id]: {
+                                  sellingPrice: current[stock.id]?.sellingPrice ?? draft.sellingPrice,
+                                  lowStockThreshold: event.target.value,
+                                },
+                              }))}
+                              inputProps={{ inputMode: "numeric" }}
+                              placeholder="Reorder"
+                              disabled={!canManageInventory || saving}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Chip size="small" label={draftMissing.length === 0 ? "Complete" : "Incomplete"} color={draftMissing.length === 0 ? "success" : "warning"} />
+                            {draftMissing.length ? (
+                              <Typography variant="caption" display="block" color="text.secondary">
+                                {draftMissing.join(" • ")}
+                              </Typography>
+                            ) : null}
+                          </TableCell>
+                          <TableCell align="right">
+                            <Stack direction="row" spacing={0.75} justifyContent="flex-end" useFlexGap flexWrap="wrap">
+                              <Button size="small" disabled={!canManageInventory || saving || !dirty} onClick={() => void saveSetupRow(stock.id)}>
+                                Save Row
+                              </Button>
+                              <Button size="small" variant="outlined" disabled={!canManageInventory} onClick={() => { editStock(stock); setStockActionPanel("add"); }}>
+                                Edit Details
+                              </Button>
+                            </Stack>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </OperationalTableCard>
+
+              <OperationalTableCard
+                title="Inventory transactions"
+                countLabel={`${transactions.length} logged`}
+                emptyState={transactions.length === 0 ? (
+                  <CompactEmptyState
+                    title="No inventory movements yet."
+                    subtitle="Adjustments, purchases, dispenses, returns, and transfers will appear here once posted."
+                  />
+                ) : undefined}
+              >
+                <Table size="small" stickyHeader>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Medicine</TableCell>
+                      <TableCell>Type</TableCell>
+                      <TableCell align="right">Before</TableCell>
+                      <TableCell align="right">After</TableCell>
+                      <TableCell align="right">Quantity</TableCell>
+                      <TableCell>Reference</TableCell>
+                      <TableCell>Adjusted by</TableCell>
+                      <TableCell>Notes</TableCell>
+                      <TableCell>Created</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {transactions.map((transaction) => (
+                      <TableRow key={transaction.id} sx={{ "& td": { py: 0.8, verticalAlign: "top" } }}>
+                        <TableCell>{medicineById.get(transaction.medicineId)?.medicineName || transaction.medicineId}</TableCell>
+                        <TableCell>{transactionLabel(transaction.transactionType)}</TableCell>
+                        <TableCell align="right">{transaction.beforeQuantity ?? "-"}</TableCell>
+                        <TableCell align="right">{transaction.afterQuantity ?? "-"}</TableCell>
+                        <TableCell align="right">{transaction.quantity}</TableCell>
+                        <TableCell>
+                          <Stack spacing={0.2}>
+                            <Typography variant="caption" color="text.secondary">{transaction.referenceType || "-"}</Typography>
+                            {transaction.businessReference ? (
+                              <Button size="small" sx={{ px: 0, minWidth: 0, justifyContent: "flex-start" }} onClick={() => navigate(`/pharmacy/procure?workspace=goods-receipt&receipt=${encodeURIComponent(transaction.businessReference || "")}`)}>
+                                {transaction.businessReference}
+                              </Button>
+                            ) : (
+                              <Typography variant="body2">{transaction.referenceId || "-"}</Typography>
+                            )}
+                          </Stack>
+                        </TableCell>
+                        <TableCell>{transaction.adjustedByName || transaction.createdBy || "-"}</TableCell>
+                        <TableCell sx={{ maxWidth: 240 }}>{transaction.notes || "-"}</TableCell>
+                        <TableCell>{new Date(transaction.createdAt).toLocaleString()}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </OperationalTableCard>
+
+              <CompactFilterCard
+                title="Batch history"
+                subtitle="Read-only movement path for the selected inventory batch."
+              >
+                {currentStock ? (
+                  <WorkflowGuide
+                    title="Adjustment trail"
+                    subtitle={`${currentStock.medicineName} • ${currentStock.batchNumber || "No batch"} • ${currentStock.locationName || "Main Pharmacy"}`}
+                    steps={currentStockHistory}
+                  />
+                ) : (
+                  <CompactEmptyState
+                    title="Select a batch to review its history."
+                    subtitle="The batch history shows GRN, commercial setup, physical count, stock adjustment, and current quantity."
+                  />
+                )}
+              </CompactFilterCard>
             </Stack>
           </Grid>
         </Grid>
+      ) : null}
+
+      {tab === "count" ? (
+        <Stack spacing={2}>
+          <Grid container spacing={1.5}>
+            <Grid size={{ xs: 6, md: 2.4 }}>
+              <CompactStatCard label="Draft" value={physicalCountDashboard.draft} helper="Ready to start" />
+            </Grid>
+            <Grid size={{ xs: 6, md: 2.4 }}>
+              <CompactStatCard label="In Progress" value={physicalCountDashboard.inProgress} tone={physicalCountDashboard.inProgress ? "warning" : "default"} helper="Counting in progress" />
+            </Grid>
+            <Grid size={{ xs: 6, md: 2.4 }}>
+              <CompactStatCard label="Submitted" value={physicalCountDashboard.submitted} tone={physicalCountDashboard.submitted ? "info" : "default"} helper="Awaiting review" />
+            </Grid>
+            <Grid size={{ xs: 6, md: 2.4 }}>
+              <CompactStatCard label="Reviewed" value={physicalCountDashboard.reviewed} tone={physicalCountDashboard.reviewed ? "success" : "default"} helper="Ready for Batch 3" />
+            </Grid>
+            <Grid size={{ xs: 6, md: 2.4 }}>
+              <CompactStatCard label="Large Variances" value={physicalCountDashboard.largeVariances} tone={physicalCountDashboard.largeVariances ? "error" : "success"} helper="Difference >= 10 units" />
+            </Grid>
+          </Grid>
+
+          <Grid container spacing={1.5}>
+            <Grid size={{ xs: 6, md: 2.4 }}>
+              <CompactStatCard label="Last Physical Count" value={physicalCountInventorySummary.lastPhysicalCount ? formatInventoryDateTime(physicalCountInventorySummary.lastPhysicalCount) : "-"} helper="Most recent posted count" />
+            </Grid>
+            <Grid size={{ xs: 6, md: 2.4 }}>
+              <CompactStatCard label="Pending Count Sessions" value={physicalCountInventorySummary.pendingCountSessions} tone={physicalCountInventorySummary.pendingCountSessions ? "warning" : "default"} helper="Not yet posted" />
+            </Grid>
+            <Grid size={{ xs: 6, md: 2.4 }}>
+              <CompactStatCard label="Posted This Month" value={physicalCountInventorySummary.postedThisMonth} tone={physicalCountInventorySummary.postedThisMonth ? "success" : "default"} helper="Completed sessions" />
+            </Grid>
+            <Grid size={{ xs: 6, md: 2.4 }}>
+              <CompactStatCard label="Variance Adjusted" value={physicalCountInventorySummary.varianceAdjusted} tone={physicalCountInventorySummary.varianceAdjusted ? "info" : "default"} helper="Total counted difference" />
+            </Grid>
+            <Grid size={{ xs: 6, md: 2.4 }}>
+              <CompactStatCard label="Last Adjustment Date" value={physicalCountInventorySummary.lastAdjustmentDate ? formatInventoryDateTime(physicalCountInventorySummary.lastAdjustmentDate) : "-"} helper="Latest PHYSICAL_COUNT movement" />
+            </Grid>
+          </Grid>
+
+          <WorkflowGuide
+            title="Physical Count Workflow"
+            subtitle="Session workflow is UI-first only in this batch. System quantities are captured for comparison, but no stock adjustment is posted from sessions yet."
+            steps={[
+              { label: "Create Session", tone: "primary" },
+              { label: "Count Medicines" },
+              { label: "Submit Session", tone: "info" },
+              { label: "Review Session", tone: "success" },
+              { label: "Approve", helper: "Batch 3" },
+              { label: "Post Adjustments", helper: "Batch 3" },
+            ]}
+          />
+
+          <CompactFilterCard
+            title="Session Controls"
+            subtitle="Use session-based counting for audits and cycle counts. Quick one-off batch correction remains available below."
+            actions={(
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                <Tooltip title="Coming after count session backend is enabled.">
+                  <span><Button size="small" variant="outlined" disabled>Import Count Sheet</Button></span>
+                </Tooltip>
+                <Tooltip title="Coming after count session backend is enabled.">
+                  <span><Button size="small" variant="outlined" disabled>Export Count Sheet</Button></span>
+                </Tooltip>
+                <Tooltip title="Coming after count session backend is enabled.">
+                  <span><Button size="small" variant="outlined" disabled>Mobile Scanner</Button></span>
+                </Tooltip>
+              </Stack>
+            )}
+          >
+            <Typography variant="body2" color="text.secondary">
+              System quantities are captured for comparison when the session is created.
+            </Typography>
+          </CompactFilterCard>
+
+          <Accordion expanded={physicalCountCreateOpen} onChange={(_, expanded) => setPhysicalCountCreateOpen(expanded)} disableGutters sx={compactAccordionSx}>
+            <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
+              <Stack spacing={0.4}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                  Create Physical Count Session
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Create a local session shell and freeze system quantities for variance review.
+                </Typography>
+              </Stack>
+            </AccordionSummary>
+            <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
+              <Box sx={compactFormSx}>
+                <Grid container spacing={1}>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      label={<RequiredLabel text="Session Name" required />}
+                      value={physicalCountForm.sessionName}
+                      onChange={(event) => setPhysicalCountForm((current) => ({ ...current, sessionName: event.target.value }))}
+                      required
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="physical-count-session-location-label"><RequiredLabel text="Location" required /></InputLabel>
+                      <Select
+                        labelId="physical-count-session-location-label"
+                        label="Location"
+                        value={physicalCountForm.locationId}
+                        onChange={(event) => setPhysicalCountForm((current) => ({ ...current, locationId: String(event.target.value) }))}
+                      >
+                        {locations.map((location) => (
+                          <MenuItem key={location.id} value={location.id}>{location.locationName}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="physical-count-session-reason-label"><RequiredLabel text="Reason" required /></InputLabel>
+                      <Select
+                        labelId="physical-count-session-reason-label"
+                        label="Reason"
+                        value={physicalCountForm.reason}
+                        onChange={(event) => setPhysicalCountForm((current) => ({ ...current, reason: event.target.value as PhysicalCountReason }))}
+                      >
+                        <MenuItem value="MONTHLY_COUNT">Monthly Count</MenuItem>
+                        <MenuItem value="QUARTERLY_AUDIT">Quarterly Audit</MenuItem>
+                        <MenuItem value="CYCLE_COUNT">Cycle Count</MenuItem>
+                        <MenuItem value="ANNUAL_AUDIT">Annual Audit</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 4 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="physical-count-session-scope-label"><RequiredLabel text="Scope" required /></InputLabel>
+                      <Select
+                        labelId="physical-count-session-scope-label"
+                        label="Scope"
+                        value={physicalCountForm.scope}
+                        onChange={(event) => setPhysicalCountForm((current) => ({
+                          ...current,
+                          scope: event.target.value as PhysicalCountScope,
+                          category: "",
+                          selectedMedicineIds: [],
+                        }))}
+                      >
+                        <MenuItem value="ENTIRE_INVENTORY">Entire Inventory</MenuItem>
+                        <MenuItem value="CATEGORY">Category</MenuItem>
+                        <MenuItem value="SELECTED_MEDICINES">Selected Medicines</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  {physicalCountForm.scope === "CATEGORY" ? (
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="physical-count-session-category-label"><RequiredLabel text="Category" required /></InputLabel>
+                        <Select
+                          labelId="physical-count-session-category-label"
+                          label="Category"
+                          value={physicalCountForm.category}
+                          onChange={(event) => setPhysicalCountForm((current) => ({ ...current, category: String(event.target.value) }))}
+                        >
+                          {medicineCategories.map((category) => (
+                            <MenuItem key={category} value={category}>{category}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                  ) : null}
+                  {physicalCountForm.scope === "SELECTED_MEDICINES" ? (
+                    <Grid size={{ xs: 12, md: 8 }}>
+                      <Autocomplete
+                        multiple
+                        options={medicines}
+                        size="small"
+                        value={medicines.filter((medicine) => physicalCountForm.selectedMedicineIds.includes(medicine.id))}
+                        onChange={(_, value) => setPhysicalCountForm((current) => ({ ...current, selectedMedicineIds: value.map((medicine) => medicine.id) }))}
+                        getOptionLabel={(option) => option.medicineName}
+                        renderInput={(params) => <TextField {...params} label={<RequiredLabel text="Selected Medicines" required />} />}
+                      />
+                    </Grid>
+                  ) : null}
+                  <Grid size={12}>
+                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                      <Button variant="contained" disabled={!canManageInventory || saving || !stocks.length} onClick={createPhysicalCountSession}>
+                        Create Session
+                      </Button>
+                      <Button variant="outlined" onClick={() => setPhysicalCountForm({
+                        ...emptyPhysicalCountSessionForm(),
+                        locationId: physicalCountForm.locationId,
+                      })}>
+                        Cancel
+                      </Button>
+                    </Stack>
+                  </Grid>
+                </Grid>
+              </Box>
+            </AccordionDetails>
+          </Accordion>
+
+          <OperationalTableCard
+            title="Count Sessions"
+            subtitle="Local session register for ongoing counts, review, and submission."
+            countLabel={`${physicalCountSessions.length} sessions`}
+            maxVisibleRows={5}
+            emptyState={physicalCountSessions.length === 0 ? (
+              <CompactEmptyState title="No physical count sessions yet." subtitle="Create the first session to start a count without changing inventory quantity." />
+            ) : undefined}
+          >
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Session</TableCell>
+                  <TableCell>Location</TableCell>
+                  <TableCell>Created By</TableCell>
+                  <TableCell>Created Date</TableCell>
+                  <TableCell>Last Updated</TableCell>
+                  <TableCell align="right">Medicines</TableCell>
+                  <TableCell align="right">Counted</TableCell>
+                  <TableCell align="right">Pending</TableCell>
+                  <TableCell align="right">Variance</TableCell>
+                  <TableCell align="right">Completion %</TableCell>
+                  <TableCell>Reviewer</TableCell>
+                  <TableCell>Reviewed Date</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell align="right">Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {physicalCountSessions.map((session) => {
+                  const counted = session.lines.filter((line) => physicalCountLineDifference(line) != null).length;
+                  const pending = session.lines.length - counted;
+                  const variance = session.lines.filter((line) => {
+                    const difference = physicalCountLineDifference(line);
+                    return difference != null && difference !== 0;
+                  }).length;
+                  const completion = physicalCountCompletionPercent(session.lines);
+                  const disableContinue = !["DRAFT", "IN_PROGRESS"].includes(session.status);
+                  const disableReview = session.status !== "SUBMITTED";
+                  return (
+                    <TableRow key={session.id} hover selected={session.id === physicalCountWorkspaceSessionId || session.id === physicalCountDrawerSessionId} sx={{ "& td": { verticalAlign: "top" } }}>
+                      <TableCell>
+                        <Stack spacing={0.2}>
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>{session.sessionName}</Typography>
+                          <Typography variant="caption" color="text.secondary">{session.scopeLabel} • {physicalCountReasonLabel(session.reason)}</Typography>
+                        </Stack>
+                      </TableCell>
+                      <TableCell>{session.locationName}</TableCell>
+                      <TableCell>{session.audit.createdBy}</TableCell>
+                      <TableCell>{formatInventoryDateTime(session.audit.createdAt)}</TableCell>
+                      <TableCell>{session.audit.lastUpdatedAt ? formatInventoryDateTime(session.audit.lastUpdatedAt) : "-"}</TableCell>
+                      <TableCell align="right">{session.lines.length}</TableCell>
+                      <TableCell align="right">{counted}</TableCell>
+                      <TableCell align="right">{pending}</TableCell>
+                      <TableCell align="right">{variance}</TableCell>
+                      <TableCell align="right">{completion}%</TableCell>
+                      <TableCell>{session.audit.reviewer || "-"}</TableCell>
+                      <TableCell>{session.audit.reviewedDate ? formatInventoryDateTime(session.audit.reviewedDate) : "-"}</TableCell>
+                      <TableCell>
+                        <Chip size="small" label={physicalCountStatusLabel(session.status)} color={physicalCountStatusColor(session.status)} />
+                      </TableCell>
+                      <TableCell align="right">
+                        <Stack direction="row" spacing={0.75} justifyContent="flex-end" useFlexGap flexWrap="wrap">
+                          <Button size="small" disabled={disableContinue} onClick={() => openPhysicalCountWorkspace(session.id, "continue")}>Continue</Button>
+                          <Button size="small" variant="outlined" disabled={disableReview} onClick={() => openPhysicalCountDrawer(session.id, "review")}>Review Session</Button>
+                          <Button size="small" variant="outlined" onClick={() => openPhysicalCountDrawer(session.id, "view")}>View</Button>
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </OperationalTableCard>
+
+          {physicalCountWorkspaceSession ? (
+            <Card>
+              <CardContent sx={compactCardContentSx}>
+                <Stack spacing={1.25}>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                    <Box>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                        Counting Workspace
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {physicalCountWorkspaceSession.sessionName} • {physicalCountWorkspaceSession.locationName} • {physicalCountWorkspaceMode === "view" ? "View mode" : "Editable count mode"}
+                      </Typography>
+                    </Box>
+                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                      <Chip size="small" label={`Total ${physicalCountSessionSummary.totalMedicines}`} variant="outlined" />
+                      <Chip size="small" color="success" label={`Matched ${physicalCountSessionSummary.matched}`} />
+                      <Chip size="small" color="warning" label={`Variance ${physicalCountSessionSummary.variance}`} />
+                    </Stack>
+                  </Box>
+
+                  <Grid container spacing={1}>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField
+                        size="small"
+                        fullWidth
+                        label="Search Medicine"
+                        value={physicalCountSearch}
+                        onChange={(event) => setPhysicalCountSearch(event.target.value)}
+                        placeholder="medicine name"
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField
+                        size="small"
+                        fullWidth
+                        label="Batch Search"
+                        value={physicalCountBatchSearch}
+                        onChange={(event) => setPhysicalCountBatchSearch(event.target.value)}
+                        placeholder="batch number"
+                      />
+                    </Grid>
+                  </Grid>
+
+                  {physicalCountWorkspaceLines.length === 0 ? (
+                    <CompactEmptyState title="No lines match the current count filters." subtitle="Clear the medicine or batch search to continue counting." />
+                  ) : (
+                    <TableContainer sx={{ maxHeight: 440 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Medicine</TableCell>
+                            <TableCell>Batch</TableCell>
+                            <TableCell align="right">System Qty</TableCell>
+                            <TableCell align="right">Counted Qty</TableCell>
+                            <TableCell align="right">Difference</TableCell>
+                            <TableCell>Reason</TableCell>
+                            <TableCell>Status</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {physicalCountWorkspaceLines.map((line) => {
+                            const difference = physicalCountLineDifference(line);
+                            const status = physicalCountLineStatus(line);
+                            const isActive = line.id === physicalCountWorkspaceLine?.id;
+                            const readOnly = physicalCountWorkspaceMode === "view" || physicalCountWorkspaceSession.status === "SUBMITTED" || physicalCountWorkspaceSession.status === "REVIEWED";
+                            return (
+                              <TableRow key={line.id} hover selected={isActive} onClick={() => setPhysicalCountWorkspaceLineId(line.id)} sx={{ "& td": { verticalAlign: "top" } }}>
+                                <TableCell>
+                                  <Stack spacing={0.2}>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{line.medicineName}</Typography>
+                                    <Typography variant="caption" color="text.secondary">{line.locationName}</Typography>
+                                  </Stack>
+                                </TableCell>
+                                <TableCell>{line.batchNumber}</TableCell>
+                                <TableCell align="right">{line.systemQty}</TableCell>
+                                <TableCell align="right" sx={{ minWidth: 112 }}>
+                                  <TextField
+                                    size="small"
+                                    type="number"
+                                    value={line.countedQty}
+                                    onChange={(event) => updatePhysicalCountSessionLine(physicalCountWorkspaceSession.id, line.id, { countedQty: event.target.value })}
+                                    inputProps={{ min: 0, step: 1 }}
+                                    disabled={readOnly}
+                                  />
+                                </TableCell>
+                                <TableCell align="right">{difference == null ? "-" : `${difference > 0 ? "+" : ""}${difference}`}</TableCell>
+                                <TableCell sx={{ minWidth: 220 }}>
+                                  <TextField
+                                    size="small"
+                                    fullWidth
+                                    value={line.reason}
+                                    onChange={(event) => updatePhysicalCountSessionLine(physicalCountWorkspaceSession.id, line.id, { reason: event.target.value })}
+                                    placeholder="Count note / variance reason"
+                                    disabled={readOnly}
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <Chip size="small" label={physicalCountLineStatusLabel(status)} color={physicalCountLineStatusColor(status)} />
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  )}
+
+                  <Grid container spacing={1.25}>
+                    <Grid size={{ xs: 6, md: 2.4 }}>
+                      <CompactStatCard label="Total Medicines" value={physicalCountSessionSummary.totalMedicines} helper="Batches in the session" />
+                    </Grid>
+                    <Grid size={{ xs: 6, md: 2.4 }}>
+                      <CompactStatCard label="Matched" value={physicalCountSessionSummary.matched} tone="success" helper="No difference" />
+                    </Grid>
+                    <Grid size={{ xs: 6, md: 2.4 }}>
+                      <CompactStatCard label="Variance" value={physicalCountSessionSummary.variance} tone={physicalCountSessionSummary.variance ? "warning" : "success"} helper="Short or excess lines" />
+                    </Grid>
+                    <Grid size={{ xs: 6, md: 2.4 }}>
+                      <CompactStatCard label="Missing Qty" value={physicalCountSessionSummary.missingQty} tone={physicalCountSessionSummary.missingQty ? "warning" : "default"} helper="Counted below system" />
+                    </Grid>
+                    <Grid size={{ xs: 6, md: 2.4 }}>
+                      <CompactStatCard label="Excess Qty" value={physicalCountSessionSummary.excessQty} tone={physicalCountSessionSummary.excessQty ? "info" : "default"} helper="Counted above system" />
+                    </Grid>
+                  </Grid>
+
+                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="space-between">
+                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                      <Button
+                        variant="outlined"
+                        disabled={!physicalCountWorkspaceLine || physicalCountWorkspaceLineIndex <= 0}
+                        onClick={() => {
+                          const previous = physicalCountWorkspaceLines[physicalCountWorkspaceLineIndex - 1];
+                          if (previous) setPhysicalCountWorkspaceLineId(previous.id);
+                        }}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        disabled={!physicalCountWorkspaceLine || physicalCountWorkspaceLineIndex < 0 || physicalCountWorkspaceLineIndex >= physicalCountWorkspaceLines.length - 1}
+                        onClick={() => {
+                          const next = physicalCountWorkspaceLines[physicalCountWorkspaceLineIndex + 1];
+                          if (next) setPhysicalCountWorkspaceLineId(next.id);
+                        }}
+                      >
+                        Next
+                      </Button>
+                    </Stack>
+                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                      <Button
+                        variant="outlined"
+                        disabled={physicalCountWorkspaceMode === "view" || physicalCountWorkspaceSession.status !== "IN_PROGRESS"}
+                        onClick={() => savePhysicalCountSessionDraft()}
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        variant="contained"
+                        disabled={physicalCountWorkspaceMode === "view" || physicalCountWorkspaceSession.status !== "IN_PROGRESS" || physicalCountWorkspaceLineIndex < 0 || physicalCountWorkspaceLineIndex >= physicalCountWorkspaceLines.length - 1}
+                        onClick={() => {
+                          savePhysicalCountSessionDraft("Physical count line saved locally. Inventory quantity is unchanged.");
+                          const next = physicalCountWorkspaceLines[physicalCountWorkspaceLineIndex + 1];
+                          if (next) setPhysicalCountWorkspaceLineId(next.id);
+                        }}
+                      >
+                        Save & Next
+                      </Button>
+                      <Button
+                        variant="contained"
+                        color="warning"
+                        disabled={physicalCountWorkspaceMode === "view" || physicalCountWorkspaceSession.status !== "IN_PROGRESS" || physicalCountSessionSummary.pending > 0}
+                        onClick={submitPhysicalCountSession}
+                      >
+                        Submit Session
+                      </Button>
+                      <Tooltip title="Coming after count session backend is enabled.">
+                        <span><Button variant="outlined" disabled>Approve</Button></span>
+                      </Tooltip>
+                      <Tooltip title="Coming after count session backend is enabled.">
+                        <span><Button variant="outlined" disabled>Post</Button></span>
+                      </Tooltip>
+                    </Stack>
+                  </Stack>
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          <Drawer
+            anchor="right"
+            open={Boolean(physicalCountDrawerSession)}
+            onClose={() => setPhysicalCountDrawerSessionId(null)}
+            ModalProps={{ keepMounted: false }}
+            PaperProps={{
+              sx: {
+                width: { xs: "100%", sm: 760, lg: 820 },
+                maxWidth: "100%",
+                boxSizing: "border-box",
+              },
+            }}
+          >
+            <Box sx={{ p: 2, height: "100%", overflow: "auto" }}>
+              {physicalCountDrawerSession ? (
+                <Stack spacing={2}>
+                  <Stack direction="row" justifyContent="space-between" spacing={2} alignItems="flex-start">
+                    <Box>
+                      <Typography variant="h6" sx={{ fontWeight: 800 }}>Physical Count Session</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {physicalCountDrawerSession.sessionName} · {physicalCountDrawerSession.locationName}
+                      </Typography>
+                    </Box>
+                    <Button size="small" onClick={() => setPhysicalCountDrawerSessionId(null)}>Close</Button>
+                  </Stack>
+
+                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                    <Chip size="small" label={physicalCountStatusLabel(physicalCountDrawerSession.status)} color={physicalCountStatusColor(physicalCountDrawerSession.status)} />
+                    <Chip size="small" label={`${physicalCountDrawerSummary.completionPercent}% complete`} variant="outlined" />
+                    <Chip size="small" color={physicalCountDrawerSummary.variance ? "warning" : "success"} label={`${physicalCountDrawerSummary.variance} variance`} />
+                  </Stack>
+
+                  <CompactFilterCard title="Review Summary" subtitle="Lifecycle state, completion, and next recommendation.">
+                    <Grid container spacing={1.25}>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <TextField size="small" fullWidth label="Status" value={physicalCountStatusLabel(physicalCountDrawerSession.status)} InputProps={{ readOnly: true }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <TextField size="small" fullWidth label="Completion %" value={`${physicalCountDrawerSummary.completionPercent}%`} InputProps={{ readOnly: true }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <TextField size="small" fullWidth label="Variance Count" value={String(physicalCountDrawerSummary.variance)} InputProps={{ readOnly: true }} />
+                      </Grid>
+                      <Grid size={12}>
+                        <TextField size="small" fullWidth label="Recommendation" value={physicalCountRecommendation(physicalCountDrawerSession.status)} InputProps={{ readOnly: true }} />
+                      </Grid>
+                    </Grid>
+                  </CompactFilterCard>
+
+                  <CompactFilterCard title="Session Summary" subtitle="Core session metadata captured at creation.">
+                    <Grid container spacing={1.25}>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField size="small" fullWidth label="Session Name" value={physicalCountDrawerSession.sessionName} InputProps={{ readOnly: true }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField size="small" fullWidth label="Location" value={physicalCountDrawerSession.locationName} InputProps={{ readOnly: true }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField size="small" fullWidth label="Reason" value={physicalCountReasonLabel(physicalCountDrawerSession.reason)} InputProps={{ readOnly: true }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField size="small" fullWidth label="Scope" value={physicalCountDrawerSession.scopeLabel} InputProps={{ readOnly: true }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField size="small" fullWidth label="Created By" value={physicalCountDrawerSession.audit.createdBy} InputProps={{ readOnly: true }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField size="small" fullWidth label="Created Date" value={formatInventoryDateTime(physicalCountDrawerSession.audit.createdAt)} InputProps={{ readOnly: true }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField size="small" fullWidth label="Status" value={physicalCountStatusLabel(physicalCountDrawerSession.status)} InputProps={{ readOnly: true }} />
+                      </Grid>
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField size="small" fullWidth label="Session Duration" value={physicalCountDrawerSession.audit.sessionDuration || "-"} InputProps={{ readOnly: true }} />
+                      </Grid>
+                    </Grid>
+                  </CompactFilterCard>
+
+                  <Grid container spacing={2}>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <CompactFilterCard title="Progress" subtitle="Counting progress across all batches in the session.">
+                        <Grid container spacing={1.25}>
+                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth label="Medicines" value={String(physicalCountDrawerSummary.totalMedicines)} InputProps={{ readOnly: true }} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth label="Counted" value={String(physicalCountDrawerSummary.counted)} InputProps={{ readOnly: true }} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth label="Pending" value={String(physicalCountDrawerSummary.pending)} InputProps={{ readOnly: true }} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth label="Completion %" value={`${physicalCountDrawerSummary.completionPercent}%`} InputProps={{ readOnly: true }} /></Grid>
+                          <Grid size={{ xs: 12 }}><TextField size="small" fullWidth label="Variance" value={String(physicalCountDrawerSummary.variance)} InputProps={{ readOnly: true }} /></Grid>
+                        </Grid>
+                      </CompactFilterCard>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <CompactFilterCard title="Variance Summary" subtitle="Difference profile from the captured system quantities.">
+                        <Grid container spacing={1.25}>
+                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth label="Matched" value={String(physicalCountDrawerSummary.matched)} InputProps={{ readOnly: true }} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth label="Short" value={String(physicalCountDrawerSummary.short)} InputProps={{ readOnly: true }} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth label="Excess" value={String(physicalCountDrawerSummary.excess)} InputProps={{ readOnly: true }} /></Grid>
+                          <Grid size={{ xs: 6 }}><TextField size="small" fullWidth label="Large Variance" value={String(physicalCountDrawerSummary.largeVariance)} InputProps={{ readOnly: true }} /></Grid>
+                        </Grid>
+                      </CompactFilterCard>
+                    </Grid>
+                  </Grid>
+
+                  <CompactFilterCard title="Comments / Notes" subtitle="Session-wide notes remain local in this phase.">
+                    <Grid container spacing={1.25}>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          multiline
+                          minRows={3}
+                          label="General Notes"
+                          value={physicalCountDrawerSession.audit.generalNotes}
+                          onChange={(event) => updatePhysicalCountSessionNotes(physicalCountDrawerSession.id, { generalNotes: event.target.value.slice(0, 500) })}
+                          inputProps={{ maxLength: 500 }}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          multiline
+                          minRows={3}
+                          label="Counter Notes"
+                          value={physicalCountDrawerSession.audit.counterNotes}
+                          onChange={(event) => updatePhysicalCountSessionNotes(physicalCountDrawerSession.id, { counterNotes: event.target.value.slice(0, 500) })}
+                          inputProps={{ maxLength: 500 }}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          multiline
+                          minRows={3}
+                          label="Reviewer Notes"
+                          value={physicalCountDrawerSession.audit.reviewerNotes}
+                          onChange={(event) => updatePhysicalCountSessionNotes(physicalCountDrawerSession.id, { reviewerNotes: event.target.value.slice(0, 500) })}
+                          inputProps={{ maxLength: 500 }}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          multiline
+                          minRows={3}
+                          label="Audit Notes"
+                          value={physicalCountDrawerSession.audit.auditNotes}
+                          onChange={(event) => updatePhysicalCountSessionNotes(physicalCountDrawerSession.id, { auditNotes: event.target.value.slice(0, 500) })}
+                          inputProps={{ maxLength: 500 }}
+                        />
+                      </Grid>
+                    </Grid>
+                  </CompactFilterCard>
+
+                  <CompactFilterCard title="Review Checklist" subtitle="Editable only while reviewing a submitted session.">
+                    <Grid container spacing={1}>
+                      {([
+                        ["randomSampleVerified", "Random sample verified"],
+                        ["largeVariancesInvestigated", "Large variances investigated"],
+                        ["batchVerificationComplete", "Batch verification complete"],
+                        ["supportingRemarksAdded", "Supporting remarks added"],
+                      ] as Array<[keyof PhysicalCountReviewChecklist, string]>).map(([key, label]) => (
+                        <Grid key={key} size={{ xs: 12, md: 6 }}>
+                          <FormControlLabel
+                            control={(
+                              <Checkbox
+                                checked={physicalCountDrawerSession.audit.reviewChecklist[key]}
+                                onChange={(event) => updatePhysicalCountReviewChecklist(physicalCountDrawerSession.id, key, event.target.checked)}
+                                disabled={!(physicalCountDrawerMode === "review" && physicalCountDrawerSession.status === "SUBMITTED")}
+                              />
+                            )}
+                            label={label}
+                          />
+                        </Grid>
+                      ))}
+                    </Grid>
+                  </CompactFilterCard>
+
+                  <CompactFilterCard title="Approval" subtitle="Approve reviewed sessions, reject them, or send them back for recount before posting.">
+                    <Grid container spacing={1.25}>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          multiline
+                          minRows={3}
+                          label="Approval Notes"
+                          value={physicalCountDrawerSession.audit.approvalNotes}
+                          onChange={(event) => updatePhysicalCountSessionNotes(physicalCountDrawerSession.id, { approvalNotes: event.target.value.slice(0, 500) })}
+                          inputProps={{ maxLength: 500 }}
+                          disabled={physicalCountDrawerSession.status !== "REVIEWED"}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          multiline
+                          minRows={3}
+                          label="Rejection Reason"
+                          value={physicalCountDrawerSession.audit.rejectionReason}
+                          onChange={(event) => updatePhysicalCountSessionNotes(physicalCountDrawerSession.id, { rejectionReason: event.target.value.slice(0, 500) })}
+                          inputProps={{ maxLength: 500 }}
+                          disabled={physicalCountDrawerSession.status !== "REVIEWED"}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          multiline
+                          minRows={3}
+                          label="Return Reason"
+                          value={physicalCountDrawerSession.audit.returnReason}
+                          onChange={(event) => updatePhysicalCountSessionNotes(physicalCountDrawerSession.id, { returnReason: event.target.value.slice(0, 500) })}
+                          inputProps={{ maxLength: 500 }}
+                          disabled={physicalCountDrawerSession.status !== "REVIEWED"}
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          label="Posted"
+                          value={physicalCountDrawerSession.audit.postedAt ? formatInventoryDateTime(physicalCountDrawerSession.audit.postedAt) : "Not posted"}
+                          InputProps={{ readOnly: true }}
+                        />
+                      </Grid>
+                    </Grid>
+                  </CompactFilterCard>
+
+                  {physicalCountDrawerMode === "review" && physicalCountDrawerSession.status === "SUBMITTED" ? (
+                    <OperationalTableCard
+                      title="Review Workspace"
+                      subtitle="Review counted lines, add reviewer remarks, and flag exceptions before marking reviewed."
+                      countLabel={`${physicalCountDrawerSession.lines.length} lines`}
+                      maxVisibleRows={5}
+                    >
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Medicine</TableCell>
+                            <TableCell>Batch</TableCell>
+                            <TableCell align="right">System Qty</TableCell>
+                            <TableCell align="right">Counted Qty</TableCell>
+                            <TableCell align="right">Difference</TableCell>
+                            <TableCell>Reason</TableCell>
+                            <TableCell>Reviewer Remarks</TableCell>
+                            <TableCell>Result</TableCell>
+                            <TableCell>Flag</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {physicalCountDrawerSession.lines.map((line) => {
+                            const difference = physicalCountLineDifference(line);
+                            const result = physicalCountLineStatus(line);
+                            return (
+                              <TableRow key={line.id} sx={{ "& td": { verticalAlign: "top" } }}>
+                                <TableCell>{line.medicineName}</TableCell>
+                                <TableCell>{line.batchNumber}</TableCell>
+                                <TableCell align="right">{line.systemQty}</TableCell>
+                                <TableCell align="right">{line.countedQty || "-"}</TableCell>
+                                <TableCell align="right">{difference == null ? "-" : `${difference > 0 ? "+" : ""}${difference}`}</TableCell>
+                                <TableCell>{line.reason || "-"}</TableCell>
+                                <TableCell sx={{ minWidth: 220 }}>
+                                  <TextField
+                                    size="small"
+                                    fullWidth
+                                    value={line.reviewerRemarks}
+                                    onChange={(event) => updatePhysicalCountSessionLine(physicalCountDrawerSession.id, line.id, { reviewerRemarks: event.target.value })}
+                                    placeholder="Reviewer remarks"
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <Chip size="small" label={physicalCountLineStatusLabel(result)} color={physicalCountLineStatusColor(result)} />
+                                </TableCell>
+                                <TableCell>
+                                  <Checkbox
+                                    checked={line.flagged}
+                                    onChange={(event) => updatePhysicalCountSessionLine(physicalCountDrawerSession.id, line.id, { flagged: event.target.checked })}
+                                  />
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </OperationalTableCard>
+                  ) : null}
+
+                  {(physicalCountDrawerSession.status === "REVIEWED" || physicalCountDrawerSession.status === "APPROVED" || physicalCountDrawerSession.status === "POSTED") ? (
+                    <OperationalTableCard
+                      title="Post Preview"
+                      subtitle="Variance lines only. Posting will reuse the existing stock adjustment engine and create stock movement audit."
+                      countLabel={`${physicalCountDrawerSession.lines.filter((line) => {
+                        const difference = physicalCountLineDifference(line);
+                        return difference != null && difference !== 0;
+                      }).length} variance lines`}
+                      maxVisibleRows={5}
+                    >
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Medicine</TableCell>
+                            <TableCell>Batch</TableCell>
+                            <TableCell align="right">System Qty</TableCell>
+                            <TableCell align="right">Counted Qty</TableCell>
+                            <TableCell align="right">Difference</TableCell>
+                            <TableCell>Reason</TableCell>
+                            <TableCell>Movement Type</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {physicalCountDrawerSession.lines.filter((line) => {
+                            const difference = physicalCountLineDifference(line);
+                            return difference != null && difference !== 0;
+                          }).map((line) => {
+                            const difference = physicalCountLineDifference(line) ?? 0;
+                            return (
+                              <TableRow key={`post-${line.id}`}>
+                                <TableCell>{line.medicineName}</TableCell>
+                                <TableCell>{line.batchNumber}</TableCell>
+                                <TableCell align="right">{line.systemQty}</TableCell>
+                                <TableCell align="right">{line.countedQty}</TableCell>
+                                <TableCell align="right">{difference > 0 ? `+${difference}` : difference}</TableCell>
+                                <TableCell>{line.reason || "-"}</TableCell>
+                                <TableCell>{difference > 0 ? "Adjustment In" : "Adjustment Out"}</TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </OperationalTableCard>
+                  ) : null}
+
+                  <CompactFilterCard title="Audit Timeline" subtitle="Lifecycle progression derived from local session audit fields.">
+                    <Stack spacing={1}>
+                      {physicalCountTimeline(physicalCountDrawerSession).map((timelineStep, index, rows) => (
+                        <Stack key={`${physicalCountDrawerSession.id}-${timelineStep.label}`} direction="row" spacing={1.25} alignItems="stretch">
+                          <Stack alignItems="center" spacing={0.35} sx={{ width: 18, flex: "0 0 auto" }}>
+                            <Box
+                              aria-hidden
+                              sx={{
+                                width: 14,
+                                height: 14,
+                                borderRadius: "50%",
+                                bgcolor: timelineStep.state === "completed" ? "success.main" : timelineStep.state === "current" ? "primary.main" : "transparent",
+                                border: "2px solid",
+                                borderColor: timelineStep.state === "pending" ? "divider" : timelineStep.state === "current" ? "primary.main" : "success.main",
+                              }}
+                            />
+                            {index < rows.length - 1 ? (
+                              <Box
+                                aria-hidden
+                                sx={{
+                                  width: 2,
+                                  flex: 1,
+                                  bgcolor: timelineStep.state === "pending" ? "divider" : timelineStep.state === "current" ? "primary.light" : "success.light",
+                                }}
+                              />
+                            ) : null}
+                          </Stack>
+                          <Stack spacing={0.25} sx={{ pb: index < rows.length - 1 ? 1 : 0 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 700 }}>{timelineStep.label}</Typography>
+                            <Chip
+                              size="small"
+                              label={timelineStep.state === "completed" ? "Completed" : timelineStep.state === "current" ? "Current" : "Pending"}
+                              color={timelineStep.state === "completed" ? "success" : timelineStep.state === "current" ? "primary" : "default"}
+                              variant={timelineStep.state === "pending" ? "outlined" : "filled"}
+                            />
+                            <Typography variant="caption" color="text.secondary">
+                              {timelineStep.at ? formatInventoryDateTime(timelineStep.at) : "Not recorded yet"}
+                            </Typography>
+                          </Stack>
+                        </Stack>
+                      ))}
+                    </Stack>
+                  </CompactFilterCard>
+
+                  <Divider />
+
+                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                    <Button size="small" onClick={() => setPhysicalCountDrawerSessionId(null)}>Close</Button>
+                    {physicalCountDrawerMode === "review" && physicalCountDrawerSession.status === "SUBMITTED" ? (
+                      <Button size="small" variant="contained" color="success" onClick={markPhysicalCountSessionReviewed}>Mark Reviewed</Button>
+                    ) : null}
+                    <Tooltip title="Available in next workflow phase.">
+                      <span><Button size="small" variant="outlined" disabled>Print</Button></span>
+                    </Tooltip>
+                    <Tooltip title="Available in next workflow phase.">
+                      <span><Button size="small" variant="outlined" disabled>Export PDF</Button></span>
+                    </Tooltip>
+                    <Button size="small" variant="outlined" disabled={physicalCountDrawerSession.status !== "REVIEWED" || saving} onClick={approvePhysicalCountSession}>Approve Session</Button>
+                    <Button size="small" variant="outlined" color="error" disabled={physicalCountDrawerSession.status !== "REVIEWED" || saving} onClick={rejectPhysicalCountSession}>Reject</Button>
+                    <Button size="small" variant="outlined" color="warning" disabled={physicalCountDrawerSession.status !== "REVIEWED" || saving} onClick={returnPhysicalCountSessionForRecount}>Return for Recount</Button>
+                    <Button size="small" variant="contained" disabled={physicalCountDrawerSession.status !== "APPROVED" || Boolean(physicalCountDrawerSession.audit.postedAt) || saving} onClick={() => void postPhysicalCountAdjustments()}>Post Adjustments</Button>
+                  </Stack>
+                </Stack>
+              ) : null}
+            </Box>
+          </Drawer>
+
+          <Accordion expanded={physicalCountQuickOpen} onChange={(_, expanded) => setPhysicalCountQuickOpen(expanded)} disableGutters sx={compactAccordionSx}>
+            <AccordionSummary expandIcon={<ExpandMoreRounded />} sx={{ px: 1.5, py: 0.25, minHeight: 40 }}>
+              <Stack spacing={0.4}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                  Quick Quantity Correction
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Use this for emergency correction of one medicine/batch. For audits, use Physical Count Sessions.
+                </Typography>
+              </Stack>
+            </AccordionSummary>
+            <AccordionDetails sx={{ px: 1.5, pb: 1.25, pt: 0 }}>
+              <Box sx={compactFormSx}>
+                <Grid container spacing={1}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="count-medicine-label"><RequiredLabel text="Medicine" required /></InputLabel>
+                      <Select
+                        id="inventory-count-medicine"
+                        labelId="count-medicine-label"
+                        label="Medicine"
+                        value={stockCountForm.medicineId}
+                        onChange={(e) => setStockCountForm((current) => ({ ...current, medicineId: String(e.target.value), stockBatchId: "" }))}
+                        required
+                        error={Boolean(countFieldErrors.medicineId)}
+                        inputProps={{ "aria-required": true }}
+                      >
+                        <MenuItem value="">Select medicine</MenuItem>
+                        {medicines.map((medicine) => (
+                          <MenuItem key={medicine.id} value={medicine.id}>{medicine.medicineName}</MenuItem>
+                        ))}
+                      </Select>
+                      {countFieldErrors.medicineId ? <Typography variant="caption" color="error">{countFieldErrors.medicineId}</Typography> : null}
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="count-location-label"><RequiredLabel text="Location" required /></InputLabel>
+                      <Select
+                        id="inventory-count-location"
+                        labelId="count-location-label"
+                        label="Location"
+                        value={stockCountForm.locationId}
+                        onChange={(e) => setStockCountForm((current) => ({ ...current, locationId: String(e.target.value), stockBatchId: "" }))}
+                        required
+                        error={Boolean(countFieldErrors.locationId)}
+                        inputProps={{ "aria-required": true }}
+                      >
+                        <MenuItem value="">All locations</MenuItem>
+                        {locations.map((location) => (
+                          <MenuItem key={location.id} value={location.id}>{location.locationName}</MenuItem>
+                        ))}
+                      </Select>
+                      {countFieldErrors.locationId ? <Typography variant="caption" color="error">{countFieldErrors.locationId}</Typography> : null}
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="count-batch-label"><RequiredLabel text="Batch" required /></InputLabel>
+                      <Select
+                        id="inventory-count-batch"
+                        labelId="count-batch-label"
+                        label="Batch"
+                        value={stockCountForm.stockBatchId}
+                        onChange={(e) => setStockCountForm((current) => ({ ...current, stockBatchId: String(e.target.value) }))}
+                        required
+                        error={Boolean(countFieldErrors.stockBatchId)}
+                        inputProps={{ "aria-required": true }}
+                      >
+                        <MenuItem value="">Select batch</MenuItem>
+                        {countableStocks.map((stock) => (
+                          <MenuItem key={stock.id} value={stock.id}>
+                            {(stock.batchNumber || "No batch")} • {stock.locationName || "Main Pharmacy"} • Qty {stock.quantityOnHand}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                      {countFieldErrors.stockBatchId ? <Typography variant="caption" color="error">{countFieldErrors.stockBatchId}</Typography> : null}
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      label="System quantity"
+                      value={selectedCountStock ? selectedCountStock.quantityOnHand : ""}
+                      InputProps={{ readOnly: true }}
+                      helperText="Quantity currently recorded in the system."
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      id="inventory-count-quantity"
+                      size="small"
+                      fullWidth
+                      type="number"
+                      label={<RequiredLabel text="Physical count" required />}
+                      value={stockCountForm.countedQuantity}
+                      onChange={(e) => setStockCountForm((current) => ({ ...current, countedQuantity: e.target.value }))}
+                      required
+                      error={Boolean(countFieldErrors.physicalQuantity)}
+                      helperText={countFieldErrors.physicalQuantity || "Enter the counted quantity from shelves."}
+                      inputProps={{ min: 0, step: 1, "aria-required": true }}
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Box id="inventory-count-reason" tabIndex={-1}>
+                      <CommentSuggestions
+                        category="INVENTORY_ADJUSTMENT"
+                        selectedReason={stockCountForm.reason}
+                        remarks={stockCountForm.remarks}
+                        onReasonChange={(value) => setStockCountForm((current) => ({ ...current, reason: value }))}
+                        onRemarksChange={(value) => setStockCountForm((current) => ({ ...current, remarks: value }))}
+                        requiredReason
+                        maxRemarksLength={250}
+                        reasonLabel="Adjustment reason"
+                        remarksLabel="Remarks"
+                        reasonHelperText={countFieldErrors.reason || "Reason is required for audit trail."}
+                        remarksHelperText={countFieldErrors.remarks || `${stockCountForm.remarks.length}/250`}
+                      />
+                    </Box>
+                  </Grid>
+                  <Grid size={12}>
+                    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                      <Chip
+                        size="small"
+                        label={countVariance === null ? "Variance: -" : `Variance: ${countVariance > 0 ? "+" : ""}${countVariance}`}
+                        color={countVariance === null ? "default" : countVariance === 0 ? "default" : countVariance > 0 ? "success" : "warning"}
+                      />
+                      <Button
+                        variant="contained"
+                        disabled={!canManageInventory || saving || !selectedCountStock || !stockCountForm.reason.trim() || stockCountForm.countedQuantity.trim() === "" || countVariance === 0}
+                        onClick={async () => {
+                          if (!auth.accessToken || !auth.tenantId || !selectedCountStock) {
+                            setError("Select a batch before posting the stock count.");
+                            return;
+                          }
+                          const parsedCount = inventoryPhysicalCountSchema.safeParse({
+                            stockBatchId: selectedCountStock.id,
+                            medicineId: selectedCountStock.medicineId,
+                            locationId: selectedCountStock.locationId || selectedLocationId || "",
+                            physicalQuantity: stockCountForm.countedQuantity,
+                            reason: stockCountForm.reason,
+                            remarks: stockCountForm.remarks,
+                          });
+                          if (!parsedCount.success) {
+                            const fieldErrors = zodFieldErrors(parsedCount.error);
+                            setCountFieldErrors(fieldErrors);
+                            setError(parsedCount.error.issues[0]?.message || "Stock count could not be posted.");
+                            focusFirstInventoryField(fieldErrors, {
+                              medicineId: "inventory-count-medicine",
+                              locationId: "inventory-count-location",
+                              stockBatchId: "inventory-count-batch",
+                              physicalQuantity: "inventory-count-quantity",
+                              reason: "inventory-count-reason",
+                            });
+                            return;
+                          }
+                          const counted = Number(stockCountForm.countedQuantity);
+                          const variance = counted - selectedCountStock.quantityOnHand;
+                          if (variance === 0) {
+                            setError("No variance to post for this stock count.");
+                            return;
+                          }
+                          setSaving(true);
+                          setError(null);
+                          setSuccess(null);
+                          setCountFieldErrors({});
+                          try {
+                            await createInventoryTransaction(auth.accessToken, auth.tenantId, {
+                              medicineId: selectedCountStock.medicineId,
+                              stockBatchId: selectedCountStock.id,
+                              transactionType: variance > 0 ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT",
+                              quantity: Math.abs(variance),
+                              reason: `Physical stock count: ${stockCountForm.reason.trim()}`,
+                              referenceType: "PHYSICAL_STOCK_COUNT",
+                              referenceId: selectedCountStock.id,
+                              notes: `System ${selectedCountStock.quantityOnHand}, counted ${counted}, variance ${variance > 0 ? "+" : ""}${variance}${stockCountForm.remarks.trim() ? ` • ${stockCountForm.remarks.trim()}` : ""}`,
+                            });
+                            await loadAll();
+                            setSuccess(`Physical stock count posted. Variance ${variance > 0 ? "+" : ""}${variance}.`);
+                            setStockCountForm(emptyStockCountForm());
+                          } catch (err) {
+                            setError(err instanceof Error ? err.message : "Failed to post stock count");
+                          } finally {
+                            setSaving(false);
+                          }
+                        }}
+                      >
+                        Post count correction
+                      </Button>
+                    </Stack>
+                  </Grid>
+                </Grid>
+              </Box>
+            </AccordionDetails>
+          </Accordion>
+        </Stack>
       ) : null}
 
       {tab === "expiry-report" ? (

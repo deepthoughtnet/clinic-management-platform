@@ -23,6 +23,8 @@ import {
   ListItemButton,
   ListItemText,
   MenuItem,
+  Popover,
+  InputAdornment,
   Select,
   Stack,
   Table,
@@ -39,17 +41,16 @@ import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
 import CameraAltRoundedIcon from "@mui/icons-material/CameraAltRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
+import HelpOutlineRoundedIcon from "@mui/icons-material/HelpOutlineRounded";
 import HistoryRoundedIcon from "@mui/icons-material/HistoryRounded";
 import LocalPrintshopOutlinedIcon from "@mui/icons-material/LocalPrintshopOutlined";
-import LocalPharmacyRoundedIcon from "@mui/icons-material/LocalPharmacyRounded";
 import PauseCircleOutlineRoundedIcon from "@mui/icons-material/PauseCircleOutlineRounded";
 import PointOfSaleRoundedIcon from "@mui/icons-material/PointOfSaleRounded";
 import PreviewRoundedIcon from "@mui/icons-material/PreviewRounded";
 import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
-import MedicalServicesRoundedIcon from "@mui/icons-material/MedicalServicesRounded";
 import ShoppingCartCheckoutRoundedIcon from "@mui/icons-material/ShoppingCartCheckoutRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
-import { WorkflowGuide } from "../../components/compact/CompactUi";
+import { CompactEmptyState, compactChipSx } from "../../components/compact/CompactUi";
 import CodeScannerDialog from "../../components/pharmacy/CodeScannerDialog";
 import RequiredLabel from "../../components/forms/RequiredLabel.js";
 import { useNavigate } from "react-router-dom";
@@ -130,13 +131,14 @@ const STICKY_TOP = 76;
 const PRESCRIPTION_MAX_BYTES = 10 * 1024 * 1024;
 const POS_LOW_STOCK_THRESHOLD = 5;
 const BATCH_SETUP_INCOMPLETE_MESSAGE = "Batch setup incomplete. Please update MRP and reorder level in Inventory before sale.";
+const MONEY_INPUT_PATTERN = /^\d+(\.\d{1,2})?$/;
 
 const panelSx = {
   border: "1px solid",
   borderColor: "divider",
   borderRadius: 2,
   bgcolor: "background.paper",
-  p: 1.25,
+  p: 1,
 };
 
 function money(value: number) {
@@ -146,6 +148,32 @@ function money(value: number) {
 function numeric(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function validatePaidAmountInput(value: string, grandTotal: number) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { amount: null as number | null, error: grandTotal > 0 ? "Paid amount is required." : null };
+  }
+  if (trimmed.startsWith("-")) {
+    return { amount: null as number | null, error: "Paid amount cannot be negative." };
+  }
+  if (!MONEY_INPUT_PATTERN.test(trimmed)) {
+    return { amount: null as number | null, error: "Amount can have up to 2 decimal places." };
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) {
+    return { amount: null as number | null, error: "Enter a valid amount." };
+  }
+  const amount = roundMoney(parsed);
+  if (grandTotal > 0 && amount < roundMoney(grandTotal)) {
+    return { amount, error: "Paid amount cannot be less than grand total." };
+  }
+  return { amount, error: null as string | null };
 }
 
 function lineGross(line: CartLine) {
@@ -354,9 +382,7 @@ function scanModeLabel(mode: CodeScanMode) {
   return mode === "QR" ? "QR" : "barcode";
 }
 
-function shiftStatusLabel(shift: PharmacyPosShift | null) {
-  return shift ? shift.status : "No open shift";
-}
+type HelpPopoverKey = "search" | "fefo" | null;
 
 export default function PharmacyPosPage() {
   const auth = useAuth();
@@ -444,20 +470,25 @@ export default function PharmacyPosPage() {
   const [returnReference, setReturnReference] = React.useState("");
   const [returnDrawerOpen, setReturnDrawerOpen] = React.useState(false);
   const [shiftHistoryDrawerOpen, setShiftHistoryDrawerOpen] = React.useState(false);
-  const [customerSectionOpen, setCustomerSectionOpen] = React.useState(true);
+  const [customerSectionOpen, setCustomerSectionOpen] = React.useState(false);
   const [prescriptionSectionOpen, setPrescriptionSectionOpen] = React.useState(false);
+  const [shiftSectionOpen, setShiftSectionOpen] = React.useState(false);
   const [saleConfirmOpen, setSaleConfirmOpen] = React.useState(false);
   const [clearCartConfirmOpen, setClearCartConfirmOpen] = React.useState(false);
   const [previewDialogOpen, setPreviewDialogOpen] = React.useState(false);
   const [previewDocumentName, setPreviewDocumentName] = React.useState<string | null>(null);
   const [previewDocumentUrl, setPreviewDocumentUrl] = React.useState<string | null>(null);
   const [previewDocumentIsImage, setPreviewDocumentIsImage] = React.useState(false);
+  const [helpPopoverAnchor, setHelpPopoverAnchor] = React.useState<HTMLElement | null>(null);
+  const [helpPopoverKey, setHelpPopoverKey] = React.useState<HelpPopoverKey>(null);
 
   const subtotal = React.useMemo(() => cart.reduce((sum, line) => sum + lineGross(line), 0), [cart]);
   const discountTotal = React.useMemo(() => cart.reduce((sum, line) => sum + numeric(line.discount), 0), [cart]);
   const taxTotal = React.useMemo(() => cart.reduce((sum, line) => sum + lineTaxAmount(line), 0), [cart]);
   const total = React.useMemo(() => cart.reduce((sum, line) => sum + lineTotal(line), 0), [cart]);
-  const duePreview = Math.max(0, total - numeric(paidAmount));
+  const roundedTotal = React.useMemo(() => roundMoney(total), [total]);
+  const paidAmountValidation = React.useMemo(() => validatePaidAmountInput(paidAmount, roundedTotal), [paidAmount, roundedTotal]);
+  const duePreview = Math.max(0, roundMoney(roundedTotal - (paidAmountValidation.amount ?? 0)));
   const filteredSales = React.useMemo(() => {
     const term = saleSearchQuery.trim().toLowerCase();
     if (!term) return sales;
@@ -488,22 +519,13 @@ export default function PharmacyPosPage() {
     const actualTotal = numeric(actualCashAmount) + numeric(actualUpiAmount) + numeric(actualCardAmount) + numeric(actualOtherAmount);
     return actualTotal - (currentShift?.expectedTotalAmount ?? 0);
   }, [actualCardAmount, actualCashAmount, actualOtherAmount, actualUpiAmount, currentShift]);
-  const customerSummary = React.useMemo(() => {
-    const name = selectedPatient
-      ? `${selectedPatient.firstName} ${selectedPatient.lastName}`.trim()
-      : customerName.trim();
-    const mobile = customerMobile.trim();
-    if (!name && !mobile) return "No customer selected";
-    return `${name || "Walk-in"}${mobile ? ` • ${mobile}` : ""}`;
-  }, [customerMobile, customerName, selectedPatient]);
   const saleSummary = React.useMemo(() => ({
     itemCount: cart.length,
-    totalAmount: money(total),
+    totalAmount: money(roundedTotal),
     paymentMode,
-    amountReceived: money(Math.max(0, numeric(paidAmount))),
-  }), [cart.length, paidAmount, paymentMode, total]);
-  const paidAmountValue = numeric(paidAmount);
-  const paidAmountMissing = total > 0 && paidAmountValue <= 0;
+    amountReceived: money(Math.max(0, paidAmountValidation.amount ?? 0)),
+  }), [cart.length, paidAmountValidation.amount, paymentMode, roundedTotal]);
+  const paidAmountValue = paidAmountValidation.amount ?? 0;
   const requiresReference = paidAmountValue > 0 && paymentMode !== "CASH";
   const medicineResultsOrdered = React.useMemo(() => {
     const filtered = medicineResults.filter((medicine) => {
@@ -537,6 +559,13 @@ export default function PharmacyPosPage() {
       return left.medicineName.localeCompare(right.medicineName);
     });
   }, [hideUnavailable, medicineQuery, medicineResults, stockFilter]);
+  const medicineStatusCounts = React.useMemo(() => ({
+    all: medicineResults.length,
+    inStock: medicineResults.filter((medicine) => medicine.totalAvailableQuantity > 0).length,
+    lowStock: medicineResults.filter((medicine) => isLowStock(medicine.totalAvailableQuantity)).length,
+    outOfStock: medicineResults.filter((medicine) => medicine.totalAvailableQuantity <= 0).length,
+    expiringSoon: medicineResults.filter((medicine) => isExpiringSoon(medicine.earliestExpiryDate)).length,
+  }), [medicineResults]);
 
   const medicineSearchValidation = React.useMemo(
     () => pharmacyPosSearchSchema.safeParse(medicineQuery),
@@ -558,13 +587,13 @@ export default function PharmacyPosPage() {
     patientId: selectedPatient?.id ?? null,
     customerName: selectedPatient ? null : customerName,
     customerMobile: selectedPatient ? null : (customerMobile.trim() ? (normalizeIndianMobileInput(customerMobile) as string) : null),
-    grandTotal: total,
-    paidAmount: numeric(paidAmount),
+    grandTotal: roundedTotal,
+    paidAmount: paidAmountValidation.amount,
     paymentMode: paymentMode,
     paymentReference: paymentReference,
     prescriptionDocumentId: prescription?.documentId ?? null,
     notes,
-  }), [cart, customerMobile, customerName, notes, paidAmount, paymentMode, paymentReference, prescription?.documentId, selectedPatient?.id, total]);
+  }), [cart, customerMobile, customerName, notes, paidAmountValidation.amount, paymentMode, paymentReference, prescription?.documentId, roundedTotal, selectedPatient?.id]);
   const saleSubmissionValidation = React.useMemo(
     () => pharmacyPosCheckoutSchema.safeParse(saleSubmissionDraft),
     [saleSubmissionDraft],
@@ -580,14 +609,14 @@ export default function PharmacyPosPage() {
     if (!cart.length) {
       return "Add at least one medicine to the cart.";
     }
-    if (paidAmountMissing) {
-      return "Enter paid amount.";
+    if (paidAmountValidation.error) {
+      return paidAmountValidation.error;
     }
     if (!saleSubmissionValidation.success) {
       return firstZodError(saleSubmissionValidation.error);
     }
     return null;
-  }, [cart.length, currentShift, paidAmountMissing, saleSubmissionValidation]);
+  }, [cart.length, currentShift, paidAmountValidation.error, saleSubmissionValidation]);
   const cartHasStockIssue = React.useMemo(
     () => cart.some((line, index) => Boolean(saleFieldErrors[`items.${index}.quantity`]) || Boolean(saleFieldErrors[`items.${index}.discount`]) || Boolean(saleFieldErrors[`items.${index}.unitPrice`]) || Boolean(saleFieldErrors[`items.${index}.taxRate`])),
     [cart, saleFieldErrors],
@@ -599,8 +628,8 @@ export default function PharmacyPosPage() {
     if (!cart.length) {
       return "Add at least one medicine.";
     }
-    if (paidAmountMissing) {
-      return "Enter paid amount.";
+    if (paidAmountValidation.error) {
+      return paidAmountValidation.error;
     }
     if (cartHasStockIssue) {
       return "Out of stock. Add stock before sale.";
@@ -609,7 +638,7 @@ export default function PharmacyPosPage() {
       return saleValidationMessage;
     }
     return null;
-  }, [cart.length, cartHasStockIssue, currentShift, paidAmountMissing, saleValidationMessage]);
+  }, [cart.length, cartHasStockIssue, currentShift, paidAmountValidation.error, saleValidationMessage]);
   const focusFirstSaleValidationError = React.useCallback(() => {
     for (let index = 0; index < cart.length; index += 1) {
       const medicineId = cart[index]?.medicineId;
@@ -1575,90 +1604,159 @@ export default function PharmacyPosPage() {
 
   return (
     <Stack spacing={1.5}>
-      <Stack direction={{ xs: "column", lg: "row" }} spacing={1} alignItems={{ xs: "stretch", lg: "center" }} sx={panelSx}>
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, flex: 1 }}>
-          <Chip icon={<PointOfSaleRoundedIcon />} label="Pharmacy POS" color="primary" />
-          <TextField
-            inputRef={searchInputRef}
-            size="small"
-            fullWidth
-            label="Scan / Search medicine"
-            value={medicineQuery}
-            onChange={(event) => setMedicineQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                if (medicineResults[0]) {
-                  void addMedicine(medicineResults[0]);
-                  return;
-                }
-                setError("No FEFO-eligible medicine matched this scan.");
-                window.setTimeout(() => searchInputRef.current?.focus(), 0);
-              }
-            }}
-            placeholder="Name, generic, brand, barcode, QR, external code, batch"
-            error={!medicineSearchValidation.success}
-            helperText={medicineSearchValidation.success ? "Search medicine name, generic name, barcode, QR code, external code, or batch." : firstZodError(medicineSearchValidation.error)}
-            inputProps={{ maxLength: 60 }}
-          />
-        </Stack>
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={0.75}>
-          <Tooltip title="Use camera to scan medicine barcode.">
-            <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("BARCODE")}>
-              Scan Barcode
-            </Button>
-          </Tooltip>
-          <Tooltip title="Use camera to scan QR code.">
-            <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("QR")}>
-              Scan QR
-            </Button>
-          </Tooltip>
-          <Button size="small" variant="outlined" startIcon={<AttachFileRoundedIcon />} onClick={() => { setPrescriptionSectionOpen(true); prescriptionInputRef.current?.click(); }}>
-            Upload Prescription
-          </Button>
-          <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => { setPrescriptionSectionOpen(true); setScanDialogOpen(true); }}>
-            Scan Prescription
-          </Button>
-          <Tooltip title="Save this cart temporarily.">
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<PauseCircleOutlineRoundedIcon />}
-              onClick={holdCurrentCart}
+      <Box
+        sx={{
+          ...panelSx,
+          position: "sticky",
+          top: STICKY_TOP,
+          zIndex: 20,
+          boxShadow: 1,
+        }}
+      >
+        <Stack spacing={1}>
+          <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+            <Chip icon={<PointOfSaleRoundedIcon />} label="Pharmacy POS" color="primary" />
+            <Box
+              sx={{
+                minWidth: { xs: "100%", md: 300 },
+                border: "1px solid",
+                borderColor: currentShift ? "success.light" : "warning.light",
+                borderRadius: 2,
+                px: 1,
+                py: 0.75,
+                bgcolor: currentShift ? "success.50" : "warning.50",
+              }}
             >
-              {cart.length ? "Hold Cart" : heldDraft ? "Resume Held" : "Hold Cart"}
-            </Button>
-          </Tooltip>
-          <Button size="small" variant="outlined" color="inherit" startIcon={<RestartAltRoundedIcon />} onClick={confirmClearDraft}>
-            Clear Cart
-          </Button>
-          <Tooltip title="View completed POS sales.">
-            <Button size="small" variant="outlined" startIcon={<HistoryRoundedIcon />} onClick={() => setRecentDrawerOpen(true)}>
-              Recent Sales
-            </Button>
-          </Tooltip>
-          <Chip
-            size="small"
-            label={shiftStatusLabel(currentShift)}
-            color={currentShift ? "success" : "default"}
-            variant={currentShift ? "filled" : "outlined"}
-          />
-        </Stack>
-        <input
-          ref={prescriptionInputRef}
-          type="file"
-          hidden
-          accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"
-          onChange={(event) => void uploadPrescription(event.target.files?.[0] ?? null)}
-        />
-      </Stack>
+              <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="center" useFlexGap flexWrap="wrap">
+                <Box>
+                  <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                    {currentShift ? `Shift ${shortId(currentShift.id)}` : "Shift Closed"}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {currentShift
+                      ? `Cash ${money(currentShift.expectedCashAmount)} • Started ${new Date(currentShift.openedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      : "Open Shift before checkout"}
+                  </Typography>
+                </Box>
+                <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
+                  <Chip size="small" label="F2 Payment" variant="outlined" sx={compactChipSx} />
+                  {currentShift ? (
+                    <Button size="small" variant="outlined" color="inherit" onClick={openCloseShiftDialog}>Close Shift</Button>
+                  ) : (
+                    <Button size="small" variant="contained" onClick={() => setOpenShiftDialogOpen(true)}>Open Shift</Button>
+                  )}
+                </Stack>
+              </Stack>
+            </Box>
+          </Box>
 
-      <Typography variant="body2" color="text.secondary">
-        Enter adds the top FEFO-eligible result. Repeated scans increase quantity. Stock deduction is confirmed at checkout and audited as sale movements.
-      </Typography>
-      <Typography variant="caption" color="text.secondary">
-        Shortcuts: `Enter` add top result, `F2` paid amount, `F4` complete sale, `Esc` clear search or close modal, `+` / `-` adjust selected cart row quantity.
-      </Typography>
+          <Stack direction={{ xs: "column", lg: "row" }} spacing={1} alignItems={{ xs: "stretch", lg: "flex-start" }}>
+            <Box sx={{ minWidth: 0, flex: { lg: "0 1 68%" } }}>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mb: 0.5 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Search Medicine</Typography>
+                <Tooltip title="Keyboard shortcuts and FEFO guidance">
+                  <IconButton
+                    size="small"
+                    aria-label="Search medicine help"
+                    onClick={(event) => {
+                      setHelpPopoverAnchor(event.currentTarget);
+                      setHelpPopoverKey("search");
+                    }}
+                  >
+                    <HelpOutlineRoundedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="First Expiry First Out">
+                  <IconButton
+                    size="small"
+                    aria-label="FEFO help"
+                    onClick={(event) => {
+                      setHelpPopoverAnchor(event.currentTarget);
+                      setHelpPopoverKey("fefo");
+                    }}
+                  >
+                    <HelpOutlineRoundedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+              <TextField
+                inputRef={searchInputRef}
+                size="small"
+                fullWidth
+                autoFocus
+                value={medicineQuery}
+                onChange={(event) => setMedicineQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    if (medicineResults[0]) {
+                      void addMedicine(medicineResults[0]);
+                      return;
+                    }
+                    setError("No FEFO-eligible medicine matched this scan.");
+                    window.setTimeout(() => searchInputRef.current?.focus(), 0);
+                  }
+                }}
+                placeholder="Search medicine, barcode, QR or batch"
+                error={!medicineSearchValidation.success}
+                helperText={!medicineSearchValidation.success ? firstZodError(medicineSearchValidation.error) : undefined}
+                InputProps={{
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <Chip size="small" label="Enter" variant="outlined" sx={compactChipSx} />
+                    </InputAdornment>
+                  ),
+                }}
+                inputProps={{ maxLength: 60 }}
+              />
+            </Box>
+
+            <Stack spacing={0.75} sx={{ minWidth: 0, flex: { lg: "0 1 32%" } }}>
+              <Box sx={{ display: "flex", gap: 0.6, flexWrap: "wrap" }}>
+                <Tooltip title="Use camera to scan medicine barcode.">
+                  <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} sx={{ minHeight: 34 }} onClick={() => openCodeScanner("BARCODE")}>
+                    Barcode
+                  </Button>
+                </Tooltip>
+                <Tooltip title="Use camera to scan QR code.">
+                  <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} sx={{ minHeight: 34 }} onClick={() => openCodeScanner("QR")}>
+                    QR
+                  </Button>
+                </Tooltip>
+                <Tooltip title="Scan a prescription image or PDF.">
+                  <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} sx={{ minHeight: 34 }} onClick={() => { setPrescriptionSectionOpen(true); setScanDialogOpen(true); }}>
+                    Scan Prescription
+                  </Button>
+                </Tooltip>
+              </Box>
+              <Box sx={{ display: "flex", gap: 0.6, flexWrap: "wrap" }}>
+                <Button size="small" variant="outlined" startIcon={<AttachFileRoundedIcon />} sx={{ minHeight: 32 }} onClick={() => { setPrescriptionSectionOpen(true); prescriptionInputRef.current?.click(); }}>
+                  Upload Prescription
+                </Button>
+                <Tooltip title="Save this cart temporarily.">
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<PauseCircleOutlineRoundedIcon />}
+                    sx={{ minHeight: 32 }}
+                    onClick={holdCurrentCart}
+                  >
+                    {cart.length ? "Hold Cart" : heldDraft ? "Resume Held" : "Hold Cart"}
+                  </Button>
+                </Tooltip>
+                <Tooltip title="View completed POS sales.">
+                  <Button size="small" variant="outlined" startIcon={<HistoryRoundedIcon />} sx={{ minHeight: 32 }} onClick={() => setRecentDrawerOpen(true)}>
+                    Recent Sales
+                  </Button>
+                </Tooltip>
+                <Button size="small" variant="outlined" color="inherit" startIcon={<RestartAltRoundedIcon />} sx={{ minHeight: 32 }} onClick={confirmClearDraft}>
+                  Clear Cart
+                </Button>
+              </Box>
+            </Stack>
+          </Stack>
+        </Stack>
+      </Box>
 
       {error ? <Alert severity="error" onClose={() => setError(null)}>{error}</Alert> : null}
       {success ? <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert> : null}
@@ -1675,20 +1773,146 @@ export default function PharmacyPosPage() {
           Sale {lastCompletedSale.saleNumber} completed successfully.
         </Alert>
       ) : null}
-      {saleValidationMessage ? <Alert severity="warning" sx={{ py: 0.5 }}>{saleValidationMessage}</Alert> : null}
+      {currentShift && saleValidationMessage ? <Alert severity="warning" sx={{ py: 0.5 }}>{saleValidationMessage}</Alert> : null}
       {cartHasStockIssue ? <Alert severity="warning">Some cart line values need correction. Review the highlighted fields before completing the sale.</Alert> : null}
 
-      <WorkflowGuide
-        title="POS Workflow"
-        subtitle="Search medicine, build the cart, then complete checkout only after a shift is open."
-        steps={[
-          { label: "Search" },
-          { label: "Cart" },
-          { label: "Checkout", helper: "Paid Amount inside" },
-          { label: "Shift" },
-          { label: "Receipt" },
-        ]}
-      />
+      <Accordion expanded={customerSectionOpen} onChange={(_, expanded) => setCustomerSectionOpen(expanded)} disableGutters sx={panelSx}>
+        <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
+          <Stack spacing={0.25}>
+            <Typography variant="subtitle1" fontWeight={700}>Customer</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {selectedPatient
+                ? `${selectedPatient.firstName} ${selectedPatient.lastName} • ${selectedPatient.mobile} • Regular Customer`
+                : customerName.trim() || customerMobile.trim()
+                  ? `${customerName.trim() || "Walk-in Customer"}${customerMobile.trim() ? ` • ${customerMobile.trim()}` : ""}`
+                  : "No customer selected"}
+            </Typography>
+          </Stack>
+        </AccordionSummary>
+        <AccordionDetails sx={{ px: 0, pb: 0 }}>
+          <Stack spacing={1.25}>
+            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" justifyContent="space-between" alignItems="center">
+              <Chip size="small" label={selectedPatient || customerName.trim() || customerMobile.trim() ? "Customer selected" : "Walk-in Customer"} variant="outlined" sx={compactChipSx} />
+              <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                <Button size="small" variant="text" onClick={() => navigate("/patients/new")}>Register New</Button>
+                <Button size="small" color="inherit" onClick={clearCustomerSelection} disabled={!selectedPatient && !customerName.trim() && !customerMobile.trim() && !patientQuery.trim()}>
+                  Clear
+                </Button>
+              </Stack>
+            </Stack>
+            <TextField
+              size="small"
+              label="Search patient"
+              value={patientQuery}
+              onFocus={() => setCustomerSectionOpen(true)}
+              onChange={(event) => setPatientQuery(event.target.value)}
+              placeholder="Type 2+ letters"
+              fullWidth
+            />
+            <Collapse in={patientResults.length > 0}>
+              <List dense sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, py: 0, maxHeight: 150, overflow: "auto" }}>
+                {patientResults.map((patient) => (
+                  <ListItemButton
+                    key={patient.id}
+                    onClick={() => {
+                      setSelectedPatient(patient);
+                      setCustomerName(`${patient.firstName} ${patient.lastName}`.trim());
+                      setCustomerMobile(patient.mobile);
+                      setPatientResults([]);
+                      setPatientQuery("");
+                      setCustomerSectionOpen(false);
+                    }}
+                  >
+                    <ListItemText primary={`${patient.firstName} ${patient.lastName}`} secondary={`${patient.patientNumber} | ${patient.mobile}`} />
+                  </ListItemButton>
+                ))}
+              </List>
+            </Collapse>
+            {selectedPatient ? (
+              <Chip
+                color="primary"
+                label={`Patient: ${selectedPatient.firstName} ${selectedPatient.lastName}`}
+                onDelete={clearCustomerSelection}
+              />
+            ) : null}
+            <TextField
+              size="small"
+              label={<RequiredLabel text="Walk-in name" required={false} />}
+              value={customerName}
+              inputRef={customerNameInputRef}
+              onFocus={() => setCustomerSectionOpen(true)}
+              onChange={(event) => setCustomerName(event.target.value)}
+              fullWidth
+              error={Boolean(saleFieldErrors.customerName)}
+              helperText={saleFieldErrors.customerName || "Optional for OTC sales; include letters or numbers if entered."}
+              inputProps={{ maxLength: 60 }}
+            />
+            <TextField
+              size="small"
+              label={<RequiredLabel text="Mobile" required={false} />}
+              value={customerMobile}
+              inputRef={customerMobileInputRef}
+              onFocus={() => setCustomerSectionOpen(true)}
+              onChange={(event) => setCustomerMobile(event.target.value)}
+              fullWidth
+              error={Boolean(saleFieldErrors.customerMobile)}
+              helperText={saleFieldErrors.customerMobile || "Optional Indian mobile number."}
+              inputProps={{ inputMode: "tel" }}
+            />
+          </Stack>
+        </AccordionDetails>
+      </Accordion>
+
+      <Popover
+        open={Boolean(helpPopoverAnchor && helpPopoverKey)}
+        anchorEl={helpPopoverAnchor}
+        onClose={() => {
+          setHelpPopoverAnchor(null);
+          setHelpPopoverKey(null);
+        }}
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+      >
+        <Box sx={{ p: 1.25, maxWidth: 280 }}>
+          {helpPopoverKey === "search" ? (
+            <Stack spacing={0.75}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Keyboard Shortcuts</Typography>
+              <Stack spacing={0.4}>
+                {[
+                  ["Enter", "Add first result"],
+                  ["F2", "Payment"],
+                  ["F4", "Complete sale"],
+                  ["Esc", "Clear search"],
+                  ["+", "Increase quantity"],
+                  ["-", "Decrease quantity"],
+                ].map(([key, value]) => (
+                  <Stack key={key} direction="row" justifyContent="space-between" spacing={1}>
+                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{key}</Typography>
+                    <Typography variant="body2" color="text.secondary">{value}</Typography>
+                  </Stack>
+                ))}
+              </Stack>
+            </Stack>
+          ) : null}
+          {helpPopoverKey === "fefo" ? (
+            <Stack spacing={0.75}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>FEFO</Typography>
+              <Typography variant="body2" color="text.secondary">
+                First Expiry First Out. Medicines nearest expiry are suggested first to reduce wastage.
+              </Typography>
+            </Stack>
+          ) : null}
+        </Box>
+      </Popover>
+
+      <Box sx={{ display: "flex", gap: 0.75, flexWrap: "wrap", alignItems: "center" }}>
+        {["Search", "Cart", "Checkout", "Shift", "Receipt"].map((step, index) => (
+          <React.Fragment key={step}>
+            {index > 0 ? <Typography variant="caption" color="text.secondary">→</Typography> : null}
+            <Chip size="small" label={step} variant="outlined" sx={compactChipSx} />
+          </React.Fragment>
+        ))}
+      </Box>
 
       <Grid container spacing={1.25}>
         <Grid size={{ xs: 12, lg: 8.4 }}>
@@ -1700,13 +1924,13 @@ export default function PharmacyPosPage() {
                   <Typography variant="caption" color="text.secondary">{loading ? "Loading..." : `${medicineResultsOrdered.length} results`}</Typography>
                 </Stack>
                 <Stack direction={{ xs: "column", md: "row" }} spacing={0.75} alignItems={{ xs: "stretch", md: "center" }} justifyContent="space-between">
-                  <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
                     {([
-                      ["ALL", "All"],
-                      ["IN_STOCK", "In stock"],
-                      ["LOW_STOCK", "Low stock"],
-                      ["OUT_OF_STOCK", "Out of stock"],
-                      ["EXPIRING_SOON", "Expiring soon"],
+                      ["ALL", `All (${medicineStatusCounts.all})`],
+                      ["IN_STOCK", `In stock (${medicineStatusCounts.inStock})`],
+                      ["LOW_STOCK", `Low stock (${medicineStatusCounts.lowStock})`],
+                      ["OUT_OF_STOCK", `Out of stock (${medicineStatusCounts.outOfStock})`],
+                      ["EXPIRING_SOON", `Expiring soon (${medicineStatusCounts.expiringSoon})`],
                     ] as const).map(([value, label]) => (
                       <Chip
                         key={value}
@@ -1729,16 +1953,28 @@ export default function PharmacyPosPage() {
                     <Chip size="small" label="In stock first" variant="outlined" />
                   </Stack>
                 </Stack>
-                <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, maxHeight: 245 }}>
-                  <Table size="small" stickyHeader sx={{ tableLayout: "fixed" }}>
+                <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, maxHeight: 430, width: "100%", overflowX: "auto" }}>
+                  <Table
+                    size="small"
+                    stickyHeader
+                    sx={{
+                      tableLayout: "fixed",
+                      width: "100%",
+                      "& .MuiTableCell-root": {
+                        px: 0.75,
+                        py: 0.5,
+                        verticalAlign: "top",
+                      },
+                    }}
+                  >
                     <TableHead>
                       <TableRow>
-                        <TableCell>Medicine</TableCell>
-                        <TableCell width={150}>Lookup</TableCell>
-                        <TableCell width={90}>Stock</TableCell>
-                        <TableCell width={110}>Expiry</TableCell>
-                        <TableCell width={110}>Rate</TableCell>
-                        <TableCell width={70} />
+                        <TableCell sx={{ minWidth: 0 }}>Medicine</TableCell>
+                        <TableCell width={120}>Lookup</TableCell>
+                        <TableCell width={84}>Stock</TableCell>
+                        <TableCell width={96}>Expiry</TableCell>
+                        <TableCell width={102}>Rate</TableCell>
+                        <TableCell width={56} />
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -1750,7 +1986,20 @@ export default function PharmacyPosPage() {
                           <TableRow
                             key={medicine.medicineId}
                             hover
-                            sx={{ cursor: outOfStock ? "default" : "pointer", opacity: outOfStock ? 0.7 : 1 }}
+                            sx={{
+                              cursor: outOfStock ? "default" : "pointer",
+                              opacity: outOfStock ? 0.7 : 1,
+                              transition: "background-color 120ms ease",
+                              "&:hover": {
+                                bgcolor: outOfStock ? undefined : "action.hover",
+                              },
+                              "& .add-action": {
+                                opacity: outOfStock ? 0.65 : 0.85,
+                              },
+                              "&:hover .add-action": {
+                                opacity: 1,
+                              },
+                            }}
                             onClick={() => {
                               if (outOfStock) {
         setError("Out of stock. Add stock before sale.");
@@ -1759,25 +2008,27 @@ export default function PharmacyPosPage() {
                               void addMedicine(medicine);
                             }}
                           >
-                            <TableCell>
-                              <Typography variant="body2" fontWeight={600}>{medicine.medicineName}</Typography>
-                              <Typography variant="caption" color="text.secondary">
+                            <TableCell sx={{ minWidth: 0 }}>
+                              <Typography variant="body2" fontWeight={600} sx={{ lineHeight: 1.2 }}>
+                                {medicine.medicineName}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.2 }}>
                                 {medicine.genericName || medicine.brandName || "No secondary name"}
                               </Typography>
                               {resultExpiryWarning ? (
-                                <Typography variant="caption" color={`${resultExpiryWarning.tone}.main`} sx={{ display: "block" }}>
+                                <Typography variant="caption" color={`${resultExpiryWarning.tone}.main`} sx={{ display: "block", lineHeight: 1.2 }}>
                                   {resultExpiryWarning.label}
                                 </Typography>
                               ) : null}
                             </TableCell>
                             <TableCell>
-                              <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.2 }}>
                                 {medicine.barcode || medicine.qrCode || medicine.externalCode || "Direct search"}
                               </Typography>
                             </TableCell>
                             <TableCell>
                               <Stack spacing={0.5} alignItems="flex-start">
-                                <Typography variant="body2">{medicine.totalAvailableQuantity}</Typography>
+                                <Typography variant="body2" sx={{ lineHeight: 1.2 }}>{medicine.totalAvailableQuantity}</Typography>
                                 {outOfStock ? <Chip size="small" color="error" variant="outlined" label="OUT OF STOCK" /> : null}
                                 {!outOfStock && lowStock ? <Chip size="small" color="warning" variant="outlined" label="LOW STOCK" /> : null}
                               </Stack>
@@ -1788,8 +2039,9 @@ export default function PharmacyPosPage() {
                               <Tooltip title={outOfStock ? "Out of stock. Add stock before sale." : "Add to cart"}>
                                 <span>
                                   <Button
+                                    className="add-action"
                                     size="small"
-                                    variant="text"
+                                    variant={outOfStock ? "text" : "outlined"}
                                     disabled={outOfStock}
                                     onClick={(event) => {
                                       event.stopPropagation();
@@ -1834,23 +2086,48 @@ export default function PharmacyPosPage() {
                   <Typography variant="subtitle1" fontWeight={700}>Cart</Typography>
                   <Typography variant="caption" color="text.secondary">Compact FEFO checkout table</Typography>
                 </Stack>
-                <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, maxHeight: 360 }}>
-                  <Table size="small" stickyHeader sx={{ tableLayout: "fixed" }}>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Medicine</TableCell>
-                        <TableCell width={140}>Batch</TableCell>
-                        <TableCell width={92}>Expiry</TableCell>
-                        <TableCell width={74}><RequiredLabel text="Qty" required /></TableCell>
-                        <TableCell width={88}>Rate</TableCell>
-                        <TableCell width={88}>Disc</TableCell>
-                        <TableCell width={84}>Tax</TableCell>
-                        <TableCell width={108}>Total</TableCell>
-                        <TableCell width={52} />
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {cart.map((line, lineIndex) => {
+                {!cart.length ? (
+                  <CompactEmptyState
+                    title="Cart Ready"
+                    subtitle="Search or scan medicine to begin."
+                    action={(
+                      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="center">
+                        <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("BARCODE")}>Barcode</Button>
+                        <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("QR")}>QR</Button>
+                        <Button size="small" variant="outlined" startIcon={<AttachFileRoundedIcon />} onClick={() => { setPrescriptionSectionOpen(true); setScanDialogOpen(true); }}>Prescription</Button>
+                      </Stack>
+                    )}
+                  />
+                ) : (
+                  <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, maxHeight: 360, width: "100%", overflowX: "auto" }}>
+                    <Table
+                      size="small"
+                      stickyHeader
+                      sx={{
+                        tableLayout: "fixed",
+                        width: "100%",
+                        "& .MuiTableCell-root": {
+                          px: 0.75,
+                          py: 0.5,
+                          verticalAlign: "top",
+                        },
+                      }}
+                    >
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={{ minWidth: 0 }}>Medicine</TableCell>
+                          <TableCell width={120}>Batch</TableCell>
+                          <TableCell width={84}>Expiry</TableCell>
+                          <TableCell width={64}><RequiredLabel text="Qty" required /></TableCell>
+                          <TableCell width={72}>Rate</TableCell>
+                          <TableCell width={72}>Disc</TableCell>
+                          <TableCell width={64}>Tax</TableCell>
+                          <TableCell width={92}>Total</TableCell>
+                          <TableCell width={48} />
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {cart.map((line, lineIndex) => {
                         const overLimit = numeric(line.quantity) > line.availableQuantity;
                         const primaryBatch = batchPreview[line.medicineId]?.[0];
                         const splitLikely = Boolean(primaryBatch && numeric(line.quantity) > primaryBatch.availableQuantity && batchPreview[line.medicineId] && batchPreview[line.medicineId]!.length > 1);
@@ -1867,26 +2144,28 @@ export default function PharmacyPosPage() {
                             onClick={() => setSelectedCartMedicineId(line.medicineId)}
                             sx={{ cursor: "pointer" }}
                           >
-                            <TableCell>
-                              <Typography variant="body2" fontWeight={600}>{line.medicineName}</Typography>
-                              <Typography variant="caption" color={overLimit ? "error.main" : "text.secondary"} sx={{ display: "block" }}>
+                            <TableCell sx={{ minWidth: 0 }}>
+                              <Typography variant="body2" fontWeight={600} sx={{ lineHeight: 1.2 }}>
+                                {line.medicineName}
+                              </Typography>
+                              <Typography variant="caption" color={overLimit ? "error.main" : "text.secondary"} sx={{ display: "block", lineHeight: 1.2 }}>
                                 {overLimit
                                   ? `Only ${line.availableQuantity} available across sellable batches.`
                                   : `Available ${line.availableQuantity}. Remaining after this line ${Math.max(0, line.availableQuantity - numeric(line.quantity))}. ${compactBatchPreview(batchPreview[line.medicineId])}`}
                               </Typography>
                               {nearExpiry ? (
-                                <Typography variant="caption" color={`${nearExpiry.tone}.main`} sx={{ display: "block" }}>
+                                <Typography variant="caption" color={`${nearExpiry.tone}.main`} sx={{ display: "block", lineHeight: 1.2 }}>
                                   {nearExpiry.label}
                                 </Typography>
                               ) : null}
                               {splitLikely ? (
-                                <Typography variant="caption" color="info.main" sx={{ display: "block" }}>
+                                <Typography variant="caption" color="info.main" sx={{ display: "block", lineHeight: 1.2 }}>
                                   Sale fulfilled from multiple batches.
                                 </Typography>
                               ) : null}
                             </TableCell>
                             <TableCell>
-                              <Typography variant="caption" color="text.secondary">
+                              <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.2 }}>
                                 {primaryBatch?.batchNumber ?? "Auto FEFO"}
                               </Typography>
                             </TableCell>
@@ -1903,7 +2182,8 @@ export default function PharmacyPosPage() {
                                   cartInputRefs.current[line.medicineId] = refs;
                                 }}
                                 error={Boolean(quantityError)}
-                                helperText={quantityError || "Whole number within available stock."}
+                                helperText={quantityError}
+                                sx={{ width: 64 }}
                                 inputProps={{ min: 1, step: 1, "aria-required": true }}
                               />
                             </TableCell>
@@ -1919,7 +2199,8 @@ export default function PharmacyPosPage() {
                                   cartInputRefs.current[line.medicineId] = refs;
                                 }}
                                 error={Boolean(unitPriceError)}
-                                helperText={unitPriceError || "Rate must be zero or greater."}
+                                helperText={unitPriceError}
+                                sx={{ width: 72 }}
                                 inputProps={{ min: 0, step: "0.01" }}
                               />
                             </TableCell>
@@ -1935,7 +2216,8 @@ export default function PharmacyPosPage() {
                                   cartInputRefs.current[line.medicineId] = refs;
                                 }}
                                 error={Boolean(discountError)}
-                                helperText={discountError || "Discount must be zero or greater."}
+                                helperText={discountError}
+                                sx={{ width: 72 }}
                                 inputProps={{ min: 0, step: "0.01" }}
                               />
                             </TableCell>
@@ -1951,7 +2233,8 @@ export default function PharmacyPosPage() {
                                   cartInputRefs.current[line.medicineId] = refs;
                                 }}
                                 error={Boolean(taxError)}
-                                helperText={taxError || "Tax % must be between 0 and 100."}
+                                helperText={taxError}
+                                sx={{ width: 64 }}
                                 inputProps={{ min: 0, max: 100, step: "0.01" }}
                               />
                             </TableCell>
@@ -1965,15 +2248,11 @@ export default function PharmacyPosPage() {
                             </TableCell>
                           </TableRow>
                         );
-                      })}
-                      {!cart.length ? (
-                        <TableRow>
-                          <TableCell colSpan={9}>No medicines in the cart.</TableCell>
-                        </TableRow>
-                      ) : null}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
                 <Typography variant="caption" color="text.secondary">
                   FEFO explanation: checkout deducts stock from the earliest non-expired batch first and spills into the next batch only when required.
                 </Typography>
@@ -2001,21 +2280,22 @@ export default function PharmacyPosPage() {
                   </Grid>
                   <Grid size={{ xs: 6, md: 2.4 }}>
                     <Typography variant="caption" color="text.secondary">Grand total</Typography>
-                    <Typography variant="body2" fontWeight={700}>{money(total)}</Typography>
+                    <Typography variant="subtitle1" fontWeight={800} color="primary.main">{money(roundedTotal)}</Typography>
                   </Grid>
                   <Grid size={{ xs: 6, md: 2.4 }}>
                     <TextField
                       inputRef={paidAmountInputRef}
                       size="small"
-                      label={<RequiredLabel text="Paid Amount" required={total > 0} />}
+                      label={<RequiredLabel text="Amount Received" required={roundedTotal > 0} />}
                       value={paidAmount}
                       onChange={(event) => setPaidAmount(event.target.value)}
                       fullWidth
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       disabled={!currentShift}
-                      error={Boolean(saleFieldErrors.paidAmount)}
-                      helperText={saleFieldErrors.paidAmount || "Enter paid amount."}
-                      inputProps={{ min: 0, step: "0.01", "aria-required": total > 0 }}
+                      error={Boolean(paidAmountValidation.error || saleFieldErrors.paidAmount)}
+                      helperText={paidAmountValidation.error || saleFieldErrors.paidAmount || undefined}
+                      inputProps={{ inputMode: "decimal", "aria-required": roundedTotal > 0 }}
                     />
                   </Grid>
                   <Grid size={{ xs: 12, md: 2.4 }}>
@@ -2095,86 +2375,6 @@ export default function PharmacyPosPage() {
 
         <Grid size={{ xs: 12, lg: 3.6 }}>
           <Stack spacing={1.25} sx={{ position: { lg: "sticky" }, top: { lg: STICKY_TOP }, alignSelf: "flex-start" }}>
-            <Accordion expanded={customerSectionOpen} onChange={(_, expanded) => setCustomerSectionOpen(expanded)} disableGutters sx={panelSx}>
-              <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
-                <Stack spacing={0.25}>
-                  <Typography variant="subtitle1" fontWeight={700}>Customer</Typography>
-                  <Typography variant="caption" color="text.secondary">{customerSummary}</Typography>
-                </Stack>
-              </AccordionSummary>
-              <AccordionDetails sx={{ px: 0, pb: 0 }}>
-                <Stack spacing={1.25}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center">
-                    <Typography variant="caption" color="text.secondary">
-                      {selectedPatient || customerName.trim() || customerMobile.trim() ? "Customer summary ready for checkout." : "Select a patient or enter walk-in details."}
-                    </Typography>
-                    <Button size="small" color="inherit" onClick={clearCustomerSelection} disabled={!selectedPatient && !customerName.trim() && !customerMobile.trim() && !patientQuery.trim()}>
-                      Clear
-                    </Button>
-                  </Stack>
-                  <TextField
-                    size="small"
-                    label="Search patient"
-                    value={patientQuery}
-                    onFocus={() => setCustomerSectionOpen(true)}
-                    onChange={(event) => setPatientQuery(event.target.value)}
-                    placeholder="Type 2+ letters"
-                    fullWidth
-                  />
-                  <Collapse in={patientResults.length > 0}>
-                    <List dense sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, py: 0, maxHeight: 150, overflow: "auto" }}>
-                      {patientResults.map((patient) => (
-                        <ListItemButton
-                          key={patient.id}
-                          onClick={() => {
-                            setSelectedPatient(patient);
-                            setCustomerName(`${patient.firstName} ${patient.lastName}`.trim());
-                            setCustomerMobile(patient.mobile);
-                            setPatientResults([]);
-                            setPatientQuery("");
-                            setCustomerSectionOpen(false);
-                          }}
-                        >
-                          <ListItemText primary={`${patient.firstName} ${patient.lastName}`} secondary={`${patient.patientNumber} | ${patient.mobile}`} />
-                        </ListItemButton>
-                      ))}
-                    </List>
-                  </Collapse>
-                  {selectedPatient ? (
-                    <Chip
-                      color="primary"
-                      label={`Patient: ${selectedPatient.firstName} ${selectedPatient.lastName}`}
-                      onDelete={clearCustomerSelection}
-                    />
-                  ) : null}
-                  <TextField
-                    size="small"
-                    label={<RequiredLabel text="Walk-in name" required={false} />}
-                    value={customerName}
-                    inputRef={customerNameInputRef}
-                    onFocus={() => setCustomerSectionOpen(true)}
-                    onChange={(event) => setCustomerName(event.target.value)}
-                    fullWidth
-                    error={Boolean(saleFieldErrors.customerName)}
-                    helperText={saleFieldErrors.customerName || "Optional for OTC sales; include letters or numbers if entered."}
-                    inputProps={{ maxLength: 60 }}
-                  />
-                  <TextField
-                    size="small"
-                    label={<RequiredLabel text="Mobile" required={false} />}
-                    value={customerMobile}
-                    inputRef={customerMobileInputRef}
-                    onFocus={() => setCustomerSectionOpen(true)}
-                    onChange={(event) => setCustomerMobile(event.target.value)}
-                    fullWidth
-                    error={Boolean(saleFieldErrors.customerMobile)}
-                    helperText={saleFieldErrors.customerMobile || "Optional Indian mobile number."}
-                    inputProps={{ inputMode: "tel" }}
-                  />
-                </Stack>
-              </AccordionDetails>
-            </Accordion>
-
             <Accordion expanded={prescriptionSectionOpen} onChange={(_, expanded) => setPrescriptionSectionOpen(expanded)} disableGutters sx={panelSx}>
               <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
                 <Stack spacing={0.25}>
@@ -2256,52 +2456,52 @@ export default function PharmacyPosPage() {
               </AccordionDetails>
             </Accordion>
 
-            <Box sx={panelSx}>
-              <Stack spacing={0.9}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <MedicalServicesRoundedIcon fontSize="small" color="primary" />
-                    <Typography variant="subtitle1" fontWeight={700}>Shift</Typography>
+            <Accordion expanded={shiftSectionOpen} onChange={(_, expanded) => setShiftSectionOpen(expanded)} disableGutters sx={panelSx}>
+              <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
+                <Stack spacing={0.25}>
+                  <Typography variant="subtitle1" fontWeight={700}>Shift Details</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {currentShift ? `Expected total ${money(currentShift.expectedTotalAmount)}` : "No shift open"}
+                  </Typography>
+                </Stack>
+              </AccordionSummary>
+              <AccordionDetails sx={{ px: 0, pb: 0 }}>
+                <Stack spacing={1}>
+                  <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                    <Button size="small" variant="outlined" color="inherit" onClick={() => setShiftHistoryDrawerOpen(true)}>View Shift History</Button>
+                    {currentShift ? (
+                      <Button size="small" variant="outlined" color="inherit" onClick={openCloseShiftDialog}>Close Shift</Button>
+                    ) : (
+                      <Button size="small" variant="contained" onClick={() => setOpenShiftDialogOpen(true)}>Open Shift</Button>
+                    )}
                   </Stack>
-                  <Chip
-                    size="small"
-                    label={shiftStatusLabel(currentShift)}
-                    color={currentShift ? "success" : "default"}
-                    variant={currentShift ? "filled" : "outlined"}
-                  />
-                </Stack>
-                <Typography variant="caption" color="text.secondary">
-                  {currentShift
-                    ? `Opened ${new Date(currentShift.openedAt).toLocaleString()} for cashier ${currentShift.cashierUserId}.`
-                    : "No open shift. Open a shift before collecting payments or completing a sale."}
-                </Typography>
-                <Stack direction="row" spacing={1} flexWrap="wrap">
-                  <Button size="small" variant={currentShift ? "outlined" : "contained"} startIcon={<LocalPharmacyRoundedIcon />} disabled={Boolean(currentShift)} onClick={() => setOpenShiftDialogOpen(true)}>Open Shift</Button>
-                  <Button size="small" variant="outlined" color="inherit" disabled={!currentShift} onClick={openCloseShiftDialog}>Close Shift</Button>
-                  <Button size="small" variant="outlined" color="inherit" onClick={() => setShiftHistoryDrawerOpen(true)}>View Shift History</Button>
-                </Stack>
-                {currentShift ? (
-                  <>
-                    <Stack direction="row" justifyContent="space-between">
-                      <Typography variant="body2">Opening cash</Typography>
-                      <Typography variant="body2">{money(currentShift.openingCashAmount)}</Typography>
-                    </Stack>
-                    {[
-                      ["Expected cash", money(currentShift.expectedCashAmount)],
-                      ["Expected UPI", money(currentShift.expectedUpiAmount)],
-                      ["Expected card", money(currentShift.expectedCardAmount)],
-                      ["Expected other", money(currentShift.expectedOtherAmount)],
-                      ["Total expected", money(currentShift.expectedTotalAmount)],
-                    ].map(([label, value]) => (
-                      <Stack key={label} direction="row" justifyContent="space-between">
-                        <Typography variant="body2">{label}</Typography>
-                        <Typography variant="body2">{value}</Typography>
+                  {currentShift ? (
+                    <>
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography variant="body2">Opening cash</Typography>
+                        <Typography variant="body2">{money(currentShift.openingCashAmount)}</Typography>
                       </Stack>
-                    ))}
-                  </>
-                ) : null}
-              </Stack>
-            </Box>
+                      {[
+                        ["Expected cash", money(currentShift.expectedCashAmount)],
+                        ["Expected UPI", money(currentShift.expectedUpiAmount)],
+                        ["Expected card", money(currentShift.expectedCardAmount)],
+                        ["Expected other", money(currentShift.expectedOtherAmount)],
+                        ["Total expected", money(currentShift.expectedTotalAmount)],
+                      ].map(([label, value]) => (
+                        <Stack key={label} direction="row" justifyContent="space-between">
+                          <Typography variant="body2">{label}</Typography>
+                          <Typography variant="body2">{value}</Typography>
+                        </Stack>
+                      ))}
+                    </>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      Open a shift when you are ready to collect payment and complete the sale.
+                    </Typography>
+                  )}
+                </Stack>
+              </AccordionDetails>
+            </Accordion>
           </Stack>
         </Grid>
       </Grid>

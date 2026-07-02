@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Box, Card, CardContent, Chip, Stack, TableContainer, Typography } from "@mui/material";
+import { Box, Card, CardContent, Chip, Stack, TableContainer, TableRow, Typography } from "@mui/material";
 import type { ChipProps } from "@mui/material";
 
 export const compactChipSx = {
@@ -277,5 +277,92 @@ export function CompactTableFrame({ children, maxHeight = 560 }: CompactTableFra
         {children}
       </TableContainer>
     </Box>
+  );
+}
+
+type OperationalTableCardProps = {
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
+  countLabel?: React.ReactNode;
+  maxVisibleRows?: number;
+  actions?: React.ReactNode;
+  emptyState?: React.ReactNode;
+  children: React.ReactNode;
+};
+
+function countOperationalTableRows(node: React.ReactNode): number {
+  let count = 0;
+  React.Children.forEach(node, (child) => {
+    if (!React.isValidElement(child)) {
+      return;
+    }
+    const element = child as React.ReactElement<{ children?: React.ReactNode }>;
+    if (child.type === TableRow) {
+      count += 1;
+    }
+    if (element.props.children) {
+      count += countOperationalTableRows(element.props.children);
+    }
+  });
+  return count;
+}
+
+export function OperationalTableCard({
+  title,
+  subtitle,
+  countLabel,
+  maxVisibleRows = 5,
+  actions,
+  emptyState,
+  children,
+}: OperationalTableCardProps) {
+  const rowCount = React.useMemo(() => countOperationalTableRows(children), [children]);
+  const shouldScroll = rowCount > maxVisibleRows;
+  const maxHeight = shouldScroll ? (40 + (maxVisibleRows * 52)) : undefined;
+  const accessibleTitle = typeof title === "string" ? title : "Operational table";
+
+  return (
+    <Card variant="outlined" sx={compactPanelSx}>
+      <CardContent sx={compactCardContentSx}>
+        <Stack spacing={1.25}>
+          <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                {title}
+              </Typography>
+              {subtitle ? (
+                <Typography variant="body2" color="text.secondary">
+                  {subtitle}
+                </Typography>
+              ) : null}
+            </Box>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
+              {actions}
+              {countLabel ? <Chip size="small" label={countLabel} variant="outlined" /> : null}
+            </Stack>
+          </Box>
+          {emptyState ? (
+            emptyState
+          ) : (
+            <Box
+              role="region"
+              aria-label={`${accessibleTitle} rows`}
+              tabIndex={0}
+              sx={{
+                outline: "none",
+                borderRadius: 2,
+                "&:focus-visible": {
+                  boxShadow: (theme) => `0 0 0 2px ${theme.palette.primary.main}`,
+                },
+              }}
+            >
+              <CompactTableFrame maxHeight={maxHeight}>
+                {children}
+              </CompactTableFrame>
+            </Box>
+          )}
+        </Stack>
+      </CardContent>
+    </Card>
   );
 }

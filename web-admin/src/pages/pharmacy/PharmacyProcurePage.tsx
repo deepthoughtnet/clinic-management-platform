@@ -542,6 +542,10 @@ function parseWorkspace(value: string | null): Workspace {
   return "suppliers";
 }
 
+function isProcurePath(pathname: string) {
+  return pathname === "/pharmacy/procure" || pathname === "/pharmacy/procurement";
+}
+
 function toSupplierFormState(supplier: Supplier): SupplierFormState {
   return {
     supplierName: supplier.supplierName || "",
@@ -1029,7 +1033,7 @@ export default function PharmacyProcurePage() {
   const auth = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const workspace = parseWorkspace(searchParams.get("workspace"));
   const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
   const [loadingSuppliers, setLoadingSuppliers] = React.useState(true);
@@ -1102,6 +1106,26 @@ export default function PharmacyProcurePage() {
   const [poEditorMode, setPoEditorMode] = React.useState<PurchaseOrderEditorMode>("edit");
   const [deepLinkNotice, setDeepLinkNotice] = React.useState<string | null>(null);
   const handledDeepLinkRef = React.useRef<{ po: string; grn: string; invoice: string }>({ po: "", grn: "", invoice: "" });
+  const latestPathnameRef = React.useRef(location.pathname);
+  const isMountedRef = React.useRef(true);
+  const onProcurePath = isProcurePath(location.pathname);
+  React.useEffect(() => {
+    latestPathnameRef.current = location.pathname;
+  }, [location.pathname]);
+  React.useEffect(() => {
+    if (onProcurePath) return;
+    setPoDrawerOpen(false);
+    setCancelDialogOpen(false);
+    setQuickMedicineOpen(false);
+    setInvoiceCancelDialogOpen(false);
+    setSelectedGrn(null);
+    setDeepLinkNotice(null);
+  }, [onProcurePath]);
+  React.useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const currentPurchaseOrder = React.useMemo(
     () => selectedPurchaseOrder || (editingPoId ? purchaseOrders.find((row) => row.id === editingPoId) || null : null),
     [editingPoId, purchaseOrders, selectedPurchaseOrder],
@@ -1384,9 +1408,26 @@ export default function PharmacyProcurePage() {
     navigate(`/inventory?tab=stocks&ref=${encodeURIComponent(reference)}`);
   }, [navigate]);
 
-  const updateWorkspace = (next: Workspace) => {
-    navigate(`/pharmacy/procurement?workspace=${next}${next === "suppliers" ? "&focus=supplier" : ""}`);
-  };
+  const updateWorkspace = React.useCallback((next: Workspace) => {
+    if (!isProcurePath(location.pathname)) return;
+    const nextParams = new URLSearchParams(searchParams);
+    const currentWorkspace = parseWorkspace(searchParams.get("workspace"));
+    const currentFocus = searchParams.get("focus");
+    if (currentWorkspace === next && (next !== "suppliers" || currentFocus === "supplier")) {
+      return;
+    }
+    nextParams.set("workspace", next);
+    if (next === "suppliers") {
+      nextParams.set("focus", "supplier");
+    } else {
+      nextParams.delete("focus");
+    }
+    nextParams.delete("po");
+    nextParams.delete("invoice");
+    nextParams.delete("grn");
+    nextParams.delete("receipt");
+    setSearchParams(nextParams, { replace: false });
+  }, [location.pathname, searchParams, setSearchParams]);
 
   const resetSupplierForm = React.useCallback(() => {
     setEditingSupplierId(null);
@@ -1855,21 +1896,46 @@ export default function PharmacyProcurePage() {
       notes: invoice.notes || "",
     });
   }, []);
+  const setProcurementWorkspace = React.useCallback((next: Workspace, extraParams?: Record<string, string | null | undefined>) => {
+    if (!isProcurePath(location.pathname)) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("workspace", next);
+    if (next === "suppliers") {
+      nextParams.set("focus", "supplier");
+    } else {
+      nextParams.delete("focus");
+    }
+    (["po", "invoice", "grn", "receipt"] as const).forEach((key) => {
+      nextParams.delete(key);
+    });
+    if (extraParams) {
+      Object.entries(extraParams).forEach(([key, value]) => {
+        if (value == null || value === "") {
+          nextParams.delete(key);
+        } else {
+          nextParams.set(key, value);
+        }
+      });
+    }
+    setSearchParams(nextParams, { replace: false });
+  }, [location.pathname, searchParams, setSearchParams]);
   const openPurchaseOrderReference = React.useCallback(async (purchaseOrderId: string | null | undefined) => {
     if (!purchaseOrderId) return;
     const po = purchaseOrders.find((candidate) => candidate.id === purchaseOrderId) ?? null;
     if (!po) return;
     await loadPurchaseOrderDetail(po.id, po, "view");
+    if (!isMountedRef.current || !isProcurePath(latestPathnameRef.current)) return;
     setPoDrawerOpen(true);
-    navigate("/pharmacy/procurement?workspace=purchase-orders");
-  }, [loadPurchaseOrderDetail, navigate, purchaseOrders]);
+    setProcurementWorkspace("purchase-orders", { po: po.poNumber || po.id });
+  }, [loadPurchaseOrderDetail, purchaseOrders, setProcurementWorkspace]);
   const openInvoiceReference = React.useCallback((invoiceId: string | null | undefined) => {
     if (!invoiceId) return;
     const invoice = invoices.find((candidate) => candidate.id === invoiceId) ?? null;
     if (!invoice) return;
+    if (!isMountedRef.current || !isProcurePath(latestPathnameRef.current)) return;
     loadInvoiceIntoForm(invoice, "view");
-    navigate("/pharmacy/procurement?workspace=supplier-invoices");
-  }, [invoices, loadInvoiceIntoForm, navigate]);
+    setProcurementWorkspace("supplier-invoices", { invoice: invoice.invoiceNumber || invoice.id });
+  }, [invoices, loadInvoiceIntoForm, setProcurementWorkspace]);
 
   const resetGrnForm = React.useCallback(() => {
     setGrnForm({
@@ -2021,7 +2087,7 @@ export default function PharmacyProcurePage() {
   }, [grnForm.receivedAt]);
 
   React.useEffect(() => {
-    if (location.pathname !== "/pharmacy/procurement") return;
+    if (!onProcurePath) return;
     if (workspace !== "goods-receipt") return;
     const receiptRef = searchParams.get("grn") || searchParams.get("receipt");
     if (!receiptRef) return;
@@ -2035,10 +2101,10 @@ export default function PharmacyProcurePage() {
     } else {
       setDeepLinkNotice(`Opened from reconciliation for GRN: ${receiptRef}`);
     }
-  }, [grns, loadingGrns, location.pathname, searchParams, workspace]);
+  }, [grns, loadingGrns, onProcurePath, searchParams, workspace]);
 
   React.useEffect(() => {
-    if (location.pathname !== "/pharmacy/procurement") return;
+    if (!onProcurePath) return;
     if (workspace !== "purchase-orders") return;
     const poRef = searchParams.get("po");
     if (!poRef) return;
@@ -2058,10 +2124,10 @@ export default function PharmacyProcurePage() {
       .catch(() => {
         setDeepLinkNotice(`Selected from reconciliation: ${poRef}`);
       });
-  }, [loadPurchaseOrderDetail, loadingPurchaseOrders, location.pathname, purchaseOrders, searchParams, workspace]);
+  }, [loadPurchaseOrderDetail, loadingPurchaseOrders, onProcurePath, purchaseOrders, searchParams, workspace]);
 
   React.useEffect(() => {
-    if (location.pathname !== "/pharmacy/procurement") return;
+    if (!onProcurePath) return;
     if (workspace !== "supplier-invoices") return;
     const invoiceRef = searchParams.get("invoice");
     if (!invoiceRef) return;
@@ -2075,7 +2141,7 @@ export default function PharmacyProcurePage() {
     }
     loadInvoiceIntoForm(match, "view");
     setDeepLinkNotice(`Selected from reconciliation: ${match.invoiceNumber}`);
-  }, [invoices, loadInvoiceIntoForm, loadingInvoices, location.pathname, searchParams, workspace]);
+  }, [invoices, loadInvoiceIntoForm, loadingInvoices, onProcurePath, searchParams, workspace]);
 
   const currentSupplierCount = suppliers.length;
   const currentPurchaseOrderCount = purchaseOrders.filter((po) => po.status === "Generated" || po.status === "Sent" || po.status === "Partially Received").length;
