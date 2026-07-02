@@ -412,6 +412,7 @@ export default function PharmacyPosPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
   const [lastCompletedSale, setLastCompletedSale] = React.useState<PharmacyPosSale | null>(null);
+  const [checkoutValidationRequested, setCheckoutValidationRequested] = React.useState(false);
   const [recentDrawerOpen, setRecentDrawerOpen] = React.useState(false);
   const [scanDialogOpen, setScanDialogOpen] = React.useState(false);
   const [scanError, setScanError] = React.useState<string | null>(null);
@@ -481,6 +482,7 @@ export default function PharmacyPosPage() {
   const [previewDocumentIsImage, setPreviewDocumentIsImage] = React.useState(false);
   const [helpPopoverAnchor, setHelpPopoverAnchor] = React.useState<HTMLElement | null>(null);
   const [helpPopoverKey, setHelpPopoverKey] = React.useState<HelpPopoverKey>(null);
+  const checkoutValidationRequestedRef = React.useRef(checkoutValidationRequested);
 
   const subtotal = React.useMemo(() => cart.reduce((sum, line) => sum + lineGross(line), 0), [cart]);
   const discountTotal = React.useMemo(() => cart.reduce((sum, line) => sum + numeric(line.discount), 0), [cart]);
@@ -616,17 +618,18 @@ export default function PharmacyPosPage() {
       return firstZodError(saleSubmissionValidation.error);
     }
     return null;
-  }, [cart.length, currentShift, paidAmountValidation.error, saleSubmissionValidation]);
+  }, [cart.length, checkoutValidationRequested, currentShift, paidAmountValidation.error, saleSubmissionValidation]);
   const cartHasStockIssue = React.useMemo(
     () => cart.some((line, index) => Boolean(saleFieldErrors[`items.${index}.quantity`]) || Boolean(saleFieldErrors[`items.${index}.discount`]) || Boolean(saleFieldErrors[`items.${index}.unitPrice`]) || Boolean(saleFieldErrors[`items.${index}.taxRate`])),
     [cart, saleFieldErrors],
   );
+  const checkoutWarningMessage = checkoutValidationRequested ? saleValidationMessage : null;
   const completeSaleDisabledReason = React.useMemo(() => {
     if (!currentShift) {
       return "Open POS shift before sale.";
     }
     if (!cart.length) {
-      return "Add at least one medicine.";
+      return "Cart is empty.";
     }
     if (paidAmountValidation.error) {
       return paidAmountValidation.error;
@@ -676,6 +679,33 @@ export default function PharmacyPosPage() {
     }
   }, [cart, saleFieldErrors]);
 
+  const clearCompletionNotice = React.useCallback(() => {
+    setLastCompletedSale(null);
+  }, []);
+
+  const clearCheckoutValidationState = React.useCallback(() => {
+    setCheckoutValidationRequested(false);
+  }, []);
+
+  React.useEffect(() => {
+    checkoutValidationRequestedRef.current = checkoutValidationRequested;
+  }, [checkoutValidationRequested]);
+
+  React.useEffect(() => {
+    if (!checkoutValidationRequestedRef.current) return;
+    setCheckoutValidationRequested(false);
+  }, [
+    cart,
+    customerName,
+    customerMobile,
+    notes,
+    paidAmount,
+    paymentMode,
+    paymentReference,
+    prescription?.documentId,
+    selectedPatient?.id,
+  ]);
+
   const beginAction = React.useCallback((name: string) => {
     if (actionLockRef.current) return false;
     actionLockRef.current = name;
@@ -706,8 +736,10 @@ export default function PharmacyPosPage() {
     setPrescription(null);
     setCustomerSectionOpen(true);
     setPrescriptionSectionOpen(false);
+    clearCompletionNotice();
+    clearCheckoutValidationState();
     window.setTimeout(() => searchInputRef.current?.focus(), 0);
-  }, []);
+  }, [clearCheckoutValidationState, clearCompletionNotice]);
 
   const confirmClearDraft = React.useCallback(() => {
     if (!cart.length && !customerName.trim() && !customerMobile.trim() && !paidAmount.trim() && !prescription) {
@@ -984,6 +1016,8 @@ export default function PharmacyPosPage() {
   }, [cart]);
 
   const addMedicine = React.useCallback(async (medicine: PharmacyPosMedicine) => {
+    clearCompletionNotice();
+    clearCheckoutValidationState();
     if (medicine.totalAvailableQuantity <= 0) {
       const hasIncompleteSetup = inventoryStocks.some((stock) =>
         stock.medicineId === medicine.medicineId
@@ -1042,7 +1076,7 @@ export default function PharmacyPosPage() {
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
     }
     return true;
-  }, [batchPreview, inventoryStocks, tenantId, token]);
+  }, [batchPreview, clearCheckoutValidationState, clearCompletionNotice, inventoryStocks, tenantId, token]);
 
   const handleScannedCode = React.useCallback(async (rawValue: string, mode: CodeScanMode) => {
     if (!token || !tenantId) {
@@ -1082,6 +1116,7 @@ export default function PharmacyPosPage() {
   }, []);
 
   const removeCartLine = React.useCallback((medicineId: string) => {
+    clearCheckoutValidationState();
     setCart((current) => {
       const next = current.filter((line) => line.medicineId !== medicineId);
       if (selectedCartMedicineId === medicineId) {
@@ -1089,7 +1124,7 @@ export default function PharmacyPosPage() {
       }
       return next;
     });
-  }, [selectedCartMedicineId]);
+  }, [clearCheckoutValidationState, selectedCartMedicineId]);
 
   const selectSale = React.useCallback((sale: PharmacyPosSale) => {
     setSelectedSaleId(sale.id);
@@ -1160,6 +1195,8 @@ export default function PharmacyPosPage() {
       setPrescription(heldDraft.prescription);
       setHeldDraft(null);
       window.sessionStorage.removeItem(HELD_CART_STORAGE_KEY);
+      clearCompletionNotice();
+      clearCheckoutValidationState();
       setSuccess("Held cart restored.");
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
       return;
@@ -1180,17 +1217,19 @@ export default function PharmacyPosPage() {
     window.sessionStorage.setItem(HELD_CART_STORAGE_KEY, JSON.stringify(draft));
     clearDraft();
     setSuccess("Cart held. Use Hold Cart again on an empty cart to restore it.");
-  }, [cart, clearDraft, customerMobile, customerName, heldDraft, notes, paidAmount, paymentMode, paymentReference, prescription, selectedPatient, tenantId]);
+  }, [cart, clearDraft, clearCheckoutValidationState, clearCompletionNotice, customerMobile, customerName, heldDraft, notes, paidAmount, paymentMode, paymentReference, prescription, selectedPatient, tenantId]);
 
   const executeSale = React.useCallback(async () => {
     if (!token || !tenantId) return;
     if (!beginAction("sale")) return;
     if (!currentShift) {
       setError("No POS shift is open. Open a shift before collecting payment or completing sale.");
+      setCheckoutValidationRequested(true);
       endAction();
       return;
     }
     if (!saleSubmissionValidation.success) {
+      setCheckoutValidationRequested(true);
       setError(firstZodError(saleSubmissionValidation.error) || "Sale could not be completed. Stock was not deducted.");
       focusFirstSaleValidationError();
       endAction();
@@ -1217,7 +1256,7 @@ export default function PharmacyPosPage() {
       clearDraft();
       setBatchPreview({});
       setLastCompletedSale(sale);
-      setSuccess(`Sale ${sale.saleNumber} created. FEFO allocation used the earliest non-expired batches and stock movements were recorded.`);
+      setSuccess(null);
       await Promise.all([refreshSales(), refreshShifts(), refreshMedicineResults("")]);
       selectSale(sale);
       setHeldDraft(null);
@@ -1233,10 +1272,12 @@ export default function PharmacyPosPage() {
 
   const requestSaleConfirmation = React.useCallback(() => {
     if (saleValidationMessage) {
+      setCheckoutValidationRequested(true);
       setError(saleValidationMessage);
       focusFirstSaleValidationError();
       return;
     }
+    setCheckoutValidationRequested(false);
     setSaleConfirmOpen(true);
   }, [focusFirstSaleValidationError, saleValidationMessage]);
 
@@ -1759,21 +1800,28 @@ export default function PharmacyPosPage() {
       </Box>
 
       {error ? <Alert severity="error" onClose={() => setError(null)}>{error}</Alert> : null}
-      {success ? <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert> : null}
+      {success && !lastCompletedSale ? <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert> : null}
       {lastCompletedSale ? (
         <Alert
           severity="success"
-          onClose={() => setLastCompletedSale(null)}
+          role="status"
+          aria-live="polite"
+          onClose={clearCompletionNotice}
           action={(
-            <Button color="inherit" size="small" startIcon={<LocalPrintshopOutlinedIcon />} onClick={() => void printReceipt(lastCompletedSale.id)}>
-              Print Receipt
-            </Button>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+              <Button color="inherit" size="small" startIcon={<LocalPrintshopOutlinedIcon />} onClick={() => void printReceipt(lastCompletedSale.id)}>
+                Print Receipt
+              </Button>
+              <Button color="inherit" size="small" onClick={clearCompletionNotice}>
+                Dismiss
+              </Button>
+            </Stack>
           )}
         >
-          Sale {lastCompletedSale.saleNumber} completed successfully.
+          Sale {lastCompletedSale.saleNumber} completed successfully. Inventory updated and stock movements recorded.
         </Alert>
       ) : null}
-      {currentShift && saleValidationMessage ? <Alert severity="warning" sx={{ py: 0.5 }}>{saleValidationMessage}</Alert> : null}
+      {currentShift && checkoutWarningMessage ? <Alert severity="warning" sx={{ py: 0.5 }}>{checkoutWarningMessage}</Alert> : null}
       {cartHasStockIssue ? <Alert severity="warning">Some cart line values need correction. Review the highlighted fields before completing the sale.</Alert> : null}
 
       <Accordion expanded={customerSectionOpen} onChange={(_, expanded) => setCustomerSectionOpen(expanded)} disableGutters sx={panelSx}>
@@ -2088,13 +2136,13 @@ export default function PharmacyPosPage() {
                 </Stack>
                 {!cart.length ? (
                   <CompactEmptyState
-                    title="Cart Ready"
-                    subtitle="Search or scan medicine to begin."
+                    title="Cart is empty"
+                    subtitle="Search medicine or scan a barcode to begin the next sale."
                     action={(
                       <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" justifyContent="center">
-                        <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("BARCODE")}>Barcode</Button>
-                        <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("QR")}>QR</Button>
-                        <Button size="small" variant="outlined" startIcon={<AttachFileRoundedIcon />} onClick={() => { setPrescriptionSectionOpen(true); setScanDialogOpen(true); }}>Prescription</Button>
+                        <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("BARCODE")}>Scan Barcode</Button>
+                        <Button size="small" variant="outlined" startIcon={<CameraAltRoundedIcon />} onClick={() => openCodeScanner("QR")}>Scan QR</Button>
+                        <Button size="small" variant="outlined" startIcon={<AttachFileRoundedIcon />} onClick={() => { setPrescriptionSectionOpen(true); setScanDialogOpen(true); }}>Scan Prescription</Button>
                       </Stack>
                     )}
                   />

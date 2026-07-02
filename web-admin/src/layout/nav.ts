@@ -130,6 +130,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "platform-dashboard", label: "Platform Dashboard", path: "/", platformOnly: true },
       { key: "platform-tenants", label: "Tenants", path: "/platform/tenants", platformOnly: true },
+      { key: "platform-product-implementation", label: "Product Implementation", path: "/platform/product-implementation", platformOnly: true },
       { key: "platform-subscriptions", label: "Subscriptions", disabled: true, future: true, badge: "Coming soon", platformOnly: true },
       { key: "platform-analytics", label: "Platform Analytics", disabled: true, future: true, badge: "Coming soon", platformOnly: true },
       { key: "platform-health", label: "System Health", disabled: true, future: true, badge: "Coming soon", platformOnly: true },

@@ -51,17 +51,25 @@ type ReconcileTab = "supplier-bill-reconciliation" | "physical-count" | "stock-a
 
 type ReconciliationRow = {
   id: string;
+  invoiceId: string;
+  purchaseOrderId: string | null;
+  goodsReceiptId: string | null;
   invoiceNumber: string;
   supplierId: string;
   supplier: string;
   poReference: string;
   grnReference: string;
   inventoryUpdated: boolean;
+  readyForPayment: boolean;
   invoiceDate: string;
   invoiceAmount: number;
+  invoiceTotalAmount: number;
+  poTotalAmount: number;
   varianceAmount: number;
   varianceQuantity: number;
-  matchResult: "Matched" | "Awaiting GRN" | "Quantity Mismatch" | "Price Mismatch" | "Tax Difference" | "Duplicate Invoice" | "Needs Review";
+  variancePercent: number;
+  matchResult: "Matched" | "Unlinked" | "Awaiting GRN" | "Quantity Mismatch" | "Price Mismatch" | "Tax Difference" | "Amount Difference" | "Partial Receipt" | "Over Receipt" | "Short Receipt" | "Duplicate Invoice" | "Needs Review";
+  matchIssues: string[];
   status: "Draft" | "Submitted" | "Reviewed" | "Approved" | "Posted" | "Cancelled";
   variance: number;
   lastActivity: string;
@@ -74,6 +82,13 @@ type ReconciliationRow = {
     variance: number;
     result: string;
   }>;
+  auditTrail: Array<{
+    label: string;
+    state: "completed" | "current" | "pending" | "cancelled";
+    at: string | null;
+    by: string | null;
+    comment: string | null;
+  }>;
   exception: {
     severity: "Info" | "Warning" | "Critical";
     recommendedAction: string;
@@ -82,7 +97,10 @@ type ReconciliationRow = {
   };
   timeline: Array<{
     label: string;
-    state: "completed" | "current" | "pending";
+    state: "completed" | "current" | "pending" | "cancelled";
+    at: string | null;
+    by: string | null;
+    comment: string | null;
   }>;
 };
 
@@ -108,6 +126,13 @@ type ApprovalQueueRow = {
   variance: string;
   risk: "Low" | "Medium" | "High";
   status: "Draft" | "Reviewed" | "Needs Approval" | "Approved" | "Rejected" | "Posted";
+};
+
+type WorkflowTransition = {
+  status: ReconciliationRow["status"];
+  actor: string;
+  at: string;
+  comment: string | null;
 };
 
 const TABS: Array<{ value: ReconcileTab; label: string }> = [
@@ -177,7 +202,7 @@ function invoiceStatusLabel(status: SupplierInvoiceStatus): ReconciliationRow["s
 }
 
 function buildTimeline(status: ReconciliationRow["status"], matchResult: ReconciliationRow["matchResult"]) {
-  const hasGrn = matchResult !== "Awaiting GRN";
+  const hasGrn = matchResult !== "Awaiting GRN" && matchResult !== "Unlinked";
   const reviewed = status === "Reviewed" || status === "Approved" || status === "Posted";
   const approved = status === "Approved" || status === "Posted";
   const posted = status === "Posted";
@@ -189,6 +214,40 @@ function buildTimeline(status: ReconciliationRow["status"], matchResult: Reconci
     { label: "Approved", state: approved ? "completed" as const : reviewed ? "current" as const : "pending" as const },
     { label: "Posted", state: posted ? "completed" as const : approved ? "current" as const : "pending" as const },
   ];
+}
+
+function deriveMatchAssessment(row: Pick<ReconciliationRow, "purchaseOrderId" | "goodsReceiptId" | "varianceAmount" | "varianceQuantity" | "comparisonRows" | "matchResult">) {
+  const poMatched = Boolean(row.purchaseOrderId);
+  const grnMatched = Boolean(row.goodsReceiptId);
+  const amountVariance = Math.abs(row.varianceAmount);
+  const quantityVariance = Math.abs(row.varianceQuantity);
+  const receivedOverOrdered = row.comparisonRows.some((comparisonRow) => comparisonRow.receivedQty > comparisonRow.orderedQty);
+  const matchIssues: string[] = [];
+
+  if (!poMatched) {
+    matchIssues.push("Missing PO");
+    return { matchResult: "Unlinked" as const, matchIssues };
+  }
+  if (!grnMatched) {
+    matchIssues.push("Awaiting GRN");
+    return { matchResult: "Awaiting GRN" as const, matchIssues };
+  }
+  if (amountVariance === 0 && quantityVariance === 0 && poMatched && grnMatched) {
+    return { matchResult: "Matched" as const, matchIssues };
+  }
+  if (receivedOverOrdered) {
+    matchIssues.push("Over Receipt");
+    return { matchResult: "Over Receipt" as const, matchIssues };
+  }
+  if (quantityVariance > 0) {
+    matchIssues.push("Quantity Mismatch");
+    return { matchResult: "Quantity Mismatch" as const, matchIssues };
+  }
+  if (amountVariance > 0) {
+    matchIssues.push("Amount Difference");
+    return { matchResult: "Amount Difference" as const, matchIssues };
+  }
+  return { matchResult: row.matchResult, matchIssues };
 }
 
 function buildException(matchResult: ReconciliationRow["matchResult"]) {
@@ -207,7 +266,17 @@ function buildException(matchResult: ReconciliationRow["matchResult"]) {
         responsibleRole: "Store Manager",
         expectedNextStep: "Receive the pending goods and post the GRN.",
       };
+    case "Unlinked":
+      return {
+        severity: "Warning" as const,
+        recommendedAction: "Link the invoice to a purchase order before approval.",
+        responsibleRole: "Procurement Lead",
+        expectedNextStep: "Attach the missing purchase order or correct the source document references.",
+      };
     case "Quantity Mismatch":
+    case "Partial Receipt":
+    case "Short Receipt":
+    case "Over Receipt":
       return {
         severity: "Warning" as const,
         recommendedAction: "Review invoice quantity against received quantity before approval.",
@@ -227,6 +296,13 @@ function buildException(matchResult: ReconciliationRow["matchResult"]) {
         recommendedAction: "Validate tax treatment and confirm whether the difference is acceptable.",
         responsibleRole: "Accounts Payable",
         expectedNextStep: "Accept the corrected tax or request revised documentation.",
+      };
+    case "Amount Difference":
+      return {
+        severity: "Warning" as const,
+        recommendedAction: "Validate the invoice total against the PO and line item math.",
+        responsibleRole: "Accounts Payable",
+        expectedNextStep: "Resolve the billed amount difference before approval.",
       };
     case "Matched":
       return {
@@ -273,6 +349,42 @@ function formatDateTime(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString() : "-";
 }
 
+function normalizeStatus(status: string | null | undefined): ReconciliationRow["status"] {
+  const normalized = (status || "").toUpperCase();
+  if (normalized === "DRAFT") return "Draft";
+  if (normalized === "SUBMITTED" || normalized === "MATCHED") return "Submitted";
+  if (normalized === "REVIEWED") return "Reviewed";
+  if (normalized === "APPROVED" || normalized === "READY_FOR_PAYMENT" || normalized === "APPROVED_FOR_PAYMENT") return "Approved";
+  if (normalized === "POSTED" || normalized === "PAID") return "Posted";
+  if (normalized === "CANCELLED") return "Cancelled";
+  return "Draft";
+}
+
+function parseLineAmount(line: ProcurementLineInput) {
+  return {
+    quantity: numberFromUnknown(line.quantity),
+    unitCost: line.unitCost ?? line.expectedUnitCost ?? null,
+    taxPercent: line.taxPercent ?? null,
+  };
+}
+
+function buildDocumentTimeline(row: Pick<ReconciliationRow, "status" | "inventoryUpdated" | "readyForPayment" | "auditTrail" | "invoiceDate" | "poReference" | "grnReference"> & { invoiceCreatedAt?: string | null; poCreatedAt?: string | null; grnConfirmedAt?: string | null; }) {
+  const auditMap = new Map(row.auditTrail.map((item) => [item.label, item]));
+  const invoiceSubmitted = row.invoiceCreatedAt ?? row.invoiceDate ?? null;
+  return [
+    { label: "Invoice Submitted", state: "completed" as const, at: invoiceSubmitted, by: null, comment: null },
+    { label: "Matched to PO", state: row.poReference && row.poReference !== "Unlinked" ? "completed" as const : "pending" as const, at: row.poCreatedAt ?? null, by: null, comment: null },
+    { label: "Matched to GRN", state: row.grnReference && row.grnReference !== "-" ? "completed" as const : "pending" as const, at: row.grnConfirmedAt ?? null, by: null, comment: null },
+    { label: "Reviewed", state: auditMap.get("Reviewed")?.state ?? (row.status === "Reviewed" || row.status === "Approved" || row.status === "Posted" ? "completed" as const : "pending" as const), at: auditMap.get("Reviewed")?.at ?? null, by: auditMap.get("Reviewed")?.by ?? null, comment: auditMap.get("Reviewed")?.comment ?? null },
+    { label: "Approved", state: auditMap.get("Approved")?.state ?? (row.status === "Approved" || row.status === "Posted" ? "completed" as const : "pending" as const), at: auditMap.get("Approved")?.at ?? null, by: auditMap.get("Approved")?.by ?? null, comment: auditMap.get("Approved")?.comment ?? null },
+    { label: "Ready for Payment", state: auditMap.get("Ready for Payment")?.state ?? (row.status === "Posted" ? "completed" as const : "pending" as const), at: auditMap.get("Ready for Payment")?.at ?? null, by: auditMap.get("Ready for Payment")?.by ?? null, comment: auditMap.get("Ready for Payment")?.comment ?? null },
+  ];
+}
+
+function appendWorkflowEvent(existing: ReconciliationRow["auditTrail"], label: string, state: "completed" | "current" | "pending" | "cancelled", by: string, comment: string | null) {
+  return [...existing.filter((entry) => entry.label !== label), { label, state, at: new Date().toISOString(), by, comment }];
+}
+
 export default function PharmacyReconcilePage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -298,18 +410,43 @@ export default function PharmacyReconcilePage() {
   const [physicalCountToDate, setPhysicalCountToDate] = React.useState("");
   const [localMessage, setLocalMessage] = React.useState<string | null>(null);
   const [selectedInvoiceId, setSelectedInvoiceId] = React.useState<string | null>(null);
+  const [workflowTransitions, setWorkflowTransitions] = React.useState<Record<string, WorkflowTransition[]>>({});
 
   const updateTab = (nextTab: ReconcileTab) => {
     navigate(`/pharmacy/reconcile?tab=${nextTab}`);
   };
 
+  const reconciliationRows = React.useMemo(() => rows.map((row) => {
+    const derivedAssessment = deriveMatchAssessment(row);
+    const transitions = workflowTransitions[row.id] ?? [];
+    const override = transitions[transitions.length - 1];
+    const status = override?.status ?? row.status;
+    const auditLabel = override ? (override.status === "Posted" ? "Ready for Payment" : override.status) : null;
+    const auditTrail = override && auditLabel
+      ? appendWorkflowEvent(row.auditTrail, auditLabel, override.status === "Cancelled" ? "cancelled" : "completed", override.actor, override.comment)
+      : row.auditTrail;
+    const timeline = buildDocumentTimeline({ ...row, status, auditTrail });
+    return {
+      ...row,
+      matchResult: derivedAssessment.matchResult,
+      matchIssues: derivedAssessment.matchIssues,
+      exception: buildException(derivedAssessment.matchResult),
+      status,
+      auditTrail,
+      timeline,
+      lastActivity: override
+        ? `${override.status} on ${new Date(override.at).toLocaleDateString()}`
+        : row.lastActivity,
+    };
+  }), [rows, workflowTransitions]);
+
   const supplierOptions = React.useMemo(
-    () => Array.from(new Set(rows.map((row) => row.supplier))),
-    [rows],
+    () => Array.from(new Set(reconciliationRows.map((row) => row.supplier))),
+    [reconciliationRows],
   );
 
   const filteredRows = React.useMemo(() => {
-    return rows.filter((row) => {
+    return reconciliationRows.filter((row) => {
       if (supplierFilter !== "all" && row.supplier !== supplierFilter) return false;
       if (matchFilter === "matched" && row.matchResult !== "Matched") return false;
       if (matchFilter === "pending" && row.matchResult !== "Awaiting GRN" && row.status !== "Draft" && row.status !== "Submitted") return false;
@@ -320,12 +457,12 @@ export default function PharmacyReconcilePage() {
       }
       return true;
     });
-  }, [matchFilter, rows, searchTerm, supplierFilter]);
+  }, [matchFilter, reconciliationRows, searchTerm, supplierFilter]);
 
-  const pendingCount = rows.filter((row) => row.status === "Draft" || row.status === "Submitted").length;
-  const reviewedCount = rows.filter((row) => row.status === "Reviewed").length;
-  const approvedCount = rows.filter((row) => row.status === "Approved").length;
-  const postedCount = rows.filter((row) => row.status === "Posted").length;
+  const pendingCount = reconciliationRows.filter((row) => row.status === "Draft" || row.status === "Submitted").length;
+  const reviewedCount = reconciliationRows.filter((row) => row.status === "Reviewed").length;
+  const approvedCount = reconciliationRows.filter((row) => row.status === "Approved").length;
+  const postedCount = reconciliationRows.filter((row) => row.status === "Posted").length;
   const inventoryMedicineById = React.useMemo(() => new Map(inventoryMedicines.map((medicine) => [medicine.id, medicine] as const)), [inventoryMedicines]);
   const inventoryStockById = React.useMemo(() => new Map(inventoryStocks.map((stock) => [stock.id, stock] as const)), [inventoryStocks]);
   const physicalCountArchiveRows = React.useMemo(() => {
@@ -459,8 +596,8 @@ export default function PharmacyReconcilePage() {
     [filteredPhysicalCountArchiveRows, selectedPhysicalCountId],
   );
   const selectedInvoice = React.useMemo(
-    () => rows.find((row) => row.id === selectedInvoiceId) ?? null,
-    [rows, selectedInvoiceId],
+    () => reconciliationRows.find((row) => row.id === selectedInvoiceId) ?? null,
+    [reconciliationRows, selectedInvoiceId],
   );
   const selectedInvoiceRelationshipStages = React.useMemo<DocumentRelationshipStage[]>(() => {
     if (!selectedInvoice) return [];
@@ -478,7 +615,7 @@ export default function PharmacyReconcilePage() {
         label: "Supplier Invoice",
         documentNumber: selectedInvoice.invoiceNumber,
         badgeLabel: selectedInvoice.status,
-        state: invoiceCancelled ? "cancelled" : "current",
+        state: invoiceCancelled ? "cancelled" : selectedInvoice.status === "Posted" ? "completed" : "current",
       },
       {
         label: "Goods Receipt",
@@ -489,8 +626,8 @@ export default function PharmacyReconcilePage() {
       {
         label: "Inventory Updated",
         documentNumber: selectedInvoice.inventoryUpdated ? "Completed" : "Pending",
-        badgeLabel: selectedInvoice.inventoryUpdated ? "Completed" : "Pending",
-        state: selectedInvoice.inventoryUpdated ? "completed" : "future",
+        badgeLabel: selectedInvoice.readyForPayment ? "Ready" : selectedInvoice.inventoryUpdated ? "Completed" : "Pending",
+        state: selectedInvoice.readyForPayment || selectedInvoice.inventoryUpdated ? "completed" : "future",
       },
       {
         label: "Supplier Bill Reconciliation",
@@ -501,30 +638,36 @@ export default function PharmacyReconcilePage() {
     ];
   }, [selectedInvoice]);
   const inspectedInvoice = React.useMemo(
-    () => rows.find((row) => row.id === selectedRowId) ?? null,
-    [rows, selectedRowId],
+    () => reconciliationRows.find((row) => row.id === selectedRowId) ?? null,
+    [reconciliationRows, selectedRowId],
   );
-  const physicalCountRows = React.useMemo(() => [] as Array<{
-    countSession: string;
-    location: string;
-    countDate: string;
-    itemsCounted: number;
-    varianceItems: number;
-    varianceValue: number;
-    status: "Draft" | "Reviewed" | "Needs Approval" | "Approved" | "Posted";
-  }>, []);
-  const stockAdjustmentRows = React.useMemo(() => [] as Array<{
-    adjustmentRef: string;
-    medicine: string;
-    batch: string;
-    location: string;
-    type: "Damage" | "Expiry" | "Correction" | "Transfer" | "Lost" | "Found";
-    quantity: number;
-    varianceValue: number;
-    status: "Draft" | "Reviewed" | "Needs Approval" | "Approved" | "Posted";
-  }>, []);
+  const physicalCountRows = React.useMemo(() => physicalCountArchiveRows.map((row) => ({
+    countSession: row.session,
+    location: row.location,
+    countDate: row.countDate,
+    itemsCounted: row.itemsCounted,
+    varianceItems: row.varianceItems,
+    varianceValue: row.varianceValue,
+    status: row.status as "Draft" | "Reviewed" | "Needs Approval" | "Approved" | "Posted",
+  })), [physicalCountArchiveRows]);
+  const stockAdjustmentRows = React.useMemo(() => {
+    const relevant = inventoryTransactions.filter((transaction) =>
+      ["ADJUSTMENT_IN", "ADJUSTMENT_OUT", "ADJUSTMENT", "WRITE_OFF", "EXPIRED", "VENDOR_RETURN_OUT"].includes(transaction.transactionType)
+      || transaction.referenceType === "STOCK_ADJUSTMENT",
+    );
+    return relevant.map((transaction) => ({
+      adjustmentRef: transaction.businessReference || transaction.referenceId?.toString() || transaction.id,
+      medicine: inventoryMedicineById.get(transaction.medicineId)?.medicineName || transaction.medicineId,
+      batch: transaction.batchNumber || inventoryStockById.get(transaction.stockBatchId ?? "")?.batchNumber || "No batch",
+      location: inventoryStockById.get(transaction.stockBatchId ?? "")?.locationName || "Main Pharmacy",
+      type: transaction.transactionType === "WRITE_OFF" ? "Damage" : transaction.transactionType === "EXPIRED" ? "Expiry" : transaction.transactionType === "VENDOR_RETURN_OUT" ? "Correction" : transaction.transactionType === "TRANSFER_IN" || transaction.transactionType === "TRANSFER_OUT" ? "Transfer" : "Correction",
+      quantity: Math.abs(transaction.quantity),
+      varianceValue: Math.abs((transaction.beforeQuantity ?? 0) - (transaction.afterQuantity ?? transaction.beforeQuantity ?? 0)),
+      status: "Posted" as const,
+    }));
+  }, [inventoryMedicineById, inventoryStockById, inventoryTransactions]);
   const approvalQueueRows = React.useMemo<ApprovalQueueRow[]>(() => {
-    const supplierBillRows = rows
+    const supplierBillRows = reconciliationRows
       .filter((row) =>
         row.status === "Reviewed"
         || row.matchResult === "Quantity Mismatch"
@@ -545,12 +688,30 @@ export default function PharmacyReconcilePage() {
             ? "Reviewed"
             : "Needs Approval" as ApprovalQueueRow["status"],
       }));
-    return supplierBillRows;
-  }, [rows]);
+    const physicalCountQueueRows = physicalCountRows.map((row) => ({
+      reference: row.countSession,
+      type: "Physical Count" as const,
+      source: row.location,
+      requestedBy: "Inventory",
+      variance: `INR ${money(row.varianceValue)} / Qty ${row.varianceItems}`,
+      risk: row.varianceItems > 0 ? "Medium" as const : "Low" as const,
+      status: row.status === "Posted" ? "Posted" as const : "Reviewed" as const,
+    }));
+    const stockAdjustmentQueueRows = stockAdjustmentRows.map((row) => ({
+      reference: row.adjustmentRef,
+      type: "Stock Adjustment" as const,
+      source: row.location,
+      requestedBy: "Inventory",
+      variance: `INR ${money(row.varianceValue)} / Qty ${row.quantity}`,
+      risk: row.quantity > 10 ? "High" as const : row.quantity > 0 ? "Medium" as const : "Low" as const,
+      status: "Needs Approval" as const,
+    }));
+    return [...supplierBillRows, ...physicalCountQueueRows, ...stockAdjustmentQueueRows];
+  }, [physicalCountRows, reconciliationRows, stockAdjustmentRows]);
 
   const matchTone = (matchResult: ReconciliationRow["matchResult"]) => {
     if (matchResult === "Matched") return "success" as const;
-    if (matchResult === "Awaiting GRN" || matchResult === "Needs Review") return "warning" as const;
+    if (matchResult === "Awaiting GRN" || matchResult === "Needs Review" || matchResult === "Unlinked") return "warning" as const;
     return "error" as const;
   };
 
@@ -582,6 +743,20 @@ export default function PharmacyReconcilePage() {
     return "success" as const;
   };
 
+  const transitionReconciliation = React.useCallback((row: ReconciliationRow, nextStatus: ReconciliationRow["status"], comment: string | null) => {
+    const actor = "Current User";
+    setWorkflowTransitions((current) => ({
+      ...current,
+      [row.id]: [...(current[row.id] ?? []), { status: nextStatus, actor, at: new Date().toISOString(), comment }],
+    }));
+    setLocalMessage(`${row.invoiceNumber} marked ${nextStatus.toLowerCase()}.`);
+  }, []);
+
+  const currentWorkflowStatus = React.useCallback((row: ReconciliationRow) => {
+    const transitions = workflowTransitions[row.id] ?? [];
+    return transitions.length ? transitions[transitions.length - 1].status : row.status;
+  }, [workflowTransitions]);
+
   const openPurchaseOrder = React.useCallback((row: ReconciliationRow | null) => {
     if (!row?.poReference || row.poReference === "Unlinked") return;
     setLocalMessage(null);
@@ -608,6 +783,12 @@ export default function PharmacyReconcilePage() {
       return;
     }
     navigate("/pharmacy/inventory");
+  }, [navigate]);
+
+  const openStockMovement = React.useCallback((row: ReconciliationRow | null) => {
+    if (!row) return;
+    const referenceId = row.goodsReceiptId || row.invoiceId;
+    navigate(`/pharmacy/stock-movements?movement=RECONCILIATION&referenceType=GRN&referenceId=${encodeURIComponent(referenceId)}`);
   }, [navigate]);
 
   React.useEffect(() => {
@@ -722,7 +903,8 @@ export default function PharmacyReconcilePage() {
             const variance = Math.round((priceDelta + qtyDelta) * 100) / 100;
             let result = "Matched";
             if (!goodsReceipt) result = "Awaiting GRN";
-            else if (difference !== 0) result = "Quantity Mismatch";
+            else if (difference > 0) result = "Over Receipt";
+            else if (difference < 0) result = "Short Receipt";
             else if ((line.poUnitPrice ?? null) !== (line.invoiceUnitPrice ?? null)) result = "Price Mismatch";
             else if ((line.poTaxPercent ?? null) !== (line.invoiceTaxPercent ?? null)) result = "Tax Difference";
             return {
@@ -744,42 +926,86 @@ export default function PharmacyReconcilePage() {
             || (invoice.taxAmount != null && invoice.totalAmount != null && invoice.invoiceAmount != null
               ? Math.abs((invoice.totalAmount - invoice.invoiceAmount + (invoice.discountAmount ?? 0)) - invoice.taxAmount) > 0.0001
               : false);
+          const amountDifference = invoice.totalAmount != null && purchaseOrder ? Math.abs((invoice.totalAmount ?? 0) - (purchaseOrder?.itemsJson ? parseProcurementItems(purchaseOrder.itemsJson).reduce((sum, item) => sum + (item.unitCost ?? item.expectedUnitCost ?? 0) * item.quantity, 0) : 0)) > 0.0001 : false;
 
           let matchResult: ReconciliationRow["matchResult"] = "Needs Review";
+          const matchIssues: string[] = [];
           if (isDuplicate) matchResult = "Duplicate Invoice";
           else if (!purchaseOrder) matchResult = "Needs Review";
           else if (!goodsReceipt) matchResult = "Awaiting GRN";
-          else if (quantityMismatch) matchResult = "Quantity Mismatch";
+          else if (quantityMismatch) matchResult = comparisonRows.some((row) => row.result === "Over Receipt")
+            ? "Over Receipt"
+            : comparisonRows.some((row) => row.result === "Short Receipt")
+              ? "Short Receipt"
+              : "Quantity Mismatch";
           else if (priceMismatch) matchResult = "Price Mismatch";
           else if (taxDifference) matchResult = "Tax Difference";
+          else if (amountDifference) matchResult = "Amount Difference";
           else if (purchaseOrder && goodsReceipt) matchResult = "Matched";
+          if (!purchaseOrder) matchIssues.push("Missing PO");
+          if (!goodsReceipt) matchIssues.push("Awaiting GRN");
+          if (quantityMismatch) matchIssues.push("Quantity Mismatch");
+          if (priceMismatch) matchIssues.push("Price Mismatch");
+          if (taxDifference) matchIssues.push("Tax Difference");
+          if (amountDifference) matchIssues.push("Amount Difference");
 
-          const status = invoiceStatusLabel(invoice.status);
+          const status = normalizeStatus(invoice.status);
+          const readyForPayment = status === "Approved" || status === "Posted";
           const lastActivity = invoice.updatedAt
             ? `${status} on ${new Date(invoice.updatedAt).toLocaleDateString()}`
             : `${status} status loaded from supplier invoice`;
           const varianceAmount = invoice.varianceAmount ?? comparisonRows.reduce((sum, row) => sum + row.variance, 0);
           const varianceQuantity = comparisonRows.reduce((sum, row) => sum + Math.abs(row.difference), 0);
+          const invoiceTotalAmount = invoice.totalAmount ?? invoice.invoiceAmount ?? 0;
+          const poTotalAmount = purchaseOrder ? parseProcurementItems(purchaseOrder.itemsJson).reduce((sum, item) => sum + (item.unitCost ?? item.expectedUnitCost ?? 0) * item.quantity, 0) : 0;
 
           return {
             id: invoice.id,
+            invoiceId: invoice.id,
+            purchaseOrderId: purchaseOrder?.id ?? null,
+            goodsReceiptId: goodsReceipt?.id ?? null,
             invoiceNumber: invoice.invoiceNumber,
             supplierId: invoice.supplierId,
             supplier: invoice.supplierName || purchaseOrder?.supplierName || "Unknown supplier",
             poReference: purchaseOrder?.poNumber || "Unlinked",
             grnReference: goodsReceipt?.receiptNumber || "-",
             inventoryUpdated: Boolean(goodsReceipt?.confirmedAt),
+            readyForPayment,
             invoiceDate: invoice.invoiceDate,
-            invoiceAmount: invoice.totalAmount ?? invoice.invoiceAmount ?? 0,
+            invoiceAmount: invoiceTotalAmount,
+            invoiceTotalAmount,
+            poTotalAmount,
             varianceAmount,
             varianceQuantity,
+            variancePercent: invoiceTotalAmount ? Math.round((Math.abs(varianceAmount) / invoiceTotalAmount) * 10000) / 100 : 0,
             matchResult,
+            matchIssues,
             status,
             variance: varianceAmount,
             lastActivity,
             comparisonRows,
+            auditTrail: [
+              { label: "Invoice Submitted", state: "completed", at: invoice.createdAt, by: null, comment: null },
+              { label: "Matched to PO", state: purchaseOrder ? "completed" : "pending", at: purchaseOrder?.createdAt ?? null, by: null, comment: purchaseOrder ? purchaseOrder.approvalNote ?? null : null },
+              { label: "Matched to GRN", state: goodsReceipt ? "completed" : "pending", at: goodsReceipt?.confirmedAt ?? goodsReceipt?.createdAt ?? null, by: null, comment: goodsReceipt?.approvalNote ?? null },
+            ],
             exception: buildException(matchResult),
-            timeline: buildTimeline(status, matchResult),
+            timeline: buildDocumentTimeline({
+              status,
+              inventoryUpdated: Boolean(goodsReceipt?.confirmedAt),
+              readyForPayment,
+              auditTrail: [
+                { label: "Reviewed", state: status === "Reviewed" || status === "Approved" || status === "Posted" ? "completed" : "pending", at: null, by: null, comment: null },
+                { label: "Approved", state: status === "Approved" || status === "Posted" ? "completed" : "pending", at: null, by: null, comment: null },
+                { label: "Ready for Payment", state: status === "Posted" ? "completed" : "pending", at: null, by: null, comment: null },
+              ],
+              invoiceDate: invoice.invoiceDate,
+              poReference: purchaseOrder?.poNumber || "Unlinked",
+              grnReference: goodsReceipt?.receiptNumber || "-",
+              invoiceCreatedAt: invoice.createdAt,
+              poCreatedAt: purchaseOrder?.createdAt ?? null,
+              grnConfirmedAt: goodsReceipt?.confirmedAt ?? goodsReceipt?.createdAt ?? null,
+            }),
           } satisfies ReconciliationRow;
         });
 
@@ -807,20 +1033,20 @@ export default function PharmacyReconcilePage() {
   }, [auth.accessToken, auth.tenantId]);
 
   React.useEffect(() => {
-    if (selectedRowId && !rows.some((row) => row.id === selectedRowId)) {
+    if (selectedRowId && !reconciliationRows.some((row) => row.id === selectedRowId)) {
       setSelectedRowId(null);
     }
-    if (selectedInvoiceId && !rows.some((row) => row.id === selectedInvoiceId)) {
+    if (selectedInvoiceId && !reconciliationRows.some((row) => row.id === selectedInvoiceId)) {
       setSelectedInvoiceId(null);
     }
-  }, [rows, selectedInvoiceId, selectedRowId]);
+  }, [reconciliationRows, selectedInvoiceId, selectedRowId]);
 
   return (
     <Stack spacing={2}>
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 900 }}>Reconcile</Typography>
-          <Typography variant="body2" color="text.secondary">Local reconciliation workspace with URL-synced tabs.</Typography>
+          <Typography variant="body2" color="text.secondary">Supplier bill reconciliation derived from purchase orders, supplier invoices, GRNs, and inventory movements.</Typography>
         </Box>
         <Stack direction="row" spacing={1}>
           <Button variant="outlined" onClick={() => navigate("/inventory")}>Inventory</Button>
@@ -887,7 +1113,7 @@ export default function PharmacyReconcilePage() {
           {localMessage ? <Alert severity="info" onClose={() => setLocalMessage(null)}>{localMessage}</Alert> : null}
           {loadError ? <Alert severity="error">Unable to load reconciliation data.</Alert> : null}
 
-          <CompactFilterCard title="Supplier Bill Reconciliation" subtitle="Local-only table. No drawer, no inspector, no document navigation.">
+          <CompactFilterCard title="Supplier Bill Reconciliation" subtitle="Derived from purchase orders, supplier invoices, and posted GRNs.">
             <Grid container spacing={1.25}>
               <Grid size={{ xs: 12, md: 4 }}>
                 <TextField
@@ -936,7 +1162,7 @@ export default function PharmacyReconcilePage() {
 
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, xl: 8 }}>
-              <CompactFilterCard title="Reconciliation List" subtitle="Rows update local component state only.">
+              <CompactFilterCard title="Reconciliation List" subtitle="Rows are derived from real procurement and GRN records.">
                 {loadingRows ? (
                   <Typography variant="body2" color="text.secondary">Loading reconciliation data...</Typography>
                 ) : loadError ? (
@@ -995,7 +1221,7 @@ export default function PharmacyReconcilePage() {
                     </Table>
                   </TableContainer>
                 ) : (
-                  <CompactEmptyState title="No supplier bills available for reconciliation." subtitle="No supplier invoices are currently available for three-way matching." />
+                  <CompactEmptyState title="No supplier bills available for reconciliation." subtitle="No supplier invoices are currently linked to a purchase order and GRN yet." />
                 )}
               </CompactFilterCard>
             </Grid>
@@ -1046,23 +1272,25 @@ export default function PharmacyReconcilePage() {
                       >
                         Open Detail Drawer
                       </Button>
-                      <Tooltip title="PO reference available. Direct navigation will be enabled after procurement deep-link routing is stable.">
+                      <Tooltip title="Open the source purchase order.">
                         <span>
                           <Button
                             size="small"
                             variant="outlined"
-                            disabled
+                            disabled={!inspectedInvoice.poReference || inspectedInvoice.poReference === "Unlinked"}
+                            onClick={() => openPurchaseOrder(inspectedInvoice)}
                           >
                             View PO
                           </Button>
                         </span>
                       </Tooltip>
-                      <Tooltip title="GRN reference available. Direct navigation will be enabled after goods receipt deep-link routing is stable.">
+                      <Tooltip title="Open the source goods receipt.">
                         <span>
                           <Button
                             size="small"
                             variant="outlined"
-                            disabled
+                            disabled={!inspectedInvoice.grnReference || inspectedInvoice.grnReference === "-"}
+                            onClick={() => openGoodsReceipt(inspectedInvoice)}
                           >
                             View GRN
                           </Button>
@@ -1073,9 +1301,9 @@ export default function PharmacyReconcilePage() {
                           <Button size="small" variant="outlined" onClick={() => openInventory(inspectedInvoice)}>Open Inventory</Button>
                         </span>
                       </Tooltip>
-                      <Tooltip title="Stock movement drill-down will be enabled after inventory reference filtering.">
+                      <Tooltip title="Open stock movement history filtered to the linked GRN.">
                         <span>
-                          <Button size="small" variant="outlined" disabled>View Stock Movement</Button>
+                          <Button size="small" variant="outlined" onClick={() => openStockMovement(inspectedInvoice)}>View Stock Movement</Button>
                         </span>
                       </Tooltip>
                     </Stack>
@@ -1162,6 +1390,12 @@ export default function PharmacyReconcilePage() {
                   <Grid size={{ xs: 12, sm: 6 }}>
                     <TextField size="small" fullWidth label="Variance quantity" value={String(selectedInvoice.varianceQuantity)} InputProps={{ readOnly: true }} />
                   </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField size="small" fullWidth label="PO total" value={`INR ${money(selectedInvoice.poTotalAmount)}`} InputProps={{ readOnly: true }} />
+                  </Grid>
+                  <Grid size={{ xs: 12, sm: 6 }}>
+                    <TextField size="small" fullWidth label="Variance %" value={`${selectedInvoice.variancePercent.toFixed(2)}%`} InputProps={{ readOnly: true }} />
+                  </Grid>
                 </Grid>
               </CompactFilterCard>
 
@@ -1180,7 +1414,7 @@ export default function PharmacyReconcilePage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {selectedInvoice.comparisonRows.map((comparisonRow) => (
+                  {selectedInvoice.comparisonRows.map((comparisonRow) => (
                         <TableRow key={`${selectedInvoice.id}-${comparisonRow.medicine}`}>
                           <TableCell>{comparisonRow.medicine}</TableCell>
                           <TableCell align="right">{comparisonRow.orderedQty}</TableCell>
@@ -1189,7 +1423,10 @@ export default function PharmacyReconcilePage() {
                           <TableCell align="right">{comparisonRow.difference}</TableCell>
                           <TableCell align="right">INR {money(comparisonRow.variance)}</TableCell>
                           <TableCell>
-                            <Chip size="small" label={comparisonRow.result} color={matchTone(selectedInvoice.matchResult)} sx={compactChipSx} />
+                            <Stack spacing={0.25}>
+                              <Chip size="small" label={comparisonRow.result} color={matchTone(selectedInvoice.matchResult)} sx={compactChipSx} />
+                              {selectedInvoice.matchIssues.length > 1 ? <Typography variant="caption" color="text.secondary">{selectedInvoice.matchIssues.join(" · ")}</Typography> : null}
+                            </Stack>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -1256,10 +1493,15 @@ export default function PharmacyReconcilePage() {
                       </Stack>
                       <Stack spacing={0.25} sx={{ pb: index < selectedInvoice.timeline.length - 1 ? 1 : 0 }}>
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>{timelineStep.label}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {timelineStep.at ? formatDateTime(timelineStep.at) : "Pending"}
+                          {timelineStep.by ? ` • ${timelineStep.by}` : ""}
+                          {timelineStep.comment ? ` • ${timelineStep.comment}` : ""}
+                        </Typography>
                         <Chip
                           size="small"
-                          label={timelineStep.state === "completed" ? "Completed" : timelineStep.state === "current" ? "Current" : "Pending"}
-                          color={timelineStep.state === "completed" ? "success" : timelineStep.state === "current" ? "primary" : "default"}
+                          label={timelineStep.state === "completed" ? "Completed" : timelineStep.state === "current" ? "Current" : timelineStep.state === "cancelled" ? "Cancelled" : "Pending"}
+                          color={timelineStep.state === "completed" ? "success" : timelineStep.state === "current" ? "primary" : timelineStep.state === "cancelled" ? "error" : "default"}
                           variant={timelineStep.state === "pending" ? "outlined" : "filled"}
                           sx={compactChipSx}
                         />
@@ -1272,37 +1514,46 @@ export default function PharmacyReconcilePage() {
               <Divider />
 
               <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                <Tooltip title="Local-only action. Backend workflow is not wired from this drawer yet.">
+                <Tooltip title={selectedInvoice.status === "Submitted" ? "Mark this reconciliation as reviewed." : "Reviewed step already completed."}>
                   <span>
-                    <Button size="small" variant="outlined" disabled>
+                    <Button size="small" variant="outlined" disabled={selectedInvoice.status !== "Submitted"} onClick={() => transitionReconciliation(selectedInvoice, "Reviewed", "Reviewed in reconciliation drawer")}>
                       Mark Reviewed
                     </Button>
                   </span>
                 </Tooltip>
-                <Tooltip title="Local-only action. Backend workflow is not wired from this drawer yet.">
+                <Tooltip title={selectedInvoice.status === "Reviewed" ? "Approve this reconciliation." : "Approval becomes available after review."}>
                   <span>
-                    <Button size="small" variant="contained" disabled>
-                      Send for Approval
+                    <Button size="small" variant="contained" disabled={selectedInvoice.status !== "Reviewed"} onClick={() => transitionReconciliation(selectedInvoice, "Approved", "Approved in reconciliation drawer")}>
+                      Approve
                     </Button>
                   </span>
                 </Tooltip>
-                <Tooltip title="PO reference available. Direct navigation will be enabled after procurement deep-link routing is stable.">
+                <Tooltip title={selectedInvoice.status === "Approved" ? "Mark this reconciliation ready for payment." : "Ready for payment becomes available after approval."}>
+                  <span>
+                    <Button size="small" variant="outlined" disabled={selectedInvoice.status !== "Approved"} onClick={() => transitionReconciliation(selectedInvoice, "Posted", "Marked ready for payment")}>
+                      Mark Ready for Payment
+                    </Button>
+                  </span>
+                </Tooltip>
+                <Tooltip title="Open the source purchase order.">
                   <span>
                     <Button
                       size="small"
                       variant="outlined"
-                      disabled
+                      disabled={!selectedInvoice.poReference || selectedInvoice.poReference === "Unlinked"}
+                      onClick={() => openPurchaseOrder(selectedInvoice)}
                     >
                       View PO
                     </Button>
                   </span>
                 </Tooltip>
-                <Tooltip title="GRN reference available. Direct navigation will be enabled after goods receipt deep-link routing is stable.">
+                <Tooltip title="Open the source goods receipt.">
                   <span>
                     <Button
                       size="small"
                       variant="outlined"
-                      disabled
+                      disabled={!selectedInvoice.grnReference || selectedInvoice.grnReference === "-"}
+                      onClick={() => openGoodsReceipt(selectedInvoice)}
                     >
                       View GRN
                     </Button>
@@ -1315,9 +1566,9 @@ export default function PharmacyReconcilePage() {
                     </Button>
                   </span>
                 </Tooltip>
-                <Tooltip title="Stock movement drill-down will be enabled after inventory reference filtering.">
+                <Tooltip title="Open stock movement history filtered to the linked GRN.">
                   <span>
-                    <Button size="small" variant="outlined" disabled>
+                    <Button size="small" variant="outlined" onClick={() => openStockMovement(selectedInvoice)}>
                       View Stock Movement
                     </Button>
                   </span>
@@ -1503,13 +1754,13 @@ export default function PharmacyReconcilePage() {
                 ))}
               </Stack>
               <Typography variant="body2" color="text.secondary">
-                Stock adjustments are created in Inventory. This tab reviews damage, expiry, correction, and transfer adjustments before approval.
+                Stock adjustments are derived from posted inventory movements and keep the approval trail read-only.
               </Typography>
               <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                 <Button size="small" variant="contained" onClick={() => openInventory(null)}>Open Inventory Adjustments</Button>
-                <Tooltip title="Adjustment drill-down will be enabled after adjustment reconciliation records are available.">
+                <Tooltip title="Open the stock movement ledger filtered for adjustment activity.">
                   <span>
-                    <Button size="small" variant="outlined" disabled>View Adjustment</Button>
+                    <Button size="small" variant="outlined" onClick={() => navigate("/pharmacy/stock-movements?movement=ADJUSTMENT")}>View Adjustment</Button>
                   </span>
                 </Tooltip>
               </Stack>
@@ -1546,7 +1797,7 @@ export default function PharmacyReconcilePage() {
                         <Chip size="small" label={row.status} color={queueStatusTone(row.status)} sx={compactChipSx} />
                       </TableCell>
                       <TableCell align="right">
-                        <Button size="small" disabled>View Adjustment</Button>
+                        <Button size="small" onClick={() => navigate("/pharmacy/stock-movements?movement=ADJUSTMENT")}>View Adjustment</Button>
                       </TableCell>
                     </TableRow>
                   )) : (
@@ -1567,7 +1818,7 @@ export default function PharmacyReconcilePage() {
         <Stack spacing={2}>
           <Grid container spacing={2}>
             <Grid size={{ xs: 6, md: 3 }}>
-              <CompactStatCard label="Supplier Bill Exceptions" value={rows.filter((row) => row.matchResult !== "Matched").length} />
+              <CompactStatCard label="Supplier Bill Exceptions" value={reconciliationRows.filter((row) => row.matchResult !== "Matched").length} />
             </Grid>
             <Grid size={{ xs: 6, md: 3 }}>
               <CompactStatCard label="Physical Count Variances" value={physicalCountArchiveRows.length} />
@@ -1612,7 +1863,7 @@ export default function PharmacyReconcilePage() {
                       <TableCell align="right">
                         <Stack direction="row" spacing={0.75} justifyContent="flex-end" useFlexGap flexWrap="wrap">
                           <Button size="small" disabled={row.type !== "Supplier Bill"} onClick={() => {
-                            const target = rows.find((invoiceRow) => invoiceRow.invoiceNumber === row.reference);
+                            const target = reconciliationRows.find((invoiceRow) => invoiceRow.invoiceNumber === row.reference);
                             if (target) {
                               setSelectedRowId(target.id);
                               setSelectedInvoiceId(target.id);
@@ -1621,14 +1872,20 @@ export default function PharmacyReconcilePage() {
                           >
                             Review
                           </Button>
-                          <Tooltip title="Approval workflow will be enabled after backend reconciliation actions are available.">
+                          <Tooltip title="Approve the selected supplier bill when review is complete.">
                             <span>
-                              <Button size="small" variant="outlined" disabled>Approve</Button>
+                              <Button size="small" variant="outlined" disabled={row.type !== "Supplier Bill" || row.status === "Posted"} onClick={() => {
+                                const target = reconciliationRows.find((invoiceRow) => invoiceRow.invoiceNumber === row.reference);
+                                if (target) transitionReconciliation(target, "Approved", "Approved from approval review queue");
+                              }}>Approve</Button>
                             </span>
                           </Tooltip>
-                          <Tooltip title="Rejection workflow will be enabled after backend reconciliation actions are available.">
+                          <Tooltip title="Return the selected supplier bill for correction.">
                             <span>
-                              <Button size="small" variant="outlined" disabled>Reject</Button>
+                              <Button size="small" variant="outlined" disabled={row.type !== "Supplier Bill" || row.status === "Rejected"} onClick={() => {
+                                const target = reconciliationRows.find((invoiceRow) => invoiceRow.invoiceNumber === row.reference);
+                                if (target) transitionReconciliation(target, "Draft", "Returned for correction from approval review queue");
+                              }}>Reject</Button>
                             </span>
                           </Tooltip>
                         </Stack>

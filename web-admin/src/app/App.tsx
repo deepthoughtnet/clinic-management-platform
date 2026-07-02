@@ -52,6 +52,7 @@ import PlaceholderPage from "../pages/PlaceholderPage";
 import TenantsPage from "../pages/platform/TenantsPage";
 import TenantDetailPage from "../pages/platform/TenantDetailPage";
 import PlansModulesPage from "../pages/platform/PlansModulesPage";
+import ProductImplementationPage from "../pages/platform/ProductImplementationPage";
 import CampaignsPage from "../products/carepilot/campaigns/CampaignsPage";
 import AnalyticsPage from "../products/carepilot/analytics/AnalyticsPage";
 import OpsConsolePage from "../products/carepilot/ops/OpsConsolePage";
@@ -342,6 +343,7 @@ function AuthedApp() {
         <Route path="/platform/help" element={<PathnameKeyedRoute><PlatformAdminGate><HelpCmsPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/platform/tenants/:tenantId" element={<PathnameKeyedRoute><TenantDetailPage /></PathnameKeyedRoute>} />
         <Route path="/platform/plans" element={<PathnameKeyedRoute><PlansModulesPage /></PathnameKeyedRoute>} />
+        <Route path="/platform/product-implementation" element={<PathnameKeyedRoute><PlatformAdminGate><ProductImplementationPage /></PlatformAdminGate></PathnameKeyedRoute>} />
         <Route path="/carepilot/campaigns" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><CampaignsPage /></ModuleGate></PathnameKeyedRoute>} />
         <Route path="/carepilot/analytics" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><AnalyticsPage /></ModuleGate></PathnameKeyedRoute>} />
         <Route path="/carepilot/ops" element={<PathnameKeyedRoute><ModuleGate moduleKey="carePilot"><OpsConsolePage /></ModuleGate></PathnameKeyedRoute>} />
@@ -391,6 +393,7 @@ function formatPageTitle(pathname: string): string {
   if (pathname === "/pharmacy/reconciliation") return "Reconciliation";
   if (pathname === "/pharmacy/pos") return "POS Sale";
   if (pathname === "/pharmacy/operations") return "Procurement";
+  if (pathname.startsWith("/platform/product-implementation")) return "Product Implementation";
   const leaf = pathname.split("/").filter(Boolean).at(-1) || "Dashboard";
   return leaf.replace(/-/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }

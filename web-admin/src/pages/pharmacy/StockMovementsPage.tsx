@@ -177,6 +177,8 @@ export default function StockMovementsPage() {
   const [fromDate, setFromDate] = React.useState("");
   const [toDate, setToDate] = React.useState("");
   const [selectedBatchId, setSelectedBatchId] = React.useState<string | null>(null);
+  const [referenceTypeFilter, setReferenceTypeFilter] = React.useState("");
+  const [referenceIdFilter, setReferenceIdFilter] = React.useState("");
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) {
@@ -214,6 +216,13 @@ export default function StockMovementsPage() {
     }
   }, [searchParams]);
 
+  React.useEffect(() => {
+    const referenceType = searchParams.get("referenceType");
+    const referenceId = searchParams.get("referenceId");
+    if (referenceType) setReferenceTypeFilter(referenceType);
+    if (referenceId) setReferenceIdFilter(referenceId);
+  }, [searchParams]);
+
   const medicineById = React.useMemo(() => new Map(medicines.map((m) => [m.id, m])), [medicines]);
   const stockById = React.useMemo(() => new Map(stocks.map((stock) => [stock.id, stock])), [stocks]);
 
@@ -222,12 +231,14 @@ export default function StockMovementsPage() {
       if (medicineId && row.medicineId !== medicineId) return false;
       if (movementType && row.transactionType !== movementType) return false;
       if (!movementMatchesChip(row, chipFilter)) return false;
+      if (referenceTypeFilter && (row.referenceType || "").toUpperCase() !== referenceTypeFilter.toUpperCase()) return false;
+      if (referenceIdFilter && (row.referenceId?.toString() || "") !== referenceIdFilter) return false;
       const created = new Date(row.createdAt);
       if (fromDate && created < new Date(`${fromDate}T00:00:00`)) return false;
       if (toDate && created > new Date(`${toDate}T23:59:59`)) return false;
       return true;
     });
-  }, [rows, medicineId, movementType, chipFilter, fromDate, toDate]);
+  }, [rows, medicineId, movementType, chipFilter, fromDate, toDate, referenceIdFilter, referenceTypeFilter]);
 
   const filteredSummary = React.useMemo(() => ({
     total: filtered.length,
