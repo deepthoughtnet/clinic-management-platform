@@ -9,8 +9,9 @@ import org.springframework.data.repository.query.Param;
 
 public interface ClinicalDocumentRepository extends JpaRepository<ClinicalDocumentEntity, UUID> {
     Optional<ClinicalDocumentEntity> findByTenantIdAndId(UUID tenantId, UUID id);
-    List<ClinicalDocumentEntity> findByTenantIdAndPatientIdOrderByCreatedAtDesc(UUID tenantId, UUID patientId);
-    boolean existsByTenantIdAndStorageKey(UUID tenantId, String storageKey);
+    Optional<ClinicalDocumentEntity> findByTenantIdAndIdAndActiveTrue(UUID tenantId, UUID id);
+    List<ClinicalDocumentEntity> findByTenantIdAndPatientIdAndActiveTrueOrderByCreatedAtDesc(UUID tenantId, UUID patientId);
+    boolean existsByTenantIdAndStorageObjectKey(UUID tenantId, String storageObjectKey);
 
     @Query("""
             select count(d)

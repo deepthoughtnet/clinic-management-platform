@@ -21,8 +21,6 @@ import com.deepthoughtnet.clinic.api.lab.db.LabOrderSampleRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderStatus;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterRepository;
-import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterEntity;
-import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterRepository;
 import com.deepthoughtnet.clinic.api.lab.LabCatalogueConfigService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderCreateCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDirectCreateCommand;
@@ -86,7 +84,7 @@ class LabServiceValidationTest {
     private static final UUID ORDER_ID = UUID.fromString("66666666-6666-6666-6666-666666666666");
 
     @Mock private LabTestMasterRepository labTestMasterRepository;
-    @Mock private LabTestParameterRepository labTestParameterRepository;
+    @Mock private com.deepthoughtnet.clinic.api.lab.db.LabTestParameterRepository labTestParameterRepository;
     @Mock private LabOrderRepository labOrderRepository;
     @Mock private LabOrderItemRepository labOrderItemRepository;
     @Mock private LabOrderResultRepository labOrderResultRepository;
@@ -544,7 +542,7 @@ class LabServiceValidationTest {
         when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(orderItem));
         when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(collectedSample()));
         when(labTestParameterRepository.findByTenantIdAndLabTestIdOrderBySortOrderAsc(TENANT_ID, testId)).thenReturn(List.of(
-                LabTestParameterEntity.create(TENANT_ID, testId, "Hemoglobin", "g/dL", normalRange, criticalRange, 1)
+                com.deepthoughtnet.clinic.api.lab.db.LabTestParameterEntity.create(TENANT_ID, testId, "Hemoglobin", "g/dL", normalRange, criticalRange, 1)
         ));
         AtomicReference<List<LabOrderResultEntity>> savedResults = new AtomicReference<>(List.of());
         when(labOrderResultRepository.saveAll(anyList())).thenAnswer(invocation -> {
@@ -587,7 +585,7 @@ class LabServiceValidationTest {
         when(labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(orderItem));
         when(labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(TENANT_ID, ORDER_ID)).thenReturn(List.of(collectedSample()));
         when(labTestParameterRepository.findByTenantIdAndLabTestIdOrderBySortOrderAsc(TENANT_ID, testId)).thenReturn(List.of(
-                LabTestParameterEntity.create(TENANT_ID, testId, "Potassium", "mmol/L", "3.5-5.1", "2.5-6.0", 1)
+                com.deepthoughtnet.clinic.api.lab.db.LabTestParameterEntity.create(TENANT_ID, testId, "Potassium", "mmol/L", "3.5-5.1", "2.5-6.0", 1)
         ));
         AtomicReference<List<LabOrderResultEntity>> savedResults = new AtomicReference<>(List.of());
         when(labOrderResultRepository.saveAll(anyList())).thenAnswer(invocation -> {

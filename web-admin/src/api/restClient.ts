@@ -255,3 +255,12 @@ export async function httpPostForm<T>(path: string, formData: FormData, opts?: A
   });
   return parseResponse<T>(res);
 }
+
+export async function httpDelete<T>(path: string, opts?: ApiOpts): Promise<T> {
+  const res = await fetch(`${baseUrl(opts?.apiBase)}${path}`, {
+    method: "DELETE",
+    headers: buildHeaders(path, opts, false),
+    signal: opts?.signal,
+  });
+  return parseResponse<T>(res);
+}

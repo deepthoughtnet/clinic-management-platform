@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { labOrderCreateSchema, labResultEntrySchema, labTestMasterSchema } from "../dist/index.js";
+import { labConsultationOrderCreateSchema, labOrderCreateSchema, labResultEntrySchema, labTestMasterSchema } from "../dist/index.js";
 
 test("lab test master accepts a valid payload", () => {
   const result = labTestMasterSchema.safeParse({
@@ -52,4 +52,14 @@ test("lab order create requires at least one test", () => {
   });
 
   assert.equal(result.success, false);
+});
+
+test("consultation lab order create accepts patientId, tests, and notes", () => {
+  const result = labConsultationOrderCreateSchema.safeParse({
+    patientId: "11111111-1111-4111-8111-111111111111",
+    testIds: ["22222222-2222-4222-8222-222222222222"],
+    notes: "Consultation request",
+  });
+
+  assert.equal(result.success, true);
 });

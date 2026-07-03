@@ -7,6 +7,8 @@ public interface ObjectStorageService {
 
     String buildDocumentStorageKey(UUID tenantId, String originalFilename);
 
+    String buildPatientDocumentStorageKey(UUID tenantId, UUID patientId, UUID documentId, String originalFilename);
+
     void putObject(String storageKey, String contentType, byte[] bytes);
 
     byte[] getObjectBytes(String storageKey);

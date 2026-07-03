@@ -46,7 +46,6 @@ import {
   getClinicClock,
   getClinicUsers,
   getDoctorSlots,
-  getDoctorProfile,
   getWaitlist,
   rescheduleAppointment,
   searchAppointments,
@@ -64,10 +63,9 @@ import {
   type PaymentMode,
   type Patient,
   type Bill,
-  type DoctorProfile,
 } from "../../api/clinicApi";
 import ConsultationFeeDialog from "../../components/ConsultationFeeDialog";
-import { CompactEmptyState } from "../../components/compact/CompactUi";
+import { CompactEmptyState, WorkflowStrip } from "../../components/compact/CompactUi";
 import { getClinicClockParts, getClinicDateKey, isBookingTimePast, formatClinicClockLabel } from "./bookingValidation";
 import { getAppointmentSlotPresentation } from "./slotState";
 
@@ -246,6 +244,14 @@ function compactDateLabel(date: string) {
     day: "numeric",
   }).format(new Date(`${date}T00:00:00Z`));
 }
+
+const DAY_BOARD_WORKFLOW_STEPS = [
+  { label: "Availability" },
+  { label: "Slot" },
+  { label: "Booking" },
+  { label: "Check-in" },
+  { label: "Consultation" },
+] as const;
 
 function isPastDateTime(date: string, time: string | null | undefined, timeZone?: string | null, clinicNow?: string | null) {
   return isBookingTimePast(date, time, undefined, timeZone, clinicNow);
@@ -562,22 +568,25 @@ function feeStatusLabel(status: FeeStatus, amount: number | null | undefined) {
   }
 }
 
-function consultationFeeSummary(consultationFee: number | null, bills: Bill[]) {
-  const effectiveFee = consultationFee ?? (bills.length > 0 ? Math.max(...bills.map((bill) => bill.totalAmount)) : null);
-  const netPaid = bills.reduce((sum, bill) => sum + Math.max(0, bill.netPaidAmount ?? (bill.paidAmount - bill.refundedAmount)), 0);
-  const due = effectiveFee == null ? null : Math.max(0, effectiveFee - netPaid);
-  const feeStatus: FeeStatus = effectiveFee == null || effectiveFee <= 0
-    ? "NOT_CONFIGURED"
-    : (due ?? 0) <= 0
-      ? "PAID"
-      : netPaid > 0
-        ? "PARTIAL"
-        : "UNPAID";
+function consultationFeeSummary(appointment: Appointment, bills: Bill[]) {
+  const effectiveFee = appointment.consultationFeeAmount ?? (bills.length > 0 ? Math.max(...bills.map((bill) => bill.totalAmount)) : null);
+  const netPaid = appointment.consultationFeePaidAmount ?? bills.reduce((sum, bill) => sum + Math.max(0, bill.netPaidAmount ?? (bill.paidAmount - bill.refundedAmount)), 0);
+  const due = appointment.consultationFeeDueAmount ?? (effectiveFee == null ? null : Math.max(0, effectiveFee - netPaid));
+  const feeStatus: FeeStatus = appointment.consultationFeeStatus
+    ? appointment.consultationFeeStatus
+    : (effectiveFee == null || effectiveFee <= 0
+      ? "NOT_CONFIGURED"
+      : (due ?? 0) <= 0
+        ? "PAID"
+        : netPaid > 0
+          ? "PARTIAL"
+          : "UNPAID");
   return {
     bill: consultationEffectiveBill(bills),
     consultationFee: effectiveFee,
     feeStatus,
     dueAmount: due,
+    paidAmount: netPaid,
   };
 }
 
@@ -601,7 +610,6 @@ export default function DayBoardPage() {
   const [waitlist, setWaitlist] = React.useState<AppointmentWaitlist[]>([]);
   const [doctorPanels, setDoctorPanels] = React.useState<DoctorPanel[]>([]);
   const [bills, setBills] = React.useState<Bill[]>([]);
-  const [doctorProfiles, setDoctorProfiles] = React.useState<Record<string, DoctorProfile>>({});
   const [selected, setSelected] = React.useState<Selection | null>(null);
   const [rescheduleOpen, setRescheduleOpen] = React.useState(false);
   const [rescheduleTarget, setRescheduleTarget] = React.useState<Appointment | null>(null);
@@ -670,10 +678,9 @@ export default function DayBoardPage() {
 
   const selectedAppointmentFee = React.useMemo(() => {
     if (!selectedAppointment) return null;
-    const profile = doctorProfiles[selectedAppointment.doctorUserId];
     const consultationBills = consultationBillsByAppointment(bills, selectedAppointment.id);
-    return consultationFeeSummary(profile?.consultationFee ?? null, consultationBills);
-  }, [bills, doctorProfiles, selectedAppointment]);
+    return consultationFeeSummary(selectedAppointment, consultationBills);
+  }, [bills, selectedAppointment]);
 
   const activeWaitlist = React.useMemo(() => {
     if (effectiveDoctorId) return waitlist;
@@ -901,45 +908,6 @@ export default function DayBoardPage() {
   }, []);
 
   React.useEffect(() => {
-    let cancelled = false;
-    async function loadDoctorProfiles() {
-      const token = auth.accessToken;
-      const tenantId = auth.tenantId;
-      if (!token || !tenantId || users.length === 0) {
-        setDoctorProfiles({});
-        return;
-      }
-      const doctors = users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
-      try {
-        const rows = await Promise.all(doctors.map(async (doctor) => {
-          const doctorId = doctor.appUserId;
-          if (!doctorId) {
-            return null;
-          }
-          const profile = await getDoctorProfile(token, tenantId, doctorId as string).catch(() => null);
-          return profile ? [doctorId as string, profile] as const : null;
-        }));
-        if (cancelled) return;
-        const map: Record<string, DoctorProfile> = {};
-        for (const entry of rows) {
-          if (entry) {
-            map[entry[0]] = entry[1];
-          }
-        }
-        setDoctorProfiles(map);
-      } catch {
-        if (!cancelled) {
-          setDoctorProfiles({});
-        }
-      }
-    }
-    void loadDoctorProfiles();
-    return () => {
-      cancelled = true;
-    };
-  }, [auth.accessToken, auth.tenantId, users]);
-
-  React.useEffect(() => {
     setSelected(null);
   }, [date]);
 
@@ -1060,7 +1028,7 @@ export default function DayBoardPage() {
 
   const checkInAppointment = async (appointment: Appointment) => {
     const consultationBills = consultationBillsByAppointment(bills, appointment.id);
-    const fee = consultationFeeSummary(doctorProfiles[appointment.doctorUserId]?.consultationFee ?? null, consultationBills);
+    const fee = consultationFeeSummary(appointment, consultationBills);
     if ((fee.dueAmount ?? 0) > 0) {
       setError("Consultation fee is pending. Collect fee before check-in.");
       if (canCollect) {
@@ -1231,6 +1199,8 @@ export default function DayBoardPage() {
           <Button variant="outlined" onClick={() => navigate("/queue")}>Queue</Button>
         </Stack>
       </Box>
+
+      <WorkflowStrip steps={DAY_BOARD_WORKFLOW_STEPS} />
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 

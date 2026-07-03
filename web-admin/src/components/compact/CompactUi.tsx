@@ -58,6 +58,52 @@ export const compactFormGridSx = {
   mt: 0.25,
 } as const;
 
+export type WorkflowStripStep = {
+  label: React.ReactNode;
+  tone?: ChipProps["color"];
+};
+
+type WorkflowStripProps = {
+  steps: readonly WorkflowStripStep[];
+  label?: React.ReactNode;
+};
+
+export function WorkflowStrip({ steps, label = "Workflow" }: WorkflowStripProps) {
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.45 }}>
+      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase" }}>
+        {label}
+      </Typography>
+      <Stack
+        direction="row"
+        spacing={0.6}
+        useFlexGap
+        flexWrap="wrap"
+        alignItems="center"
+        sx={{
+          py: 0.1,
+          overflowX: "auto",
+          scrollbarWidth: "thin",
+          "&::-webkit-scrollbar": {
+            height: 6,
+          },
+        }}
+      >
+        {steps.map((step, index) => (
+          <React.Fragment key={typeof step.label === "string" ? `${step.label}-${index}` : index}>
+            {index > 0 ? (
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, px: 0.1, flexShrink: 0 }}>
+                →
+              </Typography>
+            ) : null}
+            <Chip size="small" label={step.label} color={step.tone || "default"} variant="outlined" sx={compactChipSx} />
+          </React.Fragment>
+        ))}
+      </Stack>
+    </Box>
+  );
+}
+
 export type WorkflowGuideStep = {
   label: React.ReactNode;
   helper?: React.ReactNode;

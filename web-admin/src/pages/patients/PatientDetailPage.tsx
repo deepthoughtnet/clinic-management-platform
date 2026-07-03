@@ -33,6 +33,7 @@ import {
   getPatientNotifications,
   getPatientDocuments,
   getPatientDocumentDownloadUrl,
+  getPatientDocumentViewUrl,
   getPatientTimeline,
   reviewClinicalDocumentExtraction,
   reprocessClinicalDocumentExtraction,
@@ -49,6 +50,7 @@ import {
   type PatientTimelineItem,
 } from "../../api/clinicApi";
 import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocumentViewer";
+import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDocumentUploadDialog";
 
 function statusColor(status: Appointment["status"]) {
   switch (status) {
@@ -94,6 +96,25 @@ function documentTypeLabel(value: string | null | undefined): string {
   return DOCUMENT_TYPES.find((type) => type.value === value)?.label || (value || "Document").replaceAll("_", " ");
 }
 
+const DOCUMENT_FILTERS: Array<{ key: "ALL" | "LAB" | "RADIOLOGY" | "REFERRAL" | "PRESCRIPTION" | "DISCHARGE" | "OTHER"; label: string }> = [
+  { key: "ALL", label: "All" },
+  { key: "LAB", label: "External Lab" },
+  { key: "RADIOLOGY", label: "Radiology" },
+  { key: "REFERRAL", label: "Referral" },
+  { key: "PRESCRIPTION", label: "Prescription" },
+  { key: "DISCHARGE", label: "Discharge" },
+  { key: "OTHER", label: "Other" },
+];
+
+function documentFilterKey(documentType: string): "LAB" | "RADIOLOGY" | "REFERRAL" | "PRESCRIPTION" | "DISCHARGE" | "OTHER" {
+  if (["EXTERNAL_LAB_REPORT", "INTERNAL_LAB_REPORT", "LAB_REPORT"].includes(documentType)) return "LAB";
+  if (["RADIOLOGY_REPORT", "X_RAY", "MRI_CT"].includes(documentType)) return "RADIOLOGY";
+  if (["REFERRAL_LETTER", "REFERRAL"].includes(documentType)) return "REFERRAL";
+  if (["OLD_PRESCRIPTION", "PRESCRIPTION"].includes(documentType)) return "PRESCRIPTION";
+  if (["DISCHARGE_SUMMARY"].includes(documentType)) return "DISCHARGE";
+  return "OTHER";
+}
+
 export default function PatientDetailPage() {
   const auth = useAuth();
   const params = useParams();
@@ -108,12 +129,11 @@ export default function PatientDetailPage() {
   const [documentType, setDocumentType] = React.useState<ClinicalDocumentType>("LAB_REPORT");
   const [documentFile, setDocumentFile] = React.useState<File | null>(null);
   const [documentNotes, setDocumentNotes] = React.useState("");
-  const [referredDoctor, setReferredDoctor] = React.useState("");
-  const [referredHospital, setReferredHospital] = React.useState("");
-  const [referralNotes, setReferralNotes] = React.useState("");
   const [uploadingDocument, setUploadingDocument] = React.useState(false);
   const [viewerDocument, setViewerDocument] = React.useState<ClinicalDocument | null>(null);
   const [viewerUrl, setViewerUrl] = React.useState<string | null>(null);
+  const [uploadDialogOpen, setUploadDialogOpen] = React.useState(false);
+  const [documentFilter, setDocumentFilter] = React.useState<"ALL" | "LAB" | "RADIOLOGY" | "REFERRAL" | "PRESCRIPTION" | "DISCHARGE" | "OTHER">("ALL");
   const [reviewBusy, setReviewBusy] = React.useState(false);
   const [reviewNotes, setReviewNotes] = React.useState("");
   const [reviewOverrideReason, setReviewOverrideReason] = React.useState("");
@@ -211,16 +231,15 @@ export default function PatientDetailPage() {
       await uploadPatientDocument(auth.accessToken, auth.tenantId, id, {
         file: documentFile,
         documentType,
+        title: documentNotes.trim() || documentFile.name,
+        reportDate: null,
+        consultationId: null,
         notes: documentNotes,
-        referredDoctor: documentType === "REFERRAL" ? referredDoctor : null,
-        referredHospital: documentType === "REFERRAL" ? referredHospital : null,
-        referralNotes: documentType === "REFERRAL" ? referralNotes : null,
+        uploadSource: "RECEPTION",
+        visibility: "INTERNAL_ONLY",
       });
       setDocumentFile(null);
       setDocumentNotes("");
-      setReferredDoctor("");
-      setReferredHospital("");
-      setReferralNotes("");
       await refreshDocuments();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload clinical document");
@@ -234,7 +253,7 @@ export default function PatientDetailPage() {
     setViewerDocument(document);
     setViewerUrl(null);
     try {
-      const response = await getPatientDocumentDownloadUrl(auth.accessToken, auth.tenantId, document.id);
+      const response = await getPatientDocumentViewUrl(auth.accessToken, auth.tenantId, id, document.id);
       setViewerUrl(response.url);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to open document preview");
@@ -449,65 +468,56 @@ export default function PatientDetailPage() {
           <Stack spacing={2}>
             <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
               <Box>
-                <Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Documents & History</Typography>
-                <Typography variant="body2" color="text.secondary">Upload reports, referrals, discharge summaries, insurance papers, and imaging for this patient.</Typography>
+                <Typography variant="h6" sx={{ fontWeight: 900 }}>Patient Documents</Typography>
+                <Typography variant="body2" color="text.secondary">Tenant-scoped repository for reports, referrals, scans, and generated lab files.</Typography>
               </Box>
-              <Chip label={`${documents.length} document(s)`} size="small" color="info" />
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Chip label={`${documents.length} document(s)`} size="small" color="info" />
+                {canUploadClinicalDocument ? <Button variant="contained" onClick={() => setUploadDialogOpen(true)}>Upload Document</Button> : null}
+              </Stack>
             </Box>
-            <Grid container spacing={2}>
-              <Grid size={{ xs: 12, md: 4 }}>
-                {canUploadClinicalDocument ? (
-                  <Stack spacing={1.5}>
-                    <FormControl size="small" fullWidth>
-                      <InputLabel>Document type</InputLabel>
-                      <Select label="Document type" value={documentType} onChange={(event) => setDocumentType(event.target.value as ClinicalDocumentType)}>
-                        {DOCUMENT_TYPES.map((type) => <MenuItem key={type.value} value={type.value}>{type.label}</MenuItem>)}
-                      </Select>
-                    </FormControl>
-                    <Button component="label" variant="outlined" disabled={uploadingDocument}>
-                      {documentFile ? documentFile.name : "Select PDF/Image"}
-                      <input hidden type="file" accept="application/pdf,image/png,image/jpeg,.jpg,.jpeg,.pdf,.png" onChange={(event) => setDocumentFile(event.target.files?.[0] || null)} />
-                    </Button>
-                    <TextField size="small" label="Notes" value={documentNotes} onChange={(event) => setDocumentNotes(event.target.value)} multiline minRows={2} />
-                    {documentType === "REFERRAL" ? (
-                      <>
-                        <TextField size="small" label="Referred doctor" value={referredDoctor} onChange={(event) => setReferredDoctor(event.target.value)} />
-                        <TextField size="small" label="Referred hospital" value={referredHospital} onChange={(event) => setReferredHospital(event.target.value)} />
-                        <TextField size="small" label="Referral notes" value={referralNotes} onChange={(event) => setReferralNotes(event.target.value)} multiline minRows={2} />
-                      </>
-                    ) : null}
-                    <Button variant="contained" disabled={!documentFile || uploadingDocument} onClick={uploadDocument}>
-                      {uploadingDocument ? "Uploading..." : "Upload document"}
-                    </Button>
-                    <Typography variant="caption" color="text.secondary">Supported: PDF, JPG, JPEG, PNG. Future AI/OCR status is tracked with each document.</Typography>
-                  </Stack>
-                ) : (
-                  <Alert severity="info">You have read-only access to clinical documents.</Alert>
-                )}
-              </Grid>
-              <Grid size={{ xs: 12, md: 8 }}>
-                <Stack spacing={1.5}>
-                  {documents.length === 0 ? (
-                    <Alert severity="info">No clinical documents have been uploaded for this patient.</Alert>
-                  ) : documents.slice(0, 8).map((document) => (
-                    <Box key={document.id} sx={{ p: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 2, display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
-                      <Box>
-                        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
-                          <Chip size="small" label={documentTypeLabel(document.documentType)} color={document.documentType === "REFERRAL" ? "secondary" : "default"} />
-                          <Typography variant="caption" color="text.secondary">{new Date(document.createdAt).toLocaleString()}</Typography>
-                        </Stack>
-                        <Typography variant="body2" sx={{ fontWeight: 800 }}>{document.originalFilename}</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {document.notes || document.referralNotes || "No notes"} · OCR {document.ocrStatus || "PENDING"} · AI {document.aiExtractionStatus || "PENDING"}{document.aiExtractionConfidence != null ? ` · ${(document.aiExtractionConfidence * 100).toFixed(0)}%` : ""}
-                        </Typography>
-                        {document.documentType === "REFERRAL" ? <Typography variant="caption" display="block" color="text.secondary">Referral: {[document.referredDoctor, document.referredHospital].filter(Boolean).join(" · ") || "Not specified"}</Typography> : null}
-                      </Box>
-                      <Button size="small" onClick={() => void openDocument(document)}>Preview</Button>
+            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+              {DOCUMENT_FILTERS.map((filter) => (
+                <Chip
+                  key={filter.key}
+                  size="small"
+                  label={filter.label}
+                  color={documentFilter === filter.key ? "primary" : "default"}
+                  variant={documentFilter === filter.key ? "filled" : "outlined"}
+                  onClick={() => setDocumentFilter(filter.key)}
+                  clickable
+                />
+              ))}
+            </Stack>
+            {!canUploadClinicalDocument ? <Alert severity="info">You have read-only access to patient documents.</Alert> : null}
+            <Stack spacing={1.25}>
+              {documents.filter((document) => documentFilter === "ALL" || documentFilterKey(document.documentType) === documentFilter).length === 0 ? (
+                <Alert severity="info">No patient documents match the selected filter.</Alert>
+              ) : documents
+                .filter((document) => documentFilter === "ALL" || documentFilterKey(document.documentType) === documentFilter)
+                .slice(0, 12)
+                .map((document) => (
+                  <Box key={document.id} sx={{ p: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 2, display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", bgcolor: "background.paper" }}>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5, flexWrap: "wrap" }}>
+                        <Chip size="small" label={documentTypeLabel(document.documentType)} color={documentFilterKey(document.documentType) === "REFERRAL" ? "secondary" : "default"} />
+                        <Chip size="small" variant="outlined" label={document.uploadSource} />
+                        <Typography variant="caption" color="text.secondary">{new Date(document.createdAt).toLocaleString()}</Typography>
+                      </Stack>
+                      <Typography variant="body2" sx={{ fontWeight: 800 }}>{document.title || document.originalFilename}</Typography>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {document.description || "No notes"} · OCR {document.ocrStatus || "NOT_STARTED"} · AI {document.aiExtractionStatus || "NOT_STARTED"}{document.aiExtractionConfidence != null ? ` · ${(document.aiExtractionConfidence * 100).toFixed(0)}%` : ""}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {document.uploadedByName}{document.reportDate ? ` • Report date ${document.reportDate}` : ""}{document.visibility ? ` • ${document.visibility}` : ""}
+                      </Typography>
                     </Box>
-                  ))}
-                </Stack>
-              </Grid>
-            </Grid>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Button size="small" onClick={() => void openDocument(document)}>View</Button>
+                    </Stack>
+                  </Box>
+                ))}
+            </Stack>
             <Divider />
             <Box>
               <Typography variant="subtitle1" sx={{ fontWeight: 900, mb: 1 }}>Patient Timeline</Typography>
@@ -745,6 +755,17 @@ export default function PatientDetailPage() {
           </Stack>
         </CardContent>
       </Card>
+      <PatientDocumentUploadDialog
+        open={uploadDialogOpen}
+        onClose={() => setUploadDialogOpen(false)}
+        defaultUploadSource="RECEPTION"
+        title="Upload patient document"
+        onSubmit={async (body) => {
+          if (!auth.accessToken || !auth.tenantId) return;
+          await uploadPatientDocument(auth.accessToken, auth.tenantId, id, body);
+          await refreshDocuments();
+        }}
+      />
       <ClinicalDocumentViewer open={!!viewerDocument} document={viewerDocument} url={viewerUrl} onClose={() => { setViewerDocument(null); setViewerUrl(null); }} />
     </Stack>
   );

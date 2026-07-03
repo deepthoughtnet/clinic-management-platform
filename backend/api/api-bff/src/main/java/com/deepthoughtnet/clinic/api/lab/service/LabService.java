@@ -79,6 +79,7 @@ import java.io.IOException;
 import java.time.format.DateTimeFormatter;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -788,16 +789,18 @@ public class LabService {
                 tenantId,
                 saved.getPatientId(),
                 saved.getConsultationId(),
-                null,
                 actorAppUserId,
-                ClinicalDocumentType.LAB_REPORT,
+                ClinicalDocumentType.INTERNAL_LAB_REPORT,
+                pdf.filename(),
+                OffsetDateTime.now(ZoneOffset.UTC).toLocalDate(),
+                "LABORATORY",
+                "LABORATORY",
+                saved.getId().toString(),
+                "INTERNAL_ONLY",
                 pdf.filename(),
                 "application/pdf",
                 pdf.content(),
-                normalizeNullable(command == null ? null : command.publishNotes()),
-                null,
-                null,
-                "Published from lab order " + saved.getOrderNumber()
+                normalizeNullable(command == null ? null : command.publishNotes())
         ));
 
         labNotificationService.notifyReportPublished(

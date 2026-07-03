@@ -61,6 +61,10 @@ public final class Permissions {
     public static final String CLINIC_DOCUMENT_UPLOAD = "clinic.document.upload";
     public static final String CLINIC_DOCUMENT_AGENT_UPLOAD = "clinic.document.agent_upload";
     public static final String CLINIC_DOCUMENT_READ = "clinic.document.read";
+    public static final String PATIENT_DOCUMENT_READ = "patient.document.read";
+    public static final String PATIENT_DOCUMENT_UPLOAD = "patient.document.upload";
+    public static final String PATIENT_DOCUMENT_MANAGE = "patient.document.manage";
+    public static final String PATIENT_DOCUMENT_DELETE = "patient.document.delete";
     public static final String AGENT_INTAKE_CREATE = "agent.intake.create";
     public static final String AGENT_INTAKE_READ = "agent.intake.read";
     public static final String AGENT_INTAKE_SOURCE_READ = "agent_intake.source.read";

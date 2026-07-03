@@ -701,6 +701,92 @@ class BillingServicePaymentTest {
                 .save(argThat(entity -> !entity.getId().equals(cancelled.getId()) && appointmentId.equals(entity.getAppointmentId())));
     }
 
+    @Test
+    void consultationFeeStatusReturnsPaidWhenConsultationFeeBillIsPaid() {
+        List<PaymentEntity> payments = new ArrayList<>();
+        BillEntity bill = consultationBill(appointmentId, new BigDecimal("900.00"));
+        when(billRepository.findByTenantIdAndAppointmentIdOrderByCreatedAtDesc(tenantId, appointmentId)).thenReturn(List.of(bill));
+        when(billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, bill.getId()))
+                .thenReturn(List.of(consultationLine(bill.getId(), new BigDecimal("900.00"))));
+        when(paymentRepository.findByTenantIdAndBillIdOrderByCreatedAtDesc(tenantId, bill.getId())).thenAnswer(invocation -> List.copyOf(payments));
+        when(paymentRepository.save(any(PaymentEntity.class))).thenAnswer(invocation -> {
+            PaymentEntity payment = invocation.getArgument(0);
+            payments.add(payment);
+            return payment;
+        });
+
+        service.recordPayment(tenantId, bill.getId(), payment("900.00"), actorId);
+        var status = service.consultationFeeStatus(tenantId, appointmentId);
+
+        assertThat(status.status()).isEqualTo("PAID");
+        assertThat(status.consultationFeeAmount()).isEqualByComparingTo("900.00");
+        assertThat(status.paidAmount()).isEqualByComparingTo("900.00");
+        assertThat(status.dueAmount()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void consultationFeeStatusReturnsUnpaidWhenFeeIsPending() {
+        when(doctorProfileService.findByDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(new DoctorProfileRecord(
+                UUID.randomUUID(),
+                tenantId,
+                doctorUserId,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new BigDecimal("800.00"),
+                null,
+                null,
+                true,
+                false,
+                null,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        )));
+        BillEntity bill = consultationBill(appointmentId, new BigDecimal("800.00"));
+        when(billRepository.findByTenantIdAndAppointmentIdOrderByCreatedAtDesc(tenantId, appointmentId)).thenReturn(List.of(bill));
+        when(billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, bill.getId()))
+                .thenReturn(List.of(consultationLine(bill.getId(), new BigDecimal("800.00"))));
+        when(paymentRepository.findByTenantIdAndBillIdOrderByCreatedAtDesc(tenantId, bill.getId())).thenReturn(List.of());
+
+        var status = service.consultationFeeStatus(tenantId, appointmentId);
+
+        assertThat(status.status()).isEqualTo("UNPAID");
+        assertThat(status.consultationFeeAmount()).isEqualByComparingTo("800.00");
+        assertThat(status.paidAmount()).isEqualByComparingTo("0.00");
+        assertThat(status.dueAmount()).isEqualByComparingTo("800.00");
+    }
+
+    @Test
+    void consultationFeeStatusReturnsNotConfiguredWhenDoctorHasNoFee() {
+        when(doctorProfileService.findByDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(new DoctorProfileRecord(
+                UUID.randomUUID(),
+                tenantId,
+                doctorUserId,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                true,
+                false,
+                null,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        )));
+
+        var status = service.consultationFeeStatus(tenantId, appointmentId);
+
+        assertThat(status.status()).isEqualTo("NOT_CONFIGURED");
+        assertThat(status.consultationFeeAmount()).isEqualByComparingTo("0.00");
+        assertThat(status.paidAmount()).isEqualByComparingTo("0.00");
+        assertThat(status.dueAmount()).isEqualByComparingTo("0.00");
+    }
+
     private BillEntity billWithTotal(BigDecimal total, List<PaymentEntity> payments) {
         return billWithTotal(total, payments, List.of());
     }

@@ -1,4 +1,4 @@
-import { httpGet, httpGetText, httpPatch, httpPost, httpPostForm, httpPut } from "./restClient";
+import { httpDelete, httpGet, httpGetText, httpPatch, httpPost, httpPostForm, httpPut } from "./restClient";
 import { buildHelpRequestOptions } from "./helpClient";
 
 export type PatientGender = "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
@@ -53,31 +53,52 @@ export type InventoryTransactionType =
   | "TRANSFER_IN"
   | "TRANSFER_OUT";
 export type ClinicalDocumentType =
+  | "EXTERNAL_LAB_REPORT"
+  | "RADIOLOGY_REPORT"
+  | "REFERRAL_LETTER"
+  | "DISCHARGE_SUMMARY"
+  | "OLD_PRESCRIPTION"
+  | "INTERNAL_LAB_REPORT"
+  | "INSURANCE_DOCUMENT"
+  | "IDENTITY_DOCUMENT"
+  | "OTHER"
   | "LAB_REPORT"
   | "PRESCRIPTION"
   | "X_RAY"
   | "MRI_CT"
   | "REFERRAL"
-  | "DISCHARGE_SUMMARY"
   | "INSURANCE"
   | "VACCINATION"
-  | "OTHER";
+  | "ATTACHMENT";
+
+export type ClinicalDocumentUploadSource = "RECEPTION" | "DOCTOR" | "LABORATORY" | "PATIENT_PORTAL" | "IMPORT" | "OTHER";
+export type ClinicalDocumentVisibility = "INTERNAL_ONLY" | "PATIENT_VISIBLE";
+export type ClinicalDocumentVerificationStatus = "UNVERIFIED" | "VERIFIED";
+export type ClinicalDocumentDocumentStatus = "NOT_STARTED" | "PENDING" | "COMPLETED" | "FAILED";
 
 export type ClinicalDocument = {
   id: string;
   patientId: string;
   consultationId: string | null;
-  appointmentId: string | null;
-  uploadedByAppUserId: string;
+  sourceModule: string | null;
+  sourceEntityId: string | null;
+  uploadedByUserId: string;
+  uploadedByName: string;
   documentType: ClinicalDocumentType;
+  title: string;
+  description: string | null;
+  reportDate: string | null;
+  uploadSource: ClinicalDocumentUploadSource;
   originalFilename: string;
   mediaType: string;
   sizeBytes: number;
   checksumSha256: string;
-  notes: string | null;
-  referredDoctor: string | null;
-  referredHospital: string | null;
-  referralNotes: string | null;
+  storageBucket: string;
+  storageKey: string;
+  visibility: ClinicalDocumentVisibility;
+  verificationStatus: ClinicalDocumentVerificationStatus;
+  ocrStatus: ClinicalDocumentDocumentStatus | string | null;
+  aiIndexStatus: ClinicalDocumentDocumentStatus | string | null;
   aiExtractionStatus: string | null;
   aiExtractionProvider: string | null;
   aiExtractionModel: string | null;
@@ -89,7 +110,7 @@ export type ClinicalDocument = {
   aiExtractionOverrideReason: string | null;
   aiExtractionReviewedByAppUserId: string | null;
   aiExtractionReviewedAt: string | null;
-  ocrStatus: string | null;
+  active: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -550,6 +571,10 @@ export type Appointment = {
   type: AppointmentType;
   priority: AppointmentPriority;
   status: AppointmentStatus;
+  consultationFeeStatus?: "NOT_CONFIGURED" | "UNPAID" | "PARTIAL" | "PAID" | null;
+  consultationFeeAmount?: number | null;
+  consultationFeePaidAmount?: number | null;
+  consultationFeeDueAmount?: number | null;
   paymentBypassReason: string | null;
   paymentBypassNotes: string | null;
   paymentBypassedBy: string | null;
@@ -3011,7 +3036,7 @@ export async function getLabOrder(token: string, tenantId: string, id: string) {
   return httpGet<LabOrder>(`/api/lab/orders/${id}`, { token, tenantId });
 }
 
-export async function createConsultationLabOrder(token: string, tenantId: string, consultationId: string, body: { testIds: string[]; notes?: string | null }) {
+export async function createConsultationLabOrder(token: string, tenantId: string, consultationId: string, body: { patientId: string; testIds: string[]; notes?: string | null }) {
   return httpPost<LabOrder>(`/api/lab/consultations/${consultationId}/orders`, body, { token, tenantId });
 }
 
@@ -3333,6 +3358,11 @@ export async function aiClinicalSummary(token: string, tenantId: string, body: A
 export async function aiStructureConsultationNotes(token: string, tenantId: string, body: {
   consultationId: string;
   patientId: string;
+  patientAgeGender?: string | null;
+  allergies?: string | null;
+  chronicConditions?: string | null;
+  currentPrescriptionDraft?: string | null;
+  labOrdersSummary?: string | null;
   doctorNotes?: string | null;
   symptoms?: string | null;
   vitals?: string | null;
@@ -3341,9 +3371,32 @@ export async function aiStructureConsultationNotes(token: string, tenantId: stri
   return httpPost<AiDraftResponse>("/api/ai/consultation/structure-notes", body, { token, tenantId });
 }
 
+export async function aiConsultationAsk(token: string, tenantId: string, body: {
+  consultationId: string;
+  patientId: string;
+  prompt: string;
+  patientAgeGender?: string | null;
+  vitals?: string | null;
+  allergies?: string | null;
+  chronicConditions?: string | null;
+  currentPrescriptionDraft?: string | null;
+  labOrdersSummary?: string | null;
+  chiefComplaints?: string | null;
+  symptoms?: string | null;
+  clinicalNotes?: string | null;
+  diagnosis?: string | null;
+  advice?: string | null;
+}) {
+  return httpPost<AiDraftResponse>("/api/ai/consultation/ask", body, { token, tenantId });
+}
+
 export async function aiSuggestDiagnosis(token: string, tenantId: string, body: {
   consultationId: string;
   patientId: string;
+  patientAgeGender?: string | null;
+  vitals?: string | null;
+  currentPrescriptionDraft?: string | null;
+  labOrdersSummary?: string | null;
   symptoms?: string | null;
   findings?: string | null;
   doctorNotes?: string | null;
@@ -3356,6 +3409,10 @@ export async function aiSuggestDiagnosis(token: string, tenantId: string, body: 
 export async function aiSuggestPrescriptionTemplate(token: string, tenantId: string, body: {
   consultationId: string;
   patientId: string;
+  patientAgeGender?: string | null;
+  vitals?: string | null;
+  currentPrescriptionDraft?: string | null;
+  labOrdersSummary?: string | null;
   diagnosis?: string | null;
   symptoms?: string | null;
   allergies?: string | null;
@@ -3928,34 +3985,79 @@ export async function createPlatformTenantAdminUser(token: string, tenantId: str
   return httpPost(`/api/platform/tenants/${tenantId}/admin-user`, body, { token, platformOperation: true });
 }
 
-export async function getPatientDocuments(token: string, tenantId: string, patientId: string) {
-  return httpGet<ClinicalDocument[]>(`/api/patients/${patientId}/documents`, { token, tenantId });
+type PatientDocumentListFilters = {
+  documentType?: ClinicalDocumentType | null;
+  reportDateFrom?: string | null;
+  reportDateTo?: string | null;
+  uploadSource?: ClinicalDocumentUploadSource | null;
+  consultationId?: string | null;
+  search?: string | null;
+};
+
+function buildPatientDocumentFilters(filters?: PatientDocumentListFilters): string {
+  if (!filters) return "";
+  const params = new URLSearchParams();
+  if (filters.documentType) params.set("documentType", filters.documentType);
+  if (filters.reportDateFrom) params.set("reportDateFrom", filters.reportDateFrom);
+  if (filters.reportDateTo) params.set("reportDateTo", filters.reportDateTo);
+  if (filters.uploadSource) params.set("uploadSource", filters.uploadSource);
+  if (filters.consultationId) params.set("consultationId", filters.consultationId);
+  if (filters.search) params.set("search", filters.search);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+export async function getPatientDocuments(token: string, tenantId: string, patientId: string, filters?: PatientDocumentListFilters) {
+  return httpGet<ClinicalDocument[]>(`/api/patients/${patientId}/documents${buildPatientDocumentFilters(filters)}`, { token, tenantId });
 }
 
 export async function uploadPatientDocument(token: string, tenantId: string, patientId: string, body: {
   file: File;
   documentType: ClinicalDocumentType;
+  title: string;
+  reportDate?: string | null;
   consultationId?: string | null;
-  appointmentId?: string | null;
   notes?: string | null;
-  referredDoctor?: string | null;
-  referredHospital?: string | null;
-  referralNotes?: string | null;
+  uploadSource?: ClinicalDocumentUploadSource | null;
+  sourceModule?: string | null;
+  sourceEntityId?: string | null;
+  visibility?: ClinicalDocumentVisibility | null;
 }) {
   const formData = new FormData();
   formData.append("file", body.file);
   formData.append("documentType", body.documentType);
+  formData.append("title", body.title);
+  if (body.reportDate) formData.append("reportDate", body.reportDate);
   if (body.consultationId) formData.append("consultationId", body.consultationId);
-  if (body.appointmentId) formData.append("appointmentId", body.appointmentId);
   if (body.notes) formData.append("notes", body.notes);
-  if (body.referredDoctor) formData.append("referredDoctor", body.referredDoctor);
-  if (body.referredHospital) formData.append("referredHospital", body.referredHospital);
-  if (body.referralNotes) formData.append("referralNotes", body.referralNotes);
+  if (body.uploadSource) formData.append("uploadSource", body.uploadSource);
+  if (body.sourceModule) formData.append("sourceModule", body.sourceModule);
+  if (body.sourceEntityId) formData.append("sourceEntityId", body.sourceEntityId);
+  if (body.visibility) formData.append("visibility", body.visibility);
   return httpPostForm<ClinicalDocument>(`/api/patients/${patientId}/documents`, formData, { token, tenantId });
 }
 
 export async function getPatientDocumentDownloadUrl(token: string, tenantId: string, documentId: string) {
   return httpGet<{ url: string; expiresInSeconds: string }>(`/api/patient-documents/${documentId}/download-url`, { token, tenantId });
+}
+
+export async function getPatientDocumentViewUrl(token: string, tenantId: string, patientId: string, documentId: string) {
+  return httpGet<{ url: string; expiresInSeconds: string }>(`/api/patients/${patientId}/documents/${documentId}/view`, { token, tenantId });
+}
+
+export async function deletePatientDocument(token: string, tenantId: string, patientId: string, documentId: string) {
+  return httpDelete<void>(`/api/patients/${patientId}/documents/${documentId}`, { token, tenantId });
+}
+
+export async function patchPatientDocument(token: string, tenantId: string, patientId: string, documentId: string, body: {
+  documentType?: ClinicalDocumentType | null;
+  title: string;
+  description?: string | null;
+  reportDate?: string | null;
+  visibility?: ClinicalDocumentVisibility | null;
+  verificationStatus?: ClinicalDocumentVerificationStatus | null;
+}) {
+  return httpPatch<ClinicalDocument>(`/api/patients/${patientId}/documents/${documentId}`, body, { token, tenantId });
 }
 
 export async function getPatientTimeline(token: string, tenantId: string, patientId: string) {

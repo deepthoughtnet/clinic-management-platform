@@ -178,7 +178,8 @@ type RefundFormState = {
 };
 
 const BILL_ITEM_CATEGORIES: BillItemCategory[] = ["CONSULTATION", "MEDICINE", "TEST", "VACCINATION", "PROCEDURE", "SERVICE", "PACKAGE", "OTHER"];
-const SCAN_ITEM_TYPE_OPTIONS: Array<{ value: Exclude<BillItemCategory, "CONSULTATION">; label: string }> = [
+const SCAN_ITEM_TYPE_OPTIONS: Array<{ value: ChargeSearchType; label: string }> = [
+  { value: "ALL", label: "All" },
   { value: "MEDICINE", label: "Medicine" },
   { value: "TEST", label: "Lab/Test" },
   { value: "SERVICE", label: "Service" },
@@ -197,6 +198,16 @@ const QUICK_CHARGE_PRESETS: QuickChargePreset[] = [
 ];
 const PAYMENT_MODES: PaymentMode[] = ["CASH", "CARD", "UPI", "PAYTM", "PHONEPE", "GOOGLE_PAY", "BANK_TRANSFER", "CHEQUE", "OTHER"];
 const DISCOUNT_TYPES: DiscountType[] = ["NONE", "AMOUNT", "PERCENTAGE"];
+type ChargeSearchType = "ALL" | Exclude<BillItemCategory, "CONSULTATION">;
+
+type BillingWorkflowStep = "PATIENT" | "CHARGES" | "REVIEW_PAYMENT" | "RECEIPT";
+
+const BILLING_WORKFLOW_STEPS: Array<{ key: BillingWorkflowStep; label: string }> = [
+  { key: "PATIENT", label: "Patient" },
+  { key: "CHARGES", label: "Charges" },
+  { key: "REVIEW_PAYMENT", label: "Review" },
+  { key: "RECEIPT", label: "Receipt" },
+];
 
 function resolveItemType(value: BillItemCategory): BillItemType {
   if (value === "SERVICE" || value === "PACKAGE") return "OTHER";
@@ -216,6 +227,10 @@ function billItemCategoryLabel(value: BillItemCategory) {
     default:
       return "Other";
   }
+}
+
+function chargeSuggestionTypeLabel(value: BillItemCategory) {
+  return billItemCategoryLabel(value).replace("Lab/Test", "Lab Test");
 }
 
 function discountTypeLabel(value: DiscountType) {
@@ -528,6 +543,17 @@ function preferredPatientBill(bills: Bill[]) {
     || null;
 }
 
+function getBillingWorkflowStep(args: {
+  patientId: string;
+  lineCount: number;
+  hasSettledBill: boolean;
+}): BillingWorkflowStep {
+  if (args.hasSettledBill) return "RECEIPT";
+  if (!args.patientId) return "PATIENT";
+  if (args.lineCount <= 0) return "CHARGES";
+  return "REVIEW_PAYMENT";
+}
+
 type InvoicePreviewState = InvoicePrintData | null;
 type ReceiptPreviewState = ReceiptPrintData | null;
 
@@ -594,16 +620,20 @@ export default function BillsPage() {
   const [consultationContextLoading, setConsultationContextLoading] = React.useState(false);
   const [consultationContextError, setConsultationContextError] = React.useState<string | null>(null);
   const [scanQuery, setScanQuery] = React.useState("");
-  const [scanItemType, setScanItemType] = React.useState<BillItemCategory>("MEDICINE");
+  const [scanItemType, setScanItemType] = React.useState<ChargeSearchType>("ALL");
   const [medicineCatalog, setMedicineCatalog] = React.useState<CatalogItem[]>([]);
   const [consultationDoctorUserIdForDraft, setConsultationDoctorUserIdForDraft] = React.useState("");
   const [manualScanPrompt, setManualScanPrompt] = React.useState<string | null>(null);
+  const [chargeSearchFocused, setChargeSearchFocused] = React.useState(false);
+  const [chargeHighlightIndex, setChargeHighlightIndex] = React.useState(0);
   const [paymentLedger, setPaymentLedger] = React.useState<PaymentLedgerRow[]>([]);
   const [pendingConsultationFeeDialog, setPendingConsultationFeeDialog] = React.useState<PendingConsultationFee | null>(null);
   const [pendingConsultationFeeOpen, setPendingConsultationFeeOpen] = React.useState(false);
   const [ledgerActionBill, setLedgerActionBill] = React.useState<Bill | null>(null);
   const [ledgerActionAnchorEl, setLedgerActionAnchorEl] = React.useState<HTMLElement | null>(null);
-  const [ledgerCollapsed, setLedgerCollapsed] = React.useState(false);
+  const [manualLineItemsOpen, setManualLineItemsOpen] = React.useState(false);
+  const [moreBillingOptionsOpen, setMoreBillingOptionsOpen] = React.useState(false);
+  const [ledgerCollapsed, setLedgerCollapsed] = React.useState(true);
   const scanInputRef = React.useRef<HTMLInputElement | null>(null);
   const patientSearchRef = React.useRef<HTMLInputElement | null>(null);
   const billDateInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -738,7 +768,7 @@ export default function BillsPage() {
     [doctorOptions],
   );
   React.useEffect(() => {
-    if (!auth.accessToken || !auth.tenantId || scanItemType !== "MEDICINE") {
+    if (!auth.accessToken || !auth.tenantId || (scanItemType !== "MEDICINE" && scanItemType !== "ALL")) {
       setMedicineCatalog([]);
       return;
     }
@@ -770,15 +800,59 @@ export default function BillsPage() {
       window.clearTimeout(handle);
     };
   }, [auth.accessToken, auth.tenantId, canReadMedicineMaster, scanItemType, scanQuery]);
-  const filteredCatalog = React.useMemo(() => {
+  const chargeCatalog = React.useMemo(() => {
+    const items = new Map<string, CatalogItem>();
+    [...itemCatalog, ...medicineCatalog].forEach((item) => {
+      const key = normalizeDraftText(`${item.itemName}|${item.itemType}|${item.unitPrice}|${item.referenceId || ""}`);
+      if (!items.has(key)) {
+        items.set(key, item);
+      }
+    });
+    return Array.from(items.values());
+  }, [itemCatalog, medicineCatalog]);
+  const chargeSuggestions = React.useMemo(() => {
     const query = normalizeDraftText(scanQuery);
-    const source = scanItemType === "MEDICINE" && query ? medicineCatalog.concat(itemCatalog) : itemCatalog;
-    if (!query) return source.slice(0, 6);
-    return source
-      .filter((item) => item.itemType === scanItemType || scanItemType === "OTHER" || normalizeDraftText(item.itemName).includes(query))
-      .filter((item) => normalizeDraftText(item.itemName).includes(query) || normalizeDraftText(item.itemType).includes(query))
-      .slice(0, 6);
-  }, [itemCatalog, medicineCatalog, scanItemType, scanQuery]);
+    if (!query || !chargeSearchFocused) return [] as CatalogItem[];
+    const source = chargeCatalog.filter((item) => scanItemType === "ALL" || item.itemType === scanItemType);
+    const exactMatches = source.filter((item) => normalizeDraftText(item.itemName) === query);
+    const startMatches = source.filter((item) => normalizeDraftText(item.itemName).startsWith(query) && normalizeDraftText(item.itemName) !== query);
+    const containMatches = source.filter((item) => !normalizeDraftText(item.itemName).startsWith(query) && normalizeDraftText(item.itemName).includes(query));
+    const typeMatches = source.filter((item) => normalizeDraftText(billItemCategoryLabel(item.itemType)).includes(query) && !normalizeDraftText(item.itemName).includes(query));
+    const ranked = [...exactMatches, ...startMatches, ...containMatches, ...typeMatches];
+    const seen = new Set<string>();
+    return ranked.filter((item) => {
+      const key = normalizeDraftText(`${item.itemName}|${item.itemType}|${item.unitPrice}|${item.referenceId || ""}`);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 8);
+  }, [chargeCatalog, chargeSearchFocused, scanItemType, scanQuery]);
+  const chargeSuggestionGroups = React.useMemo(() => {
+    const groupOrder: BillItemCategory[] = ["TEST", "MEDICINE", "PROCEDURE", "SERVICE", "PACKAGE", "OTHER"];
+    const groups = new Map<BillItemCategory, CatalogItem[]>();
+    chargeSuggestions.forEach((item) => {
+      const current = groups.get(item.itemType) || [];
+      current.push(item);
+      groups.set(item.itemType, current);
+    });
+    return groupOrder
+      .map((itemType) => ({
+        itemType,
+        label: chargeSuggestionTypeLabel(itemType),
+        items: groups.get(itemType) || [],
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [chargeSuggestions]);
+  React.useEffect(() => {
+    if (!chargeSearchFocused || chargeSuggestions.length === 0) {
+      setChargeHighlightIndex(-1);
+      return;
+    }
+    setChargeHighlightIndex((current) => {
+      if (current < 0) return 0;
+      return Math.min(current, chargeSuggestions.length - 1);
+    });
+  }, [chargeSearchFocused, chargeSuggestions.length]);
   const currentDraftTotals = React.useMemo(() => draftBillTotals(form), [form]);
   const isNoDiscount = form.discountType === "NONE";
   const discountRequired = !isNoDiscount;
@@ -793,6 +867,11 @@ export default function BillsPage() {
     () => patientBillDueAmount + patientPendingConsultationDueAmount,
     [patientBillDueAmount, patientPendingConsultationDueAmount],
   );
+  const billingWorkflowStep = React.useMemo(() => getBillingWorkflowStep({
+    patientId: form.patientId,
+    lineCount: form.lines.filter((line) => line.itemName.trim()).length,
+    hasSettledBill: Boolean(selectedBill && billCountsAsSettled(selectedBill)),
+  }), [form.lines, form.patientId, selectedBill]);
   const ledgerSummary = React.useMemo(() => {
     const visibleBills = bills;
     return {
@@ -1670,21 +1749,8 @@ export default function BillsPage() {
     });
   };
 
-  const addManualScanItem = () => {
-    const value = manualScanPrompt || scanQuery.trim();
-    if (!value) return;
-    addBillLine({
-      itemType: scanItemType,
-      itemName: value,
-      scanCode: value,
-    });
-    setScanQuery("");
-    setManualScanPrompt(null);
-  };
-
-  const addScannedItem = async () => {
-    const query = scanQuery.trim();
-    if (!query) return;
+  const commitChargeSuggestion = (item: CatalogItem, scanCode?: string) => {
+    const query = scanCode || item.itemName;
     const normalized = normalizeDraftText(query);
     const currentMatchIndex = form.lines.findIndex((row) => {
       const rowName = normalizeDraftText(row.itemName);
@@ -1697,29 +1763,52 @@ export default function BillsPage() {
         quantity: String(Number(form.lines[currentMatchIndex].quantity || "1") + 1),
         scanCode: query,
       });
-      setSuccess("Item added");
-      setManualScanPrompt(null);
-      setScanQuery("");
-      return;
-    }
-    let catalogSource = itemCatalog;
-    if (scanItemType === "MEDICINE") {
-      catalogSource = medicineCatalog.length > 0 ? medicineCatalog : await loadMedicineCatalog(query);
-    }
-    const catalogMatch = catalogSource.find((item) => normalizeDraftText(item.itemName) === normalized)
-      || catalogSource.find((item) => normalizeDraftText(item.itemName).includes(normalized) || normalizeDraftText(item.itemType) === normalized)
-      || (scanItemType === "MEDICINE" ? catalogSource[0] : null);
-    if (catalogMatch) {
+    } else {
       addBillLine({
-        itemType: catalogMatch.itemType,
-        itemName: catalogMatch.itemName,
-        unitPrice: catalogMatch.unitPrice,
-        referenceId: catalogMatch.referenceId || undefined,
+        itemType: item.itemType,
+        itemName: item.itemName,
+        unitPrice: item.unitPrice,
+        referenceId: item.referenceId || undefined,
         scanCode: query,
       });
-      setSuccess("Item added");
-      setManualScanPrompt(null);
-      setScanQuery("");
+    }
+    setSuccess("Item added");
+    setManualScanPrompt(null);
+    setScanQuery("");
+    setChargeHighlightIndex(0);
+    window.setTimeout(() => scanInputRef.current?.focus(), 0);
+  };
+
+  const addManualScanItem = () => {
+    const value = manualScanPrompt || scanQuery.trim();
+    if (!value) return;
+    addBillLine({
+      itemType: scanItemType === "ALL" ? "OTHER" : scanItemType,
+      itemName: value,
+      scanCode: value,
+    });
+    setScanQuery("");
+    setManualScanPrompt(null);
+    setChargeHighlightIndex(0);
+    window.setTimeout(() => scanInputRef.current?.focus(), 0);
+  };
+
+  const addScannedItem = async () => {
+    const query = scanQuery.trim();
+    if (!query) return;
+    let suggestions = chargeSuggestions;
+    if (suggestions.length === 0 && (scanItemType === "MEDICINE" || scanItemType === "ALL")) {
+      const liveCatalog = medicineCatalog.length > 0 ? medicineCatalog : await loadMedicineCatalog(query);
+      suggestions = liveCatalog.length > 0
+        ? liveCatalog.filter((item) => scanItemType === "ALL" || item.itemType === scanItemType)
+        : suggestions;
+    }
+    const normalized = normalizeDraftText(query);
+    const catalogMatch = suggestions.find((item) => normalizeDraftText(item.itemName) === normalized)
+      || suggestions.find((item) => normalizeDraftText(item.itemName).includes(normalized) || normalizeDraftText(item.itemType) === normalized)
+      || (suggestions[0] || null);
+    if (catalogMatch) {
+      commitChargeSuggestion(catalogMatch, query);
       return;
     }
     setManualScanPrompt(query);
@@ -1954,10 +2043,33 @@ export default function BillsPage() {
           <Grid size={{ xs: 12, lg: 8 }}>
             <Card variant="outlined" sx={{ height: "100%" }}>
               <CardContent sx={{ p: 1.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  <Typography variant="overline" color="text.secondary" sx={{ letterSpacing: 0.7 }}>Workflow</Typography>
+                  <Stack direction="row" spacing={0.75} flexWrap="wrap" alignItems="center">
+                    {BILLING_WORKFLOW_STEPS.map((step, index) => {
+                      const active = billingWorkflowStep === step.key;
+                      return (
+                        <React.Fragment key={step.key}>
+                          <Chip
+                            size="small"
+                            label={step.label}
+                            color={active ? "primary" : "default"}
+                            variant={active ? "filled" : "outlined"}
+                            sx={{ fontWeight: active ? 800 : 600 }}
+                          />
+                          {index < BILLING_WORKFLOW_STEPS.length - 1 ? (
+                            <Typography variant="body2" color="text.secondary" sx={{ mx: 0.25 }}>→</Typography>
+                          ) : null}
+                        </React.Fragment>
+                      );
+                    })}
+                  </Stack>
+                </Box>
+
                 <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap", alignItems: "flex-start" }}>
                   <Box>
-                    <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Bill Builder</Typography>
-                    <Typography variant="body2" color="text.secondary">Search a patient, scan or type items, and keep the draft visible while you work.</Typography>
+                    <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Cashier Workspace</Typography>
+                    <Typography variant="body2" color="text.secondary">Select a patient, add visit charges, review totals, and collect payment.</Typography>
                   </Box>
                   <Stack direction="row" spacing={0.75} flexWrap="wrap" justifyContent="flex-end">
                     <Chip size="small" label={form.patientId ? (selectedPatient?.patientNumber || selectedPatient?.mobile || "Selected patient") : "No patient selected"} variant="outlined" sx={compactChipSx} />
@@ -1966,118 +2078,65 @@ export default function BillsPage() {
                   </Stack>
                 </Box>
 
-                <Grid container spacing={1.25}>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField
-                      {...denseTextFieldProps}
-                      inputRef={patientSearchRef}
-                      label={<RequiredLabel text="Patient" required />}
-                      value={patientQuery}
-                      onChange={(e) => setPatientQuery(e.target.value)}
-                      helperText="Search by patient number, mobile, or name"
-                    />
-                    {patientSearchResults.length > 0 && !form.patientId ? (
-                      <Card variant="outlined" sx={{ mt: 1, borderRadius: 2 }}>
-                        <List dense disablePadding>
-                          {patientSearchResults.map((patient) => (
-                            <ListItemButton key={patient.id} onClick={() => setForm((current) => ({ ...current, patientId: patient.id }))}>
-                              <ListItemText
-                                primary={`${patient.firstName} ${patient.lastName}`.trim()}
-                                secondary={`${patient.patientNumber} • ${patient.mobile}`}
-                              />
-                            </ListItemButton>
-                          ))}
-                        </List>
-                      </Card>
-                    ) : null}
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    {selectedPatient ? (
-                      <Card variant="outlined" sx={{ height: "100%" }}>
-                        <CardContent sx={{ p: 1.25 }}>
-                          <Stack spacing={0.75}>
-                            <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "flex-start" }}>
-                              <Box>
-                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{`${selectedPatient.firstName} ${selectedPatient.lastName}`.trim()}</Typography>
-                                <Typography variant="body2" color="text.secondary">{selectedPatient.patientNumber} • {selectedPatient.mobile}</Typography>
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Patient</Typography>
+                  <Grid container spacing={1.25}>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <TextField
+                        {...denseTextFieldProps}
+                        inputRef={patientSearchRef}
+                        label={<RequiredLabel text="Patient" required />}
+                        value={patientQuery}
+                        onChange={(e) => setPatientQuery(e.target.value)}
+                        helperText="Search by patient number, mobile, or name"
+                      />
+                      {patientSearchResults.length > 0 && !form.patientId ? (
+                        <Card variant="outlined" sx={{ mt: 1, borderRadius: 2 }}>
+                          <List dense disablePadding>
+                            {patientSearchResults.map((patient) => (
+                              <ListItemButton key={patient.id} onClick={() => setForm((current) => ({ ...current, patientId: patient.id }))}>
+                                <ListItemText
+                                  primary={`${patient.firstName} ${patient.lastName}`.trim()}
+                                  secondary={`${patient.patientNumber} • ${patient.mobile}`}
+                                />
+                              </ListItemButton>
+                            ))}
+                          </List>
+                        </Card>
+                      ) : null}
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      {selectedPatient ? (
+                        <Card variant="outlined" sx={{ height: "100%" }}>
+                          <CardContent sx={{ p: 1.25 }}>
+                            <Stack spacing={0.75}>
+                              <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "flex-start" }}>
+                                <Box>
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{`${selectedPatient.firstName} ${selectedPatient.lastName}`.trim()}</Typography>
+                                  <Typography variant="body2" color="text.secondary">{selectedPatient.patientNumber} • {selectedPatient.mobile}</Typography>
+                                </Box>
+                                <Button size="small" variant="text" onClick={() => setForm((current) => ({ ...current, patientId: "", consultationId: "", appointmentId: "" }))}>Clear</Button>
                               </Box>
-                              <Button size="small" variant="text" onClick={() => setForm((current) => ({ ...current, patientId: "", consultationId: "", appointmentId: "" }))}>Clear</Button>
-                            </Box>
-                            <Stack direction="row" spacing={0.75} flexWrap="wrap">
-                              <Chip size="small" label={`Due: ${formatAmount(selectedPatientTotalDue)}`} color="warning" variant="outlined" sx={compactChipSx} />
-                              {consultationAppointmentLabel ? <Chip size="small" label={consultationAppointmentLabel} variant="outlined" sx={compactChipSx} /> : null}
-                              {consultationDoctorLabel ? <Chip size="small" label={consultationDoctorLabel} variant="outlined" sx={compactChipSx} /> : null}
+                              <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                                <Chip size="small" label={`Due: ${formatAmount(selectedPatientTotalDue)}`} color="warning" variant="outlined" sx={compactChipSx} />
+                                {consultationAppointmentLabel ? <Chip size="small" label={consultationAppointmentLabel} variant="outlined" sx={compactChipSx} /> : null}
+                                {consultationDoctorLabel ? <Chip size="small" label={consultationDoctorLabel} variant="outlined" sx={compactChipSx} /> : null}
+                              </Stack>
                             </Stack>
-                          </Stack>
-                        </CardContent>
-                      </Card>
-                    ) : (
-                      <CompactEmptyState title="Search or select a patient to start billing." subtitle="The builder stays visible so the cashier can keep working without a drawer." />
-                    )}
+                          </CardContent>
+                        </Card>
+                      ) : (
+                        <CompactEmptyState title="Search or select a patient to start billing." subtitle="Patient summary and due context appear here once a patient is selected." />
+                      )}
+                    </Grid>
                   </Grid>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField
-                      {...denseTextFieldProps}
-                      inputRef={billDateInputRef}
-                      type="date"
-                      label={<RequiredLabel text="Bill date" required />}
-                      value={form.billDate}
-                      onChange={(e) => setForm((current) => ({ ...current, billDate: e.target.value }))}
-                      InputLabelProps={{ shrink: true }}
-                      error={Boolean(billFieldErrors.billDate)}
-                      helperText={billFieldErrors.billDate || "Cannot be future dated."}
-                    />
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <FormControl {...denseSelectProps}>
-                      <InputLabel id="discount-type-label"><RequiredLabel text="Discount type" required /></InputLabel>
-                      <Select labelId="discount-type-label" label="Discount type" value={form.discountType} onChange={(e) => setForm((current) => ({ ...current, discountType: e.target.value as DiscountType }))}>
-                        {DISCOUNT_TYPES.map((d) => <MenuItem key={d} value={d}>{discountTypeLabel(d)}</MenuItem>)}
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField
-                      {...denseTextFieldProps}
-                      label={<RequiredLabel text={discountLabel} required={discountRequired} />}
-                      value={form.discountValue}
-                      onChange={(e) => setForm((current) => ({ ...current, discountValue: e.target.value }))}
-                      disabled={isNoDiscount}
-                      error={Boolean(billFieldErrors.discountValue)}
-                      helperText={billFieldErrors.discountValue || "Flat amount or percentage, depending on the selected type."}
-                    />
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField {...denseTextFieldProps} label="Consultation ID" value={form.consultationId} onChange={(e) => setForm((current) => ({ ...current, consultationId: e.target.value }))} error={Boolean(billFieldErrors.consultationId)} helperText={billFieldErrors.consultationId || "Optional, max 60 characters."} />
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField {...denseTextFieldProps} label="Appointment ID" value={form.appointmentId} onChange={(e) => setForm((current) => ({ ...current, appointmentId: e.target.value }))} error={Boolean(billFieldErrors.appointmentId)} helperText={billFieldErrors.appointmentId || "Optional, max 60 characters."} />
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 4 }}>
-                    <TextField {...denseTextFieldProps} label={<RequiredLabel text="Source" required />} value={consultationAppointmentId ? "APPOINTMENT" : "MANUAL_BILLING"} InputProps={{ readOnly: true }} />
-                  </Grid>
-                  <Grid size={12}>
-                    <TextField
-                      {...denseTextFieldProps}
-                      inputRef={discountReasonInputRef}
-                      label={<RequiredLabel text="Discount reason" required={discountRequired && Number(form.discountValue || "0") > 0} />}
-                      value={form.discountReason}
-                      onChange={(e) => setForm((current) => ({ ...current, discountReason: e.target.value }))}
-                      disabled={isNoDiscount}
-                      error={Boolean(billFieldErrors.discountReason)}
-                      helperText={billFieldErrors.discountReason || "Required when discount is greater than zero."}
-                    />
-                  </Grid>
-                  <Grid size={12}>
-                    <TextField {...denseTextFieldProps} label="Notes" value={form.notes} onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} />
-                  </Grid>
-                </Grid>
+                </Box>
 
                 <Box ref={consultationSectionRef} sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
                   <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
                     <Box>
                       <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Consultation Fee</Typography>
-                      <Typography variant="body2" color="text.secondary">Pick a consultant, confirm the fee, and add it as a bill line without exposing internal IDs.</Typography>
+                      <Typography variant="body2" color="text.secondary">Use this when collecting a doctor consultation fee. Fee is populated from doctor configuration.</Typography>
                     </Box>
                     {consultationAppointmentLabel ? <Chip size="small" label={consultationAppointmentLabel} variant="outlined" sx={compactChipSx} /> : null}
                   </Box>
@@ -2101,7 +2160,7 @@ export default function BillsPage() {
                     <Grid size={{ xs: 12, md: 3 }}>
                       <TextField
                         {...denseTextFieldProps}
-                        label="Fee"
+                        label="Configured fee"
                         value={consultationFeeQuickAmount != null ? formatAmount(consultationFeeQuickAmount) : "Fee unavailable"}
                         InputProps={{ readOnly: true }}
                       />
@@ -2114,12 +2173,15 @@ export default function BillsPage() {
                         onClick={() => {
                           prepareConsultationDraft();
                         }}
-                        disabled={!consultationDoctorUserIdForDraft || consultationExistingBill != null}
+                        disabled={!consultationDoctorUserIdForDraft || consultationExistingBill != null || consultationDraftHasLine}
                       >
-                        {consultationExistingBill ? "Already billed" : "Add Consultation Fee"}
+                        {consultationExistingBill ? "Already billed" : consultationDraftHasLine ? "Added to current bill" : "Add Consultation Fee"}
                       </Button>
                     </Grid>
                   </Grid>
+                  {consultationDraftHasLine ? (
+                    <Alert severity="success" sx={{ py: 0.5 }}>Consultation fee added to current bill.</Alert>
+                  ) : null}
                   {consultationAppointment ? (
                     <Alert severity="info" sx={{ py: 0.5 }}>
                       {consultationAppointment.patientName || consultationAppointment.patientNumber || "Patient"} • {consultationAppointmentLabel}
@@ -2147,85 +2209,170 @@ export default function BillsPage() {
                 <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
                   <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
                     <Box>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Scan / Search Item Entry</Typography>
-                      <Typography variant="body2" color="text.secondary">Scan or search medicines, tests, services, procedures, packages, and other billable items.</Typography>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Add Other Charges</Typography>
+                      <Typography variant="body2" color="text.secondary">Search or scan anything, then add it directly to the current bill.</Typography>
                     </Box>
-                    {scanQuery.trim() ? (
-                      <Button size="small" variant="outlined" onClick={() => { void addScannedItem(); }}>Add / Match</Button>
+                  </Box>
+                  <Box sx={{ position: "relative" }}>
+                    <Stack direction={{ xs: "column", md: "row" }} spacing={1} alignItems="stretch">
+                      <Box sx={{ flex: 1, position: "relative" }}>
+                        <TextField
+                          {...denseTextFieldProps}
+                          inputRef={scanInputRef}
+                          label="Search or scan anything"
+                          placeholder="Search medicine, lab test, service, procedure, package, barcode"
+                          value={scanQuery}
+                          onFocus={() => setChargeSearchFocused(true)}
+                          onBlur={() => {
+                            window.setTimeout(() => {
+                              setChargeSearchFocused(false);
+                              setChargeHighlightIndex(0);
+                            }, 120);
+                          }}
+                          onChange={(e) => {
+                            setScanQuery(e.target.value);
+                            setChargeSearchFocused(true);
+                            setManualScanPrompt(null);
+                            setChargeHighlightIndex(0);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "ArrowDown" && chargeSuggestions.length > 0) {
+                              e.preventDefault();
+                              setChargeHighlightIndex((current) => Math.min(current + 1, chargeSuggestions.length - 1));
+                              return;
+                            }
+                            if (e.key === "ArrowUp" && chargeSuggestions.length > 0) {
+                              e.preventDefault();
+                              setChargeHighlightIndex((current) => Math.max(current - 1, 0));
+                              return;
+                            }
+                            if (e.key === "Escape") {
+                              setChargeSearchFocused(false);
+                              setChargeHighlightIndex(0);
+                              return;
+                            }
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              const activeSuggestion = chargeSuggestions[chargeHighlightIndex] || chargeSuggestions[0];
+                              if (activeSuggestion) {
+                                commitChargeSuggestion(activeSuggestion, scanQuery.trim());
+                              } else {
+                                void addScannedItem();
+                              }
+                            }
+                          }}
+                          InputProps={{
+                            startAdornment: (
+                              <InputAdornment position="start">
+                                <SearchRoundedIcon fontSize="small" />
+                              </InputAdornment>
+                            ),
+                          }}
+                        />
+                        {chargeSuggestions.length > 0 && chargeSearchFocused ? (
+                          <Paper
+                            variant="outlined"
+                            sx={{
+                              position: "absolute",
+                              top: "calc(100% + 6px)",
+                              left: 0,
+                              right: 0,
+                              zIndex: 4,
+                              borderRadius: 2,
+                              overflow: "hidden",
+                              boxShadow: (theme) => theme.shadows[4],
+                              maxHeight: 360,
+                            }}
+                          >
+                            <Stack sx={{ maxHeight: 360, overflow: "auto" }} divider={<Box sx={{ borderTop: "1px solid", borderColor: "divider" }} />}>
+                              {chargeSuggestionGroups.map((group) => (
+                                <Box key={group.itemType} sx={{ py: 0.75 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ px: 1.25, display: "block", fontWeight: 700 }}>
+                                    {group.label}
+                                  </Typography>
+                                  <Stack>
+                                    {group.items.map((item) => {
+                                      const suggestionIndex = chargeSuggestions.findIndex((entry) => entry.itemName === item.itemName && entry.itemType === item.itemType && entry.unitPrice === item.unitPrice && entry.referenceId === item.referenceId);
+                                      const active = suggestionIndex === chargeHighlightIndex;
+                                      return (
+                                        <Button
+                                          key={`${item.itemName}-${item.itemType}-${item.unitPrice}-${item.referenceId || ""}`}
+                                          fullWidth
+                                          variant="text"
+                                          onMouseEnter={() => setChargeHighlightIndex(suggestionIndex)}
+                                          onMouseDown={(event) => {
+                                            event.preventDefault();
+                                            commitChargeSuggestion(item, scanQuery.trim());
+                                          }}
+                                          sx={{
+                                            justifyContent: "space-between",
+                                            textAlign: "left",
+                                            px: 1.25,
+                                            py: 0.85,
+                                            borderRadius: 0,
+                                            bgcolor: active ? "action.selected" : "transparent",
+                                          }}
+                                        >
+                                          <Box sx={{ minWidth: 0, flex: 1, pr: 1 }}>
+                                            <Typography variant="body2" sx={{ fontWeight: 700 }} noWrap>
+                                              {item.itemName}
+                                            </Typography>
+                                          </Box>
+                                          <Stack direction="row" spacing={0.75} alignItems="center" sx={{ flexShrink: 0 }}>
+                                            <Chip size="small" label={chargeSuggestionTypeLabel(item.itemType)} variant="outlined" sx={compactChipSx} />
+                                            <Typography variant="body2" sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>
+                                              {item.unitPrice ? formatAmount(Number(item.unitPrice)) : "—"}
+                                            </Typography>
+                                          </Stack>
+                                        </Button>
+                                      );
+                                    })}
+                                  </Stack>
+                                </Box>
+                              ))}
+                            </Stack>
+                          </Paper>
+                        ) : null}
+                      </Box>
+                      <Stack direction="row" spacing={1} alignItems="stretch" sx={{ flexShrink: 0 }}>
+                        <FormControl {...denseSelectProps} sx={{ minWidth: 132, maxWidth: 160 }}>
+                          <InputLabel id="scan-item-type-label">Type</InputLabel>
+                          <Select
+                            labelId="scan-item-type-label"
+                            label="Type"
+                            value={scanItemType}
+                            onChange={(e) => setScanItemType(e.target.value as ChargeSearchType)}
+                          >
+                            {SCAN_ITEM_TYPE_OPTIONS.map((option) => (
+                              <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                        {scanQuery.trim() ? (
+                          <Button size="small" variant="outlined" onMouseDown={(event) => event.preventDefault()} onClick={() => { void addScannedItem(); }}>
+                            Add
+                          </Button>
+                        ) : null}
+                      </Stack>
+                    </Stack>
+                    {manualScanPrompt ? (
+                      <Alert
+                        severity="warning"
+                        action={(
+                          <Button color="inherit" size="small" onClick={addManualScanItem}>
+                            Add as manual item
+                          </Button>
+                        )}
+                        sx={{ mt: 1 }}
+                      >
+                        No matching charge found.
+                      </Alert>
                     ) : null}
                   </Box>
-                  <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
-                    <FormControl {...denseSelectProps} sx={{ minWidth: { md: 180 } }}>
-                      <InputLabel id="scan-item-type-label">Item type</InputLabel>
-                      <Select
-                        labelId="scan-item-type-label"
-                        label="Item type"
-                        value={scanItemType}
-                        onChange={(e) => setScanItemType(e.target.value as Exclude<BillItemCategory, "CONSULTATION">)}
-                      >
-                        {SCAN_ITEM_TYPE_OPTIONS.map((option) => (
-                          <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                    <TextField
-                      {...denseTextFieldProps}
-                      inputRef={scanInputRef}
-                      label="Scan barcode or search medicine, test, service, package"
-                      placeholder="Scan barcode or search medicine, test, service, package"
-                      value={scanQuery}
-                      onChange={(e) => setScanQuery(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void addScannedItem(); } }}
-                      InputProps={{
-                        startAdornment: (
-                          <InputAdornment position="start">
-                            <SearchRoundedIcon fontSize="small" />
-                          </InputAdornment>
-                        ),
-                      }}
-                    />
-                    <Button size="small" variant="outlined" onClick={() => { void addScannedItem(); }} disabled={!scanQuery.trim()}>Add</Button>
-                  </Stack>
-                  {manualScanPrompt ? (
-                    <Alert
-                      severity="warning"
-                      action={(
-                        <Button color="inherit" size="small" onClick={addManualScanItem}>
-                          Add manual item
-                        </Button>
-                      )}
-                    >
-                      Item not found. Add as manual item?
-                    </Alert>
-                  ) : null}
-                  {filteredCatalog.length > 0 ? (
-                    <Paper variant="outlined" sx={{ borderRadius: 2, overflow: "hidden" }}>
-                      <List dense disablePadding>
-                        {filteredCatalog.map((item) => (
-                          <ListItemButton key={`${item.itemName}-${item.itemType}`} onClick={() => {
-                            addBillLine({
-                              itemType: item.itemType,
-                              itemName: item.itemName,
-                              unitPrice: item.unitPrice,
-                              referenceId: item.referenceId || undefined,
-                              scanCode: scanQuery.trim() || item.itemName,
-                            });
-                            setManualScanPrompt(null);
-                            setScanQuery("");
-                          }}>
-                            <ListItemText
-                              primary={item.itemName}
-                              secondary={`${billItemCategoryLabel(item.itemType)}${item.unitPrice ? ` • ${formatAmount(Number(item.unitPrice))}` : ""}${item.availabilityLabel ? ` • ${item.availabilityLabel}` : ""}`}
-                            />
-                          </ListItemButton>
-                        ))}
-                      </List>
-                    </Paper>
-                  ) : null}
                 </Box>
 
                 <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Quick Add</Typography>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Frequently Used</Typography>
                   <Stack direction="row" spacing={1} flexWrap="wrap">
                     {QUICK_CHARGE_PRESETS.map((preset) => (
                       <Button
@@ -2247,13 +2394,33 @@ export default function BillsPage() {
                   </Stack>
                 </Box>
 
-                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Line items</Typography>
-                    <Button size="small" startIcon={<AddRoundedIcon />} onClick={() => addBillLine()}>Add line</Button>
+                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Manual Line Items</Typography>
+                    <Typography variant="body2" color="text.secondary">Use this for custom entries when presets are not enough.</Typography>
                   </Box>
-                  <CompactTableFrame maxHeight={420}>
-                    <Table size="small" stickyHeader sx={{ width: "100%", minWidth: 860, tableLayout: "fixed", "& .MuiTableCell-root": { py: 0.75, px: 0.75, verticalAlign: "top" } }}>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<AddRoundedIcon />}
+                      onClick={() => {
+                        if (!manualLineItemsOpen) {
+                          setManualLineItemsOpen(true);
+                          addBillLine();
+                          return;
+                        }
+                        addBillLine();
+                      }}
+                    >
+                      {manualLineItemsOpen ? "Add line" : "Add manual line item"}
+                    </Button>
+                  </Stack>
+                </Box>
+                <Collapse in={manualLineItemsOpen} timeout="auto" unmountOnExit={false}>
+                  <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
+                    <CompactTableFrame maxHeight={420}>
+                      <Table size="small" stickyHeader sx={{ width: "100%", minWidth: 860, tableLayout: "fixed", "& .MuiTableCell-root": { py: 0.75, px: 0.75, verticalAlign: "top" } }}>
                       <TableHead>
                         <TableRow>
                           <TableCell sx={{ width: "28%" }}>Item</TableCell>
@@ -2320,7 +2487,82 @@ export default function BillsPage() {
                       </TableBody>
                     </Table>
                   </CompactTableFrame>
+                  </Box>
+                </Collapse>
+
+                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.1 }}>More Billing Options</Typography>
+                    <Typography variant="body2" color="text.secondary">Advanced billing fields used for corrections, notes, and source tracking.</Typography>
+                  </Box>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => setMoreBillingOptionsOpen((current) => !current)}
+                  >
+                    {moreBillingOptionsOpen ? "Hide options" : "Show options"}
+                  </Button>
                 </Box>
+                <Collapse in={moreBillingOptionsOpen} timeout="auto" unmountOnExit={false}>
+                  <Grid container spacing={1.25}>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <TextField
+                        {...denseTextFieldProps}
+                        inputRef={billDateInputRef}
+                        type="date"
+                        label={<RequiredLabel text="Bill date" required />}
+                        value={form.billDate}
+                        onChange={(e) => setForm((current) => ({ ...current, billDate: e.target.value }))}
+                        InputLabelProps={{ shrink: true }}
+                        error={Boolean(billFieldErrors.billDate)}
+                        helperText={billFieldErrors.billDate || "Cannot be future dated."}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <FormControl {...denseSelectProps}>
+                        <InputLabel id="discount-type-label"><RequiredLabel text="Discount type" required /></InputLabel>
+                        <Select labelId="discount-type-label" label="Discount type" value={form.discountType} onChange={(e) => setForm((current) => ({ ...current, discountType: e.target.value as DiscountType }))}>
+                          {DISCOUNT_TYPES.map((d) => <MenuItem key={d} value={d}>{discountTypeLabel(d)}</MenuItem>)}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <TextField
+                        {...denseTextFieldProps}
+                        label={<RequiredLabel text={discountLabel} required={discountRequired} />}
+                        value={form.discountValue}
+                        onChange={(e) => setForm((current) => ({ ...current, discountValue: e.target.value }))}
+                        disabled={isNoDiscount}
+                        error={Boolean(billFieldErrors.discountValue)}
+                        helperText={billFieldErrors.discountValue || "Flat amount or percentage, depending on the selected type."}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <TextField {...denseTextFieldProps} label="Consultation ID" value={form.consultationId} onChange={(e) => setForm((current) => ({ ...current, consultationId: e.target.value }))} error={Boolean(billFieldErrors.consultationId)} helperText={billFieldErrors.consultationId || "Optional, max 60 characters."} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <TextField {...denseTextFieldProps} label="Appointment ID" value={form.appointmentId} onChange={(e) => setForm((current) => ({ ...current, appointmentId: e.target.value }))} error={Boolean(billFieldErrors.appointmentId)} helperText={billFieldErrors.appointmentId || "Optional, max 60 characters."} />
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                      <TextField {...denseTextFieldProps} label={<RequiredLabel text="Source" required />} value={consultationAppointmentId ? "APPOINTMENT" : "MANUAL_BILLING"} InputProps={{ readOnly: true }} />
+                    </Grid>
+                    <Grid size={12}>
+                      <TextField
+                        {...denseTextFieldProps}
+                        inputRef={discountReasonInputRef}
+                        label={<RequiredLabel text="Discount reason" required={discountRequired && Number(form.discountValue || "0") > 0} />}
+                        value={form.discountReason}
+                        onChange={(e) => setForm((current) => ({ ...current, discountReason: e.target.value }))}
+                        disabled={isNoDiscount}
+                        error={Boolean(billFieldErrors.discountReason)}
+                        helperText={billFieldErrors.discountReason || "Required when discount is greater than zero."}
+                      />
+                    </Grid>
+                    <Grid size={12}>
+                      <TextField {...denseTextFieldProps} label="Notes" value={form.notes} onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))} multiline minRows={2} />
+                    </Grid>
+                  </Grid>
+                </Collapse>
 
                 <Box sx={{ position: "sticky", bottom: 0, zIndex: 1, mt: 0.5, pt: 1, bgcolor: "background.paper", borderTop: "1px solid", borderColor: "divider" }}>
                   <Stack spacing={1}>
@@ -2484,7 +2726,7 @@ export default function BillsPage() {
                   </CardContent>
                 </Card>
               ) : (
-                <CompactEmptyState title="Search or select a patient to start billing." subtitle="Patient history, due summary, and quick actions appear here once a patient is selected." />
+                <CompactEmptyState title="Search or select a patient to start billing." subtitle="Patient summary, due context, and quick actions appear here once a patient is selected." />
               )}
 
               {recentPatientPayments.length > 0 ? (
@@ -2599,7 +2841,6 @@ export default function BillsPage() {
                   </Button>
                   {canRefund ? <Button size="small" variant="outlined" onClick={() => openRefundDialog()}>Find bill to refund</Button> : null}
                   <Button size="small" variant="outlined" onClick={() => void loadBills()}>Refresh</Button>
-                  <Button size="small" variant="text" onClick={() => scanInputRef.current?.focus()}>Focus scan</Button>
                 </Stack>
               </Box>
               <Collapse in={!ledgerCollapsed} timeout="auto" unmountOnExit={false}>

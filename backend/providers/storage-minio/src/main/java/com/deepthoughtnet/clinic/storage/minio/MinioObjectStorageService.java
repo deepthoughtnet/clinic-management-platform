@@ -51,6 +51,17 @@ public class MinioObjectStorageService implements ObjectStorageService {
     }
 
     @Override
+    public String buildPatientDocumentStorageKey(UUID tenantId, UUID patientId, UUID documentId, String originalFilename) {
+        String safeFilename = sanitizeFilename(originalFilename);
+        return "tenant/%s/patients/%s/documents/%s/%s".formatted(
+                tenantId,
+                patientId,
+                documentId,
+                safeFilename
+        );
+    }
+
+    @Override
     public void putObject(String storageKey, String contentType, byte[] bytes) {
         ensureBucketExists();
 

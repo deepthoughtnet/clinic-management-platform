@@ -2,6 +2,8 @@ package com.deepthoughtnet.clinic.api.clinicaldocument.service;
 
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentRepository;
+import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
+import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.platform.audit.AuditEntityType;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
@@ -9,48 +11,78 @@ import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import java.math.BigDecimal;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
-import org.springframework.http.HttpStatus;
 
 @Service
 public class ClinicalDocumentService {
     private static final long MAX_SIZE_BYTES = 25L * 1024L * 1024L;
-    private static final Map<String, String> MEDIA_TYPE_BY_EXTENSION = Map.of(
-            "pdf", "application/pdf",
-            "jpg", "image/jpeg",
-            "jpeg", "image/jpeg",
-            "png", "image/png"
-    );
+    private static final Set<String> ALLOWED_EXTENSIONS = Set.of("pdf", "jpg", "jpeg", "png");
     private static final Set<String> BLOCKED_EXTENSIONS = Set.of(
             "exe", "dll", "bat", "cmd", "com", "msi", "ps1", "vbs", "js", "jar", "sh", "php", "pl", "scr", "hta", "apk", "bin"
     );
 
     private final ClinicalDocumentRepository repository;
     private final ObjectStorageService storageService;
+    private final AppUserRepository appUserRepository;
     private final AuditEventPublisher auditEventPublisher;
+    private final String storageBucket;
 
     public ClinicalDocumentService(
             ClinicalDocumentRepository repository,
             ObjectStorageService storageService,
-            AuditEventPublisher auditEventPublisher
+            AppUserRepository appUserRepository,
+            AuditEventPublisher auditEventPublisher,
+            @Value("${clinic.storage.minio.bucket:clinic-documents}") String storageBucket
     ) {
         this.repository = repository;
         this.storageService = storageService;
+        this.appUserRepository = appUserRepository;
         this.auditEventPublisher = auditEventPublisher;
+        this.storageBucket = storageBucket;
     }
 
     @Transactional(readOnly = true)
     public List<ClinicalDocumentRecord> listByPatient(UUID tenantId, UUID patientId) {
-        return repository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId).stream().map(this::toRecord).toList();
+        return listByPatient(tenantId, patientId, null, null, null, null, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ClinicalDocumentRecord> listByPatient(
+            UUID tenantId,
+            UUID patientId,
+            ClinicalDocumentType documentType,
+            LocalDate reportDateFrom,
+            LocalDate reportDateTo,
+            String uploadSource,
+            UUID consultationId,
+            String search
+    ) {
+        String searchTerm = normalizeNullable(search);
+        String uploadSourceFilter = normalizeNullable(uploadSource);
+
+        return repository.findByTenantIdAndPatientIdAndActiveTrueOrderByCreatedAtDesc(tenantId, patientId).stream()
+                .filter(entity -> documentType == null || entity.getDocumentType() == documentType)
+                .filter(entity -> consultationId == null || consultationId.equals(entity.getConsultationId()))
+                .filter(entity -> uploadSourceFilter == null || uploadSourceFilter.equalsIgnoreCase(entity.getUploadSource()))
+                .filter(entity -> reportDateFrom == null || (entity.getReportDate() != null && !entity.getReportDate().isBefore(reportDateFrom)))
+                .filter(entity -> reportDateTo == null || (entity.getReportDate() != null && !entity.getReportDate().isAfter(reportDateTo)))
+                .filter(entity -> matchesSearch(entity, searchTerm))
+                .map(this::toRecord)
+                .sorted(Comparator.comparing(ClinicalDocumentRecord::createdAt).reversed())
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -61,7 +93,7 @@ public class ClinicalDocumentService {
     @Transactional(readOnly = true)
     public String downloadUrl(UUID tenantId, UUID id, Duration ttl) {
         ClinicalDocumentEntity document = findTenantDocument(tenantId, id);
-        return storageService.generatePresignedDownloadUrl(document.getStorageKey(), ttl);
+        return storageService.generatePresignedDownloadUrl(document.getStorageObjectKey(), ttl);
     }
 
     @Transactional
@@ -70,41 +102,64 @@ public class ClinicalDocumentService {
         String fileName = sanitizeFilename(command.originalFilename());
         String extension = fileExtension(fileName);
         String mediaType = normalizeMediaType(command.mediaType(), fileName);
+        validateFileType(extension, mediaType);
+
+        UUID documentId = UUID.randomUUID();
         String checksum = sha256(command.bytes());
-        String storageKey = storageService.buildDocumentStorageKey(command.tenantId(), fileName);
-        if (repository.existsByTenantIdAndStorageKey(command.tenantId(), storageKey)) {
+        String title = normalizeRequired(command.title(), "Title is required");
+        String uploadSource = normalizeUploadSource(command.uploadSource());
+        String visibility = normalizeVisibility(command.visibility());
+        String verificationStatus = "UNVERIFIED";
+        String ocrStatus = "NOT_STARTED";
+        String aiIndexStatus = "NOT_STARTED";
+        String uploadedByName = resolveUploadedByName(command.tenantId(), command.uploadedByAppUserId());
+        String sourceModule = normalizeNullable(command.sourceModule());
+        String sourceEntityId = normalizeNullable(command.sourceEntityId());
+        String description = normalizeNullable(command.notes());
+        String storageKey = storageService.buildPatientDocumentStorageKey(command.tenantId(), command.patientId(), documentId, fileName);
+        if (repository.existsByTenantIdAndStorageObjectKey(command.tenantId(), storageKey)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Document storage key already exists");
         }
 
-        validateFileType(extension, mediaType);
         storageService.putObject(storageKey, mediaType, command.bytes());
         try {
             ClinicalDocumentEntity saved = repository.save(ClinicalDocumentEntity.create(
+                    documentId,
                     command.tenantId(),
                     command.patientId(),
                     command.consultationId(),
-                    command.appointmentId(),
+                    null,
                     command.uploadedByAppUserId(),
                     command.documentType(),
+                    title,
+                    description,
+                    command.reportDate(),
+                    uploadedByName,
+                    uploadSource,
                     fileName,
                     mediaType,
                     command.bytes().length,
-                    checksum,
+                    storageBucket,
                     storageKey,
-                    normalizeNullable(command.notes()),
-                    normalizeNullable(command.referredDoctor()),
-                    normalizeNullable(command.referredHospital()),
-                    normalizeNullable(command.referralNotes())
+                    checksum,
+                    visibility,
+                    verificationStatus,
+                    ocrStatus,
+                    aiIndexStatus,
+                    sourceModule,
+                    sourceEntityId,
+                    command.uploadedByAppUserId(),
+                    command.uploadedByAppUserId()
             ));
             auditEventPublisher.record(new AuditEventCommand(
                     command.tenantId(),
                     AuditEntityType.DOCUMENT,
                     saved.getId(),
-                    "PATIENT_CLINICAL_DOCUMENT_UPLOADED",
+                    "PATIENT_DOCUMENT_UPLOADED",
                     command.uploadedByAppUserId(),
-                    OffsetDateTime.now(),
-                    "Uploaded patient clinical document",
-                    "{\"patientId\":\"%s\",\"documentType\":\"%s\"}".formatted(command.patientId(), command.documentType())
+                    OffsetDateTime.now(ZoneOffset.UTC),
+                    "Uploaded patient document",
+                    "{\"patientId\":\"%s\",\"documentType\":\"%s\",\"uploadSource\":\"%s\"}".formatted(command.patientId(), command.documentType(), uploadSource)
             ));
             return toRecord(saved);
         } catch (RuntimeException ex) {
@@ -113,8 +168,54 @@ public class ClinicalDocumentService {
         }
     }
 
+    @Transactional
+    public ClinicalDocumentRecord patch(UUID tenantId, UUID id, ClinicalDocumentPatchCommand command, UUID actorAppUserId) {
+        ClinicalDocumentEntity document = findTenantDocument(tenantId, id);
+        String title = normalizeRequired(command.title(), "Title is required");
+        document.updateMetadata(
+                command.documentType() == null ? document.getDocumentType() : command.documentType(),
+                title,
+                normalizeNullable(command.description()),
+                command.reportDate(),
+                command.visibility() == null ? document.getVisibility() : normalizeVisibility(command.visibility()),
+                command.verificationStatus() == null ? document.getVerificationStatus() : normalizeVerificationStatus(command.verificationStatus()),
+                resolveUploadedByName(tenantId, document.getUploadedByUserId()),
+                document.getUploadSource(),
+                actorAppUserId
+        );
+        ClinicalDocumentEntity saved = repository.save(document);
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                AuditEntityType.DOCUMENT,
+                saved.getId(),
+                "PATIENT_DOCUMENT_UPDATED",
+                actorAppUserId,
+                OffsetDateTime.now(ZoneOffset.UTC),
+                "Updated patient document metadata",
+                "{\"patientId\":\"%s\",\"documentId\":\"%s\"}".formatted(saved.getPatientId(), saved.getId())
+        ));
+        return toRecord(saved);
+    }
+
+    @Transactional
+    public void delete(UUID tenantId, UUID id, UUID actorAppUserId) {
+        ClinicalDocumentEntity document = findTenantDocument(tenantId, id);
+        document.softDelete(actorAppUserId);
+        repository.save(document);
+        auditEventPublisher.record(new AuditEventCommand(
+                tenantId,
+                AuditEntityType.DOCUMENT,
+                id,
+                "PATIENT_DOCUMENT_DELETED",
+                actorAppUserId,
+                OffsetDateTime.now(ZoneOffset.UTC),
+                "Soft deleted patient document",
+                "{\"patientId\":\"%s\",\"documentId\":\"%s\"}".formatted(document.getPatientId(), id)
+        ));
+    }
+
     private ClinicalDocumentEntity findTenantDocument(UUID tenantId, UUID id) {
-        return repository.findByTenantIdAndId(tenantId, id)
+        return repository.findByTenantIdAndIdAndActiveTrue(tenantId, id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found"));
     }
 
@@ -124,6 +225,9 @@ public class ClinicalDocumentService {
         }
         if (command.documentType() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Document type is required");
+        }
+        if (command.title() == null || command.title().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Title is required");
         }
         if (command.originalFilename() == null || command.originalFilename().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Filename is required");
@@ -140,6 +244,24 @@ public class ClinicalDocumentService {
         validateFileType(extension, mediaType);
     }
 
+    private boolean matchesSearch(ClinicalDocumentEntity entity, String searchTerm) {
+        if (searchTerm == null || searchTerm.isBlank()) {
+            return true;
+        }
+        String haystack = String.join(" ",
+                safeLower(entity.getTitle()),
+                safeLower(entity.getDescription()),
+                safeLower(entity.getFileName()),
+                safeLower(entity.getUploadedByName()),
+                safeLower(entity.getSourceModule()),
+                safeLower(entity.getSourceEntityId()));
+        return haystack.contains(searchTerm.toLowerCase(Locale.ROOT));
+    }
+
+    private String safeLower(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT);
+    }
+
     private String normalizeMediaType(String mediaType, String filename) {
         String value = mediaType == null ? "" : mediaType.trim().toLowerCase(Locale.ROOT);
         if (value.equals("image/jpg")) {
@@ -149,7 +271,12 @@ public class ClinicalDocumentService {
             return value;
         }
         String extension = fileExtension(filename);
-        return MEDIA_TYPE_BY_EXTENSION.getOrDefault(extension, "application/octet-stream");
+        return switch (extension) {
+            case "pdf" -> "application/pdf";
+            case "jpg", "jpeg" -> "image/jpeg";
+            case "png" -> "image/png";
+            default -> "application/octet-stream";
+        };
     }
 
     private void validateFileType(String extension, String mediaType) {
@@ -159,10 +286,15 @@ public class ClinicalDocumentService {
         if (BLOCKED_EXTENSIONS.contains(extension)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Executable files are not allowed");
         }
-        if (!MEDIA_TYPE_BY_EXTENSION.containsKey(extension)) {
+        if (!ALLOWED_EXTENSIONS.contains(extension)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only PDF, JPG, JPEG, and PNG files are allowed");
         }
-        String expectedMediaType = MEDIA_TYPE_BY_EXTENSION.get(extension);
+        String expectedMediaType = switch (extension) {
+            case "pdf" -> "application/pdf";
+            case "jpg", "jpeg" -> "image/jpeg";
+            case "png" -> "image/png";
+            default -> "application/octet-stream";
+        };
         if (!expectedMediaType.equals(mediaType)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "File type does not match the allowed MIME types");
         }
@@ -202,15 +334,84 @@ public class ClinicalDocumentService {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    private String normalizeRequired(String value, String message) {
+        String normalized = normalizeNullable(value);
+        if (normalized == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
+        }
+        return normalized;
+    }
+
+    private String normalizeUploadSource(String value) {
+        String normalized = normalizeNullable(value);
+        return normalized == null ? "OTHER" : normalized.toUpperCase(Locale.ROOT);
+    }
+
+    private String normalizeVisibility(String value) {
+        String normalized = normalizeNullable(value);
+        return normalized == null ? "INTERNAL_ONLY" : normalized.toUpperCase(Locale.ROOT);
+    }
+
+    private String normalizeVerificationStatus(String value) {
+        String normalized = normalizeNullable(value);
+        return normalized == null ? "UNVERIFIED" : normalized.toUpperCase(Locale.ROOT);
+    }
+
+    private String normalizeStatus(String sourceModule, String defaultValue) {
+        return defaultValue;
+    }
+
+    private String resolveUploadedByName(UUID tenantId, UUID appUserId) {
+        return appUserRepository.findByTenantIdAndId(tenantId, appUserId)
+                .map(user -> {
+                    String displayName = user.getDisplayName();
+                    if (displayName == null || displayName.isBlank()) {
+                        displayName = user.getEmail();
+                    }
+                    return displayName == null || displayName.isBlank() ? appUserId.toString() : displayName.trim();
+                })
+                .orElse(appUserId.toString());
+    }
+
     private ClinicalDocumentRecord toRecord(ClinicalDocumentEntity entity) {
         return new ClinicalDocumentRecord(
-                entity.getId(), entity.getTenantId(), entity.getPatientId(), entity.getConsultationId(), entity.getAppointmentId(),
-                entity.getUploadedByAppUserId(), entity.getDocumentType(), entity.getOriginalFilename(), entity.getMediaType(),
-                entity.getSizeBytes(), entity.getChecksumSha256(), entity.getStorageKey(), entity.getNotes(), entity.getReferredDoctor(),
-                entity.getReferredHospital(), entity.getReferralNotes(), entity.getAiExtractionStatus(), entity.getAiExtractionProvider(),
-                entity.getAiExtractionModel(), entity.getAiExtractionConfidence(), entity.getAiExtractionSummary(),
-                entity.getAiExtractionStructuredJson(), entity.getAiExtractionReviewNotes(), entity.getAiExtractionAcceptedJson(), entity.getAiExtractionOverrideReason(), entity.getAiExtractionReviewedByAppUserId(),
-                entity.getAiExtractionReviewedAt(), entity.getOcrStatus(), entity.getCreatedAt(), entity.getUpdatedAt()
+                entity.getId(),
+                entity.getTenantId(),
+                entity.getPatientId(),
+                entity.getConsultationId(),
+                entity.getSourceModule(),
+                entity.getSourceEntityId(),
+                entity.getUploadedByUserId(),
+                entity.getUploadedByName(),
+                entity.getDocumentType(),
+                entity.getTitle(),
+                entity.getDescription(),
+                entity.getReportDate(),
+                entity.getUploadSource(),
+                entity.getOriginalFilename(),
+                entity.getMediaType(),
+                entity.getSizeBytes(),
+                entity.getChecksumSha256(),
+                entity.getStorageBucket(),
+                entity.getStorageKey(),
+                entity.getVisibility(),
+                entity.getVerificationStatus(),
+                entity.getOcrStatus(),
+                entity.getAiIndexStatus(),
+                entity.getAiExtractionStatus(),
+                entity.getAiExtractionProvider(),
+                entity.getAiExtractionModel(),
+                entity.getAiExtractionConfidence(),
+                entity.getAiExtractionSummary(),
+                entity.getAiExtractionStructuredJson(),
+                entity.getAiExtractionReviewNotes(),
+                entity.getAiExtractionAcceptedJson(),
+                entity.getAiExtractionOverrideReason(),
+                entity.getAiExtractionReviewedByAppUserId(),
+                entity.getAiExtractionReviewedAt(),
+                entity.isActive(),
+                entity.getCreatedAt(),
+                entity.getUpdatedAt()
         );
     }
 }

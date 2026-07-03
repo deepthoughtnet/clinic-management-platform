@@ -9,6 +9,7 @@ import com.deepthoughtnet.clinic.api.appointment.dto.QueueReorderRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.WalkInAppointmentRequest;
 import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.billing.service.model.ConsultationFeeStatusRecord;
 import com.deepthoughtnet.clinic.api.consultation.dto.ConsultationResponse;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
@@ -291,6 +292,7 @@ public class AppointmentController {
     }
 
     private AppointmentResponse toResponse(AppointmentRecord record, ConsultationRecord consultation) {
+        ConsultationFeeStatusRecord feeStatus = record.id() == null ? null : billingService.consultationFeeStatus(RequestContextHolder.requireTenantId(), record.id());
         return new AppointmentResponse(
                 record.id() == null ? null : record.id().toString(),
                 record.tenantId() == null ? null : record.tenantId().toString(),
@@ -301,6 +303,10 @@ public class AppointmentController {
                 record.doctorUserId() == null ? null : record.doctorUserId().toString(),
                 record.doctorName(),
                 consultation == null || consultation.id() == null ? null : consultation.id().toString(),
+                feeStatus == null ? null : feeStatus.status(),
+                feeStatus == null ? null : feeStatus.consultationFeeAmount(),
+                feeStatus == null ? null : feeStatus.paidAmount(),
+                feeStatus == null ? null : feeStatus.dueAmount(),
                 record.appointmentDate(),
                 record.appointmentTime(),
                 record.tokenNumber(),

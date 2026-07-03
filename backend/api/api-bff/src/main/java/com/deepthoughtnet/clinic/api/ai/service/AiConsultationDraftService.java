@@ -25,6 +25,11 @@ public class AiConsultationDraftService {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("consultationId", request.consultationId());
         input.put("patientId", request.patientId());
+        input.put("patientAgeGender", request.patientAgeGender());
+        input.put("allergies", request.allergies());
+        input.put("chronicConditions", request.chronicConditions());
+        input.put("currentPrescriptionDraft", request.currentPrescriptionDraft());
+        input.put("labOrdersSummary", request.labOrdersSummary());
         input.put("doctorNotes", request.doctorNotes());
         input.put("symptoms", request.symptoms());
         input.put("vitals", request.vitals());
@@ -43,6 +48,10 @@ public class AiConsultationDraftService {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("consultationId", request.consultationId());
         input.put("patientId", request.patientId());
+        input.put("patientAgeGender", request.patientAgeGender());
+        input.put("vitals", request.vitals());
+        input.put("currentPrescriptionDraft", request.currentPrescriptionDraft());
+        input.put("labOrdersSummary", request.labOrdersSummary());
         input.put("symptoms", request.symptoms());
         input.put("findings", request.findings());
         input.put("doctorNotes", request.doctorNotes());
@@ -78,6 +87,10 @@ public class AiConsultationDraftService {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("consultationId", request.consultationId());
         input.put("patientId", request.patientId());
+        input.put("patientAgeGender", request.patientAgeGender());
+        input.put("vitals", request.vitals());
+        input.put("currentPrescriptionDraft", request.currentPrescriptionDraft());
+        input.put("labOrdersSummary", request.labOrdersSummary());
         input.put("diagnosis", request.diagnosis());
         input.put("symptoms", request.symptoms());
         input.put("allergies", request.allergies());

@@ -19,6 +19,7 @@ import {
 
 import { useAuth } from "../../auth/useAuth";
 import { getConsultations, type Consultation } from "../../api/clinicApi";
+import { WorkflowStrip } from "../../components/compact/CompactUi";
 
 function statusColor(status: Consultation["status"]) {
   switch (status) {
@@ -30,6 +31,14 @@ function statusColor(status: Consultation["status"]) {
       return "default";
   }
 }
+
+const CONSULTATIONS_WORKFLOW_STEPS = [
+  { label: "Draft" },
+  { label: "Clinical Notes" },
+  { label: "Prescription / Lab" },
+  { label: "Complete" },
+  { label: "Timeline" },
+] as const;
 
 export default function ConsultationsPage() {
   const auth = useAuth();
@@ -84,6 +93,8 @@ export default function ConsultationsPage() {
           </Typography>
         </Box>
       </Box>
+
+      <WorkflowStrip steps={CONSULTATIONS_WORKFLOW_STEPS} />
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 

@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.clinicaldocument.service;
 
 import java.math.BigDecimal;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -10,18 +11,25 @@ public record ClinicalDocumentRecord(
         UUID tenantId,
         UUID patientId,
         UUID consultationId,
-        UUID appointmentId,
-        UUID uploadedByAppUserId,
+        String sourceModule,
+        String sourceEntityId,
+        UUID uploadedByUserId,
+        String uploadedByName,
         ClinicalDocumentType documentType,
+        String title,
+        String description,
+        LocalDate reportDate,
+        String uploadSource,
         String originalFilename,
         String mediaType,
         long sizeBytes,
         String checksumSha256,
+        String storageBucket,
         String storageKey,
-        String notes,
-        String referredDoctor,
-        String referredHospital,
-        String referralNotes,
+        String visibility,
+        String verificationStatus,
+        String ocrStatus,
+        String aiIndexStatus,
         String aiExtractionStatus,
         String aiExtractionProvider,
         String aiExtractionModel,
@@ -33,7 +41,7 @@ public record ClinicalDocumentRecord(
         String aiExtractionOverrideReason,
         UUID aiExtractionReviewedByAppUserId,
         OffsetDateTime aiExtractionReviewedAt,
-        String ocrStatus,
+        boolean active,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

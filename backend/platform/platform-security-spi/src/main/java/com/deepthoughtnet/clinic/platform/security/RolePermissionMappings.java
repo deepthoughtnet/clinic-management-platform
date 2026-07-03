@@ -170,7 +170,11 @@ public final class RolePermissionMappings {
                     Permissions.NOTIFICATION_READ,
                     Permissions.CLINIC_DOCUMENT_UPLOAD,
                     Permissions.CLINIC_DOCUMENT_AGENT_UPLOAD,
-            Permissions.CLINIC_DOCUMENT_READ,
+                    Permissions.CLINIC_DOCUMENT_READ,
+                    Permissions.PATIENT_DOCUMENT_READ,
+                    Permissions.PATIENT_DOCUMENT_UPLOAD,
+                    Permissions.PATIENT_DOCUMENT_MANAGE,
+                    Permissions.PATIENT_DOCUMENT_DELETE,
             Permissions.AI_COPILOT_CLINIC_READ,
             Permissions.AI_COPILOT_CLINIC_RUN,
             Permissions.AI_COPILOT_READ,
@@ -235,6 +239,8 @@ public final class RolePermissionMappings {
             Permissions.MEDICINE_READ,
             Permissions.CLINIC_DOCUMENT_UPLOAD,
             Permissions.CLINIC_DOCUMENT_READ,
+            Permissions.PATIENT_DOCUMENT_READ,
+            Permissions.PATIENT_DOCUMENT_UPLOAD,
             Permissions.AI_COPILOT_CLINIC_READ,
             Permissions.AI_COPILOT_CLINIC_RUN,
             Permissions.AI_COPILOT_READ,
@@ -268,6 +274,8 @@ public final class RolePermissionMappings {
             Permissions.NOTIFICATION_READ,
             Permissions.CLINIC_DOCUMENT_UPLOAD,
             Permissions.CLINIC_DOCUMENT_READ,
+            Permissions.PATIENT_DOCUMENT_READ,
+            Permissions.PATIENT_DOCUMENT_UPLOAD,
             Permissions.CAREPILOT_LEAD_READ,
             Permissions.CAREPILOT_LEAD_CREATE,
             Permissions.CAREPILOT_LEAD_UPDATE,
@@ -342,7 +350,8 @@ public final class RolePermissionMappings {
     private static final Set<String> LAB_ASSISTANT_PERMISSIONS = Set.of(
             Permissions.LAB_TEST_READ,
             Permissions.LAB_ORDER_READ,
-            Permissions.LAB_ORDER_COLLECT_SAMPLE
+            Permissions.LAB_ORDER_COLLECT_SAMPLE,
+            Permissions.PATIENT_DOCUMENT_READ
     );
 
     private static final Set<String> LAB_FRONT_DESK_PERMISSIONS = Set.of(
@@ -351,14 +360,16 @@ public final class RolePermissionMappings {
             Permissions.LAB_ORDER_CREATE,
             Permissions.LAB_ORDER_COLLECT_PAYMENT,
             Permissions.PATIENT_CREATE,
-            Permissions.PATIENT_READ
+            Permissions.PATIENT_READ,
+            Permissions.PATIENT_DOCUMENT_READ
     );
 
     private static final Set<String> LAB_TECHNICIAN_PERMISSIONS = Set.of(
             Permissions.LAB_TEST_READ,
             Permissions.LAB_ORDER_READ,
             Permissions.LAB_ORDER_COLLECT_SAMPLE,
-            Permissions.LAB_ORDER_RESULT_ENTRY
+            Permissions.LAB_ORDER_RESULT_ENTRY,
+            Permissions.PATIENT_DOCUMENT_READ
     );
 
     private static final Set<String> LAB_APPROVER_PERMISSIONS = Set.of(
@@ -367,7 +378,9 @@ public final class RolePermissionMappings {
             Permissions.LAB_ORDER_REVIEW,
             Permissions.LAB_ORDER_GENERATE_REPORT,
             Permissions.REPORT_READ,
-            Permissions.AUDIT_READ
+            Permissions.AUDIT_READ,
+            Permissions.PATIENT_DOCUMENT_READ,
+            Permissions.PATIENT_DOCUMENT_UPLOAD
     );
 
     private static final Set<String> VIEWER_PERMISSIONS = Set.of(
@@ -485,6 +498,7 @@ public final class RolePermissionMappings {
             Permissions.INVENTORY_READ,
             Permissions.REPORT_READ,
             Permissions.CLINIC_DOCUMENT_READ,
+            Permissions.PATIENT_DOCUMENT_READ,
             Permissions.AGENT_INTAKE_READ,
             Permissions.AGENT_INTAKE_SOURCE_READ,
             Permissions.AGENT_INTAKE_RUN_READ,
@@ -515,6 +529,7 @@ public final class RolePermissionMappings {
             Permissions.CLINIC_READ,
             Permissions.CLINIC_PROFILE_READ,
             Permissions.CLINIC_DOCUMENT_READ,
+            Permissions.PATIENT_DOCUMENT_READ,
             Permissions.CLINIC_EXTRACTION_JOBS_READ,
             Permissions.CLINIC_AUDIT_READ,
             Permissions.CLINIC_DOCTOR_READ,
@@ -632,6 +647,8 @@ public final class RolePermissionMappings {
                     Permissions.CLINIC_DOCUMENT_UPLOAD,
                     Permissions.CLINIC_DOCUMENT_AGENT_UPLOAD,
                     Permissions.CLINIC_DOCUMENT_READ,
+                    Permissions.PATIENT_DOCUMENT_READ,
+                    Permissions.PATIENT_DOCUMENT_UPLOAD,
                     Permissions.AGENT_INTAKE_CREATE,
                     Permissions.AGENT_INTAKE_READ,
                     Permissions.AGENT_INTAKE_SOURCE_READ,
@@ -645,6 +662,7 @@ public final class RolePermissionMappings {
             Map.entry(Roles.AGENT, Set.of(
                     Permissions.CLINIC_DOCUMENT_AGENT_UPLOAD,
                     Permissions.CLINIC_DOCUMENT_READ,
+                    Permissions.PATIENT_DOCUMENT_READ,
                     Permissions.AGENT_INTAKE_CREATE,
                     Permissions.AGENT_INTAKE_READ,
                     Permissions.AGENT_INTAKE_SOURCE_READ,

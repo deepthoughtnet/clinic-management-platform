@@ -7,6 +7,8 @@ import com.deepthoughtnet.clinic.api.appointment.dto.DoctorUnavailabilityRequest
 import com.deepthoughtnet.clinic.api.appointment.dto.DoctorUnavailabilityResponse;
 import com.deepthoughtnet.clinic.api.common.ClinicTimeZoneResolver;
 import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
+import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.billing.service.model.ConsultationFeeStatusRecord;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
@@ -43,11 +45,13 @@ import org.slf4j.LoggerFactory;
 public class DoctorAvailabilityController {
     private static final Logger log = LoggerFactory.getLogger(DoctorAvailabilityController.class);
     private final AppointmentService appointmentService;
+    private final BillingService billingService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
 
-    public DoctorAvailabilityController(AppointmentService appointmentService, DoctorAssignmentSecurityService doctorAssignmentSecurityService, ClinicTimeZoneResolver clinicTimeZoneResolver) {
+    public DoctorAvailabilityController(AppointmentService appointmentService, BillingService billingService, DoctorAssignmentSecurityService doctorAssignmentSecurityService, ClinicTimeZoneResolver clinicTimeZoneResolver) {
         this.appointmentService = appointmentService;
+        this.billingService = billingService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
     }
@@ -96,7 +100,9 @@ public class DoctorAvailabilityController {
         UUID effectiveDoctorUserId = doctorAssignmentSecurityService.effectiveDoctorUserId(doctorUserId);
         ZoneId bookingZone = clinicTimeZoneResolver.resolve(tenantId);
         return appointmentService.listQueueToday(tenantId, effectiveDoctorUserId, bookingZone).stream()
-                .map(record -> new com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse(
+                .map(record -> {
+                    ConsultationFeeStatusRecord feeStatus = record.id() == null ? null : billingService.consultationFeeStatus(tenantId, record.id());
+                    return new com.deepthoughtnet.clinic.api.appointment.dto.AppointmentResponse(
                         record.id() == null ? null : record.id().toString(),
                         record.tenantId() == null ? null : record.tenantId().toString(),
                         record.patientId() == null ? null : record.patientId().toString(),
@@ -106,6 +112,10 @@ public class DoctorAvailabilityController {
                         record.doctorUserId() == null ? null : record.doctorUserId().toString(),
                         record.doctorName(),
                         record.consultationId() == null ? null : record.consultationId().toString(),
+                        feeStatus == null ? null : feeStatus.status(),
+                        feeStatus == null ? null : feeStatus.consultationFeeAmount(),
+                        feeStatus == null ? null : feeStatus.paidAmount(),
+                        feeStatus == null ? null : feeStatus.dueAmount(),
                         record.appointmentDate(),
                         record.appointmentTime(),
                         record.tokenNumber(),
@@ -120,7 +130,8 @@ public class DoctorAvailabilityController {
                         record.paymentBypassedAt(),
                         record.createdAt(),
                         record.updatedAt()
-                ))
+                    );
+                })
                 .toList();
     }
 

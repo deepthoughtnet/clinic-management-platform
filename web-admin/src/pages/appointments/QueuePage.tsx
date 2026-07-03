@@ -28,12 +28,11 @@ import {
 } from "@mui/material";
 
 import ConsultationFeeDialog, { type ConsultationFeeDialogValue } from "../../components/ConsultationFeeDialog";
-import { CompactEmptyState, CompactStatCard, CompactTableFrame, compactChipSx } from "../../components/compact/CompactUi";
+import { CompactEmptyState, CompactStatCard, CompactTableFrame, compactChipSx, WorkflowStrip } from "../../components/compact/CompactUi";
 import { useAuth } from "../../auth/useAuth";
 import {
   collectConsultationFee,
   getClinicUsers,
-  getDoctorProfile,
   reorderDoctorQueueToday,
   searchAppointments,
   searchBills,
@@ -44,7 +43,6 @@ import {
   type AppointmentPriority,
   type Bill,
   type ClinicUser,
-  type DoctorProfile,
   type PaymentMode,
 } from "../../api/clinicApi";
 
@@ -183,19 +181,22 @@ function consultationEffectiveBill(bills: Bill[]) {
   return bills.find((bill) => bill.dueAmount > 0) || bills[0] || null;
 }
 
-function consultationFeeSummary(consultationFee: number | null, bills: Bill[]) {
-  const effectiveFee = consultationFee ?? (bills.length > 0 ? Math.max(...bills.map((bill) => bill.totalAmount)) : null);
-  const netPaid = bills.reduce((sum, bill) => sum + Math.max(0, bill.netPaidAmount ?? (bill.paidAmount - bill.refundedAmount)), 0);
-  const due = effectiveFee == null ? null : Math.max(0, effectiveFee - netPaid);
-  const feeStatus: FeeStatus = effectiveFee == null || effectiveFee <= 0
-    ? "NOT_CONFIGURED"
-    : (due ?? 0) <= 0
-      ? "PAID"
-      : netPaid > 0
-        ? "PARTIAL"
-        : "UNPAID";
+function consultationFeeSummary(appointment: Appointment, bills: Bill[]) {
+  const effectiveFee = appointment.consultationFeeAmount ?? (bills.length > 0 ? Math.max(...bills.map((bill) => bill.totalAmount)) : null);
+  const netPaid = appointment.consultationFeePaidAmount ?? bills.reduce((sum, bill) => sum + Math.max(0, bill.netPaidAmount ?? (bill.paidAmount - bill.refundedAmount)), 0);
+  const due = appointment.consultationFeeDueAmount ?? (effectiveFee == null ? null : Math.max(0, effectiveFee - netPaid));
+  const feeStatus: FeeStatus = appointment.consultationFeeStatus
+    ? appointment.consultationFeeStatus
+    : (effectiveFee == null || effectiveFee <= 0
+      ? "NOT_CONFIGURED"
+      : (due ?? 0) <= 0
+        ? "PAID"
+        : netPaid > 0
+          ? "PARTIAL"
+          : "UNPAID");
   return {
     consultationBill: consultationEffectiveBill(bills),
+    consultationFee: effectiveFee,
     feeStatus,
     feeDueAmount: due,
     feePaidAmount: effectiveFee == null ? null : Math.min(effectiveFee, netPaid),
@@ -263,6 +264,15 @@ const CHECK_IN_BYPASS_REASON_OPTIONS: Array<{ value: CheckInBypassReason; label:
   { value: "OTHER", label: "Other" },
 ];
 
+const QUEUE_WORKFLOW_STEPS = [
+  { label: "Booked" },
+  { label: "Payment Pending" },
+  { label: "Ready" },
+  { label: "Checked-in" },
+  { label: "In Consultation" },
+  { label: "Completed" },
+] as const;
+
 export default function QueuePage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -271,7 +281,6 @@ export default function QueuePage() {
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [appointments, setAppointments] = React.useState<Appointment[]>([]);
   const [bills, setBills] = React.useState<Bill[]>([]);
-  const [doctorProfiles, setDoctorProfiles] = React.useState<Record<string, DoctorProfile>>({});
   const [doctorUserId, setDoctorUserId] = React.useState(doctorUserIdFromQuery);
   const [queueSearch, setQueueSearch] = React.useState("");
   const [loadingDoctors, setLoadingDoctors] = React.useState(true);
@@ -334,20 +343,18 @@ export default function QueuePage() {
 
   const queueRowsWithFee = React.useMemo<QueueViewRow[]>(() => {
     return queueRows.map((appointment) => {
-      const doctorProfile = doctorProfiles[appointment.doctorUserId];
       const consultationBills = appointment.id ? consultationBillsByAppointment(bills, appointment.id) : [];
-      const consultationFeeAmount = doctorProfile?.consultationFee ?? (consultationBills.length > 0 ? Math.max(...consultationBills.map((bill) => bill.totalAmount)) : null);
-      const feeSummary = consultationFeeSummary(consultationFeeAmount, consultationBills);
+      const feeSummary = consultationFeeSummary(appointment, consultationBills);
       return {
         ...appointment,
-        consultationFeeAmount,
         consultationBill: feeSummary.consultationBill,
+        consultationFeeAmount: feeSummary.consultationFee,
         feeStatus: feeSummary.feeStatus,
         feeDueAmount: feeSummary.feeDueAmount,
         feePaidAmount: feeSummary.feePaidAmount,
       };
     });
-  }, [bills, doctorProfiles, queueRows]);
+  }, [bills, queueRows]);
 
   const visibleRows = React.useMemo(() => {
     const term = queueSearch.trim().toLowerCase();
@@ -461,46 +468,6 @@ export default function QueuePage() {
       cancelled = true;
     };
   }, [auth.accessToken, auth.tenantId, canViewBillingData, effectiveDoctorId, tenantReady, today]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    async function loadProfiles() {
-      const token = auth.accessToken;
-      const tenantId = auth.tenantId;
-      if (!token || !tenantId || !tenantReady || doctors.length === 0) {
-        setDoctorProfiles({});
-        return;
-      }
-      try {
-        const rows = await Promise.all(
-          doctors.map(async (doctor) => {
-            const doctorId = doctor.appUserId;
-            if (!doctorId) {
-              return null;
-            }
-            const profile = await getDoctorProfile(token, tenantId, doctorId as string).catch(() => null);
-            return profile ? [doctorId as string, profile] as const : null;
-          }),
-        );
-        if (cancelled) return;
-        const map: Record<string, DoctorProfile> = {};
-        for (const entry of rows) {
-          if (entry) {
-            map[entry[0]] = entry[1];
-          }
-        }
-        setDoctorProfiles(map);
-      } catch {
-        if (!cancelled) {
-          setDoctorProfiles({});
-        }
-      }
-    }
-    void loadProfiles();
-    return () => {
-      cancelled = true;
-    };
-  }, [auth.accessToken, auth.tenantId, doctors, tenantReady]);
 
   const refreshQueue = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -787,6 +754,8 @@ export default function QueuePage() {
           <Button variant="outlined" onClick={() => void refreshQueue()}>Refresh</Button>
         </Stack>
       </Box>
+
+      <WorkflowStrip steps={QUEUE_WORKFLOW_STEPS} />
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 

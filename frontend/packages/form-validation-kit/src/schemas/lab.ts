@@ -101,6 +101,12 @@ export const labOrderCreateSchema = z.object({
   }
 });
 
+export const labConsultationOrderCreateSchema = z.object({
+  patientId: requiredUuid("Patient is required."),
+  testIds: z.array(requiredUuid("Test is required.")).min(1, "Select at least one lab test."),
+  notes: labOptionalPlainText(250, "Notes must be 250 characters or fewer."),
+});
+
 export const labResultComponentSchema = z.object({
   parameterName: labOptionalNamedText(60, "Parameter name must be 60 characters or fewer."),
   componentName: labOptionalNamedText(60, "Component name must be 60 characters or fewer."),

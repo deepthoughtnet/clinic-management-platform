@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.ai;
 
 import com.deepthoughtnet.clinic.api.ai.dto.AiConsultationNotesRequest;
+import com.deepthoughtnet.clinic.api.ai.dto.AiConsultationAskRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiDiagnosisSuggestionRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiClinicalAnalyticsResponse;
 import com.deepthoughtnet.clinic.api.ai.dto.AiClinicalSummaryRequest;
@@ -11,6 +12,7 @@ import com.deepthoughtnet.clinic.api.ai.dto.AiPrescriptionTemplateRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiStatusResponse;
 import com.deepthoughtnet.clinic.api.ai.service.AiClinicalAnalyticsService;
 import com.deepthoughtnet.clinic.api.ai.service.AiClinicalSummaryService;
+import com.deepthoughtnet.clinic.api.ai.service.AiConsultationAskService;
 import com.deepthoughtnet.clinic.api.ai.service.AiConsultationDraftService;
 import com.deepthoughtnet.clinic.api.ai.service.AiPatientSummaryService;
 import com.deepthoughtnet.clinic.api.ai.service.AiStatusService;
@@ -25,6 +27,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -43,6 +46,7 @@ public class AiDoctorCopilotController {
     private final AiPatientSummaryService aiPatientSummaryService;
     private final AiClinicalSummaryService aiClinicalSummaryService;
     private final AiClinicalAnalyticsService aiClinicalAnalyticsService;
+    private final AiConsultationAskService aiConsultationAskService;
     private final AiConsultationDraftService aiConsultationDraftService;
     private final AiRequestAuditQueryService aiRequestAuditQueryService;
     private final TenantModuleEntitlementService moduleEntitlementService;
@@ -51,6 +55,7 @@ public class AiDoctorCopilotController {
     public AiDoctorCopilotController(AiPatientSummaryService aiPatientSummaryService,
                                      AiClinicalSummaryService aiClinicalSummaryService,
                                      AiClinicalAnalyticsService aiClinicalAnalyticsService,
+                                     AiConsultationAskService aiConsultationAskService,
                                      AiConsultationDraftService aiConsultationDraftService,
                                      AiRequestAuditQueryService aiRequestAuditQueryService,
                                      TenantModuleEntitlementService moduleEntitlementService,
@@ -58,6 +63,7 @@ public class AiDoctorCopilotController {
         this.aiPatientSummaryService = aiPatientSummaryService;
         this.aiClinicalSummaryService = aiClinicalSummaryService;
         this.aiClinicalAnalyticsService = aiClinicalAnalyticsService;
+        this.aiConsultationAskService = aiConsultationAskService;
         this.aiConsultationDraftService = aiConsultationDraftService;
         this.aiRequestAuditQueryService = aiRequestAuditQueryService;
         this.moduleEntitlementService = moduleEntitlementService;
@@ -82,6 +88,13 @@ public class AiDoctorCopilotController {
     public AiDraftResponse structureNotes(@RequestBody AiConsultationNotesRequest request) {
         requireAiReady();
         return aiConsultationDraftService.structureNotes(request);
+    }
+
+    @PostMapping("/consultation/ask")
+    @PreAuthorize(AI_COPILOT_RUN_ACCESS)
+    public AiDraftResponse askConsultation(@Valid @RequestBody AiConsultationAskRequest request) {
+        requireAiReady();
+        return aiConsultationAskService.ask(request);
     }
 
     @PostMapping("/consultation/suggest-diagnosis")

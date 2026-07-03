@@ -70,6 +70,7 @@ public class GlobalRestExceptionHandler {
                 messages.add(userMessage(err.getDefaultMessage(), "Validation failed"))
         );
         String message = messages.isEmpty() ? "Validation failed" : String.join(", ", messages);
+        logValidationFailure(req, "method_argument_not_valid", message, ex);
         return build(HttpStatus.BAD_REQUEST, "validation_failed", message, req);
     }
 
@@ -134,6 +135,7 @@ public class GlobalRestExceptionHandler {
                 })
                 .reduce((a, b) -> a + ", " + b)
                 .orElse("Validation failed");
+        logValidationFailure(req, "constraint_violation", message, ex);
         return build(HttpStatus.BAD_REQUEST, "validation_failed", message, req);
     }
 
@@ -149,6 +151,7 @@ public class GlobalRestExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<?> handleIllegalArgument(IllegalArgumentException ex, HttpServletRequest req) {
+        logValidationFailure(req, "illegal_argument", ex.getMessage(), ex);
         return build(HttpStatus.BAD_REQUEST, "bad_request", userMessage(ex.getMessage(), "Invalid request"), req);
     }
 
@@ -254,6 +257,19 @@ public class GlobalRestExceptionHandler {
             correlationId = "unknown";
         }
         return correlationId;
+    }
+
+    private void logValidationFailure(HttpServletRequest req, String kind, String message, Exception ex) {
+        log.warn(
+                "Validation failure kind={} requestId={} correlationId={} {} {} message={}",
+                kind,
+                correlationId(req),
+                correlationId(req),
+                req == null ? "UNKNOWN" : req.getMethod(),
+                path(req),
+                message,
+                ex
+        );
     }
 
     private String codeFor(HttpStatus status) {

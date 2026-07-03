@@ -15,6 +15,7 @@ import com.deepthoughtnet.clinic.billing.db.PaymentRepository;
 import com.deepthoughtnet.clinic.billing.db.ReceiptEntity;
 import com.deepthoughtnet.clinic.billing.db.ReceiptRepository;
 import com.deepthoughtnet.clinic.billing.service.model.ConsultationFeePaymentCommand;
+import com.deepthoughtnet.clinic.billing.service.model.ConsultationFeeStatusRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillItemType;
 import com.deepthoughtnet.clinic.billing.service.model.BillLineCommand;
 import com.deepthoughtnet.clinic.billing.service.model.BillLineRecord;
@@ -472,6 +473,33 @@ public class BillingService {
         }
         ConsultationFeeAssessment assessment = assessConsultationFee(tenantId, appointmentId, normalizeMoney(doctorProfile.consultationFee()));
         return assessment.remainingDue();
+    }
+
+    @Transactional(readOnly = true)
+    public ConsultationFeeStatusRecord consultationFeeStatus(UUID tenantId, UUID appointmentId) {
+        requireTenant(tenantId);
+        requireId(appointmentId, "appointmentId");
+        var appointment = appointmentService.findById(tenantId, appointmentId);
+        DoctorProfileRecord doctorProfile = doctorProfileService.findByDoctorUserId(tenantId, appointment.doctorUserId()).orElse(null);
+        if (doctorProfile == null || doctorProfile.consultationFee() == null || doctorProfile.consultationFee().compareTo(ZERO) <= 0) {
+            return new ConsultationFeeStatusRecord("NOT_CONFIGURED", ZERO, ZERO, ZERO, null, null);
+        }
+        BigDecimal configuredFee = normalizeMoney(doctorProfile.consultationFee());
+        ConsultationFeeAssessment assessment = assessConsultationFee(tenantId, appointmentId, configuredFee);
+        String status = assessment.remainingDue().compareTo(ZERO) <= 0
+                ? "PAID"
+                : assessment.aggregateNetPaid().compareTo(ZERO) > 0
+                    ? "PARTIAL"
+                    : "UNPAID";
+        BillEntity bill = assessment.reusableBill();
+        return new ConsultationFeeStatusRecord(
+                status,
+                configuredFee,
+                assessment.aggregateNetPaid(),
+                assessment.remainingDue(),
+                bill == null ? null : bill.getId(),
+                bill == null ? null : bill.getBillNumber()
+        );
     }
 
     @Transactional

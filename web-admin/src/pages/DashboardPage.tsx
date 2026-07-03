@@ -25,6 +25,7 @@ import {
 
 import { useAuth } from "../auth/useAuth";
 import { dashboardFilterSchema, firstZodError } from "@deepthoughtnet/form-validation-kit";
+import { WorkflowStrip } from "../components/compact/CompactUi";
 import {
   getClinicDashboard,
   getClinicUsers,
@@ -104,6 +105,15 @@ const DASHBOARD_CHIP_SX = {
     py: 0,
   },
 } as const;
+
+const DASHBOARD_WORKFLOW_STEPS = [
+  { label: "Appointment" },
+  { label: "Check-in" },
+  { label: "Queue" },
+  { label: "Consultation" },
+  { label: "Billing" },
+  { label: "Follow-up" },
+] as const;
 
 function KpiCard({
   label,
@@ -416,6 +426,8 @@ export default function DashboardPage() {
         </Box>
         <Chip label={auth.tenantName || "Clinic"} variant="outlined" size="small" sx={DASHBOARD_CHIP_SX} />
       </Box>
+
+      <WorkflowStrip steps={DASHBOARD_WORKFLOW_STEPS} />
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 

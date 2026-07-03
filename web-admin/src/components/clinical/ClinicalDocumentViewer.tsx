@@ -105,11 +105,12 @@ export function ClinicalDocumentViewer({ open, document, url, onClose }: Props) 
                 <Typography variant="body2"><b>Media:</b> {document?.mediaType || "-"}</Typography>
                 <Typography variant="body2"><b>Size:</b> {sizeLabel}</Typography>
                 <Typography variant="body2"><b>Uploaded:</b> {document?.createdAt ? new Date(document.createdAt).toLocaleString() : "-"}</Typography>
-                <Typography variant="body2"><b>Uploaded by:</b> {document?.uploadedByAppUserId || "-"}</Typography>
-                <Typography variant="body2"><b>Source doctor:</b> {document?.referredDoctor || "-"}</Typography>
-                <Typography variant="body2"><b>Source hospital:</b> {document?.referredHospital || "-"}</Typography>
-                <Typography variant="body2"><b>Referral notes:</b> {document?.referralNotes || "-"}</Typography>
-                <Typography variant="body2"><b>Clinical notes:</b> {document?.notes || "-"}</Typography>
+                <Typography variant="body2"><b>Uploaded by:</b> {document?.uploadedByName || document?.uploadedByUserId || "-"}</Typography>
+                <Typography variant="body2"><b>Source module:</b> {document?.sourceModule || "-"}</Typography>
+                <Typography variant="body2"><b>Source entity:</b> {document?.sourceEntityId || "-"}</Typography>
+                <Typography variant="body2"><b>Upload source:</b> {document?.uploadSource || "-"}</Typography>
+                <Typography variant="body2"><b>Title:</b> {document?.title || "-"}</Typography>
+                <Typography variant="body2"><b>Description:</b> {document?.description || "-"}</Typography>
                 <Typography variant="body2"><b>AI summary:</b> {document?.aiExtractionSummary || "-"}</Typography>
                 <Typography variant="body2"><b>AI review:</b> {document?.aiExtractionReviewNotes || "-"}</Typography>
                 <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", fontFamily: "monospace" }}><b>AI structured data:</b> {document?.aiExtractionStructuredJson || "-"}</Typography>

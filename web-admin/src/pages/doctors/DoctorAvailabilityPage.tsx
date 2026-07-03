@@ -31,7 +31,7 @@ import { alpha, type Theme } from "@mui/material/styles";
 import { useNavigate } from "react-router-dom";
 import { doctorAvailabilitySchema, doctorUnavailabilitySchema, firstZodError, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
-import { CompactEmptyState } from "../../components/compact/CompactUi";
+import { CompactEmptyState, WorkflowStrip } from "../../components/compact/CompactUi";
 import RequiredLabel from "../../components/forms/RequiredLabel";
 import {
   createDoctorAvailability,
@@ -64,6 +64,13 @@ import { getAppointmentSlotPresentation } from "../appointments/slotState";
 const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"] as const;
 const WEEKDAY_DAYS = DAYS.slice(0, 5);
 const WEEKEND_DAYS = DAYS.slice(5);
+const DOCTOR_AVAILABILITY_WORKFLOW_STEPS = [
+  { label: "Schedule" },
+  { label: "Slots" },
+  { label: "Booking" },
+  { label: "Waitlist" },
+  { label: "Leave / Block" },
+] as const;
 type ViewMode = "day" | "week";
 type StatusFilters = Record<DoctorAvailabilitySlotStatus | "WAITLIST", boolean>;
 
@@ -950,6 +957,8 @@ export default function DoctorAvailabilityPage() {
           <Button variant="contained" onClick={() => navigate("/queue")}>Open queue</Button>
         </Stack>
       </Box>
+
+      <WorkflowStrip steps={DOCTOR_AVAILABILITY_WORKFLOW_STEPS} />
 
       {error ? <Alert severity="error" onClose={() => setError(null)}>{error}</Alert> : null}
       {info ? <Alert severity="success" onClose={() => setInfo(null)}>{info}</Alert> : null}

@@ -25,7 +25,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../../auth/useAuth";
-import { CompactTableFrame } from "../../components/compact/CompactUi";
+import { CompactTableFrame, WorkflowStrip } from "../../components/compact/CompactUi";
 import { searchPatients, type Patient } from "../../api/clinicApi";
 
 const activeOptions = [
@@ -33,6 +33,14 @@ const activeOptions = [
   { label: "Active", value: "true" },
   { label: "Inactive", value: "false" },
 ];
+
+const PATIENTS_WORKFLOW_STEPS = [
+  { label: "Register" },
+  { label: "Search" },
+  { label: "Profile" },
+  { label: "History" },
+  { label: "Billing / Clinical Links" },
+] as const;
 
 export default function PatientsPage() {
   const auth = useAuth();
@@ -105,6 +113,8 @@ export default function PatientsPage() {
           </Button>
         ) : null}
       </Box>
+
+      <WorkflowStrip steps={PATIENTS_WORKFLOW_STEPS} />
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 
