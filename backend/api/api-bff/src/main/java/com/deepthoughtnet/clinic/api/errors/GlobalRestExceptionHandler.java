@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.platform.core.errors.BadRequestException;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
 import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilityConflictException;
+import com.deepthoughtnet.clinic.patient.service.model.PatientConflictException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.deepthoughtnet.clinic.identity.exception.TenantModuleDisabledException;
 import com.deepthoughtnet.clinic.platform.spring.context.CorrelationId;
@@ -159,6 +160,11 @@ public class GlobalRestExceptionHandler {
     @ExceptionHandler(DoctorAvailabilityConflictException.class)
     public ResponseEntity<?> handleDoctorAvailabilityConflict(DoctorAvailabilityConflictException ex, HttpServletRequest req) {
         return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Availability already exists for this doctor, day, and time range."), req);
+    }
+
+    @ExceptionHandler(PatientConflictException.class)
+    public ResponseEntity<?> handlePatientConflict(PatientConflictException ex, HttpServletRequest req) {
+        return build(HttpStatus.CONFLICT, "conflict", userMessage(ex.getMessage(), "Patient already exists. Select existing patient."), req);
     }
 
     @ExceptionHandler(Exception.class)

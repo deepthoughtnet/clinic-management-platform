@@ -58,6 +58,18 @@ public class LabTestMasterEntity {
     private BigDecimal price;
 
     @Column(nullable = false)
+    private boolean enabled = true;
+
+    @Column(name = "tenant_price_override", precision = 18, scale = 2)
+    private BigDecimal tenantPriceOverride;
+
+    @Column(name = "tenant_tat_override", length = 128)
+    private String tenantTatOverride;
+
+    @Column(name = "display_order")
+    private Integer displayOrder;
+
+    @Column(nullable = false)
     private boolean active = true;
 
     @Column(name = "created_at", nullable = false)
@@ -105,6 +117,15 @@ public class LabTestMasterEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    public void updateCatalogueConfig(boolean enabled, BigDecimal tenantPriceOverride, String tenantTatOverride, Integer displayOrder, boolean active) {
+        this.enabled = enabled;
+        this.tenantPriceOverride = tenantPriceOverride;
+        this.tenantTatOverride = tenantTatOverride;
+        this.displayOrder = displayOrder;
+        this.active = active;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public UUID getId() { return id; }
     public UUID getTenantId() { return tenantId; }
     public String getTestCode() { return testCode; }
@@ -116,6 +137,10 @@ public class LabTestMasterEntity {
     public String getReferenceRange() { return referenceRange; }
     public String getTurnaroundTime() { return turnaroundTime; }
     public BigDecimal getPrice() { return price; }
+    public boolean isEnabled() { return enabled; }
+    public BigDecimal getTenantPriceOverride() { return tenantPriceOverride; }
+    public String getTenantTatOverride() { return tenantTatOverride; }
+    public Integer getDisplayOrder() { return displayOrder; }
     public boolean isActive() { return active; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }

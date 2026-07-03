@@ -17,6 +17,8 @@ import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterRepository;
+import com.deepthoughtnet.clinic.api.lab.LabCatalogueConfigService;
+import com.deepthoughtnet.clinic.api.lab.LabCategoryCatalog;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentService;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderCreateCommand;
@@ -79,6 +81,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -90,6 +93,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -100,6 +104,9 @@ import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 
@@ -122,15 +129,6 @@ public class LabService {
             LabOrderStatus.DELIVERED
     );
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-    private static final List<String> LAB_CATEGORIES = List.of(
-            "HEMATOLOGY",
-            "BIOCHEMISTRY",
-            "MICROBIOLOGY",
-            "PATHOLOGY",
-            "RADIOLOGY",
-            "CARDIOLOGY",
-            "OTHER"
-    );
 
     private final LabTestMasterRepository labTestMasterRepository;
     private final LabTestParameterRepository labTestParameterRepository;
@@ -150,6 +148,8 @@ public class LabService {
     private final AuditEventPublisher auditEventPublisher;
     private final ObjectMapper objectMapper;
     private final BrandingProperties brandingProperties;
+    private final LabCatalogueConfigService labCatalogueConfigService;
+    private final TransactionTemplate requiresNewTransactionTemplate;
 
     public LabService(
             LabTestMasterRepository labTestMasterRepository,
@@ -169,7 +169,9 @@ public class LabService {
             LabNotificationService labNotificationService,
             AuditEventPublisher auditEventPublisher,
             ObjectMapper objectMapper,
-            BrandingProperties brandingProperties
+            BrandingProperties brandingProperties,
+            LabCatalogueConfigService labCatalogueConfigService,
+            PlatformTransactionManager platformTransactionManager
     ) {
         this.labTestMasterRepository = labTestMasterRepository;
         this.labTestParameterRepository = labTestParameterRepository;
@@ -189,11 +191,15 @@ public class LabService {
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper;
         this.brandingProperties = brandingProperties;
+        this.labCatalogueConfigService = labCatalogueConfigService;
+        this.requiresNewTransactionTemplate = new TransactionTemplate(platformTransactionManager);
+        this.requiresNewTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     @Transactional(readOnly = true)
-    public List<String> listCategories() {
-        return LAB_CATEGORIES;
+    public List<String> listCategories(UUID tenantId) {
+        requireTenant(tenantId);
+        return labCatalogueConfigService.listActiveCategoryCodes(tenantId);
     }
 
     @Transactional(readOnly = true)
@@ -222,23 +228,27 @@ public class LabService {
         validateTest(command);
         ensureUniqueTestCode(tenantId, command.testCode(), null);
         ensureUniqueTestName(tenantId, command.testName(), null);
-        LabTestMasterEntity entity = LabTestMasterEntity.create(tenantId, normalizeNullable(command.testCode()), normalize(command.testName()));
-        entity.update(
-                normalizeNullable(command.testCode()),
-                normalize(command.testName()),
-                normalizeCategory(command.category()),
-                normalizeNullable(command.department()),
-                normalizeNullable(command.sampleType()),
-                normalizeNullable(command.unit()),
-                normalizeNullable(command.referenceRange()),
-                normalizeNullable(command.turnaroundTime()),
-                normalizeMoney(command.price()),
-                command.active()
-        );
-        LabTestMasterEntity saved = labTestMasterRepository.save(entity);
-        saveParameters(tenantId, saved.getId(), command.parameters());
-        auditTest(tenantId, saved, "lab_test.created", actorAppUserId, "Created lab test master");
-        return toRecord(saved);
+        try {
+            LabTestMasterEntity entity = LabTestMasterEntity.create(tenantId, normalizeNullable(command.testCode()), normalize(command.testName()));
+            entity.update(
+                    normalizeNullable(command.testCode()),
+                    normalize(command.testName()),
+                    normalizeCategory(command.category()),
+                    normalizeNullable(command.department()),
+                    normalizeNullable(command.sampleType()),
+                    normalizeNullable(command.unit()),
+                    normalizeNullable(command.referenceRange()),
+                    normalizeNullable(command.turnaroundTime()),
+                    normalizeMoney(command.price()),
+                    command.active()
+            );
+            LabTestMasterEntity saved = labTestMasterRepository.save(entity);
+            saveParameters(tenantId, saved.getId(), command.parameters());
+            auditTest(tenantId, saved, "lab_test.created", actorAppUserId, "Created lab test master");
+            return toRecord(saved);
+        } catch (DataIntegrityViolationException ex) {
+            throw duplicateTestException(command, ex);
+        }
     }
 
     @Transactional
@@ -250,22 +260,26 @@ public class LabService {
                 .orElseThrow(() -> new IllegalArgumentException("Lab test not found"));
         ensureUniqueTestCode(tenantId, command.testCode(), id);
         ensureUniqueTestName(tenantId, command.testName(), id);
-        entity.update(
-                normalizeNullable(command.testCode()),
-                normalize(command.testName()),
-                normalizeCategory(command.category()),
-                normalizeNullable(command.department()),
-                normalizeNullable(command.sampleType()),
-                normalizeNullable(command.unit()),
-                normalizeNullable(command.referenceRange()),
-                normalizeNullable(command.turnaroundTime()),
-                normalizeMoney(command.price()),
-                command.active()
-        );
-        LabTestMasterEntity saved = labTestMasterRepository.save(entity);
-        saveParameters(tenantId, saved.getId(), command.parameters());
-        auditTest(tenantId, saved, "lab_test.updated", actorAppUserId, "Updated lab test master");
-        return toRecord(saved);
+        try {
+            entity.update(
+                    normalizeNullable(command.testCode()),
+                    normalize(command.testName()),
+                    normalizeCategory(command.category()),
+                    normalizeNullable(command.department()),
+                    normalizeNullable(command.sampleType()),
+                    normalizeNullable(command.unit()),
+                    normalizeNullable(command.referenceRange()),
+                    normalizeNullable(command.turnaroundTime()),
+                    normalizeMoney(command.price()),
+                    command.active()
+            );
+            LabTestMasterEntity saved = labTestMasterRepository.save(entity);
+            saveParameters(tenantId, saved.getId(), command.parameters());
+            auditTest(tenantId, saved, "lab_test.updated", actorAppUserId, "Updated lab test master");
+            return toRecord(saved);
+        } catch (DataIntegrityViolationException ex) {
+            throw duplicateTestException(command, ex);
+        }
     }
 
     @Transactional
@@ -468,6 +482,7 @@ public class LabService {
         Map<UUID, LabOrderItemEntity> orderItems = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, orderId).stream()
                 .collect(Collectors.toMap(LabOrderItemEntity::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
         List<LabOrderSampleEntity> entities = new ArrayList<>();
+        HashSet<String> reservedAccessions = new HashSet<>();
         OffsetDateTime firstCollectedAt = null;
         String firstSpecimenType = null;
         String firstNotes = null;
@@ -479,32 +494,46 @@ public class LabService {
                 throw new IllegalArgumentException("Unknown lab order item for sample collection");
             }
             String specimenType = normalize(command.specimenType());
-            String accessionNumber = generateAccessionNumber(tenantId);
-            String barcodeValue = generateBarcodeValue(accessionNumber);
-            OffsetDateTime collectedAt = command.collectedAt() == null ? OffsetDateTime.now() : command.collectedAt();
-            UUID collectedBy = command.collectedBy() == null ? actorAppUserId : command.collectedBy();
-            LabOrderSampleEntity entity = LabOrderSampleEntity.create(
-                    tenantId,
-                    orderId,
-                    command.labOrderItemId(),
-                    accessionNumber,
-                    barcodeValue,
-                    specimenType,
-                    normalizeNullable(command.containerType()),
-                    collectedAt,
-                    collectedBy,
-                    normalizeNullable(command.notes()),
-                    actorAppUserId
-            );
-            entities.add(entity);
-            if (firstCollectedAt == null || collectedAt.isBefore(firstCollectedAt)) {
-                firstCollectedAt = collectedAt;
+            LabOrderSampleEntity savedSample = null;
+            for (int attempt = 0; attempt < 5; attempt++) {
+                String accessionNumber = generateAccessionNumber(tenantId, reservedAccessions);
+                String barcodeValue = generateBarcodeValue(accessionNumber);
+                OffsetDateTime collectedAt = command.collectedAt() == null ? OffsetDateTime.now() : command.collectedAt();
+                UUID collectedBy = command.collectedBy() == null ? actorAppUserId : command.collectedBy();
+                LabOrderSampleEntity entity = LabOrderSampleEntity.create(
+                        tenantId,
+                        orderId,
+                        command.labOrderItemId(),
+                        accessionNumber,
+                        barcodeValue,
+                        specimenType,
+                        normalizeNullable(command.containerType()),
+                        collectedAt,
+                        collectedBy,
+                        normalizeNullable(command.notes()),
+                        actorAppUserId
+                );
+                try {
+                    savedSample = requiresNewTransactionTemplate.execute(status -> labOrderSampleRepository.save(entity));
+                    break;
+                } catch (DataIntegrityViolationException ex) {
+                    if (!isAccessionCollision(ex, accessionNumber)) {
+                        throw ex;
+                    }
+                }
+            }
+            if (savedSample == null) {
+                throw new IllegalStateException("Unable to generate unique lab accession number");
+            }
+            reservedAccessions.add(savedSample.getAccessionNumber());
+            entities.add(savedSample);
+            if (firstCollectedAt == null || savedSample.getCollectedAt().isBefore(firstCollectedAt)) {
+                firstCollectedAt = savedSample.getCollectedAt();
                 firstSpecimenType = specimenType;
-                firstNotes = entity.getNotes();
-                firstCollectedBy = collectedBy;
+                firstNotes = savedSample.getNotes();
+                firstCollectedBy = savedSample.getCollectedBy();
             }
         }
-        List<LabOrderSampleEntity> savedSamples = labOrderSampleRepository.saveAll(entities);
         order.markSampleCollected(
                 firstCollectedAt,
                 firstCollectedBy == null ? actorAppUserId : firstCollectedBy,
@@ -514,7 +543,7 @@ public class LabService {
         );
         LabOrderEntity saved = labOrderRepository.save(order);
         auditOrder(tenantId, saved, "lab_order.sample_collected", actorAppUserId, "Collected lab sample");
-        for (LabOrderSampleEntity sample : savedSamples) {
+        for (LabOrderSampleEntity sample : entities) {
             auditSample(tenantId, sample, "lab_sample.accession_generated", actorAppUserId, "Generated accession number");
             auditSample(tenantId, sample, "lab_sample.collected", actorAppUserId, "Collected lab sample");
         }
@@ -527,7 +556,7 @@ public class LabService {
                 saved.getDoctorName(),
                 actorAppUserId
         );
-        return savedSamples.stream().map(this::toRecord).toList();
+        return entities.stream().map(this::toRecord).toList();
     }
 
     @Transactional
@@ -1083,9 +1112,9 @@ public class LabService {
                 drawReportBorder(content, page, margin);
                 y = drawReportHeader(document, content, clinicName, clinicAddress, clinicContact, logo, page, margin, y);
                 y = drawMetaBlock(tenantId, content, record, page, margin, width, y);
-                y = drawResultsTable(content, record, margin, width, y);
+                y = drawResultsTable(content, record, page, margin, width, y);
                 y = drawNotesBlock(content, record, margin, width, y);
-                drawFooter(content, brandingProperties.footerLine(), margin, y);
+                drawFooter(content, "Generated by Jeevanam Healthcare | Powered by AIVA", margin, y, width);
             }
             document.save(output);
             return new LabOrderResultPdf(safeFilename(record.orderNumber()) + "-lab-report.pdf", output.toByteArray());
@@ -1098,6 +1127,8 @@ public class LabService {
         float pageWidth = page.getMediaBox().getWidth();
         float pageHeight = page.getMediaBox().getHeight();
         float logoSize = 42f;
+        PDType1Font boldFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        float titleFontSize = 18f;
         if (logo != null) {
             PDImageXObject image = LosslessFactory.createFromImage(document, logo);
             content.drawImage(image, margin + 2, pageHeight - margin - logoSize - 2, logoSize, logoSize);
@@ -1115,7 +1146,9 @@ public class LabService {
         if (StringUtils.hasText(clinicContact)) {
             y = writeWrapped(content, clinicContact, 9f, textX, y - 2, pageWidth - textX - margin);
         }
-        writeLine(content, "LABORATORY REPORT", 22, pageWidth - margin - 206, pageHeight - margin - 4, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        float titleWidth = textWidth(boldFont, titleFontSize, "LABORATORY REPORT");
+        float titleX = Math.max(textX + 16f, pageWidth - margin - titleWidth);
+        writeLine(content, "LABORATORY REPORT", titleFontSize, titleX, pageHeight - margin - 4, boldFont);
         y -= 10;
         content.moveTo(margin, y);
         content.lineTo(pageWidth - margin, y);
@@ -1127,6 +1160,7 @@ public class LabService {
         List<MetaPair> pairs = List.of(
                 new MetaPair("Order No", record.orderNumber()),
                 new MetaPair("Generated", formatDateTime(record.reportGeneratedAt() == null ? OffsetDateTime.now() : record.reportGeneratedAt())),
+                new MetaPair("Accession", record.sampleAccessionNumber()),
                 new MetaPair("Patient", record.patientName()),
                 new MetaPair("Patient ID", record.patientNumber()),
                 new MetaPair("Doctor", record.doctorName()),
@@ -1140,12 +1174,12 @@ public class LabService {
                 new MetaPair("Delivered At", formatDateTime(record.deliveredAt())),
                 new MetaPair("Status", String.valueOf(record.status()))
         );
-        float rowHeight = 20f;
         float columnWidth = width / 2f;
         for (int i = 0; i < pairs.size(); i += 2) {
-            ensureSpace(page, margin, y, rowHeight + 4);
             MetaPair left = pairs.get(i);
             MetaPair right = i + 1 < pairs.size() ? pairs.get(i + 1) : new MetaPair("", "");
+            float rowHeight = Math.max(28f, Math.max(measureMetaCellHeight(left, columnWidth), measureMetaCellHeight(right, columnWidth)));
+            ensureSpace(page, margin, y, rowHeight + 4);
             drawMetaCell(content, margin, y, columnWidth, rowHeight, left);
             drawMetaCell(content, margin + columnWidth, y, columnWidth, rowHeight, right);
             y -= rowHeight;
@@ -1156,17 +1190,17 @@ public class LabService {
     private void drawMetaCell(PDPageContentStream content, float x, float y, float width, float height, MetaPair pair) throws IOException {
         content.addRect(x, y - height, width, height);
         content.stroke();
-        writeLine(content, pair.label(), 8.5f, x + 6, y - 8, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
-        writeLine(content, safe(pair.value()), 9.2f, x + 72, y - 8, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        writeLine(content, pair.label(), 8.5f, x + 6, y - 9, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeWrapped(content, safe(pair.value()), 9f, x + 6, y - 19, width - 12f);
     }
 
-    private float drawResultsTable(PDPageContentStream content, LabOrderRecord record, float margin, float width, float y) throws IOException {
+    private float drawResultsTable(PDPageContentStream content, LabOrderRecord record, PDPage page, float margin, float width, float y) throws IOException {
         writeSectionHeader(content, "Results", margin, y, width);
         y -= 20;
-        String[] headers = new String[]{"Test / Component", "Result", "Flag", "Unit", "Reference Range"};
-        float[] columns = new float[]{0.30f, 0.18f, 0.12f, 0.12f, 0.28f};
+        String[] headers = new String[]{"Test / Component", "Result", "Unit", "Reference Range", "Interpretation"};
+        float[] columns = new float[]{0.40f, 0.12f, 0.10f, 0.20f, 0.18f};
         float headerHeight = 18f;
-        float rowHeight = 20f;
+        PDType1Font boldFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
         content.setNonStrokingColor(232 / 255f, 240 / 255f, 254 / 255f);
         content.addRect(margin, y - headerHeight, width, headerHeight);
         content.fill();
@@ -1176,11 +1210,12 @@ public class LabService {
             float colWidth = width * columns[i];
             content.addRect(x, y - headerHeight, colWidth, headerHeight);
             content.stroke();
-            writeLine(content, headers[i], 8.4f, x + 4, y - 11, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+            writeLine(content, headers[i], 8.2f, x + 4, y - 11, boldFont);
             x += colWidth;
         }
         y -= headerHeight;
         if (record.results().isEmpty()) {
+            float rowHeight = 20f;
             content.addRect(margin, y - rowHeight, width, rowHeight);
             content.stroke();
             writeLine(content, "No results entered", 9f, margin + 6, y - 12, new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE));
@@ -1189,22 +1224,24 @@ public class LabService {
         for (LabOrderResultRecord row : record.results()) {
             x = margin;
             String label = StringUtils.hasText(row.parameterName()) ? row.testName() + " / " + row.parameterName() : (StringUtils.hasText(row.componentName()) ? row.testName() + " / " + row.componentName() : row.testName());
-            String[] values = new String[]{label, safe(row.resultValue()), safe(row.resultFlag()), safe(row.unit()), safe(row.referenceRange())};
+            String[] values = new String[]{label, safe(row.resultValue()), safe(row.unit()), safe(row.referenceRange()), interpretationLabel(row.resultFlag())};
+            float rowHeight = measureResultRowHeight(values, columns, width);
+            ensureSpace(page, margin, y, rowHeight + 4);
             for (int i = 0; i < values.length; i++) {
                 float colWidth = width * columns[i];
                 content.addRect(x, y - rowHeight, colWidth, rowHeight);
                 content.stroke();
-                if (i == 2 && StringUtils.hasText(values[i])) {
-                    if ("CRITICAL".equalsIgnoreCase(values[i])) {
+                if (i == 4 && StringUtils.hasText(values[i])) {
+                    if (isCriticalInterpretation(values[i])) {
                         setFillColor(content, 185, 28, 28);
-                    } else if ("LOW".equalsIgnoreCase(values[i]) || "HIGH".equalsIgnoreCase(values[i])) {
+                    } else if ("Low".equalsIgnoreCase(values[i]) || "High".equalsIgnoreCase(values[i])) {
                         setFillColor(content, 237, 108, 2);
                     } else {
                         setFillColor(content, 27, 94, 32);
                     }
                 }
-                writeWrappedInCell(content, values[i], 8.8f, x + 4, y - 11, colWidth - 8);
-                if (i == 2) {
+                writeWrappedInCell(content, values[i], 8.6f, x + 4, y - 10, colWidth - 8);
+                if (i == 4) {
                     setFillColor(content, 0, 0, 0);
                 }
                 x += colWidth;
@@ -1319,8 +1356,49 @@ public class LabService {
         content.setStrokingColor(red / 255f, green / 255f, blue / 255f);
     }
 
-    private void drawFooter(PDPageContentStream content, String text, float margin, float y) throws IOException {
-        writeWrapped(content, text, 8f, margin, y, 520);
+    private void drawFooter(PDPageContentStream content, String text, float margin, float y, float width) throws IOException {
+        PDType1Font font = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+        float fontSize = 8f;
+        float textWidth = textWidth(font, fontSize, text);
+        if (textWidth <= width) {
+            float x = margin + Math.max(0f, (width - textWidth) / 2f);
+            writeLine(content, text, fontSize, x, y - 10, font);
+        } else {
+            writeWrapped(content, text, fontSize, margin, y - 10, width);
+        }
+    }
+
+    private float measureMetaCellHeight(MetaPair pair, float width) throws IOException {
+        List<String> lines = wrap(safe(pair.value()), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 9f, width - 12f);
+        return Math.max(28f, 14f + Math.max(1, lines.size()) * 10f);
+    }
+
+    private float measureResultRowHeight(String[] values, float[] columns, float width) throws IOException {
+        float max = 22f;
+        for (int i = 0; i < values.length; i++) {
+            float colWidth = width * columns[i] - 8f;
+            List<String> lines = wrap(values[i], new PDType1Font(Standard14Fonts.FontName.HELVETICA), 8.6f, colWidth);
+            max = Math.max(max, 8f + Math.max(1, lines.size()) * 9.6f);
+        }
+        return max;
+    }
+
+    private String interpretationLabel(String resultFlag) {
+        if (!StringUtils.hasText(resultFlag)) {
+            return "Normal";
+        }
+        return switch (resultFlag.trim().toUpperCase()) {
+            case "LOW" -> "Low";
+            case "HIGH" -> "High";
+            case "CRITICAL_LOW" -> "Critical Low";
+            case "CRITICAL_HIGH" -> "Critical High";
+            case "CRITICAL" -> "Critical";
+            default -> "NORMAL".equalsIgnoreCase(resultFlag.trim()) ? "Normal" : resultFlag.trim();
+        };
+    }
+
+    private boolean isCriticalInterpretation(String label) {
+        return StringUtils.hasText(label) && label.trim().toUpperCase().startsWith("CRITICAL");
     }
 
     private BufferedImage loadClinicLogo(UUID tenantId, com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord clinic) {
@@ -1421,9 +1499,40 @@ public class LabService {
     private record MetaPair(String label, String value) {
     }
 
-    private record Range(BigDecimal low, BigDecimal high) {
+    private record Range(BigDecimal low, boolean lowInclusive, BigDecimal high, boolean highInclusive) {
         boolean contains(BigDecimal value) {
-            return value != null && value.compareTo(low) >= 0 && value.compareTo(high) <= 0;
+            if (value == null) {
+                return false;
+            }
+            if (low != null) {
+                int comparison = value.compareTo(low);
+                if (comparison < 0 || (comparison == 0 && !lowInclusive)) {
+                    return false;
+                }
+            }
+            if (high != null) {
+                int comparison = value.compareTo(high);
+                if (comparison > 0 || (comparison == 0 && !highInclusive)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        boolean isBelow(BigDecimal value) {
+            if (value == null || low == null) {
+                return false;
+            }
+            int comparison = value.compareTo(low);
+            return comparison < 0 || (comparison == 0 && !lowInclusive);
+        }
+
+        boolean isAbove(BigDecimal value) {
+            if (value == null || high == null) {
+                return false;
+            }
+            int comparison = value.compareTo(high);
+            return comparison > 0 || (comparison == 0 && !highInclusive);
         }
     }
 
@@ -1452,6 +1561,10 @@ public class LabService {
                 entity.getReferenceRange(),
                 entity.getTurnaroundTime(),
                 entity.getPrice(),
+                entity.isEnabled(),
+                entity.getTenantPriceOverride(),
+                entity.getTenantTatOverride(),
+                entity.getDisplayOrder(),
                 entity.isActive(),
                 parameters,
                 entity.getCreatedAt(),
@@ -1492,6 +1605,12 @@ public class LabService {
             }
             if (!test.isActive()) {
                 throw new IllegalArgumentException("Lab test is inactive: " + test.getTestName());
+            }
+            if (!test.isEnabled()) {
+                throw new IllegalArgumentException("Lab test is disabled: " + test.getTestName());
+            }
+            if (!labCatalogueConfigService.isCategoryActive(tenantId, test.getCategory())) {
+                throw new IllegalArgumentException("Lab category is disabled for this tenant: " + test.getCategory());
             }
         }
         return testIds.stream().map(byId::get).toList();
@@ -1536,6 +1655,8 @@ public class LabService {
         int sortOrder = 1;
         List<LabOrderItemEntity> items = new ArrayList<>();
         for (LabTestMasterEntity test : tests) {
+            BigDecimal effectivePrice = test.getTenantPriceOverride() != null ? test.getTenantPriceOverride() : test.getPrice();
+            String effectiveTat = StringUtils.hasText(test.getTenantTatOverride()) ? test.getTenantTatOverride() : test.getTurnaroundTime();
             items.add(labOrderItemRepository.save(LabOrderItemEntity.create(
                     tenantId,
                     savedOrder.getId(),
@@ -1547,8 +1668,8 @@ public class LabService {
                     test.getSampleType(),
                     test.getUnit(),
                     test.getReferenceRange(),
-                    test.getTurnaroundTime(),
-                    normalizeMoney(test.getPrice()),
+                    effectiveTat,
+                    normalizeMoney(effectivePrice),
                     sortOrder++
             )));
         }
@@ -1962,6 +2083,7 @@ public class LabService {
 
     private void saveParameters(UUID tenantId, UUID labTestId, List<LabTestParameterUpsertCommand> commands) {
         labTestParameterRepository.deleteByTenantIdAndLabTestId(tenantId, labTestId);
+        labTestParameterRepository.flush();
         if (commands == null || commands.isEmpty()) {
             return;
         }
@@ -1983,6 +2105,24 @@ public class LabService {
             sortOrder++;
         }
         labTestParameterRepository.saveAll(entities);
+    }
+
+    private IllegalArgumentException duplicateTestException(LabTestUpsertCommand command, DataIntegrityViolationException ex) {
+        Throwable root = ex;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String message = root.getMessage() == null ? "" : root.getMessage().toLowerCase();
+        if (message.contains("uq_lab_tests_tenant_code") || message.contains("test_code")) {
+            return new IllegalArgumentException("Lab test code already exists");
+        }
+        if (message.contains("uq_lab_tests_tenant_name") || message.contains("test_name")) {
+            return new IllegalArgumentException("Lab test already exists");
+        }
+        if (command.parameters() != null && !command.parameters().isEmpty()) {
+            return new IllegalArgumentException("parameter names must be unique within a test");
+        }
+        return new IllegalArgumentException("Lab test already exists");
     }
 
     private List<LabTestParameterRecord> resolveParameters(UUID tenantId, LabOrderItemEntity item) {
@@ -2022,23 +2162,24 @@ public class LabService {
         }
         Range critical = parseRange(criticalRange);
         if (critical != null && !critical.contains(numeric)) {
-            if (numeric.compareTo(critical.low()) < 0) {
+            if (critical.isBelow(numeric)) {
                 return new ResultFlagResolution(LabResultFlag.CRITICAL_LOW, true);
             }
-            if (numeric.compareTo(critical.high()) > 0) {
+            if (critical.isAbove(numeric)) {
                 return new ResultFlagResolution(LabResultFlag.CRITICAL_HIGH, true);
             }
-            return new ResultFlagResolution(LabResultFlag.CRITICAL, true);
         }
         Range normal = parseRange(normalRange);
         if (normal == null) {
             return new ResultFlagResolution(LabResultFlag.NORMAL, false);
         }
-        if (numeric.compareTo(normal.low()) < 0) {
-            return new ResultFlagResolution(LabResultFlag.LOW, false);
-        }
-        if (numeric.compareTo(normal.high()) > 0) {
-            return new ResultFlagResolution(LabResultFlag.HIGH, false);
+        if (!normal.contains(numeric)) {
+            if (normal.isBelow(numeric)) {
+                return new ResultFlagResolution(LabResultFlag.LOW, false);
+            }
+            if (normal.isAbove(numeric)) {
+                return new ResultFlagResolution(LabResultFlag.HIGH, false);
+            }
         }
         return new ResultFlagResolution(LabResultFlag.NORMAL, false);
     }
@@ -2072,29 +2213,33 @@ public class LabService {
         if (!StringUtils.hasText(value)) {
             return null;
         }
-        String normalized = value.trim();
+        String normalized = value.trim().replace(" ", "");
+        if (normalized.startsWith("<=")) {
+            BigDecimal high = parseNumeric(normalized.substring(2));
+            return high == null ? null : new Range(null, false, high, true);
+        }
+        if (normalized.startsWith("<")) {
+            BigDecimal high = parseNumeric(normalized.substring(1));
+            return high == null ? null : new Range(null, false, high, false);
+        }
+        if (normalized.startsWith(">=")) {
+            BigDecimal low = parseNumeric(normalized.substring(2));
+            return low == null ? null : new Range(low, true, null, false);
+        }
+        if (normalized.startsWith(">")) {
+            BigDecimal low = parseNumeric(normalized.substring(1));
+            return low == null ? null : new Range(low, false, null, false);
+        }
         if (normalized.contains("-")) {
             String[] parts = normalized.split("-", 2);
             BigDecimal low = parseNumeric(parts[0]);
             BigDecimal high = parseNumeric(parts[1]);
             if (low != null && high != null) {
-                return new Range(low.min(high), low.max(high));
-            }
-        }
-        if (normalized.startsWith("<")) {
-            BigDecimal high = parseNumeric(normalized.substring(1));
-            if (high != null) {
-                return new Range(ZERO, high);
-            }
-        }
-        if (normalized.startsWith(">")) {
-            BigDecimal low = parseNumeric(normalized.substring(1));
-            if (low != null) {
-                return new Range(low, low.add(BigDecimal.ONE));
+                return new Range(low.min(high), true, low.max(high), true);
             }
         }
         BigDecimal exact = parseNumeric(normalized);
-        return exact == null ? null : new Range(exact, exact);
+        return exact == null ? null : new Range(exact, true, exact, true);
     }
 
     private LabOrderAttachmentRecord toRecord(LabOrderAttachmentEntity entity) {
@@ -2123,16 +2268,7 @@ public class LabService {
     }
 
     private String normalizeCategory(String value) {
-        String normalized = normalize(value);
-        if (normalized == null) {
-            throw new IllegalArgumentException("category is required");
-        }
-        for (String allowed : LAB_CATEGORIES) {
-            if (allowed.equalsIgnoreCase(normalized)) {
-                return allowed;
-            }
-        }
-        throw new IllegalArgumentException("Unsupported category");
+        return LabCategoryCatalog.normalize(value);
     }
 
     private String normalizeReviewDecision(String value) {
@@ -2296,15 +2432,53 @@ public class LabService {
         throw new IllegalStateException("Unable to generate lab order number");
     }
 
-    private String generateAccessionNumber(UUID tenantId) {
+    private String generateAccessionNumber(UUID tenantId, Set<String> reservedAccessions) {
         String datePortion = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
-        for (int sequence = 1; sequence <= 9999; sequence++) {
-            String candidate = "LAB-" + datePortion + "-" + String.format("%04d", sequence);
-            if (labOrderSampleRepository.findByTenantIdAndAccessionNumber(tenantId, candidate).isEmpty()) {
+        String prefix = "LAB-" + datePortion + "-";
+        int nextSequence = findNextAccessionSequence(tenantId, prefix);
+        for (int sequence = nextSequence; sequence <= 9999; sequence++) {
+            String candidate = prefix + String.format("%04d", sequence);
+            if ((reservedAccessions == null || !reservedAccessions.contains(candidate))
+                    && labOrderSampleRepository.findByTenantIdAndAccessionNumber(tenantId, candidate).isEmpty()) {
                 return candidate;
             }
         }
         throw new IllegalStateException("Unable to generate lab accession number");
+    }
+
+    private int findNextAccessionSequence(UUID tenantId, String accessionPrefix) {
+        return labOrderSampleRepository.findFirstByTenantIdAndAccessionNumberStartingWithOrderByAccessionNumberDesc(tenantId, accessionPrefix)
+                .map(LabOrderSampleEntity::getAccessionNumber)
+                .map(this::parseAccessionSequence)
+                .map(sequence -> sequence + 1)
+                .orElse(1);
+    }
+
+    private int parseAccessionSequence(String accessionNumber) {
+        if (!StringUtils.hasText(accessionNumber)) {
+            return 0;
+        }
+        int index = accessionNumber.lastIndexOf('-');
+        if (index < 0 || index == accessionNumber.length() - 1) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(accessionNumber.substring(index + 1));
+        } catch (NumberFormatException ex) {
+            return 0;
+        }
+    }
+
+    private boolean isAccessionCollision(DataIntegrityViolationException ex, String accessionNumber) {
+        Throwable root = ex;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String message = root.getMessage() == null ? "" : root.getMessage().toLowerCase();
+        return StringUtils.hasText(accessionNumber)
+                && (message.contains("uq_lab_order_samples_tenant_accession")
+                || message.contains("accession_number")
+                || message.contains(accessionNumber.toLowerCase()));
     }
 
     private String generateBarcodeValue(String accessionNumber) {

@@ -15,6 +15,7 @@ public class TenantModuleService {
 
     public static final Set<String> SUPPORTED_MODULES = Set.of(
             SaasModuleCode.APPOINTMENTS.name(),
+            SaasModuleCode.PATIENTS.name(),
             SaasModuleCode.CONSULTATION.name(),
             SaasModuleCode.PRESCRIPTION.name(),
             SaasModuleCode.BILLING.name(),

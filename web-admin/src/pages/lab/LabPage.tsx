@@ -40,11 +40,14 @@ import { firstZodError, labDoctorReviewSchema, labOrderCreateSchema, labPaymentS
 
 import { useAuth } from "../../auth/useAuth";
 import { resolveEnabledTenantModules } from "../../modules/moduleRegistry";
-import { CompactEmptyState, CompactStatCard, compactCardContentSx } from "../../components/compact/CompactUi";
-import LabDashboard, { type LabDashboardActionKey, type LabDashboardData } from "./LabDashboard";
+import { CompactEmptyState, compactCardContentSx } from "../../components/compact/CompactUi";
+import PatientQuickRegisterDialog, { patientSummary } from "../../components/patients/PatientQuickRegisterDialog";
+import LabDashboard, { LabAnalyticsPanel, type LabDashboardActionKey, type LabDashboardData } from "./LabDashboard";
+import LabConfigurationPanel from "./LabConfigurationPanel";
 import RequiredLabel from "../../components/forms/RequiredLabel";
 import CommentSuggestions from "../../shared/components/comment-suggestions/CommentSuggestions";
 import {
+  getLabCategoryConfig,
   collectLabOrderSamples,
   collectLabOrderPayment,
   createLabTest,
@@ -53,6 +56,7 @@ import {
   enterLabOrderResults,
   getLabCategories,
   getLabTestImportTemplate,
+  getLabTestConfig,
   getLabOrderPdf,
   getLabOrders,
   getLabTests,
@@ -62,7 +66,11 @@ import {
   publishLabOrderReport,
   searchPatients,
   updateLabTest,
+  updateLabCategoryConfig,
+  updateLabTestConfig,
   verifyLabOrder,
+  type LabCategoryConfig,
+  type LabTestCatalogueConfig,
   type LabTestCsvImportResult,
   type Patient,
   type LabOrder,
@@ -423,6 +431,8 @@ function defaultResultsForItem(orderItem: LabOrder["items"][number], existingRes
 export default function LabPage() {
   const auth = useAuth();
   const [tests, setTests] = React.useState<LabTest[]>([]);
+  const [categoryConfigs, setCategoryConfigs] = React.useState<LabCategoryConfig[]>([]);
+  const [testConfigs, setTestConfigs] = React.useState<LabTestCatalogueConfig[]>([]);
   const [orders, setOrders] = React.useState<LabOrder[]>([]);
   const [categories, setCategories] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -463,6 +473,7 @@ export default function LabPage() {
   const [importResult, setImportResult] = React.useState<LabTestCsvImportResult | null>(null);
   const [requestOpen, setRequestOpen] = React.useState(false);
   const [requestForm, setRequestForm] = React.useState<LabRequestForm>(emptyLabRequestForm());
+  const [quickRegisterOpen, setQuickRegisterOpen] = React.useState(false);
   const [patientQuery, setPatientQuery] = React.useState("");
   const [patientOptions, setPatientOptions] = React.useState<Patient[]>([]);
   const [patientLoading, setPatientLoading] = React.useState(false);
@@ -483,6 +494,7 @@ export default function LabPage() {
   const canGenerateReport = auth.hasPermission("lab.order.generate_report");
   const canReviewReport = auth.hasPermission("lab.order.review");
   const canCreateOrders = auth.hasPermission("lab.order.create");
+  const canQuickRegisterPatient = canCreateOrders && auth.hasPermission("patient.create") && auth.hasPermission("patient.read");
   const enabledModules = React.useMemo(() => resolveEnabledTenantModules(auth), [auth]);
   const consultationEnabled = enabledModules.has("CONSULTATION");
   const laboratoryMode = consultationEnabled ? "INTEGRATED" : "STANDALONE";
@@ -491,30 +503,29 @@ export default function LabPage() {
   const pageSubtitle = consultationEnabled
     ? "Manage consultation-linked and walk-in laboratory orders, billing, samples, results, and reports."
     : "Run standalone diagnostic registrations, billing, sample collection, results, and reports without consultation dependency.";
-  const workflowTitle = consultationEnabled ? "Doctor Request / Walk-in" : "Patient Registration";
-  const workflowSteps = consultationEnabled
-    ? ["Billing", "Payment", "Sample Collection", "Result Entry", "Lab Review", "Report"]
-    : ["Test Selection", "Billing", "Payment", "Sample Collection", "Result Entry", "Lab Review", "Report"];
-
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;
     setLoading(true);
     setError(null);
     try {
-      const [categoryRows, testRows, orderRows] = await Promise.all([
+      const [categoryRows, testRows, orderRows, categoryConfigRows, testConfigRows] = await Promise.all([
         getLabCategories(auth.accessToken, auth.tenantId),
         getLabTests(auth.accessToken, auth.tenantId, { active: null }),
         canViewOrders ? getLabOrders(auth.accessToken, auth.tenantId, {}) : Promise.resolve([] as LabOrder[]),
+        canManageTests ? getLabCategoryConfig(auth.accessToken, auth.tenantId) : Promise.resolve([] as LabCategoryConfig[]),
+        canManageTests ? getLabTestConfig(auth.accessToken, auth.tenantId) : Promise.resolve([] as LabTestCatalogueConfig[]),
       ]);
       setCategories(categoryRows);
       setTests(testRows);
       setOrders(orderRows);
+      setCategoryConfigs(categoryConfigRows);
+      setTestConfigs(testConfigRows);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load laboratory module");
     } finally {
       setLoading(false);
     }
-  }, [auth.accessToken, auth.tenantId, canViewOrders]);
+  }, [auth.accessToken, auth.tenantId, canManageTests, canViewOrders]);
 
   React.useEffect(() => {
     void load();
@@ -572,6 +583,12 @@ export default function LabPage() {
       ].filter(Boolean).some((value) => String(value).toLowerCase().includes(term));
     });
   }, [search, tests]);
+  const visibleCatalogTests = React.useMemo(() => filteredTests.slice(0, 50), [filteredTests]);
+  const activeCategoryCodes = React.useMemo(() => new Set(categories), [categories]);
+  const availableTests = React.useMemo(
+    () => tests.filter((row) => row.active && row.enabled && activeCategoryCodes.has(row.category)),
+    [activeCategoryCodes, tests],
+  );
 
   const pendingSampleOrders = React.useMemo(() => orders.filter((row) => row.status === "READY_FOR_COLLECTION"), [orders]);
   const pendingResultsOrders = React.useMemo(() => orders.filter((row) => row.status === "SAMPLE_COLLECTED" || row.status === "PROCESSING" || row.status === "RESULT_ENTERED"), [orders]);
@@ -593,52 +610,82 @@ export default function LabPage() {
     [orders, orderSearch, statusFilter],
   );
 
-  const activeTestCount = tests.filter((row) => row.active).length;
-  const pendingStatusCount = orders.filter((row) => ["ORDERED", "PAYMENT_PENDING", "PAID", "READY_FOR_COLLECTION"].includes(row.status)).length;
-  const sampleCollectedCount = orders.filter((row) => ["SAMPLE_COLLECTED", "PROCESSING"].includes(row.status)).length;
-  const completedCount = orders.filter((row) => ["RESULT_ENTERED", "REPORT_READY", "REPORT_GENERATED", "DOCTOR_REVIEWED"].includes(row.status)).length;
-  const deliveredCount = orders.filter((row) => row.status === "DELIVERED").length;
   const dashboardData = React.useMemo<LabDashboardData>(() => {
     const now = new Date();
     const todayOrders = orders.filter((row) => isSameLocalDay(row.orderedAt, now));
     const todayCollections = orders.filter((row) => isSameLocalDay(row.sampleCollectedAt, now));
     const todayResults = orders.filter((row) => isSameLocalDay(row.resultEnteredAt, now));
     const todayReports = orders.filter((row) => isSameLocalDay(row.reportPublishedAt, now));
+    const walkInOrdersToday = todayOrders.filter((row) => row.orderOrigin === "WALK_IN");
     const todayRevenue = orders
       .filter((row) => isSameLocalDay(row.paymentCollectedAt, now))
       .reduce((sum, row) => sum + (row.billTotalAmount ?? 0), 0);
+    const pendingPaymentCount = orders.filter((row) => row.status === "PAYMENT_PENDING").length;
+    const pendingCollectionCount = orders.filter((row) => row.status === "READY_FOR_COLLECTION").length;
+    const workQueueCount = orders.filter((row) => ["SAMPLE_COLLECTED", "PROCESSING"].includes(row.status)).length;
+    const pendingReviewCount = pendingReviewOrders.length;
+    const readyToPublishCount = orders.filter((row) => row.status === "REPORT_READY" || row.status === "REPORT_GENERATED" || row.status === "DOCTOR_REVIEWED").length;
+    const criticalResultsCount = orders.filter((row) => row.results.some((result) => result.criticalResult || /critical/i.test(result.resultFlag || ""))).length;
+    const tatBreachedCount = orders.filter((row) => {
+      if (row.status === "DELIVERED" || row.status === "CANCELLED") return false;
+      const turnaroundHours = row.items
+        .map((item) => parseTurnaroundHours(item.turnaroundTime))
+        .filter((value): value is number => typeof value === "number");
+      if (!turnaroundHours.length) return false;
+      const maxTurnaroundHours = Math.max(...turnaroundHours);
+      const ageHours = (now.getTime() - new Date(row.orderedAt).getTime()) / 3_600_000;
+      return ageHours > maxTurnaroundHours;
+    }).length;
+    const sampleRejectedCount = orders.filter((row) => row.samples.some((sample) => sample.status === "REJECTED")).length;
+    const recollectionRequiredCount = orders.filter((row) => row.samples.some((sample) => sample.status === "RECOLLECTION_REQUIRED" || sample.recollectionRequired)).length;
+    const resultsPendingEntryCount = pendingResultsOrders.length;
 
-    const workflowSummary = [
-      { key: "new-orders" as const, label: "New Orders", value: todayOrders.length, helper: "Created today", tone: "info" as const },
-      { key: "payment-pending" as const, label: "Payment Pending", value: orders.filter((row) => row.status === "PAYMENT_PENDING").length, helper: "Awaiting billing clearance", tone: "warning" as const },
-      { key: "pending-collection" as const, label: "Pending Collection", value: orders.filter((row) => row.status === "READY_FOR_COLLECTION").length, helper: "Ready for sample draw", tone: "info" as const },
-      { key: "work-queue" as const, label: "Work Queue", value: sampleCollectedCount, helper: "Samples in lab flow", tone: "default" as const },
-      { key: "pending-review" as const, label: "Pending Lab Review", value: orders.filter((row) => row.status === "RESULT_ENTERED").length, helper: "Awaiting verification", tone: "warning" as const },
-      { key: "ready-to-publish" as const, label: "Ready to Publish", value: orders.filter((row) => row.status === "REPORT_READY" || row.status === "REPORT_GENERATED" || row.status === "DOCTOR_REVIEWED").length, helper: "Report actions pending", tone: "success" as const },
-      { key: "published-today" as const, label: "Published Today", value: todayReports.length, helper: "Delivered to patients", tone: "success" as const },
-    ];
+    const workToday: LabDashboardData["myWorkToday"] = [];
+    const addWorkCard = (metric: LabDashboardData["myWorkToday"][number]) => {
+      if (workToday.some((row) => row.key === metric.key)) return;
+      workToday.push(metric);
+    };
+
+    if (canCreateOrders || canCollectPayment || canManageTests) {
+      addWorkCard({ key: "work-pending-payment", label: "Pending Payment", value: pendingPaymentCount, helper: "Awaiting billing clearance", tone: "warning" });
+      addWorkCard({ key: "work-walk-in-orders-today", label: "Walk-in Orders Today", value: walkInOrdersToday.length, helper: "Front-desk registrations", tone: "info" });
+      addWorkCard({ key: "work-new-orders", label: "New Orders", value: todayOrders.length, helper: "Created since opening", tone: "info" });
+    }
+    if (canCollectSample || canManageTests) {
+      addWorkCard({ key: "work-pending-sample-collection", label: "Pending Sample Collection", value: pendingCollectionCount, helper: "Ready for collection", tone: "info" });
+      addWorkCard({ key: "work-recollection-required", label: "Recollection Required", value: recollectionRequiredCount, helper: "Return to collection", tone: "warning" });
+      addWorkCard({ key: "work-sample-rejected", label: "Sample Rejected", value: sampleRejectedCount, helper: "Requires follow-up", tone: "error" });
+    }
+    if (canEnterResults || canManageTests) {
+      addWorkCard({ key: "work-work-queue", label: "Work Queue", value: workQueueCount, helper: "Active lab workflow", tone: "default" });
+      addWorkCard({ key: "work-samples-collected", label: "Samples Collected", value: todayCollections.length, helper: "Collected today", tone: "info" });
+      addWorkCard({ key: "work-results-pending-entry", label: "Results Pending Entry", value: resultsPendingEntryCount, helper: "Awaiting result entry", tone: "warning" });
+      addWorkCard({ key: "work-critical-results", label: "Critical Results", value: criticalResultsCount, helper: "Immediate attention", tone: "error" });
+    }
+    if (canReviewReport || canGenerateReport || canManageTests) {
+      addWorkCard({ key: "work-pending-lab-review", label: "Pending Lab Review", value: pendingReviewCount, helper: "Awaiting verification", tone: "warning" });
+      addWorkCard({ key: "work-ready-to-publish", label: "Ready to Publish", value: readyToPublishCount, helper: "Report actions pending", tone: "success" });
+      addWorkCard({ key: "work-published-today", label: "Published Today", value: todayReports.length, helper: "Delivered to patients", tone: "success" });
+      addWorkCard({ key: "work-tat-breached", label: "TAT Breached", value: tatBreachedCount, helper: "Needs escalation", tone: "warning" });
+    }
+    if (!workToday.length) {
+      addWorkCard({ key: "work-published-today", label: "Published Today", value: todayReports.length, helper: "Delivered to patients", tone: "success" });
+      addWorkCard({ key: "work-critical-results", label: "Critical Results", value: criticalResultsCount, helper: "Immediate attention", tone: "error" });
+      addWorkCard({ key: "work-tat-breached", label: "TAT Breached", value: tatBreachedCount, helper: "Needs escalation", tone: "warning" });
+    }
 
     const alerts = [
       {
         key: "critical-results" as const,
         label: "Critical Results",
-        value: orders.filter((row) => row.results.some((result) => result.criticalResult || /critical/i.test(result.resultFlag || ""))).length,
+        value: criticalResultsCount,
         helper: "Immediate attention",
         tone: "error" as const,
       },
       {
         key: "tat-breached" as const,
         label: "TAT Breached",
-        value: orders.filter((row) => {
-          if (row.status === "DELIVERED" || row.status === "CANCELLED") return false;
-          const turnaroundHours = row.items
-            .map((item) => parseTurnaroundHours(item.turnaroundTime))
-            .filter((value): value is number => typeof value === "number");
-          if (!turnaroundHours.length) return false;
-          const maxTurnaroundHours = Math.max(...turnaroundHours);
-          const ageHours = (now.getTime() - new Date(row.orderedAt).getTime()) / 3_600_000;
-          return ageHours > maxTurnaroundHours;
-        }).length,
+        value: tatBreachedCount,
         helper: "Needs escalation",
         tone: "warning" as const,
       },
@@ -669,21 +716,23 @@ export default function LabPage() {
     };
 
     return {
-      workflowSummary,
-      alerts,
-      activity: [
-        { key: "new-orders" as const, label: "Orders", value: todayOrders.length, helper: "Today", tone: "info" as const },
-        { key: "work-queue" as const, label: "Collections", value: todayCollections.length, helper: "Samples logged", tone: "info" as const },
-        { key: "pending-review" as const, label: "Results Entered", value: todayResults.length, helper: "Moved to review", tone: "success" as const },
-        { key: "ready-to-publish" as const, label: "Reports Published", value: todayReports.length, helper: "Completed", tone: "success" as const },
-        { key: "payment-pending" as const, label: "Revenue", value: new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(todayRevenue), helper: "Collected today", tone: "success" as const },
-      ],
-      sparklines: [
-        { key: "sparkline-orders" as const, label: "Orders", subtitle: "7-day trend", series: sevenDaySeries((row) => row.orderedAt), tone: "info" as const },
-        { key: "sparkline-reports" as const, label: "Reports Published", subtitle: "7-day trend", series: sevenDaySeries((row) => row.reportPublishedAt), tone: "success" as const },
-      ],
+      myWorkToday: workToday,
+      analytics: {
+        alerts,
+        activity: [
+          { key: "new-orders" as const, label: "Orders", value: todayOrders.length, helper: "Today", tone: "info" as const },
+          { key: "work-queue" as const, label: "Collections", value: todayCollections.length, helper: "Samples logged", tone: "info" as const },
+          { key: "pending-review" as const, label: "Results Entered", value: todayResults.length, helper: "Moved to review", tone: "success" as const },
+          { key: "ready-to-publish" as const, label: "Reports Published", value: todayReports.length, helper: "Completed", tone: "success" as const },
+          { key: "payment-pending" as const, label: "Revenue", value: new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(todayRevenue), helper: "Collected today", tone: "success" as const },
+        ],
+        sparklines: [
+          { key: "sparkline-orders" as const, label: "Orders", subtitle: "7-day trend", series: sevenDaySeries((row) => row.orderedAt), tone: "info" as const },
+          { key: "sparkline-reports" as const, label: "Reports Published", subtitle: "7-day trend", series: sevenDaySeries((row) => row.reportPublishedAt), tone: "success" as const },
+        ],
+      },
     };
-  }, [orders, sampleCollectedCount]);
+  }, [orders, canCollectPayment, canCollectSample, canCreateOrders, canEnterResults, canGenerateReport, canManageTests, canReviewReport, pendingResultsOrders.length, pendingReviewOrders.length]);
 
   const openSampleDialog = React.useCallback((row: LabOrder) => {
     setSampleTarget(row);
@@ -1085,6 +1134,7 @@ export default function LabPage() {
       ...emptyLabRequestForm(),
       orderOrigin: "WALK_IN",
     });
+    setQuickRegisterOpen(false);
     setSelectedPatient(null);
     setPatientQuery("");
     setPatientOptions([]);
@@ -1093,39 +1143,100 @@ export default function LabPage() {
   };
 
   const handleDashboardAction = (key: LabDashboardActionKey) => {
-    switch (key) {
-      case "new-orders":
-      case "payment-pending":
-      case "published-today":
-        setTab(4);
-        return;
-      case "pending-collection":
-      case "work-queue":
-      case "critical-results":
-      case "sample-rejected":
-      case "recollection-required":
-        setTab(1);
-        return;
-      case "pending-review":
-      case "ready-to-publish":
-        setTab(3);
-        return;
-      case "quick-new-order":
-        openRequestDialog();
-        return;
-      case "quick-collect":
-        setTab(1);
-        return;
-      case "quick-enter-results":
-        setTab(2);
-        return;
-      case "quick-verify":
-      case "quick-publish":
-        setTab(3);
-        return;
-      default:
-        return;
+    const paymentKeys = new Set<LabDashboardActionKey>([
+      "new-orders",
+      "payment-pending",
+      "work-pending-payment",
+      "work-walk-in-orders-today",
+      "work-new-orders",
+      "work-published-today",
+      "work-ready-to-publish",
+      "published-today",
+    ]);
+    const sampleKeys = new Set<LabDashboardActionKey>([
+      "quick-collect",
+      "pending-collection",
+      "work-pending-sample-collection",
+      "work-recollection-required",
+      "work-sample-rejected",
+      "sample-rejected",
+      "recollection-required",
+    ]);
+    const queueKeys = new Set<LabDashboardActionKey>([
+      "quick-enter-results",
+      "work-queue",
+      "work-work-queue",
+      "work-samples-collected",
+      "work-results-pending-entry",
+      "work-tat-breached",
+      "critical-results",
+      "work-critical-results",
+    ]);
+    const reviewKeys = new Set<LabDashboardActionKey>([
+      "quick-verify",
+      "quick-publish",
+      "pending-review",
+      "ready-to-publish",
+      "work-pending-lab-review",
+    ]);
+
+    if (key === "quick-new-order") {
+      openRequestDialog();
+      return;
     }
+    if (key === "quick-collect-payment" || paymentKeys.has(key)) {
+      setTab(4);
+      return;
+    }
+    if (sampleKeys.has(key)) {
+      setTab(1);
+      return;
+    }
+    if (queueKeys.has(key)) {
+      setTab(canEnterResults ? 2 : 3);
+      return;
+    }
+    if (reviewKeys.has(key)) {
+      setTab(3);
+      return;
+    }
+    if (key === "quick-collect") {
+      setTab(1);
+    }
+  };
+
+  const saveCategoryConfig = async (code: string, patch: { displayName?: string | null; active?: boolean | null; displayOrder?: number | null }) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setSaving(true);
+    try {
+      await updateLabCategoryConfig(auth.accessToken, auth.tenantId, code, patch);
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveTestConfig = async (id: string, patch: { enabled?: boolean | null; active?: boolean | null; tenantPriceOverride?: number | null; tenantTatOverride?: string | null; displayOrder?: number | null }) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setSaving(true);
+    try {
+      await updateLabTestConfig(auth.accessToken, auth.tenantId, id, patch);
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const readOnlyAnalyticsRole = !canCreateOrders && !canCollectPayment && !canCollectSample && !canEnterResults && !canReviewReport && !canGenerateReport && !canManageTests;
+  const analyticsExpandedByDefault = canManageTests || readOnlyAnalyticsRole;
+
+  const onQuickPatientCreated = (patient: Patient) => {
+    setSelectedPatient(patient);
+    setRequestForm((current) => ({ ...current, patientId: patient.id }));
+    setPatientQuery(patientSummary(patient));
+    setPatientOptions([patient]);
+    setPatientOptionsLoaded(true);
+    setQuickRegisterOpen(false);
   };
 
   const submitLabRequest = async () => {
@@ -1220,37 +1331,6 @@ export default function LabPage() {
         onAction={handleDashboardAction}
       />
 
-      <Card variant="outlined" sx={{ boxShadow: "none", bgcolor: "background.paper" }}>
-        <CardContent sx={{ py: 1.5 }}>
-          <Stack spacing={0.75}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>
-              {consultationEnabled ? "Integrated workflow" : "Standalone workflow"}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {[workflowTitle, ...workflowSteps].join(" \u2192 ")}
-            </Typography>
-          </Stack>
-        </CardContent>
-      </Card>
-
-      <Grid container spacing={2}>
-        <Grid size={{ xs: 12, md: 3 }}>
-          <CompactStatCard label="Catalog items" value={tests.length} helper={`${activeTestCount} active`} tone="info" />
-        </Grid>
-        <Grid size={{ xs: 12, md: 3 }}>
-          <CompactStatCard label="Pending" value={pendingStatusCount} helper="Ordered through ready-for-collection" tone="warning" />
-        </Grid>
-        <Grid size={{ xs: 12, md: 3 }}>
-          <CompactStatCard label="Sample collected" value={sampleCollectedCount} helper="Processing or already collected" tone="info" />
-        </Grid>
-        <Grid size={{ xs: 12, md: 3 }}>
-          <CompactStatCard label="Completed" value={completedCount} helper="Results entered or reviewed" tone="success" />
-        </Grid>
-        <Grid size={{ xs: 12, md: 3 }}>
-          <CompactStatCard label="Delivered" value={deliveredCount} helper="Reports handed over" tone="info" />
-        </Grid>
-      </Grid>
-
       <Card variant="outlined" sx={{ boxShadow: "none" }}>
         <CardContent sx={compactCardContentSx}>
           <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 1 }}>
@@ -1259,6 +1339,7 @@ export default function LabPage() {
             <Tab label="Work Queue / Result Entry" />
             <Tab label="Pending Lab Review" />
             <Tab label="Orders" />
+            {canManageTests ? <Tab label="Lab Configuration" /> : null}
           </Tabs>
 
           {tab === 0 ? (
@@ -1267,14 +1348,17 @@ export default function LabPage() {
                 <TextField fullWidth size="small" label="Search tests" value={search} onChange={(e) => setSearch(e.target.value.slice(0, 60))} inputProps={{ maxLength: 60 }} />
                 <Button variant="outlined" onClick={openCreate} disabled={!canManageTests} startIcon={<AddRoundedIcon />}>Add test</Button>
               </Stack>
-              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+              <Typography variant="caption" color="text.secondary">
+                Showing first 50 tests. Use search to find more.
+              </Typography>
+              <Box sx={{ display: "flex", gap: 0.75, overflowX: "auto", pb: 0.25, flexWrap: "nowrap" }}>
                 {categories.map((category) => <Chip key={category} size="small" label={category} variant="outlined" />)}
-              </Stack>
+              </Box>
               {!filteredTests.length ? (
                 <CompactEmptyState title="No lab tests found" subtitle="Create the first lab test to start ordering." action={canManageTests ? <Button variant="contained" onClick={openCreate}>Create test</Button> : null} />
               ) : (
-                <Box sx={{ overflowX: "auto" }}>
-                  <Table size="small">
+                <Box sx={{ maxHeight: 520, overflow: "auto" }}>
+                  <Table size="small" stickyHeader sx={{ minWidth: 900 }}>
                     <TableHead>
                       <TableRow>
                         <TableCell>Code</TableCell>
@@ -1287,7 +1371,7 @@ export default function LabPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {filteredTests.map((row) => (
+                      {visibleCatalogTests.map((row) => (
                         <TableRow key={row.id}>
                           <TableCell sx={{ fontWeight: 700 }}>{row.testCode}</TableCell>
                           <TableCell>
@@ -1400,7 +1484,7 @@ export default function LabPage() {
               onGenerateReport={generateReport}
               onPublishReport={openPublishDialog}
             />
-          ) : (
+          ) : tab === 4 ? (
             <Stack spacing={2}>
               <TextField
                 fullWidth
@@ -1565,9 +1649,19 @@ export default function LabPage() {
                 </Box>
               )}
             </Stack>
-          )}
+          ) : canManageTests && tab === 5 ? (
+            <LabConfigurationPanel
+              categories={categoryConfigs}
+              tests={testConfigs}
+              saving={saving}
+              onSaveCategory={saveCategoryConfig}
+              onSaveTest={saveTestConfig}
+            />
+          ) : null}
         </CardContent>
       </Card>
+
+      <LabAnalyticsPanel data={dashboardData.analytics} defaultExpanded={analyticsExpandedByDefault} onAction={handleDashboardAction} />
 
       <Dialog open={editorOpen} onClose={() => setEditorOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>{editing ? "Edit Lab Test" : "New Lab Test"}</DialogTitle>
@@ -1579,7 +1673,7 @@ export default function LabPage() {
               <FormControl fullWidth>
                 <InputLabel id="lab-category-label"><RequiredLabel text="Category" required /></InputLabel>
                 <Select labelId="lab-category-label" label="Category" value={form.category} onChange={(e) => setForm((current) => ({ ...current, category: String(e.target.value) }))}>
-                  {categories.length ? categories.map((category) => <MenuItem key={category} value={category}>{category}</MenuItem>) : ["HEMATOLOGY", "BIOCHEMISTRY", "MICROBIOLOGY", "PATHOLOGY", "RADIOLOGY", "CARDIOLOGY", "OTHER"].map((category) => <MenuItem key={category} value={category}>{category}</MenuItem>)}
+                  {categories.length ? categories.map((category) => <MenuItem key={category} value={category}>{category}</MenuItem>) : ["HEMATOLOGY", "BIOCHEMISTRY", "MICROBIOLOGY", "PATHOLOGY", "RADIOLOGY", "CARDIOLOGY", "IMMUNOLOGY", "SEROLOGY", "ENDOCRINOLOGY", "VIROLOGY", "MOLECULAR", "CYTOLOGY", "HISTOPATHOLOGY", "OTHER"].map((category) => <MenuItem key={category} value={category}>{category}</MenuItem>)}
                 </Select>
               </FormControl>
             </Grid>
@@ -2042,6 +2136,20 @@ export default function LabPage() {
                 />
               )}
             />
+            {canQuickRegisterPatient ? (
+              <Alert
+                severity={consultationEnabled ? "info" : "success"}
+                action={(
+                  <Button color="inherit" size="small" onClick={() => setQuickRegisterOpen(true)}>
+                    Quick Register Patient
+                  </Button>
+                )}
+              >
+                {consultationEnabled
+                  ? "If the patient is not found, quick register and continue the lab order."
+                  : "Walk-in lab registration can create and select a patient without leaving this modal."}
+              </Alert>
+            ) : null}
             <FormControl fullWidth>
               <InputLabel id="lab-registration-origin-label">
                 <RequiredLabel text="Requested By" required />
@@ -2059,15 +2167,16 @@ export default function LabPage() {
             </FormControl>
             <Autocomplete
               multiple
-              options={tests}
-              value={tests.filter((test) => requestForm.testIds.includes(test.id))}
+              options={availableTests}
+              value={availableTests.filter((test) => requestForm.testIds.includes(test.id))}
               getOptionLabel={(option) => `${option.testName}${option.testCode ? ` (${option.testCode})` : ""}`}
               onChange={(_, value) => setRequestForm((current) => ({ ...current, testIds: value.map((row) => row.id) }))}
+              noOptionsText="No enabled tests are available for ordering."
               renderInput={(params) => (
                 <TextField
                   {...params}
                   label="Lab tests"
-                  helperText="Select one or more tests."
+                  helperText="Select one or more enabled tests from active categories."
                 />
               )}
             />
@@ -2113,6 +2222,21 @@ export default function LabPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {canQuickRegisterPatient ? (
+        <PatientQuickRegisterDialog
+          open={quickRegisterOpen}
+          token={auth.accessToken}
+          tenantId={auth.tenantId}
+          title="Quick Register Patient"
+          subtitle={consultationEnabled
+            ? "Create a patient record without leaving laboratory order entry."
+            : "Create the patient master record and continue the walk-in lab order."}
+          initialMobile={patientQuery}
+          onClose={() => setQuickRegisterOpen(false)}
+          onCreated={onQuickPatientCreated}
+        />
+      ) : null}
     </Stack>
   );
 }

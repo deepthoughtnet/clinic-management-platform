@@ -9,5 +9,6 @@ public interface LabOrderSampleRepository extends JpaRepository<LabOrderSampleEn
     List<LabOrderSampleEntity> findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(UUID tenantId, UUID labOrderId);
     Optional<LabOrderSampleEntity> findByTenantIdAndId(UUID tenantId, UUID id);
     Optional<LabOrderSampleEntity> findByTenantIdAndAccessionNumber(UUID tenantId, String accessionNumber);
+    Optional<LabOrderSampleEntity> findFirstByTenantIdAndAccessionNumberStartingWithOrderByAccessionNumberDesc(UUID tenantId, String accessionPrefix);
     Optional<LabOrderSampleEntity> findByTenantIdAndBarcodeValue(UUID tenantId, String barcodeValue);
 }

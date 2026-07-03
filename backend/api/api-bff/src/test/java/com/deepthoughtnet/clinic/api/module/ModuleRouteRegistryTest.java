@@ -26,6 +26,15 @@ class ModuleRouteRegistryTest {
     }
 
     @Test
+    void mapsPatientsApiPathToPatientsModule() {
+        ModuleRouteRegistry registry = new ModuleRouteRegistry();
+
+        String moduleKey = registry.moduleForPath("/api/patients");
+
+        assertThat(moduleKey).isEqualTo(SaasModuleCode.PATIENTS.name());
+    }
+
+    @Test
     void mapsReportsApiPathToReportsModule() {
         ModuleRouteRegistry registry = new ModuleRouteRegistry();
 

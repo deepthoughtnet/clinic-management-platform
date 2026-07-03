@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.platform.core.module;
 
 public enum SaasModuleCode {
     APPOINTMENTS,
+    PATIENTS,
     CONSULTATION,
     PRESCRIPTION,
     BILLING,

@@ -9,6 +9,8 @@ import com.deepthoughtnet.clinic.api.lab.dto.LabOrderPaymentRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderPublishReportRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderResultRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderResultResponse;
+import com.deepthoughtnet.clinic.api.lab.dto.LabCategoryConfigDtos.LabCategoryConfigResponse;
+import com.deepthoughtnet.clinic.api.lab.dto.LabCategoryConfigDtos.LabCategoryConfigUpdateRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderSamplesCollectRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderSampleCollectionRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderResponse;
@@ -17,10 +19,13 @@ import com.deepthoughtnet.clinic.api.lab.dto.LabSampleCollectionRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabSampleReceiveRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabSampleRejectRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabSampleResponse;
+import com.deepthoughtnet.clinic.api.lab.dto.LabTestCatalogueConfigDtos.LabTestCatalogueConfigResponse;
+import com.deepthoughtnet.clinic.api.lab.dto.LabTestCatalogueConfigDtos.LabTestCatalogueConfigUpdateRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabTestRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabTestResponse;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderStatus;
 import com.deepthoughtnet.clinic.api.lab.LabCsvService;
+import com.deepthoughtnet.clinic.api.lab.LabCatalogueConfigService;
 import com.deepthoughtnet.clinic.api.lab.service.LabService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderCreateCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDirectCreateCommand;
@@ -76,16 +81,35 @@ import org.springframework.core.io.Resource;
 public class LabController {
     private final LabService labService;
     private final LabCsvService labCsvService;
+    private final LabCatalogueConfigService labCatalogueConfigService;
 
-    public LabController(LabService labService, LabCsvService labCsvService) {
+    public LabController(LabService labService, LabCsvService labCsvService, LabCatalogueConfigService labCatalogueConfigService) {
         this.labService = labService;
         this.labCsvService = labCsvService;
+        this.labCatalogueConfigService = labCatalogueConfigService;
     }
 
     @GetMapping("/categories")
     @PreAuthorize("@permissionChecker.hasPermission('lab.test.read') or @permissionChecker.hasPermission('lab.test.manage')")
     public List<String> categories() {
-        return labService.listCategories();
+        return labService.listCategories(RequestContextHolder.requireTenantId());
+    }
+
+    @GetMapping("/config/categories")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.test.manage')")
+    public List<LabCategoryConfigResponse> listCategoryConfig() {
+        return labCatalogueConfigService.listCategories(RequestContextHolder.requireTenantId());
+    }
+
+    @PutMapping("/config/categories/{code}")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.test.manage')")
+    public LabCategoryConfigResponse updateCategoryConfig(
+            @PathVariable String code,
+            @RequestBody LabCategoryConfigUpdateRequest request
+    ) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return labCatalogueConfigService.updateCategory(tenantId, code, request, actorAppUserId);
     }
 
     @GetMapping("/tests")
@@ -96,6 +120,20 @@ public class LabController {
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return labService.listTests(tenantId, search, active).stream().map(this::toResponse).toList();
+    }
+
+    @GetMapping("/config/tests")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.test.manage')")
+    public List<LabTestCatalogueConfigResponse> listTestConfig() {
+        return labCatalogueConfigService.listTests(RequestContextHolder.requireTenantId());
+    }
+
+    @PutMapping("/config/tests/{id}")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.test.manage')")
+    public LabTestCatalogueConfigResponse updateTestConfig(@PathVariable UUID id, @RequestBody LabTestCatalogueConfigUpdateRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return labCatalogueConfigService.updateTest(tenantId, id, request, actorAppUserId);
     }
 
     @PostMapping("/tests")
@@ -399,6 +437,10 @@ public class LabController {
                 record.referenceRange(),
                 record.turnaroundTime(),
                 record.price(),
+                record.enabled(),
+                record.tenantPriceOverride(),
+                record.tenantTatOverride(),
+                record.displayOrder(),
                 record.active(),
                 record.parameters().stream()
                         .map(parameter -> new LabTestResponse.LabTestParameterResponse(

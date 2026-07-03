@@ -3,9 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   appointmentCreateSchema,
   appointmentRescheduleSchema,
-  mapZodErrors,
   normalizeIndianMobileInput,
-  patientQuickRegisterSchema,
 } from "@deepthoughtnet/form-validation-kit";
 import {
   Alert,
@@ -44,10 +42,10 @@ import {
 import { alpha } from "@mui/material/styles";
 
 import { useAuth } from "../../auth/useAuth";
+import PatientQuickRegisterDialog, { patientSummary } from "../../components/patients/PatientQuickRegisterDialog";
 import {
   createAppointment,
   createWaitlist,
-  createPatient,
   createWalkInAppointment,
   getClinicClock,
   getDoctorSlots,
@@ -67,7 +65,6 @@ import {
   type ClinicUser,
   type Patient,
   type PatientGender,
-  type PatientInput,
   type WaitlistStatus,
 } from "../../api/clinicApi";
 import {
@@ -83,15 +80,6 @@ type AppointmentTab = "today" | "upcoming" | "waitlist" | "completed" | "archive
 
 type AppointmentPageState = {
   patient?: Patient;
-};
-
-type QuickRegisterForm = {
-  mobile: string;
-  firstName: string;
-  lastName: string;
-  ageYears: string;
-  dateOfBirth: string;
-  gender: PatientGender;
 };
 
 const appointmentTypes: AppointmentType[] = ["SCHEDULED", "FOLLOW_UP", "VACCINATION", "WALK_IN"];
@@ -131,34 +119,11 @@ function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-function calculateAge(dateOfBirth: string) {
-  if (!dateOfBirth) return "";
-  const dob = new Date(`${dateOfBirth}T00:00:00`);
-  if (Number.isNaN(dob.getTime())) return "";
-  const today = new Date();
-  let age = today.getFullYear() - dob.getFullYear();
-  const monthDiff = today.getMonth() - dob.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
-    age -= 1;
-  }
-  return age >= 0 && age <= 130 ? String(age) : "";
-}
-
-function approximateDobFromAge(ageYears: string) {
-  const parsed = Number(ageYears);
-  if (!ageYears || Number.isNaN(parsed) || parsed < 0 || parsed > 130) return "";
-  return `${new Date().getFullYear() - parsed}-01-01`;
-}
-
 function patientLabel(patient: Patient | null) {
   if (!patient) return "";
   const age = patient.ageYears !== null ? `${patient.ageYears}y` : null;
   const label = `${patient.firstName} ${patient.lastName || ""}`.trim();
   return [label, age, patient.gender].filter(Boolean).join(" • ");
-}
-
-function patientSummary(patient: Patient) {
-  return `${patient.patientNumber} • ${patient.mobile}`;
 }
 
 function arrivalLabel(appointment: Appointment) {
@@ -242,43 +207,6 @@ function slotLabel(slot: DoctorAvailabilitySlot, date: string, timeZone?: string
   return `${toFive(slot.slotTime)} • ${presentation.state.toLowerCase().replace(/_/g, " ")} • ${slot.bookedCount}/${slot.maxPatientsPerSlot}`;
 }
 
-function toPatientInput(form: QuickRegisterForm): PatientInput {
-  return {
-    firstName: form.firstName.trim(),
-    lastName: form.lastName.trim(),
-    gender: form.gender,
-    dateOfBirth: form.dateOfBirth || null,
-    ageYears: form.ageYears ? Number(form.ageYears) : null,
-    mobile: normalizeIndianMobileInput(form.mobile) as string,
-    email: null,
-    addressLine1: null,
-    addressLine2: null,
-    city: null,
-    state: null,
-    country: null,
-    postalCode: null,
-    emergencyContactName: null,
-    emergencyContactMobile: null,
-    bloodGroup: null,
-    allergies: null,
-    existingConditions: null,
-    longTermMedications: null,
-    surgicalHistory: null,
-    notes: null,
-    active: true,
-  };
-}
-
-function emptyQuickRegisterForm(mobile = ""): QuickRegisterForm {
-  return {
-    mobile,
-    firstName: "",
-    lastName: "",
-    ageYears: "",
-    dateOfBirth: "",
-    gender: "UNKNOWN",
-  };
-}
 
 export default function AppointmentsPage() {
   const auth = useAuth();
@@ -310,9 +238,6 @@ export default function AppointmentsPage() {
   const [searchingPatients, setSearchingPatients] = React.useState(false);
   const [slots, setSlots] = React.useState<DoctorAvailabilitySlot[]>([]);
   const [quickRegisterOpen, setQuickRegisterOpen] = React.useState(false);
-  const [quickRegisterSaving, setQuickRegisterSaving] = React.useState(false);
-  const [quickRegisterError, setQuickRegisterError] = React.useState<string | null>(null);
-  const [quickRegisterForm, setQuickRegisterForm] = React.useState<QuickRegisterForm>(emptyQuickRegisterForm());
   const [error, setError] = React.useState<string | null>(null);
   const [waitlist, setWaitlist] = React.useState<AppointmentWaitlist[]>([]);
   const [rescheduleOpen, setRescheduleOpen] = React.useState(false);
@@ -338,11 +263,6 @@ export default function AppointmentsPage() {
   const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
   const canCreateAppointmentFlow = !isDoctor && auth.hasPermission("appointment.manage");
   const canQuickRegisterPatient = canCreateAppointmentFlow && auth.hasPermission("patient.create");
-  const quickRegisterPreview = React.useMemo(
-    () => patientQuickRegisterSchema.safeParse(toPatientInput(quickRegisterForm)),
-    [quickRegisterForm],
-  );
-  const quickRegisterFieldErrors: Record<string, string> = quickRegisterPreview.success ? {} : mapZodErrors(quickRegisterPreview.error);
   const doctorOptions = users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
   const doctorFilter = isDoctor && auth.appUserId ? auth.appUserId : undefined;
   const today = React.useMemo(() => getClinicDateKey(clinicTimeZone, clinicNowSnapshot), [clinicNowSnapshot, clinicTimeZone, clockTick]);
@@ -634,8 +554,6 @@ export default function AppointmentsPage() {
         if (!cancelled) {
           setPatientResults(rows);
           if (canQuickRegisterPatient && rows.length === 0 && /^[6-9]\d{9}$/.test(normalizedMobile)) {
-            setQuickRegisterForm((current) => ({ ...current, mobile: normalizedMobile }));
-            setQuickRegisterError(null);
             setQuickRegisterOpen(true);
           }
         }
@@ -1013,37 +931,8 @@ export default function AppointmentsPage() {
     }
   };
 
-  const saveQuickPatient = async () => {
-    if (!auth.accessToken || !auth.tenantId || !canQuickRegisterPatient) return;
-    const payload = toPatientInput(quickRegisterForm);
-    if (!quickRegisterPreview.success) {
-      setQuickRegisterError(quickRegisterPreview.error.issues[0]?.message || "Unable to create patient");
-      return;
-    }
-    setQuickRegisterSaving(true);
-    setQuickRegisterError(null);
-    try {
-      const saved = await createPatient(auth.accessToken, auth.tenantId, payload);
-      setSelectedPatient(saved);
-      setPatientQuery(patientSummary(saved));
-      setQuickRegisterOpen(false);
-      setPatientResults([]);
-    } catch (err) {
-      setQuickRegisterError(err instanceof Error ? err.message : "Unable to create patient");
-    } finally {
-      setQuickRegisterSaving(false);
-    }
-  };
-
   const openQuickRegister = () => {
     if (!canQuickRegisterPatient) return;
-    const term = patientQuery.trim();
-    const normalizedMobile = normalizeIndianMobileInput(term) as string;
-    setQuickRegisterForm((current) => ({
-      ...current,
-      mobile: current.mobile || (/^[6-9]\d{9}$/.test(normalizedMobile) ? normalizedMobile : ""),
-    }));
-    setQuickRegisterError(null);
     setQuickRegisterOpen(true);
   };
 
@@ -1515,58 +1404,21 @@ export default function AppointmentsPage() {
       </Dialog>
 
       {canQuickRegisterPatient ? (
-        <Dialog open={quickRegisterOpen} onClose={() => setQuickRegisterOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Quick Register Patient</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} sx={{ pt: 1 }}>
-            {quickRegisterError ? <Alert severity="error">{quickRegisterError}</Alert> : null}
-            <TextField
-              fullWidth
-              label="Mobile"
-              value={quickRegisterForm.mobile}
-              onChange={(event) => setQuickRegisterForm((current) => ({ ...current, mobile: event.target.value }))}
-              inputProps={{ inputMode: "tel" }}
-              error={Boolean(quickRegisterFieldErrors.mobile)}
-              helperText={quickRegisterFieldErrors.mobile || " "}
-            />
-            <Grid container spacing={2}>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth label="First name" value={quickRegisterForm.firstName} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, firstName: event.target.value }))} error={Boolean(quickRegisterFieldErrors.firstName)} helperText={quickRegisterFieldErrors.firstName || " "} />
-              </Grid>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth label="Last name" value={quickRegisterForm.lastName} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, lastName: event.target.value }))} error={Boolean(quickRegisterFieldErrors.lastName)} helperText={quickRegisterFieldErrors.lastName || " "} />
-              </Grid>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth type="number" label="Age" value={quickRegisterForm.ageYears} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, ageYears: event.target.value, dateOfBirth: approximateDobFromAge(event.target.value) }))} inputProps={{ min: 0, max: 130 }} error={Boolean(quickRegisterFieldErrors.ageYears)} helperText={quickRegisterFieldErrors.ageYears || " "}/>
-              </Grid>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth type="date" label="Date of birth" value={quickRegisterForm.dateOfBirth} onChange={(event) => setQuickRegisterForm((current) => ({ ...current, dateOfBirth: event.target.value, ageYears: calculateAge(event.target.value) }))} InputLabelProps={{ shrink: true }} error={Boolean(quickRegisterFieldErrors.dateOfBirth)} helperText={quickRegisterFieldErrors.dateOfBirth || " "}/>
-              </Grid>
-              <Grid size={{ xs: 12 }}>
-                <FormControl fullWidth error={Boolean(quickRegisterFieldErrors.gender)}>
-                  <InputLabel id="quick-gender-label">Gender</InputLabel>
-                  <Select
-                    labelId="quick-gender-label"
-                    label="Gender"
-                    value={quickRegisterForm.gender}
-                    onChange={(event) => setQuickRegisterForm((current) => ({ ...current, gender: event.target.value as PatientGender }))}
-                  >
-                    <MenuItem value="MALE">Male</MenuItem>
-                    <MenuItem value="FEMALE">Female</MenuItem>
-                    <MenuItem value="OTHER">Other</MenuItem>
-                    <MenuItem value="UNKNOWN">Unknown</MenuItem>
-                  </Select>
-                  {quickRegisterFieldErrors.gender ? <Typography variant="caption" color="error">{quickRegisterFieldErrors.gender}</Typography> : null}
-                </FormControl>
-              </Grid>
-            </Grid>
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setQuickRegisterOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={() => void saveQuickPatient()} disabled={quickRegisterSaving || !quickRegisterPreview.success}>Save patient</Button>
-        </DialogActions>
-        </Dialog>
+        <PatientQuickRegisterDialog
+          open={quickRegisterOpen}
+          token={auth.accessToken}
+          tenantId={auth.tenantId}
+          title="Quick Register Patient"
+          subtitle="Create the patient in master and continue the appointment flow without leaving the page."
+          initialMobile={patientQuery}
+          onClose={() => setQuickRegisterOpen(false)}
+          onCreated={(saved) => {
+            setSelectedPatient(saved);
+            setPatientQuery(patientSummary(saved));
+            setQuickRegisterOpen(false);
+            setPatientResults([]);
+          }}
+        />
       ) : null}
       <Dialog open={rescheduleOpen} onClose={() => setRescheduleOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>Reschedule Appointment</DialogTitle>

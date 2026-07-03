@@ -349,7 +349,9 @@ public final class RolePermissionMappings {
             Permissions.LAB_TEST_READ,
             Permissions.LAB_ORDER_READ,
             Permissions.LAB_ORDER_CREATE,
-            Permissions.LAB_ORDER_COLLECT_PAYMENT
+            Permissions.LAB_ORDER_COLLECT_PAYMENT,
+            Permissions.PATIENT_CREATE,
+            Permissions.PATIENT_READ
     );
 
     private static final Set<String> LAB_TECHNICIAN_PERMISSIONS = Set.of(

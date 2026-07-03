@@ -1227,7 +1227,21 @@ export type VaccineInput = {
   active: boolean;
 };
 
-export type LabTestCategory = "Hematology" | "Biochemistry" | "Microbiology" | "Pathology" | "Radiology" | "Cardiology" | "Other";
+export type LabTestCategory =
+  | "Hematology"
+  | "Biochemistry"
+  | "Microbiology"
+  | "Pathology"
+  | "Radiology"
+  | "Cardiology"
+  | "Immunology"
+  | "Serology"
+  | "Endocrinology"
+  | "Virology"
+  | "Molecular"
+  | "Cytology"
+  | "Histopathology"
+  | "Other";
 
 export type LabTestInput = {
   testCode: string;
@@ -1246,9 +1260,49 @@ export type LabTestInput = {
 export type LabTest = LabTestInput & {
   id: string;
   tenantId: string;
+  enabled: boolean;
+  tenantPriceOverride: number | null;
+  tenantTatOverride: string | null;
+  displayOrder: number | null;
   createdAt: string;
   updatedAt: string;
   parameters: LabTestParameter[];
+};
+
+export type LabCategoryConfig = {
+  categoryCode: string;
+  displayName: string;
+  active: boolean;
+  displayOrder: number | null;
+};
+
+export type LabCategoryConfigInput = {
+  displayName?: string | null;
+  active?: boolean | null;
+  displayOrder?: number | null;
+};
+
+export type LabTestCatalogueConfig = {
+  id: string;
+  tenantId: string;
+  testCode: string;
+  testName: string;
+  category: string;
+  enabled: boolean;
+  active: boolean;
+  price: number | null;
+  turnaroundTime: string | null;
+  tenantPriceOverride: number | null;
+  tenantTatOverride: string | null;
+  displayOrder: number | null;
+};
+
+export type LabTestCatalogueConfigInput = {
+  enabled?: boolean | null;
+  active?: boolean | null;
+  tenantPriceOverride?: number | null;
+  tenantTatOverride?: string | null;
+  displayOrder?: number | null;
 };
 
 export type LabTestParameterInput = {
@@ -2892,12 +2946,28 @@ export async function getLabCategories(token: string, tenantId: string) {
   return httpGet<string[]>("/api/lab/categories", { token, tenantId });
 }
 
+export async function getLabCategoryConfig(token: string, tenantId: string) {
+  return httpGet<LabCategoryConfig[]>("/api/lab/config/categories", { token, tenantId });
+}
+
+export async function updateLabCategoryConfig(token: string, tenantId: string, code: string, body: LabCategoryConfigInput) {
+  return httpPut<LabCategoryConfig>(`/api/lab/config/categories/${encodeURIComponent(code)}`, body, { token, tenantId });
+}
+
 export async function getLabTests(token: string, tenantId: string, params: { search?: string; active?: boolean | null } = {}) {
   const query = new URLSearchParams();
   if (params.search) query.set("search", params.search);
   if (params.active !== undefined && params.active !== null) query.set("active", String(params.active));
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return httpGet<LabTest[]>(`/api/lab/tests${suffix}`, { token, tenantId });
+}
+
+export async function getLabTestConfig(token: string, tenantId: string) {
+  return httpGet<LabTestCatalogueConfig[]>("/api/lab/config/tests", { token, tenantId });
+}
+
+export async function updateLabTestConfig(token: string, tenantId: string, id: string, body: LabTestCatalogueConfigInput) {
+  return httpPut<LabTestCatalogueConfig>(`/api/lab/config/tests/${id}`, body, { token, tenantId });
 }
 
 export async function createLabTest(token: string, tenantId: string, body: LabTestInput) {

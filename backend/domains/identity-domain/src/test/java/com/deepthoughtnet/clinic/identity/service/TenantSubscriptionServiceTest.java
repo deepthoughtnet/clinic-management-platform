@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.identity.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -79,5 +80,27 @@ class TenantSubscriptionServiceTest {
         );
 
         assertThat(service.isModuleEnabled(tenantId, "CAREPILOT")).isFalse();
+    }
+
+    @Test
+    void patientsModuleDefaultsToEnabledWhenNoTenantOverrideExists() {
+        TenantRepository tenantRepository = mock(TenantRepository.class);
+        TenantSubscriptionRepository subscriptionRepository = mock(TenantSubscriptionRepository.class);
+        TenantModuleRepository moduleRepository = mock(TenantModuleRepository.class);
+        TenantModuleEntitlementService entitlementService = mock(TenantModuleEntitlementService.class);
+
+        UUID tenantId = UUID.randomUUID();
+        when(moduleRepository.findByTenantIdAndModuleCode(tenantId, "PATIENTS")).thenReturn(Optional.empty());
+
+        TenantSubscriptionService service = new TenantSubscriptionService(
+                tenantRepository,
+                subscriptionRepository,
+                moduleRepository,
+                entitlementService
+        );
+
+        assertThat(service.isModuleEnabled(tenantId, "PATIENTS")).isTrue();
+        assertThat(service.isModuleEnabled(tenantId, "patients")).isTrue();
+        verify(entitlementService, never()).isModuleEnabled(tenantId, ModuleKeys.CAREPILOT);
     }
 }

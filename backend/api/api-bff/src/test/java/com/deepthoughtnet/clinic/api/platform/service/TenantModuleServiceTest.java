@@ -14,4 +14,12 @@ class TenantModuleServiceTest {
         assertThat(TenantModuleService.SUPPORTED_MODULES).contains("PHARMACY_POS");
         assertThat(service.normalizeModule(" pharmacy_pos ")).isEqualTo("PHARMACY_POS");
     }
+
+    @Test
+    void normalizesPatientsModuleCode() {
+        TenantModuleService service = new TenantModuleService((JdbcTemplate) null);
+
+        assertThat(TenantModuleService.SUPPORTED_MODULES).contains("PATIENTS");
+        assertThat(service.normalizeModule(" patients ")).isEqualTo("PATIENTS");
+    }
 }

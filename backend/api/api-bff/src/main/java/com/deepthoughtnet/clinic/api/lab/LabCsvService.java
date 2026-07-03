@@ -39,16 +39,6 @@ public class LabCsvService {
             "parameters"
     };
 
-    private static final List<String> ALLOWED_CATEGORIES = List.of(
-            "HEMATOLOGY",
-            "BIOCHEMISTRY",
-            "MICROBIOLOGY",
-            "PATHOLOGY",
-            "RADIOLOGY",
-            "CARDIOLOGY",
-            "OTHER"
-    );
-
     private final LabService labService;
     private final LabTestMasterRepository labTestMasterRepository;
 
@@ -57,7 +47,6 @@ public class LabCsvService {
         this.labTestMasterRepository = labTestMasterRepository;
     }
 
-    @Transactional
     public LabCsvImportResponse importCsv(UUID tenantId, byte[] csvBytes, UUID actorAppUserId) throws IOException {
         if (csvBytes == null || csvBytes.length == 0) {
             throw new IllegalArgumentException("CSV file is required");
@@ -157,10 +146,7 @@ public class LabCsvService {
         if (!hasLetterOrNumber(testName)) {
             throw new IllegalArgumentException("testName must contain letters or numbers");
         }
-        String category = requireText(value(record, "category"), "category is required").toUpperCase(Locale.ROOT);
-        if (!ALLOWED_CATEGORIES.contains(category)) {
-            throw new IllegalArgumentException("category is invalid");
-        }
+        String category = LabCategoryCatalog.normalize(requireText(value(record, "category"), "category is required"));
         String sampleType = requireText(value(record, "sampleType"), "sampleType is required");
         if (sampleType.length() > 60) {
             throw new IllegalArgumentException("sampleType must be 60 characters or fewer");
@@ -276,7 +262,33 @@ public class LabCsvService {
 
     private String friendlyMessage(RuntimeException ex) {
         String message = ex.getMessage();
-        return StringUtils.hasText(message) ? message : "Invalid row";
+        Throwable root = ex;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        if (!StringUtils.hasText(message) && root != ex) {
+            message = root.getMessage();
+        }
+        String normalized = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        if (normalized.contains("uq_lab_test_parameters_tenant_test_name")
+                || normalized.contains("parameter_name")
+                || normalized.contains("parameter names must be unique within a test")) {
+            return "parameter names must be unique within a test";
+        }
+        if (normalized.contains("uq_lab_tests_tenant_code")
+                || normalized.contains("test_code")
+                || normalized.contains("lab test code already exists")) {
+            return "Lab test code already exists";
+        }
+        if (normalized.contains("uq_lab_tests_tenant_name")
+                || normalized.contains("test_name")
+                || normalized.contains("lab test already exists")) {
+            return "Lab test already exists";
+        }
+        if (StringUtils.hasText(message)) {
+            return message;
+        }
+        return "Invalid row";
     }
 
     private record ParsedLabTestRow(

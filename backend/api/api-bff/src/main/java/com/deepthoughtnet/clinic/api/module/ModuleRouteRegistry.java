@@ -23,7 +23,7 @@ public class ModuleRouteRegistry {
             new RouteModule("/api/voice", SaasModuleCode.AI_COPILOT.name()),
             new RouteModule("/api/carepilot", SaasModuleCode.CAREPILOT.name()),
             new RouteModule("/api/dashboard", SaasModuleCode.APPOINTMENTS.name()),
-            new RouteModule("/api/patients", SaasModuleCode.APPOINTMENTS.name()),
+            new RouteModule("/api/patients", SaasModuleCode.PATIENTS.name()),
             new RouteModule("/api/doctors", SaasModuleCode.APPOINTMENTS.name()),
             new RouteModule("/api/notifications", SaasModuleCode.APPOINTMENTS.name())
     );

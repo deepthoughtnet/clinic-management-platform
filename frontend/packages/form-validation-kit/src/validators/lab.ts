@@ -34,6 +34,13 @@ export const labCategoryValues = [
   "PATHOLOGY",
   "RADIOLOGY",
   "CARDIOLOGY",
+  "IMMUNOLOGY",
+  "SEROLOGY",
+  "ENDOCRINOLOGY",
+  "VIROLOGY",
+  "MOLECULAR",
+  "CYTOLOGY",
+  "HISTOPATHOLOGY",
   "OTHER",
 ] as const;
 

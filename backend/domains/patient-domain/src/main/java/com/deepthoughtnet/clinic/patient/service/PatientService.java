@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.patient.service;
 import com.deepthoughtnet.clinic.patient.db.PatientEntity;
 import com.deepthoughtnet.clinic.patient.db.PatientRepository;
 import com.deepthoughtnet.clinic.patient.service.model.PatientGender;
+import com.deepthoughtnet.clinic.patient.service.model.PatientConflictException;
 import com.deepthoughtnet.clinic.patient.service.model.PatientRecord;
 import com.deepthoughtnet.clinic.patient.service.model.PatientSearchCriteria;
 import com.deepthoughtnet.clinic.patient.service.model.PatientUpsertCommand;
@@ -24,6 +25,7 @@ import java.util.Optional;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.Locale;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
@@ -101,24 +103,28 @@ public class PatientService {
     public PatientRecord create(UUID tenantId, PatientUpsertCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
         validate(command);
-
+        ensureMobileIsAvailable(tenantId, null, command.mobile());
         String patientNumber = generatePatientNumber(tenantId);
         PatientEntity entity = PatientEntity.create(tenantId, patientNumber);
-        applyCommand(entity, command);
-        PatientEntity saved = repository.save(entity);
+        try {
+            applyCommand(entity, command);
+            PatientEntity saved = repository.save(entity);
 
-        auditEventPublisher.record(new AuditEventCommand(
-                tenantId,
-                ENTITY_TYPE,
-                saved.getId(),
-                "patient.created",
-                actorAppUserId,
-                OffsetDateTime.now(),
-                "Created patient " + saved.getPatientNumber(),
-                detailsJson(saved)
-        ));
+            auditEventPublisher.record(new AuditEventCommand(
+                    tenantId,
+                    ENTITY_TYPE,
+                    saved.getId(),
+                    "patient.created",
+                    actorAppUserId,
+                    OffsetDateTime.now(),
+                    "Created patient " + saved.getPatientNumber(),
+                    detailsJson(saved)
+            ));
 
-        return toRecord(saved);
+            return toRecord(saved);
+        } catch (DataIntegrityViolationException ex) {
+            throw duplicatePatientConflict(tenantId, null, command.mobile(), ex);
+        }
     }
 
     @Transactional
@@ -137,14 +143,19 @@ public class PatientService {
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
 
         enforceEditWindow(entity, actorRole, zoneId);
+        ensureMobileIsAvailable(tenantId, id, command.mobile());
 
         Map<String, Object> before = snapshot(entity);
-        applyCommand(entity, command);
-        PatientEntity saved = repository.save(entity);
+        try {
+            applyCommand(entity, command);
+            PatientEntity saved = repository.save(entity);
 
-        recordFieldChanges(tenantId, saved, before, actorAppUserId, actorEmail, actorRole, OffsetDateTime.now());
+            recordFieldChanges(tenantId, saved, before, actorAppUserId, actorEmail, actorRole, OffsetDateTime.now());
 
-        return toRecord(saved);
+            return toRecord(saved);
+        } catch (DataIntegrityViolationException ex) {
+            throw duplicatePatientConflict(tenantId, id, command.mobile(), ex);
+        }
     }
 
     @Transactional
@@ -328,6 +339,27 @@ public class PatientService {
             throw new IllegalArgumentException(field + " must be a valid 10-digit mobile number");
         }
         return normalized;
+    }
+
+    private void ensureMobileIsAvailable(UUID tenantId, UUID currentId, String mobile) {
+        String normalizedMobile = normalizeMobile(mobile, "mobile");
+        repository.findFirstByTenantIdAndMobileIgnoreCase(tenantId, normalizedMobile)
+                .filter(existing -> currentId == null || !currentId.equals(existing.getId()))
+                .ifPresent(existing -> {
+                    if (existing.isActive()) {
+                        throw new PatientConflictException("Patient already exists. Select existing patient.");
+                    }
+                    throw new PatientConflictException("A patient record already exists for this mobile number but is inactive. Please contact the clinic.");
+                });
+    }
+
+    private PatientConflictException duplicatePatientConflict(UUID tenantId, UUID currentId, String mobile, DataIntegrityViolationException ex) {
+        try {
+            ensureMobileIsAvailable(tenantId, currentId, mobile);
+        } catch (PatientConflictException conflict) {
+            return conflict;
+        }
+        return new PatientConflictException("Patient already exists. Select existing patient.", ex);
     }
 
     private String detailsJson(PatientEntity entity) {

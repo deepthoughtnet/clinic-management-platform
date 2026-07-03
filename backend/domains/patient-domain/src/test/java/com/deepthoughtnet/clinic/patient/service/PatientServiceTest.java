@@ -19,6 +19,7 @@ import com.deepthoughtnet.clinic.platform.audit.AuditEventAction;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.core.errors.ForbiddenException;
+import com.deepthoughtnet.clinic.patient.service.model.PatientConflictException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Field;
 import java.time.OffsetDateTime;
@@ -71,7 +72,79 @@ class PatientServiceTest {
     }
 
     @Test
-    void createAllowsMultipleActivePatientsWithSameMobile() {
+    void createRejectsDuplicateMobileInSameTenant() {
+        UUID tenantId = UUID.randomUUID();
+        PatientEntity existing = PatientEntity.create(tenantId, "PAT-EXIST");
+        existing.update(
+                "Existing",
+                "Patient",
+                PatientGender.UNKNOWN,
+                null,
+                null,
+                "9876543210",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                true
+        );
+        when(repository.findFirstByTenantIdAndMobileIgnoreCase(tenantId, "9876543210")).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.create(tenantId, command("Receptionist", "One", "9876543210"), UUID.randomUUID()))
+                .isInstanceOf(PatientConflictException.class)
+                .hasMessageContaining("Patient already exists");
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void createRejectsInactiveMobileDuplicateInSameTenant() {
+        UUID tenantId = UUID.randomUUID();
+        PatientEntity existing = PatientEntity.create(tenantId, "PAT-EXIST");
+        existing.update(
+                "Existing",
+                "Patient",
+                PatientGender.UNKNOWN,
+                null,
+                null,
+                "9876543210",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                false
+        );
+        when(repository.findFirstByTenantIdAndMobileIgnoreCase(tenantId, "9876543210")).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.create(tenantId, command("Receptionist", "One", "9876543210"), UUID.randomUUID()))
+                .isInstanceOf(PatientConflictException.class)
+                .hasMessageContaining("inactive");
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void createAllowsSameMobileInDifferentTenant() {
         UUID tenantId = UUID.randomUUID();
         var created = service.create(tenantId, command("Receptionist", "One", "9876543210"), UUID.randomUUID());
 
