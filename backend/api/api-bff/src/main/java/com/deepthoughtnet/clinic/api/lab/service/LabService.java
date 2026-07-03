@@ -1534,6 +1534,36 @@ public class LabService {
             int comparison = value.compareTo(high);
             return comparison > 0 || (comparison == 0 && !highInclusive);
         }
+
+        boolean isCriticalLowCrossed(BigDecimal value) {
+            if (value == null) {
+                return false;
+            }
+            if (low == null && high != null) {
+                int comparison = value.compareTo(high);
+                return comparison < 0 || (comparison == 0 && !highInclusive);
+            }
+            if (low != null && high != null) {
+                int comparison = value.compareTo(low);
+                return comparison < 0 || (comparison == 0 && !lowInclusive);
+            }
+            return false;
+        }
+
+        boolean isCriticalHighCrossed(BigDecimal value) {
+            if (value == null) {
+                return false;
+            }
+            if (low != null && high == null) {
+                int comparison = value.compareTo(low);
+                return comparison > 0 || (comparison == 0 && !lowInclusive);
+            }
+            if (low != null && high != null) {
+                int comparison = value.compareTo(high);
+                return comparison > 0 || (comparison == 0 && !highInclusive);
+            }
+            return false;
+        }
     }
 
     private record ResultFlagResolution(LabResultFlag flag, boolean critical) {
@@ -2160,26 +2190,33 @@ public class LabService {
         if (numeric == null) {
             return new ResultFlagResolution(LabResultFlag.NORMAL, false);
         }
-        Range critical = parseRange(criticalRange);
-        if (critical != null && !critical.contains(numeric)) {
-            if (critical.isBelow(numeric)) {
-                return new ResultFlagResolution(LabResultFlag.CRITICAL_LOW, true);
-            }
-            if (critical.isAbove(numeric)) {
-                return new ResultFlagResolution(LabResultFlag.CRITICAL_HIGH, true);
-            }
-        }
         Range normal = parseRange(normalRange);
-        if (normal == null) {
+        if (normal != null && normal.contains(numeric)) {
             return new ResultFlagResolution(LabResultFlag.NORMAL, false);
         }
-        if (!normal.contains(numeric)) {
-            if (normal.isBelow(numeric)) {
-                return new ResultFlagResolution(LabResultFlag.LOW, false);
+        Range critical = parseRange(criticalRange);
+        if (normal == null) {
+            if (critical != null) {
+                if (critical.isCriticalLowCrossed(numeric)) {
+                    return new ResultFlagResolution(LabResultFlag.CRITICAL_LOW, true);
+                }
+                if (critical.isCriticalHighCrossed(numeric)) {
+                    return new ResultFlagResolution(LabResultFlag.CRITICAL_HIGH, true);
+                }
             }
-            if (normal.isAbove(numeric)) {
-                return new ResultFlagResolution(LabResultFlag.HIGH, false);
+            return new ResultFlagResolution(LabResultFlag.NORMAL, false);
+        }
+        if (normal.isBelow(numeric)) {
+            if (critical != null && critical.isCriticalLowCrossed(numeric)) {
+                return new ResultFlagResolution(LabResultFlag.CRITICAL_LOW, true);
             }
+            return new ResultFlagResolution(LabResultFlag.LOW, false);
+        }
+        if (normal.isAbove(numeric)) {
+            if (critical != null && critical.isCriticalHighCrossed(numeric)) {
+                return new ResultFlagResolution(LabResultFlag.CRITICAL_HIGH, true);
+            }
+            return new ResultFlagResolution(LabResultFlag.HIGH, false);
         }
         return new ResultFlagResolution(LabResultFlag.NORMAL, false);
     }
