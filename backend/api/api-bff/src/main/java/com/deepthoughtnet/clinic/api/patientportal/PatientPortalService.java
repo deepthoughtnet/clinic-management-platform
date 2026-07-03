@@ -648,7 +648,9 @@ public class PatientPortalService {
     public List<PatientPortalLabLatestResultResponse> latestLabResults(String query) {
         PatientAccess access = requireCurrentPatientAccess();
         String term = summarize(query);
-        List<LabOrderRecord> records = allLabOrders(resolveAccessiblePatientAccesses(access));
+        List<LabOrderRecord> records = allLabOrders(resolveAccessiblePatientAccesses(access)).stream()
+                .filter(this::isApprovedLabRecord)
+                .toList();
         return records.stream()
                 .flatMap(order -> order.results().stream().map(result -> new LatestLabMatch(order, result)))
                 .filter(match -> term == null || matchesLabResult(match, term))
@@ -699,7 +701,7 @@ public class PatientPortalService {
 
     private List<PatientPortalLabOrderResponse> labOrderResponses(List<PatientAccess> patientAccesses, boolean reportsOnly) {
         return allLabOrders(patientAccesses).stream()
-                .filter(record -> !reportsOnly || isReportStatus(record.status() == null ? null : record.status().name()))
+                .filter(record -> !reportsOnly || isApprovedLabRecord(record))
                 .map(this::toLabOrderResponse)
                 .toList();
     }
@@ -716,6 +718,7 @@ public class PatientPortalService {
             throw new IllegalArgumentException("orderNumber is required");
         }
         return allLabOrders(patientAccesses).stream()
+                .filter(this::isApprovedLabRecord)
                 .filter(record -> record.orderNumber() != null && record.orderNumber().equalsIgnoreCase(orderNumber.trim()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
@@ -725,13 +728,18 @@ public class PatientPortalService {
         if (!StringUtils.hasText(status)) {
             return false;
         }
-        return "REPORT_READY".equalsIgnoreCase(status)
-                || "REPORT_GENERATED".equalsIgnoreCase(status)
-                || "DOCTOR_REVIEWED".equalsIgnoreCase(status)
+        return "REPORT_GENERATED".equalsIgnoreCase(status)
                 || "DELIVERED".equalsIgnoreCase(status);
     }
 
+    private boolean isApprovedLabRecord(LabOrderRecord record) {
+        return record != null && isReportStatus(record.status() == null ? null : record.status().name());
+    }
+
     private PatientPortalLabOrderResponse toLabOrderResponse(LabOrderRecord record) {
+        List<PatientPortalLabResultResponse> visibleResults = isApprovedLabRecord(record)
+                ? record.results().stream().map(this::toLabResultResponse).toList()
+                : List.of();
         return new PatientPortalLabOrderResponse(
                 record.orderNumber(),
                 record.doctorName(),
@@ -742,7 +750,7 @@ public class PatientPortalService {
                 record.reportGeneratedAt(),
                 record.doctorReviewedAt(),
                 record.doctorComments(),
-                record.results().stream().map(this::toLabResultResponse).toList()
+                visibleResults
         );
     }
 

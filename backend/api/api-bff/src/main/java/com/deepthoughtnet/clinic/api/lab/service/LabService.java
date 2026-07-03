@@ -5,10 +5,14 @@ import com.deepthoughtnet.clinic.api.lab.db.LabOrderAttachmentEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderAttachmentRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderItemEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderItemRepository;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderOrigin;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderResultEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderResultRepository;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderSampleEntity;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderSampleRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderStatus;
+import com.deepthoughtnet.clinic.api.lab.db.LabSampleStatus;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestMasterRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabTestParameterEntity;
@@ -18,6 +22,7 @@ import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderCreateCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDirectCreateCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderDoctorReviewCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPublishReportCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderItemRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultComponentCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultEntryCommand;
@@ -29,11 +34,19 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderSampleCollectionCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderVerificationCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderAttachmentRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleReceiveCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleRejectCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleStatusRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestUpsertCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterUpsertCommand;
+import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
+import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentUploadCommand;
 import com.deepthoughtnet.clinic.api.clinicaldocument.service.ClinicalDocumentRecord;
 import com.deepthoughtnet.clinic.api.notifications.LabNotificationService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
@@ -94,6 +107,20 @@ import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 public class LabService {
     private static final String TEST_ENTITY_TYPE = "LAB_TEST";
     private static final String ORDER_ENTITY_TYPE = "LAB_ORDER";
+    private static final String SAMPLE_ENTITY_TYPE = "LAB_SAMPLE";
+    private static final Set<LabOrderStatus> ACTIVE_ORDER_STATUSES = Set.of(
+            LabOrderStatus.ORDERED,
+            LabOrderStatus.PAYMENT_PENDING,
+            LabOrderStatus.PAID,
+            LabOrderStatus.READY_FOR_COLLECTION,
+            LabOrderStatus.SAMPLE_COLLECTED,
+            LabOrderStatus.PROCESSING,
+            LabOrderStatus.RESULT_ENTERED,
+            LabOrderStatus.REPORT_READY,
+            LabOrderStatus.REPORT_GENERATED,
+            LabOrderStatus.DOCTOR_REVIEWED,
+            LabOrderStatus.DELIVERED
+    );
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final List<String> LAB_CATEGORIES = List.of(
             "HEMATOLOGY",
@@ -111,6 +138,7 @@ public class LabService {
     private final LabOrderItemRepository labOrderItemRepository;
     private final LabOrderResultRepository labOrderResultRepository;
     private final LabOrderAttachmentRepository labOrderAttachmentRepository;
+    private final LabOrderSampleRepository labOrderSampleRepository;
     private final ConsultationService consultationService;
     private final PatientRepository patientRepository;
     private final TenantUserManagementService tenantUserManagementService;
@@ -130,6 +158,7 @@ public class LabService {
             LabOrderItemRepository labOrderItemRepository,
             LabOrderResultRepository labOrderResultRepository,
             LabOrderAttachmentRepository labOrderAttachmentRepository,
+            LabOrderSampleRepository labOrderSampleRepository,
             ConsultationService consultationService,
             PatientRepository patientRepository,
             TenantUserManagementService tenantUserManagementService,
@@ -148,6 +177,7 @@ public class LabService {
         this.labOrderItemRepository = labOrderItemRepository;
         this.labOrderResultRepository = labOrderResultRepository;
         this.labOrderAttachmentRepository = labOrderAttachmentRepository;
+        this.labOrderSampleRepository = labOrderSampleRepository;
         this.consultationService = consultationService;
         this.patientRepository = patientRepository;
         this.tenantUserManagementService = tenantUserManagementService;
@@ -300,6 +330,8 @@ public class LabService {
                 .orElseThrow(() -> new IllegalArgumentException("Consultation not found"));
         PatientEntity patient = patientRepository.findByTenantIdAndId(tenantId, consultation.patientId())
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
+        List<LabTestMasterEntity> tests = loadTests(tenantId, command.testIds());
+        ensureNoConsultationDuplicateOrders(tenantId, consultationId, tests);
         TenantUserRecord doctor = consultation.doctorUserId() == null ? null : tenantUserManagementService.list(tenantId).stream()
                 .filter(user -> consultation.doctorUserId().equals(user.appUserId()))
                 .findFirst()
@@ -310,11 +342,17 @@ public class LabService {
                 consultation.doctorUserId(),
                 doctor == null ? consultation.doctorName() : doctor.displayName(),
                 consultation.id(),
+                LabOrderOrigin.CONSULTATION,
+                consultation.doctorUserId(),
+                null,
+                null,
+                null,
+                null,
                 consultation.appointmentId(),
                 normalizeNullable(command.notes()),
-                loadTests(tenantId, command.testIds()),
+                tests,
                 actorAppUserId,
-                "Created lab order and billing"
+                "Created consultation lab order and billing"
         );
     }
 
@@ -324,7 +362,7 @@ public class LabService {
         validateDirectOrder(command);
         PatientEntity patient = patientRepository.findByTenantIdAndId(tenantId, command.patientId())
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
-        UUID doctorUserId = command.doctorUserId();
+        UUID doctorUserId = command.requestedByInternalDoctorId();
         String doctorName = null;
         if (doctorUserId != null) {
             TenantUserRecord doctor = tenantUserManagementService.list(tenantId).stream()
@@ -333,17 +371,26 @@ public class LabService {
                     .orElseThrow(() -> new IllegalArgumentException("Doctor not found"));
             doctorName = doctor.displayName();
         }
+        LabOrderOrigin orderOrigin = command.orderOrigin() == null ? LabOrderOrigin.WALK_IN : command.orderOrigin();
         return createOrderInternal(
                 tenantId,
                 patient,
                 doctorUserId,
                 doctorName,
                 null,
+                orderOrigin,
+                doctorUserId,
+                normalizeNullable(command.externalDoctorName()),
+                normalizeNullable(command.externalDoctorMobile()),
+                normalizeNullable(command.externalClinicName()),
+                normalizeNullable(command.referralSource()),
                 null,
                 normalizeNullable(command.notes()),
                 loadTests(tenantId, command.testIds()),
                 actorAppUserId,
-                "Created standalone lab order and billing"
+                orderOrigin == LabOrderOrigin.WALK_IN
+                        ? "Created direct walk-in lab registration and billing"
+                        : "Created direct lab registration and billing"
         );
     }
 
@@ -379,30 +426,98 @@ public class LabService {
 
     @Transactional
     public LabOrderRecord collectSample(UUID tenantId, UUID orderId, LabOrderSampleCollectionCommand command, UUID actorAppUserId) {
+        LabOrderRecord order = findOrder(tenantId, orderId).orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+        String specimenType = firstText(command.sampleType(), order.sampleType(), fallbackSampleType(order));
+        List<LabSampleRecord> samples = collectSamples(tenantId, orderId, List.of(new LabSampleCollectionCommand(
+                null,
+                specimenType,
+                null,
+                command.collectedAt(),
+                actorAppUserId,
+                command.notes()
+        )), actorAppUserId);
+        if (samples.isEmpty()) {
+            throw new IllegalStateException("No lab samples were collected");
+        }
+        return findOrder(tenantId, orderId).orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+    }
+
+    @Transactional(readOnly = true)
+    public List<LabSampleRecord> listSamples(UUID tenantId, UUID orderId) {
         requireTenant(tenantId);
         requireId(orderId, "orderId");
-        validateSampleCollection(command);
+        labOrderRepository.findByTenantIdAndId(tenantId, orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+        return labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, orderId).stream()
+                .map(this::toRecord)
+                .toList();
+    }
+
+    @Transactional
+    public List<LabSampleRecord> collectSamples(UUID tenantId, UUID orderId, List<LabSampleCollectionCommand> commands, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireId(orderId, "orderId");
+        if (commands == null || commands.isEmpty()) {
+            throw new IllegalArgumentException("At least one sample is required");
+        }
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
         if (order.getStatus() != LabOrderStatus.READY_FOR_COLLECTION) {
             throw new IllegalArgumentException("Lab order is not ready for sample collection");
         }
-        if (order.getSampleCollectedAt() != null) {
-            throw new IllegalArgumentException("Sample collection has already been recorded");
+        Map<UUID, LabOrderItemEntity> orderItems = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, orderId).stream()
+                .collect(Collectors.toMap(LabOrderItemEntity::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
+        List<LabOrderSampleEntity> entities = new ArrayList<>();
+        OffsetDateTime firstCollectedAt = null;
+        String firstSpecimenType = null;
+        String firstNotes = null;
+        UUID firstCollectedBy = null;
+        for (LabSampleCollectionCommand command : commands) {
+            validateSampleCollection(command);
+            LabOrderItemEntity orderItem = command.labOrderItemId() == null ? null : orderItems.get(command.labOrderItemId());
+            if (command.labOrderItemId() != null && orderItem == null) {
+                throw new IllegalArgumentException("Unknown lab order item for sample collection");
+            }
+            String specimenType = normalize(command.specimenType());
+            String accessionNumber = generateAccessionNumber(tenantId);
+            String barcodeValue = generateBarcodeValue(accessionNumber);
+            OffsetDateTime collectedAt = command.collectedAt() == null ? OffsetDateTime.now() : command.collectedAt();
+            UUID collectedBy = command.collectedBy() == null ? actorAppUserId : command.collectedBy();
+            LabOrderSampleEntity entity = LabOrderSampleEntity.create(
+                    tenantId,
+                    orderId,
+                    command.labOrderItemId(),
+                    accessionNumber,
+                    barcodeValue,
+                    specimenType,
+                    normalizeNullable(command.containerType()),
+                    collectedAt,
+                    collectedBy,
+                    normalizeNullable(command.notes()),
+                    actorAppUserId
+            );
+            entities.add(entity);
+            if (firstCollectedAt == null || collectedAt.isBefore(firstCollectedAt)) {
+                firstCollectedAt = collectedAt;
+                firstSpecimenType = specimenType;
+                firstNotes = entity.getNotes();
+                firstCollectedBy = collectedBy;
+            }
         }
-        String collectedBy = normalizeNullable(command.collectedBy());
-        if (!StringUtils.hasText(collectedBy)) {
-            collectedBy = resolveUserDisplayName(tenantId, actorAppUserId).orElse(null);
-        }
+        List<LabOrderSampleEntity> savedSamples = labOrderSampleRepository.saveAll(entities);
         order.markSampleCollected(
-                command.collectedAt(),
-                actorAppUserId,
-                collectedBy,
-                normalizeNullable(command.sampleType()),
-                normalizeNullable(command.notes())
+                firstCollectedAt,
+                firstCollectedBy == null ? actorAppUserId : firstCollectedBy,
+                resolveUserDisplayName(tenantId, firstCollectedBy == null ? actorAppUserId : firstCollectedBy).orElse(null),
+                firstSpecimenType,
+                firstNotes
         );
         LabOrderEntity saved = labOrderRepository.save(order);
         auditOrder(tenantId, saved, "lab_order.sample_collected", actorAppUserId, "Collected lab sample");
+        for (LabOrderSampleEntity sample : savedSamples) {
+            auditSample(tenantId, sample, "lab_sample.accession_generated", actorAppUserId, "Generated accession number");
+            auditSample(tenantId, sample, "lab_sample.collected", actorAppUserId, "Collected lab sample");
+        }
         labNotificationService.notifySampleCollected(
                 tenantId,
                 saved.getPatientId(),
@@ -412,7 +527,52 @@ public class LabService {
                 saved.getDoctorName(),
                 actorAppUserId
         );
-        return toRecord(tenantId, saved);
+        return savedSamples.stream().map(this::toRecord).toList();
+    }
+
+    @Transactional
+    public LabSampleRecord receiveSample(UUID tenantId, UUID sampleId, LabSampleReceiveCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireId(sampleId, "sampleId");
+        LabOrderSampleEntity sample = labOrderSampleRepository.findByTenantIdAndId(tenantId, sampleId)
+                .orElseThrow(() -> new IllegalArgumentException("Lab sample not found"));
+        if (sample.getStatus() != LabSampleStatus.COLLECTED) {
+            throw new IllegalArgumentException("Lab sample is not ready to receive");
+        }
+        UUID receivedBy = command == null || command.receivedBy() == null ? actorAppUserId : command.receivedBy();
+        sample.markReceived(command == null ? null : command.receivedAt(), receivedBy, actorAppUserId);
+        LabOrderSampleEntity saved = labOrderSampleRepository.save(sample);
+        auditSample(tenantId, saved, "lab_sample.received", actorAppUserId, "Received lab sample");
+        return toRecord(saved);
+    }
+
+    @Transactional
+    public LabSampleRecord rejectSample(UUID tenantId, UUID sampleId, LabSampleRejectCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireId(sampleId, "sampleId");
+        validateSampleRejection(command);
+        LabOrderSampleEntity sample = labOrderSampleRepository.findByTenantIdAndId(tenantId, sampleId)
+                .orElseThrow(() -> new IllegalArgumentException("Lab sample not found"));
+        if (sample.getStatus() != LabSampleStatus.COLLECTED && sample.getStatus() != LabSampleStatus.RECEIVED) {
+            throw new IllegalArgumentException("Lab sample cannot be rejected in its current state");
+        }
+        ensureNoResultsEnteredForSample(tenantId, sample);
+        sample.markRejected(normalize(command.rejectionReason()), command.recollectionRequired(), normalizeNullable(command.notes()), actorAppUserId);
+        LabOrderSampleEntity savedSample = labOrderSampleRepository.save(sample);
+        LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, sample.getLabOrderId())
+                .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+        if (savedSample.getStatus() == LabSampleStatus.RECOLLECTION_REQUIRED) {
+            boolean allNeedRecollection = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, order.getId()).stream()
+                    .allMatch(existing -> existing.getStatus() == LabSampleStatus.RECOLLECTION_REQUIRED || existing.getStatus() == LabSampleStatus.REJECTED);
+            if (allNeedRecollection) {
+                order.markReadyForCollection();
+                labOrderRepository.save(order);
+            }
+            auditSample(tenantId, savedSample, "lab_sample.recollection_required", actorAppUserId, "Marked sample for recollection");
+        } else {
+            auditSample(tenantId, savedSample, "lab_sample.rejected", actorAppUserId, "Rejected lab sample");
+        }
+        return toRecord(savedSample);
     }
 
     @Transactional
@@ -422,6 +582,11 @@ public class LabService {
         validateResults(command);
         LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+        if (order.getStatus() == LabOrderStatus.REPORT_READY
+                || order.getStatus() == LabOrderStatus.REPORT_GENERATED
+                || order.getStatus() == LabOrderStatus.DELIVERED) {
+            throw new IllegalArgumentException("Results are verified and cannot be edited. Use amendment workflow in a future release.");
+        }
         if (order.getStatus() != LabOrderStatus.SAMPLE_COLLECTED
                 && order.getStatus() != LabOrderStatus.PROCESSING
                 && order.getStatus() != LabOrderStatus.RESULT_ENTERED
@@ -431,6 +596,14 @@ public class LabService {
         if (order.getStatus() == LabOrderStatus.DOCTOR_REVIEWED) {
             throw new IllegalArgumentException("Lab order has already been reviewed and cannot be edited");
         }
+        List<LabOrderSampleEntity> orderSamples = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, orderId);
+        if (!orderSamples.isEmpty()) {
+            boolean hasUsableSample = orderSamples.stream().anyMatch(sample -> sample.getStatus() == LabSampleStatus.COLLECTED || sample.getStatus() == LabSampleStatus.RECEIVED);
+            if (!hasUsableSample) {
+                throw new IllegalArgumentException("Lab order requires recollection before result entry");
+            }
+        }
+        LabOrderStatus previousStatus = order.getStatus();
         Map<UUID, LabOrderItemEntity> orderItems = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, orderId).stream()
                 .collect(Collectors.toMap(LabOrderItemEntity::getId, Function.identity(), (a, b) -> a, LinkedHashMap::new));
         if (orderItems.isEmpty()) {
@@ -453,11 +626,13 @@ public class LabService {
             if (orderItem == null) {
                 throw new IllegalArgumentException("Unknown lab order item in results payload");
             }
+            ensureUsableSampleForOrderItem(orderSamples, orderItem.getId());
             List<LabOrderResultComponentCommand> components = itemCommand.componentResults() == null ? List.of() : itemCommand.componentResults();
             if (!components.isEmpty()) {
                 for (LabOrderResultComponentCommand component : components) {
                     LabTestParameterEntity parameter = findParameter(parametersByTestId.get(orderItem.getLabTestId()), component.parameterName(), component.componentName());
                     ResultFlagResolution resolution = resolveResultFlag(component.resultValue(), parameter == null ? itemCommand.referenceRange() : parameter.getNormalRange(), parameter == null ? null : parameter.getCriticalRange());
+                    ensureNumericResultWhenRangesPresent(component.resultValue(), parameter == null ? itemCommand.referenceRange() : parameter.getNormalRange(), parameter == null ? null : parameter.getCriticalRange());
                     if (resolution.critical()) {
                         criticalLabels.add(orderItem.getTestName() + " / " + firstText(component.parameterName(), component.componentName()));
                     }
@@ -480,6 +655,7 @@ public class LabService {
             } else {
                 LabTestParameterEntity parameter = firstParameter(parametersByTestId.get(orderItem.getLabTestId()));
                 ResultFlagResolution resolution = resolveResultFlag(itemCommand.resultValue(), parameter == null ? itemCommand.referenceRange() : parameter.getNormalRange(), parameter == null ? null : parameter.getCriticalRange());
+                ensureNumericResultWhenRangesPresent(itemCommand.resultValue(), parameter == null ? itemCommand.referenceRange() : parameter.getNormalRange(), parameter == null ? null : parameter.getCriticalRange());
                 if (resolution.critical()) {
                     criticalLabels.add(orderItem.getTestName());
                 }
@@ -504,8 +680,10 @@ public class LabService {
         order.markProcessingStarted();
         order.markResultsEntered(normalizeNullable(command.comments()));
         LabOrderEntity saved = labOrderRepository.save(order);
-        auditOrder(tenantId, saved, "lab_order.results_entered", actorAppUserId, "Entered lab results");
+        String resultAuditAction = previousStatus == LabOrderStatus.RESULT_ENTERED ? "lab_order.results_updated_before_verification" : "lab_order.results_entered";
+        auditOrder(tenantId, saved, resultAuditAction, actorAppUserId, "Entered lab results");
         if (!criticalLabels.isEmpty()) {
+            auditOrder(tenantId, saved, "lab_order.critical_results_entered", actorAppUserId, "Entered critical lab results");
             labNotificationService.notifyCriticalResult(
                     tenantId,
                     null,
@@ -517,6 +695,94 @@ public class LabService {
                     actorAppUserId
             );
         }
+        return toRecord(tenantId, saved);
+    }
+
+    @Transactional
+    public LabOrderRecord verifyResults(UUID tenantId, UUID orderId, LabOrderVerificationCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireId(orderId, "orderId");
+        validateVerification(command);
+        LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+        if (order.getStatus() != LabOrderStatus.RESULT_ENTERED) {
+            throw new IllegalArgumentException("Lab order is not ready for verification");
+        }
+        List<LabOrderResultEntity> results = labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, orderId);
+        if (results.isEmpty()) {
+            throw new IllegalArgumentException("Lab order has no result values to verify");
+        }
+        List<LabOrderSampleEntity> orderSamples = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, orderId);
+        boolean hasUsableSample = orderSamples.stream().anyMatch(sample -> sample.getStatus() == LabSampleStatus.COLLECTED || sample.getStatus() == LabSampleStatus.RECEIVED);
+        if (!hasUsableSample) {
+            throw new IllegalArgumentException("Lab order requires a valid sample before verification");
+        }
+        String decision = normalizeReviewDecision(command.decision());
+        if ("SEND_BACK".equals(decision)) {
+            order.markLabVerificationSentBack(actorAppUserId, decision, normalizeNullable(command.reason()), normalizeNullable(command.comments()));
+        } else {
+            order.markLabVerified(actorAppUserId, decision, normalizeNullable(command.reason()), normalizeNullable(command.comments()));
+        }
+        LabOrderEntity saved = labOrderRepository.save(order);
+        auditOrder(
+                tenantId,
+                saved,
+                "SEND_BACK".equals(decision) ? "lab_order.verification_sent_back" : "lab_order.verification_approved",
+                actorAppUserId,
+                "SEND_BACK".equals(decision) ? "Sent lab results back for correction" : "Verified lab results"
+        );
+        return toRecord(tenantId, saved);
+    }
+
+    @Transactional
+    public LabOrderRecord publishReport(UUID tenantId, UUID orderId, LabOrderPublishReportCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireId(orderId, "orderId");
+        LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+        if (order.getStatus() != LabOrderStatus.REPORT_READY) {
+            throw new IllegalArgumentException("Lab order is not ready for report publishing");
+        }
+        LabOrderResultPdf pdf = renderReportPdf(tenantId, orderId);
+        String deliveryChannelsJson = serializeJson(normalizeDeliveryChannels(command == null ? null : command.deliveryChannels()));
+        order.markReportPublished(
+                actorAppUserId,
+                pdf.filename(),
+                "PUBLISHED",
+                deliveryChannelsJson,
+                normalizeNullable(command == null ? null : command.publishNotes())
+        );
+        LabOrderEntity saved = labOrderRepository.save(order);
+        auditOrder(tenantId, saved, "lab_order.report_published", actorAppUserId, "Published lab report");
+
+        clinicalDocumentService.upload(new ClinicalDocumentUploadCommand(
+                tenantId,
+                saved.getPatientId(),
+                saved.getConsultationId(),
+                null,
+                actorAppUserId,
+                ClinicalDocumentType.LAB_REPORT,
+                pdf.filename(),
+                "application/pdf",
+                pdf.content(),
+                normalizeNullable(command == null ? null : command.publishNotes()),
+                null,
+                null,
+                "Published from lab order " + saved.getOrderNumber()
+        ));
+
+        labNotificationService.notifyReportPublished(
+                tenantId,
+                saved.getPatientId(),
+                saved.getId(),
+                saved.getOrderNumber(),
+                saved.getPatientName(),
+                saved.getDoctorName(),
+                pdf.content(),
+                pdf.filename(),
+                actorAppUserId
+        );
+        notifyRequestingDoctor(tenantId, saved, actorAppUserId);
         return toRecord(tenantId, saved);
     }
 
@@ -645,6 +911,11 @@ public class LabService {
                         resolveParameters(tenantId, item)
                 ))
                 .toList();
+        List<LabSampleRecord> samples = labOrderSampleRepository.findByTenantIdAndLabOrderIdOrderByCollectedAtAscCreatedAtAsc(tenantId, order.getId()).stream()
+                .map(this::toRecord)
+                .toList();
+        LabSampleRecord primarySample = samples.isEmpty() ? null : samples.getFirst();
+        LabSampleStatusRecord sampleSummaryStatus = summarizeSampleStatus(samples);
         List<LabOrderResultRecord> results = labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, order.getId()).stream()
                 .map(result -> new LabOrderResultRecord(
                         result.getId(),
@@ -675,6 +946,12 @@ public class LabService {
                 order.getDoctorUserId(),
                 order.getDoctorName(),
                 order.getConsultationId(),
+                order.getOrderOrigin(),
+                order.getRequestedByInternalDoctorId(),
+                order.getExternalDoctorName(),
+                order.getExternalDoctorMobile(),
+                order.getExternalClinicName(),
+                order.getReferralSource(),
                 order.getNotes(),
                 toRecord(order.getStatus()),
                 order.getOrderedAt(),
@@ -689,6 +966,9 @@ public class LabService {
                 order.getDeliveredByUserId(),
                 order.getPaymentCollectedAt(),
                 order.getReadyForCollectionAt(),
+                primarySample == null ? null : primarySample.accessionNumber(),
+                primarySample == null ? null : primarySample.barcodeValue(),
+                sampleSummaryStatus,
                 order.getSampleType(),
                 order.getSampleCollectedAt(),
                 order.getSampleCollectedByUserId(),
@@ -701,14 +981,26 @@ public class LabService {
                 order.getReportGeneratedByUserId(),
                 resolveUserDisplayName(tenantId, order.getReportGeneratedByUserId()).orElse(null),
                 order.getReportFilename(),
+                order.getReportPublishedAt(),
+                order.getReportPublishedByUserId(),
+                order.getReportDeliveryStatus(),
+                parseDeliveryChannels(order.getReportDeliveryChannels()),
+                order.getReportDeliveryNotes(),
                 order.getDoctorReviewedAt(),
                 order.getDoctorReviewedByUserId(),
                 order.getDoctorReviewedBy(),
                 order.getDoctorReviewDecision(),
                 order.getDoctorReviewReason(),
                 order.getDoctorComments(),
+                order.getLabVerifiedAt(),
+                order.getLabVerifiedBy(),
+                resolveUserDisplayName(tenantId, order.getLabVerifiedBy()).orElse(null),
+                order.getLabVerificationDecision(),
+                order.getLabVerificationComments(),
+                order.getLabVerificationReason(),
                 attachments,
                 items,
+                samples,
                 results,
                 order.getCreatedAt(),
                 order.getUpdatedAt()
@@ -729,6 +1021,41 @@ public class LabService {
             case DOCTOR_REVIEWED -> LabOrderStatusRecord.DOCTOR_REVIEWED;
             case DELIVERED -> LabOrderStatusRecord.DELIVERED;
             case CANCELLED -> LabOrderStatusRecord.CANCELLED;
+        };
+    }
+
+    private LabSampleRecord toRecord(LabOrderSampleEntity entity) {
+        return new LabSampleRecord(
+                entity.getId(),
+                entity.getLabOrderId(),
+                entity.getLabOrderItemId(),
+                entity.getAccessionNumber(),
+                entity.getBarcodeValue(),
+                entity.getSpecimenType(),
+                entity.getContainerType(),
+                toRecord(entity.getStatus()),
+                entity.getCollectedAt(),
+                entity.getCollectedBy(),
+                entity.getReceivedAt(),
+                entity.getReceivedBy(),
+                entity.getRejectionReason(),
+                entity.isRecollectionRequired(),
+                entity.getNotes(),
+                entity.getCreatedAt(),
+                entity.getCreatedBy(),
+                entity.getUpdatedAt(),
+                entity.getUpdatedBy()
+        );
+    }
+
+    private LabSampleStatusRecord toRecord(LabSampleStatus status) {
+        return switch (status) {
+            case PENDING_COLLECTION -> LabSampleStatusRecord.PENDING_COLLECTION;
+            case COLLECTED -> LabSampleStatusRecord.COLLECTED;
+            case RECEIVED -> LabSampleStatusRecord.RECEIVED;
+            case REJECTED -> LabSampleStatusRecord.REJECTED;
+            case RECOLLECTION_REQUIRED -> LabSampleStatusRecord.RECOLLECTION_REQUIRED;
+            case CANCELLED -> LabSampleStatusRecord.CANCELLED;
         };
     }
 
@@ -840,10 +1167,10 @@ public class LabService {
         float[] columns = new float[]{0.30f, 0.18f, 0.12f, 0.12f, 0.28f};
         float headerHeight = 18f;
         float rowHeight = 20f;
-        content.setNonStrokingColor(232, 240, 254);
+        content.setNonStrokingColor(232 / 255f, 240 / 255f, 254 / 255f);
         content.addRect(margin, y - headerHeight, width, headerHeight);
         content.fill();
-        content.setNonStrokingColor(0, 0, 0);
+        content.setNonStrokingColor(0f, 0f, 0f);
         float x = margin;
         for (int i = 0; i < headers.length; i++) {
             float colWidth = width * columns[i];
@@ -988,8 +1315,8 @@ public class LabService {
     }
 
     private void setFillColor(PDPageContentStream content, int red, int green, int blue) throws IOException {
-        content.setNonStrokingColor(red, green, blue);
-        content.setStrokingColor(red, green, blue);
+        content.setNonStrokingColor(red / 255f, green / 255f, blue / 255f);
+        content.setStrokingColor(red / 255f, green / 255f, blue / 255f);
     }
 
     private void drawFooter(PDPageContentStream content, String text, float margin, float y) throws IOException {
@@ -1026,6 +1353,56 @@ public class LabService {
                 .filter(StringUtils::hasText)
                 .findFirst()
                 .orElse(null);
+    }
+
+    private LabSampleStatusRecord summarizeSampleStatus(List<LabSampleRecord> samples) {
+        if (samples == null || samples.isEmpty()) {
+            return null;
+        }
+        if (samples.stream().anyMatch(sample -> sample.status() == LabSampleStatusRecord.RECOLLECTION_REQUIRED)) {
+            return LabSampleStatusRecord.RECOLLECTION_REQUIRED;
+        }
+        if (samples.stream().anyMatch(sample -> sample.status() == LabSampleStatusRecord.REJECTED)) {
+            return LabSampleStatusRecord.REJECTED;
+        }
+        if (samples.stream().allMatch(sample -> sample.status() == LabSampleStatusRecord.RECEIVED)) {
+            return LabSampleStatusRecord.RECEIVED;
+        }
+        if (samples.stream().anyMatch(sample -> sample.status() == LabSampleStatusRecord.RECEIVED)) {
+            return LabSampleStatusRecord.RECEIVED;
+        }
+        if (samples.stream().anyMatch(sample -> sample.status() == LabSampleStatusRecord.COLLECTED)) {
+            return LabSampleStatusRecord.COLLECTED;
+        }
+        return samples.getFirst().status();
+    }
+
+    private void ensureUsableSampleForOrderItem(List<LabOrderSampleEntity> samples, UUID labOrderItemId) {
+        if (samples == null || samples.isEmpty()) {
+            return;
+        }
+        List<LabOrderSampleEntity> relevantSamples = samples.stream()
+                .filter(sample -> sample.getLabOrderItemId() == null || sample.getLabOrderItemId().equals(labOrderItemId))
+                .toList();
+        if (relevantSamples.isEmpty()) {
+            throw new IllegalArgumentException("A collected sample is required before result entry");
+        }
+        boolean hasUsable = relevantSamples.stream().anyMatch(sample -> sample.getStatus() == LabSampleStatus.COLLECTED || sample.getStatus() == LabSampleStatus.RECEIVED);
+        if (!hasUsable) {
+            throw new IllegalArgumentException("Result entry is blocked for a rejected or recollection-required sample");
+        }
+    }
+
+    private void ensureNoResultsEnteredForSample(UUID tenantId, LabOrderSampleEntity sample) {
+        if (sample.getLabOrderItemId() == null) {
+            if (!labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, sample.getLabOrderId()).isEmpty()) {
+                throw new IllegalArgumentException("Lab sample cannot be rejected after results are entered");
+            }
+            return;
+        }
+        if (!labOrderResultRepository.findByTenantIdAndLabOrderItemId(tenantId, sample.getLabOrderItemId()).isEmpty()) {
+            throw new IllegalArgumentException("Lab sample cannot be rejected after results are entered");
+        }
     }
 
     private String formatDateTime(OffsetDateTime value) {
@@ -1126,6 +1503,12 @@ public class LabService {
             UUID doctorUserId,
             String doctorName,
             UUID consultationId,
+            LabOrderOrigin orderOrigin,
+            UUID requestedByInternalDoctorId,
+            String externalDoctorName,
+            String externalDoctorMobile,
+            String externalClinicName,
+            String referralSource,
             UUID appointmentId,
             String notes,
             List<LabTestMasterEntity> tests,
@@ -1141,6 +1524,12 @@ public class LabService {
                 doctorUserId,
                 doctorName,
                 consultationId,
+                orderOrigin,
+                requestedByInternalDoctorId,
+                externalDoctorName,
+                externalDoctorMobile,
+                externalClinicName,
+                referralSource,
                 notes
         );
         LabOrderEntity savedOrder = labOrderRepository.save(order);
@@ -1195,6 +1584,12 @@ public class LabService {
         savedOrder.markStatus(LabOrderStatus.PAYMENT_PENDING);
         LabOrderEntity persisted = labOrderRepository.save(savedOrder);
         auditOrder(tenantId, persisted, "lab_order.created", actorAppUserId, auditMessage);
+        if (persisted.getOrderOrigin() == LabOrderOrigin.WALK_IN || persisted.getOrderOrigin() == LabOrderOrigin.DOCTOR_REFERRAL) {
+            auditOrder(tenantId, persisted, "lab_order.direct_registration_created", actorAppUserId, "Created direct laboratory registration");
+        }
+        if (StringUtils.hasText(persisted.getExternalDoctorName()) || StringUtils.hasText(persisted.getReferralSource())) {
+            auditOrder(tenantId, persisted, "lab_order.referral_captured", actorAppUserId, "Captured laboratory referral metadata");
+        }
         labNotificationService.notifyOrderCreated(
                 tenantId,
                 patient.getId(),
@@ -1274,12 +1669,53 @@ public class LabService {
             throw new IllegalArgumentException("command is required");
         }
         requireId(command.patientId(), "patientId");
+        if (command.orderOrigin() == null) {
+            throw new IllegalArgumentException("orderOrigin is required");
+        }
         if (command.testIds() == null || command.testIds().isEmpty()) {
             throw new IllegalArgumentException("At least one test is required");
+        }
+        if (command.orderOrigin() == LabOrderOrigin.CONSULTATION) {
+            throw new IllegalArgumentException("Consultation-origin lab orders must be created from the consultation workspace");
+        }
+        if (command.orderOrigin() == LabOrderOrigin.DOCTOR_REFERRAL && !StringUtils.hasText(command.externalDoctorName())) {
+            throw new IllegalArgumentException("externalDoctorName is required for doctor referral orders");
+        }
+        if (StringUtils.hasText(command.externalDoctorName()) && command.externalDoctorName().trim().length() > 256) {
+            throw new IllegalArgumentException("externalDoctorName must be 256 characters or fewer");
+        }
+        if (StringUtils.hasText(command.externalDoctorMobile()) && command.externalDoctorMobile().trim().length() > 32) {
+            throw new IllegalArgumentException("externalDoctorMobile must be 32 characters or fewer");
+        }
+        if (StringUtils.hasText(command.externalClinicName()) && command.externalClinicName().trim().length() > 256) {
+            throw new IllegalArgumentException("externalClinicName must be 256 characters or fewer");
+        }
+        if (StringUtils.hasText(command.referralSource()) && command.referralSource().trim().length() > 128) {
+            throw new IllegalArgumentException("referralSource must be 128 characters or fewer");
         }
         if (StringUtils.hasText(command.notes()) && command.notes().trim().length() > 250) {
             throw new IllegalArgumentException("notes must be 250 characters or fewer");
         }
+    }
+
+    private void ensureNoConsultationDuplicateOrders(UUID tenantId, UUID consultationId, List<LabTestMasterEntity> tests) {
+        if (consultationId == null || tests == null || tests.isEmpty()) {
+            return;
+        }
+        Set<UUID> requestedTestIds = tests.stream()
+                .map(LabTestMasterEntity::getId)
+                .collect(Collectors.toSet());
+        labOrderRepository.findByTenantIdAndConsultationIdOrderByCreatedAtDesc(tenantId, consultationId).stream()
+                .filter(order -> order.getStatus() != LabOrderStatus.CANCELLED)
+                .filter(order -> ACTIVE_ORDER_STATUSES.contains(order.getStatus()))
+                .forEach(order -> {
+                    boolean duplicateExists = labOrderItemRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAsc(tenantId, order.getId()).stream()
+                            .map(LabOrderItemEntity::getLabTestId)
+                            .anyMatch(requestedTestIds::contains);
+                    if (duplicateExists) {
+                        throw new IllegalArgumentException("This consultation already has an active lab order for one of the selected tests");
+                    }
+                });
     }
 
     private void validatePayment(LabOrderPaymentCommand command) {
@@ -1364,12 +1800,7 @@ public class LabService {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
         }
-        if (command.collectedAt() == null) {
-            throw new IllegalArgumentException("collectedAt is required");
-        }
-        if (command.collectedAt().isAfter(OffsetDateTime.now())) {
-            throw new IllegalArgumentException("collection date cannot be in the future");
-        }
+        validateSampleTimestamp(command.collectedAt(), "collectedAt");
         if (StringUtils.hasText(command.sampleType()) && command.sampleType().trim().length() > 60) {
             throw new IllegalArgumentException("sampleType must be 60 characters or fewer");
         }
@@ -1378,6 +1809,49 @@ public class LabService {
         }
         if (StringUtils.hasText(command.notes()) && command.notes().trim().length() > 250) {
             throw new IllegalArgumentException("notes must be 250 characters or fewer");
+        }
+    }
+
+    private void validateSampleCollection(LabSampleCollectionCommand command) {
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        if (!StringUtils.hasText(command.specimenType())) {
+            throw new IllegalArgumentException("specimenType is required");
+        }
+        if (normalize(command.specimenType()).length() > 128) {
+            throw new IllegalArgumentException("specimenType must be 128 characters or fewer");
+        }
+        if (StringUtils.hasText(command.containerType()) && command.containerType().trim().length() > 128) {
+            throw new IllegalArgumentException("containerType must be 128 characters or fewer");
+        }
+        validateSampleTimestamp(command.collectedAt(), "collectedAt");
+        if (StringUtils.hasText(command.notes()) && command.notes().trim().length() > 1000) {
+            throw new IllegalArgumentException("notes must be 1000 characters or fewer");
+        }
+    }
+
+    private void validateSampleRejection(LabSampleRejectCommand command) {
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        if (!StringUtils.hasText(command.rejectionReason())) {
+            throw new IllegalArgumentException("rejectionReason is required");
+        }
+        if (normalize(command.rejectionReason()).length() > 128) {
+            throw new IllegalArgumentException("rejectionReason must be 128 characters or fewer");
+        }
+        if (StringUtils.hasText(command.notes()) && command.notes().trim().length() > 1000) {
+            throw new IllegalArgumentException("notes must be 1000 characters or fewer");
+        }
+    }
+
+    private void validateSampleTimestamp(OffsetDateTime value, String fieldName) {
+        if (value == null) {
+            throw new IllegalArgumentException(fieldName + " is required");
+        }
+        if (value.isAfter(OffsetDateTime.now())) {
+            throw new IllegalArgumentException("collection date cannot be in the future");
         }
     }
 
@@ -1464,6 +1938,28 @@ public class LabService {
         }
     }
 
+    private void validateVerification(LabOrderVerificationCommand command) {
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        if (!StringUtils.hasText(command.decision())) {
+            throw new IllegalArgumentException("decision is required");
+        }
+        String decision = normalizeReviewDecision(command.decision());
+        if (!"APPROVE".equals(decision) && !"SEND_BACK".equals(decision)) {
+            throw new IllegalArgumentException("decision must be APPROVE or SEND_BACK");
+        }
+        if ("SEND_BACK".equals(decision) && !StringUtils.hasText(command.reason())) {
+            throw new IllegalArgumentException("reason is required when sending results back");
+        }
+        if (StringUtils.hasText(command.reason()) && command.reason().trim().length() > 128) {
+            throw new IllegalArgumentException("reason must be 128 characters or fewer");
+        }
+        if (StringUtils.hasText(command.comments()) && command.comments().trim().length() > 1000) {
+            throw new IllegalArgumentException("comments must be 1000 characters or fewer");
+        }
+    }
+
     private void saveParameters(UUID tenantId, UUID labTestId, List<LabTestParameterUpsertCommand> commands) {
         labTestParameterRepository.deleteByTenantIdAndLabTestId(tenantId, labTestId);
         if (commands == null || commands.isEmpty()) {
@@ -1526,6 +2022,12 @@ public class LabService {
         }
         Range critical = parseRange(criticalRange);
         if (critical != null && !critical.contains(numeric)) {
+            if (numeric.compareTo(critical.low()) < 0) {
+                return new ResultFlagResolution(LabResultFlag.CRITICAL_LOW, true);
+            }
+            if (numeric.compareTo(critical.high()) > 0) {
+                return new ResultFlagResolution(LabResultFlag.CRITICAL_HIGH, true);
+            }
             return new ResultFlagResolution(LabResultFlag.CRITICAL, true);
         }
         Range normal = parseRange(normalRange);
@@ -1539,6 +2041,16 @@ public class LabService {
             return new ResultFlagResolution(LabResultFlag.HIGH, false);
         }
         return new ResultFlagResolution(LabResultFlag.NORMAL, false);
+    }
+
+    private void ensureNumericResultWhenRangesPresent(String value, String normalRange, String criticalRange) {
+        boolean numericExpected = parseRange(normalRange) != null || parseRange(criticalRange) != null;
+        if (!numericExpected) {
+            return;
+        }
+        if (parseNumeric(value) == null) {
+            throw new IllegalArgumentException("Numeric result value is required for ranged lab parameters");
+        }
     }
 
     private BigDecimal parseNumeric(String value) {
@@ -1659,6 +2171,10 @@ public class LabService {
         auditEventPublisher.record(new AuditEventCommand(tenantId, ORDER_ENTITY_TYPE, entity.getId(), action, actorAppUserId, OffsetDateTime.now(), message, detailsJson(entity)));
     }
 
+    private void auditSample(UUID tenantId, LabOrderSampleEntity entity, String action, UUID actorAppUserId, String message) {
+        auditEventPublisher.record(new AuditEventCommand(tenantId, SAMPLE_ENTITY_TYPE, entity.getId(), action, actorAppUserId, OffsetDateTime.now(), message, detailsJson(entity)));
+    }
+
     private String detailsJson(LabTestMasterEntity entity) {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("id", entity.getId());
@@ -1678,8 +2194,91 @@ public class LabService {
         details.put("id", entity.getId());
         details.put("orderNumber", entity.getOrderNumber());
         details.put("patientId", entity.getPatientId());
+        details.put("orderOrigin", entity.getOrderOrigin());
+        details.put("consultationId", entity.getConsultationId());
+        details.put("requestedByInternalDoctorId", entity.getRequestedByInternalDoctorId());
+        details.put("externalDoctorName", entity.getExternalDoctorName());
+        details.put("externalClinicName", entity.getExternalClinicName());
+        details.put("referralSource", entity.getReferralSource());
         details.put("status", entity.getStatus());
         details.put("billId", entity.getBillId());
+        details.put("labVerifiedAt", entity.getLabVerifiedAt());
+        details.put("labVerifiedBy", entity.getLabVerifiedBy());
+        details.put("labVerificationDecision", entity.getLabVerificationDecision());
+        details.put("labVerificationReason", entity.getLabVerificationReason());
+        details.put("reportPublishedAt", entity.getReportPublishedAt());
+        details.put("reportPublishedByUserId", entity.getReportPublishedByUserId());
+        details.put("reportDeliveryStatus", entity.getReportDeliveryStatus());
+        details.put("reportDeliveryChannels", entity.getReportDeliveryChannels());
+        details.put("reportDeliveryNotes", entity.getReportDeliveryNotes());
+        try {
+            return objectMapper.writeValueAsString(details);
+        } catch (JsonProcessingException ex) {
+            return "{\"id\":\"" + entity.getId() + "\"}";
+        }
+    }
+
+    private void notifyRequestingDoctor(UUID tenantId, LabOrderEntity order, UUID actorAppUserId) {
+        UUID doctorUserId = order.getRequestedByInternalDoctorId() != null ? order.getRequestedByInternalDoctorId() : order.getDoctorUserId();
+        if (doctorUserId == null) {
+            return;
+        }
+        tenantUserManagementService.list(tenantId).stream()
+                .filter(user -> doctorUserId.equals(user.appUserId()))
+                .findFirst()
+                .ifPresent(user -> labNotificationService.notifyDoctorReportPublished(
+                tenantId,
+                order.getId(),
+                user.appUserId(),
+                user.email(),
+                order.getOrderNumber(),
+                order.getPatientName(),
+                user.displayName(),
+                actorAppUserId
+                ));
+    }
+
+    private List<String> normalizeDeliveryChannels(List<String> channels) {
+        if (channels == null) {
+            return List.of();
+        }
+        return channels.stream()
+                .filter(StringUtils::hasText)
+                .map(value -> value.trim().toUpperCase(java.util.Locale.ROOT))
+                .distinct()
+                .toList();
+    }
+
+    private String serializeJson(List<String> values) {
+        try {
+            return objectMapper.writeValueAsString(values == null ? List.of() : values);
+        } catch (JsonProcessingException ex) {
+            return "[]";
+        }
+    }
+
+    private List<String> parseDeliveryChannels(String value) {
+        if (!StringUtils.hasText(value)) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(value, objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+        } catch (Exception ex) {
+            return List.of(value);
+        }
+    }
+
+    private String detailsJson(LabOrderSampleEntity entity) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("id", entity.getId());
+        details.put("labOrderId", entity.getLabOrderId());
+        details.put("labOrderItemId", entity.getLabOrderItemId());
+        details.put("accessionNumber", entity.getAccessionNumber());
+        details.put("barcodeValue", entity.getBarcodeValue());
+        details.put("specimenType", entity.getSpecimenType());
+        details.put("status", entity.getStatus());
+        details.put("rejectionReason", entity.getRejectionReason());
+        details.put("recollectionRequired", entity.isRecollectionRequired());
         try {
             return objectMapper.writeValueAsString(details);
         } catch (JsonProcessingException ex) {
@@ -1695,5 +2294,20 @@ public class LabService {
             }
         }
         throw new IllegalStateException("Unable to generate lab order number");
+    }
+
+    private String generateAccessionNumber(UUID tenantId) {
+        String datePortion = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
+        for (int sequence = 1; sequence <= 9999; sequence++) {
+            String candidate = "LAB-" + datePortion + "-" + String.format("%04d", sequence);
+            if (labOrderSampleRepository.findByTenantIdAndAccessionNumber(tenantId, candidate).isEmpty()) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Unable to generate lab accession number");
+    }
+
+    private String generateBarcodeValue(String accessionNumber) {
+        return accessionNumber;
     }
 }

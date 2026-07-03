@@ -15,8 +15,10 @@ const ROLE_PRIORITY = [
   "PHARMA",
   "PHARMACY_INVENTORY_MANAGER",
   "PHARMACY_POS_USER",
+  "LAB_FRONT_DESK",
   "LAB_TECHNICIAN",
   "LAB_ASSISTANT",
+  "LAB_APPROVER",
   "PLATFORM_TENANT_SUPPORT",
   "SERVICE_AGENT",
 ] as const;
@@ -33,8 +35,10 @@ const ROLE_LABELS: Record<string, string> = {
   PHARMA: "Pharma",
   PHARMACY_INVENTORY_MANAGER: "Pharmacy Inventory Manager",
   PHARMACY_POS_USER: "Pharmacy POS User",
+  LAB_FRONT_DESK: "Lab Front Desk",
   LAB_TECHNICIAN: "Lab Technician",
   LAB_ASSISTANT: "Lab Assistant",
+  LAB_APPROVER: "Lab Approver",
   PLATFORM_TENANT_SUPPORT: "Platform Support",
   SERVICE_AGENT: "Service Agent",
 };

@@ -184,13 +184,23 @@ public final class RolePermissionMappings {
                     Permissions.CLINIC_REJECT,
                     Permissions.CLINIC_AUDIT_READ,
                     Permissions.CLINIC_DOCTOR_READ,
-                    Permissions.CLINIC_DOCTOR_MANAGE,
-                    Permissions.CLINIC_DOCTOR_RESUBMISSION,
-                    Permissions.CLINIC_ARCHIVE,
-                    Permissions.CLINIC_DASHBOARD_READ,
-                    Permissions.APPOINTMENT_CHECKIN_PAYMENT_BYPASS,
-                    Permissions.INVENTORY_MANAGE,
-                    Permissions.CAREPILOT_LEAD_READ,
+            Permissions.CLINIC_DOCTOR_MANAGE,
+            Permissions.CLINIC_DOCTOR_RESUBMISSION,
+            Permissions.CLINIC_ARCHIVE,
+            Permissions.CLINIC_DASHBOARD_READ,
+            Permissions.LAB_TEST_READ,
+            Permissions.LAB_TEST_MANAGE,
+            Permissions.LAB_ORDER_CREATE,
+            Permissions.LAB_ORDER_READ,
+            Permissions.LAB_ORDER_COLLECT_PAYMENT,
+            Permissions.LAB_ORDER_COLLECT_SAMPLE,
+            Permissions.LAB_ORDER_RESULT_ENTRY,
+            Permissions.LAB_ORDER_GENERATE_REPORT,
+            Permissions.LAB_ORDER_REVIEW,
+            Permissions.AUDIT_READ,
+            Permissions.APPOINTMENT_CHECKIN_PAYMENT_BYPASS,
+            Permissions.INVENTORY_MANAGE,
+            Permissions.CAREPILOT_LEAD_READ,
                     Permissions.CAREPILOT_LEAD_CREATE,
                     Permissions.CAREPILOT_LEAD_UPDATE,
                     Permissions.CAREPILOT_LEAD_CONVERT,
@@ -217,10 +227,6 @@ public final class RolePermissionMappings {
             Permissions.LAB_TEST_READ,
             Permissions.LAB_ORDER_CREATE,
             Permissions.LAB_ORDER_READ,
-            Permissions.LAB_ORDER_COLLECT_SAMPLE,
-            Permissions.LAB_ORDER_RESULT_ENTRY,
-            Permissions.LAB_ORDER_GENERATE_REPORT,
-            Permissions.LAB_ORDER_REVIEW,
             Permissions.PRESCRIPTION_CREATE,
             Permissions.PRESCRIPTION_READ,
             Permissions.PRESCRIPTION_FINALIZE,
@@ -334,26 +340,32 @@ public final class RolePermissionMappings {
     );
 
     private static final Set<String> LAB_ASSISTANT_PERMISSIONS = Set.of(
-            Permissions.PATIENT_READ,
-            Permissions.CONSULTATION_READ,
             Permissions.LAB_TEST_READ,
-            Permissions.LAB_TEST_MANAGE,
-            Permissions.LAB_ORDER_CREATE,
             Permissions.LAB_ORDER_READ,
-            Permissions.LAB_ORDER_COLLECT_SAMPLE,
-            Permissions.LAB_ORDER_RESULT_ENTRY,
-            Permissions.LAB_ORDER_GENERATE_REPORT,
-            Permissions.LAB_ORDER_REVIEW
+            Permissions.LAB_ORDER_COLLECT_SAMPLE
+    );
+
+    private static final Set<String> LAB_FRONT_DESK_PERMISSIONS = Set.of(
+            Permissions.LAB_TEST_READ,
+            Permissions.LAB_ORDER_READ,
+            Permissions.LAB_ORDER_CREATE,
+            Permissions.LAB_ORDER_COLLECT_PAYMENT
     );
 
     private static final Set<String> LAB_TECHNICIAN_PERMISSIONS = Set.of(
-            Permissions.PATIENT_READ,
-            Permissions.CONSULTATION_READ,
             Permissions.LAB_TEST_READ,
             Permissions.LAB_ORDER_READ,
             Permissions.LAB_ORDER_COLLECT_SAMPLE,
-            Permissions.LAB_ORDER_RESULT_ENTRY,
-            Permissions.LAB_ORDER_GENERATE_REPORT
+            Permissions.LAB_ORDER_RESULT_ENTRY
+    );
+
+    private static final Set<String> LAB_APPROVER_PERMISSIONS = Set.of(
+            Permissions.LAB_TEST_READ,
+            Permissions.LAB_ORDER_READ,
+            Permissions.LAB_ORDER_REVIEW,
+            Permissions.LAB_ORDER_GENERATE_REPORT,
+            Permissions.REPORT_READ,
+            Permissions.AUDIT_READ
     );
 
     private static final Set<String> VIEWER_PERMISSIONS = Set.of(
@@ -540,6 +552,8 @@ public final class RolePermissionMappings {
             Map.entry(Roles.PHARMACY_POS_USER, PHARMACY_POS_USER_PERMISSIONS),
             Map.entry(Roles.LAB_TECHNICIAN, LAB_TECHNICIAN_PERMISSIONS),
             Map.entry(Roles.LAB_ASSISTANT, LAB_ASSISTANT_PERMISSIONS),
+            Map.entry(Roles.LAB_APPROVER, LAB_APPROVER_PERMISSIONS),
+            Map.entry(Roles.LAB_FRONT_DESK, LAB_FRONT_DESK_PERMISSIONS),
             Map.entry(Roles.CLINIC_REVIEWER, Set.of(
                     Permissions.DASHBOARD_READ,
                     Permissions.CLINIC_READ,

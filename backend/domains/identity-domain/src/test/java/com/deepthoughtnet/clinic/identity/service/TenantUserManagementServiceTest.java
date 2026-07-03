@@ -27,6 +27,8 @@ class TenantUserManagementServiceTest {
         assertDoesNotThrow(() -> createService().createOrInvite(command("PHARMACIST")));
         assertDoesNotThrow(() -> createService().createOrInvite(command("PHARMACY_INVENTORY_MANAGER")));
         assertDoesNotThrow(() -> createService().createOrInvite(command("PHARMACY_POS_USER")));
+        assertDoesNotThrow(() -> createService().createOrInvite(command("LAB_APPROVER")));
+        assertDoesNotThrow(() -> createService().createOrInvite(command("LAB_FRONT_DESK")));
     }
 
     @Test

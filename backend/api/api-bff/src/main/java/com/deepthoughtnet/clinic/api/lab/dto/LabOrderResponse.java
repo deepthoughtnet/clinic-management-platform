@@ -1,7 +1,9 @@
 package com.deepthoughtnet.clinic.api.lab.dto;
 
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderOrigin;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleStatusRecord;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -16,6 +18,12 @@ public record LabOrderResponse(
         String doctorUserId,
         String doctorName,
         String consultationId,
+        LabOrderOrigin orderOrigin,
+        String requestedByInternalDoctorId,
+        String externalDoctorName,
+        String externalDoctorMobile,
+        String externalClinicName,
+        String referralSource,
         String notes,
         LabOrderStatusRecord status,
         OffsetDateTime orderedAt,
@@ -30,6 +38,9 @@ public record LabOrderResponse(
         String deliveredByUserId,
         OffsetDateTime paymentCollectedAt,
         OffsetDateTime readyForCollectionAt,
+        String sampleAccessionNumber,
+        String sampleBarcodeValue,
+        LabSampleStatusRecord sampleSummaryStatus,
         String sampleType,
         OffsetDateTime sampleCollectedAt,
         String sampleCollectedByUserId,
@@ -42,14 +53,26 @@ public record LabOrderResponse(
         String reportGeneratedByUserId,
         String reportGeneratedBy,
         String reportFilename,
+        OffsetDateTime reportPublishedAt,
+        String reportPublishedByUserId,
+        String reportDeliveryStatus,
+        List<String> reportDeliveryChannels,
+        String reportDeliveryNotes,
         OffsetDateTime doctorReviewedAt,
         String doctorReviewedByUserId,
         String doctorReviewedBy,
         String doctorReviewDecision,
         String doctorReviewReason,
         String doctorComments,
+        OffsetDateTime labVerifiedAt,
+        String labVerifiedBy,
+        String labVerifiedByName,
+        String labVerificationDecision,
+        String labVerificationComments,
+        String labVerificationReason,
         List<LabOrderAttachmentResponse> attachments,
         List<LabOrderItemResponse> items,
+        List<LabSampleResponse> samples,
         List<LabOrderResultResponse> results,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt

@@ -21,6 +21,10 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentUpsertComm
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotRecord;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotStatus;
 import com.deepthoughtnet.clinic.appointment.service.model.DoctorAvailabilitySlotTimeState;
+import com.deepthoughtnet.clinic.api.lab.service.LabService;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
 import com.deepthoughtnet.clinic.api.patientportal.dto.PatientPortalAppointmentBookingRequest;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillItemType;
@@ -87,6 +91,7 @@ class PatientPortalServiceTest {
     private AppointmentService appointmentService;
     private PrescriptionService prescriptionService;
     private BillingService billingService;
+    private LabService labService;
     private NotificationHistoryService notificationHistoryService;
     private NotificationActionService notificationActionService;
     private PatientPortalService service;
@@ -105,6 +110,7 @@ class PatientPortalServiceTest {
         appointmentService = mock(AppointmentService.class);
         prescriptionService = mock(PrescriptionService.class);
         billingService = mock(BillingService.class);
+        labService = mock(LabService.class);
         notificationHistoryService = mock(NotificationHistoryService.class);
         notificationActionService = mock(NotificationActionService.class);
         service = new PatientPortalService(
@@ -120,7 +126,7 @@ class PatientPortalServiceTest {
                 appointmentService,
                 prescriptionService,
                 billingService,
-                null,
+                labService,
                 notificationHistoryService,
                 notificationActionService
         );
@@ -236,6 +242,29 @@ class PatientPortalServiceTest {
         assertThatThrownBy(service::me)
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("not configured");
+    }
+
+    @Test
+    void patientPortalHidesUnapprovedLabResults() {
+        AppUserEntity appUser = AppUserEntity.create(TENANT_ID, "patient-sub", "patient@example.com", "Portal Patient");
+        appUser.setPatientId(PATIENT_ID);
+        PatientEntity patient = patientEntity(TENANT_ID, PATIENT_ID, "PAT-001");
+        LabOrderRecord unapproved = sampleLabOrder("LAB-RESULT", LabOrderStatusRecord.RESULT_ENTERED);
+        LabOrderRecord internalOnly = sampleLabOrder("LAB-READY", LabOrderStatusRecord.REPORT_READY);
+        LabOrderRecord approved = sampleLabOrder("LAB-APPROVED", LabOrderStatusRecord.REPORT_GENERATED);
+
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(labService.listOrders(TENANT_ID, null, PATIENT_ID, null, null, null)).thenReturn(List.of(unapproved, internalOnly, approved));
+
+        assertThat(service.labOrders()).hasSize(3);
+        assertThat(service.labOrders().stream()
+                .filter(order -> "LAB-RESULT".equals(order.orderNumber()))
+                .findFirst()
+                .orElseThrow()
+                .results()).isEmpty();
+        assertThat(service.labReports()).singleElement().satisfies(report -> assertThat(report.orderNumber()).isEqualTo("LAB-APPROVED"));
+        assertThat(service.latestLabResults(null)).singleElement().satisfies(result -> assertThat(result.orderNumber()).isEqualTo("LAB-APPROVED"));
     }
 
     @Test
@@ -1053,6 +1082,97 @@ class PatientPortalServiceTest {
                 null,
                 AppointmentStatus.BOOKED,
                 null
+        );
+    }
+
+    private LabOrderRecord sampleLabOrder(String orderNumber, LabOrderStatusRecord status) {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        LabOrderResultRecord result = new LabOrderResultRecord(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "CBC",
+                "Complete Blood Count",
+                null,
+                "Hemoglobin",
+                "13.2",
+                "g/dL",
+                "12-16",
+                1,
+                null,
+                false,
+                now,
+                now
+        );
+
+        return new LabOrderRecord(
+                UUID.randomUUID(),
+                TENANT_ID,
+                orderNumber,
+                PATIENT_ID,
+                "P-001",
+                "Patient One",
+                null,
+                "Dr. Mehta",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                status,
+                now.minusDays(1),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                now,
+                null,
+                status == LabOrderStatusRecord.DOCTOR_REVIEWED ? now : null,
+                null,
+                null,
+                null,
+                status == LabOrderStatusRecord.REPORT_GENERATED ? now : null,
+                null,
+                status == LabOrderStatusRecord.REPORT_GENERATED ? "PUBLISHED" : null,
+                status == LabOrderStatusRecord.REPORT_GENERATED ? List.of("PATIENT_PORTAL") : List.of(),
+                null,
+                status == LabOrderStatusRecord.DOCTOR_REVIEWED ? now : null,
+                null,
+                null,
+                null,
+                null,
+                "Reviewed",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(result),
+                now.minusDays(1),
+                now
         );
     }
 }

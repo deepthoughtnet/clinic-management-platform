@@ -7,6 +7,7 @@ import {
   labOptionalIntegerText,
   labOptionalNamedText,
   labOptionalPlainText,
+  labOrderOriginValues,
   labOrderStatusValues,
   labRequiredNamedText,
   labRequiredPositiveMoney,
@@ -82,9 +83,22 @@ export const labTestMasterSchema = z.object({
 
 export const labOrderCreateSchema = z.object({
   patientId: requiredUuid("Patient is required."),
-  doctorId: optionalUuid("Doctor must be a valid identifier."),
+  orderOrigin: z.enum(labOrderOriginValues),
+  requestedByInternalDoctorId: optionalUuid("Doctor must be a valid identifier."),
+  externalDoctorName: labOptionalNamedText(256, "External doctor name must be 256 characters or fewer."),
+  externalDoctorMobile: labOptionalPlainText(32, "External doctor mobile must be 32 characters or fewer."),
+  externalClinicName: labOptionalPlainText(256, "External clinic name must be 256 characters or fewer."),
+  referralSource: labOptionalNamedText(128, "Referral source must be 128 characters or fewer."),
   testIds: z.array(requiredUuid("Test is required.")).min(1, "Select at least one lab test."),
   notes: labOptionalPlainText(250, "Notes must be 250 characters or fewer."),
+}).superRefine((value, ctx) => {
+  if (value.orderOrigin === "DOCTOR_REFERRAL" && !value.externalDoctorName) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["externalDoctorName"],
+      message: "External doctor name is required for doctor referral orders.",
+    });
+  }
 });
 
 export const labResultComponentSchema = z.object({

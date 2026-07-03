@@ -52,6 +52,25 @@ public class LabOrderEntity {
     @Column(name = "consultation_id")
     private UUID consultationId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "order_origin", nullable = false, length = 32)
+    private LabOrderOrigin orderOrigin = LabOrderOrigin.WALK_IN;
+
+    @Column(name = "requested_by_internal_doctor_id")
+    private UUID requestedByInternalDoctorId;
+
+    @Column(name = "external_doctor_name", length = 256)
+    private String externalDoctorName;
+
+    @Column(name = "external_doctor_mobile", length = 32)
+    private String externalDoctorMobile;
+
+    @Column(name = "external_clinic_name", length = 256)
+    private String externalClinicName;
+
+    @Column(name = "referral_source", length = 128)
+    private String referralSource;
+
     @Column(columnDefinition = "text")
     private String notes;
 
@@ -110,6 +129,21 @@ public class LabOrderEntity {
     @Column(name = "report_filename", length = 256)
     private String reportFilename;
 
+    @Column(name = "report_published_at")
+    private OffsetDateTime reportPublishedAt;
+
+    @Column(name = "report_published_by_user_id")
+    private UUID reportPublishedByUserId;
+
+    @Column(name = "report_delivery_status", length = 32)
+    private String reportDeliveryStatus;
+
+    @Column(name = "report_delivery_channels", columnDefinition = "text")
+    private String reportDeliveryChannels;
+
+    @Column(name = "report_delivery_notes", columnDefinition = "text")
+    private String reportDeliveryNotes;
+
     @Column(name = "doctor_reviewed_at")
     private OffsetDateTime doctorReviewedAt;
 
@@ -127,6 +161,21 @@ public class LabOrderEntity {
 
     @Column(name = "doctor_comments", columnDefinition = "text")
     private String doctorComments;
+
+    @Column(name = "lab_verified_at")
+    private OffsetDateTime labVerifiedAt;
+
+    @Column(name = "lab_verified_by")
+    private UUID labVerifiedBy;
+
+    @Column(name = "lab_verification_decision", length = 32)
+    private String labVerificationDecision;
+
+    @Column(name = "lab_verification_comments", columnDefinition = "text")
+    private String labVerificationComments;
+
+    @Column(name = "lab_verification_reason", length = 128)
+    private String labVerificationReason;
 
     @Column(name = "delivered_at")
     private OffsetDateTime deliveredAt;
@@ -152,6 +201,12 @@ public class LabOrderEntity {
             UUID doctorUserId,
             String doctorName,
             UUID consultationId,
+            LabOrderOrigin orderOrigin,
+            UUID requestedByInternalDoctorId,
+            String externalDoctorName,
+            String externalDoctorMobile,
+            String externalClinicName,
+            String referralSource,
             String notes
     ) {
         LabOrderEntity entity = new LabOrderEntity();
@@ -164,6 +219,12 @@ public class LabOrderEntity {
         entity.doctorUserId = doctorUserId;
         entity.doctorName = doctorName;
         entity.consultationId = consultationId;
+        entity.orderOrigin = orderOrigin == null ? LabOrderOrigin.WALK_IN : orderOrigin;
+        entity.requestedByInternalDoctorId = requestedByInternalDoctorId;
+        entity.externalDoctorName = externalDoctorName;
+        entity.externalDoctorMobile = externalDoctorMobile;
+        entity.externalClinicName = externalClinicName;
+        entity.referralSource = referralSource;
         entity.notes = notes;
         entity.status = LabOrderStatus.ORDERED;
         entity.orderedAt = OffsetDateTime.now();
@@ -229,6 +290,28 @@ public class LabOrderEntity {
         this.reportGeneratedAt = OffsetDateTime.now();
         this.reportGeneratedByUserId = reportGeneratedByUserId;
         this.reportFilename = reportFilename;
+        this.reportPublishedAt = this.reportGeneratedAt;
+        this.reportPublishedByUserId = reportGeneratedByUserId;
+        this.reportDeliveryStatus = "PUBLISHED";
+        this.updatedAt = this.reportGeneratedAt;
+    }
+
+    public void markReportPublished(
+            UUID reportPublishedByUserId,
+            String reportFilename,
+            String reportDeliveryStatus,
+            String reportDeliveryChannels,
+            String reportDeliveryNotes
+    ) {
+        this.status = LabOrderStatus.REPORT_GENERATED;
+        this.reportGeneratedAt = OffsetDateTime.now();
+        this.reportGeneratedByUserId = reportPublishedByUserId;
+        this.reportPublishedAt = this.reportGeneratedAt;
+        this.reportPublishedByUserId = reportPublishedByUserId;
+        this.reportFilename = reportFilename;
+        this.reportDeliveryStatus = reportDeliveryStatus;
+        this.reportDeliveryChannels = reportDeliveryChannels;
+        this.reportDeliveryNotes = reportDeliveryNotes;
         this.updatedAt = this.reportGeneratedAt;
     }
 
@@ -241,6 +324,26 @@ public class LabOrderEntity {
         this.doctorReviewReason = doctorReviewReason;
         this.doctorComments = doctorComments;
         this.updatedAt = this.doctorReviewedAt;
+    }
+
+    public void markLabVerified(UUID labVerifiedBy, String decision, String reason, String comments) {
+        this.status = LabOrderStatus.REPORT_READY;
+        this.labVerifiedAt = OffsetDateTime.now();
+        this.labVerifiedBy = labVerifiedBy;
+        this.labVerificationDecision = decision;
+        this.labVerificationReason = reason;
+        this.labVerificationComments = comments;
+        this.updatedAt = this.labVerifiedAt;
+    }
+
+    public void markLabVerificationSentBack(UUID labVerifiedBy, String decision, String reason, String comments) {
+        this.status = LabOrderStatus.RESULT_ENTERED;
+        this.labVerifiedAt = OffsetDateTime.now();
+        this.labVerifiedBy = labVerifiedBy;
+        this.labVerificationDecision = decision;
+        this.labVerificationReason = reason;
+        this.labVerificationComments = comments;
+        this.updatedAt = this.labVerifiedAt;
     }
 
     public void markResultReturned(UUID doctorReviewedByUserId, String doctorReviewedBy, String doctorReviewDecision, String doctorReviewReason, String doctorComments) {
@@ -258,6 +361,7 @@ public class LabOrderEntity {
         this.status = LabOrderStatus.DELIVERED;
         this.deliveredAt = OffsetDateTime.now();
         this.deliveredByUserId = deliveredByUserId;
+        this.reportDeliveryStatus = "DELIVERED";
         this.updatedAt = this.deliveredAt;
     }
 
@@ -270,6 +374,12 @@ public class LabOrderEntity {
     public UUID getDoctorUserId() { return doctorUserId; }
     public String getDoctorName() { return doctorName; }
     public UUID getConsultationId() { return consultationId; }
+    public LabOrderOrigin getOrderOrigin() { return orderOrigin; }
+    public UUID getRequestedByInternalDoctorId() { return requestedByInternalDoctorId; }
+    public String getExternalDoctorName() { return externalDoctorName; }
+    public String getExternalDoctorMobile() { return externalDoctorMobile; }
+    public String getExternalClinicName() { return externalClinicName; }
+    public String getReferralSource() { return referralSource; }
     public String getNotes() { return notes; }
     public LabOrderStatus getStatus() { return status; }
     public OffsetDateTime getOrderedAt() { return orderedAt; }
@@ -289,12 +399,22 @@ public class LabOrderEntity {
     public OffsetDateTime getReportGeneratedAt() { return reportGeneratedAt; }
     public UUID getReportGeneratedByUserId() { return reportGeneratedByUserId; }
     public String getReportFilename() { return reportFilename; }
+    public OffsetDateTime getReportPublishedAt() { return reportPublishedAt; }
+    public UUID getReportPublishedByUserId() { return reportPublishedByUserId; }
+    public String getReportDeliveryStatus() { return reportDeliveryStatus; }
+    public String getReportDeliveryChannels() { return reportDeliveryChannels; }
+    public String getReportDeliveryNotes() { return reportDeliveryNotes; }
     public OffsetDateTime getDoctorReviewedAt() { return doctorReviewedAt; }
     public UUID getDoctorReviewedByUserId() { return doctorReviewedByUserId; }
     public String getDoctorReviewedBy() { return doctorReviewedBy; }
     public String getDoctorReviewDecision() { return doctorReviewDecision; }
     public String getDoctorReviewReason() { return doctorReviewReason; }
     public String getDoctorComments() { return doctorComments; }
+    public OffsetDateTime getLabVerifiedAt() { return labVerifiedAt; }
+    public UUID getLabVerifiedBy() { return labVerifiedBy; }
+    public String getLabVerificationDecision() { return labVerificationDecision; }
+    public String getLabVerificationComments() { return labVerificationComments; }
+    public String getLabVerificationReason() { return labVerificationReason; }
     public OffsetDateTime getDeliveredAt() { return deliveredAt; }
     public UUID getDeliveredByUserId() { return deliveredByUserId; }
     public OffsetDateTime getCreatedAt() { return createdAt; }

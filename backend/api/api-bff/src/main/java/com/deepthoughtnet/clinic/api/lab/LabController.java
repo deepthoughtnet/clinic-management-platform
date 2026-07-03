@@ -6,10 +6,17 @@ import com.deepthoughtnet.clinic.api.lab.dto.LabOrderDoctorReviewRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabCsvImportResponse;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderItemResponse;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderPaymentRequest;
+import com.deepthoughtnet.clinic.api.lab.dto.LabOrderPublishReportRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderResultRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderResultResponse;
+import com.deepthoughtnet.clinic.api.lab.dto.LabOrderSamplesCollectRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderSampleCollectionRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderResponse;
+import com.deepthoughtnet.clinic.api.lab.dto.LabOrderVerificationRequest;
+import com.deepthoughtnet.clinic.api.lab.dto.LabSampleCollectionRequest;
+import com.deepthoughtnet.clinic.api.lab.dto.LabSampleReceiveRequest;
+import com.deepthoughtnet.clinic.api.lab.dto.LabSampleRejectRequest;
+import com.deepthoughtnet.clinic.api.lab.dto.LabSampleResponse;
 import com.deepthoughtnet.clinic.api.lab.dto.LabTestRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabTestResponse;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderStatus;
@@ -24,14 +31,21 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultItemCommand
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultPdf;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPublishReportCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderSampleCollectionCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderVerificationCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleReceiveCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleRejectCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterUpsertCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestUpsertCommand;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.Collections;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpStatus;
@@ -53,6 +67,8 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import jakarta.validation.Valid;
 import org.springframework.util.StringUtils;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
 
 @RestController
 @Validated
@@ -101,7 +117,7 @@ public class LabController {
 
     @GetMapping(value = "/tests/import-template", produces = "text/csv")
     @PreAuthorize("@permissionChecker.hasPermission('lab.test.manage')")
-    public ResponseEntity<byte[]> importTemplate() throws java.io.IOException {
+    public ResponseEntity<Resource> importTemplate() throws java.io.IOException {
         return csvResponse("lab-tests-import-template.csv", labCsvService.importTemplateCsv());
     }
 
@@ -161,7 +177,12 @@ public class LabController {
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(labService.createOrder(tenantId, new LabOrderDirectCreateCommand(
                 request.patientId(),
-                request.doctorUserId(),
+                request.orderOrigin(),
+                request.requestedByInternalDoctorId(),
+                request.externalDoctorName(),
+                request.externalDoctorMobile(),
+                request.externalClinicName(),
+                request.referralSource(),
                 request.testIds(),
                 request.notes()
         ), actorAppUserId));
@@ -192,6 +213,52 @@ public class LabController {
                 request.sampleType(),
                 request.collectedBy(),
                 request.collectedAt(),
+                request.notes()
+        ), actorAppUserId));
+    }
+
+    @GetMapping("/orders/{orderId}/samples")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.order.read') or @permissionChecker.hasPermission('lab.order.collect_sample') or @permissionChecker.hasPermission('lab.order.result_entry')")
+    public List<LabSampleResponse> listSamples(@PathVariable UUID orderId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        return labService.listSamples(tenantId, orderId).stream().map(this::toResponse).toList();
+    }
+
+    @PostMapping("/orders/{orderId}/samples/collect")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.order.collect_sample')")
+    public List<LabSampleResponse> collectSamples(@PathVariable UUID orderId, @Valid @RequestBody LabOrderSamplesCollectRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return labService.collectSamples(
+                        tenantId,
+                        orderId,
+                        request.samples().stream().map(this::toCommand).toList(),
+                        actorAppUserId)
+                .stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @PostMapping("/samples/{sampleId}/receive")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.order.collect_sample')")
+    public LabSampleResponse receiveSample(@PathVariable UUID sampleId, @RequestBody(required = false) LabSampleReceiveRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        LabSampleReceiveRequest effectiveRequest = request == null ? new LabSampleReceiveRequest(null, null) : request;
+        return toResponse(labService.receiveSample(tenantId, sampleId, new LabSampleReceiveCommand(
+                effectiveRequest.receivedAt(),
+                parseUuid(effectiveRequest.receivedBy(), "receivedBy")
+        ), actorAppUserId));
+    }
+
+    @PostMapping("/samples/{sampleId}/reject")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.order.collect_sample')")
+    public LabSampleResponse rejectSample(@PathVariable UUID sampleId, @Valid @RequestBody LabSampleRejectRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toResponse(labService.rejectSample(tenantId, sampleId, new LabSampleRejectCommand(
+                request.rejectionReason(),
+                request.recollectionRequired(),
                 request.notes()
         ), actorAppUserId));
     }
@@ -237,6 +304,30 @@ public class LabController {
         ), actorAppUserId));
     }
 
+    @PostMapping("/orders/{id}/verify")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.order.review')")
+    public LabOrderResponse verifyOrder(@PathVariable UUID id, @Valid @RequestBody LabOrderVerificationRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toResponse(labService.verifyResults(tenantId, id, new LabOrderVerificationCommand(
+                request.decision() == null ? null : request.decision().name(),
+                request.reason(),
+                request.comments()
+        ), actorAppUserId));
+    }
+
+    @PostMapping("/orders/{id}/publish-report")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.order.generate_report')")
+    public LabOrderResponse publishReport(@PathVariable UUID id, @Valid @RequestBody(required = false) LabOrderPublishReportRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        LabOrderPublishReportRequest effectiveRequest = request == null ? new LabOrderPublishReportRequest(List.of(), null) : request;
+        return toResponse(labService.publishReport(tenantId, id, new LabOrderPublishReportCommand(
+                effectiveRequest.deliveryChannels() == null ? List.of() : effectiveRequest.deliveryChannels(),
+                effectiveRequest.publishNotes()
+        ), actorAppUserId));
+    }
+
     private LabTestUpsertCommand toCommand(LabTestRequest request) {
         return new LabTestUpsertCommand(
                 request.testCode(),
@@ -276,12 +367,23 @@ public class LabController {
                 .toList();
     }
 
-    private ResponseEntity<byte[]> csvResponse(String filename, String csv) {
-        byte[] bytes = csv == null ? new byte[0] : csv.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    private LabSampleCollectionCommand toCommand(LabSampleCollectionRequest request) {
+        return new LabSampleCollectionCommand(
+                parseUuid(request.labOrderItemId(), "labOrderItemId"),
+                request.specimenType(),
+                request.containerType(),
+                request.collectedAt(),
+                parseUuid(request.collectedBy(), "collectedBy"),
+                request.notes()
+        );
+    }
+
+    private ResponseEntity<Resource> csvResponse(String filename, String csv) {
+        byte[] bytes = csv == null ? new byte[0] : csv.getBytes(StandardCharsets.UTF_8);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("text/csv"))
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(filename).build().toString())
-                .body(bytes);
+                .body(new ByteArrayResource(bytes));
     }
 
     private LabTestResponse toResponse(LabTestRecord record) {
@@ -327,6 +429,12 @@ public class LabController {
                 record.doctorUserId() == null ? null : record.doctorUserId().toString(),
                 record.doctorName(),
                 record.consultationId() == null ? null : record.consultationId().toString(),
+                record.orderOrigin(),
+                record.requestedByInternalDoctorId() == null ? null : record.requestedByInternalDoctorId().toString(),
+                record.externalDoctorName(),
+                record.externalDoctorMobile(),
+                record.externalClinicName(),
+                record.referralSource(),
                 record.notes(),
                 record.status(),
                 record.orderedAt(),
@@ -341,6 +449,9 @@ public class LabController {
                 record.deliveredByUserId() == null ? null : record.deliveredByUserId().toString(),
                 record.paymentCollectedAt(),
                 record.readyForCollectionAt(),
+                record.sampleAccessionNumber(),
+                record.sampleBarcodeValue(),
+                record.sampleSummaryStatus(),
                 record.sampleType(),
                 record.sampleCollectedAt(),
                 record.sampleCollectedByUserId() == null ? null : record.sampleCollectedByUserId().toString(),
@@ -353,12 +464,23 @@ public class LabController {
                 record.reportGeneratedByUserId() == null ? null : record.reportGeneratedByUserId().toString(),
                 record.reportGeneratedBy(),
                 record.reportFilename(),
+                record.reportPublishedAt(),
+                record.reportPublishedByUserId() == null ? null : record.reportPublishedByUserId().toString(),
+                record.reportDeliveryStatus(),
+                record.reportDeliveryChannels(),
+                record.reportDeliveryNotes(),
                 record.doctorReviewedAt(),
                 record.doctorReviewedByUserId() == null ? null : record.doctorReviewedByUserId().toString(),
                 record.doctorReviewedBy(),
                 record.doctorReviewDecision(),
                 record.doctorReviewReason(),
                 record.doctorComments(),
+                record.labVerifiedAt(),
+                record.labVerifiedBy() == null ? null : record.labVerifiedBy().toString(),
+                record.labVerifiedByName(),
+                record.labVerificationDecision(),
+                record.labVerificationComments(),
+                record.labVerificationReason(),
                 record.attachments().stream()
                         .map(attachment -> new LabOrderResponse.LabOrderAttachmentResponse(
                                 attachment.id() == null ? null : attachment.id().toString(),
@@ -375,9 +497,30 @@ public class LabController {
                         ))
                         .toList(),
                 record.items().stream().map(this::toResponse).toList(),
+                record.samples().stream().map(this::toResponse).toList(),
                 record.results().stream().map(this::toResponse).toList(),
                 record.createdAt(),
                 record.updatedAt()
+        );
+    }
+
+    private LabSampleResponse toResponse(LabSampleRecord record) {
+        return new LabSampleResponse(
+                record.id() == null ? null : record.id().toString(),
+                record.labOrderId() == null ? null : record.labOrderId().toString(),
+                record.labOrderItemId() == null ? null : record.labOrderItemId().toString(),
+                record.accessionNumber(),
+                record.barcodeValue(),
+                record.specimenType(),
+                record.containerType(),
+                record.status(),
+                record.collectedAt(),
+                record.collectedBy() == null ? null : record.collectedBy().toString(),
+                record.receivedAt(),
+                record.receivedBy() == null ? null : record.receivedBy().toString(),
+                record.rejectionReason(),
+                record.recollectionRequired(),
+                record.notes()
         );
     }
 
@@ -472,6 +615,17 @@ public class LabController {
             return LabOrderStatus.valueOf(status.trim().toUpperCase());
         } catch (IllegalArgumentException ex) {
             throw new IllegalArgumentException("Invalid lab order status");
+        }
+    }
+
+    private UUID parseUuid(String value, String fieldName) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("Invalid " + fieldName);
         }
     }
 }

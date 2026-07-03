@@ -60,7 +60,7 @@ class TenantUserManagementControllerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "SERVICE_AGENT", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"})
+    @ValueSource(strings = {"CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "SERVICE_AGENT", "LAB_TECHNICIAN", "LAB_ASSISTANT", "LAB_APPROVER", "LAB_FRONT_DESK", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER"})
     void clinicAdminCanCreateSupportedTenantRoles(String role) {
         when(tenantUserManagementService.createOrInvite(any())).thenReturn(record(role));
 
@@ -160,6 +160,28 @@ class TenantUserManagementControllerTest {
         controller.assignRole(appUserId, new TenantUserManagementController.AssignRoleRequest("DOCTOR"));
 
         verify(tenantUserManagementService).updateRole(tenantId, appUserId, "DOCTOR");
+        verify(auditEventPublisher).record(any());
+    }
+
+    @Test
+    void assignRoleAllowsLabApprover() {
+        UUID appUserId = UUID.randomUUID();
+        when(tenantUserManagementService.updateRole(tenantId, appUserId, "LAB_APPROVER")).thenReturn(record("LAB_APPROVER"));
+
+        controller.assignRole(appUserId, new TenantUserManagementController.AssignRoleRequest("LAB_APPROVER"));
+
+        verify(tenantUserManagementService).updateRole(tenantId, appUserId, "LAB_APPROVER");
+        verify(auditEventPublisher).record(any());
+    }
+
+    @Test
+    void assignRoleAllowsLabFrontDesk() {
+        UUID appUserId = UUID.randomUUID();
+        when(tenantUserManagementService.updateRole(tenantId, appUserId, "LAB_FRONT_DESK")).thenReturn(record("LAB_FRONT_DESK"));
+
+        controller.assignRole(appUserId, new TenantUserManagementController.AssignRoleRequest("LAB_FRONT_DESK"));
+
+        verify(tenantUserManagementService).updateRole(tenantId, appUserId, "LAB_FRONT_DESK");
         verify(auditEventPublisher).record(any());
     }
 

@@ -6,5 +6,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface LabOrderResultRepository extends JpaRepository<LabOrderResultEntity, UUID> {
     List<LabOrderResultEntity> findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(UUID tenantId, UUID labOrderId);
+    List<LabOrderResultEntity> findByTenantIdAndLabOrderItemId(UUID tenantId, UUID labOrderItemId);
     void deleteByTenantIdAndLabOrderId(UUID tenantId, UUID labOrderId);
 }

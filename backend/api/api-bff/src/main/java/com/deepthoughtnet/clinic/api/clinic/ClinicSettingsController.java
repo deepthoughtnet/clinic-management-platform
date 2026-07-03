@@ -38,6 +38,8 @@ public class ClinicSettingsController {
             Roles.PHARMACY_POS_USER,
             Roles.LAB_TECHNICIAN,
             Roles.LAB_ASSISTANT,
+            Roles.LAB_APPROVER,
+            Roles.LAB_FRONT_DESK,
             Roles.AUDITOR
     );
 

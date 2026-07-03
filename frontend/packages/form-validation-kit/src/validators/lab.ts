@@ -53,6 +53,15 @@ export const labOrderStatusValues = [
 ] as const;
 
 export const labReviewDecisionValues = ["APPROVE", "SEND_BACK"] as const;
+export const labOrderOriginValues = [
+  "CONSULTATION",
+  "WALK_IN",
+  "DOCTOR_REFERRAL",
+  "HEALTH_PACKAGE",
+  "CORPORATE",
+  "HOME_COLLECTION",
+  "FOLLOW_UP",
+] as const;
 
 export function labRequiredNamedText(maxLength: number, message: string) {
   return z.preprocess(

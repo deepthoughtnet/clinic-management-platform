@@ -72,6 +72,67 @@ public class LabNotificationService {
         );
     }
 
+    public void notifyReportPublished(UUID tenantId, UUID patientId, UUID sourceId, String orderNumber, String patientName, String doctorName, byte[] pdfContent, String pdfFilename, UUID actorAppUserId) {
+        String subject = "Lab report published " + orderNumber;
+        String body = buildBody(
+                "Your lab report has been published.",
+                "Order: " + orderNumber,
+                patientName,
+                doctorName,
+                "You can view the report in the patient portal."
+        );
+        queueAndSend(
+                tenantId,
+                patientId,
+                sourceId,
+                "LAB_REPORT_PUBLISHED",
+                subject,
+                body,
+                actorAppUserId,
+                pdfContent == null ? null : new NotificationAttachment(pdfFilename, "application/pdf", pdfContent)
+        );
+    }
+
+    public void notifyDoctorReportPublished(UUID tenantId, UUID sourceId, UUID doctorUserId, String doctorEmail, String orderNumber, String patientName, String doctorName, UUID actorAppUserId) {
+        if (!StringUtils.hasText(doctorEmail)) {
+            return;
+        }
+        String subject = "Lab report published " + orderNumber;
+        String body = buildBody(
+                "A lab report has been published for your patient.",
+                "Order: " + orderNumber,
+                patientName,
+                doctorName,
+                "Please review it in the clinic record."
+        );
+        notificationHistoryService.queueDetailed(
+                tenantId,
+                null,
+                "LAB_REPORT_PUBLISHED",
+                "IN_APP",
+                doctorUserId == null ? doctorEmail.trim() : "doctor:" + doctorUserId,
+                subject,
+                body,
+                "LAB_ORDER",
+                sourceId,
+                actorAppUserId
+        );
+        try {
+            notificationProvider.send(new NotificationMessage(
+                    tenantId,
+                    "EMAIL",
+                    doctorEmail.trim(),
+                    subject,
+                    body,
+                    "{\"sourceType\":\"LAB_ORDER\",\"sourceId\":\"" + sourceId + "\"}",
+                    null,
+                    null
+            ));
+        } catch (RuntimeException ignored) {
+            // Doctor notification is additive and must not block report publishing.
+        }
+    }
+
     public void notifyDoctorReviewed(UUID tenantId, UUID patientId, UUID sourceId, String orderNumber, String patientName, String doctorName, String doctorComments, UUID actorAppUserId) {
         String subject = "Lab report reviewed " + orderNumber;
         String body = buildBody(

@@ -34,7 +34,7 @@ export const NAV_GROUPS: NavGroup[] = [
     requiresTenant: true,
     defaultExpanded: true,
     items: [
-      { key: "dashboard", label: "Dashboard", path: "/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_TECHNICIAN", "LAB_ASSISTANT"], moduleAny: ["APPOINTMENTS", "CONSULTATION"] },
+      { key: "dashboard", label: "Dashboard", path: "/dashboard", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_FRONT_DESK", "LAB_TECHNICIAN", "LAB_ASSISTANT", "LAB_APPROVER"], moduleAny: ["APPOINTMENTS", "CONSULTATION"] },
       { key: "day-board", label: "Day Board", path: "/appointments/day-board", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"], moduleAny: ["APPOINTMENTS"] },
       { key: "appointments", label: "Appointments", path: "/appointments", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST"], moduleAny: ["APPOINTMENTS"] },
       { key: "notifications", label: "Notifications", path: "/notifications", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN"], moduleAny: ["APPOINTMENTS"] },
@@ -52,7 +52,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: "patients", label: "Patients", path: "/patients", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "BILLING_USER", "AUDITOR"], moduleAny: ["APPOINTMENTS", "CONSULTATION"] },
       { key: "consultations", label: "Consultations", path: "/consultations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "DOCTOR", "AUDITOR"], moduleAny: ["CONSULTATION"] },
       { key: "vaccinations", label: "Vaccinations", path: "/vaccinations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "RECEPTIONIST", "AUDITOR"], moduleAny: ["VACCINATION"] },
-      { key: "laboratory", label: "Laboratory", path: "/lab", requiresTenant: true, rolesAny: ["PLATFORM_ADMIN", "CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_TECHNICIAN", "LAB_ASSISTANT"], moduleAny: ["LABORATORY"] },
+      { key: "laboratory", label: "Laboratory", path: "/lab", requiresTenant: true, rolesAny: ["PLATFORM_ADMIN", "CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "BILLING_USER", "AUDITOR", "LAB_FRONT_DESK", "LAB_TECHNICIAN", "LAB_ASSISTANT", "LAB_APPROVER"], moduleAny: ["LABORATORY"] },
     ],
   },
   {

@@ -4,5 +4,7 @@ public enum LabResultFlag {
     NORMAL,
     LOW,
     HIGH,
-    CRITICAL
+    CRITICAL,
+    CRITICAL_LOW,
+    CRITICAL_HIGH
 }

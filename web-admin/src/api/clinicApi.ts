@@ -1298,6 +1298,23 @@ export type LabOrderStatus =
   | "DELIVERED"
   | "CANCELLED";
 
+export type LabSampleStatus =
+  | "PENDING_COLLECTION"
+  | "COLLECTED"
+  | "RECEIVED"
+  | "REJECTED"
+  | "RECOLLECTION_REQUIRED"
+  | "CANCELLED";
+
+export type LabOrderOrigin =
+  | "CONSULTATION"
+  | "WALK_IN"
+  | "DOCTOR_REFERRAL"
+  | "HEALTH_PACKAGE"
+  | "CORPORATE"
+  | "HOME_COLLECTION"
+  | "FOLLOW_UP";
+
 export type LabOrderItem = {
   id: string;
   labTestId: string | null;
@@ -1347,6 +1364,24 @@ export type LabOrderAttachment = {
   createdAt: string;
 };
 
+export type LabSample = {
+  id: string;
+  labOrderId: string;
+  labOrderItemId: string | null;
+  accessionNumber: string;
+  barcodeValue: string;
+  specimenType: string;
+  containerType: string | null;
+  status: LabSampleStatus;
+  collectedAt: string | null;
+  collectedBy: string | null;
+  receivedAt: string | null;
+  receivedBy: string | null;
+  rejectionReason: string | null;
+  recollectionRequired: boolean;
+  notes: string | null;
+};
+
 export type LabOrder = {
   id: string;
   tenantId: string;
@@ -1357,6 +1392,12 @@ export type LabOrder = {
   doctorUserId: string | null;
   doctorName: string | null;
   consultationId: string | null;
+  orderOrigin: LabOrderOrigin;
+  requestedByInternalDoctorId: string | null;
+  externalDoctorName: string | null;
+  externalDoctorMobile: string | null;
+  externalClinicName: string | null;
+  referralSource: string | null;
   notes: string | null;
   status: LabOrderStatus;
   orderedAt: string;
@@ -1371,6 +1412,9 @@ export type LabOrder = {
   deliveredByUserId: string | null;
   paymentCollectedAt: string | null;
   readyForCollectionAt: string | null;
+  sampleAccessionNumber: string | null;
+  sampleBarcodeValue: string | null;
+  sampleSummaryStatus: LabSampleStatus | null;
   sampleType: string | null;
   sampleCollectedAt: string | null;
   sampleCollectedByUserId: string | null;
@@ -1383,14 +1427,26 @@ export type LabOrder = {
   reportGeneratedByUserId: string | null;
   reportGeneratedBy: string | null;
   reportFilename: string | null;
+  reportPublishedAt: string | null;
+  reportPublishedByUserId: string | null;
+  reportDeliveryStatus: string | null;
+  reportDeliveryChannels: string[];
+  reportDeliveryNotes: string | null;
   doctorReviewedAt: string | null;
   doctorReviewedByUserId: string | null;
   doctorReviewedBy: string | null;
   doctorReviewDecision: string | null;
   doctorReviewReason: string | null;
   doctorComments: string | null;
+  labVerifiedAt: string | null;
+  labVerifiedBy: string | null;
+  labVerifiedByName: string | null;
+  labVerificationDecision: string | null;
+  labVerificationComments: string | null;
+  labVerificationReason: string | null;
   attachments: LabOrderAttachment[];
   items: LabOrderItem[];
+  samples: LabSample[];
   results: LabOrderResult[];
   createdAt: string;
   updatedAt: string;
@@ -2855,7 +2911,7 @@ export async function importLabTestsCsv(token: string, tenantId: string, file: F
 }
 
 export async function getLabTestImportTemplate(token: string, tenantId: string) {
-  return httpGetText("/api/lab/tests/import-template", { token, tenantId });
+  return httpGetText("/api/lab/tests/import-template", { token, tenantId, accept: "text/csv, */*" });
 }
 
 export async function updateLabTest(token: string, tenantId: string, id: string, body: LabTestInput) {
@@ -2891,13 +2947,23 @@ export async function createConsultationLabOrder(token: string, tenantId: string
 
 export async function createLabOrder(token: string, tenantId: string, body: {
   patientId: string;
-  doctorUserId?: string | null;
+  orderOrigin: LabOrderOrigin;
+  requestedByInternalDoctorId?: string | null;
+  externalDoctorName?: string | null;
+  externalDoctorMobile?: string | null;
+  externalClinicName?: string | null;
+  referralSource?: string | null;
   testIds: string[];
   notes?: string | null;
 }) {
   return httpPost<LabOrder>("/api/lab/orders", {
     patientId: body.patientId,
-    doctorUserId: body.doctorUserId ?? null,
+    orderOrigin: body.orderOrigin,
+    requestedByInternalDoctorId: body.requestedByInternalDoctorId ?? null,
+    externalDoctorName: body.externalDoctorName ?? null,
+    externalDoctorMobile: body.externalDoctorMobile ?? null,
+    externalClinicName: body.externalClinicName ?? null,
+    referralSource: body.referralSource ?? null,
     testIds: body.testIds,
     notes: body.notes ?? null,
   }, { token, tenantId });
@@ -2937,6 +3003,54 @@ export async function collectLabOrderSample(token: string, tenantId: string, id:
   }, { token, tenantId });
 }
 
+export async function getLabOrderSamples(token: string, tenantId: string, orderId: string) {
+  return httpGet<LabSample[]>(`/api/lab/orders/${orderId}/samples`, { token, tenantId });
+}
+
+export async function collectLabOrderSamples(token: string, tenantId: string, orderId: string, body: {
+  samples: Array<{
+    labOrderItemId?: string | null;
+    specimenType: string;
+    containerType?: string | null;
+    collectedAt?: string | null;
+    collectedBy?: string | null;
+    notes?: string | null;
+  }>;
+}) {
+  return httpPost<LabSample[]>(`/api/lab/orders/${orderId}/samples/collect`, {
+    samples: body.samples.map((sample) => ({
+      labOrderItemId: sample.labOrderItemId ?? null,
+      specimenType: sample.specimenType,
+      containerType: sample.containerType ?? null,
+      collectedAt: sample.collectedAt ?? null,
+      collectedBy: sample.collectedBy ?? null,
+      notes: sample.notes ?? null,
+    })),
+  }, { token, tenantId });
+}
+
+export async function receiveLabSample(token: string, tenantId: string, sampleId: string, body?: {
+  receivedAt?: string | null;
+  receivedBy?: string | null;
+}) {
+  return httpPost<LabSample>(`/api/lab/samples/${sampleId}/receive`, {
+    receivedAt: body?.receivedAt ?? null,
+    receivedBy: body?.receivedBy ?? null,
+  }, { token, tenantId });
+}
+
+export async function rejectLabSample(token: string, tenantId: string, sampleId: string, body: {
+  rejectionReason: string;
+  recollectionRequired?: boolean;
+  notes?: string | null;
+}) {
+  return httpPost<LabSample>(`/api/lab/samples/${sampleId}/reject`, {
+    rejectionReason: body.rejectionReason,
+    recollectionRequired: body.recollectionRequired ?? false,
+    notes: body.notes ?? null,
+  }, { token, tenantId });
+}
+
 export async function enterLabOrderResults(token: string, tenantId: string, id: string, body: {
   comments?: string | null;
   items: Array<{
@@ -2958,6 +3072,20 @@ export async function enterLabOrderResults(token: string, tenantId: string, id: 
 
 export async function reviewLabOrder(token: string, tenantId: string, id: string, body: { decision: "APPROVE" | "SEND_BACK"; reason?: string | null; comments?: string | null }) {
   return httpPost<LabOrder>(`/api/lab/orders/${id}/doctor-review`, { decision: body.decision, reason: body.reason ?? null, comments: body.comments ?? null }, { token, tenantId });
+}
+
+export async function verifyLabOrder(token: string, tenantId: string, id: string, body: { decision: "APPROVE" | "SEND_BACK"; reason?: string | null; comments?: string | null }) {
+  return httpPost<LabOrder>(`/api/lab/orders/${id}/verify`, { decision: body.decision, reason: body.reason ?? null, comments: body.comments ?? null }, { token, tenantId });
+}
+
+export async function publishLabOrderReport(token: string, tenantId: string, id: string, body: {
+  deliveryChannels?: string[];
+  publishNotes?: string | null;
+}) {
+  return httpPost<LabOrder>(`/api/lab/orders/${id}/publish-report`, {
+    deliveryChannels: body.deliveryChannels ?? [],
+    publishNotes: body.publishNotes ?? null,
+  }, { token, tenantId });
 }
 
 export async function getLabOrderPdf(token: string, tenantId: string, id: string) {

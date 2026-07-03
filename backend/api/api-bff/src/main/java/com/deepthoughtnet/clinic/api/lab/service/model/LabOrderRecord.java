@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.lab.service.model;
 
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
+import com.deepthoughtnet.clinic.api.lab.db.LabOrderOrigin;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -16,6 +17,12 @@ public record LabOrderRecord(
         UUID doctorUserId,
         String doctorName,
         UUID consultationId,
+        LabOrderOrigin orderOrigin,
+        UUID requestedByInternalDoctorId,
+        String externalDoctorName,
+        String externalDoctorMobile,
+        String externalClinicName,
+        String referralSource,
         String notes,
         LabOrderStatusRecord status,
         OffsetDateTime orderedAt,
@@ -30,6 +37,9 @@ public record LabOrderRecord(
         UUID deliveredByUserId,
         OffsetDateTime paymentCollectedAt,
         OffsetDateTime readyForCollectionAt,
+        String sampleAccessionNumber,
+        String sampleBarcodeValue,
+        LabSampleStatusRecord sampleSummaryStatus,
         String sampleType,
         OffsetDateTime sampleCollectedAt,
         UUID sampleCollectedByUserId,
@@ -42,14 +52,26 @@ public record LabOrderRecord(
         UUID reportGeneratedByUserId,
         String reportGeneratedBy,
         String reportFilename,
+        OffsetDateTime reportPublishedAt,
+        UUID reportPublishedByUserId,
+        String reportDeliveryStatus,
+        List<String> reportDeliveryChannels,
+        String reportDeliveryNotes,
         OffsetDateTime doctorReviewedAt,
         UUID doctorReviewedByUserId,
         String doctorReviewedBy,
         String doctorReviewDecision,
         String doctorReviewReason,
         String doctorComments,
+        OffsetDateTime labVerifiedAt,
+        UUID labVerifiedBy,
+        String labVerifiedByName,
+        String labVerificationDecision,
+        String labVerificationComments,
+        String labVerificationReason,
         List<LabOrderAttachmentRecord> attachments,
         List<LabOrderItemRecord> items,
+        List<LabSampleRecord> samples,
         List<LabOrderResultRecord> results,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt

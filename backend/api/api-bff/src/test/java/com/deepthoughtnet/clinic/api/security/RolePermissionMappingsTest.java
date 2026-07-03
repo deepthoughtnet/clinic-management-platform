@@ -47,15 +47,30 @@ class RolePermissionMappingsTest {
                 Permissions.PRESCRIPTION_FINALIZE,
                 Permissions.AI_COPILOT_RUN
         );
+        assertThat(permissions).doesNotContain(
+                Permissions.LAB_ORDER_COLLECT_SAMPLE,
+                Permissions.LAB_ORDER_RESULT_ENTRY,
+                Permissions.LAB_ORDER_GENERATE_REPORT,
+                Permissions.LAB_ORDER_REVIEW
+        );
     }
 
     @Test
-    void clinicAdminKeepsReadOnlyClinicalVisibilityWithoutWorkspaceMutationPermissions() {
+    void clinicAdminKeepsClinicalVisibilityWhileGettingFullLabAccess() {
         Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
 
         assertThat(permissions).contains(
                 Permissions.CONSULTATION_READ,
-                Permissions.PRESCRIPTION_READ
+                Permissions.PRESCRIPTION_READ,
+                Permissions.LAB_TEST_READ,
+                Permissions.LAB_TEST_MANAGE,
+                Permissions.LAB_ORDER_CREATE,
+                Permissions.LAB_ORDER_READ,
+                Permissions.LAB_ORDER_COLLECT_PAYMENT,
+                Permissions.LAB_ORDER_COLLECT_SAMPLE,
+                Permissions.LAB_ORDER_RESULT_ENTRY,
+                Permissions.LAB_ORDER_GENERATE_REPORT,
+                Permissions.LAB_ORDER_REVIEW
         );
         assertThat(permissions).doesNotContain(
                 Permissions.CONSULTATION_CREATE,
@@ -121,6 +136,92 @@ class RolePermissionMappingsTest {
                 Permissions.PRESCRIPTION_CREATE,
                 Permissions.PRESCRIPTION_FINALIZE,
                 Permissions.INVENTORY_MANAGE
+        );
+    }
+
+    @Test
+    void labTechnicianCanCollectSampleAndEnterResultsButCannotVerify() {
+        Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.LAB_TECHNICIAN);
+
+        assertThat(permissions).contains(
+                Permissions.LAB_TEST_READ,
+                Permissions.LAB_ORDER_READ,
+                Permissions.LAB_ORDER_COLLECT_SAMPLE,
+                Permissions.LAB_ORDER_RESULT_ENTRY
+        );
+        assertThat(permissions).doesNotContain(
+                Permissions.LAB_ORDER_REVIEW,
+                Permissions.LAB_ORDER_GENERATE_REPORT
+        );
+    }
+
+    @Test
+    void labAssistantCanCollectSampleOnly() {
+        Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.LAB_ASSISTANT);
+
+        assertThat(permissions).contains(
+                Permissions.LAB_TEST_READ,
+                Permissions.LAB_ORDER_READ,
+                Permissions.LAB_ORDER_COLLECT_SAMPLE
+        );
+        assertThat(permissions).doesNotContain(
+                Permissions.LAB_ORDER_RESULT_ENTRY,
+                Permissions.LAB_ORDER_REVIEW,
+                Permissions.LAB_ORDER_GENERATE_REPORT
+        );
+    }
+
+    @Test
+    void labApproverCanVerifyAndGenerateReports() {
+        Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.LAB_APPROVER);
+
+        assertThat(permissions).contains(
+                Permissions.LAB_TEST_READ,
+                Permissions.LAB_ORDER_READ,
+                Permissions.LAB_ORDER_REVIEW,
+                Permissions.LAB_ORDER_GENERATE_REPORT,
+                Permissions.REPORT_READ,
+                Permissions.AUDIT_READ
+        );
+        assertThat(permissions).doesNotContain(
+                Permissions.LAB_ORDER_COLLECT_SAMPLE,
+                Permissions.LAB_ORDER_RESULT_ENTRY
+        );
+    }
+
+    @Test
+    void labFrontDeskCanCreateOrdersAndCollectPaymentsOnly() {
+        Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.LAB_FRONT_DESK);
+
+        assertThat(permissions).contains(
+                Permissions.LAB_TEST_READ,
+                Permissions.LAB_ORDER_READ,
+                Permissions.LAB_ORDER_CREATE,
+                Permissions.LAB_ORDER_COLLECT_PAYMENT
+        );
+        assertThat(permissions).doesNotContain(
+                Permissions.LAB_TEST_MANAGE,
+                Permissions.LAB_ORDER_COLLECT_SAMPLE,
+                Permissions.LAB_ORDER_RESULT_ENTRY,
+                Permissions.LAB_ORDER_REVIEW,
+                Permissions.LAB_ORDER_GENERATE_REPORT
+        );
+    }
+
+    @Test
+    void clinicAdminHasFullLabAccess() {
+        Set<String> permissions = RolePermissionMappings.permissionsForRole(Roles.CLINIC_ADMIN);
+
+        assertThat(permissions).contains(
+                Permissions.LAB_TEST_READ,
+                Permissions.LAB_TEST_MANAGE,
+                Permissions.LAB_ORDER_CREATE,
+                Permissions.LAB_ORDER_READ,
+                Permissions.LAB_ORDER_COLLECT_PAYMENT,
+                Permissions.LAB_ORDER_COLLECT_SAMPLE,
+                Permissions.LAB_ORDER_RESULT_ENTRY,
+                Permissions.LAB_ORDER_GENERATE_REPORT,
+                Permissions.LAB_ORDER_REVIEW
         );
     }
 
