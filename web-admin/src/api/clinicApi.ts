@@ -76,6 +76,15 @@ export type ClinicalDocumentVisibility = "INTERNAL_ONLY" | "PATIENT_VISIBLE";
 export type ClinicalDocumentVerificationStatus = "UNVERIFIED" | "VERIFIED";
 export type ClinicalDocumentDocumentStatus = "NOT_STARTED" | "PENDING" | "COMPLETED" | "FAILED";
 
+export type ConsultationGeneratedDocumentResponse = {
+  documentId: string;
+  downloadUrl: string;
+  expiresInSeconds: string;
+  filename: string;
+  title: string;
+  documentType: ClinicalDocumentType;
+};
+
 export type ClinicalDocument = {
   id: string;
   patientId: string;
@@ -4162,6 +4171,17 @@ export async function getPatientDocumentDownloadUrl(token: string, tenantId: str
 
 export async function getPatientDocumentViewUrl(token: string, tenantId: string, patientId: string, documentId: string) {
   return httpGet<{ url: string; expiresInSeconds: string }>(`/api/patients/${patientId}/documents/${documentId}/view`, { token, tenantId });
+}
+
+export async function generateConsultationDocument(token: string, tenantId: string, consultationId: string, body: {
+  title: string;
+  documentType: ClinicalDocumentType;
+  body: string;
+  language?: string | null;
+  notes?: string | null;
+  visibility?: ClinicalDocumentVisibility | null;
+}) {
+  return httpPost<ConsultationGeneratedDocumentResponse>(`/api/consultations/${consultationId}/generated-documents`, body, { token, tenantId });
 }
 
 export async function deletePatientDocument(token: string, tenantId: string, patientId: string, documentId: string) {

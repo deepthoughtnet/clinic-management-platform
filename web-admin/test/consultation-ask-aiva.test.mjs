@@ -20,4 +20,8 @@ test("consultation workspace Ask AIVA enables only for consultation, patient, pr
   assert.ok(source.includes("disabled={!canAskAiva}"));
   assert.ok(source.includes("onClick={() => void runAskAiva()}"));
   assert.ok(source.includes("aiConsultationAsk("));
+  assert.ok(source.includes("AIVA_QUICK_PROMPTS"));
+  assert.ok(source.includes("Clinical Chat"));
+  assert.ok(source.includes("Ask anything about this consultation..."));
+  assert.ok(source.includes("Add to SOAP"));
 });

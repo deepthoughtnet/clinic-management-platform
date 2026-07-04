@@ -51,6 +51,7 @@ import {
 } from "../../api/clinicApi";
 import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocumentViewer";
 import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDocumentUploadDialog";
+import { documentTypeLabel } from "../../components/clinical/documentTypeOptions";
 
 function statusColor(status: Appointment["status"]) {
   switch (status) {
@@ -78,23 +79,7 @@ function consultationStatusColor(status: Consultation["status"]) {
   }
 }
 
-const DOCUMENT_TYPES: Array<{ value: ClinicalDocumentType; label: string }> = [
-  { value: "LAB_REPORT", label: "Lab Report" },
-  { value: "PRESCRIPTION", label: "Prescription" },
-  { value: "X_RAY", label: "X-Ray" },
-  { value: "MRI_CT", label: "MRI/CT" },
-  { value: "REFERRAL", label: "Referral" },
-  { value: "DISCHARGE_SUMMARY", label: "Discharge Summary" },
-  { value: "INSURANCE", label: "Insurance" },
-  { value: "VACCINATION", label: "Vaccination" },
-  { value: "OTHER", label: "Other" },
-];
-
 const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
-
-function documentTypeLabel(value: string | null | undefined): string {
-  return DOCUMENT_TYPES.find((type) => type.value === value)?.label || (value || "Document").replaceAll("_", " ");
-}
 
 const DOCUMENT_FILTERS: Array<{ key: "ALL" | "LAB" | "RADIOLOGY" | "REFERRAL" | "PRESCRIPTION" | "DISCHARGE" | "OTHER"; label: string }> = [
   { key: "ALL", label: "All" },

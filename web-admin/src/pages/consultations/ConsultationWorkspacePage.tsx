@@ -15,6 +15,7 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  Drawer,
   FormControl,
   Grid,
   IconButton,
@@ -23,6 +24,7 @@ import {
   ListItemButton,
   ListItemText,
   MenuItem,
+  LinearProgress,
   Select,
   Stack,
   Tab,
@@ -55,6 +57,9 @@ import MedicationRoundedIcon from "@mui/icons-material/MedicationRounded";
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
 import MonitorHeartRoundedIcon from "@mui/icons-material/MonitorHeartRounded";
 import LightbulbRoundedIcon from "@mui/icons-material/LightbulbRounded";
+import PlaylistAddCheckRoundedIcon from "@mui/icons-material/PlaylistAddCheckRounded";
+import ReceiptLongRoundedIcon from "@mui/icons-material/ReceiptLongRounded";
+import CompareArrowsRoundedIcon from "@mui/icons-material/CompareArrowsRounded";
 
 import { consultationSchema, firstZodError, labConsultationOrderCreateSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
@@ -90,6 +95,8 @@ import {
   getPatientTimeline,
   getPrescriptionPdf,
   getPrescriptionHistory,
+  getLabOrderPdf,
+  generateConsultationDocument,
   printPrescription,
   previewPrescription,
   uploadPatientDocument,
@@ -105,12 +112,14 @@ import {
   type ConsultationAiSummary,
   type ConsultationInput,
   type LabOrder,
+  type LabOrderStatus,
   type LabTest,
   type Medicine,
   type MedicineType,
   type PatientDetail,
   type ClinicalDocument,
   type ClinicalContextResponse,
+  type ClinicalDocumentType,
   type PatientTimelineItem,
   type Prescription,
   type PrescriptionInput,
@@ -120,6 +129,7 @@ import {
 } from "../../api/clinicApi";
 import { ApiClientError } from "../../api/restClient";
 import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocumentViewer";
+import { ConfirmationDialog } from "../../components/clinical/ConfirmationDialog";
 import { PatientIntelligenceCard } from "../../components/clinical/PatientIntelligenceCard";
 import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDocumentUploadDialog";
 
@@ -141,7 +151,7 @@ type ConsultationFormState = {
   respiratoryRate: string;
 };
 
-type MedicineRow = PrescriptionMedicine & { localId: string };
+type MedicineRow = PrescriptionMedicine & { localId: string; route?: string | null };
 type TestRow = PrescriptionTest & { localId: string };
 type AiSuggestionItem = {
   title: string;
@@ -193,6 +203,22 @@ type ClinicalAiDraftState = {
   selectedItems: string[];
   selectedItem: string | null;
 };
+type ConsultationDocumentationKind = "visitSummary" | "referral" | "certificate";
+type ConsultationDocumentPriority = "ROUTINE" | "URGENT" | "EMERGENCY";
+type ConsultationDocumentDraftState = {
+  kind: ConsultationDocumentationKind;
+  title: string;
+  status: ClinicalAiDraftStatus;
+  generatedAt: string | null;
+  sourceSummary: string | null;
+  draftText: string;
+  error: string | null;
+  documentType: ClinicalDocumentType;
+  language: "ENGLISH" | "HINDI" | "MARATHI";
+  documentId: string | null;
+  downloadUrl: string | null;
+  notes: string | null;
+};
 type ClinicalDraftGenerationStep = ClinicalAiDraftKind | "prescriptionSuggestion" | "clinicalReasoning";
 type ClinicalDraftStepStatus = "pending" | "generating" | "done" | "failed";
 type ClinicalDraftGenerationStepState = {
@@ -206,6 +232,12 @@ type MedicineShortcut = Pick<
 > & {
   medicineType: MedicineType | null;
 };
+
+type PrescriptionDialogState =
+  | { kind: "fastPack"; templateLabel: string; hasContent: boolean; onConfirm: () => void }
+  | { kind: "overwrite"; label: string; currentValue: string; allowAppend: boolean; onResolve: (choice: "replace" | "append" | "cancel") => void }
+  | { kind: "confirm"; title: string; description: string; confirmLabel: string; onConfirm: () => void; onCancel?: () => void; confirmColor?: "primary" | "secondary" | "error" | "warning" | "info" }
+  | null;
 
 type PrescriptionFormState = {
   diagnosisSnapshot: string;
@@ -255,6 +287,20 @@ const DIAGNOSIS_CHIPS = ["Viral Fever", "Upper Respiratory Infection", "Gastriti
 const FOLLOWUP_CHIPS = ["3 days", "5 days", "7 days", "15 days", "1 month"];
 const TEST_CHIPS = ["CBC", "Urine Routine", "Blood Sugar", "X-Ray", "ECG"];
 const ADVICE_CHIPS = ["Hydration", "Rest", "Steam inhalation", "Avoid oily/spicy food", "Monitor warning signs", "Continue current medicines"];
+const MEDICINE_ROUTE_OPTIONS = ["", "ORAL", "SYRUP", "IV", "IM", "TOPICAL", "EYE_DROPS", "EAR_DROPS", "NASAL", "INHALATION", "OTHER"] as const;
+const MEDICINE_ROUTE_LABELS: Record<(typeof MEDICINE_ROUTE_OPTIONS)[number], string> = {
+  "": "Blank",
+  ORAL: "Oral",
+  SYRUP: "Syrup",
+  IV: "IV",
+  IM: "IM",
+  TOPICAL: "Topical",
+  EYE_DROPS: "Eye drops",
+  EAR_DROPS: "Ear drops",
+  NASAL: "Nasal",
+  INHALATION: "Inhalation",
+  OTHER: "Other",
+};
 const AI_DISABLED_MESSAGE = "AI assistance is not enabled or configured for this clinic.";
 const AI_PROVIDER_NOT_CONFIGURED_MESSAGE = "AI module is enabled for this clinic, but AI provider is not configured.";
 
@@ -266,6 +312,84 @@ const TIMINGS: { label: string; value: Timing }[] = [
   { label: "With food", value: "WITH_FOOD" },
   { label: "Anytime", value: "ANYTIME" },
 ];
+
+const LAB_ORDER_STATUS_LABELS: Record<LabOrderStatus, string> = {
+  ORDERED: "Payment Pending",
+  PAYMENT_PENDING: "Payment Pending",
+  PAID: "Payment Pending",
+  READY_FOR_COLLECTION: "Sample Pending",
+  SAMPLE_COLLECTED: "Sample Collected",
+  PROCESSING: "Sample Collected",
+  RESULT_ENTERED: "Result Entered",
+  REPORT_READY: "Report Ready",
+  REPORT_GENERATED: "Report Ready",
+  DOCTOR_REVIEWED: "Published",
+  DELIVERED: "Published",
+  CANCELLED: "Cancelled",
+};
+
+const LAB_ORDER_STATUS_COLORS: Record<LabOrderStatus, "default" | "warning" | "success" | "info" | "error"> = {
+  ORDERED: "warning",
+  PAYMENT_PENDING: "warning",
+  PAID: "warning",
+  READY_FOR_COLLECTION: "warning",
+  SAMPLE_COLLECTED: "info",
+  PROCESSING: "info",
+  RESULT_ENTERED: "success",
+  REPORT_READY: "success",
+  REPORT_GENERATED: "success",
+  DOCTOR_REVIEWED: "success",
+  DELIVERED: "success",
+  CANCELLED: "default",
+};
+
+function normalizeLookupKey(value: string | null | undefined) {
+  return (value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function formatMoney(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) return "Not available";
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+}
+
+function looksLikeFastingTest(testName: string, sampleType: string | null, category: string | null | undefined) {
+  const tokens = normalizeLookupKey([testName, sampleType, category].filter(Boolean).join(" "));
+  return /fasting|blood sugar|glucose|lipid|cholesterol|triglyceride|hba1c|hba1 c|ppbs|fbs|rbs/.test(tokens);
+}
+
+function labOrderReviewStatusLabel(status: LabOrderStatus) {
+  return LAB_ORDER_STATUS_LABELS[status] || status.replaceAll("_", " ");
+}
+
+function labOrderReviewStatusColor(status: LabOrderStatus) {
+  return LAB_ORDER_STATUS_COLORS[status] || "default";
+}
+
+function WorkflowStrip({
+  text,
+  action,
+}: {
+  text: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <Alert
+      severity="info"
+      variant="outlined"
+      sx={{
+        py: 0.45,
+        px: 1,
+        alignItems: "center",
+        "& .MuiAlert-message": { py: 0.1, width: "100%" },
+      }}
+      action={action}
+    >
+      <Typography variant="caption" sx={{ fontWeight: 700, lineHeight: 1.25 }}>
+        {text}
+      </Typography>
+    </Alert>
+  );
+}
 
 const RX_TEMPLATES: RxTemplate[] = [
   {
@@ -391,6 +515,7 @@ function newMedicineRow(index: number): MedicineRow {
     medicineName: "",
     medicineType: null,
     strength: "",
+    route: "",
     dosage: "",
     frequency: "",
     duration: "",
@@ -540,7 +665,7 @@ function emptyPrescriptionForm(record?: Prescription | null, consultation?: Cons
     advice: record?.advice || consultation?.advice || "",
     followUpDate: record?.followUpDate || consultation?.followUpDate || "",
     medicines: record?.medicines?.length
-      ? record.medicines.map((item, index) => ({ ...item, localId: `${index}-${item.sortOrder ?? index}` }))
+      ? record.medicines.map((item, index) => ({ ...item, route: (item as Partial<MedicineRow>).route ?? "", localId: `${index}-${item.sortOrder ?? index}` }))
       : [newMedicineRow(0)],
     recommendedTests: record?.recommendedTests?.length
       ? record.recommendedTests.map((item, index) => ({ ...item, localId: `${index}-${item.sortOrder ?? index}` }))
@@ -814,6 +939,10 @@ function compactDateTime(value?: string | null): string {
   return value ? new Date(value).toLocaleString() : "-";
 }
 
+function compactTimelineTitle(value: string) {
+  return value.trim() || "Untitled";
+}
+
 function timelineTypeLabel(itemType: PatientTimelineItem["itemType"]) {
   switch (itemType) {
     case "CONSULTATION":
@@ -872,6 +1001,72 @@ function compactText(value: string | null | undefined, max = 120) {
   return normalized.length > max ? `${normalized.slice(0, max - 1)}…` : normalized;
 }
 
+function splitCompactList(value: string | null | undefined) {
+  return (value || "")
+    .split(/[\n,•;|]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeMedicationKey(value: string | null | undefined) {
+  return (value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function medicationNameMatches(medicineName: string, keywords: string[]) {
+  const normalized = normalizeMedicationKey(medicineName);
+  return keywords.some((keyword) => normalized.includes(keyword));
+}
+
+function isAntibioticMedicine(name: string) {
+  return medicationNameMatches(name, ["amoxicillin", "azithromycin", "cef", "cefixime", "cefpodoxime", "ciprofloxacin", "ofloxacin", "doxycycline", "metronidazole", "augmentin", "levofloxacin"]);
+}
+
+function isPainkillerMedicine(name: string) {
+  return medicationNameMatches(name, ["paracetamol", "acetaminophen", "ibuprofen", "diclofenac", "naproxen", "ketorolac", "aceclofenac", "nimesulide", "meloxicam"]);
+}
+
+function parseSuggestionDraftText(value: string) {
+  const result: Record<string, string> = {};
+  value.split(/\r?\n/).forEach((line) => {
+    const match = line.match(/^([^:]+):\s*(.*)$/);
+    if (match) {
+      const key = match[1].trim().toLowerCase();
+      const text = match[2].trim();
+      if (text) result[key] = text;
+    }
+  });
+  return result;
+}
+
+function buildPrescriptionSummaryText(input: {
+  diagnosis: string;
+  medicines: MedicineRow[];
+  tests: TestRow[];
+  advice: string;
+  followUpDate: string;
+  warnings: string[];
+  redFlags: string[];
+}) {
+  const medicineLines = input.medicines
+    .filter((row) => normalizeStringValue(row.medicineName))
+    .slice(0, 8)
+    .map((row) => [row.medicineName.trim(), row.strength?.trim(), row.dosage?.trim(), row.frequency?.trim(), row.duration?.trim()].filter(Boolean).join(" • "));
+  const testLines = input.tests.map((row) => row.testName.trim()).filter(Boolean).slice(0, 6);
+  const sections = [
+    input.diagnosis.trim() ? `Diagnosis: ${input.diagnosis.trim()}` : "",
+    medicineLines.length ? `Medicines: ${medicineLines.join("; ")}` : "",
+    testLines.length ? `Tests: ${testLines.join(", ")}` : "",
+    input.advice.trim() ? `Advice: ${input.advice.trim()}` : "",
+    input.followUpDate ? `Follow-up: ${input.followUpDate}` : "",
+    input.warnings.length ? `Warnings: ${input.warnings.join(" • ")}` : "",
+    input.redFlags.length ? `Red flags: ${input.redFlags.join(" • ")}` : "",
+  ].filter(Boolean);
+  return sections.join("\n");
+}
+
 function isoDateFromToday(offsetDays: number) {
   const date = new Date();
   date.setDate(date.getDate() + offsetDays);
@@ -917,6 +1112,31 @@ function createEmptyClinicalAiDrafts() {
     advice: createClinicalAiDraftState("advice", "Patient Advice"),
     followUp: createClinicalAiDraftState("followUp", "Follow-up"),
   } satisfies Record<ClinicalAiDraftKind, ClinicalAiDraftState>;
+}
+
+function createConsultationDocumentDraftState(kind: ConsultationDocumentationKind, title: string, documentType: ClinicalDocumentType, language: ConsultationDocumentDraftState["language"] = "ENGLISH"): ConsultationDocumentDraftState {
+  return {
+    kind,
+    title,
+    status: "DRAFTED",
+    generatedAt: null,
+    sourceSummary: null,
+    draftText: "",
+    error: null,
+    documentType,
+    language,
+    documentId: null,
+    downloadUrl: null,
+    notes: null,
+  };
+}
+
+function createEmptyConsultationDocumentDrafts() {
+  return {
+    visitSummary: createConsultationDocumentDraftState("visitSummary", "Visit Summary", "ATTACHMENT"),
+    referral: createConsultationDocumentDraftState("referral", "Referral Letter", "REFERRAL_LETTER"),
+    certificate: createConsultationDocumentDraftState("certificate", "Medical Certificate", "OTHER"),
+  } satisfies Record<ConsultationDocumentationKind, ConsultationDocumentDraftState>;
 }
 
 function createEmptyClinicalDraftGenerationSteps() {
@@ -1029,7 +1249,7 @@ function normalizeDraftedTextWithSections(value: string, sections: Array<[string
 function aiAssistActionLabel(action: AiAssistAction) {
   switch (action) {
     case "ask":
-      return "Ask AIVA";
+      return "Clinical chat";
     case "diagnosis":
       return "Clinical reasoning";
     case "notes":
@@ -1105,6 +1325,7 @@ function SectionCard({
   title,
   subtitle,
   icon,
+  primaryAction,
   expanded,
   onToggle,
   children,
@@ -1113,34 +1334,49 @@ function SectionCard({
   title: string;
   subtitle?: string;
   icon?: React.ReactNode;
+  primaryAction?: React.ReactNode;
   expanded: boolean;
   onToggle: (id: string) => void;
   children: React.ReactNode;
 }) {
   return (
-    <Card variant="outlined" sx={{ boxShadow: "none" }}>
-      <CardContent sx={{ py: 1.1, "&:last-child": { pb: 1.1 } }}>
-        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
-            {icon ? (
-              <Box sx={{ display: "grid", placeItems: "center", width: 30, height: 30, borderRadius: "50%", bgcolor: "primary.50", color: "primary.main", flexShrink: 0 }}>
-                {icon}
+    <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+      <CardContent sx={{ p: 0.9, "&:last-child": { pb: 0.9 } }}>
+        <Stack spacing={0.75}>
+          <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1 }}>
+            <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.85, minWidth: 0 }}>
+              {icon ? (
+                <Box sx={{ display: "grid", placeItems: "center", width: 28, height: 28, borderRadius: "50%", bgcolor: "primary.50", color: "primary.main", flexShrink: 0, mt: 0.1 }}>
+                  {icon}
+                </Box>
+              ) : null}
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 950, lineHeight: 1.15 }}>
+                  {title}
+                </Typography>
+                {subtitle ? (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.1, mt: 0.1 }}>
+                    {subtitle}
+                  </Typography>
+                ) : null}
               </Box>
-            ) : null}
-            <Box>
-              <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>{title}</Typography>
             </Box>
+            <Button
+              type="button"
+              size="small"
+              variant="text"
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${title}`}
+              onClick={() => onToggle(id)}
+              sx={{ flexShrink: 0, mt: -0.2 }}
+            >
+              {expanded ? "Collapse" : "Expand"}
+            </Button>
           </Box>
-          <Button type="button" size="small" variant="text" onClick={() => onToggle(id)}>{expanded ? "Hide" : "Open"}</Button>
-        </Box>
-        {subtitle ? (
-          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
-            {subtitle}
-          </Typography>
-        ) : null}
-        <Collapse in={expanded} timeout="auto" unmountOnExit>
-          <Box sx={{ pt: 1.1 }}>{children}</Box>
-        </Collapse>
+          {primaryAction ? <Box>{primaryAction}</Box> : null}
+          <Collapse in={expanded} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+            <Box sx={{ pt: 0.25 }}>{children}</Box>
+          </Collapse>
+        </Stack>
       </CardContent>
     </Card>
   );
@@ -1164,6 +1400,108 @@ function QuickChipGroup({
       ))}
     </Stack>
   );
+}
+
+function medicineSuggestionToDraftText(item: AiMedicineSuggestionItem) {
+  return [
+    `Medicine: ${item.medicine}`,
+    item.dose ? `Dose: ${item.dose}` : "",
+    item.frequency ? `Frequency: ${item.frequency}` : "",
+    item.duration ? `Duration: ${item.duration}` : "",
+    item.reason ? `Reason: ${item.reason}` : "",
+    item.safetyNote ? `Safety: ${item.safetyNote}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function PrescriptionSuggestionDraftCard({
+  item,
+  generatedAt,
+  disabled,
+  onAcceptSuggestion,
+  onRejectSuggestion,
+}: {
+  item: AiMedicineSuggestionItem;
+  generatedAt: string | null;
+  disabled: boolean;
+  onAcceptSuggestion: (item: AiMedicineSuggestionItem, draftText: string) => void;
+  onRejectSuggestion: (item: AiMedicineSuggestionItem) => void;
+}) {
+  const initialDraft = React.useMemo(() => medicineSuggestionToDraftText(item), [item]);
+  const [draftText, setDraftText] = React.useState(initialDraft);
+  const [status, setStatus] = React.useState<ClinicalAiDraftStatus>("DRAFTED");
+
+  React.useEffect(() => {
+    setDraftText(initialDraft);
+    setStatus("DRAFTED");
+  }, [initialDraft]);
+
+  const parsed = React.useMemo(() => parseSuggestionDraftText(draftText), [draftText]);
+  const viewText = draftText.trim() || initialDraft;
+
+  return (
+    <ClinicalAiDraftCard
+      title={item.medicine}
+      status={status}
+      generatedAt={generatedAt}
+      draftText={viewText}
+      acceptLabel="Accept"
+      editLabel="Edit"
+      rejectLabel="Reject"
+      copyLabel="Copy"
+      acceptDisabled={disabled}
+      editDisabled={disabled}
+      rejectDisabled={disabled}
+      copyDisabled={!viewText.trim()}
+      onAccept={() => {
+        onAcceptSuggestion({ ...item, ...parsed }, viewText);
+        setStatus("ACCEPTED");
+      }}
+      onEdit={(nextText) => {
+        setDraftText(nextText);
+        setStatus("EDITED");
+      }}
+      onReject={() => {
+        setStatus("REJECTED");
+        onRejectSuggestion(item);
+      }}
+      onCopy={() => void navigator.clipboard.writeText(viewText)}
+    >
+      <Stack spacing={0.45}>
+        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+          {item.dose ? <Chip size="small" variant="outlined" label={`Dose ${item.dose}`} /> : null}
+          {item.frequency ? <Chip size="small" variant="outlined" label={item.frequency} /> : null}
+          {item.duration ? <Chip size="small" variant="outlined" label={item.duration} /> : null}
+          {item.safetyNote ? <Chip size="small" color="warning" variant="outlined" label="Safety note" /> : null}
+        </Stack>
+        {item.reason ? <Typography variant="caption" color="text.secondary">Reason: {item.reason}</Typography> : null}
+        {item.safetyNote ? <Typography variant="caption" color="warning.main">Safety: {item.safetyNote}</Typography> : null}
+      </Stack>
+    </ClinicalAiDraftCard>
+  );
+}
+
+const AI_SAFETY_NOTE = "AI suggestions are assistive. Doctor must verify before use.";
+const AIVA_QUICK_PROMPTS = [
+  "What else should I ask?",
+  "Explain diagnosis",
+  "Simplify for patient",
+  "Suggest tests",
+  "Draft referral",
+  "Drug safety",
+];
+
+// Final UX polish for R2 Consultation Workspace. Keep layout stable unless a functional defect requires change.
+
+function numericTrendLabel(current: number | null | undefined, previous: number | null | undefined) {
+  if (current == null || previous == null) return "No previous";
+  if (current > previous) return "↑ Higher than previous";
+  if (current < previous) return "↓ Lower than previous";
+  return "→ Stable";
+}
+
+function formatContextValue(value: string | number | null | undefined) {
+  if (value == null || value === "") return null;
+  return String(value);
 }
 
 export default function ConsultationWorkspacePage() {
@@ -1198,9 +1536,11 @@ export default function ConsultationWorkspacePage() {
   const [customDiagnosis, setCustomDiagnosis] = React.useState("");
   const [customTest, setCustomTest] = React.useState("");
   const [labOrderDialogOpen, setLabOrderDialogOpen] = React.useState(false);
+  const [labOrderReviewOpen, setLabOrderReviewOpen] = React.useState(false);
   const [labOrderTestIds, setLabOrderTestIds] = React.useState<string[]>([]);
   const [labOrderNotes, setLabOrderNotes] = React.useState("");
   const [labOrderSaving, setLabOrderSaving] = React.useState(false);
+  const [selectedLabOrderId, setSelectedLabOrderId] = React.useState<string | null>(null);
   const [medicineSearch, setMedicineSearch] = React.useState("");
   const [correctionReason, setCorrectionReason] = React.useState("Same-day correction");
   const [activeTab, setActiveTab] = React.useState(() => consultationTabKeyToIndex(searchParams.get("tab")));
@@ -1234,6 +1574,13 @@ export default function ConsultationWorkspacePage() {
   const [aiPrescriptionItems, setAiPrescriptionItems] = React.useState<AiMedicineSuggestionItem[]>([]);
   const [aiPrescriptionUnstructured, setAiPrescriptionUnstructured] = React.useState(false);
   const [aiPrescriptionProvider, setAiPrescriptionProvider] = React.useState<string | null>(null);
+  const [prescriptionSuggestionGeneratedAt, setPrescriptionSuggestionGeneratedAt] = React.useState<string | null>(null);
+  const [prescriptionInstructionsLanguage, setPrescriptionInstructionsLanguage] = React.useState<"ENGLISH" | "HINDI" | "MARATHI">("ENGLISH");
+  const [prescriptionInstructionsDraft, setPrescriptionInstructionsDraft] = React.useState<AiDraftResponse | null>(null);
+  const [prescriptionInstructionsLoading, setPrescriptionInstructionsLoading] = React.useState(false);
+  const [prescriptionInstructionsGeneratedAt, setPrescriptionInstructionsGeneratedAt] = React.useState<string | null>(null);
+  const [prescriptionSummaryDraft, setPrescriptionSummaryDraft] = React.useState<string>("");
+  const [alternativeMedicineRowId, setAlternativeMedicineRowId] = React.useState<string | null>(null);
   const [clinicalAiDrafts, setClinicalAiDrafts] = React.useState<Record<ClinicalAiDraftKind, ClinicalAiDraftState>>(() => createEmptyClinicalAiDrafts());
   const [clinicalDraftGenerationSteps, setClinicalDraftGenerationSteps] = React.useState<Record<ClinicalDraftGenerationStep, ClinicalDraftGenerationStepState>>(() => createEmptyClinicalDraftGenerationSteps());
   const [aivaDraftsExpanded, setAivaDraftsExpanded] = React.useState(true);
@@ -1250,6 +1597,25 @@ export default function ConsultationWorkspacePage() {
   const [selectedRxTemplateKey, setSelectedRxTemplateKey] = React.useState<string | null>(null);
   const [completeConsultationDialogOpen, setCompleteConsultationDialogOpen] = React.useState(false);
   const [readinessDetailsOpen, setReadinessDetailsOpen] = React.useState(false);
+  const [diagnosisReasoningOpen, setDiagnosisReasoningOpen] = React.useState(false);
+  const [diagnosisItemsExpanded, setDiagnosisItemsExpanded] = React.useState(false);
+  const [showStickyConsultationProgress, setShowStickyConsultationProgress] = React.useState(false);
+  const [prescriptionSafetyDetailsOpen, setPrescriptionSafetyDetailsOpen] = React.useState(false);
+  const [prescriptionComparisonDetailsOpen, setPrescriptionComparisonDetailsOpen] = React.useState(false);
+  const [prescriptionIntelligenceTab, setPrescriptionIntelligenceTab] = React.useState<"safety" | "comparison" | "instructions" | "summary">("safety");
+  const [prescriptionIntelligenceExpanded, setPrescriptionIntelligenceExpanded] = React.useState(false);
+  const [consultationDocumentDrafts, setConsultationDocumentDrafts] = React.useState<Record<ConsultationDocumentationKind, ConsultationDocumentDraftState>>(() => createEmptyConsultationDocumentDrafts());
+  const [consultationDocumentationLanguage, setConsultationDocumentationLanguage] = React.useState<"ENGLISH" | "HINDI" | "MARATHI">("ENGLISH");
+  const [consultationReferralPriority, setConsultationReferralPriority] = React.useState<ConsultationDocumentPriority>("ROUTINE");
+  const [consultationReferralDestination, setConsultationReferralDestination] = React.useState("");
+  const [consultationCertificateType, setConsultationCertificateType] = React.useState<"MEDICAL" | "FITNESS" | "SICK_LEAVE" | "RETURN_TO_WORK">("MEDICAL");
+  const [followUpPlanNotes, setFollowUpPlanNotes] = React.useState("");
+  const [consultationDocumentationSaving, setConsultationDocumentationSaving] = React.useState(false);
+  const [consultationCompletionExpanded, setConsultationCompletionExpanded] = React.useState(false);
+  const [consultationPackageGenerating, setConsultationPackageGenerating] = React.useState(false);
+  const [completionValidationOpen, setCompletionValidationOpen] = React.useState(false);
+  const [consultationAuditShareLog, setConsultationAuditShareLog] = React.useState<string[]>([]);
+  const [workspaceConfirmation, setWorkspaceConfirmation] = React.useState<PrescriptionDialogState>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
 
@@ -1258,6 +1624,7 @@ export default function ConsultationWorkspacePage() {
   const consultationFormRef = React.useRef(consultationForm);
   const prescriptionFormRef = React.useRef(prescriptionForm);
   const clinicalAiDraftsRef = React.useRef(clinicalAiDrafts);
+  const consultationDocumentDraftsRef = React.useRef(consultationDocumentDrafts);
   const aiDiagnosisSuggestionRef = React.useRef(aiDiagnosisSuggestion);
   const aiDiagnosisItemsRef = React.useRef(aiDiagnosisItems);
   const aiPrescriptionSuggestionRef = React.useRef(aiPrescriptionSuggestion);
@@ -1270,6 +1637,8 @@ export default function ConsultationWorkspacePage() {
   const autosavePromiseRef = React.useRef<Promise<Consultation | null> | null>(null);
   const hydratedConsultationIdRef = React.useRef<string | null>(null);
   const viewportRestoreRef = React.useRef<{ x: number; y: number } | null>(null);
+  const consultationHeaderRef = React.useRef<HTMLDivElement | null>(null);
+  const consultationChecklistRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
     consultationRef.current = consultation;
@@ -1278,6 +1647,24 @@ export default function ConsultationWorkspacePage() {
   React.useEffect(() => {
     prescriptionRef.current = prescription;
   }, [prescription]);
+
+  React.useEffect(() => {
+    const headerElement = consultationHeaderRef.current;
+    if (!headerElement || typeof window === "undefined" || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setShowStickyConsultationProgress(!entry.isIntersecting);
+      },
+      {
+        threshold: 0.08,
+        rootMargin: "-72px 0px 0px 0px",
+      },
+    );
+    observer.observe(headerElement);
+    return () => observer.disconnect();
+  }, []);
 
   React.useEffect(() => {
     consultationFormRef.current = consultationForm;
@@ -1290,6 +1677,10 @@ export default function ConsultationWorkspacePage() {
   React.useEffect(() => {
     clinicalAiDraftsRef.current = clinicalAiDrafts;
   }, [clinicalAiDrafts]);
+
+  React.useEffect(() => {
+    consultationDocumentDraftsRef.current = consultationDocumentDrafts;
+  }, [consultationDocumentDrafts]);
 
   React.useEffect(() => {
     aiDiagnosisSuggestionRef.current = aiDiagnosisSuggestion;
@@ -1356,17 +1747,41 @@ export default function ConsultationWorkspacePage() {
     }));
   }, []);
 
-  const resolveOverwriteChoice = React.useCallback((label: string, currentValue: string, allowAppend: boolean) => {
-    if (!currentValue.trim()) return "replace" as const;
-    const choice = window.prompt(
-      `${label} already has content. Replace existing content or append? Type Replace${allowAppend ? ", Append" : ""}, or Cancel.`,
-      allowAppend ? "Append" : "Replace",
-    );
-    const normalized = (choice || "").trim().toLowerCase();
-    if (normalized === "replace") return "replace" as const;
-    if (allowAppend && normalized === "append") return "append" as const;
-    return "cancel" as const;
+  const requestOverwriteChoice = React.useCallback((label: string, currentValue: string, allowAppend: boolean) => {
+    if (!currentValue.trim()) return Promise.resolve<"replace" | "append" | "cancel">("replace");
+    return new Promise<"replace" | "append" | "cancel">((resolve) => {
+      setWorkspaceConfirmation({
+        kind: "overwrite",
+        label,
+        currentValue,
+        allowAppend,
+        onResolve: (choice) => {
+          resolve(choice);
+          setWorkspaceConfirmation(null);
+        },
+      });
+    });
   }, []);
+
+  const requestBooleanConfirmation = React.useCallback((dialog: {
+    title: string;
+    description: string;
+    confirmLabel: string;
+    confirmColor?: "primary" | "secondary" | "error" | "warning" | "info";
+  }) => new Promise<boolean>((resolve) => {
+    setWorkspaceConfirmation({
+      kind: "confirm",
+      ...dialog,
+      onConfirm: () => {
+        resolve(true);
+        setWorkspaceConfirmation(null);
+      },
+      onCancel: () => {
+        resolve(false);
+        setWorkspaceConfirmation(null);
+      },
+    });
+  }), []);
 
   React.useEffect(() => {
     const listener = (event: Event) => {
@@ -1441,6 +1856,13 @@ export default function ConsultationWorkspacePage() {
       setAiPrescriptionItems([]);
       setAiPrescriptionUnstructured(false);
       setAiPrescriptionProvider(null);
+      setPrescriptionSuggestionGeneratedAt(null);
+      setPrescriptionInstructionsDraft(null);
+      setPrescriptionInstructionsLoading(false);
+      setPrescriptionInstructionsLanguage("ENGLISH");
+      setPrescriptionInstructionsGeneratedAt(null);
+      setPrescriptionSummaryDraft("");
+      setAlternativeMedicineRowId(null);
       setClinicalAiDrafts(createEmptyClinicalAiDrafts());
       setClinicalDraftGenerationSteps(createEmptyClinicalDraftGenerationSteps());
       setAivaDraftsExpanded(true);
@@ -1450,6 +1872,16 @@ export default function ConsultationWorkspacePage() {
       setAivaQuestionSubmitting(false);
       setAivaChatDetailsOpen(false);
       setReadinessDetailsOpen(false);
+      setDiagnosisReasoningOpen(false);
+      setConsultationDocumentDrafts(createEmptyConsultationDocumentDrafts());
+      setConsultationDocumentationLanguage("ENGLISH");
+      setConsultationReferralPriority("ROUTINE");
+      setConsultationReferralDestination("");
+      setConsultationCertificateType("MEDICAL");
+      setFollowUpPlanNotes("");
+      setConsultationCompletionExpanded(false);
+      setConsultationPackageGenerating(false);
+      setConsultationAuditShareLog([]);
       try {
         const [medicines, consult] = await Promise.all([
           getMedicines(auth.accessToken, auth.tenantId).catch(() => {
@@ -1692,6 +2124,178 @@ export default function ConsultationWorkspacePage() {
     () => Array.from(new Set(aiDiagnosisItems.flatMap((item) => item.recommendedInvestigations).filter(Boolean))).slice(0, 8),
     [aiDiagnosisItems],
   );
+  const activeLabOrderTestNames = React.useMemo(
+    () => labOrders.flatMap((order) => order.items.map((item) => item.testName)).filter(Boolean),
+    [labOrders],
+  );
+  const selectedLabOrder = React.useMemo(
+    () => (selectedLabOrderId ? labOrders.find((order) => order.id === selectedLabOrderId) || null : null),
+    [labOrders, selectedLabOrderId],
+  );
+  const reportHistoryRows = React.useMemo(() => {
+    const reportTypes: ClinicalDocument["documentType"][] = [
+      "EXTERNAL_LAB_REPORT",
+      "INTERNAL_LAB_REPORT",
+      "LAB_REPORT",
+      "RADIOLOGY_REPORT",
+      "X_RAY",
+      "MRI_CT",
+      "REFERRAL_LETTER",
+      "REFERRAL",
+      "DISCHARGE_SUMMARY",
+    ];
+    return clinicalDocuments
+      .filter((document) => reportTypes.includes(document.documentType))
+      .slice()
+      .sort((a, b) => (new Date(b.reportDate || b.createdAt).getTime() - new Date(a.reportDate || a.createdAt).getTime()));
+  }, [clinicalDocuments]);
+  const reportComparisonSummary = React.useMemo(() => {
+    const trends = clinicalContext?.labIntelligence.previousTrends || [];
+    const latestReport = clinicalContext?.labIntelligence.latestLabReport || null;
+    const summary = clinicalContext?.aiSummary || null;
+    if (trends.length || latestReport) {
+      return {
+        title: latestReport || "AI-assisted trend summary",
+        detail: trends.slice(0, 3).join(" • ") || summary || "Not enough structured history to generate a reliable trend.",
+      };
+    }
+    return {
+      title: "Not enough structured history to generate a reliable trend.",
+      detail: "Structured comparison is available when previous numeric results exist.",
+    };
+  }, [clinicalContext?.aiSummary, clinicalContext?.labIntelligence.latestLabReport, clinicalContext?.labIntelligence.previousTrends]);
+  const labTestCatalogLookup = React.useMemo(() => {
+    const entries = new Map<string, LabTest>();
+    labTests.forEach((test) => {
+      entries.set(normalizeLookupKey(`${test.testName} ${test.testCode}`), test);
+      entries.set(normalizeLookupKey(test.testName), test);
+      entries.set(normalizeLookupKey(test.testCode), test);
+    });
+    return entries;
+  }, [labTests]);
+  const recommendedLabOrderGroups = React.useMemo(() => {
+    const frequentNames = [
+      "CBC",
+      "Blood Sugar",
+      "HbA1c",
+      "Urine Routine",
+      "Creatinine",
+      "ECG",
+      "LFT",
+      "RFT",
+    ];
+    const diagnosisBase = new Set<string>();
+    const diagnosisKey = normalizeLookupKey([
+      consultationForm.diagnosis,
+      clinicalContext?.diagnosisHistory.lastVisitDiagnosis,
+      clinicalContext?.patientSummary.chronicConditions,
+    ].filter(Boolean).join(" "));
+    if (diagnosisKey.includes("diabetes")) {
+      ["Blood Sugar", "HbA1c", "Creatinine", "Urine Routine"].forEach((test) => diagnosisBase.add(test));
+    }
+    if (diagnosisKey.includes("fever") || normalizeLookupKey([consultationForm.chiefComplaints, consultationForm.symptoms].join(" ")).includes("fever")) {
+      ["CBC", "Urine Routine", "Blood Sugar"].forEach((test) => diagnosisBase.add(test));
+    }
+    if (diagnosisKey.includes("hypertension") || diagnosisKey.includes("bp")) {
+      ["ECG", "Creatinine", "RFT"].forEach((test) => diagnosisBase.add(test));
+    }
+    if (diagnosisKey.includes("cough") || diagnosisKey.includes("chest")) {
+      ["CBC", "X-Ray Chest"].forEach((test) => diagnosisBase.add(test));
+    }
+    const followUpNames = Array.from(new Set([
+      ...(clinicalContext?.labIntelligence.pendingInvestigations || []),
+      ...(recommendedTestSuggestions.length ? recommendedTestSuggestions : []),
+    ]));
+    const frequentItems = frequentNames
+      .map((name) => labTestCatalogLookup.get(normalizeLookupKey(name)) || Array.from(labTests).find((test) => normalizeLookupKey(test.testName).includes(normalizeLookupKey(name))))
+      .filter((test): test is LabTest => Boolean(test))
+      .slice(0, 6)
+      .map((test) => ({
+        id: test.id,
+        testName: test.testName,
+        sampleType: test.sampleType,
+        turnaroundTime: test.tenantTatOverride || test.turnaroundTime || null,
+        price: test.tenantPriceOverride ?? test.price ?? null,
+        fastingRequired: looksLikeFastingTest(test.testName, test.sampleType, test.category),
+        reason: "Common screening test for this presentation.",
+        group: "FREQUENTLY_ORDERED" as const,
+      }));
+    const diagnosisItems = Array.from(diagnosisBase)
+      .map((name) => labTestCatalogLookup.get(normalizeLookupKey(name)) || Array.from(labTests).find((test) => normalizeLookupKey(test.testName).includes(normalizeLookupKey(name))))
+      .filter((test): test is LabTest => Boolean(test))
+      .slice(0, 6)
+      .map((test) => ({
+        id: test.id,
+        testName: test.testName,
+        sampleType: test.sampleType,
+        turnaroundTime: test.tenantTatOverride || test.turnaroundTime || null,
+        price: test.tenantPriceOverride ?? test.price ?? null,
+        fastingRequired: looksLikeFastingTest(test.testName, test.sampleType, test.category),
+        reason: diagnosisKey.includes("diabetes") ? "Suggested due to diabetes follow-up." : diagnosisKey.includes("hypertension") ? "Suggested due to hypertension follow-up." : diagnosisKey.includes("fever") ? "Suggested because fever + weakness documented." : "Suggested from diagnosis and symptoms context.",
+        group: "DIAGNOSIS_BASED" as const,
+      }));
+    const followUpItems = followUpNames
+      .map((name) => labTestCatalogLookup.get(normalizeLookupKey(name)) || Array.from(labTests).find((test) => normalizeLookupKey(test.testName).includes(normalizeLookupKey(name))))
+      .filter((test): test is LabTest => Boolean(test))
+      .slice(0, 6)
+      .map((test) => ({
+        id: test.id,
+        testName: test.testName,
+        sampleType: test.sampleType,
+        turnaroundTime: test.tenantTatOverride || test.turnaroundTime || null,
+        price: test.tenantPriceOverride ?? test.price ?? null,
+        fastingRequired: looksLikeFastingTest(test.testName, test.sampleType, test.category),
+        reason: "Previously advised for follow-up or present in current clinical context.",
+        group: "PREVIOUS_FOLLOW_UP" as const,
+      }));
+    const customItems = labTests
+      .filter((test) => !customTest.trim() || normalizeLookupKey(`${test.testName} ${test.testCode} ${test.category}`).includes(normalizeLookupKey(customTest)) || normalizeLookupKey(customTest).includes(normalizeLookupKey(test.testName)))
+      .slice(0, 8)
+      .map((test) => ({
+        id: test.id,
+        testName: test.testName,
+        sampleType: test.sampleType,
+        turnaroundTime: test.tenantTatOverride || test.turnaroundTime || null,
+        price: test.tenantPriceOverride ?? test.price ?? null,
+        fastingRequired: looksLikeFastingTest(test.testName, test.sampleType, test.category),
+        reason: "Custom search result from active lab catalog.",
+        group: "CUSTOM" as const,
+      }));
+    return {
+      frequentItems,
+      diagnosisItems,
+      followUpItems,
+      customItems,
+    };
+  }, [clinicalContext?.diagnosisHistory.lastVisitDiagnosis, clinicalContext?.labIntelligence.pendingInvestigations, clinicalContext?.patientSummary.chronicConditions, consultationForm.chiefComplaints, consultationForm.diagnosis, consultationForm.symptoms, customTest, labTestCatalogLookup, labTests, recommendedTestSuggestions]);
+  const selectedLabOrderTests = React.useMemo(
+    () => labTests.filter((test) => labOrderTestIds.includes(test.id)),
+    [labOrderTestIds, labTests],
+  );
+  const labOrderReviewWarnings = React.useMemo(() => {
+    const warningMap = new Map<string, string>();
+    const reportText = reportHistoryRows
+      .map((row) => `${row.title} ${row.originalFilename} ${row.description || ""} ${row.reportDate || ""}`)
+      .join(" ")
+      .toLowerCase();
+    selectedLabOrderTests.forEach((test) => {
+      const normalizedTestName = normalizeLookupKey(test.testName);
+      if (activeLabOrderTestNames.some((name) => normalizeLookupKey(name) === normalizedTestName)) {
+        warningMap.set(test.id, `${test.testName} already ordered today.`);
+      } else if (reportText.includes(normalizedTestName)) {
+        warningMap.set(test.id, `${test.testName} report available from recent history.`);
+      } else if (clinicalContext?.labIntelligence.latestLabReport && normalizeLookupKey(clinicalContext.labIntelligence.latestLabReport).includes(normalizedTestName)) {
+        warningMap.set(test.id, `${test.testName} already reflected in recent clinical intelligence.`);
+      }
+    });
+    return warningMap;
+  }, [activeLabOrderTestNames, clinicalContext?.labIntelligence.latestLabReport, reportHistoryRows, selectedLabOrderTests]);
+  const labOrderEstimatedCost = React.useMemo(
+    () => selectedLabOrderTests.reduce((sum, test) => sum + (test.tenantPriceOverride ?? test.price ?? 0), 0),
+    [selectedLabOrderTests],
+  );
+  const diagnosisItemChips = diagnosisItemsExpanded ? aiDiagnosisItems : aiDiagnosisItems.slice(0, 6);
+  const diagnosisItemOverflow = Math.max(aiDiagnosisItems.length - diagnosisItemChips.length, 0);
   const appendAiAssistEntry = React.useCallback((entry: AiAssistEntry) => {
     setAiAssistEntries((current) => [...current, entry]);
     return entry.id;
@@ -1705,10 +2309,65 @@ export default function ConsultationWorkspacePage() {
   const currentBmiCategory = bmiCategory(currentBmi);
   const lastBmi = calculateBmi(lastConsultation?.weightKg?.toString() || "", lastConsultation?.heightCm?.toString() || "");
   const lastBmiCategory = bmiCategory(lastBmi);
-  const recentMedicineNames = Array.from(new Set(previousPrescriptions.flatMap((rx) => rx.medicines.map((med) => med.medicineName)).filter(Boolean))).slice(0, 10);
+  const intakeVitals = clinicalContext?.intakeSummary?.latestVitals || null;
+  const previousVitals = {
+    bloodPressureSystolic: lastConsultation?.bloodPressureSystolic ?? null,
+    bloodPressureDiastolic: lastConsultation?.bloodPressureDiastolic ?? null,
+    pulseRate: lastConsultation?.pulseRate ?? null,
+    temperature: lastConsultation?.temperature ?? null,
+    spo2: lastConsultation?.spo2 ?? null,
+    respiratoryRate: lastConsultation?.respiratoryRate ?? null,
+    weightKg: lastConsultation?.weightKg ?? null,
+    bmi: lastBmi ?? null,
+  };
+  const latestVitals = {
+    bloodPressureSystolic: consultationForm.bloodPressureSystolic.trim() ? Number(consultationForm.bloodPressureSystolic) : intakeVitals?.bloodPressureSystolic ?? null,
+    bloodPressureDiastolic: consultationForm.bloodPressureDiastolic.trim() ? Number(consultationForm.bloodPressureDiastolic) : intakeVitals?.bloodPressureDiastolic ?? null,
+    pulseRate: consultationForm.pulseRate.trim() ? Number(consultationForm.pulseRate) : intakeVitals?.pulseRate ?? null,
+    temperature: consultationForm.temperature.trim() ? Number(consultationForm.temperature) : intakeVitals?.temperature ?? null,
+    spo2: consultationForm.spo2.trim() ? Number(consultationForm.spo2) : intakeVitals?.spo2 ?? null,
+    respiratoryRate: consultationForm.respiratoryRate.trim() ? Number(consultationForm.respiratoryRate) : intakeVitals?.respiratoryRate ?? null,
+    weightKg: consultationForm.weightKg.trim() ? Number(consultationForm.weightKg) : intakeVitals?.weightKg ?? null,
+    bmi: currentBmi ?? intakeVitals?.bmi ?? null,
+  };
+  const medicineUsageCounts = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    previousPrescriptions.forEach((rx) => {
+      rx.medicines.forEach((med) => {
+        const key = normalizeMedicationKey(med.medicineName);
+        if (!key) return;
+        counts.set(key, (counts.get(key) || 0) + 1);
+      });
+    });
+    return counts;
+  }, [previousPrescriptions]);
+  const allMedicineCatalogNames = React.useMemo(
+    () => medicineCatalog.map((medicine) => medicine.medicineName).filter(Boolean),
+    [medicineCatalog],
+  );
+  const frequentlyUsedMedicineNames = React.useMemo(
+    () => Array.from(medicineUsageCounts.entries())
+      .filter(([, count]) => count >= 2)
+      .map(([key]) => previousPrescriptions.flatMap((rx) => rx.medicines.map((med) => med.medicineName)).find((name) => normalizeMedicationKey(name) === key) || "")
+      .filter(Boolean)
+      .slice(0, 8),
+    [medicineUsageCounts, previousPrescriptions],
+  );
+  const recentMedicineNames = React.useMemo(
+    () => Array.from(new Set(previousPrescriptions.flatMap((rx) => rx.medicines.map((med) => med.medicineName)).filter(Boolean))).slice(0, 10),
+    [previousPrescriptions],
+  );
+  const lastPrescribedMedicineNames = React.useMemo(
+    () => (previousPrescriptions[0]?.medicines || []).map((row) => row.medicineName).filter(Boolean).slice(0, 8),
+    [previousPrescriptions],
+  );
   const aiVitalsSummary = `BP:${consultationForm.bloodPressureSystolic}/${consultationForm.bloodPressureDiastolic}, Pulse:${consultationForm.pulseRate}, Resp:${consultationForm.respiratoryRate}, Temp:${consultationForm.temperature}, BMI:${currentBmi ? currentBmi.toFixed(1) : "-"}`;
   const aiAllergiesSummary = patientRow?.allergies?.trim() || null;
   const aiChronicConditionsSummary = patientRow?.existingConditions?.trim() || null;
+  const currentMedicineRows = prescriptionForm.medicines.filter((row) => medicineRowHasAnyContent(row));
+  const latestPreviousPrescription = previousPrescriptions[0] || null;
+  const latestPreviousMedicineRows = latestPreviousPrescription?.medicines || [];
+  const latestPreviousMedicineNames = latestPreviousMedicineRows.map((row) => row.medicineName).filter(Boolean);
   const activeTimeline = patientTimeline.length ? patientTimeline : [];
   const visiblePrescriptionHistory = prescriptionHistory.filter((row) => row.status !== "CANCELLED");
   const latestPrescriptionVersion = visiblePrescriptionHistory[visiblePrescriptionHistory.length - 1] || null;
@@ -1726,21 +2385,180 @@ export default function ConsultationWorkspacePage() {
     .filter((medicine) => medicine.active !== false)
     .filter((medicine) => !medicineSearch.trim() || `${medicine.medicineName} ${medicine.strength || ""}`.toLowerCase().includes(medicineSearch.trim().toLowerCase()))
     .slice(0, 24);
-  const workflowNextAction = React.useMemo(() => {
-    if (readOnly) {
-      return { title: "Consultation is read-only", detail: "Use version history or create a correction draft if changes are needed." };
-    }
-    if (!consultationForm.chiefComplaints.trim() || !consultationForm.diagnosis.trim()) {
-      return { title: "Fill consultation details", detail: "Capture the complaint and diagnosis, then save the draft." };
-    }
-    if (!hasPrescriptionContent(prescriptionForm)) {
-      return { title: "Build the prescription", detail: "Add medicines, advice, follow-up, or tests, then preview or save the Rx draft." };
-    }
-    if (!prescriptionReadyForCompletion) {
-      return { title: "Finalize the prescription", detail: hasAtLeastOneValidMedicineRow(prescriptionForm) ? "Preview or finalize the prescription before completing the consultation." : "No medicines added. Finalize the prescription or continue with the consultation notes only." };
-    }
-    return { title: "Complete consultation", detail: "Prescription is finalized. Review once, then complete the consultation." };
-  }, [consultationForm.chiefComplaints, consultationForm.diagnosis, prescription, prescriptionForm, prescriptionReadyForCompletion, readOnly]);
+  const favoriteMedicineNames = React.useMemo(() => [] as string[], []);
+  const matchesMedicineSearch = React.useCallback((name: string) => {
+    const query = medicineSearch.trim().toLowerCase();
+    if (!query) return true;
+    return name.toLowerCase().includes(query);
+  }, [medicineSearch]);
+  const groupedMedicineNames = React.useMemo(() => {
+    const frequentlyUsed = Array.from(medicineUsageCounts.entries())
+      .filter(([, count]) => count >= 2)
+      .map(([key]) => previousPrescriptions.flatMap((rx) => rx.medicines.map((med) => med.medicineName)).find((name) => normalizeMedicationKey(name) === key) || "")
+      .filter((name) => name && matchesMedicineSearch(name))
+      .slice(0, 8);
+    const recent = recentMedicineNames.filter(matchesMedicineSearch).slice(0, 8);
+    return { frequentlyUsed, recent };
+  }, [matchesMedicineSearch, medicineUsageCounts, previousPrescriptions, recentMedicineNames]);
+  const groupedMedicineCatalog = React.useMemo(() => {
+    const favorite = favoriteMedicineNames.filter(matchesMedicineSearch);
+    const frequent = filteredMedicines
+      .filter((medicine) => groupedMedicineNames.frequentlyUsed.some((name) => normalizeMedicationKey(name) === normalizeMedicationKey(medicine.medicineName)))
+      .slice(0, 8);
+    const recent = filteredMedicines
+      .filter((medicine) => groupedMedicineNames.recent.some((name) => normalizeMedicationKey(name) === normalizeMedicationKey(medicine.medicineName)))
+      .slice(0, 8);
+    const allMedicines = filteredMedicines;
+    return { favorite, frequent, recent, allMedicines };
+  }, [favoriteMedicineNames, filteredMedicines, groupedMedicineNames]);
+  const previousMedicineGroups = React.useMemo(() => ({
+    favorites: [] as string[],
+    recent: recentMedicineNames.filter(matchesMedicineSearch).slice(0, 8),
+    lastPrescribed: lastPrescribedMedicineNames.filter(matchesMedicineSearch).slice(0, 8),
+  }), [lastPrescribedMedicineNames, matchesMedicineSearch, recentMedicineNames]);
+  const fastPackRecentTemplates = React.useMemo(() => (previousPrescriptions.length ? [{ key: "repeat-previous", label: "Repeat previous prescription" } as const] : []), [previousPrescriptions.length]);
+  const fastPackClinicTemplates = React.useMemo(() => RX_TEMPLATES, []);
+  const fastPackAiSuggestions = React.useMemo(() => aiPrescriptionItems.slice(0, 4), [aiPrescriptionItems]);
+  const prescriptionSafetyChecks = React.useMemo(() => {
+    const allergies = splitCompactList(patientRow?.allergies);
+    const activeMedicines = clinicalContext?.medicationHistory.activeMedicines || [];
+    const duplicateNames = currentMedicineRows
+      .map((row) => row.medicineName.trim())
+      .filter(Boolean)
+      .filter((name, index, array) => array.findIndex((item) => normalizeMedicationKey(item) === normalizeMedicationKey(name)) !== index);
+    const duplicateWithActive = currentMedicineRows.filter((row) => activeMedicines.some((active) => normalizeMedicationKey(active) === normalizeMedicationKey(row.medicineName))).map((row) => row.medicineName);
+    const allergyMatch = allergies.find((allergy: string) => currentMedicineRows.some((row) => normalizeMedicationKey(row.medicineName).includes(normalizeMedicationKey(allergy)) || normalizeMedicationKey(allergy).includes(normalizeMedicationKey(row.medicineName))));
+    const antibioticRepeated = currentMedicineRows.some((row) => isAntibioticMedicine(row.medicineName)) && latestPreviousMedicineNames.some((name) => isAntibioticMedicine(name));
+    const painkillerRepeated = currentMedicineRows.some((row) => isPainkillerMedicine(row.medicineName)) && latestPreviousMedicineNames.some((name) => isPainkillerMedicine(name));
+    const hasCurrentDraft = currentMedicineRows.length > 0;
+    return [
+      {
+        label: "Drug-drug interaction",
+        status: hasCurrentDraft && activeMedicines.length ? "warning" : "not_enough_data",
+        message: hasCurrentDraft && activeMedicines.length ? "Review current regimen for interactions." : "Not enough data",
+      },
+      {
+        label: "Allergy check",
+        status: allergyMatch ? "critical" : allergies.length ? "safe" : "not_enough_data",
+        message: allergyMatch ? `Penicillin allergy recorded. Review ${currentMedicineRows.find((row) => normalizeMedicationKey(row.medicineName).includes(normalizeMedicationKey(allergyMatch)) || normalizeMedicationKey(allergyMatch).includes(normalizeMedicationKey(row.medicineName)))?.medicineName || "medicine"}.` : allergies.length ? "No direct allergy match found." : "Not enough data",
+      },
+      {
+        label: "Duplicate therapy",
+        status: duplicateNames.length || duplicateWithActive.length ? "warning" : hasCurrentDraft ? "safe" : "not_enough_data",
+        message: duplicateNames.length || duplicateWithActive.length ? "Duplicate therapy possible." : hasCurrentDraft ? "No obvious duplicate detected." : "Not enough data",
+      },
+      {
+        label: "Contraindications",
+        status: "not_enough_data",
+        message: "Not enough data",
+      },
+      {
+        label: "Pregnancy safety",
+        status: "not_enough_data",
+        message: "Not enough data",
+      },
+      {
+        label: "Pediatric dose",
+        status: patientRow?.ageYears != null && patientRow.ageYears < 18 ? "warning" : "not_enough_data",
+        message: patientRow?.ageYears != null && patientRow.ageYears < 18 ? "Pediatric dose review needed." : "Not enough data",
+      },
+      {
+        label: "Renal dose",
+        status: "not_enough_data",
+        message: "Not enough data",
+      },
+      {
+        label: "Liver dose",
+        status: "not_enough_data",
+        message: "Not enough data",
+      },
+      {
+        label: "Maximum dose",
+        status: currentMedicineRows.some((row) => isPainkillerMedicine(row.medicineName)) ? "warning" : "not_enough_data",
+        message: currentMedicineRows.some((row) => isPainkillerMedicine(row.medicineName)) ? "Check maximum dose for analgesics." : "Not enough data",
+      },
+      {
+        label: "Allergy conflict checked",
+        status: allergyMatch ? "critical" : allergies.length ? "complete" : "needs_review",
+        message: allergyMatch ? "Review before prescribing." : allergies.length ? "Checked against available allergy data." : "Not enough data",
+      },
+      {
+        label: "Interaction checked",
+        status: hasCurrentDraft ? "needs_review" : "needs_review",
+        message: hasCurrentDraft ? "Review interactions before finalizing." : "Not enough data",
+      },
+    ] as Array<{
+      label: string;
+      status: "safe" | "warning" | "critical" | "not_enough_data" | "complete" | "needs_review";
+      message: string;
+    }>;
+  }, [clinicalContext?.medicationHistory.activeMedicines, currentMedicineRows, latestPreviousMedicineNames, patientRow?.ageYears, patientRow?.allergies]);
+  const prescriptionSafetySummary = React.useMemo(() => ({
+    critical: prescriptionSafetyChecks.filter((item) => item.status === "critical").length,
+    review: prescriptionSafetyChecks.filter((item) => item.status === "warning" || item.status === "needs_review").length,
+    safe: prescriptionSafetyChecks.filter((item) => item.status === "safe" || item.status === "complete").length,
+    unavailable: prescriptionSafetyChecks.filter((item) => item.status === "not_enough_data").length,
+  }), [prescriptionSafetyChecks]);
+  const prescriptionQualityChecklist = React.useMemo(() => {
+    const hasDoseIssue = currentMedicineRows.some((row) => normalizeStringValue(row.medicineName) && !normalizeStringValue(row.dosage));
+    const hasFrequencyIssue = currentMedicineRows.some((row) => normalizeStringValue(row.medicineName) && !normalizeStringValue(row.frequency));
+    const hasDurationIssue = currentMedicineRows.some((row) => normalizeStringValue(row.medicineName) && !normalizeStringValue(row.duration));
+    const allergyCheck = prescriptionSafetyChecks.find((item) => item.label === "Allergy conflict checked");
+    const interactionCheck = prescriptionSafetyChecks.find((item) => item.label === "Interaction checked");
+    return [
+      { label: "Diagnosis present", state: normalizeStringValue(prescriptionForm.diagnosisSnapshot || consultationForm.diagnosis) ? "complete" : "missing" },
+      { label: "Medicine selected", state: currentMedicineRows.length ? "complete" : "missing" },
+      { label: "Dose specified", state: hasDoseIssue ? "needs_review" : currentMedicineRows.length ? "complete" : "missing" },
+      { label: "Frequency specified", state: hasFrequencyIssue ? "needs_review" : currentMedicineRows.length ? "complete" : "missing" },
+      { label: "Duration specified", state: hasDurationIssue ? "needs_review" : currentMedicineRows.length ? "complete" : "missing" },
+      { label: "Advice present", state: normalizeStringValue(prescriptionForm.advice || consultationForm.advice) ? "complete" : "missing" },
+      { label: "Follow-up present", state: normalizeStringValue(prescriptionForm.followUpDate || consultationForm.followUpDate) ? "complete" : "missing" },
+      { label: "Allergy conflict checked", state: allergyCheck?.status === "critical" ? "needs_review" : allergyCheck?.status === "not_enough_data" ? "missing" : "complete" },
+      { label: "Interaction checked", state: interactionCheck?.status === "not_enough_data" ? "missing" : "needs_review" },
+    ] as Array<{ label: string; state: "complete" | "missing" | "needs_review" }>;
+  }, [consultationForm.advice, consultationForm.diagnosis, consultationForm.followUpDate, currentMedicineRows, prescriptionForm.advice, prescriptionForm.diagnosisSnapshot, prescriptionForm.followUpDate, prescriptionSafetyChecks]);
+  const prescriptionComparison = React.useMemo(() => {
+    if (!latestPreviousPrescription) return null;
+    const currentMap = new Map(currentMedicineRows.map((row) => [normalizeMedicationKey(row.medicineName), row]));
+    const previousMap = new Map(latestPreviousMedicineRows.map((row) => [normalizeMedicationKey(row.medicineName), row]));
+    const continued: string[] = [];
+    const stopped: string[] = [];
+    const newMeds: string[] = [];
+    const doseChanged: string[] = [];
+    currentMap.forEach((currentRow, key) => {
+      const previousRow = previousMap.get(key);
+      if (previousRow) {
+        continued.push(currentRow.medicineName);
+        if (
+          normalizeStringValue(currentRow.dosage) !== normalizeStringValue(previousRow.dosage)
+          || normalizeStringValue(currentRow.frequency) !== normalizeStringValue(previousRow.frequency)
+          || normalizeStringValue(currentRow.duration) !== normalizeStringValue(previousRow.duration)
+        ) {
+          doseChanged.push(currentRow.medicineName);
+        }
+      } else {
+        newMeds.push(currentRow.medicineName);
+      }
+    });
+    previousMap.forEach((previousRow, key) => {
+      if (!currentMap.has(key)) {
+        stopped.push(previousRow.medicineName);
+      }
+    });
+    const repeatedAntibiotic = currentMedicineRows.some((row) => isAntibioticMedicine(row.medicineName)) && latestPreviousMedicineNames.some((name) => isAntibioticMedicine(name));
+    const repeatedPainkiller = currentMedicineRows.some((row) => isPainkillerMedicine(row.medicineName)) && latestPreviousMedicineNames.some((name) => isPainkillerMedicine(name));
+    const longTermContinuity = continued.filter((name) => medicationNameMatches(name, ["amlodipine", "metformin", "telmisartan", "losartan", "atorvastatin", "levothyroxine", "insulin"]));
+    return {
+      previousPrescription: latestPreviousPrescription,
+      continued,
+      stopped,
+      newMeds,
+      doseChanged,
+      repeatedAntibiotic,
+      repeatedPainkiller,
+      longTermContinuity,
+    };
+  }, [currentMedicineRows, latestPreviousMedicineNames, latestPreviousPrescription]);
   const workspaceTabSx = {
     minHeight: 48,
     textTransform: "none",
@@ -1760,18 +2578,18 @@ export default function ConsultationWorkspacePage() {
           <Stack direction="row" spacing={0.75} alignItems="center">
             <TrendingUpRoundedIcon fontSize="small" color="primary" />
             <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>
-              Report comparison
+              AI-assisted trend summary
             </Typography>
           </Stack>
-          <Typography variant="body2" color="text.secondary">
-            Report comparison will appear here once two or more reports are available.
+          <Typography variant="body2" sx={{ fontWeight: 800 }}>
+            {reportComparisonSummary.title}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            AIVA can compare trends and highlight changes once enough history exists.
+            {reportComparisonSummary.detail}
           </Typography>
-          <Button type="button" size="small" variant="outlined" disabled startIcon={<AutoAwesomeRoundedIcon fontSize="small" />}>
-            Compare reports
-          </Button>
+          <Typography variant="caption" color="text.secondary">
+            AI-assisted. Uses existing clinical context only.
+          </Typography>
         </Stack>
       </CardContent>
     </Card>
@@ -1873,20 +2691,29 @@ export default function ConsultationWorkspacePage() {
   const repeatPreviousPrescription = () => {
     const previous = previousPrescriptions[0];
     if (!previous || prescriptionReadOnly) return;
-    if (hasPrescriptionContent(prescriptionForm) && !window.confirm("Replace the current prescription draft with the previous prescription?")) {
+    const applyPrevious = () => {
+      setPrescriptionForm((current) => ({
+        ...current,
+        diagnosisSnapshot: previous.diagnosisSnapshot || current.diagnosisSnapshot,
+        advice: previous.advice || current.advice,
+        followUpDate: previous.followUpDate || current.followUpDate,
+        medicines: previous.medicines.map((item, index) => ({ ...item, localId: `repeat-${Date.now()}-${index}`, sortOrder: index + 1 })),
+        recommendedTests: previous.recommendedTests.map((item, index) => ({ ...item, localId: `repeat-test-${Date.now()}-${index}`, sortOrder: index + 1 })),
+      }));
+      setInvalidMedicineRowIds([]);
+      setSelectedRxTemplateKey("repeat-previous");
+      setInfo("Previous prescription repeated into draft");
+    };
+    if (!hasPrescriptionContent(prescriptionForm)) {
+      applyPrevious();
       return;
     }
-    setPrescriptionForm((current) => ({
-      ...current,
-      diagnosisSnapshot: previous.diagnosisSnapshot || current.diagnosisSnapshot,
-      advice: previous.advice || current.advice,
-      followUpDate: previous.followUpDate || current.followUpDate,
-      medicines: previous.medicines.map((item, index) => ({ ...item, localId: `repeat-${Date.now()}-${index}`, sortOrder: index + 1 })),
-      recommendedTests: previous.recommendedTests.map((item, index) => ({ ...item, localId: `repeat-test-${Date.now()}-${index}`, sortOrder: index + 1 })),
-    }));
-    setInvalidMedicineRowIds([]);
-    setSelectedRxTemplateKey("repeat-previous");
-    setInfo("Previous prescription repeated into draft");
+    setWorkspaceConfirmation({
+      kind: "fastPack",
+      templateLabel: "Previous prescription",
+      hasContent: true,
+      onConfirm: applyPrevious,
+    });
   };
 
   const updateMedicine = (localId: string, patch: Partial<MedicineRow>) => {
@@ -1912,29 +2739,57 @@ export default function ConsultationWorkspacePage() {
     setPrescriptionForm((current) => ({ ...current, followUpDate: date }));
   };
 
+  const getAlternativeMedicineSuggestions = React.useCallback((row: MedicineRow) => {
+    const normalizedCurrent = normalizeMedicationKey(row.medicineName);
+    if (!normalizedCurrent) return [] as string[];
+    const searchTokens = normalizedCurrent.split(" ").filter(Boolean).filter((token) => token.length > 2);
+    const catalogMatches = medicineCatalog
+      .filter((medicine) => medicine.active !== false)
+      .filter((medicine) => normalizeMedicationKey(medicine.medicineName) !== normalizedCurrent)
+      .filter((medicine) => {
+        const candidate = normalizeMedicationKey(medicine.medicineName);
+        const generic = normalizeMedicationKey(medicine.genericName);
+        const brand = normalizeMedicationKey(medicine.brandName);
+        return searchTokens.some((token) => candidate.includes(token) || generic.includes(token) || brand.includes(token));
+      })
+      .slice(0, 4)
+      .map((medicine) => [medicine.genericName || medicine.brandName || medicine.medicineName, medicine.strength ? `• ${medicine.strength}` : ""].filter(Boolean).join(" "));
+    const previousMatches = recentMedicineNames.filter((name) => normalizeMedicationKey(name) !== normalizedCurrent && searchTokens.some((token) => normalizeMedicationKey(name).includes(token)));
+    return Array.from(new Set([...catalogMatches, ...previousMatches])).slice(0, 5);
+  }, [medicineCatalog, recentMedicineNames]);
+
   const applyRxTemplate = (template: RxTemplate) => {
     if (prescriptionReadOnly) return;
-    if (hasPrescriptionContent(prescriptionForm) && !window.confirm(`Replace the current prescription draft with ${template.label}?`)) {
+    const applyTemplate = () => {
+      const rows = templateToRows(template);
+      setPrescriptionForm((current) => ({
+        ...current,
+        diagnosisSnapshot: template.diagnosis,
+        advice: appendTokenLine(current.advice, template.advice),
+        followUpDate: followUpChipToDate(template.followUp),
+        medicines: rows.meds,
+        recommendedTests: rows.tests,
+      }));
+      setConsultationForm((current) => ({
+        ...current,
+        diagnosis: current.diagnosis.trim() ? current.diagnosis : template.diagnosis,
+        advice: appendTokenLine(current.advice, template.advice),
+        followUpDate: followUpChipToDate(template.followUp),
+      }));
+      setInvalidMedicineRowIds([]);
+      setSelectedRxTemplateKey(template.key);
+      setInfo(`${template.label} applied`);
+    };
+    if (hasPrescriptionContent(prescriptionForm)) {
+      setWorkspaceConfirmation({
+        kind: "fastPack",
+        templateLabel: template.label,
+        hasContent: true,
+        onConfirm: applyTemplate,
+      });
       return;
     }
-    const rows = templateToRows(template);
-    setPrescriptionForm((current) => ({
-      ...current,
-      diagnosisSnapshot: template.diagnosis,
-      advice: appendTokenLine(current.advice, template.advice),
-      followUpDate: followUpChipToDate(template.followUp),
-      medicines: rows.meds,
-      recommendedTests: rows.tests,
-    }));
-    setConsultationForm((current) => ({
-      ...current,
-      diagnosis: current.diagnosis.trim() ? current.diagnosis : template.diagnosis,
-      advice: appendTokenLine(current.advice, template.advice),
-      followUpDate: followUpChipToDate(template.followUp),
-    }));
-    setInvalidMedicineRowIds([]);
-    setSelectedRxTemplateKey(template.key);
-    setInfo(`${template.label} applied`);
+    applyTemplate();
   };
 
   const aiSummaryText = React.useMemo(() => {
@@ -1980,6 +2835,109 @@ export default function ConsultationWorkspacePage() {
     prescription?.status,
     prescriptionForm,
   ]);
+
+  const consultationReadinessChecklist = React.useMemo(() => {
+    const hasChiefComplaint = Boolean(consultationForm.chiefComplaints.trim());
+    const hasSymptoms = Boolean(consultationForm.symptoms.trim());
+    const hasVitals = Boolean(
+      consultationForm.bloodPressureSystolic.trim()
+        || consultationForm.bloodPressureDiastolic.trim()
+        || consultationForm.pulseRate.trim()
+        || consultationForm.temperature.trim()
+        || consultationForm.spo2.trim()
+        || consultationForm.respiratoryRate.trim()
+        || consultationForm.weightKg.trim()
+        || consultationForm.heightCm.trim(),
+    ) || Boolean(clinicalContext?.intakeSummary?.latestVitals);
+    const hasDiagnosis = Boolean(consultationForm.diagnosis.trim());
+    const hasSoap = Boolean(consultationForm.clinicalNotes.trim() || consultationForm.diagnosis.trim() || consultationForm.advice.trim());
+    const hasPrescription = Boolean(prescription?.status === "FINALIZED" || !hasPrescriptionContent(prescriptionForm));
+    const hasAdvice = Boolean(consultationForm.advice.trim());
+    const hasFollowUp = Boolean(consultationForm.followUpDate.trim());
+    const testsReviewed = Boolean(!recommendedTestSuggestions.length || labOrders.length);
+    return [
+      { label: "Chief complaint", state: hasChiefComplaint ? "complete" : "missing" },
+      { label: "Symptoms", state: hasSymptoms ? "complete" : "missing" },
+      { label: "Vitals", state: hasVitals ? "complete" : "missing" },
+      { label: "Diagnosis", state: hasDiagnosis ? (clinicalDraftEntries.some((draft) => draft.kind === "diagnosis" && draft.status === "DRAFTED") ? "needs_review" : "complete") : "missing" },
+      { label: "SOAP", state: hasSoap ? "complete" : "missing" },
+      { label: "Prescription", state: hasPrescription ? "complete" : "needs_review" },
+      { label: "Advice", state: hasAdvice ? "complete" : "missing" },
+      { label: "Follow-up", state: hasFollowUp ? "complete" : "missing" },
+      { label: "Lab/tests reviewed", state: testsReviewed ? "complete" : "needs_review" },
+    ] as Array<{ label: string; state: "complete" | "missing" | "needs_review" }>;
+  }, [
+    clinicalContext?.intakeSummary?.latestVitals,
+    clinicalDraftEntries,
+    consultationForm.advice,
+    consultationForm.bloodPressureSystolic,
+    consultationForm.bloodPressureDiastolic,
+    consultationForm.chiefComplaints,
+    consultationForm.clinicalNotes,
+    consultationForm.diagnosis,
+    consultationForm.followUpDate,
+    consultationForm.heightCm,
+    consultationForm.pulseRate,
+    consultationForm.respiratoryRate,
+    consultationForm.spo2,
+    consultationForm.symptoms,
+    consultationForm.temperature,
+    consultationForm.weightKg,
+    labOrders.length,
+    prescription?.status,
+    prescriptionForm,
+    recommendedTestSuggestions.length,
+  ]);
+
+  const consultationCompletionChecklist = React.useMemo(() => {
+    const hasVisitSummary = consultationDocumentDrafts.visitSummary.status === "ACCEPTED" || consultationDocumentDrafts.visitSummary.status === "EDITED";
+    const hasReferral = consultationDocumentDrafts.referral.status === "ACCEPTED" || consultationDocumentDrafts.referral.status === "EDITED";
+    const hasCertificate = consultationDocumentDrafts.certificate.status === "ACCEPTED" || consultationDocumentDrafts.certificate.status === "EDITED";
+    const hasInstructions = Boolean((prescriptionInstructionsDraft?.draft || prescriptionInstructionsDraft?.message || consultationForm.advice).trim());
+    const hasFollowUp = Boolean((consultationForm.followUpDate || prescriptionForm.followUpDate).trim());
+    const labWorkReviewed = Boolean(!labOrders.length || labOrders.some((order) => order.reportPublishedAt || order.reportFilename));
+    return [
+      { label: "Chief Complaint", state: consultationReadinessChecklist.some((item) => item.label === "Chief complaint" && item.state === "complete") ? "complete" : "missing" },
+      { label: "Symptoms", state: consultationReadinessChecklist.some((item) => item.label === "Symptoms" && item.state === "complete") ? "complete" : "missing" },
+      { label: "Diagnosis", state: consultationReadinessChecklist.some((item) => item.label === "Diagnosis" && item.state === "complete") ? "complete" : "missing" },
+      { label: "SOAP", state: consultationReadinessChecklist.some((item) => item.label === "SOAP" && item.state !== "missing") ? "complete" : "missing" },
+      { label: "Prescription", state: consultationReadinessChecklist.some((item) => item.label === "Prescription" && item.state !== "missing") ? "complete" : "missing" },
+      { label: "Investigations", state: recommendedTestSuggestions.length ? "needs_review" : "complete" },
+      { label: "Lab Orders", state: labOrders.length ? (labWorkReviewed ? "complete" : "needs_review") : "complete" },
+      { label: "Advice", state: consultationReadinessChecklist.some((item) => item.label === "Advice" && item.state === "complete") ? "complete" : "missing" },
+      { label: "Follow-up", state: hasFollowUp ? "complete" : "missing" },
+      { label: "Patient Instructions", state: hasInstructions ? "complete" : "missing" },
+      { label: "Visit Summary Ready", state: hasVisitSummary ? "complete" : "missing" },
+      { label: "Referral Ready", state: hasReferral ? "complete" : "missing" },
+      { label: "Certificate Ready", state: hasCertificate ? "complete" : "missing" },
+    ] as Array<{ label: string; state: "complete" | "missing" | "needs_review" }>;
+  }, [
+    consultationDocumentDrafts.certificate.status,
+    consultationDocumentDrafts.referral.status,
+    consultationDocumentDrafts.visitSummary.status,
+    consultationForm.advice,
+    consultationForm.followUpDate,
+    consultationReadinessChecklist,
+    labOrders,
+    prescriptionForm.followUpDate,
+    prescriptionInstructionsDraft?.draft,
+    prescriptionInstructionsDraft?.message,
+    recommendedTestSuggestions.length,
+  ]);
+
+  const consultationCompletionSummary = React.useMemo(() => {
+    const complete = consultationCompletionChecklist.filter((item) => item.state === "complete").length;
+    const needsReview = consultationCompletionChecklist.filter((item) => item.state === "needs_review").length;
+    const missing = consultationCompletionChecklist.filter((item) => item.state === "missing").length;
+    const ready = missing === 0 && needsReview <= 1;
+    return {
+      complete,
+      needsReview,
+      missing,
+      ready,
+      label: ready ? "Ready to Complete" : "Needs Review",
+    };
+  }, [consultationCompletionChecklist]);
 
   const copyAiSummaryToClipboard = async () => {
     if (!aiSummaryText) return;
@@ -2098,7 +3056,12 @@ export default function ConsultationWorkspacePage() {
       const stillDirty = serializeConsultationForm(consultationFormRef.current) !== savedConsultationSnapshotRef.current
         || serializePrescriptionForm(prescriptionFormRef.current) !== savedPrescriptionSnapshotRef.current;
       if (!saved || stillDirty) {
-        const proceed = window.confirm("Unsaved consultation changes remain. Leave without saving?");
+        const proceed = await requestBooleanConfirmation({
+          title: "Leave without saving?",
+          description: "Unsaved consultation changes remain. Leave without saving?",
+          confirmLabel: "Leave page",
+          confirmColor: "warning",
+        });
         if (!proceed) return;
       }
     }
@@ -2376,8 +3339,16 @@ export default function ConsultationWorkspacePage() {
       setError("Add consultation notes or a medicine before finalizing.");
       return;
     }
-    if (!hasAtLeastOneValidMedicineRow(prescriptionForm) && !window.confirm("No medicines added. Continue without prescription?")) {
-      return;
+    if (!hasAtLeastOneValidMedicineRow(prescriptionForm)) {
+      const proceed = await requestBooleanConfirmation({
+        title: "Continue without prescription?",
+        description: "No medicines added. Continue without prescription?",
+        confirmLabel: "Continue",
+        confirmColor: "warning",
+      });
+      if (!proceed) {
+        return;
+      }
     }
     const saved = await preserveViewport(() => persistPrescription());
     if (!saved) return;
@@ -2502,6 +3473,11 @@ export default function ConsultationWorkspacePage() {
     setLabOrderDialogOpen(true);
   };
 
+  const openLabOrderReview = () => {
+    if (!labOrderTestIds.length) return;
+    setLabOrderReviewOpen(true);
+  };
+
   const submitLabOrder = async () => {
     const accessToken = auth.accessToken;
     const tenantId = auth.tenantId;
@@ -2526,6 +3502,7 @@ export default function ConsultationWorkspacePage() {
       }));
       setLabOrders((current) => [created, ...current.filter((row) => row.id !== created.id)]);
       setLabOrderDialogOpen(false);
+      setLabOrderReviewOpen(false);
       setLabOrderTestIds([]);
       setLabOrderNotes("");
       setInfo(`Lab order ${created.orderNumber} created`);
@@ -3103,17 +4080,424 @@ export default function ConsultationWorkspacePage() {
     await navigator.clipboard.writeText(text);
   }, [clinicalAiDrafts]);
 
+  const updateConsultationDocumentDraft = React.useCallback((kind: ConsultationDocumentationKind, patch: Partial<ConsultationDocumentDraftState>) => {
+    setConsultationDocumentDrafts((current) => ({
+      ...current,
+      [kind]: {
+        ...current[kind],
+        ...patch,
+      },
+    }));
+  }, []);
+
+  const setConsultationDocumentLanguage = React.useCallback((language: ConsultationDocumentDraftState["language"]) => {
+    setConsultationDocumentationLanguage(language);
+    setConsultationDocumentDrafts((current) => ({
+      visitSummary: { ...current.visitSummary, language },
+      referral: { ...current.referral, language },
+      certificate: { ...current.certificate, language },
+    }));
+  }, []);
+
+  const persistGeneratedConsultationDocument = React.useCallback(async (kind: ConsultationDocumentationKind) => {
+    if (!auth.accessToken || !auth.tenantId || !consultation) return null;
+    const draft = consultationDocumentDraftsRef.current[kind];
+    if (!draft.draftText.trim()) return null;
+    setConsultationDocumentationSaving(true);
+    try {
+      const generated = await generateConsultationDocument(auth.accessToken, auth.tenantId, consultation.id, {
+        title: draft.title,
+        documentType: draft.documentType,
+        body: draft.draftText.trim(),
+        language: draft.language,
+        notes: draft.notes,
+        visibility: "INTERNAL_ONLY",
+      });
+      const [documents, timelineRows] = await Promise.all([
+        getPatientDocuments(auth.accessToken, auth.tenantId, consultation.patientId),
+        getPatientTimeline(auth.accessToken, auth.tenantId, consultation.patientId),
+      ]);
+      setClinicalDocuments(documents);
+      setPatientTimeline(timelineRows);
+      return generated;
+    } finally {
+      setConsultationDocumentationSaving(false);
+    }
+  }, [auth.accessToken, auth.tenantId, consultation]);
+
+  const generateConsultationDocumentDraft = React.useCallback(async (kind: ConsultationDocumentationKind, forceAll = false) => {
+    if (!auth.accessToken || !auth.tenantId || !consultation || !patient) return;
+    const current = consultationDocumentDraftsRef.current[kind];
+    if (!forceAll && (current.status === "ACCEPTED" || current.status === "EDITED") && current.draftText.trim()) {
+      const proceed = await requestBooleanConfirmation({
+        title: `Regenerate ${current.title}?`,
+        description: "This will replace the current editable draft. Previously saved documents remain in the patient record.",
+        confirmLabel: "Regenerate",
+        confirmColor: "secondary",
+      });
+      if (!proceed) return;
+    }
+    const entryId = makeAiAssistEntryId();
+    const baseSourceSummary = makeClinicalDraftSourceSummary({
+      patientAgeGender,
+      chiefComplaints: consultationForm.chiefComplaints,
+      symptoms: consultationForm.symptoms,
+      diagnosis: consultationForm.diagnosis,
+      notes: consultationForm.clinicalNotes,
+      vitals: aiVitalsSummary,
+      history: patient.patient.existingConditions || patient.patient.longTermMedications || patient.patient.surgicalHistory || patient.patient.notes,
+      prescription: currentPrescriptionDraftSummary || null,
+      investigations: labOrdersSummary || null,
+    });
+    appendAiAssistEntry({
+      id: entryId,
+      action: "ask",
+      title: `${current.title} generation`,
+      prompt: null,
+      createdAt: new Date().toISOString(),
+      status: "loading",
+      response: null,
+      error: null,
+    });
+    updateConsultationDocumentDraft(kind, {
+      status: "DRAFTED",
+      generatedAt: new Date().toISOString(),
+      sourceSummary: baseSourceSummary,
+      language: consultationDocumentationLanguage,
+      error: null,
+    });
+    setAiBusy(true);
+    setError(null);
+    try {
+      let draftText = "";
+      if (kind === "visitSummary") {
+        const draft = await aiConsultationAsk(auth.accessToken, auth.tenantId, {
+          consultationId: consultation.id,
+          patientId: consultation.patientId,
+          prompt: `Draft a patient-friendly visit summary in ${consultationDocumentationLanguage}. Include reason for visit, diagnosis, medicines, investigations advised, diet/lifestyle advice, follow-up, emergency warning signs, and clinic contact. Keep it editable and concise.`,
+          patientAgeGender,
+          vitals: aiVitalsSummary,
+          allergies: aiAllergiesSummary,
+          chronicConditions: aiChronicConditionsSummary,
+          currentPrescriptionDraft: currentPrescriptionDraftSummary || null,
+          labOrdersSummary: labOrdersSummary || null,
+          chiefComplaints: consultationForm.chiefComplaints,
+          symptoms: consultationForm.symptoms,
+          clinicalNotes: consultationForm.clinicalNotes,
+          diagnosis: consultationForm.diagnosis,
+          advice: consultationForm.advice,
+        });
+        if (!draft.enabled) {
+          const message = aiStatusMessage || AI_DISABLED_MESSAGE;
+          updateConsultationDocumentDraft(kind, { error: message });
+          updateAiAssistEntry(entryId, { status: "error", response: draft, error: message });
+          setError(message);
+          return;
+        }
+        if (!draft.provider && draft.fallbackUsed) {
+          const message = draft.message || "AI providers are temporarily unavailable. Please retry.";
+          updateConsultationDocumentDraft(kind, { error: message });
+          updateAiAssistEntry(entryId, { status: "error", response: draft, error: message });
+          setError(message);
+          return;
+        }
+        draftText = extractClinicalDraftText(draft);
+        updateAiAssistEntry(entryId, { status: "success", response: draft, error: null });
+      }
+      if (kind === "referral") {
+        const referralTypeLabel = consultationReferralDestination.trim()
+          ? consultationReferralDestination.trim()
+          : "specialist referral";
+        const priorityLabel = consultationReferralPriority === "EMERGENCY"
+          ? "Emergency"
+          : consultationReferralPriority === "URGENT"
+            ? "Urgent"
+            : "Routine";
+        const draft = await aiConsultationAsk(auth.accessToken, auth.tenantId, {
+          consultationId: consultation.id,
+          patientId: consultation.patientId,
+          prompt: `Draft a ${referralTypeLabel} in ${consultationDocumentationLanguage}. Include patient, doctor, clinic, diagnosis, reason, current medicines, investigations, clinical notes, referral destination, and priority (${priorityLabel}). Keep it printable and editable.`,
+          patientAgeGender,
+          vitals: aiVitalsSummary,
+          allergies: aiAllergiesSummary,
+          chronicConditions: aiChronicConditionsSummary,
+          currentPrescriptionDraft: currentPrescriptionDraftSummary || null,
+          labOrdersSummary: labOrdersSummary || null,
+          chiefComplaints: consultationForm.chiefComplaints,
+          symptoms: consultationForm.symptoms,
+          clinicalNotes: consultationForm.clinicalNotes,
+          diagnosis: consultationForm.diagnosis,
+          advice: consultationForm.advice,
+        });
+        if (!draft.enabled) {
+          const message = aiStatusMessage || AI_DISABLED_MESSAGE;
+          updateConsultationDocumentDraft(kind, { error: message });
+          updateAiAssistEntry(entryId, { status: "error", response: draft, error: message });
+          setError(message);
+          return;
+        }
+        if (!draft.provider && draft.fallbackUsed) {
+          const message = draft.message || "AI providers are temporarily unavailable. Please retry.";
+          updateConsultationDocumentDraft(kind, { error: message });
+          updateAiAssistEntry(entryId, { status: "error", response: draft, error: message });
+          setError(message);
+          return;
+        }
+        draftText = extractClinicalDraftText(draft);
+        updateAiAssistEntry(entryId, { status: "success", response: draft, error: null });
+      }
+      if (kind === "certificate") {
+        const certificateTypeLabel = consultationCertificateType === "FITNESS"
+          ? "Fitness Certificate"
+          : consultationCertificateType === "SICK_LEAVE"
+            ? "Sick Leave Certificate"
+            : consultationCertificateType === "RETURN_TO_WORK"
+              ? "Return to Work Certificate"
+              : "Medical Certificate";
+        const draft = await aiConsultationAsk(auth.accessToken, auth.tenantId, {
+          consultationId: consultation.id,
+          patientId: consultation.patientId,
+          prompt: `Draft an editable ${certificateTypeLabel} in ${consultationDocumentationLanguage}. Include patient details, date, clinical basis, duration if relevant, and a concise doctor signature block. Keep it professional and printable.`,
+          patientAgeGender,
+          vitals: aiVitalsSummary,
+          allergies: aiAllergiesSummary,
+          chronicConditions: aiChronicConditionsSummary,
+          currentPrescriptionDraft: currentPrescriptionDraftSummary || null,
+          labOrdersSummary: labOrdersSummary || null,
+          chiefComplaints: consultationForm.chiefComplaints,
+          symptoms: consultationForm.symptoms,
+          clinicalNotes: consultationForm.clinicalNotes,
+          diagnosis: consultationForm.diagnosis,
+          advice: consultationForm.advice,
+        });
+        if (!draft.enabled) {
+          const message = aiStatusMessage || AI_DISABLED_MESSAGE;
+          updateConsultationDocumentDraft(kind, { error: message });
+          updateAiAssistEntry(entryId, { status: "error", response: draft, error: message });
+          setError(message);
+          return;
+        }
+        if (!draft.provider && draft.fallbackUsed) {
+          const message = draft.message || "AI providers are temporarily unavailable. Please retry.";
+          updateConsultationDocumentDraft(kind, { error: message });
+          updateAiAssistEntry(entryId, { status: "error", response: draft, error: message });
+          setError(message);
+          return;
+        }
+        draftText = extractClinicalDraftText(draft);
+        updateAiAssistEntry(entryId, { status: "success", response: draft, error: null });
+      }
+      updateConsultationDocumentDraft(kind, {
+        status: "DRAFTED",
+        generatedAt: new Date().toISOString(),
+        sourceSummary: baseSourceSummary,
+        draftText,
+        language: consultationDocumentationLanguage,
+        error: null,
+      });
+      setInfo("AI-assisted draft generated. Doctor must verify before use.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to generate consultation document";
+      updateConsultationDocumentDraft(kind, { error: message });
+      updateAiAssistEntry(entryId, { status: "error", error: message });
+      setError(message);
+    } finally {
+      setAiBusy(false);
+      setAiActiveAction(null);
+    }
+  }, [
+    aiAllergiesSummary,
+    aiBusy,
+    aiChronicConditionsSummary,
+    aiStatusMessage,
+    aiVitalsSummary,
+    auth.accessToken,
+    auth.tenantId,
+    consultation,
+    consultationCertificateType,
+    consultationDocumentDraftsRef,
+    consultationForm.chiefComplaints,
+    consultationForm.clinicalNotes,
+    consultationForm.diagnosis,
+    consultationForm.symptoms,
+    consultationForm.advice,
+    currentPrescriptionDraftSummary,
+    labOrdersSummary,
+    patient,
+    patientAgeGender,
+    requestBooleanConfirmation,
+    updateAiAssistEntry,
+    updateConsultationDocumentDraft,
+  ]);
+
+  const finalizeConsultationDocumentDraft = React.useCallback(async (kind: ConsultationDocumentationKind) => {
+    const draft = consultationDocumentDraftsRef.current[kind];
+    if (!draft.draftText.trim()) return;
+    const current = consultationDocumentDraftsRef.current[kind];
+    if (current.status === "REJECTED") return;
+    const saved = await persistGeneratedConsultationDocument(kind);
+    if (!saved) return;
+    updateConsultationDocumentDraft(kind, {
+      status: "ACCEPTED",
+      documentId: saved.documentId,
+      downloadUrl: saved.downloadUrl,
+      error: null,
+    });
+    setConsultationAuditShareLog((currentLog) => {
+      const label = kind === "visitSummary" ? "Visit summary finalized" : kind === "referral" ? "Referral finalized" : "Certificate finalized";
+      return currentLog.includes(label) ? currentLog : [...currentLog, label];
+    });
+    setInfo(`${draft.title} saved to patient documents`);
+  }, [persistGeneratedConsultationDocument, updateConsultationDocumentDraft]);
+
+  const rejectConsultationDocumentDraft = React.useCallback((kind: ConsultationDocumentationKind) => {
+    updateConsultationDocumentDraft(kind, { status: "REJECTED" });
+  }, [updateConsultationDocumentDraft]);
+
+  const copyConsultationDocumentDraft = React.useCallback(async (kind: ConsultationDocumentationKind) => {
+    const draft = consultationDocumentDraftsRef.current[kind];
+    if (!draft.draftText.trim()) return;
+    await navigator.clipboard.writeText(draft.draftText.trim());
+  }, []);
+
+  const buildConsultationPackageBody = React.useCallback(() => {
+    const summaryText = consultationDocumentDraftsRef.current.visitSummary.draftText.trim() || "No visit summary generated yet.";
+    const referralText = consultationDocumentDraftsRef.current.referral.draftText.trim() || "No referral generated yet.";
+    const certificateText = consultationDocumentDraftsRef.current.certificate.draftText.trim() || "No certificate generated yet.";
+    const instructionsText = (prescriptionInstructionsDraft?.draft || prescriptionInstructionsDraft?.message || "").trim() || "No patient instructions generated yet.";
+    const prescriptionSummaryText = prescriptionSummaryDraft.trim() || buildPrescriptionSummaryText({
+      diagnosis: prescriptionForm.diagnosisSnapshot || consultationForm.diagnosis,
+      medicines: prescriptionForm.medicines,
+      tests: prescriptionForm.recommendedTests,
+      advice: prescriptionForm.advice || consultationForm.advice,
+      followUpDate: prescriptionForm.followUpDate || consultationForm.followUpDate,
+      warnings: prescriptionSafetyChecks.filter((item) => item.status === "warning" || item.status === "critical").map((item) => `${item.label}: ${item.message}`),
+      redFlags: aiDiagnosisItems.flatMap((item) => item.redFlags).slice(0, 5),
+    });
+    const labSummary = reportHistoryRows.length
+      ? reportHistoryRows.slice(0, 5).map((row) => `${row.title || row.originalFilename} • ${row.documentType.replaceAll("_", " ")} • ${row.reportDate || compactDate(row.createdAt)}`).join("\n")
+      : "No lab orders or reports available.";
+    const packagePatientName = patient?.patient ? [patient.patient.firstName, patient.patient.lastName].filter(Boolean).join(" ").trim() || patient.patient.patientNumber : patientRow?.patientNumber || consultation?.patientName || "-";
+    return [
+      "Consultation Package",
+      `Patient: ${packagePatientName}`,
+      `Doctor: ${consultation?.doctorName || "-"}`,
+      `Generated at: ${new Date().toLocaleString()}`,
+      "",
+      "VISIT SUMMARY",
+      summaryText,
+      "",
+      "PRESCRIPTION SUMMARY",
+      prescriptionSummaryText,
+      "",
+      "REFERRAL",
+      referralText,
+      "",
+      "CERTIFICATE",
+      certificateText,
+      "",
+      "PATIENT INSTRUCTIONS",
+      instructionsText,
+      "",
+      "LAB ORDER / REPORT SUMMARY",
+      labSummary,
+      "",
+      "FOLLOW-UP PLAN",
+      [consultationForm.followUpDate || prescriptionForm.followUpDate ? `Follow-up date: ${consultationForm.followUpDate || prescriptionForm.followUpDate}` : null, followUpPlanNotes.trim() ? `Notes: ${followUpPlanNotes.trim()}` : null].filter(Boolean).join("\n") || "No structured follow-up plan recorded.",
+      "",
+      "COMMUNICATION",
+      consultationAuditShareLog.length ? consultationAuditShareLog.join("\n") : "No patient communication actions recorded yet.",
+    ].join("\n");
+  }, [
+    aiDiagnosisItems,
+    consultation,
+    consultationAuditShareLog,
+    consultationForm.advice,
+    consultationForm.diagnosis,
+    consultationForm.followUpDate,
+    consultationDocumentDraftsRef,
+    followUpPlanNotes,
+    patient,
+    patientRow?.patientNumber,
+    prescriptionForm.advice,
+    prescriptionForm.diagnosisSnapshot,
+    prescriptionForm.followUpDate,
+    prescriptionForm.medicines,
+    prescriptionForm.recommendedTests,
+    prescriptionInstructionsDraft?.draft,
+    prescriptionInstructionsDraft?.message,
+    prescriptionSafetyChecks,
+    prescriptionSummaryDraft,
+    reportHistoryRows,
+  ]);
+
+  const shareConsultationDocumentUrl = React.useCallback(async (kind: ConsultationDocumentationKind) => {
+    const draft = consultationDocumentDraftsRef.current[kind];
+    if (!draft.downloadUrl) return;
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: draft.title,
+          text: draft.draftText.slice(0, 200),
+          url: draft.downloadUrl,
+        });
+      } else {
+        await navigator.clipboard.writeText(draft.downloadUrl);
+        setInfo(`${draft.title} link copied to clipboard`);
+      }
+      setConsultationAuditShareLog((current) => current.includes(`${draft.title} shared`) ? current : [...current, `${draft.title} shared`]);
+    } catch {
+      setError("Unable to share the document. Copy the download link instead.");
+    }
+  }, []);
+
+  const generateConsultationPackage = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId || !consultation) return;
+    setConsultationPackageGenerating(true);
+    setError(null);
+    try {
+      const response = await generateConsultationDocument(auth.accessToken, auth.tenantId, consultation.id, {
+        title: "Consultation Package",
+        documentType: "ATTACHMENT",
+        body: buildConsultationPackageBody(),
+        language: consultationDocumentationLanguage,
+        notes: "Compiled consultation package for patient communication and records",
+        visibility: "INTERNAL_ONLY",
+      });
+      setConsultationAuditShareLog((current) => current.includes("Consultation package generated") ? current : [...current, "Consultation package generated"]);
+      setInfo("Consultation package generated and saved to patient documents.");
+      if (response?.downloadUrl) {
+        const anchor = document.createElement("a");
+        anchor.href = response.downloadUrl;
+        anchor.target = "_blank";
+        anchor.rel = "noopener noreferrer";
+        anchor.click();
+      }
+      const [documents, timelineRows] = await Promise.all([
+        getPatientDocuments(auth.accessToken, auth.tenantId, consultation.patientId),
+        getPatientTimeline(auth.accessToken, auth.tenantId, consultation.patientId),
+      ]);
+      setClinicalDocuments(documents);
+      setPatientTimeline(timelineRows);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to generate consultation package";
+      setError(message);
+    } finally {
+      setConsultationPackageGenerating(false);
+    }
+  }, [auth.accessToken, auth.tenantId, buildConsultationPackageBody, consultation, consultationDocumentationLanguage]);
+
   const appendAivaChatMessage = React.useCallback((message: AivaChatMessage) => {
     setAivaChatMessages((current) => [...current, message]);
   }, []);
 
-  const acceptClinicalDraft = React.useCallback((kind: ClinicalAiDraftKind) => {
+  const acceptClinicalDraft = React.useCallback(async (kind: ClinicalAiDraftKind) => {
     const draft = clinicalAiDrafts[kind];
     const currentText = draft.draftText.trim();
     if (!currentText) return;
 
     if (kind === "chiefComplaint") {
-      const choice = resolveOverwriteChoice("Chief complaint", consultationForm.chiefComplaints, true);
+      const choice = await requestOverwriteChoice("Chief complaint", consultationForm.chiefComplaints, true);
       if (choice === "cancel") return;
       setConsultationForm((current) => ({
         ...current,
@@ -3128,7 +4512,7 @@ export default function ConsultationWorkspacePage() {
       const items = draft.selectedItems.length ? draft.selectedItems : asStringList(structured.symptoms || structured.suggestions || structured.extractedSymptoms || structured.items || currentText);
       const selectedItems = items.length ? items : currentText.split(/\n|,|•/).map((item) => item.trim()).filter(Boolean);
       if (!selectedItems.length) return;
-      const choice = resolveOverwriteChoice("Symptoms", consultationForm.symptoms, true);
+      const choice = await requestOverwriteChoice("Symptoms", consultationForm.symptoms, true);
       if (choice === "cancel") return;
       const nextValue = choice === "replace"
         ? selectedItems.join(", ")
@@ -3159,7 +4543,7 @@ export default function ConsultationWorkspacePage() {
     }
 
     if (kind === "soap") {
-      const choice = resolveOverwriteChoice("SOAP notes", `${consultationForm.chiefComplaints}\n${consultationForm.clinicalNotes}\n${consultationForm.diagnosis}\n${consultationForm.advice}`.trim(), true);
+      const choice = await requestOverwriteChoice("SOAP notes", `${consultationForm.chiefComplaints}\n${consultationForm.clinicalNotes}\n${consultationForm.diagnosis}\n${consultationForm.advice}`.trim(), true);
       if (choice === "cancel") return;
       const parsed = extractClinicalSoapDraft({
         enabled: true,
@@ -3185,7 +4569,7 @@ export default function ConsultationWorkspacePage() {
     }
 
     if (kind === "advice") {
-      const choice = resolveOverwriteChoice("Advice", consultationForm.advice, true);
+      const choice = await requestOverwriteChoice("Advice", consultationForm.advice, true);
       if (choice === "cancel") return;
       setConsultationForm((current) => ({
         ...current,
@@ -3199,11 +4583,19 @@ export default function ConsultationWorkspacePage() {
       const structured = parseStructuredObject(draft.structuredData);
       const followUpDate = String(structured.followUpDate ?? structured.followUp ?? structured.date ?? parseFollowUpDateSuggestion(currentText) ?? "").trim();
       if (!followUpDate) return;
-      if (consultationForm.followUpDate.trim() && !window.confirm("Replace the existing follow-up date?")) return;
+      if (consultationForm.followUpDate.trim()) {
+        const proceed = await requestBooleanConfirmation({
+          title: "Replace existing follow-up date?",
+          description: "The current follow-up date will be replaced with the AI suggestion.",
+          confirmLabel: "Replace",
+          confirmColor: "secondary",
+        });
+        if (!proceed) return;
+      }
       setConsultationForm((current) => ({ ...current, followUpDate }));
       updateClinicalAiDraft(kind, { status: "ACCEPTED" });
     }
-  }, [clinicalAiDrafts, consultationForm.advice, consultationForm.chiefComplaints, consultationForm.clinicalNotes, consultationForm.diagnosis, consultationForm.followUpDate, resolveOverwriteChoice, updateClinicalAiDraft]);
+  }, [clinicalAiDrafts, consultationForm.advice, consultationForm.chiefComplaints, consultationForm.clinicalNotes, consultationForm.diagnosis, consultationForm.followUpDate, requestBooleanConfirmation, requestOverwriteChoice, updateClinicalAiDraft]);
 
   const submitAivaQuestion = React.useCallback(async () => {
     const prompt = aivaClinicalQuestion.trim();
@@ -3433,6 +4825,17 @@ export default function ConsultationWorkspacePage() {
       setInfo(`AIVA generated ${successCount} draft suggestions. Doctor must verify before use.`);
     }
   };
+
+  const regenerateAllClinicalDrafts = React.useCallback(async () => {
+    const proceed = await requestBooleanConfirmation({
+      title: "Regenerate all sections?",
+      description: "This will refresh accepted and edited AI drafts.",
+      confirmLabel: "Regenerate all",
+      confirmColor: "secondary",
+    });
+    if (!proceed) return;
+    void generateConsultationDraft(true);
+  }, [generateConsultationDraft, requestBooleanConfirmation]);
 
   const canAutoAcceptClinicalDraft = React.useCallback((kind: ClinicalAiDraftKind) => {
     const current = clinicalAiDraftsRef.current[kind];
@@ -3673,6 +5076,139 @@ export default function ConsultationWorkspacePage() {
     );
   }, [acceptClinicalDraft, aiBusy, clinicalAiActiveDraft, clinicalAiDrafts, copyClinicalDraft, editClinicalDraft, rejectClinicalDraft, readOnly, updateClinicalAiDraft]);
 
+  const renderConsultationDocumentDraftCard = React.useCallback((kind: ConsultationDocumentationKind) => {
+    const draft = consultationDocumentDrafts[kind];
+    const loading = consultationDocumentationSaving;
+    const commonProps = {
+      title: draft.title,
+      status: draft.status,
+      generatedAt: draft.generatedAt,
+      sourceSummary: draft.sourceSummary,
+      draftText: draft.draftText,
+      error: draft.error,
+      loading,
+      acceptDisabled: readOnly || !draft.draftText.trim() || consultationDocumentationSaving,
+      editDisabled: readOnly || !draft.draftText.trim() || consultationDocumentationSaving,
+      rejectDisabled: consultationDocumentationSaving,
+      copyDisabled: !draft.draftText.trim(),
+      onAccept: () => void finalizeConsultationDocumentDraft(kind),
+      onEdit: (nextText: string) => updateConsultationDocumentDraft(kind, {
+        status: "EDITED",
+        draftText: nextText,
+        generatedAt: draft.generatedAt || new Date().toISOString(),
+        error: null,
+      }),
+      onReject: () => rejectConsultationDocumentDraft(kind),
+      onCopy: () => void copyConsultationDocumentDraft(kind),
+      acceptLabel: "Finalize",
+      editLabel: "Edit",
+      rejectLabel: "Reject",
+      copyLabel: "Copy",
+      disclaimer: "AI-generated draft. Doctor must verify before use.",
+    };
+
+    if (kind === "referral") {
+      return (
+        <ClinicalAiDraftCard {...commonProps} acceptLabel="Finalize referral">
+          <Stack spacing={0.75}>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={0.75}>
+              <TextField
+                size="small"
+                fullWidth
+                label="Referral destination"
+                value={consultationReferralDestination}
+                disabled={readOnly || consultationDocumentationSaving}
+                onChange={(event) => setConsultationReferralDestination(event.target.value)}
+              />
+              <FormControl size="small" fullWidth>
+                <InputLabel id="referral-priority-label">Priority</InputLabel>
+                <Select
+                  labelId="referral-priority-label"
+                  label="Priority"
+                  value={consultationReferralPriority}
+                  disabled={readOnly || consultationDocumentationSaving}
+                  onChange={(event) => setConsultationReferralPriority(event.target.value as ConsultationDocumentPriority)}
+                >
+                  <MenuItem value="ROUTINE">Routine</MenuItem>
+                  <MenuItem value="URGENT">Urgent</MenuItem>
+                  <MenuItem value="EMERGENCY">Emergency</MenuItem>
+                </Select>
+              </FormControl>
+            </Stack>
+            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+              <Chip size="small" variant="outlined" label={`Language: ${consultationDocumentationLanguage}`} />
+              <Button size="small" variant="outlined" onClick={() => setConsultationDocumentLanguage("ENGLISH")}>English</Button>
+              <Button size="small" variant="outlined" onClick={() => setConsultationDocumentLanguage("HINDI")}>Hindi</Button>
+              <Button size="small" variant="outlined" onClick={() => setConsultationDocumentLanguage("MARATHI")}>Marathi</Button>
+            </Stack>
+          </Stack>
+        </ClinicalAiDraftCard>
+      );
+    }
+
+    if (kind === "certificate") {
+      const certificateTypeLabel = consultationCertificateType === "FITNESS"
+        ? "Fitness Certificate"
+        : consultationCertificateType === "SICK_LEAVE"
+          ? "Sick Leave Certificate"
+          : consultationCertificateType === "RETURN_TO_WORK"
+            ? "Return to Work Certificate"
+            : "Medical Certificate";
+      return (
+        <ClinicalAiDraftCard {...commonProps} title={certificateTypeLabel} acceptLabel="Finalize certificate">
+          <Stack spacing={0.75}>
+            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+              {([
+                ["MEDICAL", "Medical"],
+                ["FITNESS", "Fitness"],
+                ["SICK_LEAVE", "Sick leave"],
+                ["RETURN_TO_WORK", "Return to work"],
+              ] as const).map(([value, label]) => (
+                <Chip
+                  key={value}
+                  size="small"
+                  clickable={!readOnly && !consultationDocumentationSaving}
+                  variant={consultationCertificateType === value ? "filled" : "outlined"}
+                  color={consultationCertificateType === value ? "primary" : "default"}
+                  label={label}
+                  onClick={() => setConsultationCertificateType(value)}
+                />
+              ))}
+            </Stack>
+            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+              <Chip size="small" variant="outlined" label={`Language: ${consultationDocumentationLanguage}`} />
+              <Button size="small" variant="outlined" onClick={() => setConsultationDocumentLanguage("ENGLISH")}>English</Button>
+              <Button size="small" variant="outlined" onClick={() => setConsultationDocumentLanguage("HINDI")}>Hindi</Button>
+              <Button size="small" variant="outlined" onClick={() => setConsultationDocumentLanguage("MARATHI")}>Marathi</Button>
+            </Stack>
+          </Stack>
+        </ClinicalAiDraftCard>
+      );
+    }
+
+    return (
+      <ClinicalAiDraftCard {...commonProps} acceptLabel="Finalize summary">
+        <Stack spacing={0.75}>
+          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+            <Chip size="small" variant="outlined" label={`Language: ${consultationDocumentationLanguage}`} />
+            <Button size="small" variant="outlined" onClick={() => setConsultationDocumentLanguage("ENGLISH")}>English</Button>
+            <Button size="small" variant="outlined" onClick={() => setConsultationDocumentLanguage("HINDI")}>Hindi</Button>
+            <Button size="small" variant="outlined" onClick={() => setConsultationDocumentLanguage("MARATHI")}>Marathi</Button>
+          </Stack>
+          {draft.status === "REJECTED" ? null : draft.draftText ? (
+            <Typography variant="caption" color="text.secondary">
+              Review this summary before finalizing. It will be stored as a consultation document.
+            </Typography>
+          ) : (
+            <Typography variant="caption" color="text.secondary">
+              No visit summary generated yet. Use AIVA to draft a patient-friendly consultation summary.
+            </Typography>
+          )}
+        </Stack>
+      </ClinicalAiDraftCard>
+    );
+  }, [consultationCertificateType, consultationDocumentDrafts, consultationDocumentationSaving, consultationReferralDestination, consultationReferralPriority, copyConsultationDocumentDraft, finalizeConsultationDocumentDraft, readOnly, rejectConsultationDocumentDraft, updateConsultationDocumentDraft]);
+
   async function applyAiPrescriptionTemplate() {
     if (!auth.accessToken || !auth.tenantId || !consultation || !patient) return;
     const entryId = makeAiAssistEntryId();
@@ -3758,6 +5294,7 @@ export default function ConsultationWorkspacePage() {
       setAiPrescriptionItems(parsed.items);
       setAiPrescriptionUnstructured(parsed.invalid);
       setAiPrescriptionProvider(draft.provider || null);
+      setPrescriptionSuggestionGeneratedAt(new Date().toISOString());
       updateAiAssistEntry(entryId, { status: "success", response: draft, error: null });
       setInfo("AI prescription suggestion generated. Doctor must verify before use.");
     } catch (err) {
@@ -3793,6 +5330,63 @@ export default function ConsultationWorkspacePage() {
       setAiActiveAction(null);
     }
   }
+
+  const generatePrescriptionPatientInstructions = async () => {
+    if (!auth.accessToken || !auth.tenantId || !consultation || !patient) return;
+    setPrescriptionInstructionsLoading(true);
+    setError(null);
+    try {
+      const draft = await aiPatientInstructions(auth.accessToken, auth.tenantId, {
+        consultationId: consultation.id,
+        patientId: consultation.patientId,
+        diagnosis: consultationForm.diagnosis || prescriptionForm.diagnosisSnapshot || null,
+        prescription: currentPrescriptionDraftSummary || null,
+        instructionsContext: [
+          `Language: ${prescriptionInstructionsLanguage}`,
+          consultationForm.advice.trim() ? `Advice context: ${consultationForm.advice.trim()}` : "",
+          consultationForm.clinicalNotes.trim() ? `Clinical notes: ${consultationForm.clinicalNotes.trim()}` : "",
+          currentMedicineRows.length ? `Medicines: ${currentMedicineRows.map((row) => row.medicineName).join(", ")}` : "",
+        ].filter(Boolean).join("\n"),
+        language: prescriptionInstructionsLanguage,
+        literacyLevel: "simple",
+        allergies: patient.patient.allergies,
+        warnings: currentMedicineRows.length ? "Doctor must verify before prescribing." : null,
+      });
+      if (!draft.enabled) {
+        const message = aiStatusMessage || AI_DISABLED_MESSAGE;
+        setPrescriptionInstructionsDraft({ ...draft, message });
+        setError(message);
+        return;
+      }
+      setPrescriptionInstructionsDraft(draft);
+      setPrescriptionInstructionsGeneratedAt(new Date().toISOString());
+      setInfo("Patient instructions generated. Doctor must verify before use.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Patient instructions generation failed";
+      setPrescriptionInstructionsDraft(null);
+      setError(message);
+    } finally {
+      setPrescriptionInstructionsLoading(false);
+    }
+  };
+
+  const generatePrescriptionSummaryDraft = () => {
+    const warnings = prescriptionSafetyChecks
+      .filter((item) => item.status === "warning" || item.status === "critical")
+      .map((item) => item.message)
+      .filter(Boolean)
+      .slice(0, 4);
+    const redFlags = latestClinicalReasoningEntry ? [compactText(latestClinicalReasoningEntry.prompt || latestClinicalReasoningEntry.error || latestClinicalReasoningEntry.title, 80)] : [];
+    setPrescriptionSummaryDraft(buildPrescriptionSummaryText({
+      diagnosis: consultationForm.diagnosis || prescriptionForm.diagnosisSnapshot || "",
+      medicines: currentMedicineRows,
+      tests: prescriptionForm.recommendedTests,
+      advice: prescriptionForm.advice || consultationForm.advice,
+      followUpDate: prescriptionForm.followUpDate || consultationForm.followUpDate,
+      warnings,
+      redFlags,
+    }));
+  };
 
   const generateClinicalSummary = async () => {
     if (!auth.accessToken || !auth.tenantId || !consultation || !patient) return;
@@ -3891,6 +5485,8 @@ export default function ConsultationWorkspacePage() {
     const parsedDiagnosis = response && isDiagnosisAction ? parseAiSuggestionItems(response) : null;
     const parsedPrescription = response && isPrescriptionAction ? parseAiMedicineSuggestionItems(response) : null;
     const displayText = generalAnswer || rawText || entry.error || "No response captured yet.";
+    const missingInformation = isDiagnosisAction ? asStringList(structured.missingInformation || structured.missingData || structured.gaps || structured.gapAnalysis) : [];
+    const supportingFindings = isDiagnosisAction ? asStringList(structured.supportingFindings || structured.supportingEvidence || structured.findings) : [];
 
     return (
       <Card key={entry.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
@@ -3950,9 +5546,21 @@ export default function ConsultationWorkspacePage() {
                           <CardContent sx={{ p: 1 }}>
                             <Stack spacing={0.5}>
                               <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Supporting findings</Typography>
-                              <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
-                                {asStringList(structured.supportingFindings || structured.supportingEvidence || structured.findings).join(" • ") || "Use the consultation context and reasoning text for support."}
-                              </Typography>
+                              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                {supportingFindings.length ? supportingFindings.slice(0, 4).map((finding) => <Chip key={finding} size="small" variant="outlined" label={finding} />) : <Typography variant="body2" color="text.secondary">Use the consultation context and reasoning text for support.</Typography>}
+                              </Stack>
+                            </Stack>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                          <CardContent sx={{ p: 1 }}>
+                            <Stack spacing={0.5}>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Missing information</Typography>
+                              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                {missingInformation.length ? missingInformation.slice(0, 4).map((item) => <Chip key={item} size="small" color="warning" variant="outlined" label={item} />) : <Typography variant="body2" color="text.secondary">No missing information highlighted.</Typography>}
+                              </Stack>
                             </Stack>
                           </CardContent>
                         </Card>
@@ -3963,16 +5571,31 @@ export default function ConsultationWorkspacePage() {
                             <Stack spacing={0.5}>
                               <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Differential diagnosis</Typography>
                               {parsedDiagnosis?.items?.length ? (
-                                <Stack spacing={0.5}>
+                                <Stack spacing={0.75}>
                                   {parsedDiagnosis.items.map((item, index) => (
-                                    <Box key={`${entry.id}-diag-${index}`} sx={{ p: 0.75, border: 1, borderColor: "divider", borderRadius: 1.5 }}>
-                                      <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.25 }}>{item.title}</Typography>
-                                      {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.15 }}>{item.reason}</Typography> : null}
-                                    </Box>
+                                    <Card key={`${entry.id}-diag-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                                      <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                        <Stack spacing={0.5}>
+                                          <Stack direction="row" spacing={0.75} alignItems="flex-start" justifyContent="space-between">
+                                            <Box sx={{ minWidth: 0, flex: 1 }}>
+                                              <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.25 }}>{item.title}</Typography>
+                                              {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.15 }}>{item.reason}</Typography> : null}
+                                            </Box>
+                                            <Button type="button" size="small" variant="outlined" disabled={readOnly} onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, item.title) }))}>
+                                              Add diagnosis
+                                            </Button>
+                                          </Stack>
+                                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                            {item.redFlags.slice(0, 2).map((flag) => <Chip key={flag} size="small" color="warning" variant="outlined" label={`Red flag: ${flag}`} />)}
+                                            {item.recommendedInvestigations.slice(0, 2).map((test) => <Chip key={test} size="small" variant="outlined" label={test} />)}
+                                          </Stack>
+                                        </Stack>
+                                      </CardContent>
+                                    </Card>
                                   ))}
                                 </Stack>
                               ) : (
-                                <Typography variant="body2" color="text.secondary">No structured differentials returned.</Typography>
+                                <Typography variant="body2" color="text.secondary">Generate clinical reasoning to review likely assessment, differentials, red flags, and suggested tests.</Typography>
                               )}
                             </Stack>
                           </CardContent>
@@ -3983,9 +5606,13 @@ export default function ConsultationWorkspacePage() {
                           <CardContent sx={{ p: 1 }}>
                             <Stack spacing={0.5}>
                               <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Red flags</Typography>
-                              <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
-                                {Array.from(new Set(parsedDiagnosis?.items?.flatMap((item) => item.redFlags) || [])).join(" • ") || "No red flags returned."}
-                              </Typography>
+                              {Array.from(new Set(parsedDiagnosis?.items?.flatMap((item) => item.redFlags) || [])).slice(0, 4).length ? (
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  {Array.from(new Set(parsedDiagnosis?.items?.flatMap((item) => item.redFlags) || [])).slice(0, 4).map((flag) => <Chip key={flag} size="small" color="warning" variant="outlined" label={flag} />)}
+                                </Stack>
+                              ) : (
+                                <Typography variant="body2" color="text.secondary">No red flags returned.</Typography>
+                              )}
                             </Stack>
                           </CardContent>
                         </Card>
@@ -3995,9 +5622,14 @@ export default function ConsultationWorkspacePage() {
                           <CardContent sx={{ p: 1 }}>
                             <Stack spacing={0.5}>
                               <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Suggested investigations</Typography>
-                              <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
-                                {Array.from(new Set(parsedDiagnosis?.items?.flatMap((item) => item.recommendedInvestigations) || [])).join(" • ") || asStringList(structured.recommendedInvestigations).join(" • ") || "No investigations returned."}
-                              </Typography>
+                              {Array.from(new Set(parsedDiagnosis?.items?.flatMap((item) => item.recommendedInvestigations) || [])).slice(0, 5).length || asStringList(structured.recommendedInvestigations).slice(0, 5).length ? (
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  {Array.from(new Set(parsedDiagnosis?.items?.flatMap((item) => item.recommendedInvestigations) || [])).slice(0, 5).map((test) => <Chip key={test} size="small" variant="outlined" label={test} />)}
+                                  {!Array.from(new Set(parsedDiagnosis?.items?.flatMap((item) => item.recommendedInvestigations) || [])).slice(0, 5).length ? asStringList(structured.recommendedInvestigations).slice(0, 5).map((test) => <Chip key={test} size="small" variant="outlined" label={test} />) : null}
+                                </Stack>
+                              ) : (
+                                <Typography variant="body2" color="text.secondary">No investigations returned.</Typography>
+                              )}
                             </Stack>
                           </CardContent>
                         </Card>
@@ -4008,7 +5640,7 @@ export default function ConsultationWorkspacePage() {
                             <Stack spacing={0.5}>
                               <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Suggested patient advice</Typography>
                               <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
-                                {asStringList(structured.patientAdvice || structured.advice || structured.followUpSuggestions || suggestedActions).join(" • ") || displayText}
+                                {asStringList(structured.patientAdvice || structured.advice || structured.followUpSuggestions || suggestedActions).slice(0, 3).join(" • ") || displayText}
                               </Typography>
                             </Stack>
                           </CardContent>
@@ -4135,6 +5767,7 @@ export default function ConsultationWorkspacePage() {
 
   const header = (
     <Card
+      ref={consultationHeaderRef}
       sx={{
         position: "sticky",
         top: 12,
@@ -4194,11 +5827,7 @@ export default function ConsultationWorkspacePage() {
                   size="small"
                   variant="outlined"
                   disabled={!canGenerateClinicalDraft}
-                  onClick={() => {
-                    const proceed = window.confirm("Regenerate all sections? This will refresh accepted and edited AI drafts.");
-                    if (!proceed) return;
-                    void generateConsultationDraft(true);
-                  }}
+                  onClick={() => void regenerateAllClinicalDrafts()}
                 >
                   Regenerate All
                 </Button>
@@ -4237,44 +5866,74 @@ export default function ConsultationWorkspacePage() {
           </Stack>
 
           <Stack direction={{ xs: "column", lg: "row" }} spacing={0.75} justifyContent="space-between" alignItems={{ xs: "flex-start", lg: "center" }}>
-            <Alert severity={readOnly ? "info" : prescriptionReadyForCompletion ? "success" : "warning"} sx={{ py: 0.25, width: "100%" }}>
-              <strong>{workflowNextAction.title}</strong> {workflowNextAction.detail}
-            </Alert>
             <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: { lg: "nowrap" }, lineHeight: 1.2 }}>
               Shortcuts: Ctrl/Cmd+S save draft, Ctrl/Cmd+P preview Rx, Esc closes document viewer.
             </Typography>
           </Stack>
-          <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
-            <Chip
-              size="small"
-              color={consultationReadiness.percent >= 75 ? "success" : consultationReadiness.percent >= 50 ? "warning" : "default"}
-              variant="outlined"
-              label={`Consultation readiness: ${consultationReadiness.percent}%`}
-              clickable
-              onClick={() => setReadinessDetailsOpen((current) => !current)}
-            />
-            <Typography variant="caption" color="text.secondary">
-              {readinessDetailsOpen ? "Hide missing items" : "Show missing items"}
-            </Typography>
-          </Stack>
-          <Collapse in={readinessDetailsOpen} timeout="auto" unmountOnExit>
-            <Card variant="outlined" sx={{ boxShadow: "none" }}>
-              <CardContent sx={{ p: 1 }}>
-                <Stack spacing={0.5}>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Missing items</Typography>
-                  {consultationReadiness.missingItems.length ? (
-                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                      {consultationReadiness.missingItems.map((item) => (
-                        <Chip key={item} size="small" variant="outlined" label={item} />
-                      ))}
-                    </Stack>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">Consultation looks ready to complete.</Typography>
-                  )}
+          <Card variant="outlined" ref={consultationChecklistRef} sx={{ boxShadow: "none" }}>
+            <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+              <Stack spacing={0.65}>
+                <Stack direction="row" spacing={0.75} alignItems="flex-start" justifyContent="space-between" flexWrap="wrap">
+                  <Box>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 950, lineHeight: 1.15 }}>
+                      Consultation Checklist
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.15 }}>
+                      Guidance only. Existing completion rules remain unchanged.
+                    </Typography>
+                  </Box>
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  <Chip
+                    size="small"
+                    color={consultationReadiness.percent >= 75 ? "success" : consultationReadiness.percent >= 50 ? "warning" : "default"}
+                    variant="outlined"
+                    label={`${consultationReadiness.percent}% complete`}
+                    />
+                    <Button
+                      type="button"
+                      size="small"
+                      variant="text"
+                      aria-label="View checklist"
+                      onClick={() => setReadinessDetailsOpen((current) => !current)}
+                    >
+                      {readinessDetailsOpen ? "Hide" : "View checklist"}
+                    </Button>
+                  </Stack>
                 </Stack>
-              </CardContent>
-            </Card>
-          </Collapse>
+                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                  <Chip size="small" variant="outlined" color={consultationReadinessChecklist.some((item) => item.label === "Chief complaint" && item.state === "complete") ? "success" : "default"} label={`Complaint ${consultationReadinessChecklist.some((item) => item.label === "Chief complaint" && item.state === "complete") ? "✓" : "•"}`} />
+                  <Chip size="small" variant="outlined" color={consultationReadinessChecklist.some((item) => item.label === "Symptoms" && item.state === "complete") ? "success" : "default"} label={`Symptoms ${consultationReadinessChecklist.some((item) => item.label === "Symptoms" && item.state === "complete") ? "✓" : "•"}`} />
+                  <Chip size="small" variant="outlined" color={consultationReadinessChecklist.some((item) => item.label === "Diagnosis" && item.state === "complete") ? "success" : "default"} label={`Diagnosis ${consultationReadinessChecklist.some((item) => item.label === "Diagnosis" && item.state === "complete") ? "✓" : "•"}`} />
+                  <Chip size="small" variant="outlined" color={prescriptionReadyForCompletion ? "success" : "warning"} label={prescriptionReadyForCompletion ? "Ready to complete" : "Needs review"} />
+                </Stack>
+                <LinearProgress
+                  variant="determinate"
+                  value={consultationReadiness.percent}
+                  sx={{ height: 6, borderRadius: 999, bgcolor: "action.hover" }}
+                />
+                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                  <Chip size="small" variant="outlined" color="success" label={`${consultationReadinessChecklist.filter((item) => item.state === "complete").length} complete`} />
+                  <Chip size="small" variant="outlined" color="warning" label={`${consultationReadinessChecklist.filter((item) => item.state === "needs_review").length} needs review`} />
+                  <Chip size="small" variant="outlined" label={`${consultationReadinessChecklist.filter((item) => item.state === "missing").length} missing`} />
+                </Stack>
+                <Collapse in={readinessDetailsOpen} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+                  <Stack spacing={0.55}>
+                    {consultationReadinessChecklist.map((item) => (
+                      <Stack key={item.label} direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{item.label}</Typography>
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color={item.state === "complete" ? "success" : item.state === "needs_review" ? "warning" : "default"}
+                          label={item.state === "needs_review" ? "Needs review" : item.state === "complete" ? "Complete" : "Missing"}
+                        />
+                      </Stack>
+                    ))}
+                  </Stack>
+                </Collapse>
+              </Stack>
+            </CardContent>
+          </Card>
           {canCompleteConsultation && !readOnly && !prescriptionReadyForCompletion ? (
             <Typography variant="caption" color="warning.main" sx={{ display: "block" }}>
               {CONSULTATION_COMPLETION_BLOCKED_MESSAGE}
@@ -4288,9 +5947,45 @@ export default function ConsultationWorkspacePage() {
   return (
     <Stack spacing={1.25} sx={{ pb: 3.5 }}>
       {header}
+      {showStickyConsultationProgress ? (
+        <Box
+          sx={{
+            display: { xs: "none", md: "block" },
+            position: "sticky",
+            top: 72,
+            zIndex: 4,
+          }}
+        >
+          <Card variant="outlined" sx={{ boxShadow: 2, bgcolor: "background.paper", borderRadius: 2 }}>
+            <CardContent sx={{ py: 0.6, "&:last-child": { pb: 0.6 } }}>
+              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap">
+                  <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Consultation Progress</Typography>
+                  <Chip size="small" color={consultationReadiness.percent >= 75 ? "success" : consultationReadiness.percent >= 50 ? "warning" : "default"} variant="outlined" label={`${consultationReadiness.percent}%`} />
+                  <Chip size="small" variant="outlined" color="success" label={`${consultationReadinessChecklist.filter((item) => item.state === "complete").length} complete`} />
+                  <Chip size="small" variant="outlined" color="warning" label={`${consultationReadinessChecklist.filter((item) => item.state === "needs_review").length} needs review`} />
+                  <Chip size="small" variant="outlined" label={`${consultationReadinessChecklist.filter((item) => item.state === "missing").length} missing`} />
+                </Stack>
+                <Button
+                  type="button"
+                  size="small"
+                  variant="outlined"
+                  aria-label="View checklist"
+                  onClick={() => {
+                    setReadinessDetailsOpen(true);
+                    consultationChecklistRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                >
+                  View checklist
+                </Button>
+              </Stack>
+            </CardContent>
+          </Card>
+        </Box>
+      ) : null}
       {timelinePreview.length ? (
         <Card sx={{ boxShadow: "none", borderColor: "primary.light" }}>
-          <CardContent sx={{ py: 0.65, "&:last-child": { pb: 0.65 } }}>
+          <CardContent sx={{ py: 0.55, px: 0.8, "&:last-child": { pb: 0.55 } }}>
             <Stack spacing={0.6}>
               <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
                 <Box>
@@ -4308,20 +6003,20 @@ export default function ConsultationWorkspacePage() {
                 </Button>
               </Stack>
               {timelinePreview.length ? (
-                <Stack direction="row" spacing={0.75} sx={{ overflowX: "auto", pb: 0.25, minHeight: 82, maxHeight: 92 }}>
+                <Stack direction="row" spacing={0.65} sx={{ overflowX: "auto", pb: 0.2, minHeight: 74, maxHeight: 88 }}>
                   {timelinePreview.map((item) => (
                     <Card
                       key={item.id}
                       variant="outlined"
                       sx={{
                         boxShadow: "none",
-                        minWidth: 114,
-                        maxWidth: 124,
+                        minWidth: 102,
+                        maxWidth: 112,
                         flex: "0 0 auto",
                         cursor: item.itemType === "DOCUMENT" || item.consultationId || item.prescriptionId ? "pointer" : "default",
                         borderColor: item.consultationId === consultation.id ? "primary.main" : "divider",
                         bgcolor: item.consultationId === consultation.id ? "primary.50" : "background.paper",
-                        borderRadius: 1.75,
+                        borderRadius: 1.5,
                         transition: "transform 120ms ease, box-shadow 120ms ease",
                         "&:hover": {
                           transform: "translateY(-1px)",
@@ -4339,7 +6034,7 @@ export default function ConsultationWorkspacePage() {
                         }
                       }}
                     >
-                      <CardContent sx={{ p: 0.65, "&:last-child": { pb: 0.65 } }}>
+                      <CardContent sx={{ p: 0.5, "&:last-child": { pb: 0.5 } }}>
                         <Stack spacing={0.35}>
                           <Stack direction="row" spacing={0.5} alignItems="center">
                             <Box sx={{ width: 20, height: 20, borderRadius: "50%", display: "grid", placeItems: "center", bgcolor: "primary.50", color: "primary.main", flexShrink: 0 }}>
@@ -4347,8 +6042,20 @@ export default function ConsultationWorkspacePage() {
                             </Box>
                             <Chip size="small" label={timelineTypeLabel(item.itemType)} color={timelineColor(item.itemType)} variant="outlined" sx={{ height: 18, maxWidth: 72, "& .MuiChip-label": { px: 0.6, fontSize: 10.5 } }} />
                           </Stack>
-                          <Typography variant="body2" sx={{ fontWeight: 850, lineHeight: 1.1, fontSize: 11.5 }} noWrap>
-                            {item.title}
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontWeight: 850,
+                              lineHeight: 1.1,
+                              fontSize: 11.25,
+                              display: "-webkit-box",
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: "vertical",
+                              overflow: "hidden",
+                              minHeight: 24,
+                            }}
+                          >
+                            {compactTimelineTitle(item.title)}
                           </Typography>
                           <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.05 }} noWrap>
                             {compactDateTime(item.occurredAt)}
@@ -4363,7 +6070,26 @@ export default function ConsultationWorkspacePage() {
             </Stack>
           </CardContent>
         </Card>
-      ) : null}
+      ) : (
+        <Card sx={{ boxShadow: "none", borderColor: "divider" }}>
+          <CardContent sx={{ py: 0.7, "&:last-child": { pb: 0.7 } }}>
+            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+              <Box>
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  <TimelineRoundedIcon fontSize="small" color="primary" />
+                  <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Patient timeline</Typography>
+                </Stack>
+                <Typography variant="caption" color="text.secondary">
+                  No previous consultations available.
+                </Typography>
+              </Box>
+              <Button type="button" size="small" variant="outlined" startIcon={<HistoryRoundedIcon fontSize="small" />} onClick={openHistoryTab}>
+                View Full History
+              </Button>
+            </Stack>
+          </CardContent>
+        </Card>
+      )}
       {error ? <Alert severity="error" onClose={() => setError(null)}>{error}</Alert> : null}
       {info ? <Alert severity="success" onClose={() => setInfo(null)}>{info}</Alert> : null}
 
@@ -4432,35 +6158,326 @@ export default function ConsultationWorkspacePage() {
       {activeTab === 0 ? (
         <Card sx={{ boxShadow: "none", overflow: "visible", borderColor: "divider" }}>
           <CardContent sx={{ p: 0.75, "&:last-child": { pb: 0.75 } }}>
-            <Grid container spacing={0.75} alignItems="stretch" sx={{ minHeight: 0 }}>
+            <Grid container spacing={0.65} alignItems="stretch" sx={{ minHeight: 0 }}>
+              <Grid size={{ xs: 12 }}>
+                <WorkflowStrip text="Patient Review → Clinical Assessment → Diagnosis → Treatment → Complete" />
+              </Grid>
+              <Grid size={{ xs: 12 }}>
+                <Card variant="outlined" sx={{ boxShadow: "none", borderColor: consultationCompletionSummary.ready ? "success.light" : "divider" }}>
+                  <CardContent sx={{ p: 1, "&:last-child": { pb: 1 } }}>
+                    <Stack spacing={0.85}>
+                      <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between" flexWrap="wrap">
+                        <Box sx={{ minWidth: 0 }}>
+                          <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap">
+                            <PlaylistAddCheckRoundedIcon fontSize="small" color="primary" />
+                            <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Consultation Completion</Typography>
+                            <Chip size="small" color={consultationCompletionSummary.ready ? "success" : "warning"} variant="outlined" label={consultationCompletionSummary.label} />
+                            <Chip size="small" variant="outlined" label={`${consultationCompletionSummary.complete}/${consultationCompletionChecklist.length} complete`} />
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+                            Clinical documentation, visit summary, referrals, certificates, follow-up, and patient communication before final completion.
+                          </Typography>
+                        </Box>
+                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" justifyContent="flex-end">
+                          <Button type="button" size="small" variant="outlined" onClick={() => setCompletionValidationOpen(true)}>
+                            View validation
+                          </Button>
+                          <Button type="button" size="small" variant="text" aria-label={consultationCompletionExpanded ? "Collapse consultation completion" : "Expand consultation completion"} onClick={() => setConsultationCompletionExpanded((current) => !current)}>
+                            {consultationCompletionExpanded ? "Collapse" : "Expand"}
+                          </Button>
+                        </Stack>
+                      </Stack>
+                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                        {consultationCompletionChecklist.slice(0, 6).map((item) => (
+                          <Chip
+                            key={item.label}
+                            size="small"
+                            variant="outlined"
+                            color={item.state === "complete" ? "success" : item.state === "needs_review" ? "warning" : "default"}
+                            label={`${item.label} ${item.state === "complete" ? "✓" : item.state === "needs_review" ? "!" : "•"}`}
+                          />
+                        ))}
+                        {consultationCompletionChecklist.length > 6 ? (
+                          <Chip size="small" variant="outlined" label={`+${consultationCompletionChecklist.length - 6} more`} />
+                        ) : null}
+                      </Stack>
+                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                        <Chip size="small" color="success" variant="outlined" label={`${consultationCompletionSummary.complete} complete`} />
+                        <Chip size="small" color={consultationCompletionSummary.needsReview ? "warning" : "default"} variant="outlined" label={`${consultationCompletionSummary.needsReview} needs review`} />
+                        <Chip size="small" variant="outlined" label={`${consultationCompletionSummary.missing} missing`} />
+                      </Stack>
+                      <Collapse in={consultationCompletionExpanded} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+                        <Stack spacing={1}>
+                          <Grid container spacing={1}>
+                            <Grid size={{ xs: 12, lg: 6 }}>
+                              <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                <CardContent sx={{ p: 1, "&:last-child": { pb: 1 } }}>
+                                  <Stack spacing={0.8}>
+                                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                      <Stack direction="row" spacing={0.75} alignItems="center">
+                                        <DescriptionRoundedIcon fontSize="small" color="primary" />
+                                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Visit Summary</Typography>
+                                      </Stack>
+                                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                        <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft || consultationDocumentationSaving} onClick={() => void generateConsultationDocumentDraft("visitSummary")}>
+                                          Generate
+                                        </Button>
+                                        <Button type="button" size="small" variant="outlined" disabled={!consultationDocumentDrafts.visitSummary.downloadUrl} onClick={() => void shareConsultationDocumentUrl("visitSummary")}>
+                                          Share
+                                        </Button>
+                                      </Stack>
+                                    </Stack>
+                                    {renderConsultationDocumentDraftCard("visitSummary")}
+                                  </Stack>
+                                </CardContent>
+                              </Card>
+                            </Grid>
+                            <Grid size={{ xs: 12, lg: 6 }}>
+                              <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                <CardContent sx={{ p: 1, "&:last-child": { pb: 1 } }}>
+                                  <Stack spacing={0.8}>
+                                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                      <Stack direction="row" spacing={0.75} alignItems="center">
+                                        <ReceiptLongRoundedIcon fontSize="small" color="primary" />
+                                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Referral Letters</Typography>
+                                      </Stack>
+                                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                        <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft || consultationDocumentationSaving} onClick={() => void generateConsultationDocumentDraft("referral")}>
+                                          Generate
+                                        </Button>
+                                        <Button type="button" size="small" variant="outlined" disabled={!consultationDocumentDrafts.referral.downloadUrl} onClick={() => void shareConsultationDocumentUrl("referral")}>
+                                          Share
+                                        </Button>
+                                      </Stack>
+                                    </Stack>
+                                    {renderConsultationDocumentDraftCard("referral")}
+                                  </Stack>
+                                </CardContent>
+                              </Card>
+                            </Grid>
+                            <Grid size={{ xs: 12, lg: 6 }}>
+                              <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                <CardContent sx={{ p: 1, "&:last-child": { pb: 1 } }}>
+                                  <Stack spacing={0.8}>
+                                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                      <Stack direction="row" spacing={0.75} alignItems="center">
+                                        <TipsAndUpdatesRoundedIcon fontSize="small" color="primary" />
+                                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Certificates</Typography>
+                                      </Stack>
+                                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                        <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft || consultationDocumentationSaving} onClick={() => void generateConsultationDocumentDraft("certificate")}>
+                                          Generate
+                                        </Button>
+                                        <Button type="button" size="small" variant="outlined" disabled={!consultationDocumentDrafts.certificate.downloadUrl} onClick={() => void shareConsultationDocumentUrl("certificate")}>
+                                          Share
+                                        </Button>
+                                      </Stack>
+                                    </Stack>
+                                    {renderConsultationDocumentDraftCard("certificate")}
+                                  </Stack>
+                                </CardContent>
+                              </Card>
+                            </Grid>
+                            <Grid size={{ xs: 12, lg: 6 }}>
+                              <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                <CardContent sx={{ p: 1, "&:last-child": { pb: 1 } }}>
+                                  <Stack spacing={0.8}>
+                                    <Stack direction="row" spacing={0.75} alignItems="center">
+                                      <EventRoundedIcon fontSize="small" color="primary" />
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Follow-up Plan</Typography>
+                                    </Stack>
+                                    <Typography variant="caption" color="text.secondary">
+                                      Structured follow-up without duplicating appointment creation.
+                                    </Typography>
+                                    <Grid container spacing={0.75}>
+                                      <Grid size={{ xs: 12, md: 6 }}>
+                                        <TextField
+                                          size="small"
+                                          fullWidth
+                                          type="date"
+                                          label="Follow-up date"
+                                          value={consultationForm.followUpDate || prescriptionForm.followUpDate}
+                                          disabled={readOnly}
+                                          onChange={(event) => {
+                                            const nextDate = event.target.value;
+                                            setConsultationForm((current) => ({ ...current, followUpDate: nextDate }));
+                                            setPrescriptionForm((current) => ({ ...current, followUpDate: nextDate }));
+                                          }}
+                                        />
+                                      </Grid>
+                                      <Grid size={{ xs: 12, md: 6 }}>
+                                        <TextField
+                                          size="small"
+                                          fullWidth
+                                          label="Reminder notes"
+                                          value={followUpPlanNotes}
+                                          disabled={readOnly}
+                                          onChange={(event) => setFollowUpPlanNotes(event.target.value)}
+                                          placeholder="Review after reports, medication completion, or if symptoms persist"
+                                        />
+                                      </Grid>
+                                    </Grid>
+                                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                      {FOLLOWUP_CHIPS.slice(0, 4).map((chip) => (
+                                        <Chip
+                                          key={chip}
+                                          size="small"
+                                          clickable={!readOnly}
+                                          variant="outlined"
+                                          label={chip}
+                                          onClick={() => {
+                                            const nextDate = followUpChipToDate(chip);
+                                            setConsultationForm((current) => ({ ...current, followUpDate: nextDate }));
+                                            setPrescriptionForm((current) => ({ ...current, followUpDate: nextDate }));
+                                          }}
+                                        />
+                                      ))}
+                                    </Stack>
+                                  </Stack>
+                                </CardContent>
+                              </Card>
+                            </Grid>
+                            <Grid size={{ xs: 12, lg: 6 }}>
+                              <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                <CardContent sx={{ p: 1, "&:last-child": { pb: 1 } }}>
+                                  <Stack spacing={0.8}>
+                                    <Stack direction="row" spacing={0.75} alignItems="center">
+                                      <CallRoundedIcon fontSize="small" color="primary" />
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Patient Communication</Typography>
+                                    </Stack>
+                                    <Typography variant="caption" color="text.secondary">
+                                      Share patient-friendly instructions and documents through existing communication flows.
+                                    </Typography>
+                                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                      {([
+                                        ["Preview Rx", () => void previewCurrentPrescription()],
+                                        ["Print Rx", () => void printCurrentPrescription()],
+                                        ["Download PDF", () => void downloadCurrentPrescription()],
+                                        ["Email Rx", () => void sendCurrentPrescription("email")],
+                                        ["WhatsApp Rx", () => void sendCurrentPrescription("whatsapp")],
+                                        ["Share Visit Summary", () => void shareConsultationDocumentUrl("visitSummary")],
+                                        ["Share Referral", () => void shareConsultationDocumentUrl("referral")],
+                                        ["Share Certificate", () => void shareConsultationDocumentUrl("certificate")],
+                                      ] as Array<[string, () => void | Promise<void>]>).map(([label, action]) => (
+                                        <Button
+                                          key={label}
+                                          type="button"
+                                          size="small"
+                                          variant="outlined"
+                                          disabled={saving || consultationDocumentationSaving}
+                                          onClick={() => {
+                                            void action();
+                                            setConsultationAuditShareLog((current) => current.includes(String(label)) ? current : [...current, String(label)]);
+                                          }}
+                                        >
+                                          {label}
+                                        </Button>
+                                      ))}
+                                    </Stack>
+                                    <Button
+                                      type="button"
+                                      size="small"
+                                      variant="contained"
+                                      disabled={consultationPackageGenerating || consultationDocumentationSaving}
+                                      onClick={() => void generateConsultationPackage()}
+                                    >
+                                      {consultationPackageGenerating ? "Generating package..." : "Download Consultation Package"}
+                                    </Button>
+                                  </Stack>
+                                </CardContent>
+                              </Card>
+                            </Grid>
+                            <Grid size={{ xs: 12, lg: 6 }}>
+                              <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                                <CardContent sx={{ p: 1, "&:last-child": { pb: 1 } }}>
+                                  <Stack spacing={0.8}>
+                                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                      <Stack direction="row" spacing={0.75} alignItems="center">
+                                        <DescriptionRoundedIcon fontSize="small" color="primary" />
+                                        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Clinical Documentation</Typography>
+                                      </Stack>
+                                      <Chip size="small" variant="outlined" label={`${consultationAuditShareLog.length} audit action${consultationAuditShareLog.length === 1 ? "" : "s"}`} />
+                                    </Stack>
+                                    <Typography variant="caption" color="text.secondary">
+                                      Generated documents, uploaded documents, version history, and final audit are retained in the patient record.
+                                    </Typography>
+                                    <Stack spacing={0.5}>
+                                      {Object.values(consultationDocumentDrafts).some((draft) => draft.status !== "REJECTED" && draft.draftText.trim()) ? (
+                                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                          {Object.values(consultationDocumentDrafts).map((draft) => (
+                                            draft.draftText.trim() ? <Chip key={draft.kind} size="small" variant="outlined" label={`${draft.title}: ${draft.status}`} /> : null
+                                          ))}
+                                        </Stack>
+                                      ) : (
+                                        <Typography variant="caption" color="text.secondary">
+                                          No referral generated yet. Create a referral if specialist consultation is required.
+                                        </Typography>
+                                      )}
+                                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                        {clinicalDocuments.slice(0, 4).map((doc) => (
+                                          <Chip key={doc.id} size="small" variant="outlined" label={`${doc.documentType.replaceAll("_", " ")} • ${compactDate(doc.createdAt)}`} />
+                                        ))}
+                                      </Stack>
+                                    </Stack>
+                                    <Stack spacing={0.5}>
+                                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>Final consultation audit</Typography>
+                                      {consultationAuditShareLog.length ? (
+                                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                          {consultationAuditShareLog.slice(0, 5).map((item) => <Chip key={item} size="small" variant="outlined" label={item} />)}
+                                        </Stack>
+                                      ) : (
+                                        <Typography variant="caption" color="text.secondary">
+                                          No patient communication or package actions recorded yet.
+                                        </Typography>
+                                      )}
+                                    </Stack>
+                                  </Stack>
+                                </CardContent>
+                              </Card>
+                            </Grid>
+                          </Grid>
+                        </Stack>
+                      </Collapse>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
               <Grid size={{ xs: 12, xl: 8 }}>
                 <Stack spacing={0.75}>
-              <SectionCard id="complaint" title="Chief Complaint" subtitle="Start with the visit reason" icon={<ChatBubbleOutlineRoundedIcon fontSize="small" />} expanded={expanded.complaint} onToggle={toggleSection}>
+              <SectionCard
+                id="complaint"
+                title="Chief Complaint"
+                subtitle="Start with the visit reason"
+                icon={<ChatBubbleOutlineRoundedIcon fontSize="small" />}
+                expanded={expanded.complaint}
+                onToggle={toggleSection}
+                primaryAction={(
+                  <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("chiefComplaint")}>
+                    Draft
+                  </Button>
+                )}
+              >
                 <Stack spacing={1}>
                   <TextField size="small" fullWidth value={consultationForm.chiefComplaints} onChange={(e) => setConsultationForm((c) => ({ ...c, chiefComplaints: e.target.value }))} multiline minRows={2} disabled={readOnly} placeholder="Type complaint and press Tab to continue" />
-                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
-                    <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("chiefComplaint")}>
-                      Draft
-                    </Button>
-                    <Typography variant="caption" color="text.secondary">
-                      AI suggestions are assistive. Doctor must verify before use.
-                    </Typography>
-                  </Stack>
                   {clinicalAiDrafts.chiefComplaint.generatedAt || clinicalAiDrafts.chiefComplaint.error || clinicalAiDrafts.chiefComplaint.status !== "DRAFTED" || clinicalAiDrafts.chiefComplaint.draftText.trim() ? renderClinicalAiDraftCard("chiefComplaint") : null}
                   <QuickChipGroup disabled={readOnly} chips={SYMPTOM_CHIPS.slice(0, 6)} onPick={(chip) => setConsultationForm((c) => ({ ...c, chiefComplaints: appendTokenLine(c.chiefComplaints, chip) }))} />
                 </Stack>
               </SectionCard>
 
-              <SectionCard id="symptoms" title="Symptoms" subtitle="Chip-first symptom capture" icon={<HealingRoundedIcon fontSize="small" />} expanded={expanded.symptoms} onToggle={toggleSection}>
+              <SectionCard
+                id="symptoms"
+                title="Symptoms"
+                subtitle="Chip-first symptom capture"
+                icon={<HealingRoundedIcon fontSize="small" />}
+                expanded={expanded.symptoms}
+                onToggle={toggleSection}
+                primaryAction={(
+                  <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("symptoms")}>
+                    Extract
+                  </Button>
+                )}
+              >
                 <Stack spacing={1}>
-                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
-                    <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("symptoms")}>
-                      Extract
-                    </Button>
-                    <Typography variant="caption" color="text.secondary">
-                      AI suggestions are assistive. Doctor must verify before use.
-                    </Typography>
-                  </Stack>
                   {clinicalAiDrafts.symptoms.generatedAt || clinicalAiDrafts.symptoms.error || clinicalAiDrafts.symptoms.status !== "DRAFTED" || clinicalAiDrafts.symptoms.draftText.trim() ? renderClinicalAiDraftCard("symptoms") : null}
                   <QuickChipGroup disabled={readOnly} chips={SYMPTOM_CHIPS} onPick={(chip) => setConsultationForm((c) => ({ ...c, symptoms: appendTokenLine(c.symptoms, chip) }))} />
                   <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
@@ -4480,16 +6497,20 @@ export default function ConsultationWorkspacePage() {
                 </Stack>
               </SectionCard>
 
-              <SectionCard id="diagnosis" title="Diagnosis" subtitle="Suggestions with inline AI" icon={<PsychologyRoundedIcon fontSize="small" />} expanded={expanded.diagnosis} onToggle={toggleSection}>
+              <SectionCard
+                id="diagnosis"
+                title="Diagnosis"
+                subtitle="Suggestions with inline AI"
+                icon={<PsychologyRoundedIcon fontSize="small" />}
+                expanded={expanded.diagnosis}
+                onToggle={toggleSection}
+                primaryAction={(
+                  <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("diagnosis")}>
+                    Suggest
+                  </Button>
+                )}
+              >
                 <Stack spacing={1}>
-                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
-                    <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("diagnosis")}>
-                      Suggest
-                    </Button>
-                    <Typography variant="caption" color="text.secondary">
-                      AI suggestions are assistive. Doctor must verify before use.
-                    </Typography>
-                  </Stack>
                   {clinicalAiDrafts.diagnosis.generatedAt || clinicalAiDrafts.diagnosis.error || clinicalAiDrafts.diagnosis.status !== "DRAFTED" || clinicalAiDrafts.diagnosis.draftText.trim() ? renderClinicalAiDraftCard("diagnosis") : null}
                   <Stack direction={{ xs: "column", md: "row" }} spacing={1} alignItems={{ xs: "stretch", md: "center" }}>
                     <TextField
@@ -4523,12 +6544,12 @@ export default function ConsultationWorkspacePage() {
                       {canRunAi ? (
                         <Button
                           type="button"
-                          variant="contained"
+                          variant="outlined"
                           startIcon={<AutoAwesomeRoundedIcon fontSize="small" />}
                           disabled={!canGenerateClinicalReasoning}
                           onClick={() => void runAiAction("diagnosis")}
                         >
-                          Generate clinical reasoning
+                          Explain
                         </Button>
                       ) : null}
                     </Stack>
@@ -4583,6 +6604,24 @@ export default function ConsultationWorkspacePage() {
                                   {aiDiagnosisProvider ? <Chip size="small" variant="outlined" label={`Provider: ${aiDiagnosisProvider}`} /> : null}
                                   {aiDiagnosisSummary ? <Chip size="small" color="primary" variant="outlined" label="AI ready" /> : null}
                                 </Stack>
+                                {aiDiagnosisItems.length ? (
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
+                                    {diagnosisItemChips.map((item) => (
+                                      <Chip key={item.title} size="small" variant="outlined" label={item.title} />
+                                    ))}
+                                    {diagnosisItemOverflow > 0 ? (
+                                      <Button
+                                        type="button"
+                                        size="small"
+                                        variant="text"
+                                        aria-label={diagnosisItemsExpanded ? "Show less diagnosis chips" : `Show ${diagnosisItemOverflow} more diagnosis chips`}
+                                        onClick={() => setDiagnosisItemsExpanded((current) => !current)}
+                                      >
+                                        {diagnosisItemsExpanded ? "Show less" : `+${diagnosisItemOverflow} more`}
+                                      </Button>
+                                    ) : null}
+                                  </Stack>
+                                ) : null}
                                 {aiDiagnosisUnstructured && !aiDiagnosisItems.length ? (
                                   <Alert severity="error" sx={{ py: 0.5 }}>
                                     {aiDiagnosisSuggestion || "AI returned an invalid response. Please retry."}
@@ -4618,7 +6657,7 @@ export default function ConsultationWorkspacePage() {
                               <Box sx={{ p: 1.1, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
                                 <Stack spacing={0.4}>
                                   <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                                    Ask AIVA to suggest differential diagnoses based on current symptoms.
+                              Review the diagnosis suggestions based on current symptoms.
                                   </Typography>
                                   <Typography variant="caption" color="text.secondary">
                                     AI suggestions are assistive only. Doctor must verify before use.
@@ -4637,44 +6676,108 @@ export default function ConsultationWorkspacePage() {
                           <Stack spacing={0.8}>
                             <Stack direction="row" spacing={0.75} alignItems="center">
                               <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>AI clinical reasoning</Typography>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Clinical reasoning</Typography>
                             </Stack>
-                            <Typography variant="caption" color="text.secondary">Reasoning summary and next steps</Typography>
-                            <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                              {aiBusy && aiActiveAction === "diagnosis" ? (
-                                <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.45 }}>
-                                  Generating reasoning...
-                                </Typography>
-                              ) : aiDiagnosisSuggestion ? (
-                                <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
-                                  {aiDiagnosisSuggestion}
-                                </Typography>
-                              ) : (
-                                <Typography variant="body2" color="text.secondary">
-                                  Generate clinical reasoning to see differential diagnoses, suggested tests, and next steps.
-                                </Typography>
-                              )}
-                            </Box>
-                            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                              <Button
-                                type="button"
-                                size="small"
-                                variant="outlined"
-                                disabled={readOnly || !aiDiagnosisSuggestion}
-                                onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, aiDiagnosisSummary || aiDiagnosisSuggestion || "") }))}
-                              >
-                                Add to diagnosis
-                              </Button>
-                              <Button
-                                type="button"
-                                size="small"
-                                variant="outlined"
-                                disabled={readOnly || !aiDiagnosisSummary}
-                                onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, aiDiagnosisSummary || "") }))}
-                              >
-                                Add summary
-                              </Button>
-                            </Stack>
+                            {aiDiagnosisSuggestion || aiDiagnosisItems.length ? (
+                              diagnosisReasoningOpen ? (
+                                <Stack spacing={0.75}>
+                                  <Box sx={{ p: 0.9, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+                                    <Stack spacing={0.55}>
+                                      <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
+                                        {aiBusy && aiActiveAction === "diagnosis"
+                                          ? "Generating reasoning..."
+                                          : aiDiagnosisSummary || aiDiagnosisItems[0]?.title || "Clinical reasoning available"}
+                                      </Typography>
+                                      {aiDiagnosisItems.length ? (
+                                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                          {aiDiagnosisItems.slice(0, 3).map((item) => (
+                                            <Chip key={item.title} size="small" variant="outlined" label={item.title} />
+                                          ))}
+                                        </Stack>
+                                      ) : null}
+                                    </Stack>
+                                  </Box>
+                                  <Stack spacing={0.35}>
+                                    <Typography variant="caption" color="text.secondary">Clinical reasoning</Typography>
+                                    <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
+                                      {aiDiagnosisSuggestion || "No reasoning text captured yet."}
+                                    </Typography>
+                                  </Stack>
+                                <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                                  <Button
+                                    type="button"
+                                    size="small"
+                                    variant="outlined"
+                                    disabled={readOnly || !aiDiagnosisSuggestion}
+                                      onClick={() => setConsultationForm((c) => ({ ...c, diagnosis: appendTokenLine(c.diagnosis, aiDiagnosisSummary || aiDiagnosisSuggestion || "") }))}
+                                    >
+                                      Add to diagnosis
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="small"
+                                      variant="outlined"
+                                      disabled={readOnly || !aiDiagnosisSuggestion}
+                                      onClick={() => setConsultationForm((c) => ({ ...c, clinicalNotes: appendTokenLine(c.clinicalNotes, aiDiagnosisSummary || aiDiagnosisSuggestion || "") }))}
+                                    >
+                                      Add to SOAP
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="small"
+                                      variant="outlined"
+                                      disabled={readOnly || !aiDiagnosisSuggestion}
+                                      onClick={() => setConsultationForm((c) => ({ ...c, advice: appendTokenLine(c.advice, aiDiagnosisSummary || aiDiagnosisSuggestion || "") }))}
+                                    >
+                                      Add to Advice
+                                    </Button>
+                                  <Button type="button" size="small" variant="outlined" disabled={!aiDiagnosisSuggestion} onClick={() => void navigator.clipboard.writeText(aiDiagnosisSuggestion || "")}>
+                                    Copy
+                                  </Button>
+                                </Stack>
+                                <Button
+                                  type="button"
+                                  size="small"
+                                  variant="text"
+                                  aria-label="Hide reasoning"
+                                  onClick={() => setDiagnosisReasoningOpen(false)}
+                                >
+                                  Hide reasoning
+                                </Button>
+                              </Stack>
+                            ) : (
+                              <Box sx={{ p: 0.85, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+                                <Stack spacing={0.4}>
+                                    <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
+                                      Clinical reasoning available
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                      Review likely assessment, differentials, red flags, and suggested tests.
+                                    </Typography>
+                                    <Button
+                                      type="button"
+                                      size="small"
+                                      variant="text"
+                                      aria-label="Review reasoning"
+                                      onClick={() => setDiagnosisReasoningOpen(true)}
+                                    >
+                                      Review reasoning
+                                    </Button>
+                                  </Stack>
+                                </Box>
+                              )
+                            ) : (
+                              <Box sx={{ p: 0.85, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+                                <Stack spacing={0.4}>
+                                  <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
+                                    No reasoning generated yet.
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    Generate reasoning to review assessment, differentials, red flags, and suggested tests.
+                                  </Typography>
+                                </Stack>
+                              </Box>
+                            )}
                           </Stack>
                         </CardContent>
                       </Card>
@@ -4683,17 +6786,26 @@ export default function ConsultationWorkspacePage() {
                 </Stack>
               </SectionCard>
 
-              <SectionCard id="notes" title="Clinical Notes / SOAP" subtitle="Subjective, objective, assessment, and plan" icon={<DescriptionRoundedIcon fontSize="small" />} expanded={expanded.notes} onToggle={toggleSection}>
+              <SectionCard
+                id="notes"
+                title="Clinical Notes / SOAP"
+                subtitle="Subjective, objective, assessment, and plan"
+                icon={<DescriptionRoundedIcon fontSize="small" />}
+                expanded={expanded.notes}
+                onToggle={toggleSection}
+                primaryAction={(
+                  <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("soap")}>
+                    Draft SOAP
+                  </Button>
+                )}
+              >
                 <Stack spacing={1}>
-                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
-                    <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("soap")}>
-                      Draft SOAP
-                    </Button>
-                    <Typography variant="caption" color="text.secondary">
-                      AI suggestions are assistive. Doctor must verify before use.
-                    </Typography>
-                  </Stack>
                   {clinicalAiDrafts.soap.generatedAt || clinicalAiDrafts.soap.error || clinicalAiDrafts.soap.status !== "DRAFTED" || clinicalAiDrafts.soap.draftText.trim() ? renderClinicalAiDraftCard("soap") : null}
+                  {!(consultationForm.chiefComplaints.trim() || consultationForm.clinicalNotes.trim() || consultationForm.diagnosis.trim() || consultationForm.advice.trim()) ? (
+                    <Typography variant="caption" color="text.secondary">
+                      Generate SOAP using AIVA or complete manually.
+                    </Typography>
+                  ) : null}
                   <Grid container spacing={0.75}>
                     <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Subjective" value={consultationForm.chiefComplaints} onChange={(e) => setConsultationForm((c) => ({ ...c, chiefComplaints: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
                     <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Objective" value={consultationForm.clinicalNotes} onChange={(e) => setConsultationForm((c) => ({ ...c, clinicalNotes: e.target.value }))} multiline minRows={2} disabled={readOnly} /></Grid>
@@ -4710,46 +6822,50 @@ export default function ConsultationWorkspacePage() {
                 sx={{
                   minWidth: 0,
                   minHeight: 0,
+                  position: { xl: "sticky" },
+                  top: { xl: 16 },
+                  alignSelf: { xl: "flex-start" },
                 }}
               >
                 <Stack
-                  spacing={1}
+                  spacing={0.85}
                   sx={{
                     display: "flex",
                     flexDirection: "column",
-                    gap: 1,
+                    gap: 0.85,
                     minWidth: 0,
                     minHeight: 0,
                     overflowX: "hidden",
-                    overflowY: "visible",
+                    overflowY: { xl: "auto" },
                     pr: 0,
+                    maxHeight: { xl: "calc(100vh - 32px)" },
                   }}
                 >
                   <PatientIntelligenceCard context={clinicalContext} loading={clinicalContextLoading} error={clinicalContextError} />
                   <Card variant="outlined" sx={{ boxShadow: "none", overflow: "visible", height: "auto", minHeight: "auto" }}>
                     <CardContent sx={{ p: 0.95, "&:last-child": { pb: 0.95 } }}>
-                      <Stack spacing={0.85}>
-                        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                          <Box>
-                            <Stack direction="row" spacing={0.75} alignItems="center">
-                              <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                              <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>AIVA Chat</Typography>
-                            </Stack>
-                            <Typography variant="caption" color="text.secondary">Ask AIVA anything about this consultation.</Typography>
-                          </Box>
-                          <Chip size="small" color={aiAvailable ? "success" : "warning"} variant="outlined" label={aiAvailable ? "AI ready" : "AI unavailable"} />
-                        </Stack>
+                        <Stack spacing={0.85}>
+                          <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                            <Box>
+                              <Stack direction="row" spacing={0.75} alignItems="center">
+                                <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                                <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Clinical Chat</Typography>
+                              </Stack>
+                              <Typography variant="caption" color="text.secondary">Ask anything about this consultation...</Typography>
+                            </Box>
+                            <Chip size="small" color={aiAvailable ? "success" : "warning"} variant="outlined" label={aiAvailable ? "AI ready" : "AI unavailable"} />
+                          </Stack>
                         <Alert severity="info" sx={{ py: 0.4 }}>
-                          AI suggestions are assistive only. Doctor must verify.
+                          {AI_SAFETY_NOTE}
                         </Alert>
                         <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper", overflow: "visible" }}>
                           <Stack spacing={0.65}>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Ask AIVA</Typography>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Clinical Chat</Typography>
                             <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "flex-end" }}>
                               <TextField
                                 size="small"
                                 fullWidth
-                                placeholder="Ask about diagnosis, red flags, tests, or prescription safety…"
+                                placeholder="Ask anything about this consultation..."
                                 value={aivaClinicalQuestion}
                                 onChange={(e) => setAivaClinicalQuestion(e.target.value)}
                                 onKeyDown={(e) => {
@@ -4810,7 +6926,7 @@ export default function ConsultationWorkspacePage() {
                               <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
                                 <Stack direction="row" spacing={0.75} alignItems="center">
                                   <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                                  <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>AIVA Chat</Typography>
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Clinical Chat</Typography>
                                 </Stack>
                                 <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                                   {aiBusy && aiActiveAction ? <Chip size="small" color="warning" variant="outlined" label={`Loading ${aiAssistActionLabel(aiActiveAction)}…`} /> : null}
@@ -4843,6 +6959,19 @@ export default function ConsultationWorkspacePage() {
                                             <Typography variant="caption" color="text.secondary">{compactDateTime(message.createdAt)}</Typography>
                                           </Stack>
                                           <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{message.text}</Typography>
+                                          {message.role === "AIVA" && message.text.trim() ? (
+                                            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                                              <Button type="button" size="small" variant="outlined" onClick={() => void navigator.clipboard.writeText(message.text)}>
+                                                Copy
+                                              </Button>
+                                              <Button type="button" size="small" variant="outlined" disabled={readOnly} onClick={() => setConsultationForm((current) => ({ ...current, clinicalNotes: appendTokenLine(current.clinicalNotes, message.text) }))}>
+                                                Add to SOAP
+                                              </Button>
+                                              <Button type="button" size="small" variant="outlined" disabled={readOnly} onClick={() => setConsultationForm((current) => ({ ...current, advice: appendTokenLine(current.advice, message.text) }))}>
+                                                Add to Advice
+                                              </Button>
+                                            </Stack>
+                                          ) : null}
                                         </Stack>
                                       </Box>
                                     </Box>
@@ -4850,9 +6979,23 @@ export default function ConsultationWorkspacePage() {
                                 </Stack>
                               ) : (
                                 <Box sx={{ p: 1.2, borderRadius: 2, bgcolor: "action.hover" }}>
+                                  <Stack spacing={0.75}>
                                   <Typography variant="body2" color="text.secondary">
-                                    Ask AIVA anything about this consultation.
-                                  </Typography>
+                                      Ask anything about this consultation...
+                                    </Typography>
+                                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                      {AIVA_QUICK_PROMPTS.map((prompt) => (
+                                        <Chip
+                                          key={prompt}
+                                          size="small"
+                                          variant="outlined"
+                                          clickable={!aiBusy && !aivaQuestionSubmitting}
+                                          label={prompt}
+                                          onClick={() => setAivaClinicalQuestion(prompt)}
+                                        />
+                                      ))}
+                                    </Stack>
+                                  </Stack>
                                 </Box>
                               )}
                             </Stack>
@@ -4862,17 +7005,26 @@ export default function ConsultationWorkspacePage() {
                     </CardContent>
                   </Card>
 
-                  <SectionCard id="followup" title="Vitals & Follow-up" subtitle="Capture essentials, set next visit" icon={<MonitorHeartRoundedIcon fontSize="small" />} expanded={expanded.followup} onToggle={toggleSection}>
+                  <SectionCard
+                    id="followup"
+                    title="Vitals & Follow-up"
+                    subtitle="Capture essentials, set next visit"
+                    icon={<MonitorHeartRoundedIcon fontSize="small" />}
+                    expanded={expanded.followup}
+                    onToggle={toggleSection}
+                    primaryAction={(
+                      <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("followUp")}>
+                        Suggest
+                      </Button>
+                    )}
+                  >
                     <Stack spacing={1} sx={{ overflow: "visible", minHeight: 0 }}>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
-                        <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("followUp")}>
-                          Suggest
-                        </Button>
-                        <Typography variant="caption" color="text.secondary">
-                          AI suggestions are assistive. Doctor must verify before use.
-                        </Typography>
-                      </Stack>
                       {clinicalAiDrafts.followUp.generatedAt || clinicalAiDrafts.followUp.error || clinicalAiDrafts.followUp.status !== "DRAFTED" || clinicalAiDrafts.followUp.draftText.trim() ? renderClinicalAiDraftCard("followUp") : null}
+                      {!lastConsultation && !intakeVitals ? (
+                        <Typography variant="caption" color="text.secondary">
+                          No previous vitals available.
+                        </Typography>
+                      ) : null}
                       <Box
                         sx={{
                           display: "grid",
@@ -4887,48 +7039,72 @@ export default function ConsultationWorkspacePage() {
                             label: "BP Sys",
                             icon: <FavoriteRoundedIcon fontSize="small" color="error" />,
                             value: consultationForm.bloodPressureSystolic,
+                            todayValue: formatContextValue(latestVitals.bloodPressureSystolic),
+                            lastValue: formatContextValue(previousVitals.bloodPressureSystolic),
+                            trend: numericTrendLabel(latestVitals.bloodPressureSystolic, previousVitals.bloodPressureSystolic),
                             onChange: (value: string) => setConsultationForm((c) => ({ ...c, bloodPressureSystolic: value })),
                           },
                           {
                             label: "BP Dia",
                             icon: <FavoriteRoundedIcon fontSize="small" color="error" />,
                             value: consultationForm.bloodPressureDiastolic,
+                            todayValue: formatContextValue(latestVitals.bloodPressureDiastolic),
+                            lastValue: formatContextValue(previousVitals.bloodPressureDiastolic),
+                            trend: numericTrendLabel(latestVitals.bloodPressureDiastolic, previousVitals.bloodPressureDiastolic),
                             onChange: (value: string) => setConsultationForm((c) => ({ ...c, bloodPressureDiastolic: value })),
                           },
                           {
                             label: "Pulse",
                             icon: <MonitorHeartRoundedIcon fontSize="small" color="primary" />,
                             value: consultationForm.pulseRate,
+                            todayValue: formatContextValue(latestVitals.pulseRate),
+                            lastValue: formatContextValue(previousVitals.pulseRate),
+                            trend: numericTrendLabel(latestVitals.pulseRate, previousVitals.pulseRate),
                             onChange: (value: string) => setConsultationForm((c) => ({ ...c, pulseRate: value })),
                           },
                           {
                             label: "Temp",
                             icon: <EventRoundedIcon fontSize="small" color="warning" />,
                             value: consultationForm.temperature,
+                            todayValue: formatContextValue(latestVitals.temperature),
+                            lastValue: formatContextValue(previousVitals.temperature),
+                            trend: numericTrendLabel(latestVitals.temperature, previousVitals.temperature),
                             onChange: (value: string) => setConsultationForm((c) => ({ ...c, temperature: value })),
                           },
                           {
                             label: "SpO2",
                             icon: <HealthAndSafetyRoundedIcon fontSize="small" color="success" />,
                             value: consultationForm.spo2,
+                            todayValue: formatContextValue(latestVitals.spo2),
+                            lastValue: formatContextValue(previousVitals.spo2),
+                            trend: numericTrendLabel(latestVitals.spo2, previousVitals.spo2),
                             onChange: (value: string) => setConsultationForm((c) => ({ ...c, spo2: value })),
                           },
                           {
                             label: "Resp. Rate",
                             icon: <ScienceRoundedIcon fontSize="small" color="secondary" />,
                             value: consultationForm.respiratoryRate,
+                            todayValue: formatContextValue(latestVitals?.respiratoryRate ?? null),
+                            lastValue: formatContextValue(previousVitals?.respiratoryRate ?? null),
+                            trend: "No previous",
                             onChange: (value: string) => setConsultationForm((c) => ({ ...c, respiratoryRate: value })),
                           },
                           {
                             label: "Weight (kg)",
                             icon: <PersonRoundedIcon fontSize="small" color="primary" />,
                             value: consultationForm.weightKg,
+                            todayValue: formatContextValue(latestVitals.weightKg),
+                            lastValue: formatContextValue(previousVitals.weightKg),
+                            trend: numericTrendLabel(latestVitals.weightKg, previousVitals.weightKg),
                             onChange: (value: string) => setConsultationForm((c) => ({ ...c, weightKg: value })),
                           },
                           {
                             label: "Height (cm)",
                             icon: <BadgeRoundedIcon fontSize="small" color="primary" />,
                             value: consultationForm.heightCm,
+                            todayValue: formatContextValue(consultationForm.heightCm.trim() ? Number(consultationForm.heightCm) : intakeVitals?.heightCm ?? null),
+                            lastValue: formatContextValue(lastConsultation?.heightCm ?? null),
+                            trend: "No previous",
                             onChange: (value: string) => setConsultationForm((c) => ({ ...c, heightCm: value })),
                           },
                         ].map((item) => (
@@ -4939,6 +7115,11 @@ export default function ConsultationWorkspacePage() {
                                   {item.icon}
                                   <Typography variant="subtitle2" sx={{ fontWeight: 900, lineHeight: 1.05, fontSize: 12.5 }}>{item.label}</Typography>
                                 </Stack>
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  <Chip size="small" variant="outlined" label={`Current ${item.todayValue || "No value"}`} />
+                                  <Chip size="small" variant="outlined" label={item.lastValue ? `Previous ${item.lastValue}` : "No previous value"} />
+                                  <Chip size="small" variant="outlined" label={item.trend === "No previous" ? "No previous" : `Trend ${item.trend}`} />
+                                </Stack>
                                 <TextField
                                   size="small"
                                   fullWidth
@@ -4948,9 +7129,6 @@ export default function ConsultationWorkspacePage() {
                                   disabled={readOnly}
                                   sx={{ flex: 1, minWidth: 0 }}
                                 />
-                                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.05 }}>
-                                  Trend n/a
-                                </Typography>
                               </Stack>
                             </CardContent>
                           </Card>
@@ -4981,9 +7159,6 @@ export default function ConsultationWorkspacePage() {
                                   <MenuItem value="FAHRENHEIT">F</MenuItem>
                                 </Select>
                               </FormControl>
-                              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.05 }}>
-                                Trend n/a
-                              </Typography>
                             </Stack>
                           </CardContent>
                         </Card>
@@ -4996,14 +7171,12 @@ export default function ConsultationWorkspacePage() {
                                 <Typography variant="subtitle2" sx={{ fontWeight: 900, lineHeight: 1.05, fontSize: 12.5 }}>BMI</Typography>
                               </Stack>
                               <Stack direction="row" spacing={0.5} flexWrap="wrap">
-                                <Chip size="small" label={`BMI ${currentBmi ? currentBmi.toFixed(1) : "-"}`} variant="outlined" />
-                                <Chip size="small" label={currentBmiCategory || "BMI n/a"} variant="outlined" />
-                                <Chip size="small" label={`Last ${lastBmi ? lastBmi.toFixed(1) : "-"}`} variant="outlined" />
-                                <Chip size="small" label={lastBmiCategory || "Last BMI n/a"} variant="outlined" />
+                                <Chip size="small" label={`Current ${currentBmi ? currentBmi.toFixed(1) : "No value"}`} variant="outlined" />
+                                <Chip size="small" label={currentBmiCategory || "No BMI category"} variant="outlined" />
+                                <Chip size="small" label={lastBmi ? `Previous ${lastBmi.toFixed(1)}` : "No previous value"} variant="outlined" />
+                                <Chip size="small" label={lastBmiCategory || "No previous BMI"} variant="outlined" />
+                                <Chip size="small" label={numericTrendLabel(currentBmi, lastBmi) === "No previous" ? "No previous" : `Trend ${numericTrendLabel(currentBmi, lastBmi)}`} variant="outlined" />
                               </Stack>
-                              <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.05 }}>
-                                Trend n/a
-                              </Typography>
                             </Stack>
                           </CardContent>
                         </Card>
@@ -5039,18 +7212,25 @@ export default function ConsultationWorkspacePage() {
                     </Stack>
                   </SectionCard>
 
-                  <SectionCard id="advice" title="Advice" subtitle="Reusable advice shortcuts" icon={<LightbulbRoundedIcon fontSize="small" />} expanded={expanded.advice} onToggle={toggleSection}>
+                  <SectionCard
+                    id="advice"
+                    title="Advice"
+                    subtitle="Reusable advice shortcuts"
+                    icon={<LightbulbRoundedIcon fontSize="small" />}
+                    expanded={expanded.advice}
+                    onToggle={toggleSection}
+                    primaryAction={(
+                      <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("advice")}>
+                        Draft Advice
+                      </Button>
+                    )}
+                  >
                     <Stack spacing={1.25} sx={{ overflow: "visible", minHeight: 0 }}>
-                      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
-                        <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void runClinicalDraftAction("advice")}>
-                          Draft Advice
-                        </Button>
-                        <Typography variant="caption" color="text.secondary">
-                          AI suggestions are assistive. Doctor must verify before use.
-                        </Typography>
-                      </Stack>
                       {clinicalAiDrafts.advice.generatedAt || clinicalAiDrafts.advice.error || clinicalAiDrafts.advice.status !== "DRAFTED" || clinicalAiDrafts.advice.draftText.trim() ? renderClinicalAiDraftCard("advice") : null}
                       <Box sx={{ overflow: "visible", minHeight: 0 }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.4 }}>
+                          Frequently Used Advice
+                        </Typography>
                         <QuickChipGroup disabled={readOnly} chips={ADVICE_CHIPS} onPick={(chip) => setConsultationForm((c) => ({ ...c, advice: appendTokenLine(c.advice, chip) }))} />
                       </Box>
                       <TextField size="small" fullWidth label="Advice" value={consultationForm.advice} onChange={(e) => setConsultationForm((c) => ({ ...c, advice: e.target.value }))} multiline minRows={2} disabled={readOnly} />
@@ -5080,7 +7260,7 @@ export default function ConsultationWorkspacePage() {
                               <Stack direction="row" spacing={0.75} alignItems="center">
                                 <InsightsRoundedIcon fontSize="small" color="primary" />
                                 <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                                  No previous comparable reports.
+                              No previous reports available. Upload an external report or order investigations to begin tracking trends.
                                 </Typography>
                               </Stack>
                               <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
@@ -5129,7 +7309,7 @@ export default function ConsultationWorkspacePage() {
                         {expanded.history ? "Hide" : "View"}
                       </Button>
                     </Box>
-                    <Collapse in={expanded.history} timeout="auto" unmountOnExit>
+                    <Collapse in={expanded.history} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
                     <Stack spacing={1}>
                       {!activeTimeline.length ? (
                         <Alert severity="info" sx={{ py: 0.5 }}>No previous clinical history recorded.</Alert>
@@ -5192,21 +7372,71 @@ export default function ConsultationWorkspacePage() {
 
       {activeTab === 1 ? (
         <Grid container spacing={1.5}>
-          <Grid size={{ xs: 12, lg: 4 }}>
-            <Stack spacing={1.25}>
-              <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                <CardContent sx={{ p: 1.5 }}>
-                  <Stack spacing={1.25}>
-                    <Stack direction="row" spacing={0.75} alignItems="center">
-                      <MedicationRoundedIcon fontSize="small" color="primary" />
+          <Grid size={{ xs: 12 }}>
+            <WorkflowStrip text="Search Medicine → Prescribe → Safety Review → Preview → Finalize" />
+          </Grid>
+          <Grid
+              size={{ xs: 12, lg: 4 }}
+              sx={{
+                minWidth: 0,
+                minHeight: 0,
+                position: { xl: "sticky" },
+                top: { xl: 160 },
+                alignSelf: { xl: "flex-start" },
+              }}
+            >
+              <Stack spacing={1.25} sx={{ minWidth: 0 }}>
+                <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                  <CardContent sx={{ p: 1.5 }}>
+                    <Stack spacing={1.25}>
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <MedicationRoundedIcon fontSize="small" color="primary" />
                       <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Medicine Search</Typography>
                     </Stack>
                     {medicineCatalogWarning ? <Alert severity="warning">{medicineCatalogWarning}</Alert> : null}
                     <TextField size="small" placeholder="Search medicine or strength" value={medicineSearch} disabled={prescriptionReadOnly} onChange={(e) => setMedicineSearch(e.target.value)} />
-                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ maxHeight: 180, overflow: "auto", pr: 0.5 }}>
-                      {filteredMedicines.length ? filteredMedicines.map((medicine) => (
-                        <Chip key={medicine.id} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={`${medicine.medicineName}${medicine.strength ? ` ${medicine.strength}` : ""}`} onClick={() => addMedicineFromCatalog(medicine)} variant="outlined" />
-                      )) : <Alert severity="info">No catalog match. Add manually.</Alert>}
+                    <Stack spacing={1}>
+                      <Stack spacing={0.45}>
+                        <Typography variant="caption" color="text.secondary">Frequently Used</Typography>
+                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                          {groupedMedicineCatalog.frequent.length ? groupedMedicineCatalog.frequent.map((medicine) => (
+                            <Chip key={medicine.id} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={`${medicine.medicineName}${medicine.strength ? ` ${medicine.strength}` : ""}`} onClick={() => addMedicineFromCatalog(medicine)} variant="outlined" />
+                          )) : (
+                            <Typography variant="caption" color="text.secondary">No frequently used medicines.</Typography>
+                          )}
+                        </Stack>
+                      </Stack>
+                      <Stack spacing={0.45}>
+                        <Typography variant="caption" color="text.secondary">Recent</Typography>
+                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                          {previousMedicineGroups.recent.length ? previousMedicineGroups.recent.map((name) => (
+                            <Chip key={name} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={name} onClick={() => addMedicineFromCatalog({ medicineName: name, medicineType: null, strength: "", defaultDosage: "", defaultFrequency: "", defaultDurationDays: null, defaultTiming: null, defaultInstructions: "" })} />
+                          )) : (
+                            <Typography variant="caption" color="text.secondary">No recent medicines.</Typography>
+                          )}
+                        </Stack>
+                      </Stack>
+                      <Stack spacing={0.45}>
+                        <Typography variant="caption" color="text.secondary">Favorites</Typography>
+                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                          {groupedMedicineCatalog.favorite.length ? groupedMedicineCatalog.favorite.map((name) => (
+                            <Chip key={name} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={name} onClick={() => addMedicineFromCatalog({ medicineName: name, medicineType: null, strength: "", defaultDosage: "", defaultFrequency: "", defaultDurationDays: null, defaultTiming: null, defaultInstructions: "" })} variant="outlined" />
+                          )) : (
+                            <Typography variant="caption" color="text.secondary">No favorite medicines yet.</Typography>
+                          )}
+                        </Stack>
+                      </Stack>
+                      <Divider />
+                      <Stack spacing={0.45}>
+                        <Typography variant="caption" color="text.secondary">All Medicines</Typography>
+                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                          {groupedMedicineCatalog.allMedicines.length ? groupedMedicineCatalog.allMedicines.map((medicine) => (
+                            <Chip key={medicine.id} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={`${medicine.medicineName}${medicine.strength ? ` ${medicine.strength}` : ""}`} onClick={() => addMedicineFromCatalog(medicine)} variant="outlined" />
+                          )) : (
+                            <Alert severity="info">No catalog match. Add manually.</Alert>
+                          )}
+                        </Stack>
+                      </Stack>
                     </Stack>
                   </Stack>
                 </CardContent>
@@ -5222,16 +7452,92 @@ export default function ConsultationWorkspacePage() {
                     <Typography variant="caption" color="text.secondary">
                       Fast packs replace the current prescription draft after confirmation. Existing manual rows are not overwritten silently.
                     </Typography>
-                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                      <Chip size="small" clickable={!prescriptionReadOnly} color="secondary" variant={selectedRxTemplateKey === "repeat-previous" ? "filled" : "outlined"} label="Repeat previous prescription" disabled={!previousPrescriptions.length || prescriptionReadOnly} onClick={repeatPreviousPrescription} />
-                      {RX_TEMPLATES.map((template) => <Chip key={template.key} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} color="primary" variant={selectedRxTemplateKey === template.key ? "filled" : "outlined"} label={template.label} onClick={() => applyRxTemplate(template)} />)}
-                    </Stack>
-                    <Divider />
-                    <Typography variant="caption" color="text.secondary">Recent medicines</Typography>
-                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                      {recentMedicineNames.length ? recentMedicineNames.map((name) => (
-                        <Chip key={name} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={name} onClick={() => addMedicineFromCatalog({ medicineName: name, medicineType: null, strength: "", defaultDosage: "", defaultFrequency: "", defaultDurationDays: null, defaultTiming: null, defaultInstructions: "" })} />
-                      )) : <Typography variant="caption" color="text.secondary">No recent medicines.</Typography>}
+                    <Stack spacing={1}>
+                      <Stack spacing={0.45}>
+                        <Typography variant="caption" color="text.secondary">Favorite Packs</Typography>
+                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                          <Typography variant="caption" color="text.secondary">No favorite packs yet.</Typography>
+                        </Stack>
+                      </Stack>
+                      <Stack spacing={0.45}>
+                        <Typography variant="caption" color="text.secondary">Recent Packs</Typography>
+                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                          {fastPackRecentTemplates.length ? fastPackRecentTemplates.map((template) => (
+                            <Chip
+                              key={template.key}
+                              size="small"
+                              clickable={!prescriptionReadOnly}
+                              color="secondary"
+                              variant={selectedRxTemplateKey === "repeat-previous" ? "filled" : "outlined"}
+                              label="Repeat previous prescription"
+                              disabled={!previousPrescriptions.length || prescriptionReadOnly}
+                              onClick={repeatPreviousPrescription}
+                            />
+                          )) : (
+                            <Typography variant="caption" color="text.secondary">No recent packs.</Typography>
+                          )}
+                        </Stack>
+                      </Stack>
+                      <Stack spacing={0.45}>
+                        <Typography variant="caption" color="text.secondary">Clinic Templates</Typography>
+                        <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                          {fastPackClinicTemplates.map((template) => (
+                            <Chip
+                              key={template.key}
+                              size="small"
+                              clickable={!prescriptionReadOnly}
+                              disabled={prescriptionReadOnly}
+                              color="primary"
+                              variant={selectedRxTemplateKey === template.key ? "filled" : "outlined"}
+                              label={template.label}
+                              onClick={() => applyRxTemplate(template)}
+                            />
+                          ))}
+                        </Stack>
+                      </Stack>
+                      <Divider />
+                      <Stack spacing={0.45}>
+                        <Typography variant="caption" color="text.secondary">Previous Medicines</Typography>
+                        <Stack spacing={0.55}>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            <Typography variant="caption" color="text.secondary">Favorites</Typography>
+                            {previousMedicineGroups.favorites.length ? previousMedicineGroups.favorites.map((name) => (
+                              <Chip key={name} size="small" label={name} clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} onClick={() => addMedicineFromCatalog({ medicineName: name, medicineType: null, strength: "", defaultDosage: "", defaultFrequency: "", defaultDurationDays: null, defaultTiming: null, defaultInstructions: "" })} />
+                            )) : <Typography variant="caption" color="text.secondary">No favorite medicines yet.</Typography>}
+                          </Stack>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            <Typography variant="caption" color="text.secondary">Recent</Typography>
+                            {previousMedicineGroups.recent.length ? previousMedicineGroups.recent.map((name) => (
+                              <Chip key={`recent-${name}`} size="small" label={name} clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} onClick={() => addMedicineFromCatalog({ medicineName: name, medicineType: null, strength: "", defaultDosage: "", defaultFrequency: "", defaultDurationDays: null, defaultTiming: null, defaultInstructions: "" })} />
+                            )) : <Typography variant="caption" color="text.secondary">No recent medicines.</Typography>}
+                          </Stack>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            <Typography variant="caption" color="text.secondary">Last prescribed</Typography>
+                            {previousMedicineGroups.lastPrescribed.length ? previousMedicineGroups.lastPrescribed.map((name) => (
+                              <Chip key={`last-${name}`} size="small" label={name} clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} onClick={() => addMedicineFromCatalog({ medicineName: name, medicineType: null, strength: "", defaultDosage: "", defaultFrequency: "", defaultDurationDays: null, defaultTiming: null, defaultInstructions: "" })} />
+                            )) : <Typography variant="caption" color="text.secondary">No last prescribed medicines.</Typography>}
+                          </Stack>
+                        </Stack>
+                      </Stack>
+                      {fastPackAiSuggestions.length ? (
+                        <Stack spacing={0.45}>
+                          <Typography variant="caption" color="text.secondary">AI Suggested</Typography>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            {fastPackAiSuggestions.map((item, index) => (
+                              <Chip
+                                key={`${item.medicine}-${index}`}
+                                size="small"
+                                clickable={!prescriptionReadOnly}
+                                disabled={prescriptionReadOnly}
+                                color="secondary"
+                                variant="outlined"
+                                label={`${item.medicine}${item.dose ? ` • ${item.dose}` : ""}`}
+                                onClick={() => addMedicineFromAiSuggestion(item)}
+                              />
+                            ))}
+                          </Stack>
+                        </Stack>
+                      ) : null}
                     </Stack>
                   </Stack>
                 </CardContent>
@@ -5290,155 +7596,75 @@ export default function ConsultationWorkspacePage() {
                       </Typography>
                     ) : null}
 
-                    {aiPrescriptionSuggestion || aiPrescriptionItems.length ? (
-                      <Card variant="outlined" sx={{ boxShadow: "none" }}>
-                        <CardContent sx={{ p: 1 }}>
-                          <Stack spacing={1}>
-                            <Typography variant="subtitle2">AI Medicine / Prescription Suggestions</Typography>
-                            <Alert severity="info">
-                              AI suggestions are assistive only. Doctor must verify before use.
-                            </Alert>
-                            {aiPrescriptionUnstructured && !aiPrescriptionItems.length ? (
-                              <Alert severity="error">
-                                {aiPrescriptionSuggestion || "AI returned an invalid response. Please retry."}
-                              </Alert>
-                            ) : null}
-                            {aiPrescriptionItems.length ? (
-                              <Stack spacing={0.75}>
-                                {aiPrescriptionItems.map((item, index) => (
-                                  <Card key={`${item.medicine}-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
-                                    <CardContent sx={{ p: 1 }}>
-                                      <Stack spacing={0.75}>
-                                        <Stack direction="row" spacing={1} alignItems="flex-start" justifyContent="space-between">
-                                          <Box sx={{ minWidth: 0, flex: 1 }}>
-                                            <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.35 }}>
-                                              {item.medicine}
-                                            </Typography>
-                                            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
-                                              {[item.dose, item.frequency, item.duration].filter(Boolean).join(" • ") || "No dose details provided"}
-                                            </Typography>
-                                            {item.reason ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>{item.reason}</Typography> : null}
-                                            {item.safetyNote ? <Typography variant="caption" color="warning.main" sx={{ display: "block", mt: 0.25 }}>{item.safetyNote}</Typography> : null}
-                                          </Box>
-                                          <Button
-                                            type="button"
-                                            size="small"
-                                            variant="outlined"
-                                            disabled={prescriptionReadOnly}
-                                            onClick={() => addMedicineFromAiSuggestion(item)}
-                                          >
-                                            Add
-                                          </Button>
-                                        </Stack>
-                                      </Stack>
-                                    </CardContent>
-                                  </Card>
-                                ))}
-                              </Stack>
-                            ) : aiPrescriptionSuggestion ? (
-                              <Box
-                                sx={{
-                                  maxHeight: 180,
-                                  overflowY: "auto",
-                                  overflowX: "hidden",
-                                  p: 1,
-                                  border: 1,
-                                  borderColor: "divider",
-                                  borderRadius: 1,
-                                  whiteSpace: "pre-wrap",
-                                  wordBreak: "break-word",
-                                  fontSize: 13,
-                                  lineHeight: 1.45,
-                                }}
-                              >
-                                {aiPrescriptionSuggestion}
-                              </Box>
-                            ) : null}
-                            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                              <Button
-                                type="button"
-                                size="small"
-                                variant="outlined"
-                                disabled={prescriptionReadOnly || !aiPrescriptionSuggestion}
-                                onClick={() => setPrescriptionForm((current) => ({ ...current, advice: appendTokenLine(current.advice, aiPrescriptionSuggestion || "") }))}
-                              >
-                                Add to advice
+                    <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                      <CardContent sx={{ p: 1 }}>
+                        <Stack spacing={1}>
+                          <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                            <Stack direction="row" spacing={0.75} alignItems="center">
+                              <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Smart medicine suggestions</Typography>
+                            </Stack>
+                            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                              <Chip size="small" variant="outlined" label={aiPrescriptionItems.length ? `${aiPrescriptionItems.length} suggestion${aiPrescriptionItems.length === 1 ? "" : "s"}` : "No suggestions"} />
+                              <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!consultation || !patient || aiBusy} onClick={() => void applyAiPrescriptionTemplate()}>
+                                Suggest medicines with AIVA
                               </Button>
                             </Stack>
                           </Stack>
-                        </CardContent>
-                      </Card>
-                    ) : null}
+                          <Alert severity="info">AI medication suggestions are assistive. Doctor must verify before prescribing.</Alert>
+                          {aiPrescriptionUnstructured && !aiPrescriptionItems.length ? (
+                            <Alert severity="error">
+                              {aiPrescriptionSuggestion || "AI returned an invalid response. Please retry."}
+                            </Alert>
+                          ) : null}
+                          {aiPrescriptionItems.length ? (
+                            <Stack spacing={0.75}>
+                              {aiPrescriptionItems.map((item, index) => (
+                                <PrescriptionSuggestionDraftCard
+                                  key={`${item.medicine}-${index}`}
+                                  item={item}
+                                  generatedAt={prescriptionSuggestionGeneratedAt}
+                                  disabled={prescriptionReadOnly}
+                                  onAcceptSuggestion={(nextItem) => addMedicineFromAiSuggestion(nextItem)}
+                                  onRejectSuggestion={() => setInfo(`${item.medicine} suggestion rejected.`)}
+                                />
+                              ))}
+                            </Stack>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">
+                              Clinical medication suggestions will appear here when enough diagnosis, allergy, and medication context is available.
+                            </Typography>
+                          )}
+                        </Stack>
+                      </CardContent>
+                    </Card>
 
-                    <Grid container spacing={1.25}>
-                      <Grid size={{ xs: 12, md: 4 }}>
-                        <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                          <CardContent sx={{ p: 1.25 }}>
-                            <Stack spacing={0.75}>
-                              <Stack direction="row" spacing={0.75} alignItems="center">
-                                <HealthAndSafetyRoundedIcon fontSize="small" color="warning" />
-                                <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Drug safety</Typography>
-                              </Stack>
-                              <Typography variant="body2" color="text.secondary">
-                                Safety checks remain clinician-controlled. Review allergies, interactions, and contraindications before finalizing.
+                    <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                      <CardContent sx={{ p: 1 }}>
+                        <Stack spacing={0.75}>
+                          <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                            <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Prescription Quality Checklist</Typography>
+                            <Chip size="small" variant="outlined" color={prescriptionQualityChecklist.some((item) => item.state === "needs_review") ? "warning" : "success"} label={`${prescriptionQualityChecklist.filter((item) => item.state === "complete").length}/${prescriptionQualityChecklist.length} complete`} />
+                          </Stack>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
+                            {prescriptionQualityChecklist.slice(0, 4).map((item) => (
+                              <Chip
+                                key={item.label}
+                                size="small"
+                                variant="outlined"
+                                color={item.state === "complete" ? "success" : item.state === "needs_review" ? "warning" : "default"}
+                                label={`${item.label}: ${item.state === "complete" ? "Complete" : item.state === "needs_review" ? "Needs review" : "Missing"}`}
+                              />
+                            ))}
+                            {prescriptionQualityChecklist.length > 4 ? (
+                              <Typography variant="caption" color="text.secondary">
+                                View checklist below
                               </Typography>
-                              <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                                <Chip size="small" variant="outlined" label={patientRow?.allergies ? "Allergy review needed" : "No allergies recorded"} />
-                                <Chip size="small" variant="outlined" label="Interaction check" />
-                              </Stack>
-                            </Stack>
-                          </CardContent>
-                        </Card>
-                      </Grid>
-                      <Grid size={{ xs: 12, md: 4 }}>
-                        <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                          <CardContent sx={{ p: 1.25 }}>
-                            <Stack spacing={0.75}>
-                              <Stack direction="row" spacing={0.75} alignItems="center">
-                                <TrendingUpRoundedIcon fontSize="small" color="primary" />
-                                <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Previous prescription comparison</Typography>
-                              </Stack>
-                              {previousPrescriptions.length ? (
-                                <Typography variant="body2" color="text.secondary">
-                                  Compare against the most recent finalized prescription to preserve continuity and spot changes quickly.
-                                </Typography>
-                              ) : (
-                                <Typography variant="body2" color="text.secondary">
-                                  No previous prescription comparison available yet.
-                                </Typography>
-                              )}
-                              <Button type="button" size="small" variant="outlined" disabled={!previousPrescriptions.length}>
-                                Compare previous
-                              </Button>
-                            </Stack>
-                          </CardContent>
-                        </Card>
-                      </Grid>
-                      <Grid size={{ xs: 12, md: 4 }}>
-                        <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                          <CardContent sx={{ p: 1.25 }}>
-                            <Stack spacing={0.75}>
-                              <Stack direction="row" spacing={0.75} alignItems="center">
-                                <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                                <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>AI prescription suggestions</Typography>
-                              </Stack>
-                              {aiPrescriptionSuggestion ? (
-                                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>
-                                  {compactText(aiPrescriptionSuggestion, 120)}
-                                </Typography>
-                              ) : (
-                                <Typography variant="body2" color="text.secondary">
-                                  AI prescription suggestions will appear here when available.
-                                </Typography>
-                              )}
-                              <Button type="button" size="small" variant="outlined" disabled={!aiPrescriptionSuggestion}>
-                                Apply suggestion
-                              </Button>
-                            </Stack>
-                          </CardContent>
-                        </Card>
-                      </Grid>
-                    </Grid>
+                            ) : null}
+                          </Stack>
+                        </Stack>
+                      </CardContent>
+                    </Card>
 
                     <Grid container spacing={1}>
                       <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth label="Diagnosis snapshot" value={prescriptionForm.diagnosisSnapshot} disabled={prescriptionReadOnly} onChange={(e) => setPrescriptionForm((c) => ({ ...c, diagnosisSnapshot: e.target.value }))} /></Grid>
@@ -5452,24 +7678,340 @@ export default function ConsultationWorkspacePage() {
                           <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
                             <Stack spacing={1}>
                               <Grid container spacing={1} alignItems="center">
-                                <Grid size={{ xs: 12, md: 4 }}><TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} helperText={invalidMedicineRowIds.includes(row.localId) ? "Medicine name, dosage, frequency, and duration are required." : " "} label={`Medicine ${index + 1}`} value={row.medicineName} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { medicineName: e.target.value })} /></Grid>
-                                <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth label="Strength" value={row.strength || ""} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { strength: e.target.value })} /></Grid>
-                                <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Dosage" value={row.dosage} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { dosage: e.target.value })} /></Grid>
-                                <Grid size={{ xs: 6, md: 2 }}><TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Frequency" value={row.frequency} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { frequency: e.target.value })} /></Grid>
-                                <Grid size={{ xs: 6, md: 1.5 }}><TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Duration" value={row.duration} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { duration: e.target.value })} /></Grid>
-                                <Grid size={{ xs: 12, md: 0.5 }} sx={{ display: "flex", justifyContent: { xs: "flex-end", md: "center" } }}><IconButton size="small" disabled={prescriptionReadOnly} onClick={() => { setInvalidMedicineRowIds((current) => current.filter((id) => id !== row.localId)); setPrescriptionForm((c) => ({ ...c, medicines: c.medicines.filter((item) => item.localId !== row.localId) })); }}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Grid>
+                                <Grid size={{ xs: 12, md: 4 }}>
+                                  <TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} helperText={invalidMedicineRowIds.includes(row.localId) ? "Medicine name, dosage, frequency, and duration are required." : " "} label={`Medicine ${index + 1}`} value={row.medicineName} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { medicineName: e.target.value })} />
+                                </Grid>
+                                <Grid size={{ xs: 6, md: 1.5 }}>
+                                  <TextField size="small" fullWidth label="Strength" value={row.strength || ""} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { strength: e.target.value })} />
+                                </Grid>
+                                <Grid size={{ xs: 6, md: 1.5 }}>
+                                  <FormControl size="small" fullWidth disabled={prescriptionReadOnly}>
+                                    <InputLabel id={`route-label-${row.localId}`}>Route</InputLabel>
+                                    <Select
+                                      labelId={`route-label-${row.localId}`}
+                                      label="Route"
+                                      value={row.route ?? ""}
+                                      onChange={(e) => updateMedicine(row.localId, { route: e.target.value })}
+                                    >
+                                      <MenuItem value=""><em>Blank</em></MenuItem>
+                                      {MEDICINE_ROUTE_OPTIONS.filter((option) => option).map((option) => (
+                                        <MenuItem key={option} value={option}>{MEDICINE_ROUTE_LABELS[option]}</MenuItem>
+                                      ))}
+                                    </Select>
+                                  </FormControl>
+                                </Grid>
+                                <Grid size={{ xs: 6, md: 1.5 }}>
+                                  <TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Dosage" value={row.dosage} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { dosage: e.target.value })} />
+                                </Grid>
+                                <Grid size={{ xs: 6, md: 1.5 }}>
+                                  <TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Frequency" value={row.frequency} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { frequency: e.target.value })} />
+                                </Grid>
+                                <Grid size={{ xs: 6, md: 1.25 }}>
+                                  <TextField size="small" fullWidth error={invalidMedicineRowIds.includes(row.localId)} label="Duration" value={row.duration} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { duration: e.target.value })} />
+                                </Grid>
+                                <Grid size={{ xs: 12, md: 0.75 }} sx={{ display: "flex", justifyContent: { xs: "flex-end", md: "center" } }}>
+                                  <IconButton size="small" disabled={prescriptionReadOnly} aria-label={`Delete medicine row ${index + 1}`} onClick={() => { setInvalidMedicineRowIds((current) => current.filter((id) => id !== row.localId)); setPrescriptionForm((c) => ({ ...c, medicines: c.medicines.filter((item) => item.localId !== row.localId) })); }}>
+                                    <DeleteOutlineRoundedIcon fontSize="small" />
+                                  </IconButton>
+                                </Grid>
                               </Grid>
-                              <Stack direction="row" spacing={0.6} useFlexGap flexWrap="wrap">
-                                {FREQUENCIES.map((chip) => <Chip key={chip} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={chip} onClick={() => updateMedicine(row.localId, { frequency: chip })} />)}
-                                {DURATIONS.map((chip) => <Chip key={chip} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} variant="outlined" label={chip} onClick={() => updateMedicine(row.localId, { duration: chip })} />)}
-                                {TIMINGS.map((chip) => <Chip key={chip.value} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} color={row.timing === chip.value ? "primary" : "default"} label={chip.label} onClick={() => updateMedicine(row.localId, { timing: chip.value })} />)}
-                              </Stack>
+                              <Box
+                                sx={{
+                                  display: "grid",
+                                  gap: 1,
+                                  gridTemplateColumns: {
+                                    xs: "1fr",
+                                    sm: "repeat(2, minmax(0, 1fr))",
+                                    lg: "repeat(3, minmax(0, 1fr))",
+                                  },
+                                  alignItems: "start",
+                                }}
+                              >
+                                <Stack spacing={0.35} sx={{ minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary">Frequency</Typography>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    {FREQUENCIES.map((chip) => <Chip key={chip} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} label={chip} onClick={() => updateMedicine(row.localId, { frequency: chip })} />)}
+                                  </Stack>
+                                </Stack>
+                                <Stack spacing={0.35} sx={{ minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary">Duration</Typography>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    {DURATIONS.map((chip) => <Chip key={chip} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} variant="outlined" label={chip} onClick={() => updateMedicine(row.localId, { duration: chip })} />)}
+                                  </Stack>
+                                </Stack>
+                                <Stack spacing={0.35} sx={{ minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary">Timing</Typography>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    {TIMINGS.map((chip) => <Chip key={chip.value} size="small" clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} color={row.timing === chip.value ? "primary" : "default"} label={chip.label} onClick={() => updateMedicine(row.localId, { timing: chip.value })} />)}
+                                  </Stack>
+                                </Stack>
+                              </Box>
                               <TextField size="small" fullWidth label="Instructions" value={row.instructions || ""} disabled={prescriptionReadOnly} onChange={(e) => updateMedicine(row.localId, { instructions: e.target.value })} placeholder="Auto or manual instructions" />
+                              <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                <Button type="button" size="small" variant="text" disabled={prescriptionReadOnly} onClick={() => setAlternativeMedicineRowId((current) => current === row.localId ? null : row.localId)}>
+                                  Alternatives
+                                </Button>
+                                {alternativeMedicineRowId === row.localId ? (
+                                  <Stack spacing={0.45} sx={{ flex: 1, minWidth: "100%" }}>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {getAlternativeMedicineSuggestions(row).length ? "Alternative medicine suggestions" : "No alternative data available."}
+                                    </Typography>
+                                    {getAlternativeMedicineSuggestions(row).length ? (
+                                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                        {getAlternativeMedicineSuggestions(row).map((suggestion) => (
+                                          <Chip key={suggestion} size="small" variant="outlined" label={suggestion} clickable={!prescriptionReadOnly} disabled={prescriptionReadOnly} onClick={() => setPrescriptionForm((current) => ({ ...current, medicines: current.medicines.map((medicine) => medicine.localId === row.localId ? { ...medicine, instructions: appendTokenLine(medicine.instructions || "", `Alternative: ${suggestion}`) } : medicine) }))} />
+                                        ))}
+                                      </Stack>
+                                    ) : null}
+                                  </Stack>
+                                ) : null}
+                              </Stack>
                             </Stack>
                           </CardContent>
                         </Card>
                       ))}
                     </Stack>
+
+                    <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                      <CardContent sx={{ p: 1 }}>
+                        <Stack spacing={0.85}>
+                          <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                            <Stack direction="row" spacing={0.75} alignItems="center">
+                              <HealthAndSafetyRoundedIcon fontSize="small" color="warning" />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Prescription Intelligence</Typography>
+                            </Stack>
+                            <Button
+                              type="button"
+                              size="small"
+                              variant="text"
+                              aria-label={prescriptionIntelligenceExpanded ? "Collapse prescription intelligence" : "Expand prescription intelligence"}
+                              onClick={() => setPrescriptionIntelligenceExpanded((current) => !current)}
+                            >
+                              {prescriptionIntelligenceExpanded ? "Collapse" : "Expand"}
+                            </Button>
+                          </Stack>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            {([
+                              ["safety", "Safety"],
+                              ["comparison", "Comparison"],
+                              ["instructions", "Instructions"],
+                              ["summary", "Summary"],
+                            ] as const).map(([value, label]) => (
+                              <Chip
+                                key={value}
+                                size="small"
+                                clickable
+                                variant={prescriptionIntelligenceTab === value ? "filled" : "outlined"}
+                                color={prescriptionIntelligenceTab === value ? "warning" : "default"}
+                                label={label}
+                                onClick={() => {
+                                  setPrescriptionIntelligenceTab(value);
+                                  setPrescriptionIntelligenceExpanded(true);
+                                }}
+                              />
+                            ))}
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary">
+                            Clinical medication suggestions will appear here when enough diagnosis, allergy, and medication context is available.
+                          </Typography>
+                          <Collapse in={prescriptionIntelligenceExpanded} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+                            <Stack spacing={0.9}>
+                              <Tabs
+                                value={prescriptionIntelligenceTab}
+                                onChange={(_, value) => setPrescriptionIntelligenceTab(value)}
+                                variant="scrollable"
+                                scrollButtons="auto"
+                                allowScrollButtonsMobile
+                                sx={{ minHeight: 30, "& .MuiTab-root": { minHeight: 30, py: 0.25, px: 1, fontSize: 12 } }}
+                              >
+                                <Tab value="safety" label="Safety" />
+                                <Tab value="comparison" label="Comparison" />
+                                <Tab value="instructions" label="Instructions" />
+                                <Tab value="summary" label="Summary" />
+                              </Tabs>
+
+                              {prescriptionIntelligenceTab === "safety" ? (
+                                <Stack spacing={0.75}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Typography variant="body2" color="text.secondary">
+                                      Safety: {prescriptionSafetySummary.critical} critical · {prescriptionSafetySummary.review} review · {prescriptionSafetySummary.safe} safe · {prescriptionSafetySummary.unavailable} unavailable
+                                    </Typography>
+                                    <Button type="button" size="small" variant="text" aria-label={prescriptionSafetyDetailsOpen ? "Hide medication safety details" : "View medication safety details"} onClick={() => setPrescriptionSafetyDetailsOpen((current) => !current)}>
+                                      {prescriptionSafetyDetailsOpen ? "Hide details" : "View details"}
+                                    </Button>
+                                  </Stack>
+                                  <Collapse in={prescriptionSafetyDetailsOpen} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+                                    <Stack spacing={0.55}>
+                                      {prescriptionSafetyChecks.filter((check) => check.status !== "not_enough_data").map((check) => (
+                                        <Stack key={check.label} direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                          <Typography variant="body2" sx={{ fontWeight: 700 }}>{check.label}</Typography>
+                                          <Stack direction="row" spacing={0.5} alignItems="center">
+                                            <Chip size="small" variant="outlined" color={check.status === "critical" ? "error" : check.status === "warning" ? "warning" : check.status === "safe" ? "success" : "default"} label={check.status === "critical" ? "Critical" : check.status === "warning" ? "Warning" : check.status === "safe" ? "Safe" : "Needs review"} />
+                                            <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 180 }} noWrap title={check.message}>{check.message}</Typography>
+                                          </Stack>
+                                        </Stack>
+                                      ))}
+                                      <Typography variant="caption" color="text.secondary">
+                                        Advanced checks require renal function, liver function, pregnancy status, pediatric age, or max-dose reference data.
+                                      </Typography>
+                                    </Stack>
+                                  </Collapse>
+                                </Stack>
+                              ) : null}
+
+                              {prescriptionIntelligenceTab === "comparison" ? (
+                                <Stack spacing={0.75}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Typography variant="body2" color="text.secondary">
+                                      Continued medicines: {prescriptionComparison?.continued.length || 0} · Stopped medicines: {prescriptionComparison?.stopped.length || 0} · New medicines: {prescriptionComparison?.newMeds.length || 0} · Dose changes: {prescriptionComparison?.doseChanged.length || 0}
+                                    </Typography>
+                                    <Button type="button" size="small" variant="text" aria-label={prescriptionComparisonDetailsOpen ? "Hide comparison details" : "View comparison details"} onClick={() => setPrescriptionComparisonDetailsOpen((current) => !current)}>
+                                      {prescriptionComparisonDetailsOpen ? "Hide details" : "View details"}
+                                    </Button>
+                                  </Stack>
+                                  {prescriptionComparison ? (
+                                    <Collapse in={prescriptionComparisonDetailsOpen} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
+                                      <Stack spacing={0.4}>
+                                        <Typography variant="caption" color="text.secondary" noWrap title={prescriptionComparison.continued.join(", ") || "None"}>Continued medicines: {prescriptionComparison.continued.join(", ") || "None"}</Typography>
+                                        <Typography variant="caption" color="text.secondary" noWrap title={prescriptionComparison.stopped.join(", ") || "None"}>Stopped medicines: {prescriptionComparison.stopped.join(", ") || "None"}</Typography>
+                                        <Typography variant="caption" color="text.secondary" noWrap title={prescriptionComparison.newMeds.join(", ") || "None"}>New medicines: {prescriptionComparison.newMeds.join(", ") || "None"}</Typography>
+                                        <Typography variant="caption" color="text.secondary" noWrap title={prescriptionComparison.doseChanged.join(", ") || "None"}>Dose changes: {prescriptionComparison.doseChanged.join(", ") || "None"}</Typography>
+                                        <Typography variant="caption" color="warning.main" noWrap>
+                                          {prescriptionComparison.repeatedAntibiotic ? "Repeated antibiotic detected. Review continuity." : "No repeated antibiotic detected."}
+                                        </Typography>
+                                        <Typography variant="caption" color="warning.main" noWrap>
+                                          {prescriptionComparison.repeatedPainkiller ? "Repeated NSAID/painkiller detected. Review continuity." : "No repeated NSAID/painkiller detected."}
+                                        </Typography>
+                                        {prescriptionComparison.longTermContinuity.length ? (
+                                          <Typography variant="caption" color="text.secondary" noWrap title={prescriptionComparison.longTermContinuity.join(", ")}>
+                                            Long-term continuity: {prescriptionComparison.longTermContinuity.join(", ")}
+                                          </Typography>
+                                        ) : null}
+                                      </Stack>
+                                    </Collapse>
+                                  ) : (
+                                    <Typography variant="caption" color="text.secondary">
+                                      No previous finalized prescription available for comparison.
+                                    </Typography>
+                                  )}
+                                </Stack>
+                              ) : null}
+
+                              {prescriptionIntelligenceTab === "instructions" ? (
+                                <Stack spacing={0.75}>
+                                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                    <Typography variant="body2" color="text.secondary">1. Choose language  2. Generate  3. Review  4. Copy / Add</Typography>
+                                    <Button type="button" size="small" variant="text" aria-label="Patient instructions summary" onClick={() => setPrescriptionIntelligenceTab("instructions")}>Instructions</Button>
+                                  </Stack>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    {(["ENGLISH", "HINDI", "MARATHI"] as const).map((language) => (
+                                      <Chip
+                                        key={language}
+                                        size="small"
+                                        clickable={!prescriptionInstructionsLoading && !prescriptionReadOnly}
+                                        variant={prescriptionInstructionsLanguage === language ? "filled" : "outlined"}
+                                        color={prescriptionInstructionsLanguage === language ? "primary" : "default"}
+                                        label={language === "ENGLISH" ? "English" : language === "HINDI" ? "Hindi" : "Marathi"}
+                                        onClick={() => setPrescriptionInstructionsLanguage(language)}
+                                      />
+                                    ))}
+                                  </Stack>
+                                  <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!consultation || !patient || prescriptionInstructionsLoading || prescriptionReadOnly} onClick={() => void generatePrescriptionPatientInstructions()}>
+                                    Generate patient instructions
+                                  </Button>
+                                  {prescriptionInstructionsDraft ? (
+                                    <ClinicalAiDraftCard
+                                      title="Patient Instructions"
+                                      status="DRAFTED"
+                                      generatedAt={prescriptionInstructionsGeneratedAt}
+                                      sourceSummary={`Language: ${prescriptionInstructionsLanguage}`}
+                                      draftText={(prescriptionInstructionsDraft.draft || prescriptionInstructionsDraft.message || "").trim()}
+                                      acceptLabel="Add to Advice"
+                                      editLabel="Edit"
+                                      rejectLabel="Reject"
+                                      copyLabel="Copy"
+                                      acceptDisabled={prescriptionReadOnly}
+                                      editDisabled={prescriptionReadOnly}
+                                      rejectDisabled={false}
+                                      copyDisabled={!((prescriptionInstructionsDraft.draft || prescriptionInstructionsDraft.message || "").trim())}
+                                      onAccept={() => setPrescriptionForm((current) => ({ ...current, advice: appendTokenLine(current.advice, prescriptionInstructionsDraft.draft || prescriptionInstructionsDraft.message || "") }))}
+                                      onEdit={(nextText) => setPrescriptionInstructionsDraft((current) => (current ? { ...current, draft: nextText, message: nextText } : current))}
+                                      onReject={() => setPrescriptionInstructionsDraft(null)}
+                                      onCopy={() => void navigator.clipboard.writeText((prescriptionInstructionsDraft.draft || prescriptionInstructionsDraft.message || "").trim())}
+                                    />
+                                  ) : (
+                                    <Typography variant="caption" color="text.secondary">
+                                      No instructions generated yet. Choose a language and generate patient-friendly instructions.
+                                    </Typography>
+                                  )}
+                                </Stack>
+                              ) : null}
+
+                              {prescriptionIntelligenceTab === "summary" ? (
+                                <Stack spacing={0.75}>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Compact summary preview. The full prescription summary remains below the editor and is generated manually.
+                                  </Typography>
+                                  {prescriptionSummaryDraft ? (
+                                    <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                      <Typography variant="body2" sx={{ lineHeight: 1.45 }}>{prescriptionSummaryDraft}</Typography>
+                                    </Box>
+                                  ) : (
+                                    <Typography variant="caption" color="text.secondary">
+                                      No summary generated yet. Use the Generate Prescription Summary action below the editor.
+                                    </Typography>
+                                  )}
+                                </Stack>
+                              ) : null}
+                            </Stack>
+                          </Collapse>
+                        </Stack>
+                      </CardContent>
+                    </Card>
+
+                    <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                      <CardContent sx={{ p: 1.25 }}>
+                        <Stack spacing={0.75}>
+                          <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                            <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Prescription summary</Typography>
+                            <Button type="button" size="small" variant="outlined" onClick={generatePrescriptionSummaryDraft}>
+                              Generate Prescription Summary
+                            </Button>
+                          </Stack>
+                          {prescriptionSummaryDraft ? (
+                            <Stack spacing={0.75}>
+                              <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper", whiteSpace: "pre-wrap" }}>
+                                <Typography variant="body2" sx={{ lineHeight: 1.45 }}>{prescriptionSummaryDraft}</Typography>
+                              </Box>
+                              <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                                <Button type="button" size="small" variant="outlined" onClick={() => void navigator.clipboard.writeText(prescriptionSummaryDraft)}>
+                                  Copy
+                                </Button>
+                                <Button type="button" size="small" variant="outlined" disabled={readOnly} onClick={() => setConsultationForm((current) => ({ ...current, clinicalNotes: appendTokenLine(current.clinicalNotes, prescriptionSummaryDraft) }))}>
+                                  Add to SOAP
+                                </Button>
+                                <Button type="button" size="small" variant="outlined" onClick={() => {
+                                  void navigator.clipboard.writeText(prescriptionSummaryDraft);
+                                  setInfo("Prescription summary copied for WhatsApp.");
+                                }}>
+                                  Use for WhatsApp message
+                                </Button>
+                                <Button type="button" size="small" variant="outlined" onClick={() => {
+                                  void navigator.clipboard.writeText(prescriptionSummaryDraft);
+                                  setInfo("Prescription summary copied for Email.");
+                                }}>
+                                  Use for Email message
+                                </Button>
+                              </Stack>
+                            </Stack>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">
+                              Diagnosis, medicines, tests, advice, follow-up, warnings, and red flags will appear here.
+                            </Typography>
+                          )}
+                        </Stack>
+                      </CardContent>
+                    </Card>
                   </Stack>
                 </CardContent>
               </Card>
@@ -5488,7 +8030,7 @@ export default function ConsultationWorkspacePage() {
                       {selectedPrescriptionVersion ? <Chip size="small" label={prescriptionVersionTitle(selectedPrescriptionVersion)} color="secondary" variant="outlined" /> : null}
                     </Box>
                     {!prescriptionHistory.length ? (
-                      <Alert severity="info">No prescription history yet.</Alert>
+                      <Alert severity="info">No finalized prescriptions yet. Once finalized, every version will be stored here for medico-legal audit.</Alert>
                     ) : (
                       <Grid container spacing={1}>
                         <Grid size={{ xs: 12, md: 5 }}>
@@ -5572,6 +8114,9 @@ export default function ConsultationWorkspacePage() {
 
       {activeTab === 2 ? (
         <Grid container spacing={1.5}>
+          <Grid size={{ xs: 12 }}>
+            <WorkflowStrip text="Timeline → Previous Visits → Reports → Documents" />
+          </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
             <Card><CardContent><Stack spacing={0.75}><Stack direction="row" spacing={0.75} alignItems="center"><InsightsRoundedIcon fontSize="small" color="primary" /><Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Snapshot</Typography></Stack><Typography variant="body2"><b>Last diagnosis:</b> {lastConsultation?.diagnosis || "-"}</Typography><Typography variant="body2"><b>Last vitals:</b> {lastConsultation ? `BP ${lastConsultation.bloodPressureSystolic || "-"} / ${lastConsultation.bloodPressureDiastolic || "-"}, Pulse ${lastConsultation.pulseRate || "-"}, Temp ${lastConsultation.temperature || "-"}, Resp ${lastConsultation.respiratoryRate || "-"}` : "Not recorded"}</Typography><Typography variant="body2"><b>Last BMI:</b> {lastBmi ? `${lastBmi.toFixed(1)} (${lastBmiCategory || "n/a"})` : "Not recorded"}</Typography><Typography variant="body2"><b>Chronic:</b> {patientRow?.existingConditions || "Not recorded"}</Typography><Typography variant="body2" color={patientRow?.allergies ? "error" : "text.primary"}><b>Allergies:</b> {patientRow?.allergies || "Not recorded"}</Typography><Typography variant="body2"><b>Long-term meds:</b> {patientRow?.longTermMedications || "Not recorded"}</Typography><Typography variant="body2"><b>History:</b> {patientRow?.surgicalHistory || "Not recorded"}</Typography></Stack></CardContent></Card>
           </Grid>
@@ -5676,31 +8221,318 @@ export default function ConsultationWorkspacePage() {
       ) : null}
 
       {activeTab === 3 ? (
-        <Grid container spacing={1.5}>
-          <Grid size={{ xs: 12, lg: 6 }}>
-            <Card><CardContent><Stack spacing={1.25}><Stack direction="row" spacing={0.75} alignItems="center"><ScienceRoundedIcon fontSize="small" color="primary" /><Typography variant="h6" sx={{ fontWeight: 900 }}>Recommended Tests</Typography></Stack><QuickChipGroup disabled={prescriptionReadOnly} chips={TEST_CHIPS} color="primary" onPick={(chip) => setPrescriptionForm((c) => ({ ...c, recommendedTests: [...c.recommendedTests, { ...newTestRow(c.recommendedTests.length), testName: chip }] }))} /><Stack direction="row" spacing={1}><TextField fullWidth size="small" label="Custom test" value={customTest} disabled={prescriptionReadOnly} onChange={(e) => setCustomTest(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && customTest.trim() && !prescriptionReadOnly) { e.preventDefault(); setPrescriptionForm((c) => ({ ...c, recommendedTests: [...c.recommendedTests, { ...newTestRow(c.recommendedTests.length), testName: customTest.trim() }] })); setCustomTest(""); } }} /><Button type="button" variant="outlined" disabled={prescriptionReadOnly} onClick={() => { if (!customTest.trim()) return; setPrescriptionForm((c) => ({ ...c, recommendedTests: [...c.recommendedTests, { ...newTestRow(c.recommendedTests.length), testName: customTest.trim() }] })); setCustomTest(""); }}>Add</Button></Stack>{prescriptionForm.recommendedTests.map((row, index) => <Card key={row.localId} variant="outlined" sx={{ boxShadow: "none" }}><CardContent sx={{ p: 1 }}><Grid container spacing={1} alignItems="center"><Grid size={{ xs: 12, md: 5 }}><TextField size="small" fullWidth label={`Test ${index + 1}`} value={row.testName} disabled={prescriptionReadOnly} onChange={(e) => updateTest(row.localId, { testName: e.target.value })} /></Grid><Grid size={{ xs: 12, md: 6 }}><TextField size="small" fullWidth label="Instructions" value={row.instructions || ""} disabled={prescriptionReadOnly} onChange={(e) => updateTest(row.localId, { instructions: e.target.value })} /></Grid><Grid size={{ xs: 12, md: 1 }}><IconButton size="small" disabled={prescriptionReadOnly} onClick={() => setPrescriptionForm((c) => ({ ...c, recommendedTests: c.recommendedTests.filter((item) => item.localId !== row.localId) }))}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton></Grid></Grid></CardContent></Card>)}</Stack></CardContent></Card>
-          </Grid>
-          <Grid size={{ xs: 12, lg: 6 }}>
-            <Card>
-              <CardContent>
-                <Stack spacing={1}>
-                  <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
-                    <Stack direction="row" spacing={0.75} alignItems="center">
-                      <InsightsRoundedIcon fontSize="small" color="primary" />
-                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Reports & Test History</Typography>
+        <Stack spacing={1.5}>
+          <Alert severity="info" sx={{ py: 0.65 }}>
+            Review history → Select tests → Check duplicates → Confirm order → Track report
+          </Alert>
+          <Grid container spacing={1.25}>
+            <Grid size={{ xs: 12, lg: 7 }}>
+              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                <CardContent sx={{ p: 1.35 }}>
+                  <Stack spacing={1}>
+                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <ScienceRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="h6" sx={{ fontWeight: 900 }}>Recommended Tests</Typography>
+                      </Stack>
+                      <Button type="button" size="small" variant="outlined" onClick={openLabOrderDialog} disabled={readOnly || !labTests.length}>
+                        Select from catalog
+                      </Button>
                     </Stack>
-                    <Button size="small" variant="outlined" onClick={() => setUploadDialogOpen(true)}>Upload</Button>
+                    <Typography variant="caption" color="text.secondary">
+                      Select tests manually. AIVA only suggests context-aware options.
+                    </Typography>
+                    <Grid container spacing={1}>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Stack spacing={0.55}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Frequently Ordered</Typography>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            {recommendedLabOrderGroups.frequentItems.length ? recommendedLabOrderGroups.frequentItems.map((item) => (
+                              <Chip
+                                key={item.id}
+                                size="small"
+                                variant="outlined"
+                                color={labOrderTestIds.includes(item.id) ? "primary" : "default"}
+                                label={item.testName}
+                                clickable={!readOnly}
+                                onClick={() => setLabOrderTestIds((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}
+                              />
+                            )) : <Typography variant="caption" color="text.secondary">No frequent tests available.</Typography>}
+                          </Stack>
+                        </Stack>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Stack spacing={0.55}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Diagnosis Based</Typography>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            {recommendedLabOrderGroups.diagnosisItems.length ? recommendedLabOrderGroups.diagnosisItems.map((item) => (
+                              <Chip
+                                key={item.id}
+                                size="small"
+                                variant="outlined"
+                                color={labOrderTestIds.includes(item.id) ? "primary" : "default"}
+                                label={item.testName}
+                                clickable={!readOnly}
+                                onClick={() => setLabOrderTestIds((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}
+                              />
+                            )) : <Typography variant="caption" color="text.secondary">No diagnosis-based tests suggested yet.</Typography>}
+                          </Stack>
+                        </Stack>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Stack spacing={0.55}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Previous Follow-up</Typography>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            {recommendedLabOrderGroups.followUpItems.length ? recommendedLabOrderGroups.followUpItems.map((item) => (
+                              <Chip
+                                key={item.id}
+                                size="small"
+                                variant="outlined"
+                                color={labOrderTestIds.includes(item.id) ? "primary" : "default"}
+                                label={item.testName}
+                                clickable={!readOnly}
+                                onClick={() => setLabOrderTestIds((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}
+                              />
+                            )) : <Typography variant="caption" color="text.secondary">No follow-up tests suggested.</Typography>}
+                          </Stack>
+                        </Stack>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Stack spacing={0.55}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Custom</Typography>
+                          <Stack direction="row" spacing={1}>
+                            <TextField
+                              fullWidth
+                              size="small"
+                              label="Search tests"
+                              value={customTest}
+                              disabled={readOnly}
+                              onChange={(e) => setCustomTest(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  const exactMatch = labTests.find((test) => normalizeLookupKey(test.testName) === normalizeLookupKey(customTest) || normalizeLookupKey(test.testCode) === normalizeLookupKey(customTest));
+                                  if (exactMatch) {
+                                    setLabOrderTestIds((current) => current.includes(exactMatch.id) ? current : [...current, exactMatch.id]);
+                                  }
+                                }
+                              }}
+                              placeholder="Search active lab catalog"
+                            />
+                            <Button type="button" variant="outlined" disabled={readOnly || !labTests.length} onClick={() => {
+                              const exactMatch = labTests.find((test) => normalizeLookupKey(test.testName) === normalizeLookupKey(customTest) || normalizeLookupKey(test.testCode) === normalizeLookupKey(customTest));
+                              if (!exactMatch) return;
+                              setLabOrderTestIds((current) => current.includes(exactMatch.id) ? current : [...current, exactMatch.id]);
+                            }}>
+                              Add
+                            </Button>
+                          </Stack>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            {recommendedLabOrderGroups.customItems.length ? recommendedLabOrderGroups.customItems.slice(0, 6).map((item) => (
+                              <Chip
+                                key={item.id}
+                                size="small"
+                                variant="outlined"
+                                color={labOrderTestIds.includes(item.id) ? "primary" : "default"}
+                                label={item.testName}
+                                clickable={!readOnly}
+                                onClick={() => setLabOrderTestIds((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}
+                              />
+                            )) : <Typography variant="caption" color="text.secondary">No matching active tests.</Typography>}
+                          </Stack>
+                        </Stack>
+                      </Grid>
+                    </Grid>
+                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                      {recommendedTestSuggestions.slice(0, 6).map((test) => (
+                        <Chip
+                          key={test}
+                          size="small"
+                          variant="outlined"
+                          color="secondary"
+                          label={test}
+                          clickable={!readOnly}
+                          onClick={() => {
+                            const exactMatch = labTests.find((row) => normalizeLookupKey(row.testName) === normalizeLookupKey(test));
+                            if (exactMatch) {
+                              setLabOrderTestIds((current) => current.includes(exactMatch.id) ? current : [...current, exactMatch.id]);
+                            }
+                          }}
+                        />
+                      ))}
+                    </Stack>
                   </Stack>
-                  {!clinicalDocuments.length ? <Alert severity="info">No uploaded reports yet.</Alert> : <Stack spacing={1}>{clinicalDocuments.filter((row) => ["EXTERNAL_LAB_REPORT", "INTERNAL_LAB_REPORT", "LAB_REPORT", "X_RAY", "MRI_CT", "RADIOLOGY_REPORT", "REFERRAL", "REFERRAL_LETTER", "DISCHARGE_SUMMARY"].includes(row.documentType)).slice(0, 8).map((row) => <Box key={row.id} sx={{ p: 1, border: "1px solid", borderColor: "divider", borderRadius: 1.5, display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}><Box><Typography variant="body2" sx={{ fontWeight: 800 }}>{row.title || row.documentType.replaceAll("_", " ")} • {row.originalFilename}</Typography><Typography variant="caption" color="text.secondary">{row.description || "No description"}{row.reportDate ? ` • ${row.reportDate}` : ""}</Typography></Box><Button size="small" onClick={() => void openClinicalDocument(row)}>View</Button></Box>)}</Stack>}
-                </Stack>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            <Grid size={{ xs: 12, lg: 5 }}>
+              <Stack spacing={1.25}>
+                <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                  <CardContent sx={{ p: 1.35 }}>
+                    <Stack spacing={1}>
+                      <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                        <Stack direction="row" spacing={0.75} alignItems="center">
+                          <PlaylistAddCheckRoundedIcon fontSize="small" color="primary" />
+                          <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Order Review</Typography>
+                        </Stack>
+                        <Chip size="small" variant="outlined" label={`${labOrderTestIds.length} selected`} />
+                      </Stack>
+                      <Typography variant="body2" color="text.secondary">
+                        No auto-ordering. Review the selected tests, warnings, and sample requirements before creating the lab order.
+                      </Typography>
+                      {!labOrderTestIds.length ? (
+                        <Alert severity="info">No lab orders yet. Select recommended tests or search tests to create an order.</Alert>
+                      ) : (
+                        <Stack spacing={0.75}>
+                          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                            {selectedLabOrderTests.slice(0, 6).map((test) => (
+                              <Chip
+                                key={test.id}
+                                size="small"
+                                label={test.testName}
+                                variant="outlined"
+                                color="primary"
+                                onDelete={readOnly ? undefined : () => setLabOrderTestIds((current) => current.filter((id) => id !== test.id))}
+                              />
+                            ))}
+                          </Stack>
+                          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                            <Chip size="small" variant="outlined" label={`Estimated cost: ${formatMoney(labOrderEstimatedCost)}`} />
+                            <Chip size="small" variant="outlined" label={`Sample types: ${Array.from(new Set(selectedLabOrderTests.map((test) => test.sampleType || "Not specified"))).slice(0, 3).join(", ")}`} />
+                          </Stack>
+                          <Stack spacing={0.5}>
+                            {selectedLabOrderTests.map((test) => {
+                              const warning = labOrderReviewWarnings.get(test.id);
+                              return (
+                                <Stack key={test.id} direction="row" spacing={0.75} alignItems="flex-start">
+                                  <Typography variant="body2" sx={{ fontWeight: 800, minWidth: 140 }}>{test.testName}</Typography>
+                                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.35 }}>
+                                    {warning || test.sampleType || "Sample not specified"}{test.turnaroundTime ? ` • TAT ${test.turnaroundTime}` : ""}{test.price != null ? ` • ${formatMoney(test.price)}` : ""}
+                                  </Typography>
+                                </Stack>
+                              );
+                            })}
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary">
+                            {selectedLabOrderTests.some((test) => looksLikeFastingTest(test.testName, test.sampleType, test.category)) ? "Fasting may be required for one or more selected tests." : "No fasting requirement detected from current catalog data."}
+                          </Typography>
+                          {Array.from(labOrderReviewWarnings.values()).length ? (
+                            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                              {Array.from(labOrderReviewWarnings.values()).slice(0, 4).map((warning) => (
+                                <Chip key={warning} size="small" color="warning" variant="outlined" label={warning} />
+                              ))}
+                            </Stack>
+                          ) : null}
+                          <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                            <Button type="button" size="small" variant="outlined" onClick={openLabOrderDialog}>
+                              Select more tests
+                            </Button>
+                            <Button type="button" size="small" variant="contained" disabled={!labOrderTestIds.length || readOnly} onClick={openLabOrderReview}>
+                              Review &amp; Create Lab Order
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      )}
+                    </Stack>
+                  </CardContent>
+                </Card>
+
+                <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                  <CardContent sx={{ p: 1.35 }}>
+                    <Stack spacing={0.9}>
+                      <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                        <Stack direction="row" spacing={0.75} alignItems="center">
+                          <CompareArrowsRoundedIcon fontSize="small" color="primary" />
+                          <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Report Comparison</Typography>
+                        </Stack>
+                        <Button type="button" size="small" variant="outlined" onClick={() => setSelectedLabOrderId(selectedLabOrderId ? null : labOrders[0]?.id || null)} disabled={!labOrders.length}>
+                          View order
+                        </Button>
+                      </Stack>
+                      {reportComparisonPlaceholder}
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Stack>
+            </Grid>
           </Grid>
-        </Grid>
+
+          <Grid container spacing={1.25}>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                <CardContent sx={{ p: 1.35 }}>
+                  <Stack spacing={0.9}>
+                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <ReceiptLongRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Report / Test History</Typography>
+                      </Stack>
+                      <Button size="small" variant="outlined" onClick={() => setUploadDialogOpen(true)}>Upload report / referral</Button>
+                    </Stack>
+                    {!reportHistoryRows.length ? (
+                      <Alert severity="info">No previous reports available. Upload an external report or order investigations to begin tracking trends.</Alert>
+                    ) : (
+                      <Stack spacing={0.75}>
+                        {reportHistoryRows.slice(0, 8).map((row) => (
+                          <Card key={row.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                            <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                              <Stack spacing={0.4}>
+                                <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                  <Box sx={{ minWidth: 0 }}>
+                                    <Typography variant="body2" sx={{ fontWeight: 800 }} noWrap title={row.title || row.originalFilename}>
+                                      {row.title || row.originalFilename}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                      {row.documentType.replaceAll("_", " ")} • {row.reportDate || compactDate(row.createdAt)} • {row.uploadSource}
+                                    </Typography>
+                                  </Box>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    <Chip size="small" variant="outlined" label={row.visibility} />
+                                    <Chip size="small" variant="outlined" label={row.verificationStatus} />
+                                  </Stack>
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary" noWrap title={row.description || row.originalFilename}>
+                                  {row.description || "No notes"}{row.aiExtractionSummary ? ` • AI: ${compactText(row.aiExtractionSummary, 42)}` : ""}
+                                </Typography>
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  <Button size="small" variant="outlined" onClick={() => void openClinicalDocument(row)}>View report</Button>
+                                </Stack>
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </Stack>
+                    )}
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                <CardContent sx={{ p: 1.35 }}>
+                  <Stack spacing={0.9}>
+                    <Stack direction="row" spacing={0.75} alignItems="center">
+                      <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                      <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>AI-assisted summary</Typography>
+                    </Stack>
+                    <Typography variant="caption" color="text.secondary">
+                      {reportComparisonSummary.detail}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Structured comparison is available when previous numeric results exist.
+                    </Typography>
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+        </Stack>
       ) : null}
 
       {activeTab === 3 ? (
         <Stack spacing={1.5} sx={{ mt: 1.5 }}>
+          <WorkflowStrip text="Review History → Select Tests → Check Duplicates → Confirm Order → Track Report" />
           <Grid container spacing={1.5}>
             <Grid size={{ xs: 12, md: 4 }}>
               <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
@@ -5752,97 +8584,118 @@ export default function ConsultationWorkspacePage() {
       ) : null}
 
       {activeTab === 4 ? (
-        <Grid container spacing={1.5}>
-          <Grid size={{ xs: 12, md: 4 }}>
-            <Card>
-              <CardContent>
-                <Stack spacing={1.25}>
-                  <Stack direction="row" spacing={0.75} alignItems="center">
-                    <ScienceRoundedIcon fontSize="small" color="primary" />
-                    <Typography variant="h6" sx={{ fontWeight: 900 }}>Lab Order</Typography>
-                  </Stack>
-                  <Typography variant="body2" color="text.secondary">
-                    Select active lab tests for the current consultation.
-                  </Typography>
-                  <Button variant="contained" onClick={openLabOrderDialog} disabled={readOnly || !labTests.length}>
-                    Order Lab Tests
-                  </Button>
-                  <Typography variant="caption" color="text.secondary">
-                    {labTests.length ? `${labTests.length} active tests available` : "No active tests configured."}
-                  </Typography>
-                </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid size={{ xs: 12, md: 8 }}>
-            <Card>
-              <CardContent>
-                <Stack spacing={1.25}>
-                  <Stack direction="row" spacing={0.75} alignItems="center">
-                    <ScienceRoundedIcon fontSize="small" color="primary" />
-                    <Typography variant="h6" sx={{ fontWeight: 900 }}>Lab Orders</Typography>
-                  </Stack>
-                  {!labOrders.length ? (
-                    <Alert severity="info">No lab orders have been created for this consultation.</Alert>
-                  ) : (
-                    <Stack spacing={1}>
-                      {labOrders.map((order) => (
-                        <Card key={order.id} variant="outlined" sx={{ boxShadow: "none" }}>
-                          <CardContent sx={{ p: 1.25 }}>
-                            <Stack spacing={0.75}>
-                              <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="center" flexWrap="wrap">
-                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
-                                  {order.orderNumber}
-                                </Typography>
-                                <Chip size="small" variant="outlined" color={order.status === "READY_FOR_COLLECTION" ? "success" : order.status === "PAYMENT_PENDING" ? "warning" : "default"} label={order.status.replaceAll("_", " ")} />
-                              </Stack>
-                              <Typography variant="body2" color="text.secondary">
-                                {order.items.map((item) => item.testName).join(", ")}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                Bill: {order.billNumber || "-"} {order.billDueAmount != null ? `• Due ${order.billDueAmount.toFixed(2)}` : ""}
-                              </Typography>
-                            </Stack>
-                          </CardContent>
-                        </Card>
-                      ))}
-                    </Stack>
-                  )}
-                </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-      ) : null}
-
-      {activeTab === 4 ? (
-        <Stack spacing={1.5} sx={{ mt: 1.5 }}>
-          <Grid container spacing={1.5}>
-            <Grid size={{ xs: 12, md: 6 }}>
+        <Stack spacing={1.5}>
+          <WorkflowStrip text="Create Order → Payment → Sample → Result → Publish" />
+          <Grid container spacing={1.25}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
-                <CardContent sx={{ p: 1.5 }}>
-                  <Stack spacing={0.75}>
+                <CardContent sx={{ p: 1.35 }}>
+                  <Stack spacing={1}>
                     <Stack direction="row" spacing={0.75} alignItems="center">
                       <ScienceRoundedIcon fontSize="small" color="primary" />
-                      <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Selected Tests</Typography>
+                      <Typography variant="h6" sx={{ fontWeight: 900 }}>Lab Order</Typography>
                     </Stack>
-                    {labOrders.length ? (
-                      <Typography variant="body2" color="text.secondary">
-                        {labOrders[0].items.slice(0, 5).map((item) => item.testName).join(", ")}
-                        {labOrders[0].items.length > 5 ? "…" : ""}
-                      </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Select active lab tests for the current consultation.
+                    </Typography>
+                    <Button variant="contained" onClick={openLabOrderDialog} disabled={readOnly || !labTests.length}>
+                      Review &amp; Create Lab Order
+                    </Button>
+                    <Typography variant="caption" color="text.secondary">
+                      {labTests.length ? `${labTests.length} active tests available` : "No active tests configured."}
+                    </Typography>
+                    <Divider />
+                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Selected tests</Typography>
+                    {labOrderTestIds.length ? (
+                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                        {selectedLabOrderTests.slice(0, 6).map((test) => (
+                          <Chip key={test.id} size="small" variant="outlined" label={test.testName} />
+                        ))}
+                      </Stack>
                     ) : (
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant="caption" color="text.secondary">
                         No selected tests yet. Open the lab order dialog to create a request.
                       </Typography>
                     )}
-                    <Chip size="small" variant="outlined" label={`Active tests ${labTests.length}`} sx={{ width: "fit-content" }} />
                   </Stack>
                 </CardContent>
               </Card>
             </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              {reportComparisonPlaceholder}
+            <Grid size={{ xs: 12, md: 8 }}>
+              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                <CardContent sx={{ p: 1.35 }}>
+                  <Stack spacing={1}>
+                    <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                      <Stack direction="row" spacing={0.75} alignItems="center">
+                        <ScienceRoundedIcon fontSize="small" color="primary" />
+                        <Typography variant="h6" sx={{ fontWeight: 900 }}>Lab Orders</Typography>
+                      </Stack>
+                      <Chip size="small" variant="outlined" label={`${labOrders.length} order${labOrders.length === 1 ? "" : "s"}`} />
+                    </Stack>
+                    {!labOrders.length ? (
+                      <Alert severity="info">No lab orders yet. Select recommended tests or search tests to create an order.</Alert>
+                    ) : (
+                      <Stack spacing={0.75}>
+                        {labOrders.map((order) => (
+                          <Card key={order.id} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                            <CardContent sx={{ p: 0.9, "&:last-child": { pb: 0.9 } }}>
+                              <Stack spacing={0.55}>
+                                <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="flex-start" flexWrap="wrap">
+                                  <Box sx={{ minWidth: 0 }}>
+                                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }} noWrap>
+                                      {order.orderNumber}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" noWrap>
+                                      {compactDateTime(order.orderedAt)} • {order.items.map((item) => item.testName).join(", ")}
+                                    </Typography>
+                                  </Box>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    <Chip size="small" variant="outlined" color={labOrderReviewStatusColor(order.status)} label={labOrderReviewStatusLabel(order.status)} />
+                                    <Chip size="small" variant="outlined" label={order.sampleSummaryStatus || "Sample status n/a"} />
+                                    <Chip size="small" variant="outlined" label={order.billStatus || "Bill status n/a"} />
+                                    <Chip size="small" variant="outlined" label={order.reportPublishedAt ? "Report Ready" : "Report Pending"} />
+                                  </Stack>
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary" noWrap title={`Bill ${order.billNumber || "-"} • Due ${order.billDueAmount != null ? order.billDueAmount : "-"}`}>
+                                  Order no {order.orderNumber} • Bill {order.billNumber || "-"} • Due {order.billDueAmount != null ? formatMoney(order.billDueAmount) : "Not available"}
+                                </Typography>
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  <Button size="small" variant="outlined" onClick={() => setSelectedLabOrderId(order.id)}>
+                                    View order
+                                  </Button>
+                                  <Button size="small" variant="outlined" disabled={!order.reportPublishedAt && !order.reportFilename} onClick={async () => {
+                                    if (!auth.accessToken || !auth.tenantId) return;
+                                    try {
+                                      const { blob, filename } = await getLabOrderPdf(auth.accessToken, auth.tenantId, order.id);
+                                      const url = URL.createObjectURL(blob);
+                                      const anchor = document.createElement("a");
+                                      anchor.href = url;
+                                      anchor.download = filename;
+                                      anchor.click();
+                                      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+                                      setInfo("Lab report downloaded");
+                                    } catch (err) {
+                                      setError(err instanceof Error ? err.message : "Unable to open lab report");
+                                    }
+                                  }}>
+                                    View report
+                                  </Button>
+                                  <Button size="small" variant="outlined" onClick={() => setSelectedLabOrderId(order.id)}>
+                                    Compare report
+                                  </Button>
+                                  <Button size="small" variant="outlined" onClick={() => setUploadDialogOpen(true)}>
+                                    Add/upload report
+                                  </Button>
+                                </Stack>
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </Stack>
+                    )}
+                  </Stack>
+                </CardContent>
+              </Card>
             </Grid>
           </Grid>
         </Stack>
@@ -5850,6 +8703,9 @@ export default function ConsultationWorkspacePage() {
 
       {canRunAi && activeTab === 5 ? (
         <Grid container spacing={1.5}>
+          <Grid size={{ xs: 12 }}>
+            <WorkflowStrip text="Review Context → Ask AI → Review Draft → Accept" />
+          </Grid>
           <Grid size={{ xs: 12, md: 6 }}>
             <Stack spacing={1.5}>
               <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
@@ -5917,7 +8773,7 @@ export default function ConsultationWorkspacePage() {
                         </CardContent>
                       </Card>
                     ) : null}
-                    <Collapse in={aivaDraftsExpanded} timeout="auto" unmountOnExit>
+                    <Collapse in={aivaDraftsExpanded} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
                       <Stack spacing={1}>
                         {clinicalDraftEntries.length || latestClinicalReasoningEntry || latestPrescriptionEntry || recommendedTestSuggestions.length ? (
                           <>
@@ -5952,7 +8808,7 @@ export default function ConsultationWorkspacePage() {
                               <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Clinical Reasoning</Typography>
                               {latestClinicalReasoningEntry ? renderAiAssistEntry(latestClinicalReasoningEntry) : (
                                 <Box sx={{ p: 1.2, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                  <Typography variant="body2" color="text.secondary">No clinical reasoning draft yet.</Typography>
+                                  <Typography variant="body2" color="text.secondary">Generate clinical reasoning to review likely assessment, differentials, red flags, and suggested tests.</Typography>
                                 </Box>
                               )}
                             </Stack>
@@ -6011,12 +8867,12 @@ export default function ConsultationWorkspacePage() {
                     <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
                       <Stack direction="row" spacing={0.75} alignItems="center">
                         <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                        <Typography variant="h6" sx={{ fontWeight: 900 }}>AIVA Chat</Typography>
+                        <Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Chat</Typography>
                       </Stack>
                       <Chip size="small" variant="outlined" color={aiAvailable ? "success" : "warning"} label={aiAvailable ? "AI ready" : "AI unavailable"} />
                     </Stack>
                     <Typography variant="body2" color="text.secondary">
-                      Ask AIVA anything about this consultation.
+                      Ask anything about this consultation...
                     </Typography>
                     {!aiAvailable ? (
                       <Alert severity="info">
@@ -6077,17 +8933,31 @@ export default function ConsultationWorkspacePage() {
                               ))
                             ) : (
                               <Box sx={{ p: 1.2, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
-                                <Typography variant="body2" color="text.secondary">
-                                  Ask AIVA anything about this consultation.
-                                </Typography>
+                                <Stack spacing={0.75}>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Ask anything about this consultation...
+                                  </Typography>
+                                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                    {AIVA_QUICK_PROMPTS.map((prompt) => (
+                                      <Chip
+                                        key={prompt}
+                                        size="small"
+                                        variant="outlined"
+                                        clickable={!aiBusy && !aivaQuestionSubmitting}
+                                        label={prompt}
+                                        onClick={() => setAivaClinicalQuestion(prompt)}
+                                      />
+                                    ))}
+                                  </Stack>
+                                </Stack>
                               </Box>
                             )}
                           </Stack>
                           <TextField
                             size="small"
                             fullWidth
-                            label="Ask AIVA anything about this consultation"
-                            placeholder="Ask AIVA anything about this consultation"
+                            label="Ask anything about this consultation"
+                            placeholder="Ask anything about this consultation..."
                             value={aivaClinicalQuestion}
                             disabled={aiBusy || aivaQuestionSubmitting || readOnly || !aiAvailable}
                             multiline
@@ -6102,13 +8972,13 @@ export default function ConsultationWorkspacePage() {
                           />
                           <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
                             <Button type="button" size="small" variant="contained" disabled={!canAskAiva || aivaQuestionSubmitting || aiBusy} onClick={() => void submitAivaQuestion()}>
-                              Ask AIVA
+                              Ask
                             </Button>
                             <Button type="button" size="small" variant="outlined" disabled={!aivaChatMessages.length} onClick={() => setAivaChatDetailsOpen((current) => !current)}>
                               {aivaChatDetailsOpen ? "Hide Transcript" : "Show Transcript"}
                             </Button>
                           </Stack>
-                          <Collapse in={aivaChatDetailsOpen && aivaChatMessages.length > 0} timeout="auto" unmountOnExit>
+                          <Collapse in={aivaChatDetailsOpen && aivaChatMessages.length > 0} timeout={200} easing={{ enter: "ease-in-out", exit: "ease-in-out" }} unmountOnExit>
                             <Stack spacing={0.75}>
                               <Typography variant="caption" color="text.secondary">
                                 Doctor and AIVA messages stay in this session until the consultation is closed.
@@ -6232,9 +9102,12 @@ export default function ConsultationWorkspacePage() {
       ) : null}
 
       <Dialog open={labOrderDialogOpen} onClose={() => setLabOrderDialogOpen(false)} fullWidth maxWidth="md">
-        <DialogTitle>Order Lab Tests</DialogTitle>
+        <DialogTitle>Select Lab Tests</DialogTitle>
         <DialogContent dividers>
-          <Stack spacing={2} sx={{ pt: 0.5 }}>
+          <Stack spacing={1.5} sx={{ pt: 0.5 }}>
+            <Alert severity="info" sx={{ py: 0.45 }}>
+              Review history → Select tests → Check duplicates → Confirm order → Track report
+            </Alert>
             <TextField
               fullWidth
               size="small"
@@ -6245,6 +9118,13 @@ export default function ConsultationWorkspacePage() {
               minRows={2}
               placeholder="Add order notes for the lab team"
             />
+            {labOrderTestIds.length ? (
+              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                {selectedLabOrderTests.slice(0, 8).map((test) => <Chip key={test.id} size="small" variant="outlined" label={test.testName} />)}
+              </Stack>
+            ) : (
+              <Typography variant="caption" color="text.secondary">No tests selected yet. Pick recommended or custom tests from the Investigations tab.</Typography>
+            )}
             <Box sx={{ maxHeight: 360, overflow: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1.5, p: 1.25 }}>
               <Stack spacing={1}>
                 {labTests.map((test) => {
@@ -6256,7 +9136,7 @@ export default function ConsultationWorkspacePage() {
                           <Box>
                             <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{test.testName}</Typography>
                             <Typography variant="caption" color="text.secondary">
-                              {test.testCode} • {test.category} • {test.sampleType || "Sample not specified"} • {test.turnaroundTime || "TAT not set"}
+                              {test.testCode} • {test.category} • {test.sampleType || "Sample not specified"} • {test.tenantTatOverride || test.turnaroundTime || "TAT not set"} • {formatMoney(test.tenantPriceOverride ?? test.price ?? null)}
                             </Typography>
                           </Box>
                           <Button
@@ -6278,8 +9158,154 @@ export default function ConsultationWorkspacePage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setLabOrderDialogOpen(false)}>Cancel</Button>
+          <Button variant="outlined" disabled={labOrderSaving || !labOrderTestIds.length} onClick={openLabOrderReview}>
+            Review &amp; Create Lab Order
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={labOrderReviewOpen} onClose={() => setLabOrderReviewOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Review &amp; Create Lab Order</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={1.25} sx={{ pt: 0.5 }}>
+            <Typography variant="body2" color="text.secondary">
+              Selected tests, duplicate warnings, and order notes are shown below. Create the order only after doctor review.
+            </Typography>
+            {!selectedLabOrderTests.length ? (
+              <Alert severity="info">No lab orders yet. Select recommended tests or search tests to create an order.</Alert>
+            ) : (
+              <Stack spacing={0.75}>
+                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                  {selectedLabOrderTests.map((test) => (
+                    <Chip
+                      key={test.id}
+                      size="small"
+                      label={test.testName}
+                      variant="outlined"
+                      color={labOrderReviewWarnings.has(test.id) ? "warning" : "primary"}
+                    />
+                  ))}
+                </Stack>
+                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                  <Chip size="small" variant="outlined" label={`Estimated cost: ${formatMoney(labOrderEstimatedCost)}`} />
+                  <Chip size="small" variant="outlined" label={`Sample types: ${Array.from(new Set(selectedLabOrderTests.map((test) => test.sampleType || "Not specified"))).slice(0, 3).join(", ")}`} />
+                  <Chip size="small" variant="outlined" label={selectedLabOrderTests.some((test) => looksLikeFastingTest(test.testName, test.sampleType, test.category)) ? "Fasting may be required" : "No fasting requirement detected"} />
+                </Stack>
+                <Stack spacing={0.5}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Duplicate / recent warnings</Typography>
+                  {Array.from(labOrderReviewWarnings.values()).length ? (
+                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                      {Array.from(labOrderReviewWarnings.values()).map((warning) => <Chip key={warning} size="small" variant="outlined" color="warning" label={warning} />)}
+                    </Stack>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">No duplicate warnings from current consultation context.</Typography>
+                  )}
+                </Stack>
+                <Stack spacing={0.4}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Selected tests</Typography>
+                  {selectedLabOrderTests.map((test) => (
+                    <Stack key={test.id} direction="row" spacing={0.75} alignItems="flex-start" justifyContent="space-between">
+                      <Typography variant="body2" sx={{ fontWeight: 700 }}>{test.testName}</Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ textAlign: "right" }}>
+                        {test.sampleType || "Sample not specified"}{test.turnaroundTime ? ` • TAT ${test.turnaroundTime}` : ""}{test.price != null ? ` • ${formatMoney(test.price)}` : ""}
+                      </Typography>
+                    </Stack>
+                  ))}
+                </Stack>
+                <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "pre-line" }}>
+                  {labOrderNotes.trim() ? `Notes:\n${labOrderNotes.trim()}` : "No notes added."}
+                </Typography>
+              </Stack>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setLabOrderReviewOpen(false)}>Back</Button>
           <Button variant="contained" disabled={labOrderSaving || !labOrderTestIds.length} onClick={() => void submitLabOrder()}>
             Create Order
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={Boolean(selectedLabOrder)} onClose={() => setSelectedLabOrderId(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Lab Order Details</DialogTitle>
+        <DialogContent dividers>
+          {selectedLabOrder ? (
+            <Stack spacing={1.25} sx={{ pt: 0.5 }}>
+              <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                <Chip size="small" variant="outlined" label={selectedLabOrder.orderNumber} />
+                <Chip size="small" variant="outlined" color={labOrderReviewStatusColor(selectedLabOrder.status)} label={labOrderReviewStatusLabel(selectedLabOrder.status)} />
+                <Chip size="small" variant="outlined" label={selectedLabOrder.reportPublishedAt ? "Report Ready" : "Report Pending"} />
+                <Chip size="small" variant="outlined" label={selectedLabOrder.sampleSummaryStatus || "Sample status n/a"} />
+                <Chip size="small" variant="outlined" label={selectedLabOrder.billStatus || "Bill status n/a"} />
+              </Stack>
+              <Typography variant="body2" color="text.secondary">
+                {compactDateTime(selectedLabOrder.orderedAt)} • {selectedLabOrder.items.map((item) => item.testName).join(", ")}
+              </Typography>
+              <Stack spacing={0.75}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Tests</Typography>
+                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                  {selectedLabOrder.items.map((item) => (
+                    <Chip key={item.id} size="small" variant="outlined" label={item.testName} />
+                  ))}
+                </Stack>
+              </Stack>
+              <Stack spacing={0.5}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Billing and sample</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Order no {selectedLabOrder.orderNumber} • Bill {selectedLabOrder.billNumber || "-"} • Due {selectedLabOrder.billDueAmount != null ? formatMoney(selectedLabOrder.billDueAmount) : "Not available"}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Sample status {selectedLabOrder.sampleSummaryStatus || "n/a"} • Report status {selectedLabOrder.reportPublishedAt ? "Published" : "Pending"}
+                </Typography>
+              </Stack>
+              {selectedLabOrder.notes ? (
+                <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+                  <b>Notes:</b> {selectedLabOrder.notes}
+                </Typography>
+              ) : null}
+              <Card variant="outlined" sx={{ boxShadow: "none" }}>
+                <CardContent sx={{ p: 1 }}>
+                  <Stack spacing={0.75}>
+                    <Stack direction="row" spacing={0.75} alignItems="center">
+                      <TrendingUpRoundedIcon fontSize="small" color="primary" />
+                      <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Report comparison</Typography>
+                    </Stack>
+                    <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                      {reportComparisonSummary.title}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {reportComparisonSummary.detail}
+                    </Typography>
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSelectedLabOrderId(null)}>Close</Button>
+          <Button variant="outlined" onClick={() => setUploadDialogOpen(true)}>
+            Add/upload report
+          </Button>
+          <Button
+            variant="outlined"
+            disabled={!selectedLabOrder || (!selectedLabOrder.reportPublishedAt && !selectedLabOrder.reportFilename)}
+            onClick={async () => {
+              if (!selectedLabOrder || !auth.accessToken || !auth.tenantId) return;
+              try {
+                const { blob, filename } = await getLabOrderPdf(auth.accessToken, auth.tenantId, selectedLabOrder.id);
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement("a");
+                anchor.href = url;
+                anchor.download = filename;
+                anchor.click();
+                window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+                setInfo("Lab report downloaded");
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Unable to open lab report");
+              }
+            }}
+          >
+            View report
           </Button>
         </DialogActions>
       </Dialog>
@@ -6289,6 +9315,132 @@ export default function ConsultationWorkspacePage() {
         {canFinalizePrescription ? <Button type="button" variant="outlined" disabled={saving} onClick={() => void sendCurrentPrescription("email")}>Email Rx</Button> : null}
         {canFinalizePrescription ? <Button type="button" variant="outlined" disabled={saving} onClick={() => void sendCurrentPrescription("whatsapp")}>WhatsApp Rx</Button> : null}
       </Stack>
+      {workspaceConfirmation?.kind === "fastPack" ? (
+        <ConfirmationDialog
+          open
+          title="Replace Prescription Draft?"
+          confirmLabel="Apply Fast Pack"
+          cancelLabel="Cancel"
+          confirmColor="secondary"
+          onCancel={() => setWorkspaceConfirmation(null)}
+          onConfirm={() => {
+            workspaceConfirmation.onConfirm();
+            setWorkspaceConfirmation(null);
+          }}
+        >
+          <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "pre-line" }}>
+            {workspaceConfirmation.hasContent
+              ? `Applying this Fast Pack will:
+- Replace the current prescription draft
+- Keep manual rows unchanged
+- Preserve consultation notes
+- Require doctor review before finalization`
+              : "The selected Fast Pack will populate the prescription with recommended medicines."}
+          </Typography>
+        </ConfirmationDialog>
+      ) : null}
+      {workspaceConfirmation?.kind === "overwrite" ? (
+        <ConfirmationDialog
+          open
+          title={`Replace ${workspaceConfirmation.label}?`}
+          description={`Replace existing ${workspaceConfirmation.label.toLowerCase()} or append the AI suggestion?`}
+          confirmLabel="Replace"
+          cancelLabel={workspaceConfirmation.allowAppend ? "Cancel" : "Close"}
+          confirmColor="secondary"
+          onCancel={() => workspaceConfirmation.onResolve("cancel")}
+          onConfirm={() => workspaceConfirmation.onResolve("replace")}
+        >
+          {workspaceConfirmation.allowAppend ? (
+            <Button type="button" variant="text" onClick={() => workspaceConfirmation.onResolve("append")} sx={{ mt: 0.5 }}>
+              Append instead
+            </Button>
+          ) : null}
+        </ConfirmationDialog>
+      ) : null}
+      {workspaceConfirmation?.kind === "confirm" ? (
+        <ConfirmationDialog
+          open
+          title={workspaceConfirmation.title}
+          description={workspaceConfirmation.description}
+          confirmLabel={workspaceConfirmation.confirmLabel}
+          confirmColor={workspaceConfirmation.confirmColor}
+          onCancel={() => {
+            workspaceConfirmation.onCancel?.();
+            setWorkspaceConfirmation(null);
+          }}
+          onConfirm={() => {
+            workspaceConfirmation.onConfirm();
+            setWorkspaceConfirmation(null);
+          }}
+        />
+      ) : null}
+      <Drawer
+        anchor="right"
+        open={completionValidationOpen}
+        onClose={() => setCompletionValidationOpen(false)}
+        PaperProps={{
+          sx: {
+            width: { xs: "100%", sm: 400, md: 460 },
+            maxWidth: "100%",
+            p: 1.25,
+          },
+        }}
+      >
+        <Stack spacing={1.1} sx={{ height: "100%" }}>
+          <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between">
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>
+                Completion Validation
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Guidance only. Existing completion rules remain unchanged.
+              </Typography>
+            </Box>
+            <Button type="button" size="small" variant="text" onClick={() => setCompletionValidationOpen(false)}>
+              Close
+            </Button>
+          </Stack>
+          <Alert severity={consultationCompletionSummary.ready ? "success" : "warning"} sx={{ py: 0.5 }}>
+            {consultationCompletionSummary.ready ? "Ready to complete" : "Needs review before completion"}
+          </Alert>
+          <Stack spacing={0.65}>
+            {consultationCompletionChecklist.map((item) => (
+              <Card key={item.label} variant="outlined" sx={{ boxShadow: "none" }}>
+                <CardContent sx={{ p: 0.8, "&:last-child": { pb: 0.8 } }}>
+                  <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                      {item.label}
+                    </Typography>
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      color={item.state === "complete" ? "success" : item.state === "needs_review" ? "warning" : "default"}
+                      label={item.state === "complete" ? "Complete" : item.state === "needs_review" ? "Needs review" : "Missing"}
+                    />
+                  </Stack>
+                </CardContent>
+              </Card>
+            ))}
+          </Stack>
+          <Divider />
+          <Stack spacing={0.65}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>
+              Final consultation audit
+            </Typography>
+            {consultationAuditShareLog.length ? (
+              <Stack spacing={0.5}>
+                {consultationAuditShareLog.slice(0, 8).map((item) => (
+                  <Chip key={item} size="small" variant="outlined" label={item} />
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="caption" color="text.secondary">
+                No patient communication actions recorded yet.
+              </Typography>
+            )}
+          </Stack>
+        </Stack>
+      </Drawer>
       <Dialog open={completeConsultationDialogOpen} onClose={() => setCompleteConsultationDialogOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Complete consultation?</DialogTitle>
         <DialogContent>
