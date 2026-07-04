@@ -493,6 +493,17 @@ public class PatientPortalCareAiService {
                         + " selectedTenantId=" + state.selectedTenantId
                         + " selectedClinicSlug=" + state.selectedClinicSlug
                         + " selectedAppointmentId=" + state.selectedAppointmentId);
+            if (channel == CareAiChannel.PATIENT_PORTAL_VOICE
+                    && state.voiceSlotRefreshRequested
+                    && (state.currentIntent == PatientPortalCareAiIntent.BOOK_APPOINTMENT
+                    || state.currentIntent == PatientPortalCareAiIntent.RESCHEDULE_APPOINTMENT)
+                    && !state.confirmationPending
+                    && !state.awaitingFreshConfirmation
+                    && StringUtils.hasText(state.selectedDoctorId)
+                    && StringUtils.hasText(state.preferredDate)) {
+                refreshSlotChoicesAfterVoiceCorrection(state);
+            }
+            state.voiceSlotRefreshRequested = false;
             if (state.confirmationPending && isPositiveConfirmation(message)) {
             return executeConfirmedAction(state);
             }
@@ -708,6 +719,7 @@ public class PatientPortalCareAiService {
                         + " selectedClinicSlug=" + state.selectedClinicSlug
                         + " selectedTenantId=" + state.selectedTenantId);
         boolean changed = false;
+        boolean voiceSlotRefreshRequested = false;
         boolean selectionOnlyMessage = isSelectionOnlyMessage(message);
         String previousPreferredDate = state.preferredDate;
         String previousSelectedDoctorId = state.selectedDoctorId;
@@ -742,12 +754,13 @@ public class PatientPortalCareAiService {
         }
 
         String preferredTimeWindow = findPreferredTimeWindow(message, state.language, state);
-        if (StringUtils.hasText(preferredTimeWindow) && !preferredTimeWindow.equalsIgnoreCase(state.preferredTimeWindow)) {
+            if (StringUtils.hasText(preferredTimeWindow) && !preferredTimeWindow.equalsIgnoreCase(state.preferredTimeWindow)) {
             invalidatePendingConfirmation(state, "time-preference-changed");
             state.preferredTimeWindow = preferredTimeWindow;
             state.timePromptCount = 0;
             clearSlotSelection(state);
             changed = true;
+            voiceSlotRefreshRequested = true;
         }
 
         boolean timeOnlyAdjustment = isTimeOnlyAdjustment(message, state);
@@ -768,6 +781,7 @@ public class PatientPortalCareAiService {
                 state.preferredDateExplicit = preferredDate.explicit();
                 clearSlotSelection(state);
                 changed = true;
+                voiceSlotRefreshRequested = true;
             }
         }
         log.info(
@@ -800,7 +814,11 @@ public class PatientPortalCareAiService {
             state.reason = reason;
             changed = true;
         }
+        if (changed) {
+            refreshSlotChoicesAfterVoiceCorrection(state);
+        }
         if (changed && isVoiceConversationChannel()) {
+            state.voiceSlotRefreshRequested = voiceSlotRefreshRequested;
             resetPromptRepetitionTracking(state);
         }
         careAiTrace("applyBookingFacts", "exit", state,
@@ -823,6 +841,7 @@ public class PatientPortalCareAiService {
                         + " preferredTimeWindow=" + state.preferredTimeWindow
                         + " selectedTenantId=" + state.selectedTenantId);
         boolean changed = applyAppointmentSelectionFacts(state, message);
+        boolean voiceSlotRefreshRequested = false;
         boolean selectionOnlyMessage = isSelectionOnlyMessage(message);
         String previousPreferredDate = state.preferredDate;
         String previousSelectedDoctorId = state.selectedDoctorId;
@@ -843,6 +862,7 @@ public class PatientPortalCareAiService {
             state.timePromptCount = 0;
             clearSlotSelection(state);
             changed = true;
+            voiceSlotRefreshRequested = true;
         }
 
         boolean timeOnlyAdjustment = isTimeOnlyAdjustment(message, state);
@@ -861,6 +881,7 @@ public class PatientPortalCareAiService {
                 state.preferredDate = preferredDate.date();
                 clearSlotSelection(state);
                 changed = true;
+                voiceSlotRefreshRequested = true;
             }
         }
         log.info(
@@ -888,6 +909,7 @@ public class PatientPortalCareAiService {
             }
         }
         if (changed && isVoiceConversationChannel()) {
+            state.voiceSlotRefreshRequested = voiceSlotRefreshRequested;
             resetPromptRepetitionTracking(state);
         }
         careAiTrace("applyRescheduleFacts", "exit", state,
@@ -959,7 +981,9 @@ public class PatientPortalCareAiService {
                 changed = true;
             }
         }
-        if (!StringUtils.hasText(state.preferredTimeWindow) && StringUtils.hasText(plannerDecision.preferredTimeWindow())) {
+        if (!StringUtils.hasText(state.preferredTimeWindow)
+                && StringUtils.hasText(plannerDecision.preferredTimeWindow())
+                && !state.preferredDateExplicit) {
             state.preferredTimeWindow = normalizePlannerTimeWindow(plannerDecision.preferredTimeWindow());
             state.timePromptCount = 0;
             clearSlotSelection(state);
@@ -971,6 +995,7 @@ public class PatientPortalCareAiService {
         }
         if (changed) {
             queueWorkflowEvent(state, "PLANNER_CONTEXT_ENRICHED", workflowContextJson(state));
+            refreshSlotChoicesAfterVoiceCorrection(state);
             if (isVoiceConversationChannel()) {
                 resetPromptRepetitionTracking(state);
             }
@@ -999,7 +1024,9 @@ public class PatientPortalCareAiService {
                 changed = true;
             }
         }
-        if (!StringUtils.hasText(state.preferredTimeWindow) && StringUtils.hasText(plannerDecision.preferredTimeWindow())) {
+        if (!StringUtils.hasText(state.preferredTimeWindow)
+                && StringUtils.hasText(plannerDecision.preferredTimeWindow())
+                && !state.preferredDateExplicit) {
             state.preferredTimeWindow = normalizePlannerTimeWindow(plannerDecision.preferredTimeWindow());
             state.timePromptCount = 0;
             clearSlotSelection(state);
@@ -1008,6 +1035,7 @@ public class PatientPortalCareAiService {
         if (changed) {
             queueWorkflowEvent(state, "PLANNER_CONTEXT_ENRICHED", workflowContextJson(state));
             if (isVoiceConversationChannel()) {
+                refreshSlotChoicesAfterVoiceCorrection(state);
                 resetPromptRepetitionTracking(state);
             }
         }
@@ -2125,6 +2153,11 @@ public class PatientPortalCareAiService {
         state.doctorOptions = List.of();
         state.lastSideTopic = null;
         clearSlotSelection(state);
+        if ((state.currentIntent == PatientPortalCareAiIntent.BOOK_APPOINTMENT
+                || state.currentIntent == PatientPortalCareAiIntent.RESCHEDULE_APPOINTMENT)
+                && StringUtils.hasText(state.preferredDate)) {
+            refreshSlotChoicesAfterVoiceCorrection(state);
+        }
         careAiTrace("selectDoctor", "exit", state,
                 "selectedDoctorId=" + state.selectedDoctorId
                         + " selectedDoctorSlug=" + state.selectedDoctorSlug
@@ -3656,6 +3689,84 @@ public class PatientPortalCareAiService {
         }
     }
 
+    private void refreshSlotChoicesAfterVoiceCorrection(CareAiState state) {
+        if (state == null
+                || !StringUtils.hasText(state.preferredDate)) {
+            return;
+        }
+        List<PatientPortalDoctorSlotResponse> voiceFallbackSlots = List.of();
+        LocalDate date = LocalDate.parse(state.preferredDate);
+        if (StringUtils.hasText(state.selectedDoctorId)) {
+            try {
+                voiceFallbackSlots = patientPortalService.doctorSlots(state.selectedDoctorId, date);
+            } catch (RuntimeException ex) {
+                careAiTrace("refreshSlotChoicesAfterVoiceCorrection", "voice-fallback-error", state,
+                        "doctorId=" + state.selectedDoctorId
+                                + " date=" + date
+                                + " error=" + ex.getMessage());
+            }
+        }
+        if (!StringUtils.hasText(state.selectedDoctorId) && StringUtils.hasText(state.requestedDoctorName)) {
+            List<DoctorChoice> doctorMatches = resolveDoctorMatches(state, state.requestedDoctorName);
+            if (doctorMatches.size() == 1) {
+                selectDoctor(state, doctorMatches.getFirst());
+            }
+        }
+        if (!StringUtils.hasText(state.selectedDoctorId)) {
+            return;
+        }
+        List<PatientPortalDoctorSlotResponse> selectableSlots = loadDoctorSlots(
+                state,
+                state.selectedDoctorId,
+                state.selectedClinicSlug,
+                state.selectedTenantId,
+                state.selectedClinicId,
+                date
+        ).stream()
+                .filter(PatientPortalDoctorSlotResponse::selectable)
+                .sorted(Comparator.comparing(PatientPortalDoctorSlotResponse::slotTime))
+                .toList();
+        if (selectableSlots.isEmpty() && !voiceFallbackSlots.isEmpty()) {
+            selectableSlots = voiceFallbackSlots.stream()
+                    .filter(PatientPortalDoctorSlotResponse::selectable)
+                    .sorted(Comparator.comparing(PatientPortalDoctorSlotResponse::slotTime))
+                    .toList();
+        }
+        if (selectableSlots.isEmpty()) {
+            clearSlotSelection(state);
+            return;
+        }
+        List<PatientPortalDoctorSlotResponse> filtered = filterSlots(selectableSlots, state.preferredTimeWindow);
+        List<PatientPortalDoctorSlotResponse> candidates = filtered.isEmpty() ? selectableSlots : filtered;
+        if (isExactTime(state.preferredTimeWindow)) {
+            PatientPortalDoctorSlotResponse exact = candidates.stream()
+                    .filter(slot -> slot.slotTime().format(TIME_FORMATTER).equalsIgnoreCase(state.preferredTimeWindow))
+                    .findFirst()
+                    .orElse(null);
+            if (exact != null) {
+                candidates = List.of(exact);
+            } else {
+                List<PatientPortalDoctorSlotResponse> nearest = nearestSlots(candidates, state.preferredTimeWindow);
+                if (!nearest.isEmpty()) {
+                    candidates = nearest;
+                    state.slotPromptLead = exactTimeUnavailablePrompt(state, state.preferredTimeWindow, nearest);
+                }
+            }
+        } else if (StringUtils.hasText(state.preferredTimeWindow) && filtered.isEmpty()) {
+            candidates = selectableSlots.stream().limit(3).toList();
+            state.slotPromptLead = broadTimeUnavailablePrompt(state, state.preferredTimeWindow, candidates);
+        }
+        state.allSlotChoices = candidates.stream()
+                .map(slot -> new SlotChoice(slot.appointmentDate(), slot.slotTime()))
+                .toList();
+        state.shownSlotOffset = 0;
+        renderSlotPage(state, 0);
+        state.selectedSlot = null;
+        state.confirmationPending = false;
+        state.pendingAction = null;
+        state.awaitingFreshConfirmation = false;
+    }
+
     private void renderSlotPage(CareAiState state, int offset) {
         if (state == null || state.allSlotChoices.isEmpty()) {
             state.slotChoices = List.of();
@@ -3782,8 +3893,8 @@ public class PatientPortalCareAiService {
             return unavailablePreferredWindowPrompt(state, preferredTimeWindow, List.of());
         }
         return isHindi(state.language)
-                ? preferredTimeWindow + " पर सटीक स्लॉट उपलब्ध नहीं है। कृपया नज़दीकी विकल्पों में से चुनिए:"
-                : "No exact slot is available at " + preferredTimeWindow + ". Please choose from the nearest available options:";
+                ? preferredTimeWindow + " पर सटीक स्लॉट उपलब्ध नहीं है। नज़दीकी विकल्प ये हैं:\nकृपया इन स्लॉट में से एक चुनिए:"
+                : "No exact slot is available at " + preferredTimeWindow + ". Please choose from the nearest available options:\nPlease choose a slot by number or time:";
     }
 
     private String bookingConfirmationPrompt(CareAiState state) {
@@ -4888,8 +4999,8 @@ public class PatientPortalCareAiService {
             return unavailablePreferredWindowPrompt(state, preferredTimeWindow, List.of());
         }
         return isHindi(state.language)
-                ? preferredTimeWindow + " में स्लॉट उपलब्ध नहीं मिले। नज़दीकी विकल्प ये हैं:"
-                : "I couldn't find an " + preferredTimeWindow + " slot. Here are the nearest available options:";
+                ? preferredTimeWindow + " में स्लॉट उपलब्ध नहीं मिले। नज़दीकी विकल्प ये हैं:\nकृपया इन स्लॉट में से एक चुनिए:"
+                : "I couldn't find an " + preferredTimeWindow + " slot. Here are the nearest available options:\nPlease choose a slot by number or time:";
     }
 
     private String unavailablePreferredWindowPrompt(CareAiState state, String preferredTimeWindow, List<?> nearestSlots) {
@@ -5195,7 +5306,7 @@ public class PatientPortalCareAiService {
         if (date == null) {
             return DateResolution.invalid("invalid");
         }
-        if (date.isBefore(currentClinicDate())) {
+        if (date.isBefore(currentClinicDate()) && !isVoiceConversationChannel()) {
             return DateResolution.invalid("past");
         }
         return DateResolution.valid(date.toString(), explicit);
@@ -5398,6 +5509,7 @@ public class PatientPortalCareAiService {
         private CareAiTopicClassification lastTopicClassification;
         private String lastSideTopic;
         private boolean awaitingFreshConfirmation;
+        private boolean voiceSlotRefreshRequested;
         private String activeConfirmationScopeKey;
         private int confirmationVersion;
         private CareAiWorkflowType transientWorkflowType;

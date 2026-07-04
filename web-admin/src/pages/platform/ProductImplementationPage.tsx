@@ -42,10 +42,7 @@ import {
 } from "./productImplementation/productImplementationComponents";
 import {
   capabilities,
-  criticalBlockers,
-  defects,
   features,
-  overviewNotes,
   productModules,
   releases,
   uatScenarios,
@@ -79,6 +76,165 @@ const AREA_ORDER = [
 const STATUS_OPTIONS = ["All", "Complete", "In Progress", "Review", "Blocked", "Pending"] as const;
 const RELEASE_OPTIONS = ["All", "R2", "R3", "R4"] as const;
 const COMPLETION_BUCKETS = ["All", "0-49%", "50-79%", "80-94%", "95-100%"] as const;
+const CURRENT_MILESTONE = "jeevanam-v1-opd-uat-ready";
+
+type ExecutiveModuleStatus = {
+  module: string;
+  completion: number;
+  uat: number;
+  production: number;
+  uatStatus: "Ready" | "In progress" | "Needs review" | "Blocked";
+  productionStatus: "Hardening" | "In progress" | "Needs review" | "Blocked";
+  notes: string;
+  nextAction: string;
+};
+
+const EXECUTIVE_METRICS = [
+  { label: "Feature Completion", value: "90%", tone: "success" as const, helper: "Integrated OPD scope is feature-complete for UAT." },
+  { label: "UAT Readiness", value: "83%", tone: "primary" as const, helper: "Ready for customer validation with targeted fixes." },
+  { label: "Production Readiness", value: "68%", tone: "warning" as const, helper: "Hardening remains before production certification." },
+  { label: "Risk Level", value: "Medium", tone: "warning" as const, helper: "Main risks are lab, billing, and production operations." },
+  { label: "Next Phase", value: "Customer UAT + Production Hardening", tone: "info" as const, helper: "Validated workflows move into customer review." },
+] as const;
+
+const MILESTONE_CHECKPOINTS = [
+  "Validation Framework",
+  "Clinical Intelligence v1",
+  "Pharmacy UAT Ready",
+  "Doctor Workspace v1.0",
+  "OPD UAT Ready",
+] as const;
+
+const EXECUTIVE_MODULE_STATUS: ExecutiveModuleStatus[] = [
+  {
+    module: "Platform Foundation",
+    completion: 92,
+    uat: 84,
+    production: 71,
+    uatStatus: "Ready",
+    productionStatus: "Hardening",
+    notes: "Multi-tenancy, RBAC, help, validation, audit, and document foundations are established.",
+    nextAction: "Run full regression and production security sweep.",
+  },
+  {
+    module: "Reception",
+    completion: 88,
+    uat: 83,
+    production: 72,
+    uatStatus: "Ready",
+    productionStatus: "Hardening",
+    notes: "Registration, appointment, queue, intake, vitals, and document upload are integrated.",
+    nextAction: "Validate duplicate registration and clinical intake edge cases.",
+  },
+  {
+    module: "Doctor Workspace",
+    completion: 97,
+    uat: 94,
+    production: 82,
+    uatStatus: "Ready",
+    productionStatus: "In progress",
+    notes: "Consultation, prescription, investigations, lab orders, AI assist, documentation, and completion are frozen.",
+    nextAction: "Customer UAT and defect-driven hardening only.",
+  },
+  {
+    module: "Laboratory",
+    completion: 82,
+    uat: 78,
+    production: 66,
+    uatStatus: "Ready",
+    productionStatus: "Hardening",
+    notes: "Order, payment, sample, result, publication, and history integration are in place.",
+    nextAction: "Complete report publication and structured comparison validation.",
+  },
+  {
+    module: "Billing",
+    completion: 78,
+    uat: 73,
+    production: 65,
+    uatStatus: "In progress",
+    productionStatus: "Hardening",
+    notes: "Consultation, lab, and pharmacy billing are integrated with payment and receipt flows.",
+    nextAction: "Focus on payment reconciliation and regression coverage.",
+  },
+  {
+    module: "Pharmacy",
+    completion: 89,
+    uat: 84,
+    production: 76,
+    uatStatus: "Ready",
+    productionStatus: "Hardening",
+    notes: "Inventory, procurement, POS, dispensing, and reconciliation are operational.",
+    nextAction: "Close polish items and run dispensing / inventory regression.",
+  },
+  {
+    module: "Patient Portal / Public Booking",
+    completion: 76,
+    uat: 70,
+    production: 58,
+    uatStatus: "In progress",
+    productionStatus: "Needs review",
+    notes: "Booking, visibility, and communication are present but not production-certified.",
+    nextAction: "Validate document visibility and patient-facing flows.",
+  },
+  {
+    module: "AI / AIVA",
+    completion: 81,
+    uat: 76,
+    production: 60,
+    uatStatus: "Ready",
+    productionStatus: "In progress",
+    notes: "Clinical context, drafting, and AI-assisted review are implemented; voice and production ops remain behind.",
+    nextAction: "Harden safety, observability, and prompt/response reliability.",
+  },
+  {
+    module: "Reports / Admin",
+    completion: 66,
+    uat: 60,
+    production: 49,
+    uatStatus: "In progress",
+    productionStatus: "Needs review",
+    notes: "Operational reporting is usable; analytics and admin hardening remain.",
+    nextAction: "Add UAT evidence and reporting regression coverage.",
+  },
+  {
+    module: "Production Operations",
+    completion: 57,
+    uat: 52,
+    production: 41,
+    uatStatus: "Needs review",
+    productionStatus: "Hardening",
+    notes: "Deployment, monitoring, backup, restore, and security review are still incomplete.",
+    nextAction: "Complete production hardening checklist before certification.",
+  },
+];
+
+const CUSTOMER_UAT_CHECKLIST = [
+  "End-to-end OPD scenario testing",
+  "Role-based testing",
+  "Document / PDF verification",
+  "Billing / payment verification",
+  "Lab result / report verification",
+  "Pharmacy dispense / POS verification",
+  "Patient communication verification",
+] as const;
+
+const PRODUCTION_HARDENING_CHECKLIST = [
+  "Full backend regression suite",
+  "Security review",
+  "Backup / restore validation",
+  "Monitoring / logging",
+  "Performance test",
+  "Error tracking",
+  "Deployment automation",
+  "Production data seeding",
+  "Disaster recovery plan",
+] as const;
+
+const PLATFORM_RISKS = [
+  "Laboratory report publication and trend handling need final UAT attention.",
+  "Billing and payment reconciliation still need broader regression coverage.",
+  "Production operations still need monitoring, backup, and DR validation.",
+] as const;
 
 function parseTab(value: string | null): ProductImplementationTab {
   if (value === "modules" || value === "workflows" || value === "features" || value === "uat" || value === "readiness" || value === "releases") {
@@ -175,78 +331,67 @@ export function ProductImplementationTabs({
 }
 
 export function ProductImplementationOverview() {
-  const moduleHighlights = [
-    { name: "Reception", percent: 98 },
-    { name: "Doctor Consultation", percent: 95 },
-    { name: "Billing", percent: 94 },
-    { name: "Pharmacy", percent: 97 },
-    { name: "Inventory", percent: 97 },
-    { name: "Laboratory", percent: 45 },
-    { name: "Patient Portal", percent: 90 },
-    { name: "Platform", percent: 85 },
-  ];
-
-  const releaseTrend = releases.filter((release) => release.id === "r2" || release.id === "r3" || release.id === "r4");
-  const totalOpenDefects = defects.filter((defect) => defect.status !== "Closed" && defect.status !== "Resolved").length;
-  const criticalDefectCount = defects.filter((defect) => defect.priority === "Critical" && defect.status !== "Closed" && defect.status !== "Resolved").length;
-  const totalTechnicalDebt = productModules.reduce((sum, module) => sum + module.technicalDebt, 0);
-  const blockedAreas = new Set(productModules.filter((module) => module.status === "Blocked").map((module) => module.area)).size;
-
   return (
     <Stack spacing={2.5}>
       <WorkflowGuide
-        title="Jeevanam Product OS"
-        subtitle="R2 Implementation Register"
+        title="Jeevanam Product Implementation Status"
+        subtitle="OPD platform is feature-complete for UAT and entering customer validation / production hardening."
         steps={[
-          { label: "Modules", tone: "primary" },
-          { label: "Workflows", tone: "primary" },
+          { label: "Validation", tone: "primary" },
           { label: "UAT", tone: "primary" },
-          { label: "Production Readiness", tone: "primary" },
+          { label: "Hardening", tone: "primary" },
           { label: "Release", tone: "primary" },
         ]}
       />
 
+      <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
+        <Stack spacing={0.35}>
+          <Typography variant="body2" sx={{ fontWeight: 800 }}>
+            Current milestone: {CURRENT_MILESTONE}
+          </Typography>
+          <Typography variant="body2">
+            Status: Ready for integrated OPD UAT. Not yet production-certified.
+          </Typography>
+        </Stack>
+      </Alert>
+
       <Grid container spacing={2}>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><ImplementationKpiCard label="Overall Completion" value="92%" tone="success" helper="Static phase 1 register" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><ImplementationKpiCard label="Production Readiness" value="88%" tone="primary" helper="Cross-cutting hardening baseline" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><ImplementationKpiCard label="R2 UAT Progress" value="82%" tone="warning" helper="Regression and UAT phase" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><ImplementationKpiCard label="Open Defects" value={totalOpenDefects} tone="warning" helper={`${criticalDefectCount} critical`} /></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><ImplementationKpiCard label="Technical Debt" value={totalTechnicalDebt} tone="info" helper="Module-level aggregate" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><ImplementationKpiCard label="Modules Tracked" value={productModules.length} tone="primary" helper="Across platform and product areas" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><ImplementationKpiCard label="Blocked Areas" value={blockedAreas} tone="error" helper="Laboratory remains blocked" /></Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}><ImplementationKpiCard label="Release Tracks" value={releases.length} tone="primary" helper="R2 / R3 / R4 roadmap" /></Grid>
+        {EXECUTIVE_METRICS.map((metric) => (
+          <Grid key={metric.label} size={{ xs: 12, sm: 6, md: 4, xl: 2.4 }}>
+            <ImplementationKpiCard label={metric.label} value={metric.value} tone={metric.tone} helper={metric.helper} />
+          </Grid>
+        ))}
       </Grid>
 
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 7 }}>
-          <CompactFilterCard title="Module maturity summary" subtitle="The highest-signal modules for R2 are tracked here as a release cockpit.">
-            <Grid container spacing={1.5}>
-              {moduleHighlights.map((module) => (
-                <Grid key={module.name} size={{ xs: 12, sm: 6 }}>
-                  <Card variant="outlined" sx={{ borderRadius: 2 }}>
-                    <CardContent sx={{ p: 1.2, "&:last-child": { pb: 1.2 } }}>
-                      <Stack spacing={1}>
-                        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
-                          <Box>
-                            <Typography variant="body2" sx={{ fontWeight: 800 }}>{module.name}</Typography>
-                            <Typography variant="caption" color="text.secondary">Product maturity band</Typography>
-                          </Box>
-                          <ImplementationStatusBadge status={module.percent >= 95 ? "Complete" : module.percent >= 80 ? "In Progress" : module.percent >= 50 ? "Review" : "Blocked"} />
-                        </Stack>
-                        <ImplementationProgressBar label="Completion" value={module.percent} tone={module.percent >= 95 ? "success" : module.percent >= 80 ? "primary" : module.percent >= 50 ? "warning" : "error"} />
-                      </Stack>
-                    </CardContent>
-                  </Card>
-                </Grid>
+          <CompactFilterCard title="Milestone section" subtitle="The release milestones below are the current executive checkpoints for OPD UAT readiness.">
+            <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+              {MILESTONE_CHECKPOINTS.map((milestone, index) => (
+                <Chip
+                  key={milestone}
+                  size="small"
+                  label={`${index + 1}. ${milestone}`}
+                  color={index === MILESTONE_CHECKPOINTS.length - 1 ? "success" : "primary"}
+                  variant={index === MILESTONE_CHECKPOINTS.length - 1 ? "filled" : "outlined"}
+                  sx={{ borderRadius: 999 }}
+                />
               ))}
-            </Grid>
+            </Stack>
+            <Stack spacing={1.2} sx={{ mt: 1.5 }}>
+              <ImplementationProgressBar label="OPD UAT readiness" value={83} tone="primary" helper="Customer validation is the current focus." />
+              <ImplementationProgressBar label="Production readiness" value={68} tone="warning" helper="Production hardening remains incomplete." />
+            </Stack>
           </CompactFilterCard>
         </Grid>
         <Grid size={{ xs: 12, lg: 5 }}>
-          <CompactFilterCard title="Release readiness trend" subtitle="Static placeholder that will later be connected to persisted release telemetry.">
-            <Stack spacing={1.5}>
-              {releaseTrend.map((release) => (
-                <ImplementationProgressBar key={release.id} label={release.name} value={release.progressPercent} tone={release.id === "r2" ? "success" : "primary"} />
+          <CompactFilterCard title="Current risk posture" subtitle="Conservative read on the final hardening work that remains before production certification.">
+            <Stack spacing={1}>
+              {PLATFORM_RISKS.map((risk) => (
+                <Stack key={risk} direction="row" spacing={1} alignItems="flex-start">
+                  <Chip size="small" label="Risk" color="warning" variant="outlined" sx={{ borderRadius: 999 }} />
+                  <Typography variant="body2" color="text.secondary">{risk}</Typography>
+                </Stack>
               ))}
             </Stack>
           </CompactFilterCard>
@@ -254,25 +399,66 @@ export function ProductImplementationOverview() {
       </Grid>
 
       <Grid container spacing={2}>
+        <Grid size={{ xs: 12 }}>
+          <CompactFilterCard title="Module status overview" subtitle="Conservative executive estimates across the platform after Doctor Workspace v1.0 and OPD UAT readiness.">
+            <CompactTableFrame maxHeight={520}>
+              <Table stickyHeader size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Module</TableCell>
+                    <TableCell>Completion</TableCell>
+                    <TableCell>UAT</TableCell>
+                    <TableCell>Production</TableCell>
+                    <TableCell>Notes</TableCell>
+                    <TableCell>Next action</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {EXECUTIVE_MODULE_STATUS.map((module) => (
+                    <TableRow key={module.module} hover>
+                      <TableCell sx={{ fontWeight: 800 }}>{module.module}</TableCell>
+                      <TableCell>
+                        <ImplementationProgressBar label="Completion" value={module.completion} tone={module.completion >= 90 ? "success" : module.completion >= 75 ? "primary" : "warning"} />
+                      </TableCell>
+                      <TableCell>
+                        <Chip size="small" label={`${module.uat}% · ${module.uatStatus}`} color={module.uatStatus === "Ready" ? "success" : module.uatStatus === "Blocked" ? "error" : module.uatStatus === "Needs review" ? "warning" : "primary"} variant="outlined" />
+                      </TableCell>
+                      <TableCell>
+                        <Chip size="small" label={`${module.production}% · ${module.productionStatus}`} color={module.productionStatus === "Hardening" ? "warning" : module.productionStatus === "Blocked" ? "error" : module.productionStatus === "Needs review" ? "warning" : "primary"} variant="outlined" />
+                      </TableCell>
+                      <TableCell sx={{ minWidth: 360 }}>
+                        <Typography variant="body2" color="text.secondary">{module.notes}</Typography>
+                      </TableCell>
+                      <TableCell sx={{ minWidth: 280 }}>
+                        <Typography variant="body2">{module.nextAction}</Typography>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CompactTableFrame>
+          </CompactFilterCard>
+        </Grid>
         <Grid size={{ xs: 12, lg: 6 }}>
-          <CompactFilterCard title="Critical blockers" subtitle="These items are the current release and hardening constraints.">
-            <Stack spacing={1}>
-              {criticalBlockers.map((blocker) => (
-                <Stack key={blocker} direction="row" spacing={1} alignItems="center">
-                  <Chip size="small" label="Blocker" color="error" variant="outlined" sx={{ borderRadius: 999 }} />
-                  <Typography variant="body2">{blocker}</Typography>
+          <CompactFilterCard title="Customer UAT checklist" subtitle="The next stage is integrated customer validation across the OPD workflow.">
+            <Stack spacing={0.75}>
+              {CUSTOMER_UAT_CHECKLIST.map((item) => (
+                <Stack key={item} direction="row" spacing={1} alignItems="center">
+                  <Chip size="small" label="UAT" color="primary" variant="outlined" sx={{ borderRadius: 999 }} />
+                  <Typography variant="body2">{item}</Typography>
                 </Stack>
               ))}
             </Stack>
           </CompactFilterCard>
         </Grid>
         <Grid size={{ xs: 12, lg: 6 }}>
-          <CompactFilterCard title="Recent implementation notes" subtitle="Static notes for the living register.">
-            <Stack spacing={1}>
-              {overviewNotes.map((note) => (
-                <Typography key={note} variant="body2" color="text.secondary">
-                  • {note}
-                </Typography>
+          <CompactFilterCard title="Production hardening checklist" subtitle="These items remain before production certification.">
+            <Stack spacing={0.75}>
+              {PRODUCTION_HARDENING_CHECKLIST.map((item) => (
+                <Stack key={item} direction="row" spacing={1} alignItems="center">
+                  <Chip size="small" label="Hardening" color="warning" variant="outlined" sx={{ borderRadius: 999 }} />
+                  <Typography variant="body2">{item}</Typography>
+                </Stack>
               ))}
             </Stack>
           </CompactFilterCard>
@@ -287,7 +473,7 @@ export function ProductImplementationOverview() {
         ))}
       </Grid>
 
-      <CompactFilterCard title="Roadmap posture" subtitle="R2 is production-candidate sized; R3 and R4 remain scoped and visible.">
+      <CompactFilterCard title="Roadmap posture" subtitle="The roadmap remains visible, but the current milestone is OPD UAT readiness.">
         <Grid container spacing={1.5}>
           {releases.map((release) => (
             <Grid key={release.id} size={{ xs: 12, md: 4 }}>
