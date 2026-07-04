@@ -5834,7 +5834,7 @@ export default function ConsultationWorkspacePage() {
               ) : null}
               {canEditConsultation && !readOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !labTests.length} onClick={openLabOrderDialog}>Order Lab Tests</Button> : null}
               {canEditConsultation && !prescriptionReadOnly ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void previewCurrentPrescription()}>Preview Rx</Button> : null}
-              {canCompleteConsultation && !readOnly ? <Button type="button" size="small" color="secondary" disabled={saving || !prescriptionReadyForCompletion} onClick={() => setCompleteConsultationDialogOpen(true)}>Complete</Button> : null}
+              {canCompleteConsultation && !readOnly ? <Button type="button" size="small" variant="contained" color="primary" disabled={saving || !prescriptionReadyForCompletion} onClick={() => setCompleteConsultationDialogOpen(true)}>Complete</Button> : null}
               {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void printCurrentPrescription()}>Print Rx</Button> : null}
               {canPrintPrescription ? <Button type="button" size="small" variant="outlined" disabled={saving || !hasPrescriptionContent(prescriptionForm)} onClick={() => void downloadCurrentPrescription()}>Download PDF</Button> : null}
             </Stack>
