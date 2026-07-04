@@ -16,6 +16,11 @@ test("consultation workspace renders AIVA chat and loading states", () => {
   assert.ok(source.includes("Add to SOAP"));
   assert.ok(source.includes("Add to Advice"));
   assert.ok(source.includes("aiAssistActionLabel(aiActiveAction)"));
+  assert.ok(source.includes("getClinicalContext"));
+  assert.ok(source.includes("PatientIntelligenceCard"));
+  const cardSource = readSource("components/clinical/PatientIntelligenceCard.tsx");
+  assert.ok(cardSource.includes("Intake complete"));
+  assert.ok(cardSource.includes("Latest vitals"));
 });
 
 test("consultation workspace exposes an explicit clinical reasoning generate action", () => {

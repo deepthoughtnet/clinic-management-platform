@@ -28,6 +28,7 @@ import {
 } from "@mui/material";
 
 import ConsultationFeeDialog, { type ConsultationFeeDialogValue } from "../../components/ConsultationFeeDialog";
+import { ClinicalIntakeDialog } from "../../components/clinical/ClinicalIntakeDialog";
 import { CompactEmptyState, CompactStatCard, CompactTableFrame, compactChipSx, WorkflowStrip } from "../../components/compact/CompactUi";
 import { useAuth } from "../../auth/useAuth";
 import {
@@ -291,6 +292,7 @@ export default function QueuePage() {
   const [feeDialog, setFeeDialog] = React.useState<FeeDialogState | null>(null);
   const [bypassDialog, setBypassDialog] = React.useState<CheckInBypassDialogState | null>(null);
   const [cancellationDialog, setCancellationDialog] = React.useState<CancellationDialogState | null>(null);
+  const [clinicalIntakeAppointment, setClinicalIntakeAppointment] = React.useState<QueueViewRow | null>(null);
 
   const today = React.useMemo(() => localDateKey(), []);
   const tenantRole = (auth.tenantRole || "").toUpperCase();
@@ -497,6 +499,20 @@ export default function QueuePage() {
       setLoadingQueue(false);
     }
   };
+
+  React.useEffect(() => {
+    const listener = (event: Event) => {
+      const custom = event as CustomEvent<{ patientId?: string | null }>;
+      const patientId = custom.detail?.patientId;
+      if (patientId && appointments.some((appointment) => appointment.patientId === patientId)) {
+        void refreshQueue();
+      }
+    };
+    window.addEventListener("clinic:clinical-intake-updated", listener as EventListener);
+    return () => {
+      window.removeEventListener("clinic:clinical-intake-updated", listener as EventListener);
+    };
+  }, [appointments]);
 
   if (!tenantReady) {
     return <Alert severity="warning">Invalid selected clinic. Please reselect your clinic before opening the queue.</Alert>;
@@ -900,7 +916,20 @@ export default function QueuePage() {
                               <Chip size="small" label={appointment.priority || "NORMAL"} color={priorityColor(appointment.priority)} variant="outlined" />
                             )}
                           </TableCell>
-                          <TableCell><Chip size="small" label={friendlyStatusLabel(appointment.status)} color={statusColor(appointment.status)} sx={compactChipSx} /></TableCell>
+                          <TableCell>
+                            <Stack spacing={0.4}>
+                              <Chip size="small" label={friendlyStatusLabel(appointment.status)} color={statusColor(appointment.status)} sx={compactChipSx} />
+                              {appointment.clinicalIntakeStatus ? (
+                                <Chip
+                                  size="small"
+                                  variant="outlined"
+                                  color={appointment.clinicalIntakeStatus === "INTAKE_COMPLETE" ? "success" : "default"}
+                                  label={appointment.clinicalIntakeStatus === "INTAKE_COMPLETE" ? "Intake complete" : "Pending intake"}
+                                  sx={compactChipSx}
+                                />
+                              ) : null}
+                            </Stack>
+                          </TableCell>
                           <TableCell>{formatMoney(appointment.consultationFeeAmount)}</TableCell>
                           <TableCell sx={{ minWidth: 150 }}>{renderFeeStatus(appointment)}</TableCell>
                           <TableCell sx={{ minWidth: 180 }}>
@@ -960,6 +989,11 @@ export default function QueuePage() {
                               {canManageDeskStatus && (appointment.status === "BOOKED" || appointment.status === "WAITING") ? (
                                 <Button size="small" disabled={savingId === appointment.id} onClick={() => void updateStatus(appointment.id, "NO_SHOW")}>
                                   No Show
+                                </Button>
+                              ) : null}
+                              {(appointment.status === "BOOKED" || appointment.status === "WAITING") ? (
+                                <Button size="small" variant="outlined" onClick={() => setClinicalIntakeAppointment(appointment)}>
+                                  Clinical Intake
                                 </Button>
                               ) : null}
                               {!(
@@ -1100,6 +1134,21 @@ export default function QueuePage() {
             </Button>
           </DialogActions>
         </Dialog>
+      ) : null}
+
+      {clinicalIntakeAppointment ? (
+        <ClinicalIntakeDialog
+          open
+          onClose={() => setClinicalIntakeAppointment(null)}
+          patientId={clinicalIntakeAppointment.patientId}
+          patientLabel={clinicalIntakeAppointment.patientName || clinicalIntakeAppointment.patientNumber || clinicalIntakeAppointment.patientId}
+          appointmentId={clinicalIntakeAppointment.id}
+          consultationId={clinicalIntakeAppointment.consultationId}
+          onSaved={() => {
+            setClinicalIntakeAppointment(null);
+            void refreshQueue();
+          }}
+        />
       ) : null}
     </Stack>
   );

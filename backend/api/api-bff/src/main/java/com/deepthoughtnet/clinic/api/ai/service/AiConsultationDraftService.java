@@ -4,6 +4,7 @@ import com.deepthoughtnet.clinic.api.ai.dto.AiConsultationNotesRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiDiagnosisSuggestionRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiDraftResponse;
 import com.deepthoughtnet.clinic.api.ai.dto.AiPrescriptionTemplateRequest;
+import com.deepthoughtnet.clinic.api.ai.clinicalcontext.ClinicalContextService;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.LinkedHashMap;
@@ -16,9 +17,11 @@ import org.springframework.stereotype.Service;
 public class AiConsultationDraftService {
     private static final Logger log = LoggerFactory.getLogger(AiConsultationDraftService.class);
     private final AiDoctorCopilotService copilotService;
+    private final ClinicalContextService clinicalContextService;
 
-    public AiConsultationDraftService(AiDoctorCopilotService copilotService) {
+    public AiConsultationDraftService(AiDoctorCopilotService copilotService, ClinicalContextService clinicalContextService) {
         this.copilotService = copilotService;
+        this.clinicalContextService = clinicalContextService;
     }
 
     public AiDraftResponse structureNotes(AiConsultationNotesRequest request) {
@@ -34,6 +37,11 @@ public class AiConsultationDraftService {
         input.put("symptoms", request.symptoms());
         input.put("vitals", request.vitals());
         input.put("observations", request.observations());
+        clinicalContextService.enrichPromptInput(input, clinicalContextService.buildClinicalContext(
+                RequestContextHolder.requireTenantId(),
+                request.patientId(),
+                request.consultationId()
+        ));
 
         return copilotService.draft(
                 AiTaskType.CONSULTATION_NOTE_STRUCTURING,
@@ -57,6 +65,11 @@ public class AiConsultationDraftService {
         input.put("doctorNotes", request.doctorNotes());
         input.put("knownConditions", request.knownConditions());
         input.put("allergies", request.allergies());
+        clinicalContextService.enrichPromptInput(input, clinicalContextService.buildClinicalContext(
+                RequestContextHolder.requireTenantId(),
+                request.patientId(),
+                request.consultationId()
+        ));
 
         log.debug("AI_DOCTOR_COPILOT_REQUEST taskType={} correlationId={} consultationId={} symptomsChars={} findingsChars={} notesChars={}",
                 AiTaskType.SYMPTOMS_DIAGNOSIS_DRAFT,
@@ -96,6 +109,11 @@ public class AiConsultationDraftService {
         input.put("allergies", request.allergies());
         input.put("currentMedications", request.currentMedications());
         input.put("doctorNotes", request.doctorNotes());
+        clinicalContextService.enrichPromptInput(input, clinicalContextService.buildClinicalContext(
+                RequestContextHolder.requireTenantId(),
+                request.patientId(),
+                request.consultationId()
+        ));
 
         log.debug("AI_DOCTOR_COPILOT_REQUEST taskType={} correlationId={} consultationId={} diagnosisChars={} symptomsChars={} notesChars={}",
                 AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION,

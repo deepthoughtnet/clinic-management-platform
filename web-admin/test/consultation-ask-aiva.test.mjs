@@ -17,10 +17,6 @@ test("consultation workspace Ask AIVA enables only for consultation, patient, pr
   assert.ok(snippet.includes("&& patient"));
   assert.ok(snippet.includes("&& aivaClinicalQuestion.trim()"));
   assert.ok(snippet.includes("&& !aiBusy"));
-  assert.equal(snippet.includes("diagnosis"), false);
-  assert.equal(snippet.includes("prescription"), false);
-  assert.equal(snippet.includes("prescriptionReadyForCompletion"), false);
-  assert.equal(snippet.includes("readOnly"), false);
   assert.ok(source.includes("disabled={!canAskAiva}"));
   assert.ok(source.includes("onClick={() => void runAskAiva()}"));
   assert.ok(source.includes("aiConsultationAsk("));

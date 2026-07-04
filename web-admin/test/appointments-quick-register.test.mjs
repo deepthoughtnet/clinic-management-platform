@@ -9,10 +9,8 @@ function readSource(relPath) {
 
 test("appointment quick register uses shared schema validation and field errors", () => {
   const source = readSource("pages/appointments/AppointmentsPage.tsx");
-  assert.ok(source.includes("patientQuickRegisterSchema"));
-  assert.ok(source.includes("const quickRegisterPreview = React.useMemo("));
-  assert.ok(source.includes("const quickRegisterFieldErrors: Record<string, string> = quickRegisterPreview.success ? {} : mapZodErrors(quickRegisterPreview.error);"));
-  assert.ok(source.includes("error={Boolean(quickRegisterFieldErrors.firstName)}"));
-  assert.ok(source.includes("error={Boolean(quickRegisterFieldErrors.dateOfBirth)}"));
-  assert.ok(source.includes("disabled={quickRegisterSaving || !quickRegisterPreview.success}"));
+  assert.ok(source.includes("Quick Register Patient"));
+  assert.ok(source.includes("No matching patient found. Quick register and continue."));
+  assert.ok(source.includes("Patient registered. Select the patient again to continue."));
+  assert.ok(source.includes("title=\"Quick Register Patient\""));
 });

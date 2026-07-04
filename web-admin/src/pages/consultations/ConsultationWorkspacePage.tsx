@@ -80,6 +80,7 @@ import {
   getLabOrders,
   getLabTests,
   getConsultationPrescription,
+  getClinicalContext,
   getMedicines,
   getPatient,
   getPatientDocumentDownloadUrl,
@@ -109,6 +110,7 @@ import {
   type MedicineType,
   type PatientDetail,
   type ClinicalDocument,
+  type ClinicalContextResponse,
   type PatientTimelineItem,
   type Prescription,
   type PrescriptionInput,
@@ -118,6 +120,7 @@ import {
 } from "../../api/clinicApi";
 import { ApiClientError } from "../../api/restClient";
 import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocumentViewer";
+import { PatientIntelligenceCard } from "../../components/clinical/PatientIntelligenceCard";
 import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDocumentUploadDialog";
 
 type ConsultationFormState = {
@@ -1178,6 +1181,9 @@ export default function ConsultationWorkspacePage() {
   const [clinicalDocuments, setClinicalDocuments] = React.useState<ClinicalDocument[]>([]);
   const [documentFilter, setDocumentFilter] = React.useState<"ALL" | "LAB" | "RADIOLOGY" | "REFERRAL" | "PRESCRIPTION" | "DISCHARGE" | "OTHER">("ALL");
   const [uploadDialogOpen, setUploadDialogOpen] = React.useState(false);
+  const [clinicalContext, setClinicalContext] = React.useState<ClinicalContextResponse | null>(null);
+  const [clinicalContextLoading, setClinicalContextLoading] = React.useState(false);
+  const [clinicalContextError, setClinicalContextError] = React.useState<string | null>(null);
   const [patientTimeline, setPatientTimeline] = React.useState<PatientTimelineItem[]>([]);
   const [prescriptionHistory, setPrescriptionHistory] = React.useState<Prescription[]>([]);
   const [prescription, setPrescription] = React.useState<Prescription | null>(null);
@@ -1363,6 +1369,40 @@ export default function ConsultationWorkspacePage() {
   }, []);
 
   React.useEffect(() => {
+    const listener = (event: Event) => {
+      const consultationSnapshot = consultationRef.current;
+      if (!auth.accessToken || !auth.tenantId || !consultationSnapshot) return;
+      const custom = event as CustomEvent<{ patientId?: string | null }>;
+      if (custom.detail?.patientId && custom.detail.patientId !== consultationSnapshot.patientId) {
+        return;
+      }
+      setClinicalContextLoading(true);
+      Promise.all([
+        getPatientDocuments(auth.accessToken, auth.tenantId, consultationSnapshot.patientId),
+        getPatientTimeline(auth.accessToken, auth.tenantId, consultationSnapshot.patientId),
+        getClinicalContext(auth.accessToken, auth.tenantId, consultationSnapshot.patientId, consultationSnapshot.id),
+      ])
+        .then(([documents, timelineRows, context]) => {
+          setClinicalDocuments(documents);
+          setPatientTimeline(timelineRows);
+          setClinicalContext(context);
+          setClinicalContextError(null);
+        })
+        .catch((err) => {
+          console.error("Clinical context refresh failed", err);
+          setClinicalContextError(err instanceof Error ? err.message : "Clinical context unavailable");
+        })
+        .finally(() => {
+          setClinicalContextLoading(false);
+        });
+    };
+    window.addEventListener("clinic:clinical-intake-updated", listener as EventListener);
+    return () => {
+      window.removeEventListener("clinic:clinical-intake-updated", listener as EventListener);
+    };
+  }, [auth.accessToken, auth.tenantId]);
+
+  React.useEffect(() => {
     let cancelled = false;
     async function bootstrap() {
       if (!auth.accessToken || !auth.tenantId) {
@@ -1388,6 +1428,9 @@ export default function ConsultationWorkspacePage() {
       setLoading(true);
       setError(null);
       setMedicineCatalogWarning(null);
+      setClinicalContext(null);
+      setClinicalContextError(null);
+      setClinicalContextLoading(false);
       setClinicalSummary(null);
       setAiDiagnosisSuggestion(null);
       setAiDiagnosisSummary(null);
@@ -1440,11 +1483,19 @@ export default function ConsultationWorkspacePage() {
         savedConsultationSnapshotRef.current = serializeConsultationForm(initialConsultationForm);
         hydratedConsultationIdRef.current = consult.id;
 
-        const [detail, previousRx, documents, timelineRows] = await Promise.all([
+        setClinicalContextLoading(true);
+        const [detail, previousRx, documents, timelineRows, context] = await Promise.all([
           getPatient(auth.accessToken, auth.tenantId, consult.patientId),
           getPatientPrescriptions(auth.accessToken, auth.tenantId, consult.patientId),
           getPatientDocuments(auth.accessToken, auth.tenantId, consult.patientId),
           getPatientTimeline(auth.accessToken, auth.tenantId, consult.patientId),
+          getClinicalContext(auth.accessToken, auth.tenantId, consult.patientId, consult.id).catch((contextError) => {
+            console.error("Clinical context load failed", contextError);
+            if (!cancelled) {
+              setClinicalContextError(contextError instanceof Error ? contextError.message : "Clinical context unavailable");
+            }
+            return null;
+          }),
         ]);
         if (cancelled) return;
 
@@ -1452,6 +1503,10 @@ export default function ConsultationWorkspacePage() {
         setPreviousPrescriptions(previousRx.slice(0, 10));
         setClinicalDocuments(documents);
         setPatientTimeline(timelineRows);
+        setClinicalContext(context);
+        if (context) {
+          setClinicalContextError(null);
+        }
 
         try {
           const rx = await getConsultationPrescription(auth.accessToken, auth.tenantId, consult.id);
@@ -1482,6 +1537,7 @@ export default function ConsultationWorkspacePage() {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load consultation workspace");
       } finally {
         if (!cancelled) setLoading(false);
+        if (!cancelled) setClinicalContextLoading(false);
       }
     }
 
@@ -4669,6 +4725,7 @@ export default function ConsultationWorkspacePage() {
                     pr: 0,
                   }}
                 >
+                  <PatientIntelligenceCard context={clinicalContext} loading={clinicalContextLoading} error={clinicalContextError} />
                   <Card variant="outlined" sx={{ boxShadow: "none", overflow: "visible", height: "auto", minHeight: "auto" }}>
                     <CardContent sx={{ p: 0.95, "&:last-child": { pb: 0.95 } }}>
                       <Stack spacing={0.85}>

@@ -7,6 +7,8 @@ import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentRescheduleReques
 import com.deepthoughtnet.clinic.api.appointment.dto.AppointmentStatusRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.QueueReorderRequest;
 import com.deepthoughtnet.clinic.api.appointment.dto.WalkInAppointmentRequest;
+import com.deepthoughtnet.clinic.api.clinicalintake.dto.ClinicalIntakeResponse;
+import com.deepthoughtnet.clinic.api.clinicalintake.service.ClinicalIntakeService;
 import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.ConsultationFeeStatusRecord;
@@ -70,6 +72,7 @@ public class AppointmentController {
     private final PermissionChecker permissionChecker;
     private final ClinicTimeZoneResolver clinicTimeZoneResolver;
     private final NotificationActionService notificationActionService;
+    private final ClinicalIntakeService clinicalIntakeService;
 
     public AppointmentController(
             AppointmentService appointmentService,
@@ -78,7 +81,8 @@ public class AppointmentController {
             DoctorAssignmentSecurityService doctorAssignmentSecurityService,
             PermissionChecker permissionChecker,
             ClinicTimeZoneResolver clinicTimeZoneResolver,
-            NotificationActionService notificationActionService
+            NotificationActionService notificationActionService,
+            ClinicalIntakeService clinicalIntakeService
     ) {
         this.appointmentService = appointmentService;
         this.consultationService = consultationService;
@@ -87,6 +91,7 @@ public class AppointmentController {
         this.permissionChecker = permissionChecker;
         this.clinicTimeZoneResolver = clinicTimeZoneResolver;
         this.notificationActionService = notificationActionService;
+        this.clinicalIntakeService = clinicalIntakeService;
     }
 
     @GetMapping
@@ -292,7 +297,8 @@ public class AppointmentController {
     }
 
     private AppointmentResponse toResponse(AppointmentRecord record, ConsultationRecord consultation) {
-        ConsultationFeeStatusRecord feeStatus = record.id() == null ? null : billingService.consultationFeeStatus(RequestContextHolder.requireTenantId(), record.id());
+        UUID tenantId = record.tenantId() != null ? record.tenantId() : RequestContextHolder.requireTenantId();
+        ConsultationFeeStatusRecord feeStatus = record.id() == null ? null : billingService.consultationFeeStatus(tenantId, record.id());
         return new AppointmentResponse(
                 record.id() == null ? null : record.id().toString(),
                 record.tenantId() == null ? null : record.tenantId().toString(),
@@ -319,9 +325,31 @@ public class AppointmentController {
                 record.paymentBypassNotes(),
                 record.paymentBypassedBy() == null ? null : record.paymentBypassedBy().toString(),
                 record.paymentBypassedAt(),
+                intakeStatus(tenantId, record),
+                intakeChiefComplaint(tenantId, record),
+                intakeRecordedAt(tenantId, record),
                 record.createdAt(),
                 record.updatedAt()
         );
+    }
+
+    private String intakeStatus(UUID tenantId, AppointmentRecord record) {
+        return clinicalIntake(tenantId, record).map(ClinicalIntakeResponse::status).orElse(null);
+    }
+
+    private String intakeChiefComplaint(UUID tenantId, AppointmentRecord record) {
+        return clinicalIntake(tenantId, record).map(ClinicalIntakeResponse::chiefComplaint).orElse(null);
+    }
+
+    private String intakeRecordedAt(UUID tenantId, AppointmentRecord record) {
+        return clinicalIntake(tenantId, record).map(value -> value.createdAt() == null ? null : value.createdAt().toString()).orElse(null);
+    }
+
+    private java.util.Optional<ClinicalIntakeResponse> clinicalIntake(UUID tenantId, AppointmentRecord record) {
+        if (record.patientId() == null) {
+            return java.util.Optional.empty();
+        }
+        return clinicalIntakeService.latest(tenantId, record.patientId(), record.id());
     }
 
     private void requirePaymentBypassPermission() {

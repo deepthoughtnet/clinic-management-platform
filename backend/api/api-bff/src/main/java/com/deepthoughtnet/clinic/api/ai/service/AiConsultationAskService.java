@@ -2,7 +2,9 @@ package com.deepthoughtnet.clinic.api.ai.service;
 
 import com.deepthoughtnet.clinic.api.ai.dto.AiConsultationAskRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiDraftResponse;
+import com.deepthoughtnet.clinic.api.ai.clinicalcontext.ClinicalContextService;
 import com.deepthoughtnet.clinic.platform.contracts.ai.AiTaskType;
+import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,9 +13,11 @@ import org.springframework.stereotype.Service;
 @Service
 public class AiConsultationAskService {
     private final AiDoctorCopilotService copilotService;
+    private final ClinicalContextService clinicalContextService;
 
-    public AiConsultationAskService(AiDoctorCopilotService copilotService) {
+    public AiConsultationAskService(AiDoctorCopilotService copilotService, ClinicalContextService clinicalContextService) {
         this.copilotService = copilotService;
+        this.clinicalContextService = clinicalContextService;
     }
 
     public AiDraftResponse ask(AiConsultationAskRequest request) {
@@ -32,6 +36,11 @@ public class AiConsultationAskService {
         input.put("clinicalNotes", request.clinicalNotes());
         input.put("diagnosis", request.diagnosis());
         input.put("advice", request.advice());
+        clinicalContextService.enrichPromptInput(input, clinicalContextService.buildClinicalContext(
+                RequestContextHolder.requireTenantId(),
+                request.patientId(),
+                request.consultationId()
+        ));
 
         return copilotService.draft(
                 AiTaskType.GENERIC_COPILOT,

@@ -34,6 +34,9 @@ public record AppointmentResponse(
         String paymentBypassNotes,
         String paymentBypassedBy,
         OffsetDateTime paymentBypassedAt,
+        String clinicalIntakeStatus,
+        String clinicalIntakeChiefComplaint,
+        String clinicalIntakeRecordedAt,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt
 ) {

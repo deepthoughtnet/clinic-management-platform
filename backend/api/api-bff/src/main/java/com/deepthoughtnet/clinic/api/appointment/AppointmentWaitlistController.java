@@ -121,12 +121,15 @@ public class AppointmentWaitlistController {
                 record.priority(),
                 record.status(),
                 record.paymentBypassReason(),
-                record.paymentBypassNotes(),
-                record.paymentBypassedBy() == null ? null : record.paymentBypassedBy().toString(),
-                record.paymentBypassedAt(),
-                record.createdAt(),
-                record.updatedAt()
-        );
+                        record.paymentBypassNotes(),
+                        record.paymentBypassedBy() == null ? null : record.paymentBypassedBy().toString(),
+                        record.paymentBypassedAt(),
+                        null,
+                        null,
+                        null,
+                        record.createdAt(),
+                        record.updatedAt()
+                );
     }
 
     private WaitlistResponse toResponse(WaitlistRecord record) {

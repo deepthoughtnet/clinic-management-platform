@@ -27,6 +27,10 @@ public class AiPromptTemplateCatalog {
             Tenant: {{tenantId}}
             Actor: {{actorUserId}}
             Correlation: {{correlationId}}
+            Clinical context summary:
+            {{input.clinicalContextSummary}}
+            Clinical context JSON:
+            {{input.clinicalContextJson}}
             Input variables JSON:
             {{inputVariablesJson}}
             Evidence:
@@ -112,7 +116,7 @@ public class AiPromptTemplateCatalog {
                     List.of("Use the summary as a review aid", "Verify source data before acting"),
                     List.of("Summaries are advisory only")),
             entry("clinic.patient.summary.v1", AiProductCode.CLINIC, AiTaskType.PATIENT_HISTORY_SUMMARY,
-                    "Summarize patient history with active conditions, medications, allergies, and follow-up risks.",
+                    "Summarize patient history with active conditions, medications, allergies, and follow-up risks. Use the supplied clinical context summary and JSON as the primary source of truth.",
                     List.of("Verify the timeline against EHR records", "Prioritize allergy and chronic-condition interactions"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.clinical.document-extraction.v1", AiProductCode.CLINIC, AiTaskType.CLINICAL_DOCUMENT_EXTRACTION,
@@ -120,20 +124,21 @@ public class AiPromptTemplateCatalog {
                     List.of("Verify extracted facts against the source document", "Review any low-confidence or ambiguous fields before saving", "Keep the extracted data advisory until a clinician reviews it", "Highlight possible abnormal findings without claiming a diagnosis"),
                     List.of("Extraction output is advisory until reviewed", "OCR and provider limits may affect accuracy", "Do not auto-save critical clinical fields without clinician review")),
             entry("clinic.clinical.summary.v1", AiProductCode.CLINIC, AiTaskType.CLINICAL_SUMMARY,
-                    "Summarize prior visits and chronic context in clinician-friendly language. Focus on previous visit summary, chronic history summary, recent consultation summary, medicine history, and uploaded report themes.",
+                    "Summarize prior visits and chronic context in clinician-friendly language. Use the supplied clinical context summary and JSON as the primary source of truth. Focus on previous visit summary, chronic history summary, recent consultation summary, medicine history, and uploaded report themes.",
                     List.of("Confirm the summary against the chart", "Use the summary as a review aid only", "Mention recurring conditions and follow-up gaps"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.structure-notes.v1", AiProductCode.CLINIC, AiTaskType.CONSULTATION_NOTE_STRUCTURING,
-                    "Structure consultation notes into standardized medical sections.",
+                    "Structure consultation notes into standardized medical sections using the supplied clinical context summary and JSON as the primary source of truth.",
                     List.of("Review SOAP formatting and missing sections", "Confirm clinically relevant negatives"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.copilot.v1", AiProductCode.CLINIC, AiTaskType.CONSULTATION_COPILOT,
-                    "Assist the doctor by suggesting possible diagnosis categories, investigation suggestions, and follow-up suggestions based on symptoms, findings, notes, and vitals. Return ONLY valid JSON with keys: summary, possibleDiagnosisCategories[{name,reason,confidence}], recommendedInvestigations, followUpSuggestions, safetyNotes. Do not include markdown. Do not include explanatory text before or after JSON. Do not finalize prescriptions or diagnoses.",
+                    "Assist the doctor by suggesting possible diagnosis categories, investigation suggestions, and follow-up suggestions based on symptoms, findings, notes, vitals, and the supplied clinical context summary and JSON. Return ONLY valid JSON with keys: summary, possibleDiagnosisCategories[{name,reason,confidence}], recommendedInvestigations, followUpSuggestions, safetyNotes. Do not include markdown. Do not include explanatory text before or after JSON. Do not finalize prescriptions or diagnoses.",
                     List.of("Review red flags and urgent exclusions", "Approve or reject each suggestion manually"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.consultation.suggest-diagnosis.v1", AiProductCode.CLINIC, AiTaskType.SYMPTOMS_DIAGNOSIS_DRAFT,
                     """
                     Suggest possible differential diagnosis categories based on symptoms, findings, and context.
+                    Use the supplied clinical context summary and JSON as the primary source of truth.
                     Return ONLY valid JSON. No markdown. No extra text.
                     Use exactly this shape:
                     {
@@ -160,6 +165,7 @@ public class AiPromptTemplateCatalog {
             entry("clinic.prescription.suggest-template.v1", AiProductCode.CLINIC, AiTaskType.PRESCRIPTION_TEMPLATE_SUGGESTION,
                     """
                     Suggest a prescription template using diagnosis, allergies, and current medications.
+                    Use the supplied clinical context summary and JSON as the primary source of truth.
                     Return ONLY valid JSON. No markdown. No extra text.
                     Use exactly this shape:
                     {
@@ -184,7 +190,7 @@ public class AiPromptTemplateCatalog {
                     List.of("Check contraindications and interactions", "Adjust dose and duration based on patient profile"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.patient.instructions.v1", AiProductCode.CLINIC, AiTaskType.PATIENT_INSTRUCTIONS_DRAFT,
-                    "Draft patient-friendly instructions from diagnosis and prescription context.",
+                    "Draft patient-friendly instructions from diagnosis, prescription context, and the supplied clinical context summary and JSON.",
                     List.of("Confirm dosage schedule and warning signs", "Ensure language matches patient comprehension level"),
                     List.of("This is an AI-generated draft. Doctor must verify before use.")),
             entry("clinic.allergy.condition.warning.v1", AiProductCode.CLINIC, AiTaskType.ALLERGY_CONDITION_WARNING,

@@ -5,11 +5,13 @@ import com.deepthoughtnet.clinic.api.ai.dto.AiConsultationAskRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiDiagnosisSuggestionRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiClinicalAnalyticsResponse;
 import com.deepthoughtnet.clinic.api.ai.dto.AiClinicalSummaryRequest;
+import com.deepthoughtnet.clinic.api.ai.dto.ClinicalContextResponse;
 import com.deepthoughtnet.clinic.api.ai.dto.AiDraftResponse;
 import com.deepthoughtnet.clinic.api.ai.dto.AiPatientInstructionsRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiPatientSummaryRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiPrescriptionTemplateRequest;
 import com.deepthoughtnet.clinic.api.ai.dto.AiStatusResponse;
+import com.deepthoughtnet.clinic.api.ai.clinicalcontext.ClinicalContextService;
 import com.deepthoughtnet.clinic.api.ai.service.AiClinicalAnalyticsService;
 import com.deepthoughtnet.clinic.api.ai.service.AiClinicalSummaryService;
 import com.deepthoughtnet.clinic.api.ai.service.AiConsultationAskService;
@@ -32,6 +34,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -51,6 +54,7 @@ public class AiDoctorCopilotController {
     private final AiRequestAuditQueryService aiRequestAuditQueryService;
     private final TenantModuleEntitlementService moduleEntitlementService;
     private final AiStatusService aiStatusService;
+    private final ClinicalContextService clinicalContextService;
 
     public AiDoctorCopilotController(AiPatientSummaryService aiPatientSummaryService,
                                      AiClinicalSummaryService aiClinicalSummaryService,
@@ -59,7 +63,8 @@ public class AiDoctorCopilotController {
                                      AiConsultationDraftService aiConsultationDraftService,
                                      AiRequestAuditQueryService aiRequestAuditQueryService,
                                      TenantModuleEntitlementService moduleEntitlementService,
-                                     AiStatusService aiStatusService) {
+                                     AiStatusService aiStatusService,
+                                     ClinicalContextService clinicalContextService) {
         this.aiPatientSummaryService = aiPatientSummaryService;
         this.aiClinicalSummaryService = aiClinicalSummaryService;
         this.aiClinicalAnalyticsService = aiClinicalAnalyticsService;
@@ -68,6 +73,7 @@ public class AiDoctorCopilotController {
         this.aiRequestAuditQueryService = aiRequestAuditQueryService;
         this.moduleEntitlementService = moduleEntitlementService;
         this.aiStatusService = aiStatusService;
+        this.clinicalContextService = clinicalContextService;
     }
 
     @GetMapping("/status")
@@ -143,6 +149,13 @@ public class AiDoctorCopilotController {
     public AiDraftResponse clinicalSummary(@RequestBody AiClinicalSummaryRequest request) {
         requireAiReady();
         return aiClinicalSummaryService.summarize(request);
+    }
+
+    @GetMapping("/clinical-context")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.read') or @permissionChecker.hasPermission('patient.read') or @permissionChecker.hasPermission('ai_copilot.read')")
+    public ClinicalContextResponse clinicalContext(@RequestParam java.util.UUID patientId,
+                                                  @RequestParam(required = false) java.util.UUID consultationId) {
+        return clinicalContextService.buildClinicalContext(RequestContextHolder.requireTenantId(), patientId, consultationId);
     }
 
     @GetMapping("/analytics")

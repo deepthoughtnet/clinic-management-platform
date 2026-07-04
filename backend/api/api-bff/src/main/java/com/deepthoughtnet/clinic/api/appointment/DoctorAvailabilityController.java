@@ -128,9 +128,12 @@ public class DoctorAvailabilityController {
                         record.paymentBypassNotes(),
                         record.paymentBypassedBy() == null ? null : record.paymentBypassedBy().toString(),
                         record.paymentBypassedAt(),
+                        null,
+                        null,
+                        null,
                         record.createdAt(),
                         record.updatedAt()
-                    );
+                );
                 })
                 .toList();
     }

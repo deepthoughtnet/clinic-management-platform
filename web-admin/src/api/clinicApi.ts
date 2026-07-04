@@ -159,6 +159,122 @@ export type PatientTimelineItem = {
   prescriptionId: string | null;
 };
 
+export type ClinicalContextResponse = {
+  tenantId: string;
+  patientId: string;
+  consultationId: string | null;
+  patientSummary: {
+    patientName: string | null;
+    ageYears: number | null;
+    gender: string | null;
+    chronicConditions: string | null;
+    allergies: string | null;
+    currentMedications: string[];
+    lastConsultationDate: string | null;
+  };
+  previousVisits: Array<{
+    consultationId: string;
+    consultationDate: string | null;
+    diagnosis: string | null;
+    treatmentSummary: string | null;
+    advice: string | null;
+  }>;
+  medicationHistory: {
+    activeMedicines: string[];
+    discontinuedMedicines: string[];
+    recentAntibiotics: string[];
+    duplicateMedicines: string[];
+    alerts: string[];
+  };
+  diagnosisHistory: {
+    lastVisitDiagnosis: string | null;
+    previousDiagnoses: string[];
+  };
+  intakeSummary: {
+    complete: boolean;
+    chiefComplaint: string | null;
+    latestVitals: {
+      heightCm: number | null;
+      weightKg: number | null;
+      bmi: number | null;
+      bmiCategory: string | null;
+      bloodPressureSystolic: number | null;
+      bloodPressureDiastolic: number | null;
+      pulseRate: number | null;
+      temperature: number | null;
+      temperatureUnit: TemperatureUnit | null;
+      spo2: number | null;
+      respiratoryRate: number | null;
+      randomBloodSugar: number | null;
+      painScore: number | null;
+    } | null;
+    vitalsTrendSummary: string | null;
+    abnormalVitalsAlerts: string[];
+    uploadedDocumentSummary: string | null;
+    notes: string | null;
+    recordedByName: string | null;
+    recordedAt: string | null;
+  } | null;
+  labIntelligence: {
+    latestLabReport: string | null;
+    abnormalValues: string[];
+    previousTrends: string[];
+    pendingInvestigations: string[];
+    lastHbA1c: string | null;
+    lastCbc: string | null;
+    lastCreatinine: string | null;
+  };
+  documentIntelligence: {
+    recentReports: string[];
+    radiology: string[];
+    referrals: string[];
+    dischargeSummaries: string[];
+  };
+  timelineSummary: {
+    events: Array<{
+      occurredOn: string | null;
+      title: string;
+      detail: string | null;
+      type: string;
+    }>;
+    recentImportantEvents: string | null;
+  };
+  aiSummary: string;
+  aiPromptContext: string;
+  clinicalContextJson: string;
+  generatedAt: string;
+};
+
+export type ClinicalIntakeResponse = {
+  id: string;
+  tenantId: string;
+  patientId: string;
+  appointmentId: string | null;
+  consultationId: string | null;
+  status: "PENDING_INTAKE" | "INTAKE_COMPLETE" | string;
+  chiefComplaint: string | null;
+  heightCm: number | null;
+  weightKg: number | null;
+  bmi: number | null;
+  bmiCategory: string | null;
+  bloodPressureSystolic: number | null;
+  bloodPressureDiastolic: number | null;
+  pulseRate: number | null;
+  temperature: number | null;
+  temperatureUnit: TemperatureUnit | null;
+  spo2: number | null;
+  respiratoryRate: number | null;
+  randomBloodSugar: number | null;
+  painScore: number | null;
+  notes: string | null;
+  recordedByUserId: string | null;
+  recordedByName: string | null;
+  complete: boolean;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type DashboardSummary = {
   todayAppointments: number;
   waitingPatients: number;
@@ -579,6 +695,9 @@ export type Appointment = {
   paymentBypassNotes: string | null;
   paymentBypassedBy: string | null;
   paymentBypassedAt: string | null;
+  clinicalIntakeStatus?: string | null;
+  clinicalIntakeChiefComplaint?: string | null;
+  clinicalIntakeRecordedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -4062,6 +4181,46 @@ export async function patchPatientDocument(token: string, tenantId: string, pati
 
 export async function getPatientTimeline(token: string, tenantId: string, patientId: string) {
   return httpGet<PatientTimelineItem[]>(`/api/patients/${patientId}/timeline`, { token, tenantId });
+}
+
+export async function getClinicalIntake(token: string, tenantId: string, patientId: string, appointmentId?: string | null) {
+  const query = new URLSearchParams();
+  if (appointmentId) {
+    query.set("appointmentId", appointmentId);
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<ClinicalIntakeResponse | null>(`/api/patients/${patientId}/clinical-intake/latest${suffix}`, { token, tenantId });
+}
+
+export async function saveClinicalIntake(token: string, tenantId: string, patientId: string, body: {
+  appointmentId?: string | null;
+  consultationId?: string | null;
+  chiefComplaint?: string | null;
+  heightCm?: number | null;
+  weightKg?: number | null;
+  bloodPressureSystolic?: number | null;
+  bloodPressureDiastolic?: number | null;
+  pulseRate?: number | null;
+  temperature?: number | null;
+  temperatureUnit?: TemperatureUnit | null;
+  spo2?: number | null;
+  respiratoryRate?: number | null;
+  randomBloodSugar?: number | null;
+  painScore?: number | null;
+  notes?: string | null;
+  complete: boolean;
+}) {
+  return httpPost<ClinicalIntakeResponse>(`/api/patients/${patientId}/clinical-intake`, body, { token, tenantId });
+}
+
+export async function getClinicalContext(token: string, tenantId: string, patientId: string, consultationId?: string | null) {
+  const query = new URLSearchParams();
+  query.set("patientId", patientId);
+  if (consultationId) {
+    query.set("consultationId", consultationId);
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<ClinicalContextResponse>(`/api/ai/clinical-context${suffix}`, { token, tenantId });
 }
 
 export type CareAiReceptionistTaskType = "HUMAN_HANDOFF" | "APPOINTMENT_HANDOFF" | "CALLBACK_REQUEST" | "ESCALATION";
