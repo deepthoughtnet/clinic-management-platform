@@ -278,15 +278,116 @@ export function canAccessFeature(
 }
 
 export function resolveTenantLandingPage(
-  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships">,
+  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships" | "tenantRole" | "rolesUpper">,
 ) {
   const enabled = resolveEnabledTenantModules(auth);
-  if (enabled.has("INVENTORY") && (enabled.has("PRESCRIPTION") || enabled.has("BILLING"))) return "/pharmacy/dashboard";
-  if (enabled.has("LABORATORY")) return "/lab";
-  if (enabled.has("APPOINTMENTS") || enabled.has("CONSULTATION")) return "/dashboard";
-  if (enabled.has("BILLING")) return "/billing";
-  if (enabled.has("PRESCRIPTION")) return "/prescriptions";
-  if (enabled.has("INVENTORY")) return "/inventory";
-  if (enabled.has("REPORTS")) return "/reports";
+  const candidates = [
+    enabled.has("INVENTORY") && (enabled.has("PRESCRIPTION") || enabled.has("BILLING")) && isPharmacyWorkspaceRole(auth) ? "/pharmacy/dashboard" : null,
+    enabled.has("LABORATORY") && isLabWorkspaceRole(auth) ? "/lab" : null,
+    enabled.has("BILLING") && isBillingWorkspaceRole(auth) ? "/billing" : null,
+    (enabled.has("APPOINTMENTS") || enabled.has("CONSULTATION")) ? "/dashboard" : null,
+    enabled.has("PRESCRIPTION") && isPharmacyWorkspaceRole(auth) ? "/prescriptions" : null,
+    enabled.has("INVENTORY") && isPharmacyWorkspaceRole(auth) ? "/inventory" : null,
+    enabled.has("REPORTS") ? "/reports" : null,
+  ];
+  for (const candidate of candidates) {
+    if (candidate && isRouteAccessibleForAuth(auth, candidate)) return candidate;
+  }
   return "/settings/clinic-profile";
+}
+
+function normalizeRoutePath(pathname: string): string {
+  const normalized = pathname.split("?")[0].split("#")[0].trim();
+  if (!normalized) return "/";
+  return normalized.length > 1 ? normalized.replace(/\/+$/, "") : normalized;
+}
+
+function normalizeRoleValue(role: string | null | undefined): string {
+  return (role || "").trim().replace(/[-\s]+/g, "_").toUpperCase();
+}
+
+function getActiveRoles(
+  auth: Pick<AuthContextValue, "tenantRole" | "rolesUpper">,
+) {
+  const activeRoles = new Set((auth.rolesUpper || []).map((role) => normalizeRoleValue(role)));
+  const tenantRole = normalizeRoleValue(auth.tenantRole);
+  if (tenantRole) activeRoles.add(tenantRole);
+  return activeRoles;
+}
+
+function hasAnyRole(activeRoles: Set<string>, ...roles: string[]) {
+  return roles.some((role) => activeRoles.has(normalizeRoleValue(role)));
+}
+
+export function isPharmacyWorkspaceRole(
+  auth: Pick<AuthContextValue, "tenantRole" | "rolesUpper">,
+) {
+  return hasAnyRole(getActiveRoles(auth), "CLINIC_ADMIN", "PHARMA", "PHARMACY", "PHARMACIST", "PHARMACY_INVENTORY_MANAGER", "PHARMACY_POS_USER", "PLATFORM_ADMIN");
+}
+
+export function isLabWorkspaceRole(
+  auth: Pick<AuthContextValue, "tenantRole" | "rolesUpper">,
+) {
+  return hasAnyRole(getActiveRoles(auth), "CLINIC_ADMIN", "LAB_FRONT_DESK", "LAB_TECHNICIAN", "LAB_APPROVER", "PLATFORM_ADMIN");
+}
+
+export function isBillingWorkspaceRole(
+  auth: Pick<AuthContextValue, "tenantRole" | "rolesUpper">,
+) {
+  return hasAnyRole(getActiveRoles(auth), "CLINIC_ADMIN", "BILLING_USER", "AUDITOR", "PLATFORM_ADMIN");
+}
+
+export function isRouteAccessibleForAuth(
+  auth: Pick<AuthContextValue, "tenantId" | "tenantRole" | "rolesUpper" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships">,
+  pathname: string,
+) {
+  const path = normalizeRoutePath(pathname);
+  const activeRoles = getActiveRoles(auth);
+  const doctorRole = hasAnyRole(activeRoles, "DOCTOR");
+  const billingRole = isBillingWorkspaceRole(auth);
+  const pharmacyRole = isPharmacyWorkspaceRole(auth);
+  const labRole = isLabWorkspaceRole(auth);
+  const operationalRole = hasAnyRole(activeRoles, "CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN");
+
+  if (path === "/" || path === "/dashboard") {
+    return (canAccessFeature(auth, "clinic-dashboard") && operationalRole) || (!auth.tenantId && auth.rolesUpper.includes("PLATFORM_ADMIN"));
+  }
+  if (path === "/pharmacy/dashboard") {
+    return canAccessFeature(auth, "pharmacy-dashboard") && pharmacyRole;
+  }
+  if (path === "/patients" || path.startsWith("/patients/")) return canAccessFeature(auth, "patients");
+  if (path === "/appointments" || path.startsWith("/appointments/")) return canAccessFeature(auth, "appointments") || canAccessFeature(auth, "day-board");
+  if (path === "/queue") return canAccessFeature(auth, "queue");
+  if (path === "/consultations") return canAccessFeature(auth, "consultations");
+  if (path.startsWith("/consultations/")) return canAccessFeature(auth, "consultations") && doctorRole;
+  if (path === "/prescriptions") return canAccessFeature(auth, "prescriptions");
+  if (path === "/billing") return canAccessFeature(auth, "billing") && billingRole;
+  if (path.startsWith("/finance/")) {
+    if (path === "/finance/cash-counter") return canAccessFeature(auth, "cash-counter");
+    if (path === "/finance/payments") return canAccessFeature(auth, "payments");
+    if (path === "/finance/refunds") return canAccessFeature(auth, "refunds");
+    return canAccessFeature(auth, "billing") && billingRole;
+  }
+  if (path === "/vaccinations") return canAccessFeature(auth, "vaccinations");
+  if (path === "/inventory" || path.startsWith("/pharmacy/inventory") || path.startsWith("/pharmacy/medicines") || path.startsWith("/pharmacy/procurement") || path.startsWith("/pharmacy/reconciliation") || path.startsWith("/pharmacy/operations") || path.startsWith("/pharmacy/stock-movements")) {
+    return canAccessFeature(auth, "inventory") && pharmacyRole;
+  }
+  if (path === "/pharmacy/dispensing") return canAccessFeature(auth, "pharmacy-dispensing") && pharmacyRole;
+  if (path === "/pharmacy/pos") return canAccessFeature(auth, "pharmacy-pos") && pharmacyRole;
+  if (path === "/pharmacy/procure" || path === "/pharmacy/procure-test") return canAccessFeature(auth, "pharmacy-procurement") && pharmacyRole;
+  if (path === "/pharmacy/reconcile" || path === "/pharmacy/reconcile-test") return canAccessFeature(auth, "pharmacy-reconciliation") && pharmacyRole;
+  if (path === "/reports") return canAccessFeature(auth, "reports");
+  if (path === "/lab" || path === "/laboratory") return canAccessFeature(auth, "laboratory") && labRole;
+  if (path.startsWith("/platform/")) {
+    if (path === "/platform/tenants") return auth.rolesUpper.includes("PLATFORM_ADMIN");
+    if (path === "/platform/help") return auth.rolesUpper.includes("PLATFORM_ADMIN");
+    if (path === "/platform/product-implementation") return auth.rolesUpper.includes("PLATFORM_ADMIN");
+    if (path === "/platform/plans") return auth.rolesUpper.includes("PLATFORM_ADMIN") || auth.rolesUpper.includes("PLATFORM_TENANT_SUPPORT");
+    if (path === "/platform/users") return auth.rolesUpper.includes("PLATFORM_ADMIN");
+    return auth.rolesUpper.includes("PLATFORM_ADMIN");
+  }
+  if (path.startsWith("/carepilot/")) return canAccessFeature(auth, "carepilot");
+  if (path.startsWith("/admin/") || path.startsWith("/ai/")) return true;
+  if (path.startsWith("/doctors/")) return canAccessFeature(auth, "doctor-availability") || canAccessFeature(auth, "appointments");
+  return true;
 }

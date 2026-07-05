@@ -59,7 +59,7 @@ public class ClinicalDocumentService {
         return listByPatient(tenantId, patientId, null, null, null, null, null, null);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<ClinicalDocumentRecord> listByPatient(
             UUID tenantId,
             UUID patientId,
@@ -80,20 +80,55 @@ public class ClinicalDocumentService {
                 .filter(entity -> reportDateFrom == null || (entity.getReportDate() != null && !entity.getReportDate().isBefore(reportDateFrom)))
                 .filter(entity -> reportDateTo == null || (entity.getReportDate() != null && !entity.getReportDate().isAfter(reportDateTo)))
                 .filter(entity -> matchesSearch(entity, searchTerm))
+                .map(entity -> repairPublishedLabDocumentIfNeeded(tenantId, entity))
                 .map(this::toRecord)
                 .sorted(Comparator.comparing(ClinicalDocumentRecord::createdAt).reversed())
                 .toList();
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public ClinicalDocumentRecord get(UUID tenantId, UUID id) {
-        return toRecord(findTenantDocument(tenantId, id));
+        return toRecord(repairPublishedLabDocumentIfNeeded(tenantId, findTenantDocument(tenantId, id)));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public String downloadUrl(UUID tenantId, UUID id, Duration ttl) {
-        ClinicalDocumentEntity document = findTenantDocument(tenantId, id);
-        return storageService.generatePresignedDownloadUrl(document.getStorageObjectKey(), ttl);
+        ClinicalDocumentEntity document = repairPublishedLabDocumentIfNeeded(tenantId, findTenantDocument(tenantId, id));
+        String storageKey = requireStorageKey(document.getStorageObjectKey(), "download");
+        return storageService.generatePresignedDownloadUrl(storageKey, ttl);
+    }
+
+    @Transactional
+    public byte[] downloadBytes(UUID tenantId, UUID id) {
+        ClinicalDocumentEntity document = repairPublishedLabDocumentIfNeeded(tenantId, findTenantDocument(tenantId, id));
+        String storageKey = requireStorageKey(resolveStorageKey(document, tenantId), "download");
+        byte[] bytes = storageService.getObjectBytes(storageKey);
+        if (bytes == null || bytes.length == 0) {
+            throw new IllegalStateException("Unable to download document because stored content is empty for key " + storageKey);
+        }
+        if (document.getSizeBytes() != bytes.length) {
+            document.updatePublishedMetadata(
+                    document.getDocumentType(),
+                    document.getTitle(),
+                    document.getDescription(),
+                    document.getReportDate(),
+                    document.getUploadedByName(),
+                    document.getUploadSource(),
+                    document.getFileName(),
+                    document.getContentType(),
+                    bytes.length,
+                    isValidStorageKey(document.getStorageBucket()) ? document.getStorageBucket() : storageBucket,
+                    storageKey,
+                    document.getChecksumSha256(),
+                    document.getVisibility(),
+                    document.getVerificationStatus(),
+                    document.getOcrStatus(),
+                    document.getAiIndexStatus(),
+                    document.getUpdatedBy()
+            );
+            repository.save(document);
+        }
+        return bytes;
     }
 
     @Transactional
@@ -116,7 +151,7 @@ public class ClinicalDocumentService {
         String sourceModule = normalizeNullable(command.sourceModule());
         String sourceEntityId = normalizeNullable(command.sourceEntityId());
         String description = normalizeNullable(command.notes());
-        String storageKey = storageService.buildPatientDocumentStorageKey(command.tenantId(), command.patientId(), documentId, fileName);
+        String storageKey = resolvePatientDocumentStorageKey(command.tenantId(), command.patientId(), documentId, fileName);
         if (repository.existsByTenantIdAndStorageObjectKey(command.tenantId(), storageKey)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Document storage key already exists");
         }
@@ -160,6 +195,144 @@ public class ClinicalDocumentService {
                     OffsetDateTime.now(ZoneOffset.UTC),
                     "Uploaded patient document",
                     "{\"patientId\":\"%s\",\"documentType\":\"%s\",\"uploadSource\":\"%s\"}".formatted(command.patientId(), command.documentType(), uploadSource)
+            ));
+            return toRecord(saved);
+        } catch (RuntimeException ex) {
+            storageService.deleteObjectQuietly(storageKey);
+            throw ex;
+        }
+    }
+
+    @Transactional
+    public ClinicalDocumentRecord publishLabReport(ClinicalDocumentUploadCommand command) {
+        validate(command);
+        String fileName = sanitizeFilename(command.originalFilename());
+        String extension = fileExtension(fileName);
+        String mediaType = normalizeMediaType(command.mediaType(), fileName);
+        validateFileType(extension, mediaType);
+
+        UUID tenantId = command.tenantId();
+        UUID patientId = command.patientId();
+        UUID uploadedByAppUserId = command.uploadedByAppUserId();
+        String title = normalizeRequired(command.title(), "Title is required");
+        String uploadSource = normalizeUploadSource(command.uploadSource());
+        String visibility = "PATIENT_VISIBLE";
+        String verificationStatus = "PUBLISHED";
+        String ocrStatus = "COMPLETED";
+        String aiIndexStatus = "COMPLETED";
+        String uploadedByName = resolveUploadedByName(tenantId, uploadedByAppUserId);
+        String sourceModule = normalizeNullable(command.sourceModule());
+        String sourceEntityId = normalizeNullable(command.sourceEntityId());
+        String description = normalizeNullable(command.notes());
+        LocalDate reportDate = command.reportDate();
+        String checksum = sha256(command.bytes());
+
+        ClinicalDocumentEntity existing = repository
+                .findFirstByTenantIdAndSourceModuleAndSourceEntityIdAndDocumentTypeAndActiveTrueOrderByCreatedAtDesc(
+                        tenantId,
+                        sourceModule,
+                        sourceEntityId,
+                        ClinicalDocumentType.LAB_REPORT
+                )
+                .orElse(null);
+
+        if (existing != null) {
+            String storageKey = isValidStorageKey(existing.getStorageKey())
+                    ? existing.getStorageKey()
+                    : resolvePatientDocumentStorageKey(tenantId, patientId, existing.getId(), fileName);
+            if (!isValidStorageKey(storageKey)) {
+                throw new IllegalStateException("Unable to publish lab report: invalid storage key resolved for existing document");
+            }
+            storageService.putObject(storageKey, mediaType, command.bytes());
+            existing.updatePublishedMetadata(
+                    ClinicalDocumentType.LAB_REPORT,
+                    title,
+                    description,
+                    reportDate,
+                    uploadedByName,
+                    uploadSource,
+                    fileName,
+                    mediaType,
+                    command.bytes().length,
+                    storageBucket,
+                    storageKey,
+                    checksum,
+                    visibility,
+                    verificationStatus,
+                    ocrStatus,
+                    aiIndexStatus,
+                    uploadedByAppUserId
+            );
+            ClinicalDocumentEntity saved = repository.save(existing);
+            auditEventPublisher.record(new AuditEventCommand(
+                    tenantId,
+                    AuditEntityType.DOCUMENT,
+                    saved.getId(),
+                    "PATIENT_DOCUMENT_PUBLISHED",
+                    uploadedByAppUserId,
+                    OffsetDateTime.now(ZoneOffset.UTC),
+                    "Published lab report document",
+                    "{\"patientId\":\"%s\",\"documentType\":\"LAB_REPORT\",\"sourceModule\":\"%s\",\"sourceEntityId\":\"%s\"}".formatted(
+                            patientId,
+                            sourceModule,
+                            sourceEntityId
+                    )
+            ));
+            return toRecord(saved);
+        }
+
+        UUID documentId = UUID.randomUUID();
+        String storageKey = resolvePatientDocumentStorageKey(tenantId, patientId, documentId, fileName);
+        if (!isValidStorageKey(storageKey)) {
+            throw new IllegalStateException("Unable to publish lab report: invalid storage key generated");
+        }
+        if (repository.existsByTenantIdAndStorageObjectKey(tenantId, storageKey)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Document storage key already exists");
+        }
+
+        storageService.putObject(storageKey, mediaType, command.bytes());
+        try {
+            ClinicalDocumentEntity saved = repository.save(ClinicalDocumentEntity.create(
+                    documentId,
+                    tenantId,
+                    patientId,
+                    command.consultationId(),
+                    null,
+                    uploadedByAppUserId,
+                    ClinicalDocumentType.LAB_REPORT,
+                    title,
+                    description,
+                    reportDate,
+                    uploadedByName,
+                    uploadSource,
+                    fileName,
+                    mediaType,
+                    command.bytes().length,
+                    storageBucket,
+                    storageKey,
+                    checksum,
+                    visibility,
+                    verificationStatus,
+                    ocrStatus,
+                    aiIndexStatus,
+                    sourceModule,
+                    sourceEntityId,
+                    uploadedByAppUserId,
+                    uploadedByAppUserId
+            ));
+            auditEventPublisher.record(new AuditEventCommand(
+                    tenantId,
+                    AuditEntityType.DOCUMENT,
+                    saved.getId(),
+                    "PATIENT_DOCUMENT_PUBLISHED",
+                    uploadedByAppUserId,
+                    OffsetDateTime.now(ZoneOffset.UTC),
+                    "Published lab report document",
+                    "{\"patientId\":\"%s\",\"documentType\":\"LAB_REPORT\",\"sourceModule\":\"%s\",\"sourceEntityId\":\"%s\"}".formatted(
+                            patientId,
+                            sourceModule,
+                            sourceEntityId
+                    )
             ));
             return toRecord(saved);
         } catch (RuntimeException ex) {
@@ -332,6 +505,108 @@ public class ClinicalDocumentService {
 
     private String normalizeNullable(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private boolean isValidStorageKey(String value) {
+        String normalized = normalizeNullable(value);
+        return normalized != null && !"undefined".equalsIgnoreCase(normalized);
+    }
+
+    private String requireStorageKey(String value, String action) {
+        String normalized = normalizeNullable(value);
+        if (!isValidStorageKey(normalized)) {
+            throw new IllegalStateException("Unable to " + action + " document because storage key is missing or invalid");
+        }
+        return normalized;
+    }
+
+    private String resolvePatientDocumentStorageKey(UUID tenantId, UUID patientId, UUID documentId, String fileName) {
+        String storageKey = storageService.buildPatientDocumentStorageKey(tenantId, patientId, documentId, fileName);
+        if (isValidStorageKey(storageKey)) {
+            return storageKey;
+        }
+        String fallbackKey = "tenant/%s/patients/%s/documents/%s/%s".formatted(
+                tenantId,
+                patientId,
+                documentId,
+                sanitizeFilename(fileName)
+        );
+        if (isValidStorageKey(fallbackKey)) {
+            return fallbackKey;
+        }
+        return storageKey;
+    }
+
+    private ClinicalDocumentEntity repairPublishedLabDocumentIfNeeded(UUID tenantId, ClinicalDocumentEntity document) {
+        if (document == null || document.getDocumentType() != ClinicalDocumentType.LAB_REPORT) {
+            return document;
+        }
+        boolean needsStorageKeyRepair = !isValidStorageKey(document.getStorageKey());
+        boolean needsSizeRepair = document.getSizeBytes() <= 0;
+        boolean needsBucketRepair = !isValidStorageKey(document.getStorageBucket())
+                || !storageBucket.equals(document.getStorageBucket());
+        if (!needsStorageKeyRepair && !needsSizeRepair && !needsBucketRepair) {
+            return document;
+        }
+
+        String candidateStorageKey = resolveStorageKey(document, tenantId);
+        if (!isValidStorageKey(candidateStorageKey)) {
+            return document;
+        }
+
+        long storageSize = -1L;
+        try {
+            storageSize = storageService.statObjectSize(candidateStorageKey);
+        } catch (RuntimeException ex) {
+            storageSize = -1L;
+        }
+        if (storageSize <= 0) {
+            byte[] bytes;
+            try {
+                bytes = storageService.getObjectBytes(candidateStorageKey);
+            } catch (RuntimeException ex) {
+                throw new IllegalStateException("Unable to read published lab report from storage for key " + candidateStorageKey, ex);
+            }
+            if (bytes == null || bytes.length == 0) {
+                throw new IllegalStateException("Unable to read published lab report from storage for key " + candidateStorageKey);
+            }
+            storageSize = bytes.length;
+        }
+
+        String storageBucketValue = isValidStorageKey(document.getStorageBucket()) ? document.getStorageBucket() : storageBucket;
+        document.updatePublishedMetadata(
+                document.getDocumentType(),
+                document.getTitle(),
+                document.getDescription(),
+                document.getReportDate(),
+                document.getUploadedByName(),
+                document.getUploadSource(),
+                document.getFileName(),
+                document.getContentType(),
+                storageSize,
+                storageBucketValue,
+                candidateStorageKey,
+                document.getChecksumSha256(),
+                document.getVisibility(),
+                document.getVerificationStatus(),
+                document.getOcrStatus(),
+                document.getAiIndexStatus(),
+                document.getUpdatedBy()
+        );
+        return repository.save(document);
+    }
+
+    private String resolveStorageKey(ClinicalDocumentEntity document, UUID tenantId) {
+        String storageKey = normalizeNullable(document.getStorageKey());
+        if (isValidStorageKey(storageKey)) {
+            return storageKey;
+        }
+        return resolvePatientDocumentStorageKey(
+                tenantId,
+                document.getPatientId(),
+                document.getId(),
+                document.getOriginalFilename()
+        );
     }
 
     private String normalizeRequired(String value, String message) {

@@ -1344,12 +1344,8 @@ public class PatientPortalService {
         }
 
         String mobile = resolveVerifiedMobile(access);
-        PatientEntity existingPatient = patientRepository.findFirstByTenantIdAndMobileIgnoreCase(bookingTenantId, mobile)
-                .orElse(null);
+        PatientEntity existingPatient = resolvePrimaryActivePatientByTenantAndMobile(bookingTenantId, mobile);
         if (existingPatient != null) {
-            if (!existingPatient.isActive()) {
-                throw new IllegalArgumentException("A patient record already exists for this mobile number but is inactive. Please contact the clinic.");
-            }
             return existingPatient;
         }
 
@@ -1383,6 +1379,21 @@ public class PatientPortalService {
         );
         return patientRepository.findByTenantIdAndId(bookingTenantId, created.id())
                 .orElseThrow(() -> new IllegalStateException("Patient record was not found for booking"));
+    }
+
+    private PatientEntity resolvePrimaryActivePatientByTenantAndMobile(UUID tenantId, String mobile) {
+        List<PatientEntity> candidates = patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, mobile);
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        PatientEntity primary = candidates.stream()
+                .min(Comparator.comparing(PatientEntity::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(PatientEntity::getId))
+                .orElse(candidates.get(0));
+        if (candidates.size() > 1) {
+            log.warn("patient.portal.booking.duplicate_mobile tenantId={} phone={} matches={} primaryPatientId={}", tenantId, mobile, candidates.size(), primary.getId());
+        }
+        return primary;
     }
 
     private UUID ensurePatientPortalActor(UUID tenantId, PatientEntity patient) {

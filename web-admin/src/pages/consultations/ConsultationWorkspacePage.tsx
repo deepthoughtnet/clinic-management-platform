@@ -64,6 +64,7 @@ import CompareArrowsRoundedIcon from "@mui/icons-material/CompareArrowsRounded";
 import { consultationSchema, firstZodError, labConsultationOrderCreateSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { ClinicalAiDraftCard, type ClinicalAiDraftStatus } from "../../components/clinical/ClinicalAiDraftCard";
+import { documentTypeLabel, isPublishedLabDocument } from "../../components/clinical/documentTypeOptions";
 import {
   aiClinicalSummary,
   aiConsultationAsk,
@@ -1635,6 +1636,7 @@ export default function ConsultationWorkspacePage() {
   const autosaveRetryTimerRef = React.useRef<number | null>(null);
   const autosaveInFlightRef = React.useRef(false);
   const autosavePromiseRef = React.useRef<Promise<Consultation | null> | null>(null);
+  const savingRef = React.useRef(false);
   const hydratedConsultationIdRef = React.useRef<string | null>(null);
   const viewportRestoreRef = React.useRef<{ x: number; y: number } | null>(null);
   const consultationHeaderRef = React.useRef<HTMLDivElement | null>(null);
@@ -2011,6 +2013,9 @@ export default function ConsultationWorkspacePage() {
   }, [auth, auth.accessToken, auth.tenantId]);
 
   React.useEffect(() => {
+    if (saving) {
+      return;
+    }
     const consultationEditable = consultation ? consultation.status === "DRAFT" : false;
     const prescriptionEditable = Boolean(prescription && isEditablePrescriptionStatus(prescription.status));
     if (hydratedConsultationIdRef.current !== consultation?.id) {
@@ -2041,10 +2046,15 @@ export default function ConsultationWorkspacePage() {
         autosaveTimerRef.current = null;
       }
     };
-  }, [consultation, consultationForm, prescription, prescriptionForm]);
+  }, [consultation, consultationForm, prescription, prescriptionForm, saving]);
 
   React.useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (savingRef.current || autosaveInFlightRef.current) {
+        event.preventDefault();
+        event.returnValue = "";
+        return;
+      }
       const consultationDirty = serializeConsultationForm(consultationFormRef.current) !== savedConsultationSnapshotRef.current;
       const prescriptionDirty = serializePrescriptionForm(prescriptionFormRef.current) !== savedPrescriptionSnapshotRef.current;
       if (consultationDirty || prescriptionDirty) {
@@ -2972,10 +2982,14 @@ export default function ConsultationWorkspacePage() {
       return currentConsultation;
     }
     const saved = await updateConsultation(auth.accessToken, auth.tenantId, currentConsultation.id, toConsultationInput(currentForm, currentConsultation));
-    const merged = currentConsultation ? { ...currentConsultation, ...saved } : saved;
+    const persisted = await getConsultation(auth.accessToken, auth.tenantId, currentConsultation.id).catch(() => saved);
+    const merged = currentConsultation ? { ...currentConsultation, ...persisted } : persisted;
+    const nextForm = emptyConsultationForm(merged);
     setConsultation(merged);
     consultationRef.current = merged;
-    savedConsultationSnapshotRef.current = serializeConsultationForm(currentForm);
+    setConsultationForm(nextForm);
+    consultationFormRef.current = nextForm;
+    savedConsultationSnapshotRef.current = serializeConsultationForm(nextForm);
     if (showInfo) setInfo("Consultation draft saved");
     return saved;
   };
@@ -3027,6 +3041,7 @@ export default function ConsultationWorkspacePage() {
         autosaveRetryTimerRef.current = window.setTimeout(() => {
           void runAutosave();
         }, 5000);
+        setError(err instanceof Error ? err.message : "Failed to save consultation draft");
         return null;
       } finally {
         autosaveInFlightRef.current = false;
@@ -3040,10 +3055,12 @@ export default function ConsultationWorkspacePage() {
 
   const flushAutosave = async (): Promise<Consultation | null> => {
     clearAutosaveTimers();
+    savingRef.current = true;
     setSaving(true);
     try {
       return autosavePromiseRef.current ? await autosavePromiseRef.current : await runAutosave();
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -3069,8 +3086,20 @@ export default function ConsultationWorkspacePage() {
   };
 
   const manualSaveDraft = async () => {
+    if (savingRef.current || autosaveInFlightRef.current) {
+      return;
+    }
+    setError(null);
     const saved = await preserveViewport(() => flushAutosave());
-    if (saved) setInfo("Draft saved");
+    if (saved) {
+      setInfo("Draft saved");
+      return;
+    }
+    const consultationDirty = serializeConsultationForm(consultationFormRef.current) !== savedConsultationSnapshotRef.current;
+    const prescriptionDirty = serializePrescriptionForm(prescriptionFormRef.current) !== savedPrescriptionSnapshotRef.current;
+    if (consultationDirty || prescriptionDirty) {
+      setError("Failed to save consultation draft. Please try again.");
+    }
   };
 
   React.useEffect(() => {
@@ -3285,7 +3314,7 @@ export default function ConsultationWorkspacePage() {
     setViewerUrl(null);
     try {
       const response = await getPatientDocumentViewUrl(auth.accessToken, auth.tenantId, consultation.patientId, document.id);
-      setViewerUrl(response.url);
+      setViewerUrl(URL.createObjectURL(response.blob));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to open clinical document");
     }
@@ -8484,16 +8513,17 @@ export default function ConsultationWorkspacePage() {
                                       {row.title || row.originalFilename}
                                     </Typography>
                                     <Typography variant="caption" color="text.secondary" noWrap>
-                                      {row.documentType.replaceAll("_", " ")} • {row.reportDate || compactDate(row.createdAt)} • {row.uploadSource}
+                                      {documentTypeLabel(row.documentType)} • {row.reportDate || compactDate(row.createdAt)} • {isPublishedLabDocument(row) ? "Published" : row.uploadSource}
                                     </Typography>
                                   </Box>
                                   <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                                    <Chip size="small" variant="outlined" label={row.visibility} />
-                                    <Chip size="small" variant="outlined" label={row.verificationStatus} />
+                                    <Chip size="small" variant="outlined" label={isPublishedLabDocument(row) ? "Published" : row.visibility} />
+                                    <Chip size="small" variant="outlined" label={isPublishedLabDocument(row) ? "Available" : row.verificationStatus} />
                                   </Stack>
                                 </Stack>
                                 <Typography variant="caption" color="text.secondary" noWrap title={row.description || row.originalFilename}>
-                                  {row.description || "No notes"}{row.aiExtractionSummary ? ` • AI: ${compactText(row.aiExtractionSummary, 42)}` : ""}
+                                  {row.description || "No notes"}
+                                  {isPublishedLabDocument(row) ? "" : (row.aiExtractionSummary ? ` • AI: ${compactText(row.aiExtractionSummary, 42)}` : "")}
                                 </Typography>
                                 <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                                   <Button size="small" variant="outlined" onClick={() => void openClinicalDocument(row)}>View report</Button>

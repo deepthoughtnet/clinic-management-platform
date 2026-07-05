@@ -352,6 +352,45 @@ public class ClinicalDocumentEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    public void updatePublishedMetadata(
+            ClinicalDocumentType documentType,
+            String title,
+            String description,
+            LocalDate reportDate,
+            String uploadedByName,
+            String uploadSource,
+            String fileName,
+            String contentType,
+            long fileSize,
+            String storageBucket,
+            String storageObjectKey,
+            String checksum,
+            String visibility,
+            String verificationStatus,
+            String ocrStatus,
+            String aiIndexStatus,
+            UUID updatedBy
+    ) {
+        this.documentType = documentType;
+        this.title = title;
+        this.description = description;
+        this.reportDate = reportDate;
+        this.uploadedByName = uploadedByName;
+        this.uploadSource = uploadSource;
+        this.fileName = fileName;
+        this.contentType = contentType;
+        this.fileSize = fileSize;
+        this.storageBucket = storageBucket;
+        this.storageObjectKey = storageObjectKey;
+        this.checksum = checksum;
+        this.visibility = visibility;
+        this.verificationStatus = verificationStatus;
+        this.ocrStatus = ocrStatus;
+        this.aiIndexStatus = aiIndexStatus;
+        this.updatedBy = updatedBy;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public void softDelete(UUID updatedBy) {
         this.active = false;
         this.updatedBy = updatedBy;

@@ -533,7 +533,7 @@ class PatientPortalServiceTest {
         when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(sourcePatient));
         when(tenantRepository.findByCode("demo-clinic")).thenReturn(Optional.of(tenant("demo-clinic", OTHER_TENANT_ID)));
         when(clinicProfileService.findByTenantId(OTHER_TENANT_ID)).thenReturn(Optional.of(clinicProfile(OTHER_TENANT_ID, "Demo Clinic", true)));
-        when(patientRepository.findFirstByTenantIdAndMobileIgnoreCase(OTHER_TENANT_ID, sourcePatient.getMobile())).thenReturn(Optional.of(targetPatient));
+        when(patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(OTHER_TENANT_ID, sourcePatient.getMobile())).thenReturn(List.of(targetPatient));
         when(patientRepository.findByMobileIgnoreCaseAndActiveTrue(sourcePatient.getMobile())).thenReturn(List.of(sourcePatient, targetPatient));
         when(tenantUserManagementService.list(OTHER_TENANT_ID)).thenReturn(List.of(doctorUser(doctorUserId, "Dr. Asha", OTHER_TENANT_ID)));
         when(doctorProfileService.findByDoctorUserId(OTHER_TENANT_ID, doctorUserId)).thenReturn(Optional.of(doctorProfile(OTHER_TENANT_ID, doctorUserId, true)));

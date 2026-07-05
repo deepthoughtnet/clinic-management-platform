@@ -9,6 +9,7 @@ import FullscreenExitRoundedIcon from "@mui/icons-material/FullscreenExitRounded
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 
 import type { ClinicalDocument } from "../../api/clinicApi";
+import { isPublishedLabDocument } from "./documentTypeOptions";
 
 type Props = {
   open: boolean;
@@ -33,13 +34,16 @@ export function ClinicalDocumentViewer({ open, document, url, onClose }: Props) 
 
   const isPdf = document?.mediaType === "application/pdf";
   const isImage = document?.mediaType?.startsWith("image/");
-  const sizeLabel = document ? `${(document.sizeBytes / (1024 * 1024)).toFixed(document.sizeBytes > 1024 * 1024 ? 1 : 0)} MB` : "-";
-  const metaChips = [
-    document?.documentType ? document.documentType.replaceAll("_", " ") : null,
-    document?.mediaType || null,
-    document?.ocrStatus ? `OCR ${document.ocrStatus}` : null,
-    document?.aiExtractionStatus ? `AI ${document.aiExtractionStatus}` : null,
-  ].filter(Boolean) as string[];
+  const publishedLabDocument = isPublishedLabDocument(document);
+  const sizeLabel = formatSize(document?.sizeBytes);
+  const metaChips = publishedLabDocument
+    ? ["Lab Report", "Published", "Available"]
+    : [
+        document?.documentType ? document.documentType.replaceAll("_", " ") : null,
+        document?.mediaType || null,
+        document?.ocrStatus ? `OCR ${document.ocrStatus}` : null,
+        document?.aiExtractionStatus ? `AI ${document.aiExtractionStatus}` : null,
+      ].filter(Boolean) as string[];
 
   return (
     <Dialog open={open} onClose={onClose} fullScreen={fullScreen} fullWidth maxWidth={fullScreen ? false : "xl"}>
@@ -101,23 +105,26 @@ export function ClinicalDocumentViewer({ open, document, url, onClose }: Props) 
                 <Typography variant="caption" color="text.secondary">Metadata and clinician notes</Typography>
               </Box>
               <Stack spacing={0.75}>
-                <Typography variant="body2"><b>Type:</b> {document?.documentType?.replaceAll("_", " ") || "-"}</Typography>
+                <Typography variant="body2"><b>Type:</b> {publishedLabDocument ? "Lab Report" : document?.documentType?.replaceAll("_", " ") || "-"}</Typography>
                 <Typography variant="body2"><b>Media:</b> {document?.mediaType || "-"}</Typography>
                 <Typography variant="body2"><b>Size:</b> {sizeLabel}</Typography>
                 <Typography variant="body2"><b>Uploaded:</b> {document?.createdAt ? new Date(document.createdAt).toLocaleString() : "-"}</Typography>
                 <Typography variant="body2"><b>Uploaded by:</b> {document?.uploadedByName || document?.uploadedByUserId || "-"}</Typography>
-                <Typography variant="body2"><b>Source module:</b> {document?.sourceModule || "-"}</Typography>
-                <Typography variant="body2"><b>Source entity:</b> {document?.sourceEntityId || "-"}</Typography>
-                <Typography variant="body2"><b>Upload source:</b> {document?.uploadSource || "-"}</Typography>
+                {publishedLabDocument ? null : <Typography variant="body2"><b>Source module:</b> {document?.sourceModule || "-"}</Typography>}
+                {publishedLabDocument ? null : <Typography variant="body2"><b>Source entity:</b> {document?.sourceEntityId || "-"}</Typography>}
+                <Typography variant="body2"><b>Upload source:</b> {publishedLabDocument ? "Published" : document?.uploadSource || "-"}</Typography>
                 <Typography variant="body2"><b>Title:</b> {document?.title || "-"}</Typography>
                 <Typography variant="body2"><b>Description:</b> {document?.description || "-"}</Typography>
-                <Typography variant="body2"><b>AI summary:</b> {document?.aiExtractionSummary || "-"}</Typography>
-                <Typography variant="body2"><b>AI review:</b> {document?.aiExtractionReviewNotes || "-"}</Typography>
-                <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", fontFamily: "monospace" }}><b>AI structured data:</b> {document?.aiExtractionStructuredJson || "-"}</Typography>
-                <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", fontFamily: "monospace" }}><b>AI accepted JSON:</b> {document?.aiExtractionAcceptedJson || "-"}</Typography>
-                <Typography variant="body2"><b>AI override reason:</b> {document?.aiExtractionOverrideReason || "-"}</Typography>
-                <Typography variant="body2"><b>Reviewed by:</b> {document?.aiExtractionReviewedByAppUserId || "-"}</Typography>
-                <Typography variant="body2"><b>Reviewed at:</b> {document?.aiExtractionReviewedAt || "-"}</Typography>
+                {publishedLabDocument ? null : <Typography variant="body2"><b>AI summary:</b> {document?.aiExtractionSummary || "-"}</Typography>}
+                {publishedLabDocument ? null : <Typography variant="body2"><b>AI review:</b> {document?.aiExtractionReviewNotes || "-"}</Typography>}
+                {publishedLabDocument ? null : <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", fontFamily: "monospace" }}><b>AI structured data:</b> {document?.aiExtractionStructuredJson || "-"}</Typography>}
+                {publishedLabDocument ? null : <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", fontFamily: "monospace" }}><b>AI accepted JSON:</b> {document?.aiExtractionAcceptedJson || "-"}</Typography>}
+                {publishedLabDocument ? null : <Typography variant="body2"><b>AI override reason:</b> {document?.aiExtractionOverrideReason || "-"}</Typography>}
+                {publishedLabDocument ? null : <Typography variant="body2"><b>Reviewed by:</b> {document?.aiExtractionReviewedByAppUserId || "-"}</Typography>}
+                {publishedLabDocument ? null : <Typography variant="body2"><b>Reviewed at:</b> {document?.aiExtractionReviewedAt || "-"}</Typography>}
+                {publishedLabDocument ? <Typography variant="body2"><b>Status:</b> Published</Typography> : null}
+                <Typography variant="body2"><b>Checksum:</b> {document?.checksumSha256 || "-"}</Typography>
+                <Typography variant="body2"><b>Storage:</b> {document?.storageBucket ? `${document.storageBucket}/${document.storageKey}` : document?.storageKey || "-"}</Typography>
               </Stack>
             </Stack>
           </Box>
@@ -132,4 +139,11 @@ export function ClinicalDocumentViewer({ open, document, url, onClose }: Props) 
       </DialogActions>
     </Dialog>
   );
+}
+
+function formatSize(sizeBytes: number | null | undefined) {
+  if (typeof sizeBytes !== "number" || Number.isNaN(sizeBytes)) return "-";
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }

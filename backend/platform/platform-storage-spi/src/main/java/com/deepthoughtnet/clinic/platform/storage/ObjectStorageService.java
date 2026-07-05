@@ -11,6 +11,8 @@ public interface ObjectStorageService {
 
     void putObject(String storageKey, String contentType, byte[] bytes);
 
+    long statObjectSize(String storageKey);
+
     byte[] getObjectBytes(String storageKey);
 
     void deleteObjectQuietly(String storageKey);

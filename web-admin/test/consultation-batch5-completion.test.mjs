@@ -38,3 +38,14 @@ test("consultation document API persists generated consultation documents", () =
   assert.ok(apiSource.includes("generateConsultationDocument"));
   assert.ok(apiSource.includes("ConsultationGeneratedDocumentResponse"));
 });
+
+test("consultation draft save rehydrates persisted state and blocks unload while saving", () => {
+  const source = readSource("pages/consultations/ConsultationWorkspacePage.tsx");
+  assert.ok(source.includes("const savingRef = React.useRef(false);"));
+  assert.ok(source.includes("const persisted = await getConsultation(auth.accessToken, auth.tenantId, currentConsultation.id).catch(() => saved);"));
+  assert.ok(source.includes("const nextForm = emptyConsultationForm(merged);"));
+  assert.ok(source.includes("setConsultationForm(nextForm);"));
+  assert.ok(source.includes("savingRef.current = true;"));
+  assert.ok(source.includes("savingRef.current = false;"));
+  assert.ok(source.includes("if (savingRef.current || autosaveInFlightRef.current)"));
+});

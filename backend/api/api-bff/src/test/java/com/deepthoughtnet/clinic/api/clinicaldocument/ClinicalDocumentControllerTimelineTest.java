@@ -89,8 +89,8 @@ class ClinicalDocumentControllerTimelineTest {
     void patientTimelineCombinesDocumentsConsultationsAndPrescriptions() {
         when(patientService.findById(TENANT_ID, PATIENT_ID)).thenReturn(java.util.Optional.of(patient()));
         when(documentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(
-                document(OffsetDateTime.parse("2026-05-07T08:15:00Z"), "xray.png", ClinicalDocumentType.RADIOLOGY_REPORT, "Dr. Rao", "Metro Imaging", "RECEPTION"),
-                document(OffsetDateTime.parse("2026-05-08T09:30:00Z"), "lab.pdf", ClinicalDocumentType.EXTERNAL_LAB_REPORT, null, null, "DOCTOR")
+                document(OffsetDateTime.parse("2026-05-07T08:15:00Z"), "xray.png", ClinicalDocumentType.RADIOLOGY_REPORT, "Dr. Rao", "Metro Imaging", null, "RECEPTION"),
+                document(OffsetDateTime.parse("2026-05-08T09:30:00Z"), "lab.pdf", ClinicalDocumentType.EXTERNAL_LAB_REPORT, null, null, null, "DOCTOR")
         ));
         when(consultationService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(
                 consultation(OffsetDateTime.parse("2026-05-08T10:00:00Z"), "Acute bronchitis", ConsultationStatus.COMPLETED, LocalDate.of(2026, 5, 15))
@@ -108,11 +108,31 @@ class ClinicalDocumentControllerTimelineTest {
         assertThat(timeline.get(1).itemType()).isEqualTo("CONSULTATION");
         assertThat(timeline.get(1).subtitle()).contains("COMPLETED", "Follow-up 2026-05-15");
         assertThat(timeline.get(2).itemType()).isEqualTo("DOCUMENT");
-        assertThat(timeline.get(2).subtitle()).contains("lab.pdf", "uploaded by", "DOCTOR", "AI DONE", "OCR DONE");
+        assertThat(timeline.get(2).subtitle()).contains("lab.pdf", "DOCTOR", "Verified");
+        assertThat(timeline.get(2).subtitle()).doesNotContain("AI", "OCR");
         assertThat(timeline.get(3).itemType()).isEqualTo("DOCUMENT");
-        assertThat(timeline.get(3).subtitle()).contains("xray.png", "uploaded by", "RECEPTION", "AI DONE", "OCR DONE");
+        assertThat(timeline.get(3).subtitle()).contains("xray.png", "uploaded by", "Reception", "RECEPTION", "Verified");
+        assertThat(timeline.get(3).subtitle()).doesNotContain("AI", "OCR");
         assertThat(timeline.get(4).itemType()).isEqualTo("PRESCRIPTION");
         assertThat(timeline.get(4).subtitle()).contains("v1", "SUPERSEDED");
+    }
+
+    @Test
+    void publishedLabDocumentsHideInternalProcessingMetadataInTimeline() {
+        when(patientService.findById(TENANT_ID, PATIENT_ID)).thenReturn(java.util.Optional.of(patient()));
+        when(documentService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of(
+                document(OffsetDateTime.parse("2026-05-09T09:30:00Z"), "lab-report.pdf", ClinicalDocumentType.LAB_REPORT, null, null, "LABORATORY", "LABORATORY", "PATIENT_VISIBLE", "PUBLISHED", "COMPLETED", "COMPLETED", "COMPLETED")
+        ));
+        when(consultationService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of());
+        when(prescriptionService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of());
+
+        List<com.deepthoughtnet.clinic.api.clinicaldocument.dto.PatientTimelineItemResponse> timeline = controller.patientTimeline(PATIENT_ID);
+
+        assertThat(timeline).hasSize(1);
+        assertThat(timeline.get(0).itemType()).isEqualTo("DOCUMENT");
+        assertThat(timeline.get(0).title()).isEqualTo("Lab Report");
+        assertThat(timeline.get(0).subtitle()).isEqualTo("Published • Available");
+        assertThat(timeline.get(0).status()).isEqualTo("Published");
     }
 
     private PatientRecord patient() {
@@ -147,13 +167,30 @@ class ClinicalDocumentControllerTimelineTest {
         );
     }
 
-    private ClinicalDocumentRecord document(OffsetDateTime createdAt, String filename, ClinicalDocumentType type, String referredDoctor, String referredHospital, String uploadSource) {
+    private ClinicalDocumentRecord document(OffsetDateTime createdAt, String filename, ClinicalDocumentType type, String referredDoctor, String referredHospital, String sourceModule, String uploadSource) {
+        return document(createdAt, filename, type, referredDoctor, referredHospital, sourceModule, uploadSource, "INTERNAL_ONLY", "VERIFIED", "DONE", "DONE", "DONE");
+    }
+
+    private ClinicalDocumentRecord document(
+            OffsetDateTime createdAt,
+            String filename,
+            ClinicalDocumentType type,
+            String referredDoctor,
+            String referredHospital,
+            String sourceModule,
+            String uploadSource,
+            String visibility,
+            String verificationStatus,
+            String ocrStatus,
+            String aiIndexStatus,
+            String aiExtractionStatus
+    ) {
         return new ClinicalDocumentRecord(
                 UUID.randomUUID(),
                 TENANT_ID,
                 PATIENT_ID,
                 CONSULTATION_ID,
-                null,
+                sourceModule,
                 null,
                 ACTOR_ID,
                 "Reception", 
@@ -168,11 +205,11 @@ class ClinicalDocumentControllerTimelineTest {
                 "checksum",
                 "clinic-documents",
                 "storage-key",
-                "INTERNAL_ONLY",
-                "VERIFIED",
-                "DONE",
-                "DONE",
-                "DONE",
+                visibility,
+                verificationStatus,
+                ocrStatus,
+                aiIndexStatus,
+                aiExtractionStatus,
                 "provider",
                 "model",
                 BigDecimal.valueOf(0.91),

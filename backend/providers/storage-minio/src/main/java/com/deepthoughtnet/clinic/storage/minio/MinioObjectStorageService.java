@@ -9,6 +9,7 @@ import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
+import io.minio.StatObjectArgs;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.time.Duration;
@@ -76,6 +77,22 @@ public class MinioObjectStorageService implements ObjectStorageService {
             );
         } catch (Exception ex) {
             throw new IllegalStateException("Failed to store object in MinIO", ex);
+        }
+    }
+
+    @Override
+    public long statObjectSize(String storageKey) {
+        ensureBucketExists();
+
+        try {
+            return minioClient.statObject(
+                    StatObjectArgs.builder()
+                            .bucket(properties.getBucket())
+                            .object(storageKey)
+                            .build()
+            ).size();
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to read object metadata from MinIO", ex);
         }
     }
 

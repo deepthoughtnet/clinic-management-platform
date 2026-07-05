@@ -1651,6 +1651,16 @@ export type LabOrder = {
   labVerificationDecision: string | null;
   labVerificationComments: string | null;
   labVerificationReason: string | null;
+  paymentId?: string | null;
+  receiptId?: string | null;
+  receiptNumber?: string | null;
+  receiptDate?: string | null;
+  paymentDate?: string | null;
+  paymentDateTime?: string | null;
+  paymentAmount?: number | null;
+  paymentMode?: PaymentMode | null;
+  referenceNumber?: string | null;
+  receivedBy?: string | null;
   attachments: LabOrderAttachment[];
   items: LabOrderItem[];
   samples: LabSample[];
@@ -4170,7 +4180,18 @@ export async function getPatientDocumentDownloadUrl(token: string, tenantId: str
 }
 
 export async function getPatientDocumentViewUrl(token: string, tenantId: string, patientId: string, documentId: string) {
-  return httpGet<{ url: string; expiresInSeconds: string }>(`/api/patients/${patientId}/documents/${documentId}/view`, { token, tenantId });
+  const response = await fetch(`${(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "")}/api/patients/${patientId}/documents/${documentId}/view`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Tenant-Id": tenantId,
+      Accept: "application/pdf",
+    },
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
+  }
+  return { blob: await response.blob() };
 }
 
 export async function generateConsultationDocument(token: string, tenantId: string, consultationId: string, body: {

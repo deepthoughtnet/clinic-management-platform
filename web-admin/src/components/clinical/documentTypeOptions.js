@@ -65,3 +65,30 @@ export function documentTypeLabel(value) {
 export function documentTypeStorageKey(value) {
   return normalizeDocumentType(value);
 }
+
+export function isPublishedLabDocument(document) {
+  const documentType = normalizeDocumentType(document?.documentType);
+  const type = normalizeDocumentType(document?.type);
+  const category = normalizeDocumentType(document?.category);
+  const sourceModule = normalizeDocumentType(document?.sourceModule);
+  const status = normalizeDocumentType(document?.status);
+  const displayStatus = normalizeDocumentType(document?.displayStatus);
+  const businessStatus = normalizeDocumentType(document?.businessStatus);
+
+  const isLabReport = documentType === "LAB_REPORT"
+    || type === "LAB_REPORT"
+    || category === "LAB_REPORT"
+    || sourceModule === "LAB"
+    || sourceModule === "LABORATORY";
+
+  if (!isLabReport) {
+    return false;
+  }
+
+  const statusIndicators = [status, displayStatus, businessStatus].filter(Boolean);
+  if (!statusIndicators.length) {
+    return true;
+  }
+
+  return statusIndicators.some((value) => ["PUBLISHED", "AVAILABLE", "PATIENT_VISIBLE"].includes(value));
+}

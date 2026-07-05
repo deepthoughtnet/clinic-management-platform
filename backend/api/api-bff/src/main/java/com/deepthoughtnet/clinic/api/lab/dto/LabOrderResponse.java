@@ -4,8 +4,10 @@ import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderOrigin;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleStatusRecord;
+import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.time.LocalDate;
 import java.util.List;
 
 public record LabOrderResponse(
@@ -75,7 +77,17 @@ public record LabOrderResponse(
         List<LabSampleResponse> samples,
         List<LabOrderResultResponse> results,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt
+        OffsetDateTime updatedAt,
+        String paymentId,
+        String receiptId,
+        String receiptNumber,
+        LocalDate receiptDate,
+        LocalDate paymentDate,
+        OffsetDateTime paymentDateTime,
+        BigDecimal paymentAmount,
+        PaymentMode paymentMode,
+        String referenceNumber,
+        String receivedBy
 ) {
     public record LabOrderAttachmentResponse(
             String id,

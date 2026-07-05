@@ -35,6 +35,7 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultEntryComman
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultItemCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultPdf;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPublishReportCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderSampleCollectionCommand;
@@ -47,6 +48,7 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabSampleRejectCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterUpsertCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestUpsertCommand;
+import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.Collections;
 import java.util.List;
@@ -231,7 +233,7 @@ public class LabController {
     public LabOrderResponse collectPayment(@PathVariable UUID id, @Valid @RequestBody LabOrderPaymentRequest request) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        return toResponse(labService.collectPayment(tenantId, id, new LabOrderPaymentCommand(
+        LabOrderPaymentRecord result = labService.collectPayment(tenantId, id, new LabOrderPaymentCommand(
                 request.paymentDate(),
                 request.paymentDateTime(),
                 request.amount(),
@@ -239,7 +241,8 @@ public class LabController {
                 request.referenceNumber(),
                 request.notes(),
                 request.receivedBy()
-        ), actorAppUserId));
+        ), actorAppUserId);
+        return toResponse(result.order(), result.payment());
     }
 
     @PostMapping("/orders/{id}/sample-collection")
@@ -461,6 +464,10 @@ public class LabController {
     }
 
     private LabOrderResponse toResponse(LabOrderRecord record) {
+        return toResponse(record, null);
+    }
+
+    private LabOrderResponse toResponse(LabOrderRecord record, PaymentRecord payment) {
         return new LabOrderResponse(
                 record.id() == null ? null : record.id().toString(),
                 record.tenantId() == null ? null : record.tenantId().toString(),
@@ -542,7 +549,17 @@ public class LabController {
                 record.samples().stream().map(this::toResponse).toList(),
                 record.results().stream().map(this::toResponse).toList(),
                 record.createdAt(),
-                record.updatedAt()
+                record.updatedAt(),
+                payment == null || payment.id() == null ? null : payment.id().toString(),
+                payment == null || payment.receiptId() == null ? null : payment.receiptId().toString(),
+                payment == null ? null : payment.receiptNumber(),
+                payment == null ? null : payment.receiptDate(),
+                payment == null ? null : payment.paymentDate(),
+                payment == null ? null : payment.paymentDateTime(),
+                payment == null ? null : payment.amount(),
+                payment == null ? null : payment.paymentMode(),
+                payment == null ? null : payment.referenceNumber(),
+                payment == null || payment.receivedBy() == null ? null : payment.receivedBy().toString()
         );
     }
 

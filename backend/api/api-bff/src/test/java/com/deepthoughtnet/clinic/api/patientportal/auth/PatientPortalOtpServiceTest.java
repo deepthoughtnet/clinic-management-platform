@@ -147,7 +147,7 @@ class PatientPortalOtpServiceTest {
 
         assertThat(response.verified()).isFalse();
         assertThat(response.message()).contains("Unable to verify patient access");
-        verify(patientRepository, never()).findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(eq(TENANT_A_ID), any());
+        verify(patientRepository, never()).findByTenantIdAndMobileIgnoreCaseAndActiveTrue(eq(TENANT_A_ID), any());
     }
 
     @Test
@@ -155,8 +155,8 @@ class PatientPortalOtpServiceTest {
         PatientPortalOtpChallengeEntity challenge = challenge(TENANT_A_ID, "9876543210", "123456");
         when(challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(TENANT_A_ID, "9876543210"))
                 .thenReturn(Optional.of(challenge));
-        when(patientRepository.findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(TENANT_A_ID, "9876543210"))
-                .thenReturn(Optional.empty());
+        when(patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(TENANT_A_ID, "9876543210"))
+                .thenReturn(List.of());
 
         var response = service.verifyOtp("tenant-a", "9876543210", "123456");
 
@@ -193,8 +193,8 @@ class PatientPortalOtpServiceTest {
 
         when(challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(TENANT_A_ID, "9876543210"))
                 .thenReturn(Optional.of(challenge));
-        when(patientRepository.findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(TENANT_A_ID, "9876543210"))
-                .thenReturn(Optional.of(patient));
+        when(patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(TENANT_A_ID, "9876543210"))
+                .thenReturn(List.of(patient));
         when(appUserProvisioner.upsertAndReturnId(
                 eq(TENANT_A_ID),
                 eq("patientportal:" + TENANT_A_ID + ":" + PATIENT_ID),
@@ -213,6 +213,60 @@ class PatientPortalOtpServiceTest {
         assertThat(response.patientSessionToken()).isNotBlank();
         assertThat(response.registrationSessionToken()).isNull();
         assertThat(appUser.getPatientId()).isEqualTo(PATIENT_ID);
+    }
+
+    @Test
+    void verifyOtpUsesTenantScopedPatientWhenSameMobileExistsInAnotherTenant() {
+        PatientPortalOtpChallengeEntity challenge = challenge(TENANT_A_ID, "9876543210", "123456");
+        PatientEntity tenantAValue = patientEntity(TENANT_A_ID, PATIENT_ID, "9876543210");
+        AppUserEntity appUser = AppUserEntity.create(TENANT_A_ID, "patientportal:" + TENANT_A_ID + ":" + PATIENT_ID, null, "Riya Sharma");
+
+        when(challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(TENANT_A_ID, "9876543210"))
+                .thenReturn(Optional.of(challenge));
+        when(patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(TENANT_A_ID, "9876543210"))
+                .thenReturn(List.of(tenantAValue));
+        when(appUserProvisioner.upsertAndReturnId(
+                eq(TENANT_A_ID),
+                eq("patientportal:" + TENANT_A_ID + ":" + PATIENT_ID),
+                eq(null),
+                eq("Riya Sharma")
+        )).thenReturn(APP_USER_ID);
+        when(appUserRepository.findByTenantIdAndId(TENANT_A_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+
+        var response = service.verifyOtp("tenant-a", "9876543210", "123456");
+
+        assertThat(response.verified()).isTrue();
+        assertThat(response.patientExists()).isTrue();
+        assertThat(response.registrationRequired()).isFalse();
+        assertThat(response.patientSessionToken()).isNotBlank();
+        assertThat(response.tenantId()).isEqualTo(TENANT_A_ID.toString());
+        assertThat(response.patientDisplayName()).isEqualTo("Riya Sharma");
+    }
+
+    @Test
+    void verifyOtpChoosesPrimaryActivePatientWhenDuplicateTenantMobileExists() {
+        PatientPortalOtpChallengeEntity challenge = challenge(TENANT_A_ID, "9876543210", "123456");
+        PatientEntity older = patientEntity(TENANT_A_ID, UUID.randomUUID(), "9876543210", OffsetDateTime.parse("2025-01-01T00:00:00Z"));
+        PatientEntity newer = patientEntity(TENANT_A_ID, UUID.randomUUID(), "9876543210", OffsetDateTime.parse("2025-02-01T00:00:00Z"));
+        AppUserEntity appUser = AppUserEntity.create(TENANT_A_ID, "patientportal:" + TENANT_A_ID + ":" + older.getId(), null, "Riya Sharma");
+
+        when(challengeRepository.findTopByTenantIdAndPhoneNormalizedOrderByCreatedAtDesc(TENANT_A_ID, "9876543210"))
+                .thenReturn(Optional.of(challenge));
+        when(patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(TENANT_A_ID, "9876543210"))
+                .thenReturn(List.of(newer, older));
+        when(appUserProvisioner.upsertAndReturnId(
+                eq(TENANT_A_ID),
+                eq("patientportal:" + TENANT_A_ID + ":" + older.getId()),
+                eq(null),
+                eq("Riya Sharma")
+        )).thenReturn(APP_USER_ID);
+        when(appUserRepository.findByTenantIdAndId(TENANT_A_ID, APP_USER_ID)).thenReturn(Optional.of(appUser));
+
+        var response = service.verifyOtp("tenant-a", "9876543210", "123456");
+
+        assertThat(response.patientExists()).isTrue();
+        assertThat(response.registrationRequired()).isFalse();
+        assertThat(response.patientDisplayName()).isEqualTo("Riya Sharma");
     }
 
     @Test
@@ -260,6 +314,10 @@ class PatientPortalOtpServiceTest {
     }
 
     private PatientEntity patientEntity(UUID tenantId, UUID patientId, String mobile) {
+        return patientEntity(tenantId, patientId, mobile, OffsetDateTime.now());
+    }
+
+    private PatientEntity patientEntity(UUID tenantId, UUID patientId, String mobile, OffsetDateTime createdAt) {
         PatientEntity patient = PatientEntity.create(tenantId, "PAT-001");
         patient.update(
                 "Riya",
@@ -286,6 +344,7 @@ class PatientPortalOtpServiceTest {
                 true
         );
         setField(patient, "id", patientId);
+        setField(patient, "createdAt", createdAt);
         return patient;
     }
 

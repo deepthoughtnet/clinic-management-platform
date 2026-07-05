@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.clinicaldocument.dto;
 
 import java.math.BigDecimal;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 public record ClinicalDocumentResponse(
         String id,
@@ -20,6 +21,7 @@ public record ClinicalDocumentResponse(
         long sizeBytes,
         String checksumSha256,
         String storageBucket,
+        @JsonProperty("storageKey")
         String storageObjectKey,
         String visibility,
         String verificationStatus,

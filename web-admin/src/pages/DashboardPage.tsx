@@ -184,7 +184,8 @@ export default function DashboardPage() {
     || tenantRole === "PHARMACIST"
     || tenantRole === "PHARMACY_INVENTORY_MANAGER"
     || tenantRole === "PHARMACY_POS_USER";
-  const canBilling = auth.hasPermission("billing.read") || auth.hasPermission("payment.collect") || tenantRole === "CLINIC_ADMIN" || isBillingUser;
+  const canSeeFinancialDashboard = isBillingUser || isClinicAdmin || isAuditor || isPlatformAdmin;
+  const canBilling = canSeeFinancialDashboard;
   const canUseAppointmentShortcuts = !isBillingUser && !isAuditor && (auth.hasPermission("appointment.manage") || auth.hasPermission("appointment.read"));
   const canCreateAppointments = !isDoctor && !isBillingUser && !isAuditor && auth.hasPermission("appointment.manage");
   const canOpenDayBoard = !isBillingUser && !isAuditor && auth.hasPermission("appointment.manage");
@@ -346,7 +347,7 @@ export default function DashboardPage() {
     return map;
   }, [dashboard?.currentWaitingList]);
   const showOperational = Boolean(appt || queue || consult || rx || followUp);
-  const showBilling = Boolean(billing);
+  const showBilling = Boolean(billing) && canSeeFinancialDashboard;
   const withDoctorFilter = React.useCallback((path: string) => {
     if (isDoctor || !doctorUserId) return path;
     return `${path}${path.includes("?") ? "&" : "?"}doctorUserId=${encodeURIComponent(doctorUserId)}`;
@@ -395,7 +396,7 @@ export default function DashboardPage() {
               ? "Clinic Dashboard"
               : "Dashboard";
 
-  const cards = dashboard ? [
+  const operationalCards = dashboard ? [
     { label: "Appointments", value: appt?.totalToday || 0, tone: "primary" as const, onClick: () => openDashboardSection("appointments") },
     { label: "Checked-in", value: appt?.checkedIn || 0, tone: "warning" as const, onClick: () => openDashboardSection("queue") },
     { label: "Waiting Queue", value: queue?.waiting || 0, tone: "warning" as const, onClick: () => openDashboardSection("queue") },
@@ -404,11 +405,9 @@ export default function DashboardPage() {
     { label: "No-shows", value: appt?.noShow || 0, tone: "error" as const, onClick: () => openDashboardSection("appointments") },
     { label: "Cancelled", value: appt?.cancelled || 0, tone: "error" as const, onClick: () => openDashboardSection("appointments") },
     { label: "Prescriptions", value: rx?.prescriptionsGenerated || 0, tone: "info" as const, onClick: () => openDashboardSection("prescriptions") },
-    { label: "Pending Bills", value: billing?.pendingBills || 0, tone: "warning" as const, onClick: () => openDashboardSection("billing") },
-    { label: "Revenue", value: formatMoney(billing?.totalBilled), tone: "success" as const, onClick: () => openDashboardSection("billing") },
   ] : [];
 
-  const financeCards = dashboard ? [
+  const financialCards = dashboard ? [
     { label: "Bills Created", value: billing?.billsCreated || 0, tone: "info" as const, onClick: () => openDashboardSection("billing") },
     { label: "Payments Received", value: formatMoney(billing?.totalPaid), tone: "success" as const, onClick: () => openDashboardSection("billing") },
     { label: "Pending Amount", value: formatMoney(billing?.pendingAmount), tone: "warning" as const, onClick: () => openDashboardSection("billing") },
@@ -489,7 +488,7 @@ export default function DashboardPage() {
               },
             }}
           >
-            {((showBilling && (!showOperational || !canUseAppointmentShortcuts)) ? financeCards : cards).map((card) => (
+            {((showBilling && (!showOperational || !canUseAppointmentShortcuts)) ? financialCards : operationalCards).map((card) => (
               <Box key={card.label}>
                 <KpiCard {...card} />
               </Box>

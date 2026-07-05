@@ -51,7 +51,7 @@ import {
 } from "../../api/clinicApi";
 import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocumentViewer";
 import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDocumentUploadDialog";
-import { documentTypeLabel } from "../../components/clinical/documentTypeOptions";
+import { documentTypeLabel, isPublishedLabDocument } from "../../components/clinical/documentTypeOptions";
 
 function statusColor(status: Appointment["status"]) {
   switch (status) {
@@ -239,7 +239,7 @@ export default function PatientDetailPage() {
     setViewerUrl(null);
     try {
       const response = await getPatientDocumentViewUrl(auth.accessToken, auth.tenantId, id, document.id);
-      setViewerUrl(response.url);
+      setViewerUrl(URL.createObjectURL(response.blob));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to open document preview");
     }
@@ -486,15 +486,19 @@ export default function PatientDetailPage() {
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5, flexWrap: "wrap" }}>
                         <Chip size="small" label={documentTypeLabel(document.documentType)} color={documentFilterKey(document.documentType) === "REFERRAL" ? "secondary" : "default"} />
-                        <Chip size="small" variant="outlined" label={document.uploadSource} />
+                        <Chip size="small" variant="outlined" label={isPublishedLabDocument(document) ? "Published" : document.uploadSource} />
+                        {isPublishedLabDocument(document) ? <Chip size="small" variant="outlined" color="success" label="Available" /> : null}
                         <Typography variant="caption" color="text.secondary">{new Date(document.createdAt).toLocaleString()}</Typography>
                       </Stack>
                       <Typography variant="body2" sx={{ fontWeight: 800 }}>{document.title || document.originalFilename}</Typography>
                       <Typography variant="caption" color="text.secondary" display="block">
-                        {document.description || "No notes"} · OCR {document.ocrStatus || "NOT_STARTED"} · AI {document.aiExtractionStatus || "NOT_STARTED"}{document.aiExtractionConfidence != null ? ` · ${(document.aiExtractionConfidence * 100).toFixed(0)}%` : ""}
+                        {document.description || "No notes"}
+                        {isPublishedLabDocument(document)
+                          ? ""
+                          : ` · OCR ${document.ocrStatus || "NOT_STARTED"} · AI ${document.aiExtractionStatus || "NOT_STARTED"}${document.aiExtractionConfidence != null ? ` · ${(document.aiExtractionConfidence * 100).toFixed(0)}%` : ""}`}
                       </Typography>
                       <Typography variant="caption" color="text.secondary" display="block">
-                        {document.uploadedByName}{document.reportDate ? ` • Report date ${document.reportDate}` : ""}{document.visibility ? ` • ${document.visibility}` : ""}
+                        {document.uploadedByName}{document.reportDate ? ` • Report date ${document.reportDate}` : ""}{isPublishedLabDocument(document) ? " • Published" : document.visibility ? ` • ${document.visibility}` : ""}
                       </Typography>
                     </Box>
                     <Stack direction="row" spacing={1} alignItems="center">

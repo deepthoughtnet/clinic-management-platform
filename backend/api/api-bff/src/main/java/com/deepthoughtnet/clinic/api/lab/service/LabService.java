@@ -33,6 +33,7 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultItemCommand
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabResultFlag;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentCommand;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderSampleCollectionCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
@@ -410,7 +411,7 @@ public class LabService {
     }
 
     @Transactional
-    public LabOrderRecord collectPayment(UUID tenantId, UUID orderId, LabOrderPaymentCommand command, UUID actorAppUserId) {
+    public LabOrderPaymentRecord collectPayment(UUID tenantId, UUID orderId, LabOrderPaymentCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
         requireId(orderId, "orderId");
         validatePayment(command);
@@ -436,7 +437,7 @@ public class LabService {
         order.markReadyForCollection();
         LabOrderEntity saved = labOrderRepository.save(order);
         auditOrder(tenantId, saved, "lab_order.payment_collected", actorAppUserId, "Collected lab order payment");
-        return toRecord(tenantId, saved);
+        return new LabOrderPaymentRecord(toRecord(tenantId, saved), payment);
     }
 
     @Transactional
@@ -785,18 +786,18 @@ public class LabService {
         LabOrderEntity saved = labOrderRepository.save(order);
         auditOrder(tenantId, saved, "lab_order.report_published", actorAppUserId, "Published lab report");
 
-        clinicalDocumentService.upload(new ClinicalDocumentUploadCommand(
+        clinicalDocumentService.publishLabReport(new ClinicalDocumentUploadCommand(
                 tenantId,
                 saved.getPatientId(),
                 saved.getConsultationId(),
                 actorAppUserId,
-                ClinicalDocumentType.INTERNAL_LAB_REPORT,
-                pdf.filename(),
+                ClinicalDocumentType.LAB_REPORT,
+                "Lab Report",
                 OffsetDateTime.now(ZoneOffset.UTC).toLocalDate(),
                 "LABORATORY",
                 "LABORATORY",
                 saved.getId().toString(),
-                "INTERNAL_ONLY",
+                "PATIENT_VISIBLE",
                 pdf.filename(),
                 "application/pdf",
                 pdf.content(),

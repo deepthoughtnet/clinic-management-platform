@@ -84,7 +84,7 @@ class PatientPortalRegistrationServiceTest {
     @Test
     void createsPatientWhenVerifiedMobileHasNoExistingRecord() {
         AppUserEntity patientAppUser = AppUserEntity.create(TENANT_ID, "patientportal:" + TENANT_ID + ":" + PATIENT_ID, null, "Riya Sharma");
-        when(patientRepository.findFirstByTenantIdAndMobileIgnoreCase(TENANT_ID, "9876543210")).thenReturn(Optional.empty());
+        when(patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(TENANT_ID, "9876543210")).thenReturn(List.of());
         when(patientService.create(eq(TENANT_ID), any(), eq(ACTOR_APP_USER_ID))).thenReturn(patientRecord());
         when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patientEntity(true)));
         when(appUserProvisioner.upsertAndReturnId(eq(TENANT_ID), eq("patientportal:" + TENANT_ID + ":" + PATIENT_ID), eq("riya@example.com"), eq("Riya Sharma")))
@@ -103,7 +103,30 @@ class PatientPortalRegistrationServiceTest {
     @Test
     void linksExistingActivePatientWithoutCreatingDuplicate() {
         AppUserEntity patientAppUser = AppUserEntity.create(TENANT_ID, "patientportal:" + TENANT_ID + ":" + PATIENT_ID, null, "Riya Sharma");
-        when(patientRepository.findFirstByTenantIdAndMobileIgnoreCase(TENANT_ID, "9876543210")).thenReturn(Optional.of(patientEntity(true)));
+        when(patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(TENANT_ID, "9876543210")).thenReturn(List.of(patientEntity(true)));
+        when(appUserProvisioner.upsertAndReturnId(eq(TENANT_ID), eq("patientportal:" + TENANT_ID + ":" + PATIENT_ID), eq("riya@example.com"), eq("Riya Sharma")))
+                .thenReturn(PATIENT_APP_USER_ID);
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, PATIENT_APP_USER_ID)).thenReturn(Optional.of(patientAppUser));
+        when(appUserRepository.findByTenantIdAndId(TENANT_ID, ACTOR_APP_USER_ID)).thenReturn(Optional.of(AppUserEntity.create(TENANT_ID, "registration-sub", null, "New patient")));
+
+        var response = service.complete(request());
+
+        assertThat(response.created()).isFalse();
+        assertThat(response.linkedExistingPatient()).isTrue();
+        verify(patientService, never()).create(eq(TENANT_ID), any(), eq(ACTOR_APP_USER_ID));
+    }
+
+    @Test
+    void duplicateActivePatientsUsePrimaryExistingRecord() {
+        PatientEntity older = patientEntity(true);
+        PatientEntity newer = patientEntity(true);
+        setField(older, "id", PATIENT_ID);
+        setField(newer, "id", UUID.randomUUID());
+        setField(older, "createdAt", OffsetDateTime.parse("2025-01-01T00:00:00Z"));
+        setField(newer, "createdAt", OffsetDateTime.parse("2025-02-01T00:00:00Z"));
+        AppUserEntity patientAppUser = AppUserEntity.create(TENANT_ID, "patientportal:" + TENANT_ID + ":" + PATIENT_ID, null, "Riya Sharma");
+
+        when(patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(TENANT_ID, "9876543210")).thenReturn(List.of(newer, older));
         when(appUserProvisioner.upsertAndReturnId(eq(TENANT_ID), eq("patientportal:" + TENANT_ID + ":" + PATIENT_ID), eq("riya@example.com"), eq("Riya Sharma")))
                 .thenReturn(PATIENT_APP_USER_ID);
         when(appUserRepository.findByTenantIdAndId(TENANT_ID, PATIENT_APP_USER_ID)).thenReturn(Optional.of(patientAppUser));

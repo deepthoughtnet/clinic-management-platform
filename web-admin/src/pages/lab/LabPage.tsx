@@ -41,6 +41,10 @@ import { firstZodError, labDoctorReviewSchema, labOrderCreateSchema, labPaymentS
 import { useAuth } from "../../auth/useAuth";
 import { resolveEnabledTenantModules } from "../../modules/moduleRegistry";
 import { CompactEmptyState, compactCardContentSx } from "../../components/compact/CompactUi";
+import {
+  ReceiptPrintDialog,
+  type ReceiptPrintData,
+} from "../../components/finance/PrintableBillingDocuments";
 import PatientQuickRegisterDialog, { patientSummary } from "../../components/patients/PatientQuickRegisterDialog";
 import LabDashboard, { LabAnalyticsPanel, type LabDashboardActionKey, type LabDashboardData } from "./LabDashboard";
 import LabConfigurationPanel from "./LabConfigurationPanel";
@@ -48,6 +52,11 @@ import RequiredLabel from "../../components/forms/RequiredLabel";
 import CommentSuggestions from "../../shared/components/comment-suggestions/CommentSuggestions";
 import {
   getLabCategoryConfig,
+  getClinicProfile,
+  getBill,
+  getPatient,
+  getAppointment,
+  getConsultation,
   collectLabOrderSamples,
   collectLabOrderPayment,
   createLabTest,
@@ -60,10 +69,14 @@ import {
   getLabOrderPdf,
   getLabOrders,
   getLabTests,
+  getReceiptPdf,
+  listBillPayments,
+  listBillReceipts,
   importLabTestsCsv,
   receiveLabSample,
   rejectLabSample,
   publishLabOrderReport,
+  sendReceipt,
   searchPatients,
   updateLabTest,
   updateLabCategoryConfig,
@@ -82,7 +95,13 @@ import {
   type LabTest,
   type LabTestInput,
   type LabTestParameterInput,
+  type Appointment,
+  type Bill,
+  type ClinicProfile,
+  type Consultation,
   type PaymentMode,
+  type Payment,
+  type Receipt,
 } from "../../api/clinicApi";
 
 const emptyTestForm: LabTestInput = {
@@ -203,6 +222,25 @@ function requestedByLabel(row: LabOrder) {
 function formatMoney(value: number | null | undefined) {
   if (typeof value !== "number" || Number.isNaN(value)) return "-";
   return value.toFixed(2);
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+function latestReceiptForBill(receipts: Receipt[], billId: string) {
+  return receipts
+    .filter((receipt) => receipt.billId === billId)
+    .slice()
+    .sort((left, right) => `${right.receiptDate}|${right.createdAt}`.localeCompare(`${left.receiptDate}|${left.createdAt}`))[0] || null;
+}
+
+function paymentForReceipt(payments: Payment[], receipt: Receipt | null) {
+  if (!receipt) return null;
+  return payments.find((payment) => payment.id === receipt.paymentId) || null;
 }
 
 function statusTone(status: LabOrderStatus | string) {
@@ -452,6 +490,13 @@ export default function LabPage() {
   const [paymentMode, setPaymentMode] = React.useState<PaymentMode>("CASH");
   const [paymentReference, setPaymentReference] = React.useState("");
   const [paymentNotes, setPaymentNotes] = React.useState("");
+  const [receiptPreview, setReceiptPreview] = React.useState<{ order: LabOrder; receipt: Receipt; payment: Payment } | null>(null);
+  const [receiptActionLoading, setReceiptActionLoading] = React.useState(false);
+  const [receiptPrintLoading, setReceiptPrintLoading] = React.useState(false);
+  const [receiptPrintOpen, setReceiptPrintOpen] = React.useState(false);
+  const [receiptPrintAutoPrint, setReceiptPrintAutoPrint] = React.useState(false);
+  const [receiptPrintData, setReceiptPrintData] = React.useState<ReceiptPrintData | null>(null);
+  const [clinicProfile, setClinicProfile] = React.useState<ClinicProfile | null>(null);
   const [sampleCollectedBy, setSampleCollectedBy] = React.useState("");
   const [sampleCollectedAt, setSampleCollectedAt] = React.useState(toDatetimeLocal(new Date().toISOString()));
   const [sampleRows, setSampleRows] = React.useState<SampleCollectionFormRow[]>([]);
@@ -492,6 +537,7 @@ export default function LabPage() {
   const canCollectSample = auth.hasPermission("lab.order.collect_sample");
   const canEnterResults = auth.hasPermission("lab.order.result_entry");
   const canGenerateReport = auth.hasPermission("lab.order.generate_report");
+  const canSendReceipt = auth.hasPermission("notification.send") || auth.hasPermission("billing.read") || auth.hasPermission("payment.collect");
   const canReviewReport = auth.hasPermission("lab.order.review");
   const canCreateOrders = auth.hasPermission("lab.order.create");
   const canQuickRegisterPatient = canCreateOrders && auth.hasPermission("patient.create") && auth.hasPermission("patient.read");
@@ -530,6 +576,32 @@ export default function LabPage() {
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadClinicProfile() {
+      if (!auth.accessToken || !auth.tenantId) return;
+      try {
+        const profile = await getClinicProfile(auth.accessToken, auth.tenantId);
+        if (!cancelled) setClinicProfile(profile);
+      } catch {
+        if (!cancelled) setClinicProfile(null);
+      }
+    }
+    void loadClinicProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken, auth.tenantId]);
+
+  React.useEffect(() => {
+    if (receiptPrintAutoPrint && receiptPrintData && !receiptPrintLoading) {
+      const handle = window.setTimeout(() => window.print(), 60);
+      setReceiptPrintAutoPrint(false);
+      return () => window.clearTimeout(handle);
+    }
+    return undefined;
+  }, [receiptPrintAutoPrint, receiptPrintData, receiptPrintLoading]);
 
   React.useEffect(() => {
     if (!requestOpen || !auth.accessToken || !auth.tenantId) {
@@ -853,13 +925,56 @@ export default function LabPage() {
     setSaving(true);
     setError(null);
     try {
-      await collectLabOrderPayment(auth.accessToken, auth.tenantId, paymentTarget.id, {
+      const savedOrder = await collectLabOrderPayment(auth.accessToken, auth.tenantId, paymentTarget.id, {
         amount: parsed.data.amount,
         paymentMode: parsed.data.paymentMode,
         referenceNumber: parsed.data.referenceNumber || null,
         notes: parsed.data.notes || null,
         receivedBy: auth.appUserId || null,
       });
+      if (!savedOrder.billId) {
+        throw new Error("Payment completed, but the lab order has no linked bill.");
+      }
+      if (savedOrder.receiptId && savedOrder.receiptNumber && savedOrder.paymentId) {
+        const receipt: Receipt = {
+          id: savedOrder.receiptId,
+          tenantId: savedOrder.tenantId,
+          receiptNumber: savedOrder.receiptNumber,
+          billId: savedOrder.billId,
+          paymentId: savedOrder.paymentId,
+          receiptDate: savedOrder.receiptDate || savedOrder.paymentDate || savedOrder.paymentCollectedAt?.slice(0, 10) || "",
+          amount: savedOrder.paymentAmount ?? savedOrder.billDueAmount ?? parsed.data.amount,
+          createdAt: savedOrder.updatedAt,
+        };
+        const payment: Payment = {
+          id: savedOrder.paymentId,
+          tenantId: savedOrder.tenantId,
+          billId: savedOrder.billId,
+          paymentDate: savedOrder.paymentDate || savedOrder.paymentCollectedAt?.slice(0, 10) || "",
+          paymentDateTime: savedOrder.paymentDateTime || savedOrder.paymentCollectedAt || null,
+          amount: savedOrder.paymentAmount ?? parsed.data.amount,
+          paymentMode: savedOrder.paymentMode || parsed.data.paymentMode,
+          referenceNumber: savedOrder.referenceNumber ?? null,
+          notes: parsed.data.notes ?? null,
+          receivedBy: savedOrder.receivedBy ?? auth.appUserId ?? null,
+          receiptId: savedOrder.receiptId,
+          receiptNumber: savedOrder.receiptNumber,
+          receiptDate: savedOrder.receiptDate || savedOrder.paymentDate || savedOrder.paymentCollectedAt?.slice(0, 10) || "",
+          createdAt: savedOrder.updatedAt,
+        };
+        setReceiptPreview({ order: savedOrder, receipt, payment });
+      } else {
+        const [paymentRows, receiptRows] = await Promise.all([
+          listBillPayments(auth.accessToken, auth.tenantId, savedOrder.billId),
+          listBillReceipts(auth.accessToken, auth.tenantId, savedOrder.billId),
+        ]);
+        const receipt = latestReceiptForBill(receiptRows, savedOrder.billId);
+        const payment = paymentForReceipt(paymentRows, receipt);
+        if (!receipt || !payment) {
+          throw new Error("Payment completed, but the receipt is not available yet.");
+        }
+        setReceiptPreview({ order: savedOrder, receipt, payment });
+      }
       setPaymentTarget(null);
       setPaymentReference("");
       setPaymentNotes("");
@@ -868,6 +983,81 @@ export default function LabPage() {
       setError(err instanceof Error ? err.message : "Failed to collect payment");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const loadReceiptPrintData = async (autoPrint = false) => {
+    if (!auth.accessToken || !auth.tenantId || !receiptPreview) return;
+    if (!receiptPreview.order.billId) {
+      setError("Payment completed, but the lab bill is not available yet.");
+      return;
+    }
+    setReceiptPrintLoading(true);
+    setReceiptPrintAutoPrint(autoPrint);
+    setReceiptPrintOpen(true);
+    setReceiptPrintData(null);
+    setError(null);
+    try {
+      const bill: Bill = await getBill(auth.accessToken, auth.tenantId, receiptPreview.order.billId);
+      const [patientDetail, appointment, consultation] = await Promise.all([
+        getPatient(auth.accessToken, auth.tenantId, bill.patientId).catch(() => null),
+        bill.appointmentId ? getAppointment(auth.accessToken, auth.tenantId, bill.appointmentId).catch(() => null) : Promise.resolve(null),
+        bill.consultationId ? getConsultation(auth.accessToken, auth.tenantId, bill.consultationId).catch(() => null) : Promise.resolve(null),
+      ]) as [
+        { patient: Patient } | null,
+        Appointment | null,
+        Consultation | null,
+      ];
+      setReceiptPrintData({
+        clinicProfile,
+        bill,
+        receipt: receiptPreview.receipt,
+        payment: receiptPreview.payment,
+        patient: patientDetail ? patientDetail.patient : null,
+        appointment: appointment ?? null,
+        consultation: consultation ?? null,
+      });
+    } catch (err) {
+      setReceiptPrintOpen(false);
+      setError(err instanceof Error ? err.message : "Failed to load receipt preview");
+    } finally {
+      setReceiptPrintLoading(false);
+    }
+  };
+
+  const openReceiptPdf = async () => {
+    if (!auth.accessToken || !auth.tenantId || !receiptPreview) return;
+    setReceiptActionLoading(true);
+    try {
+      const { blob, filename } = await getReceiptPdf(auth.accessToken, auth.tenantId, receiptPreview.receipt.id);
+      if (!blob.size) {
+        throw new Error("Receipt PDF is empty.");
+      }
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = filename || `${receiptPreview.receipt.receiptNumber || receiptPreview.order.orderNumber}-receipt.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download receipt PDF");
+    } finally {
+      setReceiptActionLoading(false);
+    }
+  };
+
+  const sendReceiptAction = async (channel: "email" | "whatsapp") => {
+    if (!auth.accessToken || !auth.tenantId || !receiptPreview) return;
+    setReceiptActionLoading(true);
+    setError(null);
+    try {
+      await sendReceipt(auth.accessToken, auth.tenantId, receiptPreview.receipt.id, channel);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send receipt");
+    } finally {
+      setReceiptActionLoading(false);
     }
   };
 
@@ -1777,6 +1967,128 @@ export default function LabPage() {
           <Button variant="contained" onClick={() => void collectPayment()} disabled={saving || !paymentTarget}>Collect Payment</Button>
         </DialogActions>
       </Dialog>
+
+      <Dialog
+        open={Boolean(receiptPreview)}
+        onClose={() => {
+          setReceiptPreview(null);
+          setReceiptPrintOpen(false);
+          setReceiptPrintLoading(false);
+          setReceiptPrintAutoPrint(false);
+          setReceiptPrintData(null);
+        }}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Lab Payment Receipt</DialogTitle>
+        <DialogContent dividers>
+          {receiptPreview ? (
+            <Stack spacing={2}>
+              <Alert severity="success">
+                Payment collected for {receiptPreview.order.orderNumber}. Receipt is ready.
+              </Alert>
+              <Card variant="outlined">
+                <CardContent>
+                  <Stack spacing={1.25}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Receipt Details</Typography>
+                    <Grid container spacing={1.25}>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Lab Order Number</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{receiptPreview.order.orderNumber || "-"}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Bill Number</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{receiptPreview.order.billNumber || "-"}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Patient Name</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{receiptPreview.order.patientName || "-"}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Receipt Number</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{receiptPreview.receipt.receiptNumber || "-"}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Amount</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{formatMoney(receiptPreview.receipt.amount)}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Payment Mode</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{receiptPreview.payment.paymentMode}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Reference Number</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{receiptPreview.payment.referenceNumber || "-"}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Collected By</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{receiptPreview.payment.receivedBy || "-"}</Typography>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="caption" color="text.secondary">Timestamp</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{formatDateTime(receiptPreview.payment.paymentDateTime || receiptPreview.payment.paymentDate || receiptPreview.receipt.receiptDate)}</Typography>
+                      </Grid>
+                    </Grid>
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setReceiptPreview(null)}>Continue to Sample Collection</Button>
+          <Button
+            variant="outlined"
+            onClick={() => void loadReceiptPrintData(false)}
+            disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading}
+          >
+            View Receipt
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={() => void openReceiptPdf()}
+            disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading}
+            startIcon={<DownloadRoundedIcon />}
+          >
+            Download Receipt
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void loadReceiptPrintData(true)}
+            disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading}
+            startIcon={<PaidRoundedIcon />}
+          >
+            Print Receipt
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={() => void sendReceiptAction("email")}
+            disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading || !canSendReceipt}
+          >
+            Email
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={() => void sendReceiptAction("whatsapp")}
+            disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading || !canSendReceipt}
+          >
+            WhatsApp
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <ReceiptPrintDialog
+        open={receiptPrintOpen || receiptPrintLoading}
+        loading={receiptPrintLoading}
+        data={receiptPrintData}
+        onClose={() => {
+          setReceiptPrintOpen(false);
+          setReceiptPrintLoading(false);
+          setReceiptPrintAutoPrint(false);
+          setReceiptPrintData(null);
+        }}
+        onPrint={() => window.print()}
+      />
 
       <Dialog open={Boolean(sampleTarget)} onClose={() => {
         setSampleTarget(null);

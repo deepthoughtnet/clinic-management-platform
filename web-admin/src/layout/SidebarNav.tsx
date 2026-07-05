@@ -52,7 +52,7 @@ import { useAuth } from "../auth/useAuth";
 import { friendlyRoleLabel, hasTenantModule } from "../auth/moduleEntitlements";
 import { branding } from "../branding";
 import BrandMark from "../shared/components/branding/BrandMark";
-import { canAccessFeature, resolveEnabledTenantModules } from "../modules/moduleRegistry";
+import { canAccessFeature, isRouteAccessibleForAuth, resolveEnabledTenantModules } from "../modules/moduleRegistry";
 
 const GROUP_STATE_STORAGE_KEY = "clinic_sidebar_group_state_v1";
 
@@ -215,6 +215,7 @@ export default function SidebarNav({ open, variant, width, onClose }: SidebarNav
           if (item.key === "medicine-master" && !canSeeMedicineMaster) return false;
           if (item.key === "pharmacy-pos" && activeRoles.has("PHARMACY_INVENTORY_MANAGER") && !canUsePosSale) return false;
         }
+        if (item.path && !isRouteAccessibleForAuth(auth, item.path)) return false;
         if ((group.key === "operations" || group.key === "clinical" || group.key === "pharmacy" || group.key === "finance" || group.key === "carepilot" || group.key === "administration") && isPlatformAdmin && !auth.tenantId) return false;
         return true;
       });

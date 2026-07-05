@@ -672,6 +672,7 @@ class LabServiceValidationTest {
         assertThat(published.reportDeliveryChannels()).containsExactly("PATIENT_PORTAL", "PRINT");
         assertThat(published.reportPublishedAt()).isNotNull();
         assertThat(published.reportGeneratedAt()).isNotNull();
+        verify(clinicalDocumentService).publishLabReport(any());
     }
 
     @Test

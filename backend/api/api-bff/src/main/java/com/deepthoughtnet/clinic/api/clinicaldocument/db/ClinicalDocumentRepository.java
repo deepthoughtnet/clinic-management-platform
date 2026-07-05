@@ -10,6 +10,12 @@ import org.springframework.data.repository.query.Param;
 public interface ClinicalDocumentRepository extends JpaRepository<ClinicalDocumentEntity, UUID> {
     Optional<ClinicalDocumentEntity> findByTenantIdAndId(UUID tenantId, UUID id);
     Optional<ClinicalDocumentEntity> findByTenantIdAndIdAndActiveTrue(UUID tenantId, UUID id);
+    Optional<ClinicalDocumentEntity> findFirstByTenantIdAndSourceModuleAndSourceEntityIdAndDocumentTypeAndActiveTrueOrderByCreatedAtDesc(
+            UUID tenantId,
+            String sourceModule,
+            String sourceEntityId,
+            ClinicalDocumentType documentType
+    );
     List<ClinicalDocumentEntity> findByTenantIdAndPatientIdAndActiveTrueOrderByCreatedAtDesc(UUID tenantId, UUID patientId);
     boolean existsByTenantIdAndStorageObjectKey(UUID tenantId, String storageObjectKey);
 

@@ -22,7 +22,11 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -163,14 +167,14 @@ public class ClinicalDocumentController {
 
     @GetMapping("/patients/{patientId}/documents/{documentId}/download")
     @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read')")
-    public DocumentDownloadUrlResponse download(@PathVariable UUID patientId, @PathVariable UUID documentId) {
-        return accessUrl(patientId, documentId);
+    public ResponseEntity<byte[]> download(@PathVariable UUID patientId, @PathVariable UUID documentId) {
+        return streamedDocument(patientId, documentId, false);
     }
 
     @GetMapping("/patients/{patientId}/documents/{documentId}/view")
     @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read')")
-    public DocumentDownloadUrlResponse view(@PathVariable UUID patientId, @PathVariable UUID documentId) {
-        return accessUrl(patientId, documentId);
+    public ResponseEntity<byte[]> view(@PathVariable UUID patientId, @PathVariable UUID documentId) {
+        return streamedDocument(patientId, documentId, true);
     }
 
     @GetMapping("/patient-documents/{documentId}/download-url")
@@ -232,7 +236,7 @@ public class ClinicalDocumentController {
                 documentTypeLabel(doc.documentType()),
                 documentTimelineSubtitle(doc),
                 doc.createdAt().toString(),
-                doc.verificationStatus(),
+                documentTimelineStatus(doc),
                 doc.documentType().name(),
                 doc.id().toString(),
                 doc.consultationId() == null ? null : doc.consultationId().toString(),
@@ -255,6 +259,23 @@ public class ClinicalDocumentController {
         }
         doctorAssignmentSecurityService.requirePatientAccess(tenantId, record.patientId());
         return new DocumentDownloadUrlResponse(documentService.downloadUrl(tenantId, documentId, DOWNLOAD_TTL), String.valueOf(DOWNLOAD_TTL.toSeconds()));
+    }
+
+    private ResponseEntity<byte[]> streamedDocument(UUID patientId, UUID documentId, boolean inline) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        ClinicalDocumentRecord record = documentService.get(tenantId, documentId);
+        if (!record.patientId().equals(patientId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found");
+        }
+        doctorAssignmentSecurityService.requirePatientAccess(tenantId, record.patientId());
+        byte[] bytes = documentService.downloadBytes(tenantId, documentId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentLength(bytes.length);
+        headers.setContentDisposition(ContentDisposition.builder(inline ? "inline" : "attachment")
+                .filename(record.originalFilename() == null || record.originalFilename().isBlank() ? "document.pdf" : record.originalFilename())
+                .build());
+        return ResponseEntity.ok().headers(headers).body(bytes);
     }
 
     private void requirePatientExistsAndVisible(UUID tenantId, UUID patientId) {
@@ -290,7 +311,8 @@ public class ClinicalDocumentController {
 
     private String documentTypeLabel(ClinicalDocumentType type) {
         return switch (type) {
-            case EXTERNAL_LAB_REPORT, LAB_REPORT -> "External Lab Report";
+            case EXTERNAL_LAB_REPORT -> "External Lab Report";
+            case LAB_REPORT -> "Lab Report";
             case INTERNAL_LAB_REPORT -> "Internal Lab Report";
             case RADIOLOGY_REPORT, X_RAY, MRI_CT -> "Radiology Report";
             case REFERRAL_LETTER, REFERRAL -> "Referral Letter";
@@ -304,22 +326,85 @@ public class ClinicalDocumentController {
     }
 
     private String documentTimelineSubtitle(ClinicalDocumentRecord record) {
+        if (isPublishedLabDocument(record)) {
+            return "Published • Available";
+        }
         StringBuilder subtitle = new StringBuilder();
-        subtitle.append(record.title() == null || record.title().isBlank() ? record.originalFilename() : record.title());
-        subtitle.append(" uploaded by ").append(record.uploadedByName());
+        String documentLabel = record.title() == null || record.title().isBlank() ? record.originalFilename() : record.title();
+        subtitle.append(documentLabel == null || documentLabel.isBlank() ? "Clinical document" : documentLabel);
+        String uploadedByName = record.uploadedByName();
+        if (uploadedByName != null && !uploadedByName.isBlank()) {
+            subtitle.append(" uploaded by ").append(uploadedByName);
+        }
         if (record.uploadSource() != null && !record.uploadSource().isBlank()) {
             subtitle.append(" • ").append(record.uploadSource());
         }
         if (record.sourceModule() != null && !record.sourceModule().isBlank()) {
             subtitle.append(" • ").append(record.sourceModule());
         }
-        if (record.aiExtractionStatus() != null && !record.aiExtractionStatus().isBlank()) {
-            subtitle.append(" • AI ").append(record.aiExtractionStatus());
-        }
-        if (record.ocrStatus() != null && !record.ocrStatus().isBlank()) {
-            subtitle.append(" • OCR ").append(record.ocrStatus());
+        String verificationStatus = documentTimelineStatus(record);
+        if (verificationStatus != null && !verificationStatus.isBlank()) {
+            subtitle.append(" • ").append(verificationStatus);
         }
         return subtitle.toString();
+    }
+
+    private String documentTimelineStatus(ClinicalDocumentRecord record) {
+        if (record == null) {
+            return null;
+        }
+        if (isPublishedLabDocument(record)) {
+            return "Published";
+        }
+        String verificationStatus = documentBusinessStatusLabel(record.verificationStatus());
+        if (verificationStatus != null) {
+            return verificationStatus;
+        }
+        return documentBusinessStatusLabel(record.visibility());
+    }
+
+    private boolean isPublishedLabDocument(ClinicalDocumentRecord record) {
+        return record != null
+                && record.documentType() == ClinicalDocumentType.LAB_REPORT
+                && isLaboratorySource(record.sourceModule())
+                && isPatientVisiblePublished(record);
+    }
+
+    private boolean isLaboratorySource(String sourceModule) {
+        if (sourceModule == null || sourceModule.isBlank()) {
+            return false;
+        }
+        String normalized = sourceModule.trim().toUpperCase(Locale.ROOT);
+        return "LAB".equals(normalized) || "LABORATORY".equals(normalized);
+    }
+
+    private boolean isPatientVisiblePublished(ClinicalDocumentRecord record) {
+        return record != null
+                && ("PATIENT_VISIBLE".equalsIgnoreCase(record.visibility())
+                || "PUBLISHED".equalsIgnoreCase(record.verificationStatus())
+                || "AVAILABLE".equalsIgnoreCase(record.verificationStatus()));
+    }
+
+    private String documentBusinessStatusLabel(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "PUBLISHED" -> "Published";
+            case "AVAILABLE" -> "Available";
+            case "PATIENT_VISIBLE" -> "Available";
+            case "INTERNAL_ONLY" -> "Internal document";
+            case "VERIFIED" -> "Verified";
+            case "UNVERIFIED" -> "Unverified";
+            case "APPROVED" -> "Approved";
+            case "REJECTED" -> "Rejected";
+            case "REVIEW_REQUIRED" -> "Review required";
+            case "PENDING", "UNDER_REVIEW" -> "Under review";
+            case "COMPLETED", "DONE" -> "Completed";
+            case "PROCESSING" -> "In progress";
+            default -> null;
+        };
     }
 
     private String consultationTimelineSubtitle(com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord record) {

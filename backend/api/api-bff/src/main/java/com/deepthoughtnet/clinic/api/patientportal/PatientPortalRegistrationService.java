@@ -14,6 +14,10 @@ import com.deepthoughtnet.clinic.platform.core.errors.UnauthorizedException;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.UUID;
+import java.util.Comparator;
+import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +26,7 @@ import org.springframework.util.StringUtils;
 @Service
 @Transactional
 public class PatientPortalRegistrationService {
+    private static final Logger log = LoggerFactory.getLogger(PatientPortalRegistrationService.class);
     private final PatientRepository patientRepository;
     private final PatientService patientService;
     private final AppUserProvisioner appUserProvisioner;
@@ -55,13 +60,8 @@ public class PatientPortalRegistrationService {
         String verifiedPhone = requirePhone(principal.phone());
         UUID actorAppUserId = requireActorAppUserId();
 
-        PatientEntity patient = patientRepository.findFirstByTenantIdAndMobileIgnoreCase(tenantId, verifiedPhone)
-                .orElse(null);
+        PatientEntity patient = resolvePrimaryActivePatientByTenantAndMobile(tenantId, verifiedPhone);
         boolean linkedExistingPatient = patient != null;
-        if (patient != null && !patient.isActive()) {
-            throw new IllegalArgumentException("A patient record already exists for this mobile number but is inactive. Please contact the clinic.");
-        }
-
         if (patient == null) {
             var created = patientService.create(
                     tenantId,
@@ -131,6 +131,21 @@ public class PatientPortalRegistrationService {
                 patientDisplayName,
                 patientSessionToken
         );
+    }
+
+    private PatientEntity resolvePrimaryActivePatientByTenantAndMobile(UUID tenantId, String verifiedPhone) {
+        List<PatientEntity> candidates = patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, verifiedPhone);
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        PatientEntity primary = candidates.stream()
+                .min(Comparator.comparing(PatientEntity::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(PatientEntity::getId))
+                .orElse(candidates.get(0));
+        if (candidates.size() > 1) {
+            log.warn("patient.portal.registration.duplicate_mobile tenantId={} phone={} matches={} primaryPatientId={}", tenantId, verifiedPhone, candidates.size(), primary.getId());
+        }
+        return primary;
     }
 
     private PatientPortalSessionPrincipal requireRegistrationPrincipal() {

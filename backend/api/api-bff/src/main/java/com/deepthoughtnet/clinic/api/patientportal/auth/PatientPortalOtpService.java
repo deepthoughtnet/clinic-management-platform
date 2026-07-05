@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Comparator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -157,7 +158,7 @@ public class PatientPortalOtpService {
 
         Optional<PatientEntity> patient = tenantId == null
                 ? resolveUniqueActivePatientByMobile(normalizedPhone)
-                : patientRepository.findFirstByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, normalizedPhone);
+                : resolvePrimaryActivePatientByTenantAndMobile(tenantId, normalizedPhone);
 
         if (patient.isEmpty()) {
             if (tenant == null) {
@@ -297,5 +298,20 @@ public class PatientPortalOtpService {
             return Optional.empty();
         }
         return Optional.of(candidates.get(0));
+    }
+
+    private Optional<PatientEntity> resolvePrimaryActivePatientByTenantAndMobile(UUID tenantId, String normalizedPhone) {
+        List<PatientEntity> candidates = patientRepository.findByTenantIdAndMobileIgnoreCaseAndActiveTrue(tenantId, normalizedPhone);
+        if (candidates.isEmpty()) {
+            return Optional.empty();
+        }
+        PatientEntity primary = candidates.stream()
+                .min(Comparator.comparing(PatientEntity::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(PatientEntity::getId))
+                .orElse(candidates.get(0));
+        if (candidates.size() > 1) {
+            log.warn("patient.portal.otp.duplicate_mobile tenantId={} phone={} matches={} primaryPatientId={}", tenantId, normalizedPhone, candidates.size(), primary.getId());
+        }
+        return Optional.of(primary);
     }
 }
