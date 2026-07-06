@@ -8,6 +8,7 @@ import com.deepthoughtnet.clinic.appointment.service.model.AppointmentSearchCrit
 import com.deepthoughtnet.clinic.appointment.service.model.AppointmentStatus;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
+import com.deepthoughtnet.clinic.billing.service.model.ConsultationFeeStatusRecord;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.billing.service.model.RefundRecord;
@@ -324,21 +325,32 @@ public class ReportingFacade {
                 .toList();
 
         List<ClinicDashboardResponse.QueueItem> queueItems = dateAppointments.stream()
-                .filter(a -> a.status() == AppointmentStatus.WAITING || a.status() == AppointmentStatus.IN_CONSULTATION)
-                .sorted(Comparator.comparing(AppointmentRecord::tokenNumber, Comparator.nullsLast(Integer::compareTo))
+                .filter(a -> a.status() == AppointmentStatus.BOOKED
+                        || a.status() == AppointmentStatus.WAITING
+                        || a.status() == AppointmentStatus.IN_CONSULTATION
+                        || a.status() == AppointmentStatus.NO_SHOW
+                        || a.status() == AppointmentStatus.CANCELLED)
+                .sorted(Comparator
+                        .comparing((AppointmentRecord a) -> queueStatusRank(a.status()))
+                        .thenComparing(AppointmentRecord::tokenNumber, Comparator.nullsLast(Integer::compareTo))
                         .thenComparing(AppointmentRecord::appointmentTime, Comparator.nullsLast(LocalTime::compareTo)))
-                .map(a -> new ClinicDashboardResponse.QueueItem(
-                        a.id(),
-                        a.patientId(),
-                        a.patientName(),
-                        a.patientNumber(),
-                        a.doctorUserId(),
-                        a.doctorName(),
-                        a.tokenNumber(),
-                        a.appointmentTime(),
-                        a.updatedAt(),
-                        a.status().name()
-                ))
+                .map(a -> {
+                    ConsultationFeeStatusRecord feeStatus = a.id() == null ? null : billingService.consultationFeeStatus(tenantId, a.id());
+                    return new ClinicDashboardResponse.QueueItem(
+                            a.id(),
+                            a.patientId(),
+                            a.patientName(),
+                            a.patientMobile(),
+                            a.patientNumber(),
+                            a.doctorUserId(),
+                            a.doctorName(),
+                            a.tokenNumber(),
+                            a.appointmentTime(),
+                            a.updatedAt(),
+                            feeStatus == null ? null : feeStatus.status(),
+                            a.status().name()
+                    );
+                })
                 .toList();
 
         List<ClinicDashboardResponse.PendingBillItem> pendingBillItems = dateBills.stream()
@@ -570,6 +582,17 @@ public class ReportingFacade {
             case NO_SHOW -> safe(appointment.patientName()) + " marked no-show";
             case IN_CONSULTATION -> safe(appointment.patientName()) + " moved to consultation";
             case COMPLETED -> "Appointment completed for " + safe(appointment.patientName());
+        };
+    }
+
+    private int queueStatusRank(AppointmentStatus status) {
+        return switch (status) {
+            case BOOKED -> 0;
+            case WAITING -> 1;
+            case IN_CONSULTATION -> 2;
+            case NO_SHOW -> 3;
+            case CANCELLED -> 4;
+            case COMPLETED -> 5;
         };
     }
 

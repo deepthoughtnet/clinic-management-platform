@@ -53,6 +53,11 @@ test("doctor avatar rendering uses authenticated image loading", () => {
   assert.ok(identityCardSource.includes('variant?: "avatar" | "compact" | "full"'));
   assert.ok(identityCardSource.includes("avatarSize?: number"));
   assert.ok(identityCardSource.includes("loading?: boolean"));
+  assert.ok(identityCardSource.includes("updatedAt?: string"));
   assert.ok(availabilitySource.includes('variant="avatar"'));
+  assert.ok(availabilitySource.includes("getDoctorProfile"));
+  assert.ok(availabilitySource.includes("photoUrl: selectedDoctorProfile?.photoUrl || undefined"));
   assert.ok(dayBoardSource.includes('variant="avatar"'));
+  assert.ok(dayBoardSource.includes("getDoctorProfile"));
+  assert.ok(dayBoardSource.includes("photoUrl: selectedDoctorProfile?.photoUrl || undefined"));
 });

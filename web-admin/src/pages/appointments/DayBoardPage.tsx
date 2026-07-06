@@ -45,6 +45,7 @@ import {
   createWaitlist,
   getClinicClock,
   getClinicUsers,
+  getDoctorProfile,
   getDoctorSlots,
   getWaitlist,
   rescheduleAppointment,
@@ -58,6 +59,7 @@ import {
   type AppointmentWaitlist,
   type AppointmentType,
   type ClinicUser,
+  type DoctorProfile,
   type DoctorAvailabilitySlot,
   type DoctorAvailabilitySlotStatus,
   type PaymentMode,
@@ -633,6 +635,7 @@ export default function DayBoardPage() {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [doctorProfilesById, setDoctorProfilesById] = React.useState<Record<string, DoctorProfile>>({});
   const [clinicTimeZone, setClinicTimeZone] = React.useState("Asia/Kolkata");
   const [clinicNowSnapshot, setClinicNowSnapshot] = React.useState<string | null>(null);
   const [clinicClockUnavailable, setClinicClockUnavailable] = React.useState(false);
@@ -669,11 +672,20 @@ export default function DayBoardPage() {
     if (!doctorUserId) return ALL_DOCTORS_OPTION;
     return doctorOptions.find((doctor) => doctor.appUserId === doctorUserId) || ALL_DOCTORS_OPTION;
   }, [auth.appUserId, doctorOptions, doctorUserId, isDoctor, users]);
+  const selectedDoctorProfile = React.useMemo(() => {
+    const lookupId = isDoctor ? auth.appUserId || "" : doctorUserId;
+    return lookupId ? doctorProfilesById[lookupId] || null : null;
+  }, [auth.appUserId, doctorProfilesById, doctorUserId, isDoctor]);
   const selectedDoctorIdentity = React.useMemo<DoctorIdentityCardDoctor | undefined>(() => {
     if (isDoctor && auth.appUserId) {
       return {
         id: auth.appUserId,
-        fullName: selectedDoctorOption.displayName || displayDoctorName(users, auth.appUserId),
+        fullName: selectedDoctorProfile?.doctorName || selectedDoctorOption.displayName || displayDoctorName(users, auth.appUserId),
+        qualification: selectedDoctorProfile?.qualification || undefined,
+        primarySpecialization: selectedDoctorProfile?.specializations?.[0] || selectedDoctorProfile?.specialization || undefined,
+        registrationNumber: selectedDoctorProfile?.registrationNumber || undefined,
+        photoUrl: selectedDoctorProfile?.photoUrl || undefined,
+        updatedAt: selectedDoctorProfile?.updatedAt || undefined,
       };
     }
     if (!doctorUserId) {
@@ -684,9 +696,14 @@ export default function DayBoardPage() {
     }
     return {
       id: selectedDoctorOption.appUserId,
-      fullName: selectedDoctorOption.displayName || selectedDoctorLabel,
+      fullName: selectedDoctorProfile?.doctorName || selectedDoctorOption.displayName || selectedDoctorLabel,
+      qualification: selectedDoctorProfile?.qualification || undefined,
+      primarySpecialization: selectedDoctorProfile?.specializations?.[0] || selectedDoctorProfile?.specialization || undefined,
+      registrationNumber: selectedDoctorProfile?.registrationNumber || undefined,
+      photoUrl: selectedDoctorProfile?.photoUrl || undefined,
+      updatedAt: selectedDoctorProfile?.updatedAt || undefined,
     };
-  }, [auth.appUserId, doctorUserId, isDoctor, selectedDoctorLabel, selectedDoctorOption, users]);
+  }, [auth.appUserId, doctorUserId, isDoctor, selectedDoctorLabel, selectedDoctorOption, selectedDoctorProfile, users]);
 
   const visibleDoctorPanels = React.useMemo(() => {
     if (effectiveDoctorId) return doctorPanels;
@@ -785,6 +802,28 @@ export default function DayBoardPage() {
   React.useEffect(() => {
     setSectionOverrides({});
   }, [date]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadSelectedDoctorProfile() {
+      if (!auth.accessToken || !auth.tenantId) return;
+      const selectedId = isDoctor ? auth.appUserId || "" : doctorUserId;
+      if (!selectedId || doctorProfilesById[selectedId]) return;
+      try {
+        const profile = await getDoctorProfile(auth.accessToken, auth.tenantId, selectedId);
+        if (cancelled) return;
+        setDoctorProfilesById((current) => ({ ...current, [selectedId]: profile }));
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Doctor profile load failed", err);
+        }
+      }
+    }
+    void loadSelectedDoctorProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken, auth.appUserId, auth.tenantId, doctorProfilesById, doctorUserId, isDoctor]);
 
   const loadCore = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) return;

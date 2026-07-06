@@ -362,12 +362,14 @@ export type ClinicDashboard = {
     appointmentId: string;
     patientId: string;
     patientName: string | null;
+    patientMobile: string | null;
     patientNumber: string | null;
     doctorUserId: string | null;
     doctorName: string | null;
     tokenNumber: number | null;
     appointmentTime: string | null;
     waitingSince: string | null;
+    consultationFeeStatus: string | null;
     status: string;
   }>;
   recentUnpaidBills: Array<{

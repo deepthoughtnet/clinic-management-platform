@@ -11,6 +11,7 @@ export type DoctorIdentityCardDoctor = {
   primarySpecialization?: string;
   registrationNumber?: string;
   photoUrl?: string;
+  updatedAt?: string;
 };
 
 export interface DoctorIdentityCardProps {
@@ -22,6 +23,7 @@ export interface DoctorIdentityCardProps {
     primarySpecialization?: string;
     registrationNumber?: string;
     photoUrl?: string;
+    updatedAt?: string;
   };
   variant?: "avatar" | "compact" | "full";
   avatarSize?: number;

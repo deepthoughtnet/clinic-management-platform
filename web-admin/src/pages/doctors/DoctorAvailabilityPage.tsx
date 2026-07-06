@@ -41,6 +41,7 @@ import {
   deactivateDoctorUnavailability,
   getClinicClock,
   getClinicUsers,
+  getDoctorProfile,
   getDoctorAvailability,
   getDoctorSlots,
   getDoctorUnavailability,
@@ -52,6 +53,7 @@ import {
   type ClinicUser,
   type DoctorAvailability,
   type DoctorAvailabilityInput,
+  type DoctorProfile,
   type DoctorAvailabilitySlot,
   type DoctorAvailabilitySlotStatus,
   type DoctorUnavailability,
@@ -446,6 +448,7 @@ export default function DoctorAvailabilityPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const [doctorProfilesById, setDoctorProfilesById] = React.useState<Record<string, DoctorProfile>>({});
   const [clinicTimeZone, setClinicTimeZone] = React.useState("Asia/Kolkata");
   const [clinicNowSnapshot, setClinicNowSnapshot] = React.useState<string | null>(null);
   const [clinicClockUnavailable, setClinicClockUnavailable] = React.useState(false);
@@ -478,6 +481,25 @@ export default function DoctorAvailabilityPage() {
     return selectedDoctorId ? doctorMap.get(selectedDoctorId) || ALL_DOCTORS_OPTION : ALL_DOCTORS_OPTION;
   }, [auth.appUserId, auth.username, doctorMap, isDoctor, selectedDoctorId]);
   const selectedDoctorProfileContext = isDoctor || Boolean(selectedDoctorId);
+  const selectedDoctorProfile = React.useMemo(() => {
+    const lookupId = isDoctor ? auth.appUserId || "" : selectedDoctorId;
+    return lookupId ? doctorProfilesById[lookupId] || null : null;
+  }, [auth.appUserId, doctorProfilesById, isDoctor, selectedDoctorId]);
+  const selectedDoctorIdentity = React.useMemo<DoctorIdentityOption>(() => {
+    if (!selectedDoctorProfileContext) {
+      return ALL_DOCTORS_OPTION;
+    }
+    return {
+      ...selectedDoctorOption,
+      id: selectedDoctorOption.id || selectedDoctorProfile?.doctorUserId || "",
+      fullName: selectedDoctorProfile?.doctorName || selectedDoctorOption.fullName || selectedDoctorOption.displayName || "Doctor",
+      qualification: selectedDoctorProfile?.qualification || undefined,
+      primarySpecialization: selectedDoctorProfile?.specializations?.[0] || selectedDoctorProfile?.specialization || undefined,
+      registrationNumber: selectedDoctorProfile?.registrationNumber || undefined,
+      photoUrl: selectedDoctorProfile?.photoUrl || undefined,
+      updatedAt: selectedDoctorProfile?.updatedAt || undefined,
+    };
+  }, [selectedDoctorOption, selectedDoctorProfile, selectedDoctorProfileContext]);
   const selectedDoctorLabel = isDoctor
     ? doctorDisplayName(doctorMap.get(auth.appUserId || ""), auth.username || auth.appUserId || "Doctor")
     : (selectedDoctorId ? doctorDisplayName(doctorMap.get(selectedDoctorId), selectedDoctorId) : "All Doctors");
@@ -804,6 +826,28 @@ export default function DoctorAvailabilityPage() {
       setSelectedDoctorId("");
     }
   }, [doctorOptions, isDoctor, selectedDoctorId]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadSelectedDoctorProfile() {
+      if (!auth.accessToken || !auth.tenantId) return;
+      const doctorUserId = isDoctor ? auth.appUserId || "" : selectedDoctorId;
+      if (!doctorUserId || doctorProfilesById[doctorUserId]) return;
+      try {
+        const profile = await getDoctorProfile(auth.accessToken, auth.tenantId, doctorUserId);
+        if (cancelled) return;
+        setDoctorProfilesById((current) => ({ ...current, [doctorUserId]: profile }));
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Doctor profile load failed", err);
+        }
+      }
+    }
+    void loadSelectedDoctorProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken, auth.appUserId, auth.tenantId, doctorProfilesById, isDoctor, selectedDoctorId]);
 
   React.useEffect(() => {
     setSelectedSlot(null);
@@ -1255,13 +1299,14 @@ export default function DoctorAvailabilityPage() {
                 <Stack spacing={1.1}>
                   <Box
                     sx={{
-                      display: "grid",
-                      gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 60%) minmax(320px, 40%)" },
+                      display: "flex",
                       gap: 1.5,
-                      alignItems: "stretch",
+                      alignItems: "flex-start",
+                      justifyContent: "space-between",
+                      flexWrap: "wrap",
                     }}
                   >
-                    <Stack spacing={1.1} sx={{ minWidth: 0 }}>
+                    <Stack spacing={1.1} sx={{ minWidth: 0, flex: "1 1 540px" }}>
                       <Box>
                         <Typography variant="h6" sx={{ fontWeight: 800 }}>Operational Calendar</Typography>
                         <Typography variant="body2" color="text.secondary">
@@ -1314,34 +1359,14 @@ export default function DoctorAvailabilityPage() {
                     <Box
                       sx={{
                         minWidth: 0,
-                        pl: { xs: 0, lg: 1.5 },
-                        borderLeft: { xs: "none", lg: "1px solid" },
-                        borderColor: { lg: "divider" },
+                        flex: "0 0 auto",
                         display: "flex",
-                        alignItems: "center",
+                        justifyContent: "flex-end",
+                        alignItems: "flex-start",
+                        ml: "auto",
                       }}
                     >
-                      {selectedDoctorProfileContext ? (
-                        <DoctorIdentityCard doctorId={selectedDoctorOption.id} doctor={selectedDoctorOption} variant="avatar" />
-                      ) : (
-                        <Box
-                          sx={{
-                            width: "100%",
-                            px: 1.75,
-                            py: 1.5,
-                            borderRadius: 3,
-                            border: (theme) => `1px dashed ${theme.palette.divider}`,
-                            bgcolor: "grey.50",
-                          }}
-                        >
-                          <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.35 }}>
-                            Select a doctor to view profile context.
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Choose a doctor from Scheduler Controls to see photo, qualification, and specialization here.
-                          </Typography>
-                        </Box>
-                      )}
+                      <DoctorIdentityCard doctorId={selectedDoctorIdentity.id} doctor={selectedDoctorIdentity} variant="avatar" />
                     </Box>
                   </Box>
 

@@ -18,6 +18,7 @@ import {
   IconButton,
   MenuItem,
   Menu,
+  Popover,
   Select,
   Stack,
   Table,
@@ -27,14 +28,16 @@ import {
   TableRow,
   TextField,
   Typography,
+  Tooltip,
 } from "@mui/material";
 import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 
 import ConsultationFeeDialog, { type ConsultationFeeDialogValue } from "../../components/ConsultationFeeDialog";
 import { ClinicalIntakeDialog } from "../../components/clinical/ClinicalIntakeDialog";
 import { CompactEmptyState, CompactStatCard, CompactTableFrame, compactChipSx, WorkflowStrip } from "../../components/compact/CompactUi";
 import { ReceiptPrintDialog, type ReceiptPrintData } from "../../components/finance/PrintableBillingDocuments";
-import { AppointmentTokenChip, PatientJourneyTracker, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
+import { PatientJourneyTracker } from "../../components/workflow/WorkflowUx";
 import { useAuth } from "../../auth/useAuth";
 import {
   collectConsultationFee,
@@ -107,6 +110,23 @@ function priorityColor(priority: AppointmentPriority | null | undefined) {
       return "info";
     default:
       return "default";
+  }
+}
+
+function priorityLabel(priority: AppointmentPriority | null | undefined) {
+  switch (priority) {
+    case "FOLLOW_UP":
+      return "FOLLOW UP";
+    case "MANUAL_PRIORITY":
+      return "MANUAL PRIORITY";
+    case "URGENT":
+      return "URGENT";
+    case "ELDERLY":
+      return "ELDERLY";
+    case "CHILD":
+      return "CHILD";
+    default:
+      return "NORMAL";
   }
 }
 
@@ -198,18 +218,25 @@ function consultationFeeSummary(appointment: Appointment, bills: Bill[]) {
   };
 }
 
+function getAppointmentPaymentState(row: {
+  feeStatus: FeeStatus;
+  paymentBypassedAt: string | null;
+  receiptId?: string | null;
+}) {
+  if (row.receiptId) return "PAID" as const;
+  if (row.paymentBypassedAt) return "DEFERRED" as const;
+  return row.feeStatus;
+}
+
 function canShowCollectFee(row: QueueViewRow) {
-  if (row.status === "CANCELLED" || row.status === "COMPLETED") {
+  if (row.status === "CANCELLED" || row.status === "COMPLETED" || row.status === "NO_SHOW") {
     return false;
   }
-  if (row.status === "NO_SHOW" && !row.consultationBill) {
-    return false;
-  }
-  return row.feeStatus !== "PAID";
+  return row.paymentState !== "PAID";
 }
 
 function canShowPayAfterConsultation(row: QueueViewRow) {
-  return row.status === "BOOKED" && row.feeStatus !== "PAID" && row.feeStatus !== "NOT_CONFIGURED";
+  return row.status === "BOOKED" && row.paymentState === "UNPAID" && !row.paymentBypassedAt;
 }
 
 function canShowViewBilling(row: QueueViewRow, canViewBillingData: boolean) {
@@ -222,6 +249,7 @@ type QueueViewRow = Appointment & {
   consultationFeeAmount: number | null;
   consultationBill: Bill | null;
   feeStatus: FeeStatus;
+  paymentState: FeeStatus | "DEFERRED";
   feeDueAmount: number | null;
   feePaidAmount: number | null;
 };
@@ -262,8 +290,8 @@ type CheckInBypassDialogState = {
 type CancellationDialogState = {
   appointment: QueueViewRow;
   nextStatus: "CANCELLED" | "NO_SHOW";
-  variant: "paid-cancel" | "reason";
   reason: string;
+  reasonError: string | null;
 };
 
 const CHECK_IN_BYPASS_REASON_OPTIONS: Array<{ value: CheckInBypassReason; label: string }> = [
@@ -316,6 +344,8 @@ export default function QueuePage() {
   const [rowMenuAnchor, setRowMenuAnchor] = React.useState<HTMLElement | null>(null);
   const [rowMenuAppointmentId, setRowMenuAppointmentId] = React.useState<string | null>(null);
   const [receiptActionLoading, setReceiptActionLoading] = React.useState(false);
+  const [paymentPopoverAnchor, setPaymentPopoverAnchor] = React.useState<HTMLElement | null>(null);
+  const [paymentPopoverRowId, setPaymentPopoverRowId] = React.useState<string | null>(null);
 
   const today = React.useMemo(() => localDateKey(), []);
   const tenantRole = (auth.tenantRole || "").toUpperCase();
@@ -326,7 +356,6 @@ export default function QueuePage() {
   const canViewBillingData = !isDoctor && (auth.hasPermission("billing.read") || canCollectFee);
   const canSendReceipt = !isDoctor && (auth.hasPermission("payment.collect") || auth.hasPermission("notification.send"));
   const canBypassPaymentCheckIn = auth.hasPermission("appointment.checkin.payment_bypass");
-  const canStartConsultation = isDoctor && auth.hasPermission("consultation.create");
   const canManageDeskStatus = (isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage");
   const canReorderQueue = (isDoctor || isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage") && Boolean(doctorUserId || isDoctor);
   const tenantReady = isValidTenantId(auth.tenantId);
@@ -383,6 +412,11 @@ export default function QueuePage() {
         consultationBill: feeSummary.consultationBill,
         consultationFeeAmount: feeAmount,
         feeStatus,
+        paymentState: getAppointmentPaymentState({
+          feeStatus,
+          paymentBypassedAt: appointment.paymentBypassedAt,
+          receiptId: receiptRecord?.payment.receiptId,
+        }),
         feeDueAmount: receiptRecord?.payment.receiptId ? 0 : feeSummary.feeDueAmount,
         feePaidAmount: receiptRecord?.payment.receiptId ? receiptRecord.payment.amount : feeSummary.feePaidAmount,
       };
@@ -413,8 +447,8 @@ export default function QueuePage() {
     const rows = queueRowsWithFee;
     return {
       totalBooked: rows.length,
-      paymentPending: rows.filter((row) => row.feeStatus === "UNPAID" || row.feeStatus === "PARTIAL").length,
-      readyForCheckIn: rows.filter((row) => row.status === "BOOKED" && (row.feeStatus === "PAID" || row.feeStatus === "NOT_CONFIGURED")).length,
+      paymentPending: rows.filter((row) => row.paymentState === "UNPAID" || row.paymentState === "PARTIAL").length,
+      readyForCheckIn: rows.filter((row) => row.status === "BOOKED" && (row.paymentState === "PAID" || row.paymentState === "DEFERRED")).length,
       checkedIn: rows.filter((row) => row.status === "WAITING").length,
       inConsultation: rows.filter((row) => row.status === "IN_CONSULTATION").length,
       completed: rows.filter((row) => row.status === "COMPLETED").length,
@@ -591,38 +625,28 @@ export default function QueuePage() {
     if (!auth.accessToken || !auth.tenantId) {
       return;
     }
-    setSavingId(appointmentId);
     setError(null);
     try {
       const current = queueRowsWithFee.find((item) => item.id === appointmentId);
-      if (status === "WAITING" && current && current.feeStatus !== "PAID") {
-        setError(current.feeStatus === "NOT_CONFIGURED"
+      if (status === "WAITING" && current && current.paymentState !== "PAID" && current.paymentState !== "DEFERRED") {
+        setError(current.paymentState === "NOT_CONFIGURED"
           ? "Doctor consultation fee is not configured."
           : "Consultation fee is pending. Collect fee before check-in.");
-        if (canCollectFee && current.feeStatus !== "NOT_CONFIGURED") {
+        if (canCollectFee && current.paymentState !== "NOT_CONFIGURED") {
           setFeeDialog({ appointment: current, action: "collect-and-check-in" });
         }
         return;
       }
-      const requiresComment = (status === "CANCELLED" || status === "NO_SHOW") && current?.status === "WAITING";
-      if (status === "CANCELLED" && current?.feeStatus === "PAID") {
+      if ((status === "CANCELLED" || status === "NO_SHOW") && current) {
         setCancellationDialog({
           appointment: current,
           nextStatus: status,
-          variant: "paid-cancel",
           reason: "",
+          reasonError: null,
         });
         return;
       }
-      if (requiresComment && current) {
-        setCancellationDialog({
-          appointment: current,
-          nextStatus: status,
-          variant: "reason",
-          reason: "",
-        });
-        return;
-      }
+      setSavingId(appointmentId);
       const comment = null;
       await updateAppointmentStatus(auth.accessToken, auth.tenantId, appointmentId, status, comment);
       await refreshQueue();
@@ -641,9 +665,9 @@ export default function QueuePage() {
     setSavingId(cancellationDialog.appointment.id);
     setError(null);
     try {
-      const comment = cancellationDialog.variant === "reason" ? cancellationDialog.reason.trim() || null : null;
-      if (cancellationDialog.variant === "reason" && !comment) {
-        setError("Reason/comment is required after check-in.");
+      const comment = cancellationDialog.reason.trim();
+      if (!comment) {
+        setCancellationDialog((current) => current ? { ...current, reasonError: "Reason/comment is required." } : current);
         return;
       }
       await updateAppointmentStatus(auth.accessToken, auth.tenantId, cancellationDialog.appointment.id, cancellationDialog.nextStatus, comment);
@@ -722,55 +746,60 @@ export default function QueuePage() {
     }
     const action = feeDialog.action;
     const current = feeDialog.appointment;
-    const payment = await collectConsultationFee(auth.accessToken, auth.tenantId, {
-      appointmentId: current.id,
-      paymentMode: value.paymentMode,
-      referenceNumber: value.referenceNumber || null,
-      notes: value.notes || null,
-    });
-    const bill = current.consultationBill;
-    if (bill) {
-      const receipt: Receipt = {
-        id: payment.receiptId || payment.id,
-        tenantId: payment.tenantId,
-        receiptNumber: payment.receiptNumber || `RCPT-${payment.id.slice(0, 8).toUpperCase()}`,
-        billId: bill.id,
-        paymentId: payment.id,
-        receiptDate: payment.receiptDate || payment.paymentDate,
-        amount: payment.amount,
-        createdAt: payment.createdAt,
-      };
-      const receiptPrintData: ReceiptPrintData = {
-        clinicProfile,
-        bill,
-        receipt,
-        payment,
-        patient: null,
-        appointment: current,
-        consultation: null,
-      };
-      setReceiptRecordsByAppointmentId((currentMap) => ({
-        ...currentMap,
-        [current.id]: {
-          billId: bill.id,
-          billNumber: bill.billNumber,
-          payment,
-        },
-      }));
-      setReceiptPanel({
-        appointment: current,
-        action,
-        receipt,
-        payment,
-        bill,
-        receiptPrintData,
-      });
-    }
-    setFeeDialog(null);
+    if (savingId === current.id) return;
+    setSavingId(current.id);
     try {
+      const payment = await collectConsultationFee(auth.accessToken, auth.tenantId, {
+        appointmentId: current.id,
+        paymentMode: value.paymentMode,
+        referenceNumber: value.referenceNumber || null,
+        notes: value.notes || null,
+      });
+      const bill = current.consultationBill;
+      if (bill) {
+        const receipt: Receipt = {
+          id: payment.receiptId || payment.id,
+          tenantId: payment.tenantId,
+          receiptNumber: payment.receiptNumber || `RCPT-${payment.id.slice(0, 8).toUpperCase()}`,
+          billId: bill.id,
+          paymentId: payment.id,
+          receiptDate: payment.receiptDate || payment.paymentDate,
+          amount: payment.amount,
+          createdAt: payment.createdAt,
+        };
+        const receiptPrintData: ReceiptPrintData = {
+          clinicProfile,
+          bill,
+          receipt,
+          payment,
+          patient: null,
+          appointment: current,
+          consultation: null,
+        };
+        setReceiptRecordsByAppointmentId((currentMap) => ({
+          ...currentMap,
+          [current.id]: {
+            billId: bill.id,
+            billNumber: bill.billNumber,
+            payment,
+          },
+        }));
+        setReceiptPanel({
+          appointment: current,
+          action,
+          receipt,
+          payment,
+          bill,
+          receiptPrintData,
+        });
+      }
+      setFeeDialog(null);
       await refreshQueue();
     } catch (err) {
-      console.error("Queue refresh after fee collection failed", err);
+      setError(err instanceof Error ? err.message : "Unable to collect fee. Please refresh and retry.");
+      console.error("Queue fee collection failed", err);
+    } finally {
+      setSavingId(null);
     }
   };
 
@@ -901,58 +930,88 @@ export default function QueuePage() {
     }
   }, [auth.accessToken, auth.tenantId, getQueueReceiptRecord]);
 
-  const renderFeeStatus = (row: QueueViewRow) => {
+  const getPaymentBadgeLabel = (row: QueueViewRow) => {
+    const amount = row.consultationFeeAmount ?? row.feePaidAmount ?? row.feeDueAmount;
+    const amountLabel = amount != null ? `₹${formatMoney(amount)}` : "";
+    switch (row.paymentState) {
+      case "PAID":
+        return `Paid ${amountLabel}`.trim();
+      case "DEFERRED":
+        return `Deferred ${amountLabel}`.trim();
+      case "PARTIAL":
+        return `Partial ${amountLabel}`.trim();
+      case "UNPAID":
+        return `Unpaid ${amountLabel}`.trim();
+      case "NOT_CONFIGURED":
+      default:
+        return "Payment not configured";
+    }
+  };
+
+  const getPaymentBadgeColor = (row: QueueViewRow) => {
+    switch (row.paymentState) {
+      case "PAID":
+        return "success" as const;
+      case "DEFERRED":
+        return "secondary" as const;
+      case "PARTIAL":
+      case "UNPAID":
+        return "warning" as const;
+      default:
+        return "default" as const;
+    }
+  };
+
+  const openPaymentPopover = (anchor: HTMLElement, row: QueueViewRow) => {
+    setPaymentPopoverAnchor(anchor);
+    setPaymentPopoverRowId(row.id);
+  };
+
+  const closePaymentPopover = () => {
+    setPaymentPopoverAnchor(null);
+    setPaymentPopoverRowId(null);
+  };
+
+  const renderPaymentBadge = (row: QueueViewRow) => {
     const record = getQueueReceiptRecord(row);
-    if (record?.payment.receiptId) {
-      const payment = record.payment;
-      return (
-        <Stack spacing={0.35}>
-          <Chip size="small" label={`Paid • ${formatMoney(payment.amount)}`} color="success" variant="outlined" />
-          <Typography variant="caption" color="text.secondary">
-            Receipt: {payment.receiptNumber || "—"}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            Paid {formatMoney(payment.amount)} • {payment.paymentMode}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            Ref: {payment.referenceNumber || "—"} • By {staffDisplayName(payment.receivedByLabel, payment.receivedBy)}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {formatDateTime(payment.paymentDateTime || payment.paymentDate || payment.receiptDate || payment.createdAt)}
-          </Typography>
-        </Stack>
-      );
-    }
-    const paymentChip = (() => {
-      switch (row.feeStatus) {
-        case "PAID":
-          return <Chip size="small" label={`Paid${row.consultationFeeAmount != null ? ` • ${formatMoney(row.consultationFeeAmount)}` : ""}`} color="success" variant="outlined" />;
-        case "PARTIAL":
-          return <Chip size="small" label={`Partial${row.feeDueAmount != null ? ` • Due ${formatMoney(row.feeDueAmount)}` : ""}`} color="warning" variant="outlined" />;
-        case "UNPAID":
-          return <Chip size="small" label={`Unpaid${row.consultationFeeAmount != null ? ` • ${formatMoney(row.consultationFeeAmount)}` : ""}`} color="warning" />;
-        case "NOT_CONFIGURED":
-        default:
-          return <Chip size="small" label="Doctor fee missing" color="default" variant="outlined" />;
-      }
-    })();
-    if (!row.paymentBypassedAt) {
-      return (
-        <Stack spacing={0.35}>
-          {paymentChip}
-          {row.feeStatus === "PAID" ? (
-            <Typography variant="caption" color="text.secondary">Paid - receipt details unavailable</Typography>
-          ) : null}
-        </Stack>
-      );
-    }
-    const bypassDueLabel = row.feeDueAmount != null && row.feeDueAmount > 0
-      ? `Pay later • Due ${formatMoney(row.feeDueAmount)}`
-      : "Payment bypassed";
+    const payment = record?.payment || null;
+    const amount = row.consultationFeeAmount ?? row.feePaidAmount ?? row.feeDueAmount;
+    const remainingDue = row.paymentState === "PAID" ? 0 : (row.feeDueAmount ?? amount ?? 0);
     return (
-      <Stack spacing={0.35} alignItems="flex-start">
-        {paymentChip}
-        <Chip size="small" label={bypassDueLabel} color="secondary" variant="outlined" />
+      <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0 }}>
+        <Chip size="small" label={getPaymentBadgeLabel(row)} color={getPaymentBadgeColor(row)} variant="outlined" sx={{ height: 22, maxWidth: 160 }} />
+        <Tooltip title="Payment details">
+          <IconButton
+            size="small"
+            onClick={(event) => openPaymentPopover(event.currentTarget, row)}
+            onMouseEnter={(event) => openPaymentPopover(event.currentTarget, row)}
+            aria-label="Show payment details"
+            sx={{ p: 0.25 }}
+          >
+            <InfoOutlinedIcon fontSize="inherit" />
+          </IconButton>
+        </Tooltip>
+        <Popover
+          open={paymentPopoverRowId === row.id && Boolean(paymentPopoverAnchor)}
+          anchorEl={paymentPopoverAnchor}
+          onClose={closePaymentPopover}
+          anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+          transformOrigin={{ vertical: "top", horizontal: "left" }}
+          disableRestoreFocus
+        >
+          <Box sx={{ p: 1.25, maxWidth: 300 }}>
+            <Stack spacing={0.6}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Payment details</Typography>
+              <Typography variant="body2">Receipt number: {payment?.receiptNumber || "—"}</Typography>
+              <Typography variant="body2">Amount: {amount != null ? `₹${formatMoney(amount)}` : "—"}</Typography>
+              <Typography variant="body2">Payment mode: {payment?.paymentMode || "—"}</Typography>
+              <Typography variant="body2">Reference number: {payment?.referenceNumber || "—"}</Typography>
+              <Typography variant="body2">Collected by: {payment ? staffDisplayName(payment.receivedByLabel, payment.receivedBy) : "—"}</Typography>
+              <Typography variant="body2">Payment timestamp: {payment ? formatDateTime(payment.paymentDateTime || payment.paymentDate || payment.receiptDate || payment.createdAt) : "—"}</Typography>
+              <Typography variant="body2">Remaining due: {remainingDue > 0 ? `₹${formatMoney(remainingDue)}` : "₹0.00"}</Typography>
+            </Stack>
+          </Box>
+        </Popover>
       </Stack>
     );
   };
@@ -1050,30 +1109,128 @@ export default function QueuePage() {
               <CompactEmptyState title="No queue items found" subtitle="Try a different doctor or clear the search box." />
             ) : (
               <CompactTableFrame maxHeight={620}>
-                <Table size="small" stickyHeader sx={{ minWidth: 1180 }}>
+                <Table size="small" stickyHeader sx={{ minWidth: 0, tableLayout: "fixed" }}>
                   <TableHead>
                     <TableRow>
-                      {!effectiveDoctorId ? <TableCell>Doctor</TableCell> : null}
-                      <TableCell>Token</TableCell>
-                      <TableCell>Patient</TableCell>
-                      <TableCell>Time</TableCell>
-                      <TableCell>Priority</TableCell>
-                      <TableCell>Status</TableCell>
-                      <TableCell>Fee</TableCell>
-                      <TableCell>Payment</TableCell>
-                      <TableCell>Check-in</TableCell>
-                      <TableCell align="right">Actions</TableCell>
+                      {!effectiveDoctorId ? <TableCell sx={{ width: "10%" }}>Doctor</TableCell> : null}
+                      <TableCell sx={{ width: "9%" }}>Token</TableCell>
+                      <TableCell sx={{ width: "16%" }}>Patient</TableCell>
+                      <TableCell sx={{ width: "9%" }}>Time</TableCell>
+                      <TableCell sx={{ width: "14%" }} align="center">Priority</TableCell>
+                      <TableCell sx={{ width: "14%", pl: 1.5, pr: 1 }}>Status</TableCell>
+                      <TableCell sx={{ width: "12%", pl: 2 }}>Payment</TableCell>
+                      <TableCell align="right" sx={{ width: "16%" }}>Actions</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {visibleRows.map((appointment) => {
                       const isActive = appointment.status === "BOOKED" || appointment.status === "WAITING";
-                      const checkInBlocked = appointment.consultationFeeAmount != null && appointment.consultationFeeAmount > 0 && appointment.feeStatus !== "PAID";
                       const nextAction = getNextWorkflowAction({
                         status: appointment.status,
-                        paymentStatus: appointment.feeStatus,
+                        paymentStatus: appointment.paymentState === "DEFERRED" ? "PAID" : appointment.paymentState,
                         billDueAmount: appointment.consultationFeeDueAmount,
                       });
+                      const rowActions = [
+                        {
+                          key: "collect",
+                          visible: !isDoctor && canShowCollectFee(appointment),
+                          button: (
+                            <Button
+                              key="collect"
+                              size="small"
+                              variant={nextAction.key === "collect-fee" ? "contained" : "outlined"}
+                              disabled={savingId === appointment.id || appointment.paymentState === "NOT_CONFIGURED"}
+                              onClick={() => openConsultationBilling(appointment.id)}
+                            >
+                              Collect Fee
+                            </Button>
+                          ),
+                          menuLabel: "Collect Fee",
+                          onMenuClick: () => openConsultationBilling(appointment.id),
+                        },
+                        {
+                          key: "pay-after",
+                          visible: !isDoctor && canManageDeskStatus && canBypassPaymentCheckIn && canShowPayAfterConsultation(appointment),
+                          button: (
+                            <Button
+                              key="pay-after"
+                              size="small"
+                              variant="outlined"
+                              color="secondary"
+                              disabled={savingId === appointment.id}
+                              onClick={() => openBypassDialog(appointment)}
+                            >
+                              Pay After Consultation
+                            </Button>
+                          ),
+                          menuLabel: "Pay After Consultation",
+                          onMenuClick: () => openBypassDialog(appointment),
+                        },
+                        {
+                          key: "check-in",
+                          visible: canManageDeskStatus && appointment.status === "BOOKED",
+                          button: (
+                            <Button
+                              key="check-in"
+                              size="small"
+                              variant={nextAction.key === "check-in" ? "contained" : "outlined"}
+                              disabled={!canManageDeskStatus || appointment.status !== "BOOKED" || savingId === appointment.id || !(appointment.paymentState === "PAID" || appointment.paymentState === "DEFERRED")}
+                              onClick={() => void updateStatus(appointment.id, "WAITING")}
+                            >
+                              Check-in
+                            </Button>
+                          ),
+                          menuLabel: "Check-in",
+                          onMenuClick: () => void updateStatus(appointment.id, "WAITING"),
+                        },
+                        {
+                          key: "clinical-intake",
+                          visible: appointment.status === "BOOKED" || appointment.status === "WAITING",
+                          button: (
+                            <Button
+                              key="clinical-intake"
+                              size="small"
+                              variant="outlined"
+                              onClick={() => setClinicalIntakeAppointment(appointment)}
+                            >
+                              Clinical Intake
+                            </Button>
+                          ),
+                          menuLabel: "Clinical Intake",
+                          onMenuClick: () => setClinicalIntakeAppointment(appointment),
+                        },
+                        {
+                          key: "cancel",
+                          visible: canManageDeskStatus && (appointment.status === "BOOKED" || appointment.status === "WAITING"),
+                          button: (
+                            <Button
+                              key="cancel"
+                              size="small"
+                              onClick={() => void updateStatus(appointment.id, "CANCELLED")}
+                            >
+                              Cancel
+                            </Button>
+                          ),
+                          menuLabel: "Cancel",
+                          onMenuClick: () => void updateStatus(appointment.id, "CANCELLED"),
+                        },
+                        {
+                          key: "no-show",
+                          visible: canManageDeskStatus && (appointment.status === "BOOKED" || appointment.status === "WAITING"),
+                          button: (
+                            <Button
+                              key="no-show"
+                              size="small"
+                              onClick={() => void updateStatus(appointment.id, "NO_SHOW")}
+                            >
+                              No Show
+                            </Button>
+                          ),
+                          menuLabel: "No Show",
+                          onMenuClick: () => void updateStatus(appointment.id, "NO_SHOW"),
+                        },
+                      ] as const;
+                      const visiblePrimaryActions = rowActions.filter((action) => action.visible).slice(0, 3);
                       return (
                         <TableRow
                           key={appointment.id}
@@ -1096,56 +1253,69 @@ export default function QueuePage() {
                             setDraggingId(null);
                           }}
                           onDragEnd={() => setDraggingId(null)}
-                          sx={{ opacity: draggingId === appointment.id ? 0.72 : 1 }}
+                          sx={{
+                            opacity: draggingId === appointment.id ? 0.72 : 1,
+                            "& td": { py: 0.7, verticalAlign: "middle" },
+                          }}
                         >
                           {!effectiveDoctorId ? (
-                            <TableCell>{appointment.doctorName || displayDoctorName(users, appointment.doctorUserId)}</TableCell>
+                            <TableCell sx={{ width: "10%" }}>{appointment.doctorName || displayDoctorName(users, appointment.doctorUserId)}</TableCell>
                           ) : null}
-                          <TableCell><AppointmentTokenChip appointment={appointment} compact /></TableCell>
-                          <TableCell>
-                            <Stack spacing={0.25}>
-                              <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)} sx={{ justifyContent: "flex-start", p: 0, minWidth: 0 }}>
+                          <TableCell sx={{ width: "9%" }}>
+                            <Chip size="small" label={appointment.displayReference || (appointment.tokenNumber != null ? `APT-${appointment.tokenNumber}` : "—")} variant="outlined" sx={{ height: 22, maxWidth: "100%" }} />
+                          </TableCell>
+                          <TableCell sx={{ width: "16%" }}>
+                            <Stack spacing={0.15}>
+                              <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)} sx={{ justifyContent: "flex-start", p: 0, minWidth: 0, lineHeight: 1.1 }}>
                                 {appointment.patientName || appointment.patientNumber || appointment.patientId}
                               </Button>
                               <Typography variant="caption" color="text.secondary">{appointment.patientNumber ? `Patient No: ${appointment.patientNumber}` : "Patient No: Not assigned"}</Typography>
                               <Typography variant="caption" color="text.secondary">{appointment.patientMobile || "—"}</Typography>
                             </Stack>
                           </TableCell>
-                          <TableCell>
+                          <TableCell sx={{ width: "9%" }}>
                             <Stack spacing={0.15}>
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>{toFive(appointment.appointmentTime)}</Typography>
                               <Typography variant="caption" color="text.secondary">{formatRelativeBookingTime(appointment.createdAt) || "Booked recently"}</Typography>
                             </Stack>
                           </TableCell>
-                          <TableCell>
+                          <TableCell sx={{ width: "14%", pr: 1.5 }} align="center">
                             {canManageDeskStatus ? (
-                              <FormControl size="small" fullWidth sx={{ minWidth: 150 }}>
+                              <FormControl size="small" sx={{ width: "100%" }}>
                                 <Select
                                   value={appointment.priority || "NORMAL"}
                                   onChange={(event) => void changePriority(appointment.id, event.target.value as AppointmentPriority)}
                                   disabled={savingId === appointment.id}
+                                  renderValue={(value) => priorityLabel(value as AppointmentPriority)}
+                                  sx={{
+                                    width: "100%",
+                                    minWidth: 0,
+                                    mx: "auto",
+                                    "& .MuiSelect-select": {
+                                      textAlign: "center",
+                                      py: 0.65,
+                                      pr: 2.5,
+                                    },
+                                  }}
                                 >
                                   <MenuItem value="NORMAL">NORMAL</MenuItem>
-                                  <MenuItem value="FOLLOW_UP">FOLLOW_UP</MenuItem>
+                                  <MenuItem value="FOLLOW_UP">FOLLOW UP</MenuItem>
                                   <MenuItem value="CHILD">CHILD</MenuItem>
                                   <MenuItem value="ELDERLY">ELDERLY</MenuItem>
                                   <MenuItem value="URGENT">URGENT</MenuItem>
-                                  <MenuItem value="MANUAL_PRIORITY">MANUAL_PRIORITY</MenuItem>
+                                  <MenuItem value="MANUAL_PRIORITY">MANUAL PRIORITY</MenuItem>
                                 </Select>
                               </FormControl>
                             ) : (
-                              <Chip size="small" label={appointment.priority || "NORMAL"} color={priorityColor(appointment.priority)} variant="outlined" />
+                              <Chip size="small" label={priorityLabel(appointment.priority)} color={priorityColor(appointment.priority)} variant="outlined" sx={{ mx: "auto" }} />
                             )}
                           </TableCell>
-                          <TableCell>
+                          <TableCell sx={{ width: "14%", pl: 1.5, pr: 1 }}>
                             <Stack spacing={0.4}>
-                              <WorkflowStatusBadge status={appointment.status} compact />
-                              <Chip
-                                size="small"
-                                variant="outlined"
-                                label={`Next: ${getNextWorkflowAction({ status: appointment.status, paymentStatus: appointment.feeStatus, billDueAmount: appointment.consultationFeeDueAmount }).label}`}
-                                sx={compactChipSx}
-                              />
+                              <Typography variant="body2" sx={{ fontWeight: 800, lineHeight: 1.1 }}>
+                                {getWorkflowStatusLabel(appointment.status)}
+                              </Typography>
+                              <Chip size="small" variant="outlined" label={`Next: ${nextAction.label}`} sx={compactChipSx} />
                               {appointment.clinicalIntakeStatus ? (
                                 <Chip
                                   size="small"
@@ -1157,72 +1327,15 @@ export default function QueuePage() {
                               ) : null}
                             </Stack>
                           </TableCell>
-                          <TableCell>{formatMoney(appointment.consultationFeeAmount)}</TableCell>
-                          <TableCell sx={{ minWidth: 220 }}>{renderFeeStatus(appointment)}</TableCell>
-                          <TableCell sx={{ minWidth: 180 }}>
-                            <Stack spacing={0.35}>
-                              <Button
-                                size="small"
-                                variant={nextAction.key === "check-in" ? "contained" : "outlined"}
-                                disabled={!canManageDeskStatus || appointment.status !== "BOOKED" || savingId === appointment.id || (appointment.feeStatus !== "PAID" && !getQueueReceiptRecord(appointment))}
-                                onClick={() => void updateStatus(appointment.id, "WAITING")}
-                              >
-                                Check-in
-                              </Button>
-                              {appointment.feeStatus === "NOT_CONFIGURED" ? (
-                                <Typography variant="caption" color="text.secondary">Doctor consultation fee is not configured.</Typography>
-                              ) : checkInBlocked ? (
-                                <Typography variant="caption" color="text.secondary">
-                                  {appointment.paymentBypassedAt ? "Checked in with payment pending override." : "Consultation fee pending. Collect fee before check-in."}
-                                </Typography>
-                              ) : null}
-                            </Stack>
-                          </TableCell>
-                          <TableCell align="right" sx={{ minWidth: 300 }}>
-                            <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
-                              {!isDoctor && canShowCollectFee(appointment) ? (
-                                <Button size="small" variant={nextAction.key === "collect-fee" ? "contained" : "outlined"} disabled={savingId === appointment.id || appointment.feeStatus === "NOT_CONFIGURED"} onClick={() => openConsultationBilling(appointment.id)}>
-                                  Collect Fee
+                          <TableCell sx={{ width: "12%", pl: 2 }}>{renderPaymentBadge(appointment)}</TableCell>
+                          <TableCell align="right" sx={{ width: "16%" }}>
+                            <Stack direction="row" spacing={0.5} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
+                              {visiblePrimaryActions.length === 0 ? (
+                                <Button size="small" variant="text" onClick={() => navigate(`/patients/${appointment.patientId}`)}>
+                                  Open Patient
                                 </Button>
                               ) : null}
-                              <Button size="small" variant="text" onClick={() => navigate(`/patients/${appointment.patientId}`)}>
-                                Open Patient
-                              </Button>
-                              {!isDoctor && canShowViewBilling(appointment, canViewBillingData) && !isReceptionist ? (
-                                <Button size="small" variant="outlined" onClick={() => openBillHistory(appointment.id)}>
-                                  {appointment.consultationBill ? "View Billing" : "Open Billing"}
-                                </Button>
-                              ) : null}
-                              {canManageDeskStatus && canBypassPaymentCheckIn && canShowPayAfterConsultation(appointment) ? (
-                                <Button size="small" variant="outlined" color="secondary" disabled={savingId === appointment.id} onClick={() => openBypassDialog(appointment)}>
-                                  Pay after consultation
-                                </Button>
-                              ) : null}
-                              {canStartConsultation && appointment.status === "WAITING" ? (
-                                <Button size="small" variant={nextAction.key === "start-consultation" ? "contained" : "outlined"} disabled={savingId === appointment.id} onClick={() => void startConsultation(appointment.id)}>
-                                  Start Consultation
-                                </Button>
-                              ) : null}
-                              {canStartConsultation && appointment.status === "IN_CONSULTATION" ? (
-                                <Button size="small" variant={nextAction.key === "continue-consultation" ? "contained" : "outlined"} disabled={savingId === appointment.id} onClick={() => void startConsultation(appointment.id)}>
-                                  Continue Consultation
-                                </Button>
-                              ) : null}
-                              {canManageDeskStatus && (appointment.status === "BOOKED" || appointment.status === "WAITING") ? (
-                                <Button size="small" disabled={savingId === appointment.id} onClick={() => void updateStatus(appointment.id, "CANCELLED")}>
-                                  Cancel
-                                </Button>
-                              ) : null}
-                              {canManageDeskStatus && (appointment.status === "BOOKED" || appointment.status === "WAITING") ? (
-                                <Button size="small" disabled={savingId === appointment.id} onClick={() => void updateStatus(appointment.id, "NO_SHOW")}>
-                                  No Show
-                                </Button>
-                              ) : null}
-                              {(appointment.status === "BOOKED" || appointment.status === "WAITING") ? (
-                                <Button size="small" variant="outlined" onClick={() => setClinicalIntakeAppointment(appointment)}>
-                                  Clinical Intake
-                                </Button>
-                              ) : null}
+                              {visiblePrimaryActions.map((action) => action.button)}
                               <IconButton
                                 size="small"
                                 aria-label={`Open actions for ${appointment.patientName || appointment.patientNumber || appointment.id}`}
@@ -1233,12 +1346,6 @@ export default function QueuePage() {
                               >
                                 <MoreVertRoundedIcon fontSize="small" />
                               </IconButton>
-                              {!(
-                                (canStartConsultation && (appointment.status === "WAITING" || appointment.status === "IN_CONSULTATION")) ||
-                                (canManageDeskStatus && (appointment.status === "BOOKED" || appointment.status === "WAITING"))
-                              ) ? (
-                                <Typography variant="caption" color="text.secondary">No actions</Typography>
-                              ) : null}
                             </Stack>
                           </TableCell>
                         </TableRow>
@@ -1268,53 +1375,45 @@ export default function QueuePage() {
 
       {cancellationDialog ? (
         <Dialog open onClose={() => setCancellationDialog(null)} fullWidth maxWidth="sm">
-          <DialogTitle>Appointment Cancellation</DialogTitle>
+          <DialogTitle>{cancellationDialog.nextStatus === "NO_SHOW" ? "Mark No Show" : "Cancel Appointment"}</DialogTitle>
           <DialogContent>
             <Stack spacing={1.5} sx={{ pt: 0.5 }}>
-              {cancellationDialog.variant === "paid-cancel" ? (
+              {cancellationDialog.appointment.paymentState === "PAID" ? (
                 <>
                   <Typography variant="body2" color="text.secondary">
                     Payment has already been collected for this appointment.
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    If you continue, the appointment will be cancelled. The consultation fee remains recorded. If money should be returned, process the refund from Billing.
+                    If you continue, the appointment will be {cancellationDialog.nextStatus === "NO_SHOW" ? "marked as no-show" : "cancelled"}. The consultation fee remains recorded. If money should be returned, process the refund from Billing.
                   </Typography>
                   <Typography variant="body2">
                     Appointment: <strong>{cancellationDialog.appointment.patientName || cancellationDialog.appointment.patientNumber || cancellationDialog.appointment.patientId}</strong>
                   </Typography>
                 </>
               ) : (
-                <>
-                  <Typography variant="body2" color="text.secondary">
-                    Provide a reason before cancelling or marking the appointment as no-show after check-in.
-                  </Typography>
-                  <TextField
-                    label="Reason"
-                    size="small"
-                    multiline
-                    minRows={2}
-                    value={cancellationDialog.reason}
-                    onChange={(event) => setCancellationDialog((current) => current ? { ...current, reason: event.target.value } : current)}
-                    required
-                  />
-                </>
+                <Typography variant="body2" color="text.secondary">
+                  Provide a reason before {cancellationDialog.nextStatus === "NO_SHOW" ? "marking the appointment as no-show" : "cancelling the appointment"}.
+                </Typography>
               )}
+              <TextField
+                label="Reason / comment"
+                size="small"
+                multiline
+                minRows={3}
+                value={cancellationDialog.reason}
+                onChange={(event) => setCancellationDialog((current) => current ? { ...current, reason: event.target.value, reasonError: null } : current)}
+                required
+                error={Boolean(cancellationDialog.reasonError)}
+                helperText={cancellationDialog.reasonError || "Required. This will be sent to the appointment status update."}
+              />
             </Stack>
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setCancellationDialog(null)}>Cancel</Button>
-            {cancellationDialog.variant === "paid-cancel" ? (
-              <>
-                <Button variant="outlined" onClick={() => { setCancellationDialog(null); navigate("/billing"); }}>Go To Billing</Button>
-                <Button variant="contained" color="error" disabled={savingId === cancellationDialog.appointment.id} onClick={() => void confirmCancellationDialog()}>
-                  Cancel Appointment
-                </Button>
-              </>
-            ) : (
-              <Button variant="contained" disabled={savingId === cancellationDialog.appointment.id} onClick={() => void confirmCancellationDialog()}>
-                Confirm
-              </Button>
-            )}
+            {cancellationDialog.appointment.paymentState === "PAID" ? <Button variant="outlined" onClick={() => { setCancellationDialog(null); navigate("/billing"); }}>Go To Billing</Button> : null}
+            <Button variant="contained" color="error" disabled={savingId === cancellationDialog.appointment.id} onClick={() => void confirmCancellationDialog()}>
+              {cancellationDialog.nextStatus === "NO_SHOW" ? "Mark No Show" : "Cancel Appointment"}
+            </Button>
           </DialogActions>
         </Dialog>
       ) : null}
@@ -1400,18 +1499,30 @@ export default function QueuePage() {
           const row = queueRowsWithFee.find((item) => item.id === rowMenuAppointmentId) || null;
           if (!row) return null;
           const record = getQueueReceiptRecord(row);
+          const rowVisibleActions = [
+            !isDoctor && canShowCollectFee(row),
+            !isDoctor && canManageDeskStatus && canBypassPaymentCheckIn && canShowPayAfterConsultation(row),
+            canManageDeskStatus && row.status === "BOOKED",
+            row.status === "BOOKED" || row.status === "WAITING",
+            canManageDeskStatus && (row.status === "BOOKED" || row.status === "WAITING"),
+            canManageDeskStatus && (row.status === "BOOKED" || row.status === "WAITING"),
+          ].filter(Boolean).slice(0, 3);
           return [
-            <MenuItem key="view-patient" onClick={() => { navigate(`/patients/${row.patientId}`); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>View Patient</MenuItem>,
-            ...(!isReceptionist && canViewBillingData ? [<MenuItem key="open-billing" onClick={() => { openBillHistory(row.id); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Open Billing</MenuItem>] : []),
+            rowVisibleActions.length === 0 ? <MenuItem key="open-patient" onClick={() => { navigate(`/patients/${row.patientId}`); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Open Patient</MenuItem> : null,
+            (!isDoctor && canShowCollectFee(row)) ? <MenuItem key="collect-fee" onClick={() => { openConsultationBilling(row.id); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Collect Fee</MenuItem> : null,
+            (!isDoctor && canManageDeskStatus && canBypassPaymentCheckIn && canShowPayAfterConsultation(row)) ? <MenuItem key="pay-after" onClick={() => { openBypassDialog(row); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Pay After Consultation</MenuItem> : null,
+            (canManageDeskStatus && row.status === "BOOKED") ? <MenuItem key="check-in" onClick={() => { void updateStatus(row.id, "WAITING"); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Check-in</MenuItem> : null,
+            ((row.status === "BOOKED" || row.status === "WAITING")) ? <MenuItem key="clinical-intake" onClick={() => { setClinicalIntakeAppointment(row); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Clinical Intake</MenuItem> : null,
+            ...(!isReceptionist && canShowViewBilling(row, canViewBillingData) ? [<MenuItem key="view-details" onClick={() => { openBillHistory(row.id); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>View Details</MenuItem>] : []),
             ...(record?.payment.receiptId ? [
-              <MenuItem key="view-receipt" onClick={() => { openReceiptPreview(row); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>View Receipt</MenuItem>,
-              <MenuItem key="print-receipt" onClick={() => { openReceiptPrintPreview(row, true); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Print Receipt</MenuItem>,
-              <MenuItem key="download-receipt" disabled={receiptActionLoading} onClick={() => { void handleReceiptDownload(row); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Download Receipt PDF</MenuItem>,
+              <MenuItem key="view-receipt" onClick={() => { openReceiptPreview(row); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Receipt</MenuItem>,
+              <MenuItem key="print-receipt" onClick={() => { openReceiptPrintPreview(row, true); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Print</MenuItem>,
               ...(canSendReceipt ? [
-                <MenuItem key="email-receipt" disabled={receiptActionLoading} onClick={() => { void handleReceiptSend(row, "EMAIL"); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Email Receipt</MenuItem>,
-                <MenuItem key="whatsapp-receipt" disabled={receiptActionLoading} onClick={() => { void handleReceiptSend(row, "WHATSAPP"); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>WhatsApp Receipt</MenuItem>,
+                <MenuItem key="email-receipt" disabled={receiptActionLoading} onClick={() => { void handleReceiptSend(row, "EMAIL"); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Email</MenuItem>,
+                <MenuItem key="whatsapp-receipt" disabled={receiptActionLoading} onClick={() => { void handleReceiptSend(row, "WHATSAPP"); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>WhatsApp</MenuItem>,
               ] : []),
             ] : []),
+            <MenuItem key="audit" onClick={() => { openBillHistory(row.id); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Audit</MenuItem>,
             canManageDeskStatus && (row.status === "BOOKED" || row.status === "WAITING") ? <MenuItem key="cancel" onClick={() => { void updateStatus(row.id, "CANCELLED"); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Cancel</MenuItem> : null,
             canManageDeskStatus && (row.status === "BOOKED" || row.status === "WAITING") ? <MenuItem key="no-show" onClick={() => { void updateStatus(row.id, "NO_SHOW"); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>No Show</MenuItem> : null,
           ].filter(Boolean);

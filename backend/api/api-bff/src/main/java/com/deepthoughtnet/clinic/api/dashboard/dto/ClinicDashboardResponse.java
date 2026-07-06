@@ -82,12 +82,14 @@ public record ClinicDashboardResponse(
             UUID appointmentId,
             UUID patientId,
             String patientName,
+            String patientMobile,
             String patientNumber,
             UUID doctorUserId,
             String doctorName,
             Integer tokenNumber,
             LocalTime appointmentTime,
             OffsetDateTime waitingSince,
+            String consultationFeeStatus,
             String status
     ) { }
 

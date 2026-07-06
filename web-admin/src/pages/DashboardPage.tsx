@@ -80,30 +80,6 @@ function dateRangeForPreset(preset: DatePreset) {
   return { startDate: isoDate(start), endDate: isoDate(end) };
 }
 
-function friendlyStatusLabel(value: string | null | undefined) {
-  if (!value) return "-";
-  switch (value.toUpperCase()) {
-    case "PARTIALLY_BOOKED":
-      return "Partially booked";
-    case "IN_CONSULTATION":
-      return "In consultation";
-    case "NO_SHOW":
-      return "No-show";
-    case "AVAILABLE":
-      return "Available";
-    case "BOOKED":
-      return "Booked";
-    case "CHECKED_IN":
-      return "Checked in";
-    case "CANCELLED":
-      return "Cancelled";
-    case "COMPLETED":
-      return "Completed";
-    default:
-      return value.replace(/_/g, " ").toLowerCase().replace(/(^|\s)\S/g, (match) => match.toUpperCase());
-  }
-}
-
 function displayNameForUser(user: ClinicUser | undefined, fallback: string) {
   if (!user) return fallback;
   return user.displayName || user.email || fallback;
@@ -166,6 +142,98 @@ const DASHBOARD_WORKFLOW_STEPS = [
   { label: "Billing Complete" },
   { label: "Visit Completed" },
 ] as const;
+
+type WaitingPatientFilter = "ALL" | "WAITING_FOR_DOCTOR" | "IN_CONSULTATION" | "CHECKED_IN" | "PAYMENT_PENDING" | "NO_SHOW_CANCELLED";
+
+const WAITING_PATIENT_FILTERS: Array<{ value: WaitingPatientFilter; label: string }> = [
+  { value: "ALL", label: "All" },
+  { value: "WAITING_FOR_DOCTOR", label: "Waiting for Doctor" },
+  { value: "IN_CONSULTATION", label: "In Consultation" },
+  { value: "CHECKED_IN", label: "Checked-in" },
+  { value: "PAYMENT_PENDING", label: "Payment Pending" },
+  { value: "NO_SHOW_CANCELLED", label: "No-show / Cancelled" },
+];
+
+const COMPACT_WAITING_JOURNEY_STEPS = ["Appointment", "Payment", "Check-in", "Waiting", "Consultation"] as const;
+
+function normalizeSearchValue(value: string | null | undefined) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isPaymentPendingStatus(status: string | null | undefined) {
+  const normalized = normalizeSearchValue(status).toUpperCase();
+  return normalized === "AWAITING_PAYMENT" || normalized === "PAYMENT_PENDING" || normalized === "UNPAID";
+}
+
+function waitingPatientState(item: ClinicDashboard["currentWaitingList"][number]): WaitingPatientFilter {
+  const status = normalizeSearchValue(item.status).toUpperCase();
+  if (status === "IN_CONSULTATION") return "IN_CONSULTATION";
+  if (status === "WAITING") return "WAITING_FOR_DOCTOR";
+  if (status === "NO_SHOW" || status === "CANCELLED") return "NO_SHOW_CANCELLED";
+  if (status === "BOOKED") {
+    return isPaymentPendingStatus(item.consultationFeeStatus) ? "PAYMENT_PENDING" : "CHECKED_IN";
+  }
+  if (isPaymentPendingStatus(item.consultationFeeStatus)) return "PAYMENT_PENDING";
+  return "CHECKED_IN";
+}
+
+function waitingPatientStatusLabel(state: WaitingPatientFilter) {
+  switch (state) {
+    case "WAITING_FOR_DOCTOR":
+      return "Waiting for Doctor";
+    case "IN_CONSULTATION":
+      return "In Consultation";
+    case "CHECKED_IN":
+      return "Checked-in";
+    case "PAYMENT_PENDING":
+      return "Payment Pending";
+    case "NO_SHOW_CANCELLED":
+      return "No-show / Cancelled";
+    default:
+      return "All";
+  }
+}
+
+function waitingPatientStatusTone(state: WaitingPatientFilter) {
+  switch (state) {
+    case "WAITING_FOR_DOCTOR":
+      return "warning";
+    case "IN_CONSULTATION":
+      return "secondary";
+    case "CHECKED_IN":
+      return "info";
+    case "PAYMENT_PENDING":
+      return "warning";
+    case "NO_SHOW_CANCELLED":
+      return "default";
+    default:
+      return "default";
+  }
+}
+
+function waitingPatientSearchText(item: ClinicDashboard["currentWaitingList"][number]) {
+  return [
+    item.patientName,
+    item.patientMobile,
+    item.patientNumber,
+    item.tokenNumber != null ? `token ${item.tokenNumber}` : null,
+    item.tokenNumber != null ? String(item.tokenNumber) : null,
+    item.doctorName,
+    item.doctorUserId,
+    item.status,
+  ]
+    .filter(Boolean)
+    .map((value) => normalizeSearchValue(String(value)))
+    .join(" ");
+}
+
+function waitingPatientNextAction(item: ClinicDashboard["currentWaitingList"][number]) {
+  return getNextWorkflowAction({
+    status: item.status,
+    paymentStatus: item.consultationFeeStatus,
+    feeStatus: item.consultationFeeStatus,
+  });
+}
 
 function KpiCard({
   label,
@@ -248,6 +316,10 @@ export default function DashboardPage() {
   const [clinicProfile, setClinicProfile] = React.useState<ClinicProfile | null>(null);
   const [onboardingStatus, setOnboardingStatus] = React.useState<TenantOnboardingStatus | null>(null);
   const [doctorUserId, setDoctorUserId] = React.useState("");
+  const [waitingPatientFilter, setWaitingPatientFilter] = React.useState<WaitingPatientFilter>("ALL");
+  const [waitingPatientSearch, setWaitingPatientSearch] = React.useState("");
+  const [waitingPatientDoctorUserId, setWaitingPatientDoctorUserId] = React.useState("");
+  const [expandedJourneyAppointmentId, setExpandedJourneyAppointmentId] = React.useState<string | null>(null);
   const [preset, setPreset] = React.useState<DatePreset>("TODAY");
   const initialRange = dateRangeForPreset("TODAY");
   const [startDate, setStartDate] = React.useState(initialRange.startDate);
@@ -432,6 +504,32 @@ export default function DashboardPage() {
     }
     return map;
   }, [dashboard?.currentWaitingList]);
+  const filteredWaitingPatients = React.useMemo(() => {
+    const search = normalizeSearchValue(waitingPatientSearch);
+    const localDoctorId = doctorUserId || waitingPatientDoctorUserId;
+    return (dashboard?.currentWaitingList || []).filter((item) => {
+      if (waitingPatientFilter !== "ALL" && waitingPatientState(item) !== waitingPatientFilter) {
+        return false;
+      }
+      if (localDoctorId && item.doctorUserId !== localDoctorId) {
+        return false;
+      }
+      if (search && !waitingPatientSearchText(item).includes(search)) {
+        return false;
+      }
+      return true;
+    });
+  }, [dashboard?.currentWaitingList, doctorUserId, waitingPatientDoctorUserId, waitingPatientFilter, waitingPatientSearch]);
+  const waitingPatientDoctorFilterEnabled = !doctorUserId && doctorOptions.length > 0;
+  const waitingPatientListMaxHeight = React.useMemo(() => {
+    if (filteredWaitingPatients.length <= 2) {
+      return undefined;
+    }
+    const visibleCards = waitingPatientFilter === "ALL" ? 4 : 3;
+    const estimatedCardHeight = 226;
+    const gapHeight = 12;
+    return visibleCards * estimatedCardHeight + Math.max(0, visibleCards - 1) * gapHeight;
+  }, [filteredWaitingPatients.length, waitingPatientFilter]);
   const showOperational = Boolean(appt || queue || consult || rx || followUp);
   const showBilling = Boolean(billing) && canSeeFinancialDashboard;
   const isZeroDashboard = Boolean(dashboard)
@@ -906,34 +1004,188 @@ export default function DashboardPage() {
 
                 <Card variant="outlined" sx={{ mt: 1.25 }}>
                   <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
-                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 0.75 }}>Current waiting patients</Typography>
-                    {dashboard.currentWaitingList.length === 0 ? <Alert severity="info">No waiting patients for the selected filters.</Alert> : (
-                      <Stack spacing={1}>
-                        {dashboard.currentWaitingList.slice(0, 8).map((item) => (
-                          <Box key={item.appointmentId} sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap", border: "1px solid", borderColor: "divider", borderRadius: 1.25, p: 1.1 }}>
-                            <Box>
-                              <Typography variant="body2" sx={{ fontWeight: 700 }}>{item.patientName || item.patientNumber || item.patientId}</Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {item.doctorName || item.doctorUserId || "Unassigned"} • {formatTime(item.appointmentTime)} • {(item.waitingSince ? formatRelativeBookingTime(item.waitingSince)?.replace(/^Booked /, "Waiting since ") : null) || "Booked recently"}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {item.patientNumber ? `Patient No: ${item.patientNumber}` : "Patient No: Not assigned"}
-                              </Typography>
-                              <Stack direction="row" spacing={0.5} sx={{ mt: 0.65 }} flexWrap="wrap">
-                                <AppointmentTokenChip appointment={item} compact />
-                                <WorkflowStatusBadge status={item.status} compact />
-                                <Chip size="small" variant="outlined" label={`Next: ${getNextWorkflowAction({ status: item.status, paymentStatus: item.status === "BOOKED" ? "PAYMENT_PENDING" : item.status === "WAITING" ? "PAID" : undefined }).label}`} sx={{ height: 20, "& .MuiChip-label": { px: 0.7 } }} />
+                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.25, flexWrap: "wrap", alignItems: "flex-start", mb: 1 }}>
+                      <Box sx={{ minWidth: 0, flex: 1 }}>
+                        <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.2 }}>Current waiting patients</Typography>
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.75 }}>
+                          {WAITING_PATIENT_FILTERS.map((filter) => (
+                            <Chip
+                              key={filter.value}
+                              clickable
+                              size="small"
+                              label={filter.label}
+                              color={waitingPatientFilter === filter.value ? "primary" : "default"}
+                              variant={waitingPatientFilter === filter.value ? "filled" : "outlined"}
+                              onClick={() => setWaitingPatientFilter(filter.value)}
+                              sx={DASHBOARD_CHIP_SX}
+                            />
+                          ))}
+                          {waitingPatientDoctorFilterEnabled ? (
+                            <FormControl size="small" sx={{ minWidth: 180 }}>
+                              <InputLabel id="waiting-patient-doctor-label">Doctor</InputLabel>
+                              <Select
+                                labelId="waiting-patient-doctor-label"
+                                label="Doctor"
+                                value={waitingPatientDoctorUserId}
+                                onChange={(event) => setWaitingPatientDoctorUserId(String(event.target.value))}
+                              >
+                                <MenuItem value="">All Doctors</MenuItem>
+                                {doctorOptions.map((doctor) => (
+                                  <MenuItem key={doctor.appUserId} value={doctor.appUserId}>
+                                    {doctor.displayName || doctor.email || doctor.appUserId}
+                                  </MenuItem>
+                                ))}
+                              </Select>
+                            </FormControl>
+                          ) : (
+                            <Chip
+                              size="small"
+                              label={`Doctor: ${selectedDoctorLabel}`}
+                              color={doctorUserId ? "primary" : "default"}
+                              variant={doctorUserId ? "filled" : "outlined"}
+                              sx={DASHBOARD_CHIP_SX}
+                            />
+                          )}
+                        </Stack>
+                      </Box>
+                      <TextField
+                        size="small"
+                        value={waitingPatientSearch}
+                        onChange={(event) => setWaitingPatientSearch(event.target.value)}
+                        placeholder="Search name, mobile, token, patient number"
+                        label="Search"
+                        sx={{ minWidth: { xs: "100%", sm: 320, lg: 360 }, flex: "0 1 auto" }}
+                        InputProps={{ sx: { borderRadius: 999 } }}
+                      />
+                    </Box>
+
+                    {filteredWaitingPatients.length === 0 ? (
+                      <Alert severity="info">No patients match the selected filter or search.</Alert>
+                    ) : (
+                      <Box
+                        sx={{
+                          maxHeight: waitingPatientListMaxHeight ? `${waitingPatientListMaxHeight}px` : "none",
+                          overflowY: waitingPatientListMaxHeight ? "auto" : "visible",
+                          overflowX: "hidden",
+                          pr: 0.75,
+                          scrollbarWidth: "thin",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 1,
+                          minHeight: 0,
+                        }}
+                      >
+                        {filteredWaitingPatients.map((item) => {
+                          const statusGroup = waitingPatientState(item);
+                          const nextAction = waitingPatientNextAction(item);
+                          const compactJourneyCurrent = waitingPatientStatusLabel(statusGroup);
+                          const compactJourneyText = COMPACT_WAITING_JOURNEY_STEPS.join(" \u2192 ");
+                          const isExpanded = expandedJourneyAppointmentId === item.appointmentId;
+                          return (
+                            <Box
+                              key={item.appointmentId}
+                            sx={{
+                              border: "1px solid",
+                              borderColor: "divider",
+                              borderRadius: 1.5,
+                              p: 1.1,
+                              bgcolor: "background.paper",
+                              overflow: "visible",
+                            }}
+                          >
+                            <Stack spacing={0.9}>
+                                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
+                                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                                    <Typography variant="body1" sx={{ fontWeight: 800, lineHeight: 1.2, overflowWrap: "anywhere" }}>
+                                      {item.patientName || item.patientNumber || item.patientId}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: "block", lineHeight: 1.25 }}>
+                                      {item.patientMobile ? `Mobile: ${item.patientMobile}` : "Mobile: -"}
+                                    </Typography>
+                                  </Box>
+                                  <Stack direction="row" spacing={0.5} flexWrap="wrap" justifyContent="flex-end" sx={{ maxWidth: "100%" }}>
+                                    <AppointmentTokenChip appointment={item} compact />
+                                    <WorkflowStatusBadge status={statusGroup} label={waitingPatientStatusLabel(statusGroup)} tone={waitingPatientStatusTone(statusGroup)} compact />
+                                  </Stack>
+                                </Box>
+
+                                <Box
+                                  sx={{
+                                    display: "grid",
+                                    gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
+                                    gap: 0.75,
+                                  }}
+                                >
+                                  <Box>
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: "block", fontWeight: 700 }}>
+                                      Doctor
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 700, overflowWrap: "anywhere" }}>
+                                      {item.doctorName || item.doctorUserId || "Unassigned"}
+                                    </Typography>
+                                  </Box>
+                                  <Box>
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: "block", fontWeight: 700 }}>
+                                      Appointment time
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                      {formatTime(item.appointmentTime)}
+                                    </Typography>
+                                  </Box>
+                                  <Box>
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: "block", fontWeight: 700 }}>
+                                      Waiting since
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                      {(item.waitingSince ? formatRelativeBookingTime(item.waitingSince)?.replace(/^Booked /, "Waiting since ") : null) || "Booked recently"}
+                                    </Typography>
+                                  </Box>
+                                  <Box>
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: "block", fontWeight: 700 }}>
+                                      Patient number
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                      {item.patientNumber || "Not assigned"}
+                                    </Typography>
+                                  </Box>
+                                </Box>
+
+                                <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center" sx={{ minWidth: 0 }}>
+                                  <Chip size="small" variant="outlined" label={`Token: ${item.tokenNumber != null ? item.tokenNumber : "Not assigned"}`} sx={{ height: 22 }} />
+                                  <Chip size="small" variant="outlined" label={`Next: ${nextAction.label}`} color={nextAction.tone} sx={{ height: 22 }} />
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+                                    {compactJourneyText}
+                                  </Typography>
+                                </Stack>
+
+                                <Stack direction={{ xs: "column", sm: "row" }} spacing={0.75} justifyContent="space-between" alignItems={{ sm: "center" }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, lineHeight: 1.25 }}>
+                                    Current: {compactJourneyCurrent}
+                                  </Typography>
+                                  <Stack direction="row" spacing={0.75} flexWrap="wrap" justifyContent="flex-end">
+                                    <Button
+                                      size="small"
+                                      variant="text"
+                                      onClick={() => setExpandedJourneyAppointmentId((current) => (current === item.appointmentId ? null : item.appointmentId))}
+                                    >
+                                      {isExpanded ? "Hide full journey" : "View full journey"}
+                                    </Button>
+                                    <Button size="small" variant="outlined" onClick={() => navigate(`/patients/${item.patientId}`)}>
+                                      Open Patient
+                                    </Button>
+                                  </Stack>
+                                </Stack>
+
+                                <Collapse in={isExpanded} timeout="auto" unmountOnExit sx={{ overflow: "visible" }}>
+                                  <Box sx={{ pt: 0.5, overflow: "visible" }}>
+                                    <PatientJourneyTracker context={{ status: item.status, paymentStatus: item.consultationFeeStatus }} compact={false} title="Patient Journey" />
+                                  </Box>
+                                </Collapse>
                               </Stack>
-                              <Box sx={{ mt: 0.75 }}>
-                                <PatientJourneyTracker context={{ status: item.status }} compact title="Patient Journey" />
-                              </Box>
                             </Box>
-                            <Stack direction="row" spacing={0.75} flexWrap="wrap" alignItems="center">
-                              <Button size="small" variant="outlined" onClick={() => navigate(`/patients/${item.patientId}`)}>Open patient</Button>
-                            </Stack>
-                          </Box>
-                        ))}
-                      </Stack>
+                          );
+                        })}
+                      </Box>
                     )}
                   </CardContent>
                 </Card>
