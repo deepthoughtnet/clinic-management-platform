@@ -105,11 +105,11 @@ export function WorkflowStrip({ steps, label = "Workflow", currentStepIndex }: W
         sx={{
           display: "grid",
           gridAutoFlow: "column",
-          gridAutoColumns: "minmax(104px, 1fr)",
-          gap: 0.75,
+          gridAutoColumns: "minmax(108px, 1fr)",
+          gap: 0.8,
           overflowX: "auto",
           scrollbarWidth: "thin",
-          pb: 0.25,
+          pb: 0.35,
           "&::-webkit-scrollbar": { height: 6 },
         }}
       >
@@ -121,19 +121,20 @@ export function WorkflowStrip({ steps, label = "Workflow", currentStepIndex }: W
               key={typeof step.label === "string" ? `${step.label}-${index}` : index}
               sx={{
                 position: "relative",
-                minWidth: 104,
+                minWidth: 108,
                 display: "grid",
                 justifyItems: "center",
-                gap: 0.35,
+                gap: 0.45,
                 textAlign: "center",
                 opacity: state === "future" ? 0.92 : 1,
+                alignContent: "start",
               }}
             >
               <Box
                 sx={{
                   position: "absolute",
                   top: 14,
-                  left: "calc(50% + 18px)",
+                  left: "calc(50% + 14px)",
                   right: "-50%",
                   height: 2,
                   bgcolor: state === "completed" ? "success.main" : "divider",
@@ -149,18 +150,50 @@ export function WorkflowStrip({ steps, label = "Workflow", currentStepIndex }: W
                   display: "grid",
                   placeItems: "center",
                   fontSize: 12,
-                  fontWeight: 900,
+                  fontWeight: 800,
+                  lineHeight: 1,
                   zIndex: 1,
+                  flexShrink: 0,
                   ...colors,
                 }}
               >
                 {state === "completed" ? "✓" : index + 1}
               </Box>
-              <Typography variant="body2" sx={{ fontWeight: state === "current" ? 800 : 600, lineHeight: 1.1 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontSize: "0.74rem",
+                  fontWeight: 700,
+                  lineHeight: 1.2,
+                  minHeight: "2.4em",
+                  width: "100%",
+                  maxWidth: 112,
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                  textAlign: "center",
+                  color: state === "future" ? "text.secondary" : "text.primary",
+                }}
+              >
                 {step.label}
               </Typography>
               {step.helper ? (
-                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.15 }}>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{
+                    lineHeight: 1.15,
+                    minHeight: "1.15em",
+                    width: "100%",
+                    maxWidth: 112,
+                    textAlign: "center",
+                    display: "-webkit-box",
+                    WebkitLineClamp: 1,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  }}
+                >
                   {step.helper}
                 </Typography>
               ) : null}

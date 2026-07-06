@@ -19,5 +19,6 @@ test("dashboard waiting patients list scrolls internally without clipping journe
   assert.ok(source.includes('overflowX: "hidden"'));
   assert.ok(source.includes('overflow: "visible"'));
   assert.ok(source.includes('Collapse in={isExpanded} timeout="auto" unmountOnExit sx={{ overflow: "visible" }}'));
-  assert.ok(source.includes('visibleCards = waitingPatientFilter === "ALL" ? 4 : 3'));
+  assert.ok(source.includes('(2 * estimatedCardHeight) + gapHeight'));
+  assert.ok(!source.includes('waitingPatientFilter === "ALL" ? 4 : 3'));
 });

@@ -63,6 +63,7 @@ import {
 } from "../../api/clinicApi";
 import { formatRelativeBookingTime, getNextWorkflowAction, getWorkflowStatusLabel } from "../../components/workflow/workflowHelpers";
 import { staffDisplayName } from "../../utils/staffDisplay";
+import { isActiveDoctorUser, useAutoSelectSingleDoctor } from "../../hooks/useAutoSelectSingleDoctor";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -371,6 +372,14 @@ export default function QueuePage() {
     () => users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR"),
     [users],
   );
+  const activeDoctorOptions = React.useMemo(() => doctors.filter(isActiveDoctorUser), [doctors]);
+
+  useAutoSelectSingleDoctor({
+    doctors: activeDoctorOptions,
+    selectedDoctorId: doctorUserId,
+    setSelectedDoctorId: setDoctorUserId,
+    tenantId: auth.tenantId,
+  });
 
   const queueRows = React.useMemo(() => {
     const filtered = appointments.filter((appointment) => isQueueAppointment(appointment.status));
@@ -527,11 +536,6 @@ export default function QueuePage() {
         const rows = await getClinicUsers(auth.accessToken, auth.tenantId);
         if (cancelled) return;
         setUsers(rows);
-        if (isDoctor && auth.appUserId) {
-          setDoctorUserId(auth.appUserId);
-        } else {
-          setDoctorUserId((current) => current || doctorUserIdFromQuery || "");
-        }
       } catch (err) {
         if (!cancelled) {
           setError("Unable to load doctors. Please verify clinic selection and try again.");
@@ -1112,14 +1116,14 @@ export default function QueuePage() {
                 <Table size="small" stickyHeader sx={{ minWidth: 0, tableLayout: "fixed" }}>
                   <TableHead>
                     <TableRow>
-                      {!effectiveDoctorId ? <TableCell sx={{ width: "10%" }}>Doctor</TableCell> : null}
-                      <TableCell sx={{ width: "9%" }}>Token</TableCell>
+                      {!effectiveDoctorId ? <TableCell sx={{ width: "9%" }}>Doctor</TableCell> : null}
+                      <TableCell sx={{ width: "11%" }}>Token</TableCell>
                       <TableCell sx={{ width: "16%" }}>Patient</TableCell>
-                      <TableCell sx={{ width: "9%" }}>Time</TableCell>
-                      <TableCell sx={{ width: "14%" }} align="center">Priority</TableCell>
+                      <TableCell sx={{ width: "8%" }}>Time</TableCell>
+                      <TableCell sx={{ width: "13%" }} align="center">Priority</TableCell>
                       <TableCell sx={{ width: "14%", pl: 1.5, pr: 1 }}>Status</TableCell>
                       <TableCell sx={{ width: "12%", pl: 2 }}>Payment</TableCell>
-                      <TableCell align="right" sx={{ width: "16%" }}>Actions</TableCell>
+                      <TableCell align="right" sx={{ width: "17%" }}>Actions</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -1259,10 +1263,28 @@ export default function QueuePage() {
                           }}
                         >
                           {!effectiveDoctorId ? (
-                            <TableCell sx={{ width: "10%" }}>{appointment.doctorName || displayDoctorName(users, appointment.doctorUserId)}</TableCell>
+                            <TableCell sx={{ width: "9%" }}>{appointment.doctorName || displayDoctorName(users, appointment.doctorUserId)}</TableCell>
                           ) : null}
-                          <TableCell sx={{ width: "9%" }}>
-                            <Chip size="small" label={appointment.displayReference || (appointment.tokenNumber != null ? `APT-${appointment.tokenNumber}` : "—")} variant="outlined" sx={{ height: 22, maxWidth: "100%" }} />
+                          <TableCell sx={{ width: "11%" }}>
+                            <Tooltip title={appointment.displayReference || (appointment.tokenNumber != null ? `APT-${appointment.tokenNumber}` : "—")}>
+                              <Chip
+                                size="small"
+                                label={appointment.displayReference || (appointment.tokenNumber != null ? `APT-${appointment.tokenNumber}` : "—")}
+                                variant="outlined"
+                                sx={{
+                                  height: 22,
+                                  width: "100%",
+                                  maxWidth: "100%",
+                                  minWidth: 0,
+                                  "& .MuiChip-label": {
+                                    display: "block",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  },
+                                }}
+                              />
+                            </Tooltip>
                           </TableCell>
                           <TableCell sx={{ width: "16%" }}>
                             <Stack spacing={0.15}>
@@ -1273,13 +1295,13 @@ export default function QueuePage() {
                               <Typography variant="caption" color="text.secondary">{appointment.patientMobile || "—"}</Typography>
                             </Stack>
                           </TableCell>
-                          <TableCell sx={{ width: "9%" }}>
+                          <TableCell sx={{ width: "8%" }}>
                             <Stack spacing={0.15}>
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>{toFive(appointment.appointmentTime)}</Typography>
                               <Typography variant="caption" color="text.secondary">{formatRelativeBookingTime(appointment.createdAt) || "Booked recently"}</Typography>
                             </Stack>
                           </TableCell>
-                          <TableCell sx={{ width: "14%", pr: 1.5 }} align="center">
+                          <TableCell sx={{ width: "13%", pr: 1.5 }} align="center">
                             {canManageDeskStatus ? (
                               <FormControl size="small" sx={{ width: "100%" }}>
                                 <Select
@@ -1328,7 +1350,7 @@ export default function QueuePage() {
                             </Stack>
                           </TableCell>
                           <TableCell sx={{ width: "12%", pl: 2 }}>{renderPaymentBadge(appointment)}</TableCell>
-                          <TableCell align="right" sx={{ width: "16%" }}>
+                          <TableCell align="right" sx={{ width: "17%" }}>
                             <Stack direction="row" spacing={0.5} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
                               {visiblePrimaryActions.length === 0 ? (
                                 <Button size="small" variant="text" onClick={() => navigate(`/patients/${appointment.patientId}`)}>

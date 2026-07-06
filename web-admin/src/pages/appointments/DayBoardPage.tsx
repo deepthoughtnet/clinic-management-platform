@@ -70,6 +70,7 @@ import ConsultationFeeDialog from "../../components/ConsultationFeeDialog";
 import { CompactEmptyState, WorkflowStrip } from "../../components/compact/CompactUi";
 import DoctorIdentityCard, { type DoctorIdentityCardDoctor } from "../../components/doctor/DoctorIdentityCard";
 import { AppointmentTokenChip, PatientJourneyTracker, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
+import { isActiveDoctorUser, useAutoSelectSingleDoctor } from "../../hooks/useAutoSelectSingleDoctor";
 import { getClinicClockParts, getClinicDateKey, isBookingTimePast, formatClinicClockLabel } from "./bookingValidation";
 import { getAppointmentSlotPresentation } from "./slotState";
 import { formatRelativeBookingTime, getNextWorkflowAction } from "../../components/workflow/workflowHelpers";
@@ -657,6 +658,13 @@ export default function DayBoardPage() {
   const canStartConsultation = isDoctor && auth.hasPermission("consultation.create");
   const canOpenWorkspace = isDoctor && auth.hasPermission("consultation.read");
   const doctorOptions = users.filter((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
+  const activeDoctorOptions = React.useMemo(() => doctorOptions.filter(isActiveDoctorUser), [doctorOptions]);
+  useAutoSelectSingleDoctor({
+    doctors: activeDoctorOptions,
+    selectedDoctorId: doctorUserId,
+    setSelectedDoctorId: setDoctorUserId,
+    tenantId: auth.tenantId,
+  });
   const selectedDoctorLabel = isDoctor && auth.appUserId
     ? displayDoctorName(users, auth.appUserId)
     : doctorUserId
@@ -732,11 +740,6 @@ export default function DayBoardPage() {
   }, [effectiveDoctorId, selectedSlotPanel, waitlist]);
   const gridMinWidth = React.useMemo(() => Math.max(720, 92 + (visibleDoctorPanels.length * 188)), [visibleDoctorPanels.length]);
 
-  React.useEffect(() => {
-    if (!isDoctor) {
-      setDoctorUserId(doctorUserIdFromQuery);
-    }
-  }, [doctorUserIdFromQuery, isDoctor]);
   const calendarRows = React.useMemo(() => {
     return visibleDoctorPanels.flatMap((panel) => {
       return panel.slots
@@ -976,6 +979,12 @@ export default function DayBoardPage() {
   React.useEffect(() => {
     setSelected(null);
   }, [date]);
+
+  React.useEffect(() => {
+    if (!isDoctor) {
+      setDoctorUserId(doctorUserIdFromQuery);
+    }
+  }, [doctorUserIdFromQuery, isDoctor]);
 
   React.useEffect(() => {
     if (isDoctor && auth.appUserId) {

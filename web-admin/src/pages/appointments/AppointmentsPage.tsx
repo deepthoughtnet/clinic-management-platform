@@ -42,6 +42,7 @@ import {
 import { alpha } from "@mui/material/styles";
 
 import { useAuth } from "../../auth/useAuth";
+import DoctorIdentityCard, { type DoctorIdentityCardDoctor } from "../../components/doctor/DoctorIdentityCard";
 import { AppointmentTokenChip, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
 import PatientQuickRegisterDialog, { patientSummary } from "../../components/patients/PatientQuickRegisterDialog";
 import { patientDisplayName, patientIdentitySummary, patientNumberLine, patientMobileLine } from "../../components/patients/patientQuickRegister";
@@ -50,6 +51,7 @@ import {
   createWaitlist,
   createWalkInAppointment,
   getClinicClock,
+  getDoctorProfile,
   getDoctorSlots,
   getWaitlist,
   getClinicUsers,
@@ -65,6 +67,7 @@ import {
   type AppointmentPriority,
   type AppointmentType,
   type ClinicUser,
+  type DoctorProfile,
   type Patient,
   type PatientGender,
   type WaitlistStatus,
@@ -78,6 +81,7 @@ import {
 } from "./bookingValidation";
 import { getAppointmentSlotPresentation } from "./slotState";
 import { CompactEmptyState, CompactStatCard, CompactTableFrame, compactChipSx } from "../../components/compact/CompactUi";
+import { isActiveDoctorUser, useAutoSelectSingleDoctor } from "../../hooks/useAutoSelectSingleDoctor";
 
 type AppointmentTab = "today" | "upcoming" | "waitlist" | "completed" | "archive";
 
@@ -302,12 +306,14 @@ export default function AppointmentsPage() {
   const [clockTick, setClockTick] = React.useState(0);
   const [hidePastSlots, setHidePastSlots] = React.useState(true);
   const [appointmentDateTouched, setAppointmentDateTouched] = React.useState(Boolean(searchParams.get("appointmentDate")));
+  const [doctorProfilesById, setDoctorProfilesById] = React.useState<Record<string, DoctorProfile>>({});
 
   const tenantRole = (auth.tenantRole || "").toUpperCase();
   const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
   const canCreateAppointmentFlow = !isDoctor && auth.hasPermission("appointment.manage");
   const canQuickRegisterPatient = canCreateAppointmentFlow && auth.hasPermission("patient.create");
   const doctorOptions = users.filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
+  const activeDoctorOptions = React.useMemo(() => doctorOptions.filter(isActiveDoctorUser), [doctorOptions]);
   const doctorFilter = isDoctor && auth.appUserId ? auth.appUserId : undefined;
   const today = React.useMemo(() => getClinicDateKey(clinicTimeZone, clinicNowSnapshot), [clinicNowSnapshot, clinicTimeZone, clockTick]);
   const clinicClockLabel = React.useMemo(
@@ -420,10 +426,6 @@ export default function AppointmentsPage() {
         const rows = await getClinicUsers(auth.accessToken, auth.tenantId);
         if (!cancelled) {
           setUsers(rows);
-          if (!doctorFilter) {
-            const firstDoctor = rows.find((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR");
-            setDoctorUserId((current) => current || firstDoctor?.appUserId || "");
-          }
         }
       } catch {
         if (!cancelled) {
@@ -437,6 +439,32 @@ export default function AppointmentsPage() {
       cancelled = true;
     };
   }, [auth.accessToken, auth.tenantId, doctorFilter]);
+
+  useAutoSelectSingleDoctor({
+    doctors: activeDoctorOptions,
+    selectedDoctorId: doctorUserId,
+    setSelectedDoctorId: setDoctorUserId,
+    tenantId: auth.tenantId,
+  });
+  const selectedDoctorProfile = React.useMemo(() => {
+    const lookupId = selectedDoctorId;
+    return lookupId ? doctorProfilesById[lookupId] || null : null;
+  }, [doctorProfilesById, selectedDoctorId]);
+  const selectedDoctorIdentity = React.useMemo<DoctorIdentityCardDoctor | undefined>(() => {
+    if (!selectedDoctorId) {
+      return undefined;
+    }
+    const selectedDoctor = doctorOptions.find((doctor) => doctor.appUserId === selectedDoctorId) || null;
+    return {
+      id: selectedDoctorId,
+      fullName: selectedDoctorProfile?.doctorName || selectedDoctor?.displayName || selectedDoctorId,
+      qualification: selectedDoctorProfile?.qualification || undefined,
+      primarySpecialization: selectedDoctorProfile?.specializations?.[0] || selectedDoctorProfile?.specialization || undefined,
+      registrationNumber: selectedDoctorProfile?.registrationNumber || undefined,
+      photoUrl: selectedDoctorProfile?.photoUrl || undefined,
+      updatedAt: selectedDoctorProfile?.updatedAt || undefined,
+    };
+  }, [doctorOptions, selectedDoctorId, selectedDoctorProfile]);
 
   React.useEffect(() => {
     void loadAppointments();
@@ -454,6 +482,29 @@ export default function AppointmentsPage() {
   React.useEffect(() => {
     void loadWaitlist();
   }, [loadWaitlist]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadSelectedDoctorProfile() {
+      if (!auth.accessToken || !auth.tenantId) return;
+      const doctorId = selectedDoctorId;
+      if (!doctorId || doctorProfilesById[doctorId]) return;
+      try {
+        const profile = await getDoctorProfile(auth.accessToken, auth.tenantId, doctorId);
+        if (!cancelled) {
+          setDoctorProfilesById((current) => ({ ...current, [doctorId]: profile }));
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Doctor profile load failed", err);
+        }
+      }
+    }
+    void loadSelectedDoctorProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.accessToken, auth.tenantId, doctorProfilesById, selectedDoctorId]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1197,30 +1248,56 @@ export default function AppointmentsPage() {
           <Card variant="outlined" sx={{ height: "100%" }}>
             <CardContent sx={{ p: 1.5 }}>
               <Stack spacing={1.5}>
-                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
-                  <Box>
-                    <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Doctor Available Slots</Typography>
-                    <Typography variant="body2" color="text.secondary">Compact slot timeline. Current slot is highlighted and remains bookable while capacity remains.</Typography>
-                  </Box>
-                  <Stack direction="row" spacing={0.75} flexWrap="wrap">
-                    <Chip size="small" label={`${slotSummary.bookable} bookable`} variant="outlined" sx={compactChipSx} />
-                    <Chip size="small" label={`${slotSummary.available} available`} color="success" variant="outlined" sx={compactChipSx} />
-                    <Chip size="small" label={`${slotSummary.partial} partial`} color="warning" variant="outlined" sx={compactChipSx} />
-                    <Chip size="small" label={`${slotSummary.full} full`} color="error" variant="outlined" sx={compactChipSx} />
-                    <Chip size="small" label={`${slotSummary.unavailable} unavailable`} variant="outlined" sx={compactChipSx} />
-                    <Chip size="small" label={`${slotSummary.past} past`} variant="outlined" sx={compactChipSx} />
-                  </Stack>
-                </Box>
-                <FormControlLabel
-                  control={<Switch checked={hidePastSlots} onChange={(event) => setHidePastSlots(event.target.checked)} />}
-                  label="Hide past slots"
-                />
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) auto" },
+                    gap: 1.5,
+                    alignItems: "start",
+                  }}
+                >
+                  <Stack spacing={1} sx={{ minWidth: 0 }}>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
+                      <Box>
+                        <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.1 }}>Doctor Available Slots</Typography>
+                        <Typography variant="body2" color="text.secondary">Compact slot timeline. Current slot is highlighted and remains bookable while capacity remains.</Typography>
+                      </Box>
+                      <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                        <Chip size="small" label={`${slotSummary.bookable} bookable`} variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`${slotSummary.available} available`} color="success" variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`${slotSummary.partial} partial`} color="warning" variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`${slotSummary.full} full`} color="error" variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`${slotSummary.unavailable} unavailable`} variant="outlined" sx={compactChipSx} />
+                        <Chip size="small" label={`${slotSummary.past} past`} variant="outlined" sx={compactChipSx} />
+                      </Stack>
+                    </Box>
+                    <FormControlLabel
+                      control={<Switch checked={hidePastSlots} onChange={(event) => setHidePastSlots(event.target.checked)} />}
+                      label="Hide past slots"
+                    />
 
-                {currentSlot ? (
-                  <Alert severity="info">
-                    Current slot: {slotLabel(currentSlot, appointmentDate, clinicTimeZone, clinicNowSnapshot)}. If capacity remains, it can still be booked.
-                  </Alert>
-                ) : null}
+                    {currentSlot ? (
+                      <Alert severity="info">
+                        Current slot: {slotLabel(currentSlot, appointmentDate, clinicTimeZone, clinicNowSnapshot)}. If capacity remains, it can still be booked.
+                      </Alert>
+                    ) : null}
+                  </Stack>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      alignItems: "flex-start",
+                      pt: 0.25,
+                      minWidth: 0,
+                    }}
+                  >
+                    <DoctorIdentityCard
+                      doctorId={selectedDoctorIdentity?.id}
+                      doctor={selectedDoctorIdentity}
+                      variant="avatar"
+                    />
+                  </Box>
+                </Box>
 
                 {visibleSlots.length === 0 ? (
                   <CompactEmptyState {...slotGridEmptyState({ selectedDoctorId, appointmentDate, clinicDate: today, slots, bookableSlots, hidePastSlots })} />

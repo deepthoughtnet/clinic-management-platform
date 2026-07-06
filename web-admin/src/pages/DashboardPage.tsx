@@ -26,6 +26,7 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 
@@ -34,6 +35,7 @@ import { dashboardFilterSchema, firstZodError } from "@deepthoughtnet/form-valid
 import { WorkflowStrip } from "../components/compact/CompactUi";
 import TenantOnboardingWizardDialog from "../components/onboarding/TenantOnboardingWizardDialog";
 import { AppointmentTokenChip, PatientJourneyTracker, WorkflowStatusBadge } from "../components/workflow/WorkflowUx";
+import { isActiveDoctorUser, useAutoSelectSingleDoctor } from "../hooks/useAutoSelectSingleDoctor";
 import {
   getClinicProfile,
   getClinicDashboard,
@@ -469,6 +471,17 @@ export default function DashboardPage() {
     }
   }, [navigate, setupRequested]);
 
+  const doctorOptions = users.filter((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
+  const activeDoctorOptions = React.useMemo(() => doctorOptions.filter(isActiveDoctorUser), [doctorOptions]);
+  useAutoSelectSingleDoctor({
+    doctors: activeDoctorOptions,
+    selectedDoctorId: doctorUserId,
+    setSelectedDoctorId: setDoctorUserId,
+    tenantId: auth.tenantId,
+  });
+  const selectedDoctor = doctorOptions.find((doctor) => doctor.appUserId === doctorUserId) || null;
+  const selectedDoctorLabel = doctorUserId ? displayNameForUser(selectedDoctor || undefined, doctorUserId) : "All Doctors";
+
   if (!auth.tenantId && isPlatformAdmin) {
     return (
       <Stack spacing={2}>
@@ -486,10 +499,6 @@ export default function DashboardPage() {
 
   if (!auth.tenantId) return <Alert severity="warning">No tenant selected for this session.</Alert>;
   if (isPharmacyRole) return <Navigate to="/pharmacy/dashboard" replace />;
-
-  const doctorOptions = users.filter((u) => (u.membershipRole || "").toUpperCase() === "DOCTOR");
-  const selectedDoctor = doctorOptions.find((doctor) => doctor.appUserId === doctorUserId) || null;
-  const selectedDoctorLabel = doctorUserId ? displayNameForUser(selectedDoctor || undefined, doctorUserId) : "All Doctors";
   const appt = dashboard?.appointmentSummary;
   const queue = dashboard?.queueSummary;
   const consult = dashboard?.consultationSummary;
@@ -525,11 +534,10 @@ export default function DashboardPage() {
     if (filteredWaitingPatients.length <= 2) {
       return undefined;
     }
-    const visibleCards = waitingPatientFilter === "ALL" ? 4 : 3;
     const estimatedCardHeight = 226;
     const gapHeight = 12;
-    return visibleCards * estimatedCardHeight + Math.max(0, visibleCards - 1) * gapHeight;
-  }, [filteredWaitingPatients.length, waitingPatientFilter]);
+    return (2 * estimatedCardHeight) + gapHeight;
+  }, [filteredWaitingPatients.length]);
   const showOperational = Boolean(appt || queue || consult || rx || followUp);
   const showBilling = Boolean(billing) && canSeeFinancialDashboard;
   const isZeroDashboard = Boolean(dashboard)
@@ -908,8 +916,50 @@ export default function DashboardPage() {
                 <MenuItem value="CUSTOM">Custom Range</MenuItem>
               </Select>
             </FormControl>
-            <TextField id="dashboard-startDate" size="small" sx={{ minWidth: 150 }} type="date" label="Start" value={startDate} onChange={(e) => { setPreset("CUSTOM"); setStartDate(e.target.value); }} InputLabelProps={{ shrink: true }} error={Boolean(dateFieldErrors.startDate)} helperText={dateFieldErrors.startDate || "Required."} />
-            <TextField id="dashboard-endDate" size="small" sx={{ minWidth: 150 }} type="date" label="End" value={endDate} onChange={(e) => { setPreset("CUSTOM"); setEndDate(e.target.value); }} InputLabelProps={{ shrink: true }} error={Boolean(dateFieldErrors.endDate)} helperText={dateFieldErrors.endDate || "Must be on or after start."} />
+            <Tooltip
+              title={dateFieldErrors.startDate || ""}
+              placement="top"
+              arrow
+              disableHoverListener={!dateFieldErrors.startDate}
+              disableFocusListener={!dateFieldErrors.startDate}
+              disableTouchListener={!dateFieldErrors.startDate}
+              describeChild
+            >
+              <TextField
+                id="dashboard-startDate"
+                size="small"
+                sx={{ minWidth: 150 }}
+                type="date"
+                label="Start"
+                value={startDate}
+                onChange={(e) => { setPreset("CUSTOM"); setStartDate(e.target.value); }}
+                InputLabelProps={{ shrink: true }}
+                error={Boolean(dateFieldErrors.startDate)}
+                helperText={dateFieldErrors.startDate || undefined}
+              />
+            </Tooltip>
+            <Tooltip
+              title={dateFieldErrors.endDate || ""}
+              placement="top"
+              arrow
+              disableHoverListener={!dateFieldErrors.endDate}
+              disableFocusListener={!dateFieldErrors.endDate}
+              disableTouchListener={!dateFieldErrors.endDate}
+              describeChild
+            >
+              <TextField
+                id="dashboard-endDate"
+                size="small"
+                sx={{ minWidth: 150 }}
+                type="date"
+                label="End"
+                value={endDate}
+                onChange={(e) => { setPreset("CUSTOM"); setEndDate(e.target.value); }}
+                InputLabelProps={{ shrink: true }}
+                error={Boolean(dateFieldErrors.endDate)}
+                helperText={dateFieldErrors.endDate || undefined}
+              />
+            </Tooltip>
             {!isDoctor && !isBillingUser ? (
               <FormControl size="small" sx={{ minWidth: 200 }}>
                 <InputLabel id="dashboard-doctor">Doctor</InputLabel>
@@ -1084,16 +1134,16 @@ export default function DashboardPage() {
                           return (
                             <Box
                               key={item.appointmentId}
-                            sx={{
-                              border: "1px solid",
-                              borderColor: "divider",
-                              borderRadius: 1.5,
-                              p: 1.1,
-                              bgcolor: "background.paper",
-                              overflow: "visible",
-                            }}
-                          >
-                            <Stack spacing={0.9}>
+                              sx={{
+                                border: "1px solid",
+                                borderColor: "divider",
+                                borderRadius: 1.5,
+                                p: 1.1,
+                                bgcolor: "background.paper",
+                                overflow: "visible",
+                              }}
+                            >
+                              <Stack spacing={0.9}>
                                 <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
                                   <Box sx={{ minWidth: 0, flex: 1 }}>
                                     <Typography variant="body1" sx={{ fontWeight: 800, lineHeight: 1.2, overflowWrap: "anywhere" }}>

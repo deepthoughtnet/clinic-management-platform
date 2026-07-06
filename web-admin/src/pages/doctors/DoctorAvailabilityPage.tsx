@@ -34,6 +34,7 @@ import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, WorkflowStrip } from "../../components/compact/CompactUi";
 import DoctorIdentityCard, { type DoctorIdentityCardDoctor } from "../../components/doctor/DoctorIdentityCard";
 import RequiredLabel from "../../components/forms/RequiredLabel";
+import { isActiveDoctorUser, useAutoSelectSingleDoctor } from "../../hooks/useAutoSelectSingleDoctor";
 import {
   createDoctorAvailability,
   createDoctorUnavailability,
@@ -468,6 +469,16 @@ export default function DoctorAvailabilityPage() {
         .sort((a, b) => a.displayName.localeCompare(b.displayName)),
     [users],
   );
+  const activeDoctorOptions = React.useMemo(() => {
+    const activeDoctorIds = new Set(users.filter(isActiveDoctorUser).map((user) => user.appUserId));
+    return doctorOptions.filter((doctor) => activeDoctorIds.has(doctor.appUserId));
+  }, [doctorOptions, users]);
+  useAutoSelectSingleDoctor({
+    doctors: activeDoctorOptions,
+    selectedDoctorId,
+    setSelectedDoctorId,
+    tenantId: auth.tenantId,
+  });
   const doctorMap = React.useMemo(() => new Map([...doctorOptions.map((doctor) => [doctor.appUserId, doctor] as const)]), [doctorOptions]);
   const selectedDoctorOption = React.useMemo<DoctorIdentityOption>(() => {
     if (isDoctor) {
