@@ -148,18 +148,22 @@ function queuePriorityRank(priority: AppointmentPriority | null | undefined) {
   }
 }
 
-function queueTier(status: Appointment["status"]) {
-  switch (status) {
+function queueTier(status: Appointment["status"] | string, isDoctor: boolean) {
+  switch (String(status)) {
+    case "CHECKED_IN":
+      return isDoctor ? 0 : 1;
     case "WAITING":
-      return 0;
+      return isDoctor ? 1 : 0;
     case "BOOKED":
-      return 1;
+      return isDoctor ? 2 : 1;
     case "IN_CONSULTATION":
-      return 2;
+      return isDoctor ? 3 : 2;
     case "COMPLETED":
     case "CANCELLED":
     case "NO_SHOW":
-      return 3;
+      return 4;
+    default:
+      return 4;
   }
 }
 
@@ -170,8 +174,9 @@ function isValidTenantId(tenantId: string | null | undefined) {
   return UUID_PATTERN.test(tenantId) && !tenantId.toUpperCase().startsWith("DEFAULT-ROLES");
 }
 
-function isQueueAppointment(status: Appointment["status"]) {
-  return status === "BOOKED" || status === "WAITING" || status === "IN_CONSULTATION" || status === "COMPLETED" || status === "CANCELLED" || status === "NO_SHOW";
+function isQueueAppointment(status: Appointment["status"] | string, isDoctor: boolean) {
+  const normalized = String(status);
+  return normalized === "BOOKED" || normalized === "WAITING" || normalized === "IN_CONSULTATION" || normalized === "COMPLETED" || normalized === "CANCELLED" || normalized === "NO_SHOW" || (isDoctor && normalized === "CHECKED_IN");
 }
 
 function isActiveQueueAppointment(status: Appointment["status"]) {
@@ -359,6 +364,7 @@ export default function QueuePage() {
   const canBypassPaymentCheckIn = auth.hasPermission("appointment.checkin.payment_bypass");
   const canManageDeskStatus = (isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage");
   const canReorderQueue = (isDoctor || isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage") && Boolean(doctorUserId || isDoctor);
+  const canUseClinicalIntake = isDoctor && auth.hasPermission("clinical.intake.write");
   const tenantReady = isValidTenantId(auth.tenantId);
   const effectiveDoctorId = isDoctor && auth.appUserId ? auth.appUserId : doctorUserId || null;
 
@@ -382,7 +388,7 @@ export default function QueuePage() {
   });
 
   const queueRows = React.useMemo(() => {
-    const filtered = appointments.filter((appointment) => isQueueAppointment(appointment.status));
+    const filtered = appointments.filter((appointment) => isQueueAppointment(appointment.status, isDoctor));
     return [...filtered].sort((left, right) => {
       if (!effectiveDoctorId) {
         const doctorDelta = (left.doctorName || displayDoctorName(users, left.doctorUserId)).localeCompare(right.doctorName || displayDoctorName(users, right.doctorUserId));
@@ -391,7 +397,7 @@ export default function QueuePage() {
         if (timeDelta !== 0) return timeDelta;
         return left.createdAt.localeCompare(right.createdAt);
       }
-      const tierDelta = queueTier(left.status) - queueTier(right.status);
+      const tierDelta = queueTier(left.status, isDoctor) - queueTier(right.status, isDoctor);
       if (tierDelta !== 0) return tierDelta;
       if (left.status === "WAITING" || left.status === "BOOKED") {
         const priorityDelta = queuePriorityRank(left.priority) - queuePriorityRank(right.priority);
@@ -717,6 +723,49 @@ export default function QueuePage() {
     } finally {
       setSavingId(null);
     }
+  };
+
+  const openConsultationWorkspace = (appointment: QueueViewRow) => {
+    if (appointment.consultationId) {
+      navigate(`/consultations/${appointment.consultationId}`);
+      return;
+    }
+    void startConsultation(appointment.id);
+  };
+
+  const resolveDoctorPrimaryAction = (appointment: QueueViewRow) => {
+    const status = String(appointment.status);
+    if (status === "IN_CONSULTATION") {
+      return {
+        key: "continue-consultation",
+        label: "Continue Consultation",
+        variant: "contained" as const,
+        onClick: () => openConsultationWorkspace(appointment),
+      };
+    }
+    if (status === "CHECKED_IN" || status === "WAITING" || status === "BOOKED") {
+      return {
+        key: "start-consultation",
+        label: "Start Consultation",
+        variant: "contained" as const,
+        onClick: () => openConsultationWorkspace(appointment),
+      };
+    }
+    if (status === "COMPLETED" || status === "CANCELLED" || status === "NO_SHOW") {
+      return {
+        key: "view-details",
+        label: appointment.consultationId && status === "COMPLETED" ? "View Summary" : "View Details",
+        variant: "outlined" as const,
+        onClick: () => {
+          if (appointment.consultationId && status === "COMPLETED") {
+            navigate(`/consultations/${appointment.consultationId}`);
+            return;
+          }
+          navigate(`/patients/${appointment.patientId}`);
+        },
+      };
+    }
+    return null;
   };
 
   const reorderableIds = React.useMemo(
@@ -1134,7 +1183,15 @@ export default function QueuePage() {
                         paymentStatus: appointment.paymentState === "DEFERRED" ? "PAID" : appointment.paymentState,
                         billDueAmount: appointment.consultationFeeDueAmount,
                       });
-                      const rowActions = [
+                      const doctorPrimaryAction = isDoctor ? resolveDoctorPrimaryAction(appointment) : null;
+                      type QueueRowAction = {
+                        key: string;
+                        visible: boolean;
+                        button: React.ReactNode;
+                        menuLabel: string;
+                        onMenuClick: () => void;
+                      };
+                      const rowActions: QueueRowAction[] = isDoctor ? [] : [
                         {
                           key: "collect",
                           visible: !isDoctor && canShowCollectFee(appointment),
@@ -1234,7 +1291,7 @@ export default function QueuePage() {
                           onMenuClick: () => void updateStatus(appointment.id, "NO_SHOW"),
                         },
                       ] as const;
-                      const visiblePrimaryActions = rowActions.filter((action) => action.visible).slice(0, 3);
+                      const visiblePrimaryActions: QueueRowAction[] = isDoctor ? [] : rowActions.filter((action) => action.visible).slice(0, 3);
                       return (
                         <TableRow
                           key={appointment.id}
@@ -1352,12 +1409,18 @@ export default function QueuePage() {
                           <TableCell sx={{ width: "12%", pl: 2 }}>{renderPaymentBadge(appointment)}</TableCell>
                           <TableCell align="right" sx={{ width: "17%" }}>
                             <Stack direction="row" spacing={0.5} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
-                              {visiblePrimaryActions.length === 0 ? (
+                              {isDoctor ? (
+                                doctorPrimaryAction ? (
+                                  <Button size="small" variant={doctorPrimaryAction.variant} onClick={doctorPrimaryAction.onClick}>
+                                    {doctorPrimaryAction.label}
+                                  </Button>
+                                ) : null
+                              ) : visiblePrimaryActions.length === 0 ? (
                                 <Button size="small" variant="text" onClick={() => navigate(`/patients/${appointment.patientId}`)}>
                                   Open Patient
                                 </Button>
                               ) : null}
-                              {visiblePrimaryActions.map((action) => action.button)}
+                              {!isDoctor ? visiblePrimaryActions.map((action) => action.button) : null}
                               <IconButton
                                 size="small"
                                 aria-label={`Open actions for ${appointment.patientName || appointment.patientNumber || appointment.id}`}
@@ -1521,6 +1584,15 @@ export default function QueuePage() {
           const row = queueRowsWithFee.find((item) => item.id === rowMenuAppointmentId) || null;
           if (!row) return null;
           const record = getQueueReceiptRecord(row);
+          const rowStatus = String(row.status);
+          if (isDoctor) {
+            const doctorPrimaryAction = resolveDoctorPrimaryAction(row);
+            return [
+              <MenuItem key="open-patient" onClick={() => { navigate(`/patients/${row.patientId}`); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Open Patient</MenuItem>,
+              canUseClinicalIntake && (rowStatus === "BOOKED" || rowStatus === "CHECKED_IN" || rowStatus === "WAITING") ? <MenuItem key="clinical-intake" onClick={() => { setClinicalIntakeAppointment(row); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Clinical Intake</MenuItem> : null,
+              doctorPrimaryAction ? <MenuItem key={doctorPrimaryAction.key} onClick={() => { doctorPrimaryAction.onClick(); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>{doctorPrimaryAction.label}</MenuItem> : null,
+            ].filter(Boolean);
+          }
           const rowVisibleActions = [
             !isDoctor && canShowCollectFee(row),
             !isDoctor && canManageDeskStatus && canBypassPaymentCheckIn && canShowPayAfterConsultation(row),
