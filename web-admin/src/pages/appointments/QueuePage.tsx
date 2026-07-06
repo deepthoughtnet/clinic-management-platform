@@ -59,6 +59,7 @@ import {
   type Receipt,
 } from "../../api/clinicApi";
 import { formatRelativeBookingTime, getNextWorkflowAction, getWorkflowStatusLabel } from "../../components/workflow/workflowHelpers";
+import { staffDisplayName } from "../../utils/staffDisplay";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -907,7 +908,7 @@ export default function QueuePage() {
             Paid {formatMoney(payment.amount)} • {payment.paymentMode}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            Ref: {payment.referenceNumber || "—"} • By {payment.receivedBy || "—"}
+            Ref: {payment.referenceNumber || "—"} • By {staffDisplayName(payment.receivedByLabel, payment.receivedBy)}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             {formatDateTime(payment.paymentDateTime || payment.paymentDate || payment.receiptDate || payment.createdAt)}
@@ -1422,7 +1423,7 @@ export default function QueuePage() {
                 <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Amount</Typography><Typography variant="body2">₹{formatMoney(receiptPanel.payment.amount)}</Typography></Grid>
                 <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Payment mode</Typography><Typography variant="body2">{receiptPanel.payment.paymentMode}</Typography></Grid>
                 <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Reference number</Typography><Typography variant="body2">{receiptPanel.payment.referenceNumber || "—"}</Typography></Grid>
-                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Collected by</Typography><Typography variant="body2">{receiptPanel.payment.receivedBy || "—"}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Collected by</Typography><Typography variant="body2">{staffDisplayName(receiptPanel.payment.receivedByLabel, receiptPanel.payment.receivedBy)}</Typography></Grid>
                 <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Timestamp</Typography><Typography variant="body2">{formatDateTime(receiptPanel.payment.paymentDateTime || receiptPanel.payment.paymentDate || receiptPanel.payment.receiptDate || receiptPanel.payment.createdAt)}</Typography></Grid>
               </Grid>
             </Stack>

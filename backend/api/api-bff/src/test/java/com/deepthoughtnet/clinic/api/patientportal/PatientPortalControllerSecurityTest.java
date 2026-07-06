@@ -19,10 +19,11 @@ class PatientPortalControllerSecurityTest {
     }
 
     @Test
-    void existingStaffPatientControllerSecurityRemainsPermissionBased() throws Exception {
+    void linkedDoctorPatientControllerSecurityAllowsScopedDoctorRead() throws Exception {
         Method getPatient = PatientController.class.getMethod("get", UUID.class);
 
         assertThat(getPatient.getAnnotation(PreAuthorize.class)).isNotNull();
-        assertThat(getPatient.getAnnotation(PreAuthorize.class).value()).isEqualTo("@permissionChecker.hasPermission('patient.read')");
+        assertThat(getPatient.getAnnotation(PreAuthorize.class).value())
+                .isEqualTo("@permissionChecker.hasPermission('patient.read') or @doctorAssignmentSecurityService.isDoctor()");
     }
 }

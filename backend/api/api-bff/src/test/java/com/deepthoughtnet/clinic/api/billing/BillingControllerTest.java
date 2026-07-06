@@ -7,6 +7,9 @@ import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
+import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
+import com.deepthoughtnet.clinic.billing.service.model.PaymentCommand;
 import com.deepthoughtnet.clinic.billing.service.model.PatientBillingContextRecord;
 import com.deepthoughtnet.clinic.billing.service.model.PendingConsultationFeeRecord;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
@@ -100,5 +103,49 @@ class BillingControllerTest {
         assertThat(response.totalDueAmount()).isEqualByComparingTo("800.00");
         assertThat(response.pendingConsultationFees()).hasSize(1);
         assertThat(response.pendingConsultationFees().get(0).doctorName()).isEqualTo("Dr Demo");
+    }
+
+    @Test
+    void addPaymentReturnsReceivedByLabelInsteadOfUuid() {
+        UUID tenantId = UUID.randomUUID();
+        UUID actor = UUID.randomUUID();
+        UUID billId = UUID.randomUUID();
+        UUID receivedBy = UUID.randomUUID();
+        BillingService billingService = mock(BillingService.class);
+        NotificationActionService notificationActionService = mock(NotificationActionService.class);
+        BillingController controller = new BillingController(billingService, notificationActionService);
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actor, "sub", Set.of("BILLING_USER"), "BILLING_USER", "cid"));
+        PaymentRecord payment = new PaymentRecord(
+                UUID.randomUUID(),
+                tenantId,
+                billId,
+                LocalDate.of(2026, 7, 6),
+                OffsetDateTime.now(),
+                new BigDecimal("600.00"),
+                PaymentMode.CASH,
+                "REF-123",
+                "Collected at queue",
+                receivedBy,
+                UUID.randomUUID(),
+                "RCPT-001",
+                LocalDate.of(2026, 7, 6),
+                OffsetDateTime.now()
+        );
+        when(billingService.recordPayment(org.mockito.ArgumentMatchers.eq(tenantId), org.mockito.ArgumentMatchers.eq(billId), org.mockito.ArgumentMatchers.any(PaymentCommand.class), org.mockito.ArgumentMatchers.eq(actor)))
+                .thenReturn(payment);
+        when(billingService.receivedByDisplayLabel(tenantId, receivedBy)).thenReturn("Priya Sharma");
+
+        var response = controller.addPayment(billId, new com.deepthoughtnet.clinic.api.billing.dto.PaymentRequest(
+                LocalDate.of(2026, 7, 6),
+                OffsetDateTime.now(),
+                new BigDecimal("600.00"),
+                PaymentMode.CASH,
+                "REF-123",
+                "Collected at queue",
+                receivedBy
+        ));
+
+        assertThat(response.receivedBy()).isEqualTo(receivedBy.toString());
+        assertThat(response.receivedByLabel()).isEqualTo("Priya Sharma");
     }
 }

@@ -1,12 +1,15 @@
 package com.deepthoughtnet.clinic.api.tenant;
 
 import com.deepthoughtnet.clinic.api.clinic.dto.ClinicUserResponse;
+import com.deepthoughtnet.clinic.api.tenant.dto.UpdateTenantUserProfileRequest;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.CreateTenantUserCommand;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
+import com.deepthoughtnet.clinic.identity.service.model.UpdateTenantUserProfileCommand;
+import com.deepthoughtnet.clinic.platform.security.Roles;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.OffsetDateTime;
@@ -35,6 +38,23 @@ import jakarta.validation.constraints.Size;
 @RequestMapping("/api/tenant/users")
 public class TenantUserManagementController {
     private static final Set<String> CLINIC_ASSIGNABLE_ROLES = Set.of(
+            "CLINIC_ADMIN",
+            "DOCTOR",
+            "RECEPTIONIST",
+            "BILLING_USER",
+            "AUDITOR",
+            "SERVICE_AGENT",
+            "LAB_TECHNICIAN",
+            "LAB_ASSISTANT",
+            "LAB_FRONT_DESK",
+            "PHARMACIST",
+            "PHARMACY_INVENTORY_MANAGER",
+            "PHARMACY_POS_USER",
+            "LAB_APPROVER"
+    );
+    private static final Set<String> PLATFORM_ASSIGNABLE_TENANT_ROLES = Set.of(
+            "TENANT_ADMIN",
+            "ADMIN",
             "CLINIC_ADMIN",
             "DOCTOR",
             "RECEPTIONIST",
@@ -162,7 +182,46 @@ public class TenantUserManagementController {
         return toResponse(record);
     }
 
+    @PutMapping("/{appUserId}/profile")
+    @PreAuthorize("@permissionChecker.hasAnyPermission('tenant.users.manage','user.manage')")
+    public ClinicUserResponse updateProfile(@PathVariable UUID appUserId, @Valid @RequestBody UpdateTenantUserProfileRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        enforceUserEditBoundary(appUserId);
+        String normalizedRole = null;
+        if (StringUtils.hasText(request.role())) {
+            normalizedRole = normalizeRole(request.role());
+            enforceRoleAssignmentBoundary(normalizedRole);
+        }
+        TenantUserRecord record = tenantUserManagementService.updateUserProfile(new UpdateTenantUserProfileCommand(
+                tenantId,
+                appUserId,
+                request.displayName(),
+                request.employeeCode(),
+                request.mobile(),
+                request.department(),
+                normalizedRole,
+                request.active()
+        ));
+        ensureDoctorCalendarForCurrentRole(tenantId, record.appUserId(), record.membershipRole(), "ACTIVE".equalsIgnoreCase(record.membershipStatus()), "tenant.user.profile.updated");
+        audit("tenant.user.profile.updated", record.appUserId(), "Updated tenant user profile", Map.of(
+                "email", record.email(),
+                "displayName", record.displayName(),
+                "role", record.membershipRole(),
+                "active", "ACTIVE".equalsIgnoreCase(record.membershipStatus()),
+                "employeeCode", record.employeeCode() == null ? "" : record.employeeCode(),
+                "mobile", record.mobile() == null ? "" : record.mobile(),
+                "department", record.department() == null ? "" : record.department()
+        ));
+        return toResponse(record);
+    }
+
     private void enforceRoleAssignmentBoundary(String role) {
+        if (isPlatformAdminActor()) {
+            if (!PLATFORM_ASSIGNABLE_TENANT_ROLES.contains(role)) {
+                throw new IllegalArgumentException("Role not allowed for platform admin in tenant context: " + role);
+            }
+            return;
+        }
         String actorRole = RequestContextHolder.require().tenantRole();
         if (actorRole == null) {
             throw new IllegalArgumentException("Missing tenant role in request context");
@@ -170,6 +229,34 @@ public class TenantUserManagementController {
         if (!CLINIC_ASSIGNABLE_ROLES.contains(role)) {
             throw new IllegalArgumentException("Role not allowed for clinic admin: " + role);
         }
+    }
+
+    private void enforceUserEditBoundary(UUID targetAppUserId) {
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        if (actorAppUserId == null || targetAppUserId == null) {
+            return;
+        }
+        if (isPlatformAdminActor()) {
+            return;
+        }
+        String actorRole = normalizeNullableRole(RequestContextHolder.require().tenantRole());
+        if (actorAppUserId.equals(targetAppUserId) && isTenantAdministratorRole(actorRole)) {
+            throw new IllegalArgumentException("You cannot edit your own user details on Users & Roles.");
+        }
+    }
+
+    private boolean isPlatformAdminActor() {
+        return RequestContextHolder.require().tokenRoles().stream()
+                .map(role -> role == null ? null : role.trim().toUpperCase(Locale.ROOT))
+                .anyMatch(Roles.PLATFORM_ADMIN::equals);
+    }
+
+    private String normalizeNullableRole(String role) {
+        return role == null ? null : role.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private boolean isTenantAdministratorRole(String role) {
+        return Roles.CLINIC_ADMIN.equals(role) || Roles.TENANT_ADMIN.equals(role) || Roles.ADMIN.equals(role);
     }
 
     private String normalizeRole(String role) {

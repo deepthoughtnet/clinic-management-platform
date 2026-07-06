@@ -28,9 +28,9 @@ class DoctorProfileServiceTest {
         repository = Mockito.mock(DoctorProfileRepository.class);
         storageService = Mockito.mock(ObjectStorageService.class);
         when(storageService.buildDocumentStorageKey(any(), any())).thenReturn("tenants/test/documents/2026/07/photo.webp");
-        when(storageService.generatePresignedDownloadUrl(any(), any())).thenReturn("https://example.test/photo");
         service = new DoctorProfileService(repository, storageService);
         when(repository.save(any(DoctorProfileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(repository.saveAndFlush(any(DoctorProfileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     @Test
@@ -169,11 +169,25 @@ class DoctorProfileServiceTest {
                 new byte[] {1, 2, 3}
         );
 
-        assertThat(result.photoUrl()).isEqualTo("https://example.test/photo");
+        assertThat(result.photoUrl()).startsWith("/api/doctors/" + doctorUserId + "/photo?v=");
         assertThat(result.photoFileName()).isEqualTo("profile.webp");
         assertThat(result.photoMimeType()).isEqualTo("image/webp");
         assertThat(result.photoSizeBytes()).isEqualTo(2048L);
         verify(storageService).putObject(any(), any(), any());
         verify(storageService).statObjectSize(any());
+    }
+
+    @Test
+    void findByDoctorUserIdRepairsMissingPhotoSize() {
+        DoctorProfileEntity existing = DoctorProfileEntity.create(tenantId, doctorUserId);
+        existing.updatePhoto("tenants/test/documents/2026/07/photo.webp", "image/webp", null, "profile.webp");
+        when(repository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(existing));
+        when(storageService.statObjectSize("tenants/test/documents/2026/07/photo.webp")).thenReturn(4096L);
+
+        var result = service.findByDoctorUserIdWithPhotoRepair(tenantId, doctorUserId).orElseThrow();
+
+        assertThat(result.photoUrl()).startsWith("/api/doctors/" + doctorUserId + "/photo?v=");
+        assertThat(result.photoSizeBytes()).isEqualTo(4096L);
+        verify(repository).saveAndFlush(existing);
     }
 }

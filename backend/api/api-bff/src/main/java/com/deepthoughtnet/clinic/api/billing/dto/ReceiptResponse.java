@@ -12,6 +12,7 @@ public record ReceiptResponse(
         String paymentId,
         LocalDate receiptDate,
         BigDecimal amount,
+        String receivedByLabel,
         OffsetDateTime createdAt
 ) {
 }

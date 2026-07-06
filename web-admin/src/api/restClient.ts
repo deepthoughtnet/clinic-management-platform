@@ -130,6 +130,11 @@ function buildMultipartHeaders(path: string, opts?: ApiOpts): HeadersInit {
 
 async function parseResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
+    if (res.status === 413) {
+      throw new ApiClientError("Image is too large. Please upload an image below 10 MB.", {
+        status: res.status,
+      });
+    }
     const bodyText = await res.text();
     let payload: ApiErrorResponse | null = null;
     if (bodyText) {
@@ -214,6 +219,18 @@ export async function httpGetText(path: string, opts?: ApiOpts): Promise<string>
     await parseResponse<unknown>(res);
   }
   return res.text();
+}
+
+export async function fetchAuthenticatedBlob(path: string, opts?: ApiOpts): Promise<Blob> {
+  const res = await fetch(`${baseUrl(opts?.apiBase)}${path}`, {
+    method: "GET",
+    headers: buildHeaders(path, opts, false),
+    signal: opts?.signal,
+  });
+  if (!res.ok) {
+    await parseResponse<unknown>(res);
+  }
+  return res.blob();
 }
 
 export async function httpPut<T>(path: string, body: unknown, opts?: ApiOpts): Promise<T> {

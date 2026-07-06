@@ -1088,6 +1088,7 @@ export type Payment = {
   referenceNumber: string | null;
   notes: string | null;
   receivedBy?: string | null;
+  receivedByLabel?: string | null;
   receiptId: string | null;
   receiptNumber: string | null;
   receiptDate: string | null;
@@ -1137,6 +1138,7 @@ export type PaymentLedgerRow = {
   referenceNumber: string | null;
   notes: string | null;
   receivedBy: string | null;
+  receivedByLabel?: string | null;
   receiptId: string | null;
   receiptNumber: string | null;
   receiptDate: string | null;
@@ -1205,6 +1207,7 @@ export type Receipt = {
   paymentId: string;
   receiptDate: string;
   amount: number;
+  receivedByLabel?: string | null;
   createdAt: string;
 };
 
@@ -2619,6 +2622,24 @@ export async function updateTenantUser(token: string, tenantId: string, appUserI
   role?: string | null;
 }) {
   return httpPut<ClinicUser>(`/api/tenant/users/${appUserId}`, body, { token, tenantId });
+}
+
+export async function updateTenantUserProfile(token: string, tenantId: string, appUserId: string, body: {
+  displayName: string;
+  employeeCode?: string | null;
+  mobile?: string | null;
+  department?: string | null;
+  role?: string | null;
+  active: boolean;
+}) {
+  return httpPut<ClinicUser>(`/api/tenant/users/${appUserId}/profile`, {
+    displayName: body.displayName,
+    employeeCode: body.employeeCode ?? null,
+    mobile: body.mobile ?? null,
+    department: body.department ?? null,
+    role: body.role ?? null,
+    active: body.active,
+  }, { token, tenantId });
 }
 
 export async function assignTenantUserRole(token: string, tenantId: string, appUserId: string, role: string) {

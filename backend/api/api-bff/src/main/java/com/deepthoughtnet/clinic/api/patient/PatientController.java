@@ -110,7 +110,7 @@ public class PatientController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('patient.read') or @doctorAssignmentSecurityService.isDoctor()")
     public PatientDetailResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         String actorRole = currentTenantRole();
@@ -139,7 +139,7 @@ public class PatientController {
     }
 
     @GetMapping("/{patientId}/consultations")
-    @PreAuthorize("@permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('patient.read') or @doctorAssignmentSecurityService.isDoctor()")
     public List<ConsultationResponse> listConsultations(@PathVariable UUID patientId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requirePatientAccess(tenantId, patientId);
@@ -147,7 +147,7 @@ public class PatientController {
     }
 
     @GetMapping("/{patientId}/prescriptions")
-    @PreAuthorize("@permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('patient.read') or @doctorAssignmentSecurityService.isDoctor()")
     public List<com.deepthoughtnet.clinic.api.prescription.dto.PrescriptionResponse> listPrescriptions(@PathVariable UUID patientId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         doctorAssignmentSecurityService.requirePatientAccess(tenantId, patientId);

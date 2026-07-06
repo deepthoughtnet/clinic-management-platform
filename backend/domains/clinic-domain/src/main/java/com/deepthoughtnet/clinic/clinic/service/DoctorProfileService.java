@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.clinic.service;
 import com.deepthoughtnet.clinic.clinic.db.DoctorProfileEntity;
 import com.deepthoughtnet.clinic.clinic.db.DoctorProfileRepository;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
+import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfilePhotoRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileUpsertCommand;
 import com.deepthoughtnet.clinic.platform.storage.ObjectStorageService;
 import java.math.BigDecimal;
@@ -120,7 +121,8 @@ public class DoctorProfileService {
                 throw new IllegalStateException("Stored doctor profile photo is empty.");
             }
             entity.updatePhoto(storageKey, normalizedContentType, storedSizeBytes, fileName);
-            DoctorProfileRecord saved = toRecord(doctorProfileRepository.save(entity));
+            DoctorProfileEntity savedEntity = doctorProfileRepository.saveAndFlush(entity);
+            DoctorProfileRecord saved = toRecord(savedEntity);
             if (StringUtils.hasText(oldKey) && !oldKey.equals(storageKey)) {
                 storageService.deleteObjectQuietly(oldKey);
             }
@@ -145,11 +147,40 @@ public class DoctorProfileService {
         }
     }
 
+    @Transactional
+    public Optional<DoctorProfileRecord> findByDoctorUserIdWithPhotoRepair(UUID tenantId, UUID doctorUserId) {
+        requireTenant(tenantId);
+        requireDoctor(doctorUserId);
+        return doctorProfileRepository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)
+                .map(this::repairPhotoMetadataIfNeeded)
+                .map(this::toRecord);
+    }
+
+    @Transactional(readOnly = true)
+    public DoctorProfilePhotoRecord downloadPhoto(UUID tenantId, UUID doctorUserId) {
+        requireTenant(tenantId);
+        requireDoctor(doctorUserId);
+        DoctorProfileEntity entity = doctorProfileRepository.findByTenantIdAndDoctorUserId(tenantId, doctorUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Doctor profile not found for this clinic."));
+        if (!isValidStorageKey(entity.getPhotoStorageKey())) {
+            throw new IllegalArgumentException("Doctor profile photo is not available.");
+        }
+        byte[] bytes = storageService.getObjectBytes(entity.getPhotoStorageKey());
+        if (bytes == null || bytes.length == 0) {
+            throw new IllegalStateException("Doctor profile photo content is empty.");
+        }
+        String contentType = normalizePhotoContentType(entity.getPhotoContentType(), entity.getPhotoOriginalFilename());
+        return new DoctorProfilePhotoRecord(
+                StringUtils.hasText(entity.getPhotoOriginalFilename()) ? entity.getPhotoOriginalFilename() : "doctor-photo",
+                StringUtils.hasText(contentType) ? contentType : "application/octet-stream",
+                bytes.length,
+                bytes
+        );
+    }
+
     private DoctorProfileRecord toRecord(DoctorProfileEntity entity) {
         List<String> specializations = parseSpecializations(entity.getSpecializationsJson(), entity.getSpecialization());
-        String photoUrl = isValidStorageKey(entity.getPhotoStorageKey())
-                ? storageService.generatePresignedDownloadUrl(entity.getPhotoStorageKey(), Duration.ofHours(1))
-                : null;
+        String photoUrl = buildPhotoUrl(entity);
         return new DoctorProfileRecord(
                 entity.getId(),
                 entity.getTenantId(),
@@ -176,6 +207,45 @@ public class DoctorProfileService {
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
+    }
+
+    private DoctorProfileEntity repairPhotoMetadataIfNeeded(DoctorProfileEntity entity) {
+        if (!isValidStorageKey(entity.getPhotoStorageKey())) {
+            return entity;
+        }
+        boolean needsSizeRepair = entity.getPhotoSizeBytes() == null || entity.getPhotoSizeBytes() <= 0L;
+        boolean needsContentTypeRepair = !StringUtils.hasText(entity.getPhotoContentType()) && StringUtils.hasText(entity.getPhotoOriginalFilename());
+        if (!needsSizeRepair && !needsContentTypeRepair) {
+            return entity;
+        }
+        if (needsSizeRepair) {
+            long sizeBytes = storageService.statObjectSize(entity.getPhotoStorageKey());
+            if (sizeBytes <= 0L) {
+                throw new IllegalStateException("Stored doctor profile photo is empty.");
+            }
+            entity.updatePhoto(
+                    entity.getPhotoStorageKey(),
+                    normalizePhotoContentType(entity.getPhotoContentType(), entity.getPhotoOriginalFilename()),
+                    sizeBytes,
+                    entity.getPhotoOriginalFilename()
+            );
+            return doctorProfileRepository.saveAndFlush(entity);
+        }
+        entity.updatePhoto(
+                entity.getPhotoStorageKey(),
+                normalizePhotoContentType(entity.getPhotoContentType(), entity.getPhotoOriginalFilename()),
+                entity.getPhotoSizeBytes(),
+                entity.getPhotoOriginalFilename()
+        );
+        return doctorProfileRepository.saveAndFlush(entity);
+    }
+
+    private String buildPhotoUrl(DoctorProfileEntity entity) {
+        if (!isValidStorageKey(entity.getPhotoStorageKey())) {
+            return null;
+        }
+        long version = entity.getUpdatedAt() == null ? 0L : entity.getUpdatedAt().toInstant().toEpochMilli();
+        return "/api/doctors/%s/photo?v=%d".formatted(entity.getDoctorUserId(), version);
     }
 
     private void requireTenant(UUID tenantId) {

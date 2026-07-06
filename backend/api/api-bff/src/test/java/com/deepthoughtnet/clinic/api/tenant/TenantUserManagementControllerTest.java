@@ -12,8 +12,10 @@ import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.appointment.service.AppointmentService;
+import com.deepthoughtnet.clinic.api.tenant.dto.UpdateTenantUserProfileRequest;
 import com.deepthoughtnet.clinic.identity.service.model.CreateTenantUserCommand;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
+import com.deepthoughtnet.clinic.identity.service.model.UpdateTenantUserProfileCommand;
 import com.deepthoughtnet.clinic.platform.audit.AuditEventPublisher;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
@@ -192,6 +194,52 @@ class TenantUserManagementControllerTest {
 
         controller.resetPassword(appUserId, new TenantUserManagementController.ResetPasswordRequest("Temp@1234", true));
 
+        verify(auditEventPublisher).record(any());
+    }
+
+    @Test
+    void clinicAdminCannotEditOwnUserDetails() {
+        UUID selfAppUserId = RequestContextHolder.require().appUserId();
+
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> controller.updateProfile(selfAppUserId, new UpdateTenantUserProfileRequest(
+                        "Clinic Admin",
+                        "EMP-001",
+                        "9876543210",
+                        "Administration",
+                        "CLINIC_ADMIN",
+                        true
+                ))
+        );
+
+        assertEquals("You cannot edit your own user details on Users & Roles.", ex.getMessage());
+        verify(tenantUserManagementService, never()).updateUserProfile(any(UpdateTenantUserProfileCommand.class));
+    }
+
+    @Test
+    void platformAdminCanEditTenantAdminUser() {
+        UUID appUserId = UUID.randomUUID();
+        RequestContextHolder.set(new RequestContext(
+                TenantId.of(tenantId),
+                UUID.randomUUID(),
+                "platform-admin-sub",
+                Set.of("PLATFORM_ADMIN"),
+                "CLINIC_ADMIN",
+                "test-correlation"
+        ));
+        when(tenantUserManagementService.updateUserProfile(any())).thenReturn(record("TENANT_ADMIN"));
+
+        controller.updateProfile(appUserId, new UpdateTenantUserProfileRequest(
+                "Tenant Admin",
+                "EMP-002",
+                "9876543210",
+                "Administration",
+                "TENANT_ADMIN",
+                true
+        ));
+
+        verify(tenantUserManagementService).updateUserProfile(any(UpdateTenantUserProfileCommand.class));
         verify(auditEventPublisher).record(any());
     }
 

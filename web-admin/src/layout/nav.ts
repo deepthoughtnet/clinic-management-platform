@@ -112,7 +112,7 @@ export const NAV_GROUPS: NavGroup[] = [
     requiresTenant: true,
     items: [
       { key: "settings-profile", label: "Clinic Profile", path: "/settings/clinic-profile", requiresTenant: true, rolesAny: ["CLINIC_ADMIN"] },
-      { key: "settings-users-roles", label: "Users & Roles", path: "/settings/users-roles", requiresTenant: true, rolesAny: ["CLINIC_ADMIN"] },
+      { key: "settings-users-roles", label: "Users & Roles", path: "/settings/users-roles", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "TENANT_ADMIN", "ADMIN", "PLATFORM_ADMIN"] },
       { key: "templates", label: "Templates", path: "/admin/templates", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "notification-settings", label: "Notification Settings", path: "/admin/notification-settings", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },
       { key: "integrations", label: "Integrations", path: "/admin/integrations", requiresTenant: true, rolesAny: ["CLINIC_ADMIN", "AUDITOR", "PLATFORM_ADMIN", "PLATFORM_TENANT_SUPPORT"] },

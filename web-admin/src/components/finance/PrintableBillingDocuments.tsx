@@ -28,6 +28,7 @@ import type {
   Receipt,
 } from "../../api/clinicApi";
 import { branding } from "../../branding";
+import { staffDisplayName } from "../../utils/staffDisplay";
 
 type BasePrintData = {
   clinicProfile: ClinicProfile | null;
@@ -106,12 +107,19 @@ function clinicTitle(profile: ClinicProfile | null) {
   return profile.displayName || profile.clinicName || "Clinic";
 }
 
-function appointmentSummary(appointment: Appointment | null, consultation: Consultation | null) {
+function doctorDisplayName(name: string | null | undefined) {
+  if (!name || name === "—") return "—";
+  const trimmed = name.trim();
+  if (/^dr\.?/i.test(trimmed)) return trimmed;
+  return `Dr. ${trimmed}`;
+}
+
+function appointmentSummary(appointment: Appointment | null, consultation: Consultation | null, includeStatus = true) {
   if (!appointment && !consultation) return "—";
   const date = dateText(appointment?.appointmentDate || consultation?.completedAt || consultation?.createdAt || null);
   const time = timeText(appointment?.appointmentTime || null);
-  const doctor = appointment?.doctorName || consultation?.doctorName || "—";
-  const status = appointment?.status || consultation?.status || null;
+  const doctor = doctorDisplayName(appointment?.doctorName || consultation?.doctorName || "—");
+  const status = includeStatus ? appointment?.status || consultation?.status || null : null;
   const parts = [date, time, doctor, status].filter((part) => part && part !== "—");
   return parts.length > 0 ? parts.join(" · ") : "—";
 }
@@ -144,7 +152,6 @@ function receiptSummaryRows(receipt: Receipt | null, payment: Payment | PaymentL
     { label: "Payment Mode", value: text(payment?.paymentMode) },
     { label: "Amount Paid", value: currency(amountPaid), emphasize: true },
     { label: "Remaining Due", value: currency(remainingDue), emphasize: true },
-    { label: "Received By", value: text(payment?.receivedBy) },
   ];
 }
 
@@ -527,11 +534,10 @@ export function ReceiptPrintDialog({
         { label: "Patient", value: text(data.patient ? `${data.patient.firstName} ${data.patient.lastName}`.trim() : data.bill.patientName) },
         { label: "Mobile", value: text(data.patient?.mobile) },
         { label: "Bill No", value: text(data.bill.billNumber) },
-        { label: "Appointment", value: appointmentSummary(data.appointment, data.consultation) },
+        { label: "Appointment", value: appointmentSummary(data.appointment, data.consultation, false) },
         { label: "Payment Mode", value: text(data.payment?.paymentMode) },
         { label: "Amount Paid", value: currency(data.receipt?.amount ?? data.payment?.amount ?? 0) },
         { label: "Remaining Due", value: currency(data.bill.dueAmount) },
-        { label: "Received By", value: text(data.payment?.receivedBy) },
       ]
     : [];
 
@@ -600,6 +606,9 @@ export function ReceiptPrintDialog({
                       <strong>Payment notes:</strong> {data.payment.notes}
                     </Typography>
                   ) : null}
+                  <Typography variant="body2">
+                    <strong>Received by:</strong> {staffDisplayName(data.payment?.receivedByLabel, data.payment?.receivedBy)}
+                  </Typography>
                 </Stack>
               </Box>
 

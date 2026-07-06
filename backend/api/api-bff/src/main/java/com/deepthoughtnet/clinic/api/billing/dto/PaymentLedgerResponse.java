@@ -24,6 +24,7 @@ public record PaymentLedgerResponse(
         String referenceNumber,
         String notes,
         String receivedBy,
+        String receivedByLabel,
         String receiptId,
         String receiptNumber,
         LocalDate receiptDate,

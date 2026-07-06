@@ -925,7 +925,7 @@ export default function DashboardPage() {
                                 <Chip size="small" variant="outlined" label={`Next: ${getNextWorkflowAction({ status: item.status, paymentStatus: item.status === "BOOKED" ? "PAYMENT_PENDING" : item.status === "WAITING" ? "PAID" : undefined }).label}`} sx={{ height: 20, "& .MuiChip-label": { px: 0.7 } }} />
                               </Stack>
                               <Box sx={{ mt: 0.75 }}>
-                                <PatientJourneyTracker context={{ status: item.status }} compact title="Journey" />
+                                <PatientJourneyTracker context={{ status: item.status }} compact title="Patient Journey" />
                               </Box>
                             </Box>
                             <Stack direction="row" spacing={0.75} flexWrap="wrap" alignItems="center">

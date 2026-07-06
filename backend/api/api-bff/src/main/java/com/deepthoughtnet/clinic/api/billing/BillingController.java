@@ -339,6 +339,7 @@ public class BillingController {
                 record.referenceNumber(),
                 record.notes(),
                 record.receivedBy() == null ? null : record.receivedBy().toString(),
+                billingService.receivedByDisplayLabel(record.tenantId(), record.receivedBy()),
                 record.receiptId() == null ? null : record.receiptId().toString(),
                 record.receiptNumber(),
                 record.receiptDate(),
@@ -427,6 +428,13 @@ public class BillingController {
     }
 
     private ReceiptResponse toReceiptResponse(ReceiptRecord record) {
+        UUID tenantId = record.tenantId();
+        String receivedByLabel = "Staff User";
+        if (tenantId != null && record.paymentId() != null) {
+            receivedByLabel = billingService.findPayment(tenantId, record.paymentId())
+                    .map(payment -> billingService.receivedByDisplayLabel(tenantId, payment.receivedBy()))
+                    .orElse("Staff User");
+        }
         return new ReceiptResponse(
                 record.id() == null ? null : record.id().toString(),
                 record.tenantId() == null ? null : record.tenantId().toString(),
@@ -435,6 +443,7 @@ public class BillingController {
                 record.paymentId() == null ? null : record.paymentId().toString(),
                 record.receiptDate(),
                 record.amount(),
+                receivedByLabel,
                 record.createdAt()
         );
     }
@@ -455,6 +464,7 @@ public class BillingController {
                 payment.referenceNumber(),
                 payment.notes(),
                 payment.receivedBy() == null ? null : payment.receivedBy().toString(),
+                billingService.receivedByDisplayLabel(payment.tenantId(), payment.receivedBy()),
                 payment.receiptId() == null ? null : payment.receiptId().toString(),
                 payment.receiptNumber(),
                 payment.receiptDate(),

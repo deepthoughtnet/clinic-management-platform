@@ -16,6 +16,7 @@ public record PaymentResponse(
         String referenceNumber,
         String notes,
         String receivedBy,
+        String receivedByLabel,
         String receiptId,
         String receiptNumber,
         LocalDate receiptDate,

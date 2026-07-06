@@ -106,6 +106,8 @@ export default function PatientDetailPage() {
   const params = useParams();
   const navigate = useNavigate();
   const id = params.id || "";
+  const tenantRole = (auth.tenantRole || "").toUpperCase();
+  const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
   const [detail, setDetail] = React.useState<PatientDetail | null>(null);
   const [bills, setBills] = React.useState<Bill[]>([]);
   const [vaccinations, setVaccinations] = React.useState<PatientVaccination[]>([]);
@@ -129,7 +131,6 @@ export default function PatientDetailPage() {
   const canUploadClinicalDocument = auth.hasPermission("clinic.document.upload");
   const canReviewAiExtraction = auth.hasPermission("consultation.update") || auth.hasPermission("consultation.complete");
   const canOpenConsultationWorkspace = (auth.tenantRole || "").toUpperCase() === "DOCTOR" && auth.hasPermission("consultation.read");
-  const tenantRole = (auth.tenantRole || "").toUpperCase();
 
   React.useEffect(() => {
     if (!viewerDocument) {
@@ -153,13 +154,17 @@ export default function PatientDetailPage() {
       setLoading(true);
       setError(null);
       try {
-        const [value, billRows, vaccinationRows, notificationRows, documentRows, timelineRows] = await Promise.all([
+        const [value, documentRows, timelineRows] = await Promise.all([
           getPatient(auth.accessToken, auth.tenantId, id),
-          searchBills(auth.accessToken, auth.tenantId, { patientId: id }),
-          getPatientVaccinations(auth.accessToken, auth.tenantId, id),
-          getPatientNotifications(auth.accessToken, auth.tenantId, id),
           getPatientDocuments(auth.accessToken, auth.tenantId, id),
           getPatientTimeline(auth.accessToken, auth.tenantId, id),
+        ]);
+        const [billRows, vaccinationRows, notificationRows] = await Promise.all([
+          isDoctor ? Promise.resolve([] as Bill[]) : searchBills(auth.accessToken, auth.tenantId, { patientId: id }),
+          isDoctor
+            ? getPatientVaccinations(auth.accessToken, auth.tenantId, id).catch(() => [] as PatientVaccination[])
+            : getPatientVaccinations(auth.accessToken, auth.tenantId, id),
+          isDoctor ? Promise.resolve([] as NotificationHistory[]) : getPatientNotifications(auth.accessToken, auth.tenantId, id),
         ]);
         if (!cancelled) {
           setDetail(value);
@@ -183,7 +188,15 @@ export default function PatientDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken, auth.tenantId, id]);
+  }, [auth.accessToken, auth.tenantId, id, isDoctor]);
+
+  const handleBack = React.useCallback(() => {
+    if (isDoctor && window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    navigate(isDoctor ? "/dashboard" : "/patients");
+  }, [isDoctor, navigate]);
 
   const refreshDocuments = async () => {
     if (!auth.accessToken || !auth.tenantId || !id) return;
@@ -305,7 +318,6 @@ export default function PatientDetailPage() {
 
   const patient = detail.patient;
   const canEditPatient = patient.canEdit;
-  const isDoctor = auth.rolesUpper.includes("DOCTOR") || tenantRole === "DOCTOR";
   const canCreateAppointment = !isDoctor;
   const editBlockedMessage = tenantRole === "RECEPTIONIST"
     ? "Patient details can be edited by Clinic Admin after registration day."
@@ -330,7 +342,7 @@ export default function PatientDetailPage() {
           </Typography>
         </Box>
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-          <Button variant="outlined" onClick={() => navigate("/patients")}>Back</Button>
+          <Button variant="outlined" onClick={handleBack}>Back</Button>
           <Tooltip title={canEditPatient ? undefined : editBlockedMessage}>
             <span>
               <Button variant="outlined" onClick={() => navigate(`/patients/${patient.id}/edit`)} disabled={!canEditPatient}>Edit</Button>
@@ -567,46 +579,48 @@ export default function PatientDetailPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent>
-          <Stack spacing={2}>
-            <Typography variant="h6" sx={{ fontWeight: 800 }}>Bills</Typography>
-            {bills.length === 0 ? (
-              <Alert severity="info">No bills were found for this patient.</Alert>
-            ) : (
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Bill</TableCell>
-                    <TableCell>Date</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell align="right">Total</TableCell>
-                    <TableCell align="right">Paid</TableCell>
-                    <TableCell align="right">Due</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {bills.map((bill) => (
-                    <TableRow key={bill.id}>
-                      <TableCell>
-                        <Stack spacing={0.25}>
-                          <Typography variant="body2" sx={{ fontWeight: 700 }}>{bill.billNumber}</Typography>
-                          <Typography variant="caption" color="text.secondary">{bill.notes || "No notes"}</Typography>
-                        </Stack>
-                      </TableCell>
-                      <TableCell>{bill.billDate}</TableCell>
-                      <TableCell><Chip size="small" label={bill.status} color={bill.status === "PAID" ? "success" : bill.status === "PARTIALLY_PAID" ? "warning" : bill.status === "CANCELLED" ? "default" : "info"} /></TableCell>
-                      <TableCell align="right">{bill.totalAmount.toFixed(2)}</TableCell>
-                      <TableCell align="right">{bill.paidAmount.toFixed(2)}</TableCell>
-                      <TableCell align="right">{bill.dueAmount.toFixed(2)}</TableCell>
+      {!isDoctor ? (
+        <Card>
+          <CardContent>
+            <Stack spacing={2}>
+              <Typography variant="h6" sx={{ fontWeight: 800 }}>Bills</Typography>
+              {bills.length === 0 ? (
+                <Alert severity="info">No bills were found for this patient.</Alert>
+              ) : (
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Bill</TableCell>
+                      <TableCell>Date</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell align="right">Total</TableCell>
+                      <TableCell align="right">Paid</TableCell>
+                      <TableCell align="right">Due</TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </Stack>
-        </CardContent>
-      </Card>
+                  </TableHead>
+                  <TableBody>
+                    {bills.map((bill) => (
+                      <TableRow key={bill.id}>
+                        <TableCell>
+                          <Stack spacing={0.25}>
+                            <Typography variant="body2" sx={{ fontWeight: 700 }}>{bill.billNumber}</Typography>
+                            <Typography variant="caption" color="text.secondary">{bill.notes || "No notes"}</Typography>
+                          </Stack>
+                        </TableCell>
+                        <TableCell>{bill.billDate}</TableCell>
+                        <TableCell><Chip size="small" label={bill.status} color={bill.status === "PAID" ? "success" : bill.status === "PARTIALLY_PAID" ? "warning" : bill.status === "CANCELLED" ? "default" : "info"} /></TableCell>
+                        <TableCell align="right">{bill.totalAmount.toFixed(2)}</TableCell>
+                        <TableCell align="right">{bill.paidAmount.toFixed(2)}</TableCell>
+                        <TableCell align="right">{bill.dueAmount.toFixed(2)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </Stack>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardContent>
@@ -714,39 +728,41 @@ export default function PatientDetailPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent>
-          <Stack spacing={2}>
-            <Typography variant="h6" sx={{ fontWeight: 800 }}>Notifications</Typography>
-            {notifications.length === 0 ? (
-              <Alert severity="info">No notification history was found for this patient.</Alert>
-            ) : (
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Event</TableCell>
-                    <TableCell>Channel</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Recipient</TableCell>
-                    <TableCell>Created</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {notifications.map((notification) => (
-                    <TableRow key={notification.id}>
-                      <TableCell>{notification.eventType}</TableCell>
-                      <TableCell>{notification.channel}</TableCell>
-                      <TableCell><Chip size="small" label={notification.status} color={notification.status === "SENT" ? "success" : notification.status === "FAILED" ? "error" : notification.status === "PENDING" ? "info" : "default"} /></TableCell>
-                      <TableCell>{notification.recipient}</TableCell>
-                      <TableCell>{new Date(notification.createdAt).toLocaleString()}</TableCell>
+      {!isDoctor ? (
+        <Card>
+          <CardContent>
+            <Stack spacing={2}>
+              <Typography variant="h6" sx={{ fontWeight: 800 }}>Notifications</Typography>
+              {notifications.length === 0 ? (
+                <Alert severity="info">No notification history was found for this patient.</Alert>
+              ) : (
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Event</TableCell>
+                      <TableCell>Channel</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell>Recipient</TableCell>
+                      <TableCell>Created</TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </Stack>
-        </CardContent>
-      </Card>
+                  </TableHead>
+                  <TableBody>
+                    {notifications.map((notification) => (
+                      <TableRow key={notification.id}>
+                        <TableCell>{notification.eventType}</TableCell>
+                        <TableCell>{notification.channel}</TableCell>
+                        <TableCell><Chip size="small" label={notification.status} color={notification.status === "SENT" ? "success" : notification.status === "FAILED" ? "error" : notification.status === "PENDING" ? "info" : "default"} /></TableCell>
+                        <TableCell>{notification.recipient}</TableCell>
+                        <TableCell>{new Date(notification.createdAt).toLocaleString()}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </Stack>
+          </CardContent>
+        </Card>
+      ) : null}
       <PatientDocumentUploadDialog
         open={uploadDialogOpen}
         onClose={() => setUploadDialogOpen(false)}

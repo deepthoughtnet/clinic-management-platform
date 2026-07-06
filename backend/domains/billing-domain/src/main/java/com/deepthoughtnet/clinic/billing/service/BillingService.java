@@ -40,6 +40,8 @@ import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
+import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
+import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
 import com.deepthoughtnet.clinic.inventory.service.model.MedicineRecord;
@@ -96,6 +98,7 @@ public class BillingService {
     private final ConsultationService consultationService;
     private final AppointmentService appointmentService;
     private final InventoryService inventoryService;
+    private final AppUserRepository appUserRepository;
     @SuppressWarnings("unused")
     private final TenantUserManagementService tenantUserManagementService;
     private final AuditEventPublisher auditEventPublisher;
@@ -114,6 +117,7 @@ public class BillingService {
             ConsultationService consultationService,
             AppointmentService appointmentService,
             InventoryService inventoryService,
+            AppUserRepository appUserRepository,
             TenantUserManagementService tenantUserManagementService,
             AuditEventPublisher auditEventPublisher,
             ObjectMapper objectMapper,
@@ -130,6 +134,7 @@ public class BillingService {
         this.consultationService = consultationService;
         this.appointmentService = appointmentService;
         this.inventoryService = inventoryService;
+        this.appUserRepository = appUserRepository;
         this.tenantUserManagementService = tenantUserManagementService;
         this.auditEventPublisher = auditEventPublisher;
         this.objectMapper = objectMapper;
@@ -537,6 +542,20 @@ public class BillingService {
                 .stream()
                 .collect(Collectors.toMap(ReceiptEntity::getPaymentId, Function.identity(), (a, b) -> a, LinkedHashMap::new));
         return paymentRepository.findByTenantIdAndBillIdOrderByCreatedAtDesc(tenantId, billId).stream().map(payment -> toPaymentRecord(payment, receiptByPaymentId.get(payment.getId()))).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<PaymentRecord> findPayment(UUID tenantId, UUID paymentId) {
+        requireTenant(tenantId);
+        requireId(paymentId, "paymentId");
+        return paymentRepository.findByTenantIdAndId(tenantId, paymentId).map(payment -> {
+            ReceiptEntity receipt = receiptRepository.findByTenantIdAndBillIdOrderByCreatedAtDesc(tenantId, payment.getBillId())
+                    .stream()
+                    .filter(candidate -> paymentId.equals(candidate.getPaymentId()))
+                    .findFirst()
+                    .orElse(null);
+            return toPaymentRecord(payment, receipt);
+        });
     }
 
     @Transactional(readOnly = true)
@@ -1114,8 +1133,7 @@ public class BillingService {
                 new MetaPair("Bill No", record.billNumber()),
                 new MetaPair("Payment Mode", payment == null || payment.getPaymentMode() == null ? "—" : payment.getPaymentMode().name()),
                 new MetaPair("Amount Paid", money(receipt.getAmount())),
-                new MetaPair("Remaining Due", money(record.dueAmount())),
-                new MetaPair("Received By", receivedBy(payment))
+                new MetaPair("Remaining Due", money(record.dueAmount()))
         );
         return drawMetaRows(content, pairs, margin, width, y);
     }
@@ -1241,7 +1259,7 @@ public class BillingService {
         lineY = writeSummaryRow(content, "Amount Paid", money(receipt.getAmount()), bodyX + 10, lineY, true);
         lineY = writeSummaryRow(content, "Remaining Due", money(record.dueAmount()), bodyX + 10, lineY, true);
         lineY = writeSummaryRow(content, "Payment Mode", payment == null || payment.getPaymentMode() == null ? "—" : payment.getPaymentMode().name(), bodyX + 10, lineY, false);
-        writeSummaryRow(content, "Received By", receivedBy(payment), bodyX + 10, lineY, false);
+        writeSummaryRow(content, "Received By", receivedByLabel(record.tenantId(), payment), bodyX + 10, lineY, false);
 
         writeLine(content, "Payment Notes", 9, noteX, y - 10, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
         float notesY = y - 22;
@@ -1360,15 +1378,36 @@ public class BillingService {
         return "—";
     }
 
+    private String receiptDoctorName(AppointmentRecord appointment, ConsultationRecord consultation) {
+        String doctor = doctorName(appointment, consultation);
+        if (!StringUtils.hasText(doctor) || "—".equals(doctor)) {
+            return "—";
+        }
+        String normalized = doctor.trim();
+        if (normalized.regionMatches(true, 0, "Dr.", 0, 3)) {
+            return normalized;
+        }
+        if (normalized.regionMatches(true, 0, "Dr ", 0, 3)) {
+            return "Dr." + normalized.substring(3);
+        }
+        return "Dr. " + normalized;
+    }
+
     private String appointmentSummary(AppointmentRecord appointment, ConsultationRecord consultation) {
+        return appointmentSummary(appointment, consultation, true);
+    }
+
+    private String appointmentSummary(AppointmentRecord appointment, ConsultationRecord consultation, boolean includeStatus) {
         if (appointment == null && consultation == null) return "—";
         List<String> parts = new ArrayList<>();
         if (appointment != null && appointment.appointmentDate() != null) parts.add(appointment.appointmentDate().format(PDF_DATE));
         if (appointment != null && appointment.appointmentTime() != null) parts.add(appointment.appointmentTime().format(PDF_TIME));
-        String doctor = doctorName(appointment, consultation);
+        String doctor = receiptDoctorName(appointment, consultation);
         if (StringUtils.hasText(doctor) && !"—".equals(doctor)) parts.add(doctor);
-        String status = appointment != null && appointment.status() != null ? appointment.status().name().replace('_', ' ') : consultation != null && consultation.status() != null ? consultation.status().name().replace('_', ' ') : null;
-        if (StringUtils.hasText(status)) parts.add(status);
+        if (includeStatus) {
+            String status = appointment != null && appointment.status() != null ? appointment.status().name().replace('_', ' ') : consultation != null && consultation.status() != null ? consultation.status().name().replace('_', ' ') : null;
+            if (StringUtils.hasText(status)) parts.add(status);
+        }
         return parts.isEmpty() ? "—" : String.join(" · ", parts);
     }
 
@@ -1394,9 +1433,30 @@ public class BillingService {
         return value == null ? "0.00" : value.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
-    private String receivedBy(PaymentEntity payment) {
-        if (payment == null || payment.getReceivedBy() == null) return "—";
-        return payment.getReceivedBy().toString();
+    public String receivedByDisplayLabel(UUID tenantId, UUID receivedByAppUserId) {
+        if (tenantId == null || receivedByAppUserId == null) {
+            return "Staff User";
+        }
+        AppUserEntity user = appUserRepository.findByTenantIdAndId(tenantId, receivedByAppUserId).orElse(null);
+        if (user == null) {
+            return "Staff User";
+        }
+        String label = firstText(user.getDisplayName(), user.getUsername(), user.getEmployeeCode(), user.getDepartment(), user.getEmail());
+        return StringUtils.hasText(label) ? label : "Staff User";
+    }
+
+    private String receivedByLabel(UUID tenantId, PaymentEntity payment) {
+        return payment == null ? "Staff User" : receivedByDisplayLabel(tenantId, payment.getReceivedBy());
+    }
+
+    private String firstText(String... values) {
+        if (values == null) return null;
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private record MetaPair(String label, String value) {}

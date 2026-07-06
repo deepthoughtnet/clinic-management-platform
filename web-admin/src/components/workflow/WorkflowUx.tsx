@@ -83,81 +83,155 @@ function WorkflowStepper({
   subtitle?: string;
   renderLabel: (index: number) => React.ReactNode;
 }) {
-  const size = compact ? 22 : 28;
+  const size = compact ? 22 : 30;
   return (
-    <Stack spacing={compact ? 0.6 : 0.85}>
+    <Stack spacing={compact ? 1.1 : 1.5}>
       {title || subtitle ? (
-        <Box>
-          {title ? <Typography variant={compact ? "caption" : "subtitle2"} sx={{ fontWeight: 900, lineHeight: 1.15 }}>{title}</Typography> : null}
-          {subtitle ? <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>{subtitle}</Typography> : null}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: compact ? 2 : 3,
+            flexWrap: "wrap",
+          }}
+        >
+          {title ? (
+            <Typography variant={compact ? "subtitle2" : "subtitle1"} sx={{ fontWeight: 900, lineHeight: 1.2 }}>
+              {title}
+            </Typography>
+          ) : null}
+          {subtitle ? (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ lineHeight: 1.2, fontWeight: 700, textAlign: { xs: "left", sm: "right" } }}
+            >
+              {subtitle}
+            </Typography>
+          ) : null}
         </Box>
       ) : null}
       <Box
         sx={{
-          display: "grid",
-          gridAutoFlow: "column",
-          gridAutoColumns: "minmax(92px, 1fr)",
-          alignItems: "start",
-          gap: compact ? 0.5 : 0.75,
-          overflowX: "auto",
+          width: "100%",
+          overflowX: { xs: "auto", md: "visible" },
+          overflowY: "hidden",
           scrollbarWidth: "thin",
           pb: 0.25,
           "&::-webkit-scrollbar": { height: 6 },
         }}
       >
-        {JOURNEY_STAGES.map((stage, index) => {
-          const state = index < currentIndex ? "completed" : index === currentIndex ? "current" : "future";
-          const circle = workflowCircleSx(state);
-          return (
-            <Box
-              key={stage}
-              sx={{
-                minWidth: compact ? 92 : 110,
-                position: "relative",
-                display: "grid",
-                justifyItems: "center",
-                gap: 0.35,
-                textAlign: "center",
-              }}
-            >
-              <Box
-                sx={{
-                  position: "absolute",
-                  top: size / 2,
-                  left: "50%",
-                  width: "100%",
-                  height: 2,
-                  bgcolor: index < currentIndex ? "success.main" : "divider",
-                  transform: "translate(-50%, -50%)",
-                  zIndex: 0,
-                  display: index === JOURNEY_STAGES.length - 1 ? "none" : "block",
-                }}
-              />
-              <Box
-                sx={{
-                  width: size,
-                  height: size,
-                  borderRadius: "50%",
-                  border: "2px solid",
-                  display: "grid",
-                  placeItems: "center",
-                  fontSize: compact ? 11 : 12,
-                  fontWeight: 900,
-                  position: "relative",
-                  zIndex: 1,
-                  ...circle,
-                }}
-              >
-                {state === "completed" ? "✓" : index + 1}
-              </Box>
-              <Typography variant={compact ? "caption" : "body2"} sx={{ fontWeight: state === "current" ? 800 : 600, lineHeight: 1.15 }}>
-                {renderLabel(index)}
-              </Typography>
-            </Box>
-          );
-        })}
+        <Box
+          sx={{
+            minWidth: compact ? 760 : 920,
+            width: "100%",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 0,
+            pr: compact ? 0.5 : 0,
+          }}
+        >
+          {JOURNEY_STAGES.map((stage, index) => {
+            const state = index < currentIndex ? "completed" : index === currentIndex ? "current" : "future";
+            const circle = workflowCircleSx(state);
+            const isLast = index === JOURNEY_STAGES.length - 1;
+            return (
+              <React.Fragment key={stage}>
+                <Box
+                  sx={{
+                    flex: 1,
+                    minWidth: compact ? 68 : 84,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: compact ? 0.55 : 0.75,
+                    textAlign: "center",
+                  }}
+                >
+                  <Box
+                    sx={{
+                      width: state === "current" ? size + 6 : size,
+                      height: state === "current" ? size + 6 : size,
+                      borderRadius: "50%",
+                      border: "2px solid",
+                      display: "grid",
+                      placeItems: "center",
+                      fontSize: compact ? 11 : 12,
+                      fontWeight: 900,
+                      transition: "all 0.2s ease",
+                      ...circle,
+                      ...(state === "current"
+                        ? {
+                            animation: "journeyPulse 1.9s ease-in-out infinite",
+                          }
+                        : null),
+                    }}
+                  >
+                    {state === "completed" ? "✓" : index + 1}
+                  </Box>
+                  <Typography
+                    variant={compact ? "caption" : "body2"}
+                    sx={{
+                      fontWeight: state === "current" ? 900 : state === "completed" ? 700 : 600,
+                      lineHeight: 1.2,
+                      color: state === "current" ? "text.primary" : "text.secondary",
+                      maxWidth: compact ? 76 : 96,
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {renderLabel(index)}
+                  </Typography>
+                </Box>
+                {!isLast ? (
+                  <Box
+                    sx={{
+                      flex: 1,
+                      alignSelf: "flex-start",
+                      mt: state === "current" ? `${(size + 6) / 2}px` : `${size / 2}px`,
+                      mx: compact ? 0.4 : 0.6,
+                      height: 3,
+                      borderRadius: 999,
+                      bgcolor: index < currentIndex ? "success.main" : index === currentIndex ? "primary.main" : "divider",
+                      opacity: index <= currentIndex ? 1 : 0.7,
+                    }}
+                  />
+                ) : null}
+              </React.Fragment>
+            );
+          })}
+        </Box>
       </Box>
     </Stack>
+  );
+}
+
+function WorkflowCard({
+  compact = false,
+  children,
+}: {
+  compact?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 2,
+        bgcolor: "background.paper",
+        p: compact ? 1.2 : 1.5,
+        width: "100%",
+        overflow: "hidden",
+        "@keyframes journeyPulse": {
+          "0%": { boxShadow: "0 0 0 0 rgba(25, 118, 210, 0.18)" },
+          "70%": { boxShadow: "0 0 0 6px rgba(25, 118, 210, 0)" },
+          "100%": { boxShadow: "0 0 0 0 rgba(25, 118, 210, 0)" },
+        },
+      }}
+    >
+      {children}
+    </Box>
   );
 }
 
@@ -209,7 +283,7 @@ export function PatientWorkflowGuide({
 }: PatientWorkflowGuideProps) {
   const currentIndex = getPatientJourneyStageIndex(currentWorkflowStage);
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper", p: compact ? 0.85 : 1.1 }}>
+    <WorkflowCard compact={compact}>
       <WorkflowStepper
         currentIndex={currentIndex}
         compact={compact}
@@ -217,7 +291,7 @@ export function PatientWorkflowGuide({
         subtitle={subtitle}
         renderLabel={(index) => getPatientJourneyStageLabel(JOURNEY_STAGES[index])}
       />
-    </Box>
+    </WorkflowCard>
   );
 }
 

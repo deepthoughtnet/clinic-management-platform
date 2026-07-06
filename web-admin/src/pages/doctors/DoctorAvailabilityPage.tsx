@@ -32,6 +32,7 @@ import { useNavigate } from "react-router-dom";
 import { doctorAvailabilitySchema, doctorUnavailabilitySchema, firstZodError, mapZodErrors } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, WorkflowStrip } from "../../components/compact/CompactUi";
+import DoctorIdentityCard, { type DoctorIdentityCardDoctor } from "../../components/doctor/DoctorIdentityCard";
 import RequiredLabel from "../../components/forms/RequiredLabel";
 import {
   createDoctorAvailability,
@@ -85,6 +86,8 @@ type DoctorOption = {
   displayName: string;
   email: string | null;
 };
+
+type DoctorIdentityOption = DoctorOption & DoctorIdentityCardDoctor;
 
 type CalendarSlotRow = {
   date: string;
@@ -169,10 +172,16 @@ const DEFAULT_FILTERS: StatusFilters = {
   WAITLIST: true,
 };
 
-const ALL_DOCTORS_OPTION: DoctorOption = {
+const ALL_DOCTORS_OPTION: DoctorIdentityOption = {
   appUserId: "",
   displayName: "All Doctors",
   email: null,
+  name: "All Doctors",
+  photoUrl: null,
+  qualification: null,
+  primarySpecialization: null,
+  specialization: null,
+  registrationNumber: null,
 };
 
 const TIME_BUCKETS: TimeBucketDefinition[] = [
@@ -446,7 +455,7 @@ export default function DoctorAvailabilityPage() {
   const [clinicClockUnavailable, setClinicClockUnavailable] = React.useState(false);
   const [clockTick, setClockTick] = React.useState(0);
 
-  const doctorOptions = React.useMemo<DoctorOption[]>(
+  const doctorOptions = React.useMemo<DoctorIdentityOption[]>(
     () =>
       users
         .filter((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR")
@@ -454,14 +463,24 @@ export default function DoctorAvailabilityPage() {
           appUserId: user.appUserId,
           displayName: user.displayName || user.email || user.appUserId,
           email: user.email,
+          name: user.displayName || user.email || user.appUserId,
+          photoUrl: null,
+          qualification: null,
+          primarySpecialization: null,
+          specialization: null,
+          registrationNumber: null,
         }))
         .sort((a, b) => a.displayName.localeCompare(b.displayName)),
     [users],
   );
   const doctorMap = React.useMemo(() => new Map([...doctorOptions.map((doctor) => [doctor.appUserId, doctor] as const)]), [doctorOptions]);
-  const selectedDoctorOption = React.useMemo(() => {
+  const selectedDoctorOption = React.useMemo<DoctorIdentityOption>(() => {
     if (isDoctor) {
-      return doctorMap.get(auth.appUserId || "") || { ...ALL_DOCTORS_OPTION, displayName: doctorDisplayName(undefined, auth.username || auth.appUserId || "Doctor") };
+      return doctorMap.get(auth.appUserId || "") || {
+        ...ALL_DOCTORS_OPTION,
+        displayName: doctorDisplayName(undefined, auth.username || auth.appUserId || "Doctor"),
+        name: auth.username || auth.appUserId || "Doctor",
+      };
     }
     return selectedDoctorId ? doctorMap.get(selectedDoctorId) || ALL_DOCTORS_OPTION : ALL_DOCTORS_OPTION;
   }, [auth.appUserId, auth.username, doctorMap, isDoctor, selectedDoctorId]);
@@ -982,26 +1001,45 @@ export default function DoctorAvailabilityPage() {
                     </Typography>
                   </Box>
                   {!isDoctor ? (
-                    <Autocomplete
-                      options={[ALL_DOCTORS_OPTION, ...doctorOptions]}
-                      value={selectedDoctorOption}
-                      onChange={(_, option) => {
-                        setSelectedDoctorId(option?.appUserId || "");
-                        setInfo(null);
-                      }}
-                      getOptionLabel={(option) => option.displayName}
-                      isOptionEqualToValue={(option, value) => option.appUserId === value.appUserId}
-                      renderInput={(params) => (
-                        <TextField
-                          {...params}
-                          label="Doctor"
-                          helperText="Search and choose All Doctors for a full overview."
-                        />
+                    <>
+                      <Autocomplete
+                        options={[ALL_DOCTORS_OPTION, ...doctorOptions]}
+                        value={selectedDoctorOption}
+                        onChange={(_, option) => {
+                          setSelectedDoctorId(option?.appUserId || "");
+                          setInfo(null);
+                        }}
+                        getOptionLabel={(option) => option.displayName}
+                        isOptionEqualToValue={(option, value) => option.appUserId === value.appUserId}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            label="Doctor"
+                            helperText="Search and choose All Doctors for a full overview."
+                          />
+                        )}
+                        size="small"
+                      />
+                      {selectedDoctorId ? (
+                        <DoctorIdentityCard doctor={selectedDoctorOption} variant="compact" />
+                      ) : (
+                        <Box
+                          sx={{
+                            px: 1.5,
+                            py: 1.25,
+                            borderRadius: 3,
+                            border: (theme) => `1px dashed ${theme.palette.divider}`,
+                            bgcolor: "grey.50",
+                          }}
+                        >
+                          <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                            Select a doctor to view schedule.
+                          </Typography>
+                        </Box>
                       )}
-                      size="small"
-                    />
+                    </>
                   ) : (
-                    <Alert severity="info" sx={{ py: 0.5 }}>Viewing {selectedDoctorLabel}.</Alert>
+                    <DoctorIdentityCard doctor={selectedDoctorOption} variant="compact" />
                   )}
                   <TextField
                     fullWidth

@@ -109,6 +109,7 @@ import {
   type Payment,
   type Receipt,
 } from "../../api/clinicApi";
+import { staffDisplayName } from "../../utils/staffDisplay";
 
 const emptyTestForm: LabTestInput = {
   testCode: "",
@@ -378,7 +379,7 @@ function buildReceiptPaymentSummary(row: LabOrder) {
       paymentAmount: receipt.amount ?? row.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? null,
       paymentMode: receipt.paymentMode || row.paymentMode || null,
       referenceNumber: receipt.referenceNumber || row.referenceNumber || null,
-      receivedBy: receipt.collectedBy || row.receivedBy || null,
+      receivedBy: staffDisplayName(receipt.collectedBy || null, row.receivedBy),
     };
   }
   if (!row.receiptId || !row.receiptNumber) return null;
@@ -392,7 +393,7 @@ function buildReceiptPaymentSummary(row: LabOrder) {
     paymentAmount: row.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? null,
     paymentMode: row.paymentMode || null,
     referenceNumber: row.referenceNumber || null,
-    receivedBy: row.receivedBy || null,
+    receivedBy: staffDisplayName(null, row.receivedBy),
   };
 }
 
@@ -1313,7 +1314,8 @@ export default function LabPage() {
           paymentMode: paymentMode as PaymentMode,
           referenceNumber: receiptSummary?.referenceNumber || order.referenceNumber || null,
           notes: null,
-          receivedBy: receiptSummary?.receivedBy || order.receivedBy || null,
+          receivedBy: order.receivedBy || null,
+          receivedByLabel: receiptSummary?.receivedBy || null,
           receiptId,
           receiptNumber,
           receiptDate,
@@ -2335,7 +2337,7 @@ export default function LabPage() {
                                     Paid {formatMoney(receiptSummary.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? 0)} • {receiptSummary.paymentMode || "-"}
                                   </Typography>
                                   <Typography variant="caption" color="text.secondary">
-                                    Ref: {receiptSummary.referenceNumber || "—"} • By {receiptSummary.receivedBy || "—"}
+                                    Ref: {receiptSummary.referenceNumber || "—"} • By {receiptSummary.receivedBy || "Staff User"}
                                   </Typography>
                                   <Typography variant="caption" color="text.secondary">
                                     {receiptSummary.paymentDateTime ? formatDateTime(receiptSummary.paymentDateTime) : receiptTimestampText(row)}
@@ -2620,7 +2622,7 @@ export default function LabPage() {
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
                         <Typography variant="caption" color="text.secondary">Collected By</Typography>
-                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{receiptPreview.payment.receivedBy || "-"}</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>{staffDisplayName(receiptPreview.payment.receivedByLabel, receiptPreview.payment.receivedBy)}</Typography>
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
                         <Typography variant="caption" color="text.secondary">Collected Timestamp</Typography>
@@ -3449,7 +3451,7 @@ function OrderQueue(props: {
                         Paid {formatMoney(receiptSummary.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? 0)} • {receiptSummary.paymentMode || "-"}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        Ref: {receiptSummary.referenceNumber || "—"} • By {receiptSummary.receivedBy || "—"}
+                        Ref: {receiptSummary.referenceNumber || "—"} • By {receiptSummary.receivedBy || "Staff User"}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         {receiptSummary.paymentDateTime ? formatDateTime(receiptSummary.paymentDateTime) : receiptTimestampText(row)}

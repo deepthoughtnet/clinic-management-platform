@@ -363,7 +363,12 @@ export function isRouteAccessibleForAuth(
   if (path === "/pharmacy/dashboard") {
     return canAccessFeature(auth, "pharmacy-dashboard") && pharmacyRole;
   }
-  if (path === "/patients" || path.startsWith("/patients/")) return canAccessFeature(auth, "patients");
+  if (path === "/patients") return canAccessFeature(auth, "patients");
+  if (path === "/patients/new") return canAccessFeature(auth, "patients");
+  if (path === "/patients/:id/edit") return canAccessFeature(auth, "patients");
+  if (/^\/patients\/[^/]+\/edit$/.test(path)) return canAccessFeature(auth, "patients");
+  if (/^\/patients\/[^/]+$/.test(path)) return canAccessFeature(auth, "patients") || doctorRole;
+  if (path.startsWith("/patients/")) return canAccessFeature(auth, "patients");
   if (path === "/appointments" || path.startsWith("/appointments/")) return canAccessFeature(auth, "appointments") || canAccessFeature(auth, "day-board");
   if (path === "/queue") return canAccessFeature(auth, "queue");
   if (path === "/consultations") return canAccessFeature(auth, "consultations");

@@ -29,6 +29,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 @RequestMapping("/api/clinic")
 public class ClinicSettingsController {
     private static final List<String> SUPPORTED_ROLES = List.of(
+            Roles.TENANT_ADMIN,
+            Roles.ADMIN,
             Roles.CLINIC_ADMIN,
             Roles.DOCTOR,
             Roles.RECEPTIONIST,

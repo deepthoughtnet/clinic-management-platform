@@ -41,6 +41,7 @@ import {
   type PaymentMode,
   type Receipt,
 } from "../../api/clinicApi";
+import { staffDisplayName } from "../../utils/staffDisplay";
 
 const PAYMENT_MODES: PaymentMode[] = ["CASH", "CARD", "UPI", "PAYTM", "PHONEPE", "GOOGLE_PAY", "BANK_TRANSFER", "CHEQUE", "OTHER"];
 
@@ -275,7 +276,7 @@ export default function PaymentsPage() {
                       <TableCell sx={{ py: 0.65 }} align="right">{formatMoney(row.amount)}</TableCell>
                       <TableCell sx={{ py: 0.65 }}><Chip size="small" label={row.paymentMode} sx={compactChipSx} /></TableCell>
                       <TableCell sx={{ py: 0.65, maxWidth: 160, wordBreak: "break-word" }}>{row.referenceNumber || "—"}</TableCell>
-                      <TableCell sx={{ py: 0.65 }}>{row.receivedBy || "—"}</TableCell>
+                      <TableCell sx={{ py: 0.65 }}>{staffDisplayName(row.receivedByLabel, row.receivedBy)}</TableCell>
                       <TableCell sx={{ py: 0.65 }}><Chip size="small" label={row.billStatus} color={row.billStatus === "PAID" ? "success" : row.billStatus === "PARTIALLY_PAID" ? "warning" : "default"} sx={compactChipSx} /></TableCell>
                       <TableCell sx={{ py: 0.65 }} align="right">
                         <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap">

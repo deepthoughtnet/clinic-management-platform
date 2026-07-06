@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.identity.db.TenantMembershipRepository;
 import com.deepthoughtnet.clinic.identity.service.keycloak.KeycloakAdminProvisioner;
 import com.deepthoughtnet.clinic.identity.service.model.CreateTenantUserCommand;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
+import com.deepthoughtnet.clinic.identity.service.model.UpdateTenantUserProfileCommand;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -22,6 +23,7 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class TenantUserManagementService {
+    private static final String INDIAN_MOBILE_PATTERN = "^[0-9]{10}$";
 
     private static final Set<String> ALLOWED_ROLES = Set.of(
             "TENANT_ADMIN",
@@ -111,7 +113,7 @@ public class TenantUserManagementService {
         String username = normalizeNullable(command.username());
         String displayName = normalizeNullable(command.displayName());
         String employeeCode = normalizeNullable(command.employeeCode());
-        String mobile = normalizeNullable(command.mobile());
+        String mobile = normalizeMobile(command.mobile());
         String department = normalizeNullable(command.department());
 
         UUID existingUserId = null;
@@ -200,6 +202,40 @@ public class TenantUserManagementService {
         return toRecord(user, membership, "PASSWORD_RESET");
     }
 
+    @Transactional
+    public TenantUserRecord updateUserProfile(UpdateTenantUserProfileCommand command) {
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        requireTenant(command.tenantId());
+        if (command.appUserId() == null) {
+            throw new IllegalArgumentException("appUserId is required");
+        }
+
+        AppUserEntity user = findTenantUser(command.tenantId(), command.appUserId());
+        TenantMembershipEntity membership = findMembership(command.tenantId(), command.appUserId());
+
+        String displayName = normalizeRequired(command.displayName(), "Name is required.");
+        String employeeCode = normalizeNullable(command.employeeCode());
+        String mobile = normalizeMobile(command.mobile());
+        String department = normalizeNullable(command.department());
+
+        validateSupplementalUniqueness(command.tenantId(), user.getId(), null, employeeCode);
+
+        user.updateProfile(user.getEmail(), displayName);
+        user.updateIdentity(user.getUsername(), department);
+        user.updateContactDetails(employeeCode, mobile);
+
+        if (command.role() != null) {
+            membership.setRole(normalizeRole(command.role()));
+        }
+        if (command.active() != null) {
+            membership.setStatus(Boolean.TRUE.equals(command.active()) ? "ACTIVE" : "DISABLED");
+        }
+
+        return toRecord(user, membership, "PROFILE_UPDATED");
+    }
+
     private AppUserEntity findTenantUser(UUID tenantId, UUID appUserId) {
         return appUserRepository.findByTenantIdAndId(tenantId, appUserId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found for tenant"));
@@ -265,6 +301,25 @@ public class TenantUserManagementService {
 
     private String normalizeNullable(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeRequired(String value, String message) {
+        String normalized = normalizeNullable(value);
+        if (!StringUtils.hasText(normalized)) {
+            throw new IllegalArgumentException(message);
+        }
+        return normalized;
+    }
+
+    private String normalizeMobile(String mobile) {
+        String normalized = normalizeNullable(mobile);
+        if (!StringUtils.hasText(normalized)) {
+            return null;
+        }
+        if (!normalized.matches(INDIAN_MOBILE_PATTERN)) {
+            throw new IllegalArgumentException("Enter a valid 10-digit mobile number.");
+        }
+        return normalized;
     }
 
     private String displayNameFor(String email, String username, String displayName) {

@@ -328,7 +328,7 @@ function AuthedApp() {
         <Route path="/pharmacy/dashboard" element={<PathnameKeyedRoute><RouteAccessGate><FeatureGate featureId="pharmacy-dashboard" title="Pharmacy dashboard unavailable"><PharmacyDashboardPage /></FeatureGate></RouteAccessGate></PathnameKeyedRoute>} />
         <Route path="/patients" element={<PathnameKeyedRoute><FeatureGate featureId="patients"><PatientsPage /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/patients/new" element={<PathnameKeyedRoute><FeatureGate featureId="patients"><PatientFormPage mode="create" /></FeatureGate></PathnameKeyedRoute>} />
-        <Route path="/patients/:id" element={<PathnameKeyedRoute><FeatureGate featureId="patients"><PatientDetailPage /></FeatureGate></PathnameKeyedRoute>} />
+        <Route path="/patients/:id" element={<PathnameKeyedRoute><RouteAccessGate><PatientDetailPage /></RouteAccessGate></PathnameKeyedRoute>} />
         <Route path="/patients/:id/edit" element={<PathnameKeyedRoute><FeatureGate featureId="patients"><PatientFormPage mode="edit" /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/appointments" element={<PathnameKeyedRoute><FeatureGate featureId="appointments"><AppointmentsPage /></FeatureGate></PathnameKeyedRoute>} />
         <Route path="/appointments/day-board" element={<PathnameKeyedRoute><FeatureGate featureId="day-board"><DayBoardPage /></FeatureGate></PathnameKeyedRoute>} />

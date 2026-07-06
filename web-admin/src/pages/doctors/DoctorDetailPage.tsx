@@ -1,10 +1,12 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Alert, Autocomplete, Avatar, Box, Button, Card, CardContent, Chip, CircularProgress, FormControlLabel, Grid, Stack, Switch, TextField, Typography } from "@mui/material";
+import { Alert, Autocomplete, Box, Button, Card, CardContent, Chip, CircularProgress, FormControlLabel, Grid, Stack, Switch, TextField, Typography } from "@mui/material";
 
 import { doctorUpdateSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { getDoctorProfile, updateDoctorProfile, updateDoctorProfileWithPhoto, type DoctorProfile } from "../../api/clinicApi";
+import DoctorAvatar from "../../components/doctor/DoctorAvatar";
+import { formatFileSize, ImageUploadError, optimizeAvatarUpload } from "../../utils/imageUpload";
 
 type FormState = {
   mobile: string;
@@ -59,6 +61,15 @@ export default function DoctorDetailPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
 
+  const replacePhotoPreview = React.useCallback((nextPreviewUrl: string | null) => {
+    setPhotoPreviewUrl((current) => {
+      if (current && current.startsWith("blob:") && current !== nextPreviewUrl) {
+        URL.revokeObjectURL(current);
+      }
+      return nextPreviewUrl;
+    });
+  }, []);
+
   const role = (auth.tenantRole || "").toUpperCase();
   const isDoctor = role === "DOCTOR";
   const isReceptionist = role === "RECEPTIONIST";
@@ -80,7 +91,7 @@ export default function DoctorDetailPage() {
           setProfile(loaded);
           setForm(toForm(loaded));
           setPhotoFile(null);
-          setPhotoPreviewUrl(loaded.photoUrl || null);
+          replacePhotoPreview(loaded.photoUrl || null);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load doctor profile");
@@ -92,7 +103,7 @@ export default function DoctorDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken, auth.tenantId, id]);
+  }, [auth.accessToken, auth.tenantId, id, replacePhotoPreview]);
 
   React.useEffect(() => {
     return () => {
@@ -176,12 +187,35 @@ export default function DoctorDetailPage() {
       setProfile(nextProfile);
       setForm(toForm(nextProfile));
       setPhotoFile(null);
-      setPhotoPreviewUrl(nextProfile.photoUrl || null);
+      replacePhotoPreview(nextProfile.photoUrl || null);
       setInfo("Doctor profile saved");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save doctor profile");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePhotoChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] || null;
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    setError(null);
+    setInfo(null);
+    try {
+      const optimized = await optimizeAvatarUpload(file);
+      setPhotoFile(optimized.file);
+      replacePhotoPreview(optimized.previewUrl);
+    } catch (err) {
+      setPhotoFile(null);
+      replacePhotoPreview(profile.photoUrl || null);
+      if (err instanceof ImageUploadError) {
+        setError(err.message);
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Failed to prepare doctor profile photo");
     }
   };
 
@@ -208,17 +242,16 @@ export default function DoctorDetailPage() {
           <Grid container spacing={2}>
             <Grid size={{ xs: 12 }}>
               <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "flex-start", sm: "center" }}>
-                <Avatar
-                  src={photoSrc || undefined}
+                <DoctorAvatar
+                  name={profile.doctorName || profile.email || "Doctor"}
+                  photoUrl={photoSrc}
                   alt={profile.doctorName || "Doctor profile"}
                   sx={{ width: 72, height: 72, fontWeight: 800 }}
-                >
-                  {(profile.doctorName || profile.email || "D").slice(0, 2).toUpperCase()}
-                </Avatar>
+                />
                 <Stack spacing={1} sx={{ flex: 1 }}>
                   <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Profile Photo</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Upload a JPG, PNG, or WEBP image for doctor lists and selectors.
+                    Upload a JPG, PNG, or WEBP image for doctor lists and selectors. Images larger than 10 MB are rejected before upload.
                   </Typography>
                   {canEdit ? (
                     <Button variant="outlined" component="label" disabled={saving || formReadOnly}>
@@ -227,18 +260,11 @@ export default function DoctorDetailPage() {
                         hidden
                         type="file"
                         accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-                        onChange={(event) => {
-                          const file = event.target.files?.[0] || null;
-                          setPhotoFile(file);
-                          if (photoPreviewUrl && photoPreviewUrl.startsWith("blob:")) {
-                            URL.revokeObjectURL(photoPreviewUrl);
-                          }
-                          setPhotoPreviewUrl(file ? URL.createObjectURL(file) : (profile.photoUrl || null));
-                        }}
+                        onChange={(event) => void handlePhotoChange(event)}
                       />
                     </Button>
                   ) : null}
-                  {photoFile ? <Chip size="small" label={photoFile.name} /> : null}
+                  {photoFile ? <Chip size="small" label={`${photoFile.name} • ${formatFileSize(photoFile.size)}`} /> : null}
                 </Stack>
               </Stack>
             </Grid>

@@ -37,6 +37,7 @@ import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
+import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.platform.branding.BrandingProperties;
 import com.deepthoughtnet.clinic.inventory.service.InventoryService;
@@ -69,6 +70,7 @@ class BillingServicePaymentTest {
     private AuditEventPublisher auditEventPublisher;
     private DoctorProfileService doctorProfileService;
     private AppointmentService appointmentService;
+    private AppUserRepository appUserRepository;
     private BillingService service;
     private final UUID appointmentId = UUID.randomUUID();
     private final UUID doctorUserId = UUID.randomUUID();
@@ -86,6 +88,7 @@ class BillingServicePaymentTest {
         auditEventPublisher = mock(AuditEventPublisher.class);
         doctorProfileService = mock(DoctorProfileService.class);
         appointmentService = mock(AppointmentService.class);
+        appUserRepository = mock(AppUserRepository.class);
         service = new BillingService(
                 billRepository,
                 billLineRepository,
@@ -98,6 +101,7 @@ class BillingServicePaymentTest {
                 mock(ConsultationService.class),
                 appointmentService,
                 mock(InventoryService.class),
+                appUserRepository,
                 mock(TenantUserManagementService.class),
                 auditEventPublisher,
                 new ObjectMapper(),

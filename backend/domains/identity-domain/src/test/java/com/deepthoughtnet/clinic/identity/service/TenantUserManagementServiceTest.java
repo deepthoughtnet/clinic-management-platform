@@ -14,6 +14,7 @@ import com.deepthoughtnet.clinic.identity.db.TenantMembershipRepository;
 import com.deepthoughtnet.clinic.identity.service.keycloak.KeycloakAdminProvisioner;
 import com.deepthoughtnet.clinic.identity.service.model.CreateTenantUserCommand;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
+import com.deepthoughtnet.clinic.identity.service.model.UpdateTenantUserProfileCommand;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -83,6 +84,70 @@ class TenantUserManagementServiceTest {
                 () -> service.createOrInvite(command("NOT_A_ROLE")));
     }
 
+    @Test
+    void updateUserProfilePersistsDisplayNameEmployeeCodeMobileDepartmentRoleAndStatus() {
+        UUID userId = UUID.randomUUID();
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        TenantMembershipRepository membershipRepository = mock(TenantMembershipRepository.class);
+        KeycloakAdminProvisioner keycloakAdminProvisioner = mock(KeycloakAdminProvisioner.class);
+        AppUserEntity user = AppUserEntity.create(tenantId, "kc-sub", "user@example.com", "Old Name");
+        user.updateIdentity("reception01", "Reception");
+        TenantMembershipEntity membership = TenantMembershipEntity.create(tenantId, userId, "RECEPTIONIST");
+
+        forceUserId(user, userId);
+
+        when(appUserRepository.findByTenantIdAndId(tenantId, userId)).thenReturn(Optional.of(user));
+        when(appUserRepository.findByTenantIdAndEmployeeCodeIgnoreCase(tenantId, "EMP-009")).thenReturn(Optional.empty());
+        when(membershipRepository.findByTenantIdAndAppUserId(tenantId, userId)).thenReturn(Optional.of(membership));
+
+        TenantUserManagementService service = new TenantUserManagementService(appUserRepository, membershipRepository, keycloakAdminProvisioner);
+
+        TenantUserRecord record = service.updateUserProfile(new UpdateTenantUserProfileCommand(
+                tenantId,
+                userId,
+                "Priya Sharma",
+                "EMP-009",
+                "9876543210",
+                "Reception",
+                "BILLING_USER",
+                false
+        ));
+
+        assertEquals("Priya Sharma", record.displayName());
+        assertEquals("EMP-009", record.employeeCode());
+        assertEquals("9876543210", record.mobile());
+        assertEquals("Reception", record.department());
+        assertEquals("BILLING_USER", record.membershipRole());
+        assertEquals("DISABLED", record.membershipStatus());
+    }
+
+    @Test
+    void updateUserProfileRejectsInvalidMobile() {
+        UUID userId = UUID.randomUUID();
+        AppUserRepository appUserRepository = mock(AppUserRepository.class);
+        TenantMembershipRepository membershipRepository = mock(TenantMembershipRepository.class);
+        KeycloakAdminProvisioner keycloakAdminProvisioner = mock(KeycloakAdminProvisioner.class);
+        AppUserEntity user = AppUserEntity.create(tenantId, "kc-sub", "user@example.com", "Old Name");
+        forceUserId(user, userId);
+
+        when(appUserRepository.findByTenantIdAndId(tenantId, userId)).thenReturn(Optional.of(user));
+        when(membershipRepository.findByTenantIdAndAppUserId(tenantId, userId)).thenReturn(Optional.of(TenantMembershipEntity.create(tenantId, userId, "RECEPTIONIST")));
+
+        TenantUserManagementService service = new TenantUserManagementService(appUserRepository, membershipRepository, keycloakAdminProvisioner);
+
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () ->
+                service.updateUserProfile(new UpdateTenantUserProfileCommand(
+                        tenantId,
+                        userId,
+                        "Priya Sharma",
+                        "EMP-009",
+                        "12345",
+                        "Reception",
+                        "RECEPTIONIST",
+                        true
+                )));
+    }
+
     private TenantUserManagementService createService() {
         AppUserRepository appUserRepository = mock(AppUserRepository.class);
         TenantMembershipRepository membershipRepository = mock(TenantMembershipRepository.class);
@@ -115,5 +180,15 @@ class TenantUserManagementServiceTest {
                 role,
                 null
         );
+    }
+
+    private void forceUserId(AppUserEntity user, UUID userId) {
+        try {
+            var field = AppUserEntity.class.getDeclaredField("id");
+            field.setAccessible(true);
+            field.set(user, userId);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError(ex);
+        }
     }
 }

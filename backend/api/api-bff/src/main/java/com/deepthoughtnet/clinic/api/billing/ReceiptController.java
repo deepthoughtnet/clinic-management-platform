@@ -61,6 +61,13 @@ public class ReceiptController {
     }
 
     private ReceiptResponse toResponse(ReceiptRecord record) {
+        UUID tenantId = record.tenantId();
+        String receivedByLabel = "Staff User";
+        if (tenantId != null && record.paymentId() != null) {
+            receivedByLabel = billingService.findPayment(tenantId, record.paymentId())
+                    .map(payment -> billingService.receivedByDisplayLabel(tenantId, payment.receivedBy()))
+                    .orElse("Staff User");
+        }
         return new ReceiptResponse(
                 record.id() == null ? null : record.id().toString(),
                 record.tenantId() == null ? null : record.tenantId().toString(),
@@ -69,6 +76,7 @@ public class ReceiptController {
                 record.paymentId() == null ? null : record.paymentId().toString(),
                 record.receiptDate(),
                 record.amount(),
+                receivedByLabel,
                 record.createdAt()
         );
     }

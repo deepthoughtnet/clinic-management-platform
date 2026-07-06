@@ -34,12 +34,11 @@ import {
 import { useAuth } from "../../auth/useAuth";
 import RequiredLabel from "../../components/forms/RequiredLabel";
 import {
-  assignTenantUserRole,
   createTenantUser,
   getClinicRoles,
   getClinicUsers,
   resetTenantUserPassword,
-  updateTenantUser,
+  updateTenantUserProfile,
   type ClinicRole,
   type ClinicUser,
 } from "../../api/clinicApi";
@@ -74,6 +73,15 @@ type CreateForm = {
   active: boolean;
 };
 
+type EditForm = {
+  displayName: string;
+  employeeCode: string;
+  mobile: string;
+  department: string;
+  role: string;
+  active: boolean;
+};
+
 const EMPTY_CREATE_FORM: CreateForm = {
   firstName: "",
   lastName: "",
@@ -84,6 +92,15 @@ const EMPTY_CREATE_FORM: CreateForm = {
   employeeCode: "",
   mobile: "",
   department: "",
+  active: true,
+};
+
+const EMPTY_EDIT_FORM: EditForm = {
+  displayName: "",
+  employeeCode: "",
+  mobile: "",
+  department: "",
+  role: "",
   active: true,
 };
 
@@ -175,6 +192,11 @@ export default function UsersRolesPage() {
   const canManageUsers = auth.hasPermission("user.manage") || auth.hasPermission("tenant.users.manage");
   const canAssignRoles = auth.hasPermission("tenant.users.role.assign") || canManageUsers;
   const canResetPasswords = auth.hasPermission("tenant.users.reset.password") || canManageUsers;
+  const isPlatformAdmin = auth.rolesUpper.includes("PLATFORM_ADMIN");
+  const isTenantAdminActor = ["CLINIC_ADMIN", "TENANT_ADMIN", "ADMIN"].includes(auth.tenantRole || "")
+    || auth.rolesUpper.includes("CLINIC_ADMIN")
+    || auth.rolesUpper.includes("TENANT_ADMIN")
+    || auth.rolesUpper.includes("ADMIN");
   const invalidSelectedClinic = isInvalidSelectedClinic(auth.selectedTenant);
 
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
@@ -188,6 +210,16 @@ export default function UsersRolesPage() {
   const [createSubmitting, setCreateSubmitting] = React.useState(false);
   const [createForm, setCreateForm] = React.useState<CreateForm>(EMPTY_CREATE_FORM);
   const [createFieldErrors, setCreateFieldErrors] = React.useState<Record<string, string>>({});
+  const [openEdit, setOpenEdit] = React.useState(false);
+  const [editingUser, setEditingUser] = React.useState<ClinicUser | null>(null);
+  const [editSubmitting, setEditSubmitting] = React.useState(false);
+  const [editForm, setEditForm] = React.useState<EditForm>(EMPTY_EDIT_FORM);
+  const [editFieldErrors, setEditFieldErrors] = React.useState<Record<string, string>>({});
+
+  const editableRoleOptions = React.useMemo(() => {
+    const allowedRoles = new Set<string>(isPlatformAdmin ? [...ASSIGNABLE_ROLES, "TENANT_ADMIN", "ADMIN"] : [...ASSIGNABLE_ROLES]);
+    return roles.filter((role) => allowedRoles.has(role.role));
+  }, [isPlatformAdmin, roles]);
 
   const load = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId || invalidSelectedClinic) {
@@ -214,6 +246,62 @@ export default function UsersRolesPage() {
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  const canEditUser = React.useCallback((user: ClinicUser) => {
+    if (!canManageUsers) return false;
+    if (isPlatformAdmin) return true;
+    if (!isTenantAdminActor) return false;
+    return user.appUserId !== auth.appUserId;
+  }, [auth.appUserId, canManageUsers, isPlatformAdmin, isTenantAdminActor]);
+
+  const canEditRoleForUser = React.useCallback((user: ClinicUser | null) => {
+    if (!user || !canAssignRoles) return false;
+    if (isPlatformAdmin) return true;
+    const currentRole = (user.membershipRole || "").toUpperCase();
+    return currentRole === "" || ASSIGNABLE_ROLES.includes(currentRole as (typeof ASSIGNABLE_ROLES)[number]);
+  }, [canAssignRoles, isPlatformAdmin]);
+
+  const openEditDialog = (user: ClinicUser) => {
+    const fallbackRole = user.membershipRole || editableRoleOptions[0]?.role || "DOCTOR";
+    setEditingUser(user);
+    setEditForm({
+      displayName: user.displayName || "",
+      employeeCode: user.employeeCode || "",
+      mobile: user.mobile || "",
+      department: user.department || "",
+      role: fallbackRole,
+      active: (user.membershipStatus || "ACTIVE").toUpperCase() === "ACTIVE",
+    });
+    setEditFieldErrors({});
+    setOpenEdit(true);
+  };
+
+  const closeEditDialog = () => {
+    setOpenEdit(false);
+    setEditingUser(null);
+    setEditForm(EMPTY_EDIT_FORM);
+    setEditFieldErrors({});
+  };
+
+  const validateEditForm = () => {
+    const fieldErrors: Record<string, string> = {};
+    if (!editForm.displayName.trim()) {
+      fieldErrors.displayName = "Name is required.";
+    }
+    if (editForm.mobile.trim() && !/^[0-9]{10}$/.test(editForm.mobile.trim())) {
+      fieldErrors.mobile = "Enter a valid 10-digit mobile number.";
+    }
+    if (editForm.employeeCode.trim().length > 64) {
+      fieldErrors.employeeCode = "Employee code must be 64 characters or fewer.";
+    }
+    if (editForm.department.trim().length > 128) {
+      fieldErrors.department = "Department must be 128 characters or fewer.";
+    }
+    if (canEditRoleForUser(editingUser) && !editForm.role.trim()) {
+      fieldErrors.role = "Role is required.";
+    }
+    return fieldErrors;
+  };
 
   if (!auth.tenantId || invalidSelectedClinic) {
     return (
@@ -298,34 +386,6 @@ export default function UsersRolesPage() {
     }
   };
 
-  const setUserActive = async (user: ClinicUser, active: boolean) => {
-    if (!auth.accessToken || !auth.tenantId || !canManageUsers) return;
-    setSavingUserId(user.appUserId);
-    try {
-      await updateTenantUser(auth.accessToken, auth.tenantId, user.appUserId, { active });
-      setToast(`User ${active ? "activated" : "deactivated"}.`);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update user status");
-    } finally {
-      setSavingUserId(null);
-    }
-  };
-
-  const updateUserRole = async (user: ClinicUser, role: string) => {
-    if (!auth.accessToken || !auth.tenantId || !canAssignRoles) return;
-    setSavingUserId(user.appUserId);
-    try {
-      await assignTenantUserRole(auth.accessToken, auth.tenantId, user.appUserId, role);
-      setToast("Role updated.");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update role");
-    } finally {
-      setSavingUserId(null);
-    }
-  };
-
   const resetPassword = async (user: ClinicUser) => {
     if (!auth.accessToken || !auth.tenantId || !canResetPasswords) return;
     const generated = `Clinic@${Math.random().toString(36).slice(2, 8)}!`;
@@ -337,6 +397,63 @@ export default function UsersRolesPage() {
       setError(err instanceof Error ? err.message : "Failed to reset password");
     } finally {
       setSavingUserId(null);
+    }
+  };
+
+  const saveUserEdits = async () => {
+    if (!auth.accessToken || !auth.tenantId || !editingUser || !canEditUser(editingUser)) return;
+    const fieldErrors = validateEditForm();
+    if (Object.keys(fieldErrors).length > 0) {
+      setEditFieldErrors(fieldErrors);
+      setError(fieldErrors[Object.keys(fieldErrors)[0]] || "Please correct the highlighted fields.");
+      const firstInvalidField = Object.keys(fieldErrors)[0];
+      if (firstInvalidField) {
+        window.setTimeout(() => document.getElementById(`edit-user-${firstInvalidField}`)?.focus(), 0);
+      }
+      return;
+    }
+
+    setEditFieldErrors({});
+    setEditSubmitting(true);
+    setSavingUserId(editingUser.appUserId);
+    setError(null);
+    try {
+      const updated = await updateTenantUserProfile(auth.accessToken, auth.tenantId, editingUser.appUserId, {
+        displayName: editForm.displayName.trim(),
+        employeeCode: editForm.employeeCode.trim() || null,
+        mobile: editForm.mobile.trim() || null,
+        department: editForm.department.trim() || null,
+        role: canEditRoleForUser(editingUser) ? editForm.role.trim() : null,
+        active: editForm.active,
+      });
+      setUsers((current) => current.map((user) => (user.appUserId === updated.appUserId ? updated : user)));
+      setToast("User updated successfully.");
+      closeEditDialog();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update user details.";
+      const nextFieldErrors: Record<string, string> = {};
+      if (message.toLowerCase().includes("employee code already exists")) {
+        nextFieldErrors.employeeCode = "Employee code already exists for this clinic.";
+      }
+      if (message.toLowerCase().includes("mobile")) {
+        nextFieldErrors.mobile = message;
+      }
+      if (message.toLowerCase().includes("name is required")) {
+        nextFieldErrors.displayName = "Name is required.";
+      }
+      if (message.toLowerCase().includes("cannot edit your own user details")) {
+        nextFieldErrors.displayName = message;
+      }
+      if (message.toLowerCase().includes("role")) {
+        nextFieldErrors.role = message;
+      }
+      if (Object.keys(nextFieldErrors).length > 0) {
+        setEditFieldErrors(nextFieldErrors);
+      }
+      setError(message);
+    } finally {
+      setSavingUserId(null);
+      setEditSubmitting(false);
     }
   };
 
@@ -397,23 +514,7 @@ export default function UsersRolesPage() {
                         <TableRow key={user.appUserId}>
                           <TableCell sx={{ fontWeight: 700 }}>{user.displayName || user.email || user.appUserId}</TableCell>
                           <TableCell>{user.username || user.email || user.keycloakSub || "-"}</TableCell>
-                          <TableCell>
-                            {canAssignRoles ? (
-                              <FormControl size="small" sx={{ minWidth: 190 }}>
-                                <Select
-                                  value={user.membershipRole || "VIEWER"}
-                                  onChange={(e) => void updateUserRole(user, String(e.target.value))}
-                                  disabled={savingUserId === user.appUserId}
-                                >
-                                  {ASSIGNABLE_ROLES.map((role) => (
-                                    <MenuItem key={role} value={role}>{roleLabel(role)}</MenuItem>
-                                  ))}
-                                </Select>
-                              </FormControl>
-                            ) : (
-                              <Chip size="small" label={user.membershipRole || "Unassigned"} />
-                            )}
-                          </TableCell>
+                          <TableCell><Chip size="small" label={roleLabel(user.membershipRole || "Unassigned")} /></TableCell>
                           <TableCell>
                             <Chip size="small" color={active ? "success" : "default"} label={active ? "ACTIVE" : "DISABLED"} />
                           </TableCell>
@@ -424,13 +525,10 @@ export default function UsersRolesPage() {
                           <TableCell>{new Date(user.createdAt).toLocaleString()}</TableCell>
                           <TableCell align="right">
                             <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
-                              {canManageUsers ? (
-                                <Switch
-                                  size="small"
-                                  checked={active}
-                                  disabled={savingUserId === user.appUserId}
-                                  onChange={(e) => void setUserActive(user, e.target.checked)}
-                                />
+                              {canEditUser(user) ? (
+                                <Button size="small" variant="contained" disabled={savingUserId === user.appUserId} onClick={() => openEditDialog(user)}>
+                                  Edit
+                                </Button>
                               ) : null}
                               {canResetPasswords ? (
                                 <Button size="small" variant="outlined" disabled={savingUserId === user.appUserId} onClick={() => void resetPassword(user)}>
@@ -598,6 +696,118 @@ export default function UsersRolesPage() {
           }}>Cancel</Button>
           <Button variant="contained" onClick={() => void createUser()} disabled={createSubmitting || !createForm.email.trim() || !createForm.firstName.trim() || !createForm.role.trim()}>
             {createSubmitting ? "Creating..." : "Create User"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={openEdit} onClose={closeEditDialog} fullWidth maxWidth="sm">
+        <DialogTitle>Edit User</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ mt: 0.5 }}>
+            <TextField
+              id="edit-user-displayName"
+              label={<RequiredLabel text="Name" required />}
+              value={editForm.displayName}
+              onChange={(e) => setEditForm((current) => ({ ...current, displayName: e.target.value }))}
+              error={Boolean(editFieldErrors.displayName)}
+              helperText={editFieldErrors.displayName || "Staff display name."}
+              fullWidth
+              required
+            />
+            <TextField
+              label="Email"
+              value={editingUser?.email || "-"}
+              fullWidth
+              disabled
+            />
+            <TextField
+              label="Login ID"
+              value={editingUser?.username || "-"}
+              fullWidth
+              disabled
+            />
+            <TextField
+              id="edit-user-employeeCode"
+              label="Employee Code"
+              value={editForm.employeeCode}
+              onChange={(e) => setEditForm((current) => ({ ...current, employeeCode: e.target.value }))}
+              error={Boolean(editFieldErrors.employeeCode)}
+              helperText={editFieldErrors.employeeCode || "Unique within the clinic if provided."}
+              fullWidth
+            />
+            <TextField
+              id="edit-user-mobile"
+              label="Mobile Number"
+              value={editForm.mobile}
+              onChange={(e) => setEditForm((current) => ({ ...current, mobile: e.target.value }))}
+              error={Boolean(editFieldErrors.mobile)}
+              helperText={editFieldErrors.mobile || "Enter a valid 10-digit mobile number."}
+              fullWidth
+            />
+            <FormControl fullWidth>
+              <InputLabel id="edit-department-label">Department</InputLabel>
+              <Select
+                id="edit-user-department"
+                labelId="edit-department-label"
+                label="Department"
+                value={editForm.department}
+                onChange={(e) => setEditForm((current) => ({ ...current, department: String(e.target.value) }))}
+                error={Boolean(editFieldErrors.department)}
+              >
+                <MenuItem value="">Select department</MenuItem>
+                {DEPARTMENT_OPTIONS.map((department) => (
+                  <MenuItem key={department} value={department}>{department}</MenuItem>
+                ))}
+              </Select>
+              {editFieldErrors.department ? <Typography variant="caption" color="error">{editFieldErrors.department}</Typography> : null}
+            </FormControl>
+            {canEditRoleForUser(editingUser) ? (
+              <FormControl fullWidth>
+                <InputLabel id="edit-role-label"><RequiredLabel text="Role" required /></InputLabel>
+                <Select
+                  id="edit-user-role"
+                  labelId="edit-role-label"
+                  label="Role"
+                  value={editForm.role}
+                  onChange={(e) => setEditForm((current) => ({ ...current, role: String(e.target.value) }))}
+                  error={Boolean(editFieldErrors.role)}
+                >
+                  {editableRoleOptions.map((role) => (
+                    <MenuItem key={role.role} value={role.role}>{role.displayName}</MenuItem>
+                  ))}
+                </Select>
+                {editFieldErrors.role ? <Typography variant="caption" color="error">{editFieldErrors.role}</Typography> : null}
+              </FormControl>
+            ) : (
+              <TextField
+                label="Role"
+                value={roleLabel(editingUser?.membershipRole || "-")}
+                fullWidth
+                disabled
+                helperText="Role changes for this user are restricted."
+              />
+            )}
+            <Stack direction="row" alignItems="center" justifyContent="space-between">
+              <Box>
+                <Typography variant="body2">Active status</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Last Login: {formatLocalDateTime(editingUser?.lastLoginAt)}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  Created: {editingUser?.createdAt ? new Date(editingUser.createdAt).toLocaleString() : "-"}
+                </Typography>
+              </Box>
+              <Switch
+                checked={editForm.active}
+                onChange={(e) => setEditForm((current) => ({ ...current, active: e.target.checked }))}
+              />
+            </Stack>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeEditDialog}>Cancel</Button>
+          <Button variant="contained" onClick={() => void saveUserEdits()} disabled={editSubmitting || !editingUser}>
+            {editSubmitting ? "Saving..." : "Save Changes"}
           </Button>
         </DialogActions>
       </Dialog>

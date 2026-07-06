@@ -3,12 +3,12 @@ package com.deepthoughtnet.clinic.api.doctor;
 import com.deepthoughtnet.clinic.api.doctor.dto.DoctorProfileRequest;
 import com.deepthoughtnet.clinic.api.doctor.dto.DoctorProfileResponse;
 import com.deepthoughtnet.clinic.clinic.service.DoctorProfileService;
+import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfilePhotoRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileRecord;
 import com.deepthoughtnet.clinic.clinic.service.model.DoctorProfileUpsertCommand;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
 import com.deepthoughtnet.clinic.identity.service.model.TenantUserRecord;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.List;
@@ -28,7 +28,10 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.multipart.MultipartFile;
 import jakarta.validation.Valid;
 
@@ -55,8 +58,23 @@ public class DoctorProfileController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         TenantUserRecord doctor = findDoctor(tenantId, doctorUserId);
         requireProfileReadAccess(doctorUserId);
-        DoctorProfileRecord profile = doctorProfileService.findByDoctorUserId(tenantId, doctorUserId).orElse(null);
+        DoctorProfileRecord profile = doctorProfileService.findByDoctorUserIdWithPhotoRepair(tenantId, doctorUserId).orElse(null);
         return toResponse(doctor, profile);
+    }
+
+    @GetMapping("/{doctorUserId}/photo")
+    @PreAuthorize("@permissionChecker.hasPermission('user.read') or @permissionChecker.hasPermission('appointment.manage')")
+    public ResponseEntity<byte[]> photo(@PathVariable UUID doctorUserId) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        findDoctor(tenantId, doctorUserId);
+        requireProfileReadAccess(doctorUserId);
+        DoctorProfilePhotoRecord photo = doctorProfileService.downloadPhoto(tenantId, doctorUserId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(photo.contentType()))
+                .contentLength(photo.sizeBytes())
+                .cacheControl(CacheControl.noCache().cachePrivate())
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + safeFilename(photo.fileName()) + "\"")
+                .body(photo.bytes());
     }
 
     @PutMapping(value = "/{doctorUserId}/profile", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -272,5 +290,12 @@ public class DoctorProfileController {
         }
         String lower = originalFilename.toLowerCase(Locale.ROOT);
         return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp");
+    }
+
+    private String safeFilename(String value) {
+        if (value == null || value.isBlank()) {
+            return "doctor-photo";
+        }
+        return value.replace("\"", "");
     }
 }

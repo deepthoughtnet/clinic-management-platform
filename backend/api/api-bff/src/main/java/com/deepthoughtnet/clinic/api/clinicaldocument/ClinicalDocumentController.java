@@ -73,7 +73,7 @@ public class ClinicalDocumentController {
     }
 
     @GetMapping("/patients/{patientId}/documents")
-    @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read') or @doctorAssignmentSecurityService.isDoctor()")
     public List<ClinicalDocumentResponse> listPatientDocuments(
             @PathVariable UUID patientId,
             @RequestParam(required = false) String documentType,
@@ -166,19 +166,19 @@ public class ClinicalDocumentController {
     }
 
     @GetMapping("/patients/{patientId}/documents/{documentId}/download")
-    @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read') or @doctorAssignmentSecurityService.isDoctor()")
     public ResponseEntity<byte[]> download(@PathVariable UUID patientId, @PathVariable UUID documentId) {
         return streamedDocument(patientId, documentId, false);
     }
 
     @GetMapping("/patients/{patientId}/documents/{documentId}/view")
-    @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read') or @doctorAssignmentSecurityService.isDoctor()")
     public ResponseEntity<byte[]> view(@PathVariable UUID patientId, @PathVariable UUID documentId) {
         return streamedDocument(patientId, documentId, true);
     }
 
     @GetMapping("/patient-documents/{documentId}/download-url")
-    @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read') or @doctorAssignmentSecurityService.isDoctor()")
     public DocumentDownloadUrlResponse legacyDownloadUrl(@PathVariable UUID documentId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         ClinicalDocumentRecord record = documentService.get(tenantId, documentId);
@@ -216,7 +216,7 @@ public class ClinicalDocumentController {
     }
 
     @GetMapping("/patient-documents/{documentId}")
-    @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('patient.document.read') or @permissionChecker.hasPermission('clinic.document.read') or @permissionChecker.hasPermission('patient.read') or @doctorAssignmentSecurityService.isDoctor()")
     public ClinicalDocumentResponse getDocument(@PathVariable UUID documentId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         ClinicalDocumentRecord record = documentService.get(tenantId, documentId);
@@ -225,7 +225,7 @@ public class ClinicalDocumentController {
     }
 
     @GetMapping("/patients/{patientId}/timeline")
-    @PreAuthorize("@permissionChecker.hasPermission('patient.read')")
+    @PreAuthorize("@permissionChecker.hasPermission('patient.read') or @doctorAssignmentSecurityService.isDoctor()")
     public List<PatientTimelineItemResponse> patientTimeline(@PathVariable UUID patientId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         requirePatientExistsAndVisible(tenantId, patientId);
