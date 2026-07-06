@@ -422,6 +422,56 @@ export default function QueuePage() {
     };
   }, [queueRowsWithFee]);
 
+  const loadReceiptRecords = React.useCallback(async (billRows: Bill[]) => {
+    if (!auth.accessToken || !auth.tenantId || !canViewBillingData || billRows.length === 0) {
+      return {} as Record<string, QueueReceiptRecord>;
+    }
+    const receiptEntries = await Promise.all(
+      billRows
+        .filter((bill) => Boolean(bill.appointmentId) && (bill.netPaidAmount > 0 || bill.dueAmount <= 0 || bill.status === "PAID"))
+        .map(async (bill) => {
+          try {
+            const payments = await listBillPayments(auth.accessToken!, auth.tenantId!, bill.id);
+            const payment = [...payments]
+              .sort((left, right) => `${right.paymentDateTime || right.paymentDate || right.createdAt}|${right.createdAt}`.localeCompare(`${left.paymentDateTime || left.paymentDate || left.createdAt}|${left.createdAt}`))
+              .find((row) => Boolean(row.receiptId)) || payments[0] || null;
+            if (!payment || !payment.receiptId || !bill.appointmentId) return null;
+            return [bill.appointmentId, { billId: bill.id, billNumber: bill.billNumber, payment }] as const;
+          } catch (err) {
+            console.error("Queue receipt load failed", err);
+            return null;
+          }
+        }),
+    );
+    return Object.fromEntries(receiptEntries.filter((entry): entry is readonly [string, QueueReceiptRecord] => Boolean(entry)));
+  }, [auth.accessToken, auth.tenantId, canViewBillingData]);
+
+  const loadQueueSnapshot = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId || !tenantReady) {
+      return {
+        rows: [] as Appointment[],
+        billRows: [] as Bill[],
+        receiptRecords: {} as Record<string, QueueReceiptRecord>,
+      };
+    }
+    const rowsPromise = searchAppointments(auth.accessToken, auth.tenantId, {
+      doctorUserId: effectiveDoctorId || undefined,
+      appointmentDate: today,
+    });
+    const billRowsPromise = canViewBillingData
+      ? searchBills(auth.accessToken, auth.tenantId, {
+        fromDate: today,
+        toDate: today,
+      }).catch((err) => {
+        console.error("Queue bill load failed", err);
+        return [];
+      })
+      : Promise.resolve([]);
+    const [rows, billRows] = await Promise.all([rowsPromise, billRowsPromise]);
+    const receiptRecords = await loadReceiptRecords(billRows);
+    return { rows, billRows, receiptRecords };
+  }, [auth.accessToken, auth.tenantId, canViewBillingData, effectiveDoctorId, loadReceiptRecords, tenantReady, today]);
+
   React.useEffect(() => {
     let cancelled = false;
     async function loadClinicProfile() {
@@ -471,6 +521,8 @@ export default function QueuePage() {
     async function loadQueue() {
       if (!auth.accessToken || !auth.tenantId || !tenantReady) {
         setAppointments([]);
+        setBills([]);
+        setReceiptRecordsByAppointmentId({});
         setLoadingQueue(false);
         return;
       }
@@ -478,44 +530,11 @@ export default function QueuePage() {
       setError(null);
       setBills([]);
       try {
-        const rowsPromise = searchAppointments(auth.accessToken, auth.tenantId, {
-          doctorUserId: effectiveDoctorId || undefined,
-          appointmentDate: today,
-        });
-        const billRowsPromise = canViewBillingData
-          ? searchBills(auth.accessToken, auth.tenantId, {
-            fromDate: today,
-            toDate: today,
-          }).catch((err) => {
-            console.error("Queue bill load failed", err);
-            return [];
-          })
-          : Promise.resolve([]);
-        const [rows, billRows] = await Promise.all([rowsPromise, billRowsPromise]);
+        const { rows, billRows, receiptRecords } = await loadQueueSnapshot();
         if (cancelled) return;
         setAppointments(rows);
         setBills(billRows);
-        if (canViewBillingData && billRows.length > 0) {
-          const receiptEntries = await Promise.all(billRows
-            .filter((bill) => Boolean(bill.appointmentId) && (bill.netPaidAmount > 0 || bill.dueAmount <= 0 || bill.status === "PAID"))
-            .map(async (bill) => {
-              try {
-                const payments = await listBillPayments(auth.accessToken!, auth.tenantId!, bill.id);
-                const payment = [...payments]
-                  .sort((left, right) => `${right.paymentDateTime || right.paymentDate || right.createdAt}|${right.createdAt}`.localeCompare(`${left.paymentDateTime || left.paymentDate || left.createdAt}|${left.createdAt}`))
-                  .find((row) => Boolean(row.receiptId)) || payments[0] || null;
-                if (!payment || !payment.receiptId || !bill.appointmentId) return null;
-                return [bill.appointmentId, { billId: bill.id, billNumber: bill.billNumber, payment }] as const;
-              } catch (err) {
-                console.error("Queue receipt load failed", err);
-                return null;
-              }
-            }));
-          if (!cancelled) {
-            const nextRecords = Object.fromEntries(receiptEntries.filter((entry): entry is readonly [string, QueueReceiptRecord] => Boolean(entry)));
-            setReceiptRecordsByAppointmentId((current) => ({ ...nextRecords, ...current }));
-          }
-        }
+        setReceiptRecordsByAppointmentId(receiptRecords);
       } catch (err) {
         if (!cancelled) {
           setError("Unable to load queue. Please verify clinic selection and network connection.");
@@ -531,7 +550,7 @@ export default function QueuePage() {
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken, auth.tenantId, canViewBillingData, effectiveDoctorId, tenantReady, today]);
+  }, [auth.accessToken, auth.tenantId, loadQueueSnapshot, tenantReady]);
 
   const refreshQueue = async () => {
     if (!auth.accessToken || !auth.tenantId) return;
@@ -539,22 +558,10 @@ export default function QueuePage() {
     setError(null);
     setBills([]);
     try {
-      const rowsPromise = searchAppointments(auth.accessToken, auth.tenantId, {
-        doctorUserId: effectiveDoctorId || undefined,
-        appointmentDate: today,
-      });
-      const billRowsPromise = canViewBillingData
-        ? searchBills(auth.accessToken, auth.tenantId, {
-          fromDate: today,
-          toDate: today,
-        }).catch((err) => {
-          console.error("Queue bill refresh failed", err);
-          return [];
-        })
-        : Promise.resolve([]);
-      const [rows, billRows] = await Promise.all([rowsPromise, billRowsPromise]);
+      const { rows, billRows, receiptRecords } = await loadQueueSnapshot();
       setAppointments(rows);
       setBills(billRows);
+      setReceiptRecordsByAppointmentId(receiptRecords);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to refresh queue");
     } finally {

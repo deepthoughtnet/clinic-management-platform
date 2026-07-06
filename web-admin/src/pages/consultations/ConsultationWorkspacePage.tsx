@@ -65,7 +65,7 @@ import { consultationSchema, firstZodError, labConsultationOrderCreateSchema } f
 import { useAuth } from "../../auth/useAuth";
 import { ClinicalAiDraftCard, type ClinicalAiDraftStatus } from "../../components/clinical/ClinicalAiDraftCard";
 import { documentBusinessStatusLabel, documentTypeLabel, isPublishedLabDocument } from "../../components/clinical/documentTypeOptions";
-import { AppointmentTokenChip, PatientJourneyTracker, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
+import { AppointmentTokenChip, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
 import {
   aiClinicalSummary,
   aiConsultationAsk,
@@ -306,6 +306,9 @@ const MEDICINE_ROUTE_LABELS: Record<(typeof MEDICINE_ROUTE_OPTIONS)[number], str
 };
 const AI_DISABLED_MESSAGE = "AI assistance is not enabled or configured for this clinic.";
 const AI_PROVIDER_NOT_CONFIGURED_MESSAGE = "AI module is enabled for this clinic, but AI provider is not configured.";
+const AIVA_DISABLED_TITLE = "AIVA Clinical Assistant is not enabled";
+const AIVA_DISABLED_DESCRIPTION = "AI-powered suggestions, clinical chat, report interpretation and summaries are currently disabled for this clinic.";
+const AIVA_DISABLED_NOTE = "Ask the clinic administrator to enable AI features from clinic settings.";
 
 const FREQUENCIES = ["1-0-0", "0-1-0", "0-0-1", "1-0-1", "1-1-1"];
 const DURATIONS = ["3 days", "5 days", "7 days", "10 days", "15 days"];
@@ -2140,6 +2143,21 @@ export default function ConsultationWorkspacePage() {
   const activeLabOrderTestNames = React.useMemo(
     () => labOrders.flatMap((order) => order.items.map((item) => item.testName)).filter(Boolean),
     [labOrders],
+  );
+  const aiUnavailableCard = (
+    <Box sx={{ p: 1.35, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+      <Stack spacing={0.45}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>
+          {AIVA_DISABLED_TITLE}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {AIVA_DISABLED_DESCRIPTION}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {AIVA_DISABLED_NOTE}
+        </Typography>
+      </Stack>
+    </Box>
   );
   const selectedLabOrder = React.useMemo(
     () => (selectedLabOrderId ? labOrders.find((order) => order.id === selectedLabOrderId) || null : null),
@@ -5810,7 +5828,7 @@ export default function ConsultationWorkspacePage() {
       }}
     >
       <CardContent sx={{ py: 0.9, "&:last-child": { pb: 0.9 } }}>
-        <Stack spacing={0.85}>
+        <Stack spacing={0.7}>
           <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
             <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, flex: 1 }}>
               <Box
@@ -5835,7 +5853,7 @@ export default function ConsultationWorkspacePage() {
                   .map((part) => part[0]?.toUpperCase() || "")
                   .join("") || "P"}
               </Box>
-              <Stack spacing={0.35} sx={{ minWidth: 0 }}>
+              <Stack spacing={0.3} sx={{ minWidth: 0 }}>
                 <Stack direction="row" spacing={0.75} alignItems="center" useFlexGap flexWrap="wrap">
                   <Typography variant="h6" sx={{ fontWeight: 950, lineHeight: 1, fontSize: { xs: "1.12rem", md: "1.35rem" } }}>
                     {patientRow ? `${patientRow.firstName} ${patientRow.lastName}` : consultation.patientName || consultation.patientId}
@@ -5852,19 +5870,6 @@ export default function ConsultationWorkspacePage() {
                     {formatRelativeBookingTime(appointment.createdAt) || "Booked recently"}
                   </Typography>
                 ) : null}
-                <PatientJourneyTracker
-                  compact
-                  context={{
-                    status: appointment?.status || consultation.status,
-                    paymentStatus: appointment?.status === "BOOKED" ? "PAYMENT_PENDING" : appointment?.status === "WAITING" ? "PAID" : undefined,
-                    consultationStatus: consultation.status,
-                    prescriptionStatus: prescription?.status,
-                    labStatus: labOrders.some((order) => order.reportPublishedAt ? "PUBLISHED" : order.status)
-                      ? (labOrders.some((order) => !order.reportPublishedAt && order.status !== "CANCELLED") ? "RESULT_PENDING" : "PUBLISHED")
-                      : undefined,
-                    followUpScheduled: Boolean(consultation.followUpDate),
-                  }}
-                />
               </Stack>
             </Stack>
 
@@ -5916,7 +5921,7 @@ export default function ConsultationWorkspacePage() {
             ))}
           </Stack>
 
-          <Stack direction={{ xs: "column", lg: "row" }} spacing={0.75} justifyContent="space-between" alignItems={{ xs: "flex-start", lg: "center" }}>
+          <Stack direction={{ xs: "column", lg: "row" }} spacing={0.55} justifyContent="space-between" alignItems={{ xs: "flex-start", lg: "center" }}>
             <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: { lg: "nowrap" }, lineHeight: 1.2 }}>
               Shortcuts: Ctrl/Cmd+S save draft, Ctrl/Cmd+P preview Rx, Esc closes document viewer.
             </Typography>
@@ -6592,7 +6597,7 @@ export default function ConsultationWorkspacePage() {
                       >
                         Add
                       </Button>
-                      {canRunAi ? (
+                      {aiAssistantEnabled ? (
                         <Button
                           type="button"
                           variant="outlined"
@@ -6900,12 +6905,14 @@ export default function ConsultationWorkspacePage() {
                             <Box>
                               <Stack direction="row" spacing={0.75} alignItems="center">
                                 <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
-                                <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Clinical Chat</Typography>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>AI Assist</Typography>
                               </Stack>
-                              <Typography variant="caption" color="text.secondary">Ask anything about this consultation...</Typography>
+                              <Typography variant="caption" color="text.secondary">Clinical chat and contextual AI tools for this consultation.</Typography>
                             </Box>
-                            <Chip size="small" color={aiAssistantEnabled ? "success" : "warning"} variant="outlined" label={aiAssistantEnabled ? "AI ready" : "AI unavailable"} />
+                            {aiAssistantEnabled ? <Chip size="small" color="success" variant="outlined" label="AI ready" /> : null}
                           </Stack>
+                        {aiAssistantEnabled ? (
+                          <>
                         <Alert severity="info" sx={{ py: 0.4 }}>
                           {AI_SAFETY_NOTE}
                         </Alert>
@@ -7052,6 +7059,8 @@ export default function ConsultationWorkspacePage() {
                             </Stack>
                           </CardContent>
                         </Card>
+                          </>
+                        ) : aiUnavailableCard}
                       </Stack>
                     </CardContent>
                   </Card>
@@ -8753,8 +8762,24 @@ export default function ConsultationWorkspacePage() {
         </Stack>
       ) : null}
 
-      {canRunAi && activeTab === 5 ? (
+      {activeTab === 5 ? (
         <Grid container spacing={1.5}>
+          {!aiAssistantEnabled ? (
+            <Grid size={{ xs: 12 }}>
+              <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                <CardContent sx={{ p: 1.5 }}>
+                  <Stack spacing={1.25}>
+                    <Stack direction="row" spacing={0.75} alignItems="center">
+                      <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                      <Typography variant="h6" sx={{ fontWeight: 900 }}>AI Assist</Typography>
+                    </Stack>
+                    {aiUnavailableCard}
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+          ) : (
+            <>
           <Grid size={{ xs: 12 }}>
             <WorkflowStrip text="Review Context → Ask AI → Review Draft → Accept" />
           </Grid>
@@ -9157,6 +9182,8 @@ export default function ConsultationWorkspacePage() {
               </CardContent>
             </Card>
           </Grid>
+            </>
+          )}
         </Grid>
       ) : null}
 

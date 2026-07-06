@@ -21,6 +21,9 @@ test("queue collects consultation fees in place and exposes receipt actions", ()
   assert.ok(source.includes("getReceiptPdf"));
   assert.ok(source.includes("sendReceipt"));
   assert.ok(source.includes("receiptRecordsByAppointmentId"));
+  assert.ok(source.includes("const loadReceiptRecords = React.useCallback"));
+  assert.ok(source.includes("const loadQueueSnapshot = React.useCallback"));
+  assert.ok(source.includes("setReceiptRecordsByAppointmentId(receiptRecords);"));
   assert.ok(source.includes("Payment successful"));
   assert.equal(source.includes("collectConsultationFee=1"), false);
   assert.equal(source.includes("returnTo=/queue"), false);

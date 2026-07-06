@@ -41,9 +41,10 @@ test("queue, day board, billing, dashboard and consultation reuse shared workflo
   assert.ok(appointments.includes("AppointmentTokenChip"));
 
   assert.ok(consultation.includes("AppointmentTokenChip"));
-  assert.ok(consultation.includes("PatientJourneyTracker"));
+  assert.equal(consultation.includes("PatientJourneyTracker"), false);
   assert.ok(consultation.includes("WorkflowStatusBadge"));
-  assert.ok(consultation.includes("AI assistant is not enabled for this clinic."));
-  assert.ok(consultation.includes("Ask clinic administrator to enable AIVA clinical assistance."));
-  assert.ok(consultation.includes("aiAssistantEnabled ? ("));
+  assert.ok(consultation.includes("AIVA Clinical Assistant is not enabled"));
+  assert.ok(consultation.includes("AI-powered suggestions, clinical chat, report interpretation and summaries are currently disabled for this clinic."));
+  assert.ok(consultation.includes("Ask the clinic administrator to enable AI features from clinic settings."));
+  assert.ok(consultation.includes("aiUnavailableCard"));
 });

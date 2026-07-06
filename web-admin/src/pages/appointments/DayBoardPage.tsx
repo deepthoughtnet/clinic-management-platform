@@ -66,6 +66,7 @@ import {
 } from "../../api/clinicApi";
 import ConsultationFeeDialog from "../../components/ConsultationFeeDialog";
 import { CompactEmptyState, WorkflowStrip } from "../../components/compact/CompactUi";
+import DoctorIdentityCard, { type DoctorIdentityCardDoctor } from "../../components/doctor/DoctorIdentityCard";
 import { AppointmentTokenChip, PatientJourneyTracker, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
 import { getClinicClockParts, getClinicDateKey, isBookingTimePast, formatClinicClockLabel } from "./bookingValidation";
 import { getAppointmentSlotPresentation } from "./slotState";
@@ -668,6 +669,24 @@ export default function DayBoardPage() {
     if (!doctorUserId) return ALL_DOCTORS_OPTION;
     return doctorOptions.find((doctor) => doctor.appUserId === doctorUserId) || ALL_DOCTORS_OPTION;
   }, [auth.appUserId, doctorOptions, doctorUserId, isDoctor, users]);
+  const selectedDoctorIdentity = React.useMemo<DoctorIdentityCardDoctor | undefined>(() => {
+    if (isDoctor && auth.appUserId) {
+      return {
+        id: auth.appUserId,
+        fullName: selectedDoctorOption.displayName || displayDoctorName(users, auth.appUserId),
+      };
+    }
+    if (!doctorUserId) {
+      return {
+        id: "",
+        fullName: "All Doctors",
+      };
+    }
+    return {
+      id: selectedDoctorOption.appUserId,
+      fullName: selectedDoctorOption.displayName || selectedDoctorLabel,
+    };
+  }, [auth.appUserId, doctorUserId, isDoctor, selectedDoctorLabel, selectedDoctorOption, users]);
 
   const visibleDoctorPanels = React.useMemo(() => {
     if (effectiveDoctorId) return doctorPanels;
@@ -1291,17 +1310,35 @@ export default function DayBoardPage() {
           <Card variant="outlined" sx={{ height: "100%" }}>
             <CardContent sx={{ height: "100%", p: 1.25, pb: 1.25 }}>
               <Stack spacing={1} sx={{ height: "100%", minHeight: 0 }}>
-                <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 1, flexWrap: "wrap" }}>
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 60%) minmax(120px, 40%)" },
+                    gap: 1.25,
+                    alignItems: "center",
+                  }}
+                >
                   <Box>
-                    <Typography variant="h6" sx={{ fontWeight: 800 }}>Operational Calendar</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Grouped clinic scheduler for {effectiveDoctorId ? selectedDoctorLabel : "All Doctors"} on {compactDateLabel(date)}
-                    </Typography>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 1, flexWrap: "wrap" }}>
+                      <Box>
+                        <Typography variant="h6" sx={{ fontWeight: 800 }}>Operational Calendar</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Grouped clinic scheduler for {effectiveDoctorId ? selectedDoctorLabel : "All Doctors"} on {compactDateLabel(date)}
+                        </Typography>
+                      </Box>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap" justifyContent="flex-end">
+                        <Chip size="small" label={effectiveDoctorId ? "Specific doctor" : "All Doctors"} color={effectiveDoctorId ? "primary" : "default"} />
+                        <Chip size="small" label={date} variant="outlined" />
+                      </Stack>
+                    </Box>
                   </Box>
-                  <Stack direction="row" spacing={0.5} flexWrap="wrap" justifyContent="flex-end">
-                    <Chip size="small" label={effectiveDoctorId ? "Specific doctor" : "All Doctors"} color={effectiveDoctorId ? "primary" : "default"} />
-                    <Chip size="small" label={date} variant="outlined" />
-                  </Stack>
+                  <Box sx={{ display: "flex", justifyContent: { xs: "flex-start", lg: "flex-end" }, alignItems: "center" }}>
+                    <DoctorIdentityCard
+                      doctorId={selectedDoctorIdentity?.id}
+                      doctor={selectedDoctorIdentity}
+                      variant="avatar"
+                    />
+                  </Box>
                 </Box>
 
                 <Stack direction="row" spacing={0.5} flexWrap="wrap">

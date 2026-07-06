@@ -176,12 +176,8 @@ const ALL_DOCTORS_OPTION: DoctorIdentityOption = {
   appUserId: "",
   displayName: "All Doctors",
   email: null,
-  name: "All Doctors",
-  photoUrl: null,
-  qualification: null,
-  primarySpecialization: null,
-  specialization: null,
-  registrationNumber: null,
+  id: "",
+  fullName: "All Doctors",
 };
 
 const TIME_BUCKETS: TimeBucketDefinition[] = [
@@ -463,12 +459,8 @@ export default function DoctorAvailabilityPage() {
           appUserId: user.appUserId,
           displayName: user.displayName || user.email || user.appUserId,
           email: user.email,
-          name: user.displayName || user.email || user.appUserId,
-          photoUrl: null,
-          qualification: null,
-          primarySpecialization: null,
-          specialization: null,
-          registrationNumber: null,
+          id: user.appUserId,
+          fullName: user.displayName || user.email || user.appUserId,
         }))
         .sort((a, b) => a.displayName.localeCompare(b.displayName)),
     [users],
@@ -479,11 +471,13 @@ export default function DoctorAvailabilityPage() {
       return doctorMap.get(auth.appUserId || "") || {
         ...ALL_DOCTORS_OPTION,
         displayName: doctorDisplayName(undefined, auth.username || auth.appUserId || "Doctor"),
-        name: auth.username || auth.appUserId || "Doctor",
+        id: auth.appUserId || "",
+        fullName: auth.username || auth.appUserId || "Doctor",
       };
     }
     return selectedDoctorId ? doctorMap.get(selectedDoctorId) || ALL_DOCTORS_OPTION : ALL_DOCTORS_OPTION;
   }, [auth.appUserId, auth.username, doctorMap, isDoctor, selectedDoctorId]);
+  const selectedDoctorProfileContext = isDoctor || Boolean(selectedDoctorId);
   const selectedDoctorLabel = isDoctor
     ? doctorDisplayName(doctorMap.get(auth.appUserId || ""), auth.username || auth.appUserId || "Doctor")
     : (selectedDoctorId ? doctorDisplayName(doctorMap.get(selectedDoctorId), selectedDoctorId) : "All Doctors");
@@ -1001,45 +995,33 @@ export default function DoctorAvailabilityPage() {
                     </Typography>
                   </Box>
                   {!isDoctor ? (
-                    <>
-                      <Autocomplete
-                        options={[ALL_DOCTORS_OPTION, ...doctorOptions]}
-                        value={selectedDoctorOption}
-                        onChange={(_, option) => {
-                          setSelectedDoctorId(option?.appUserId || "");
-                          setInfo(null);
-                        }}
-                        getOptionLabel={(option) => option.displayName}
-                        isOptionEqualToValue={(option, value) => option.appUserId === value.appUserId}
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            label="Doctor"
-                            helperText="Search and choose All Doctors for a full overview."
-                          />
-                        )}
-                        size="small"
-                      />
-                      {selectedDoctorId ? (
-                        <DoctorIdentityCard doctor={selectedDoctorOption} variant="compact" />
-                      ) : (
-                        <Box
-                          sx={{
-                            px: 1.5,
-                            py: 1.25,
-                            borderRadius: 3,
-                            border: (theme) => `1px dashed ${theme.palette.divider}`,
-                            bgcolor: "grey.50",
-                          }}
-                        >
-                          <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
-                            Select a doctor to view schedule.
-                          </Typography>
-                        </Box>
+                    <Autocomplete
+                      options={[ALL_DOCTORS_OPTION, ...doctorOptions]}
+                      value={selectedDoctorOption}
+                      onChange={(_, option) => {
+                        setSelectedDoctorId(option?.appUserId || "");
+                        setInfo(null);
+                      }}
+                      getOptionLabel={(option) => option.displayName}
+                      isOptionEqualToValue={(option, value) => option.appUserId === value.appUserId}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Doctor"
+                          helperText="Search and choose All Doctors for a full overview."
+                        />
                       )}
-                    </>
+                      size="small"
+                    />
                   ) : (
-                    <DoctorIdentityCard doctor={selectedDoctorOption} variant="compact" />
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Doctor"
+                      value={selectedDoctorOption.displayName}
+                      helperText="Your operational calendar is locked to your doctor profile."
+                      disabled
+                    />
                   )}
                   <TextField
                     fullWidth
@@ -1271,56 +1253,97 @@ export default function DoctorAvailabilityPage() {
             <Card sx={{ minHeight: 240 }}>
               <CardContent sx={{ p: 1.25, pb: 1.25 }}>
                 <Stack spacing={1.1}>
-                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap", alignItems: "flex-start" }}>
-                    <Box>
-                      <Typography variant="h6" sx={{ fontWeight: 800 }}>Operational Calendar</Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Grouped schedule for {doctorScopeLabel}. Expand a day, then expand the time bucket you need.
-                      </Typography>
-                    </Box>
-                    <Stack direction="row" spacing={0.5} flexWrap="wrap" justifyContent="flex-end">
-                      <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.rows.length, 0), "slots")} variant="outlined" sx={COMPACT_CHIP_SX} />
-                      <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.summary.availableCount, 0), "available")} color="success" variant="outlined" sx={COMPACT_CHIP_SX} />
-                      <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.summary.partialCount, 0), "partial")} color="warning" variant="outlined" sx={COMPACT_CHIP_SX} />
-                      <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.summary.fullCount, 0), "full")} color="error" variant="outlined" sx={COMPACT_CHIP_SX} />
-                      <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.summary.checkedInCount, 0), "checked in")} color="info" variant="outlined" sx={COMPACT_CHIP_SX} />
-                      <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.summary.inConsultationCount, 0), "in consult")} color="secondary" variant="outlined" sx={COMPACT_CHIP_SX} />
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 60%) minmax(320px, 40%)" },
+                      gap: 1.5,
+                      alignItems: "stretch",
+                    }}
+                  >
+                    <Stack spacing={1.1} sx={{ minWidth: 0 }}>
+                      <Box>
+                        <Typography variant="h6" sx={{ fontWeight: 800 }}>Operational Calendar</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Grouped schedule for {doctorScopeLabel}. Expand a day, then expand the time bucket you need.
+                        </Typography>
+                      </Box>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                        <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.rows.length, 0), "slots")} variant="outlined" sx={COMPACT_CHIP_SX} />
+                        <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.summary.availableCount, 0), "available")} color="success" variant="outlined" sx={COMPACT_CHIP_SX} />
+                        <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.summary.partialCount, 0), "partial")} color="warning" variant="outlined" sx={COMPACT_CHIP_SX} />
+                        <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.summary.fullCount, 0), "full")} color="error" variant="outlined" sx={COMPACT_CHIP_SX} />
+                        <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.summary.checkedInCount, 0), "checked in")} color="info" variant="outlined" sx={COMPACT_CHIP_SX} />
+                        <Chip size="small" label={quickChipLabel(calendarGroups.reduce((sum, group) => sum + group.summary.inConsultationCount, 0), "in consult")} color="secondary" variant="outlined" sx={COMPACT_CHIP_SX} />
+                      </Stack>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                        <Chip size="small" label="Available" color="success" variant="outlined" sx={COMPACT_CHIP_SX} />
+                        <Chip size="small" label="Partially booked" color="warning" variant="outlined" sx={COMPACT_CHIP_SX} />
+                        <Chip size="small" label="Full" color="error" variant="outlined" sx={COMPACT_CHIP_SX} />
+                        <Chip size="small" label="Break" variant="outlined" sx={COMPACT_CHIP_SX} />
+                        <Chip size="small" label="Leave" color="secondary" variant="outlined" sx={COMPACT_CHIP_SX} />
+                      </Stack>
+                      <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                        <Button size="small" variant="outlined" onClick={() => setCalendarOverrides(() => {
+                          const next: Record<string, boolean> = {};
+                          for (const group of calendarGroupsWithBuckets) {
+                            for (const bucket of group.buckets) {
+                              next[`${group.date}:${bucket.key}`] = true;
+                            }
+                          }
+                          return next;
+                        })}>
+                          Expand all
+                        </Button>
+                        <Button size="small" variant="outlined" onClick={() => setCalendarOverrides(() => {
+                          const next: Record<string, boolean> = {};
+                          for (const group of calendarGroupsWithBuckets) {
+                            for (const bucket of group.buckets) {
+                              next[`${group.date}:${bucket.key}`] = false;
+                            }
+                          }
+                          return next;
+                        })}>
+                          Collapse all
+                        </Button>
+                        <Button size="small" variant="outlined" onClick={() => setDate(clinicClock.dateKey)}>
+                          Jump to now
+                        </Button>
+                      </Stack>
                     </Stack>
+                    <Box
+                      sx={{
+                        minWidth: 0,
+                        pl: { xs: 0, lg: 1.5 },
+                        borderLeft: { xs: "none", lg: "1px solid" },
+                        borderColor: { lg: "divider" },
+                        display: "flex",
+                        alignItems: "center",
+                      }}
+                    >
+                      {selectedDoctorProfileContext ? (
+                        <DoctorIdentityCard doctorId={selectedDoctorOption.id} doctor={selectedDoctorOption} variant="avatar" />
+                      ) : (
+                        <Box
+                          sx={{
+                            width: "100%",
+                            px: 1.75,
+                            py: 1.5,
+                            borderRadius: 3,
+                            border: (theme) => `1px dashed ${theme.palette.divider}`,
+                            bgcolor: "grey.50",
+                          }}
+                        >
+                          <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.35 }}>
+                            Select a doctor to view profile context.
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Choose a doctor from Scheduler Controls to see photo, qualification, and specialization here.
+                          </Typography>
+                        </Box>
+                      )}
+                    </Box>
                   </Box>
-                  <Stack direction="row" spacing={0.5} flexWrap="wrap">
-                    <Chip size="small" label="Available" color="success" variant="outlined" sx={COMPACT_CHIP_SX} />
-                    <Chip size="small" label="Partially booked" color="warning" variant="outlined" sx={COMPACT_CHIP_SX} />
-                    <Chip size="small" label="Full" color="error" variant="outlined" sx={COMPACT_CHIP_SX} />
-                    <Chip size="small" label="Break" variant="outlined" sx={COMPACT_CHIP_SX} />
-                    <Chip size="small" label="Leave" color="secondary" variant="outlined" sx={COMPACT_CHIP_SX} />
-                  </Stack>
-                  <Stack direction="row" spacing={0.75} flexWrap="wrap">
-                    <Button size="small" variant="outlined" onClick={() => setCalendarOverrides(() => {
-                      const next: Record<string, boolean> = {};
-                      for (const group of calendarGroupsWithBuckets) {
-                        for (const bucket of group.buckets) {
-                          next[`${group.date}:${bucket.key}`] = true;
-                        }
-                      }
-                      return next;
-                    })}>
-                      Expand all
-                    </Button>
-                    <Button size="small" variant="outlined" onClick={() => setCalendarOverrides(() => {
-                      const next: Record<string, boolean> = {};
-                      for (const group of calendarGroupsWithBuckets) {
-                        for (const bucket of group.buckets) {
-                          next[`${group.date}:${bucket.key}`] = false;
-                        }
-                      }
-                      return next;
-                    })}>
-                      Collapse all
-                    </Button>
-                    <Button size="small" variant="outlined" onClick={() => setDate(clinicClock.dateKey)}>
-                      Jump to now
-                    </Button>
-                  </Stack>
 
                   {loading && calendarGroups.every((group) => group.rows.length === 0) ? (
                     <CompactEmptyState title="Loading doctor schedule…" subtitle="Fetching availability and booking visibility." />

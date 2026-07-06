@@ -41,6 +41,8 @@ test("doctor avatar rendering uses authenticated image loading", () => {
   const avatarSource = readWebAdminSource("components/doctor/DoctorAvatar.tsx");
   const detailSource = readWebAdminSource("pages/doctors/DoctorDetailPage.tsx");
   const identityCardSource = readWebAdminSource("components/doctor/DoctorIdentityCard.tsx");
+  const availabilitySource = readWebAdminSource("pages/doctors/DoctorAvailabilityPage.tsx");
+  const dayBoardSource = readWebAdminSource("pages/appointments/DayBoardPage.tsx");
   const restClientSource = readWebAdminSource("api/restClient.ts");
 
   assert.ok(hookSource.includes("fetchAuthenticatedBlob"));
@@ -48,5 +50,9 @@ test("doctor avatar rendering uses authenticated image loading", () => {
   assert.ok(restClientSource.includes('"X-Tenant-Id"'));
   assert.ok(avatarSource.includes("useAuthenticatedImage(photoUrl)"));
   assert.ok(detailSource.includes("DoctorAvatar"));
-  assert.ok(identityCardSource.includes("DoctorAvatar"));
+  assert.ok(identityCardSource.includes('variant?: "avatar" | "compact" | "full"'));
+  assert.ok(identityCardSource.includes("avatarSize?: number"));
+  assert.ok(identityCardSource.includes("loading?: boolean"));
+  assert.ok(availabilitySource.includes('variant="avatar"'));
+  assert.ok(dayBoardSource.includes('variant="avatar"'));
 });
