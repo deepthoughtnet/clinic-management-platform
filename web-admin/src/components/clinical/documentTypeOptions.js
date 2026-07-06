@@ -92,3 +92,50 @@ export function isPublishedLabDocument(document) {
 
   return statusIndicators.some((value) => ["PUBLISHED", "AVAILABLE", "PATIENT_VISIBLE"].includes(value));
 }
+
+export function documentBusinessStatusLabel(document) {
+  if (isPublishedLabDocument(document)) {
+    return "Published • Available";
+  }
+  const fields = [
+    document?.displayStatus,
+    document?.businessStatus,
+    document?.verificationStatus,
+    document?.status,
+  ].map((value) => normalizeDocumentType(value)).filter(Boolean);
+  if (!fields.length) {
+    return null;
+  }
+  const mapped = fields.map((value) => {
+    switch (value) {
+      case "PUBLISHED":
+        return "Published";
+      case "AVAILABLE":
+      case "PATIENT_VISIBLE":
+        return "Available";
+      case "INTERNAL_ONLY":
+        return null;
+      case "VERIFIED":
+        return "Verified";
+      case "UNVERIFIED":
+        return "Unverified";
+      case "APPROVED":
+        return "Approved";
+      case "REJECTED":
+        return "Rejected";
+      case "REVIEW_REQUIRED":
+        return "Review required";
+      case "PENDING":
+      case "UNDER_REVIEW":
+        return "Under review";
+      case "COMPLETED":
+      case "DONE":
+        return "Completed";
+      case "PROCESSING":
+        return "In progress";
+      default:
+        return null;
+    }
+  }).filter(Boolean);
+  return mapped.length ? mapped[0] : null;
+}

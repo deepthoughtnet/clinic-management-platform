@@ -278,12 +278,12 @@ export function canAccessFeature(
 }
 
 export function resolveTenantLandingPage(
-  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships" | "tenantRole" | "rolesUpper">,
+  auth: Pick<AuthContextValue, "tenantId" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships" | "tenantRole" | "rolesUpper" | "permissions">,
 ) {
   const enabled = resolveEnabledTenantModules(auth);
   const candidates = [
     enabled.has("INVENTORY") && (enabled.has("PRESCRIPTION") || enabled.has("BILLING")) && isPharmacyWorkspaceRole(auth) ? "/pharmacy/dashboard" : null,
-    enabled.has("LABORATORY") && isLabWorkspaceRole(auth) ? "/lab" : null,
+    enabled.has("LABORATORY") && (isLabWorkspaceRole(auth) || hasLabReceptionAccess(auth)) ? "/lab" : null,
     enabled.has("BILLING") && isBillingWorkspaceRole(auth) ? "/billing" : null,
     (enabled.has("APPOINTMENTS") || enabled.has("CONSULTATION")) ? "/dashboard" : null,
     enabled.has("PRESCRIPTION") && isPharmacyWorkspaceRole(auth) ? "/prescriptions" : null,
@@ -319,6 +319,13 @@ function hasAnyRole(activeRoles: Set<string>, ...roles: string[]) {
   return roles.some((role) => activeRoles.has(normalizeRoleValue(role)));
 }
 
+function hasLabReceptionAccess(
+  auth: Pick<AuthContextValue, "tenantRole" | "rolesUpper" | "permissions">,
+) {
+  return auth.permissions.includes("lab.reception.access")
+    || hasAnyRole(getActiveRoles(auth), "LAB_FRONT_DESK", "LAB_TECHNICIAN", "LAB_APPROVER", "LAB_ASSISTANT", "CLINIC_ADMIN", "PLATFORM_ADMIN");
+}
+
 export function isPharmacyWorkspaceRole(
   auth: Pick<AuthContextValue, "tenantRole" | "rolesUpper">,
 ) {
@@ -338,7 +345,7 @@ export function isBillingWorkspaceRole(
 }
 
 export function isRouteAccessibleForAuth(
-  auth: Pick<AuthContextValue, "tenantId" | "tenantRole" | "rolesUpper" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships">,
+  auth: Pick<AuthContextValue, "tenantId" | "tenantRole" | "rolesUpper" | "tenantModules" | "enabledTenantModules" | "activeTenantMemberships" | "permissions">,
   pathname: string,
 ) {
   const path = normalizeRoutePath(pathname);
@@ -347,6 +354,7 @@ export function isRouteAccessibleForAuth(
   const billingRole = isBillingWorkspaceRole(auth);
   const pharmacyRole = isPharmacyWorkspaceRole(auth);
   const labRole = isLabWorkspaceRole(auth);
+  const labReceptionRole = hasLabReceptionAccess(auth);
   const operationalRole = hasAnyRole(activeRoles, "CLINIC_ADMIN", "DOCTOR", "RECEPTIONIST", "AUDITOR", "PLATFORM_ADMIN");
 
   if (path === "/" || path === "/dashboard") {
@@ -377,7 +385,7 @@ export function isRouteAccessibleForAuth(
   if (path === "/pharmacy/procure" || path === "/pharmacy/procure-test") return canAccessFeature(auth, "pharmacy-procurement") && pharmacyRole;
   if (path === "/pharmacy/reconcile" || path === "/pharmacy/reconcile-test") return canAccessFeature(auth, "pharmacy-reconciliation") && pharmacyRole;
   if (path === "/reports") return canAccessFeature(auth, "reports");
-  if (path === "/lab" || path === "/laboratory") return canAccessFeature(auth, "laboratory") && labRole;
+  if (path === "/lab" || path === "/laboratory") return canAccessFeature(auth, "laboratory") && (labRole || labReceptionRole);
   if (path.startsWith("/platform/")) {
     if (path === "/platform/tenants") return auth.rolesUpper.includes("PLATFORM_ADMIN");
     if (path === "/platform/help") return auth.rolesUpper.includes("PLATFORM_ADMIN");

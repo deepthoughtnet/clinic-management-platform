@@ -64,20 +64,40 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 type CreateForm = {
   firstName: string;
   lastName: string;
+  username: string;
   email: string;
   role: string;
   tempPassword: string;
+  employeeCode: string;
+  mobile: string;
+  department: string;
   active: boolean;
 };
 
 const EMPTY_CREATE_FORM: CreateForm = {
   firstName: "",
   lastName: "",
+  username: "",
   email: "",
   role: "DOCTOR",
   tempPassword: "",
+  employeeCode: "",
+  mobile: "",
+  department: "",
   active: true,
 };
+
+const DEPARTMENT_OPTIONS = [
+  "Reception",
+  "Doctor",
+  "Billing",
+  "Pharmacy",
+  "Laboratory",
+  "Administration",
+  "Inventory",
+  "Management",
+  "Other",
+] as const;
 
 function roleLabel(role: string) {
   if (role === "SERVICE_AGENT") return "Service Agent (non-human)";
@@ -115,6 +135,16 @@ function permissionModule(permission: string) {
   if (normalized.startsWith("report.")) return "Reports";
   if (normalized.startsWith("audit.")) return "Audit";
   return "Other";
+}
+
+function formatLocalDateTime(value: string | null | undefined) {
+  if (!value) return "Never logged in";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Never logged in";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
 }
 
 function groupPermissions(permissions: string[]) {
@@ -202,11 +232,14 @@ export default function UsersRolesPage() {
     const parsed = userCreateSchema.safeParse({
       firstName: createForm.firstName,
       lastName: createForm.lastName,
+      username: createForm.username,
       email: createForm.email,
       role: createForm.role,
       tempPassword: createForm.tempPassword,
       active: createForm.active,
-      mobile: "",
+      employeeCode: createForm.employeeCode,
+      mobile: createForm.mobile,
+      department: createForm.department,
     });
     if (!parsed.success) {
       const fieldErrors = mapZodErrors(parsed.error);
@@ -228,10 +261,14 @@ export default function UsersRolesPage() {
       }
       await createTenantUser(auth.accessToken, auth.tenantId, {
         email: parsed.data.email.trim().toLowerCase(),
+        username: parsed.data.username?.trim() || null,
         firstName: parsed.data.firstName.trim() || null,
         lastName: parsed.data.lastName?.trim() || null,
         role: parsed.data.role,
         temporaryPassword: parsed.data.tempPassword?.trim() || null,
+        employeeCode: parsed.data.employeeCode?.trim() || null,
+        mobile: parsed.data.mobile?.trim() || null,
+        department: parsed.data.department?.trim() || null,
         active: parsed.data.active ?? true,
       });
       setToast("User created successfully.");
@@ -241,7 +278,21 @@ export default function UsersRolesPage() {
       await load();
     } catch (err) {
       console.error("Tenant user creation failed", err);
-      setError("Unable to create user. Please verify role and tenant selection.");
+      const message = err instanceof Error ? err.message : "Unable to create user. Please verify role and tenant selection.";
+      const fieldErrors: Record<string, string> = {};
+      if (message.toLowerCase().includes("username already exists")) {
+        fieldErrors.username = "Username already exists for this clinic.";
+      }
+      if (message.toLowerCase().includes("employee code already exists")) {
+        fieldErrors.employeeCode = "Employee code already exists for this clinic.";
+      }
+      if (message.toLowerCase().includes("mobile")) {
+        fieldErrors.mobile = message;
+      }
+      if (Object.keys(fieldErrors).length > 0) {
+        setCreateFieldErrors((current) => ({ ...current, ...fieldErrors }));
+      }
+      setError(message);
     } finally {
       setCreateSubmitting(false);
     }
@@ -328,9 +379,13 @@ export default function UsersRolesPage() {
                   <TableHead>
                     <TableRow>
                       <TableCell>Name</TableCell>
-                      <TableCell>Email</TableCell>
+                      <TableCell>Email / Login ID</TableCell>
                       <TableCell>Role</TableCell>
                       <TableCell>Status</TableCell>
+                      <TableCell>Department</TableCell>
+                      <TableCell>Employee Code</TableCell>
+                      <TableCell>Mobile</TableCell>
+                      <TableCell>Last Login</TableCell>
                       <TableCell>Created</TableCell>
                       <TableCell align="right">Actions</TableCell>
                     </TableRow>
@@ -341,7 +396,7 @@ export default function UsersRolesPage() {
                       return (
                         <TableRow key={user.appUserId}>
                           <TableCell sx={{ fontWeight: 700 }}>{user.displayName || user.email || user.appUserId}</TableCell>
-                          <TableCell>{user.email || "-"}</TableCell>
+                          <TableCell>{user.username || user.email || user.keycloakSub || "-"}</TableCell>
                           <TableCell>
                             {canAssignRoles ? (
                               <FormControl size="small" sx={{ minWidth: 190 }}>
@@ -362,6 +417,10 @@ export default function UsersRolesPage() {
                           <TableCell>
                             <Chip size="small" color={active ? "success" : "default"} label={active ? "ACTIVE" : "DISABLED"} />
                           </TableCell>
+                          <TableCell>{user.department || "-"}</TableCell>
+                          <TableCell>{user.employeeCode || "-"}</TableCell>
+                          <TableCell>{user.mobile || "-"}</TableCell>
+                          <TableCell>{formatLocalDateTime(user.lastLoginAt)}</TableCell>
                           <TableCell>{new Date(user.createdAt).toLocaleString()}</TableCell>
                           <TableCell align="right">
                             <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
@@ -448,6 +507,16 @@ export default function UsersRolesPage() {
               />
             </Stack>
             <TextField
+              id="create-user-username"
+              label="Username / Login ID"
+              value={createForm.username}
+              onChange={(e) => setCreateForm((s) => ({ ...s, username: e.target.value }))}
+              placeholder="e.g. reception01"
+              error={Boolean(createFieldErrors.username)}
+              helperText={createFieldErrors.username || "User can sign in using username or email if enabled."}
+              fullWidth
+            />
+            <TextField
               id="create-user-email"
               label={<RequiredLabel text="Email" required />}
               type="email"
@@ -472,6 +541,42 @@ export default function UsersRolesPage() {
                 ))}
               </Select>
               {createFieldErrors.role ? <Typography variant="caption" color="error">{createFieldErrors.role}</Typography> : null}
+            </FormControl>
+            <TextField
+              id="create-user-employeeCode"
+              label="Employee Code"
+              value={createForm.employeeCode}
+              onChange={(e) => setCreateForm((s) => ({ ...s, employeeCode: e.target.value }))}
+              placeholder="EMP-001"
+              error={Boolean(createFieldErrors.employeeCode)}
+              helperText={createFieldErrors.employeeCode || "Optional staff code, unique within the clinic."}
+              fullWidth
+            />
+            <TextField
+              id="create-user-mobile"
+              label="Mobile Number"
+              value={createForm.mobile}
+              onChange={(e) => setCreateForm((s) => ({ ...s, mobile: e.target.value }))}
+              placeholder="9876543210"
+              fullWidth
+              error={Boolean(createFieldErrors.mobile)}
+              helperText={createFieldErrors.mobile || "Optional staff mobile number."}
+            />
+            <FormControl fullWidth>
+              <InputLabel id="create-department-label">Department</InputLabel>
+              <Select
+                labelId="create-department-label"
+                label="Department"
+                value={createForm.department}
+                onChange={(e) => setCreateForm((s) => ({ ...s, department: String(e.target.value) }))}
+                error={Boolean(createFieldErrors.department)}
+              >
+                <MenuItem value="">Select department</MenuItem>
+                {DEPARTMENT_OPTIONS.map((department) => (
+                  <MenuItem key={department} value={department}>{department}</MenuItem>
+                ))}
+              </Select>
+              {createFieldErrors.department ? <Typography variant="caption" color="error">{createFieldErrors.department}</Typography> : null}
             </FormControl>
             <TextField
               label="Temporary Password (optional)"

@@ -66,8 +66,10 @@ import {
 } from "../../api/clinicApi";
 import ConsultationFeeDialog from "../../components/ConsultationFeeDialog";
 import { CompactEmptyState, WorkflowStrip } from "../../components/compact/CompactUi";
+import { AppointmentTokenChip, PatientJourneyTracker, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
 import { getClinicClockParts, getClinicDateKey, isBookingTimePast, formatClinicClockLabel } from "./bookingValidation";
 import { getAppointmentSlotPresentation } from "./slotState";
+import { formatRelativeBookingTime, getNextWorkflowAction } from "../../components/workflow/workflowHelpers";
 
 type SlotFilterKey = DoctorAvailabilitySlotStatus | "BOOKED" | "CHECKED_IN" | "IN_CONSULTATION" | "COMPLETED" | "NO_SHOW" | "CANCELLED";
 
@@ -246,11 +248,17 @@ function compactDateLabel(date: string) {
 }
 
 const DAY_BOARD_WORKFLOW_STEPS = [
-  { label: "Availability" },
-  { label: "Slot" },
-  { label: "Booking" },
+  { label: "Appointment Booked" },
+  { label: "Registration" },
+  { label: "Payment" },
   { label: "Check-in" },
+  { label: "Waiting" },
   { label: "Consultation" },
+  { label: "Prescription" },
+  { label: "Laboratory" },
+  { label: "Pharmacy" },
+  { label: "Billing Complete" },
+  { label: "Visit Completed" },
 ] as const;
 
 function isPastDateTime(date: string, time: string | null | undefined, timeZone?: string | null, clinicNow?: string | null) {
@@ -1776,10 +1784,20 @@ export default function DayBoardPage() {
                   <Stack spacing={1}>
                     <Typography variant="body2" sx={{ fontWeight: 700 }}>{selectedAppointment.patientName || selectedAppointment.patientNumber || selectedAppointment.patientId}</Typography>
                     <Typography variant="caption" color="text.secondary">{selectedAppointment.appointmentDate} {toFive(selectedAppointment.appointmentTime)}</Typography>
+                    <AppointmentTokenChip appointment={selectedAppointment} />
+                    <Typography variant="caption" color="text.secondary">{formatRelativeBookingTime(selectedAppointment.createdAt) || "Booked recently"}</Typography>
+                    <Typography variant="caption" color="text.secondary">{selectedAppointment.patientNumber ? `Patient No: ${selectedAppointment.patientNumber}` : "Patient No: Not assigned"}</Typography>
                     <Typography variant="body2">Doctor: {selectedAppointment.doctorName || displayDoctorName(users, selectedAppointment.doctorUserId)}</Typography>
                     <Typography variant="body2">Phone: {selectedAppointment.patientMobile || "—"}</Typography>
                     <Typography variant="body2">Reference: {selectedAppointment.displayReference || (selectedAppointment.tokenNumber != null ? `APT-${selectedAppointment.tokenNumber}` : "Pending")}</Typography>
-                    <Chip size="small" label={friendlyStatusLabel(selectedAppointment.status)} color={appointmentColor(selectedAppointment.status)} sx={{ width: "fit-content" }} />
+                    <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                      <WorkflowStatusBadge status={selectedAppointment.status} />
+                      <Chip
+                        size="small"
+                        label={`Next: ${getNextWorkflowAction({ status: selectedAppointment.status, paymentStatus: selectedAppointmentFee?.feeStatus, billDueAmount: selectedAppointmentFee?.dueAmount }).label}`}
+                        variant="outlined"
+                      />
+                    </Stack>
                     <Typography variant="body2">Consultation fee: {formatMoney(selectedAppointmentFee?.consultationFee)}</Typography>
                     <Chip
                       size="small"
@@ -1790,16 +1808,17 @@ export default function DayBoardPage() {
                     />
                     <Typography variant="body2">Queue: {selectedAppointment.status === "WAITING" ? "Checked in" : friendlyStatusLabel(selectedAppointment.status)}</Typography>
                     <Typography variant="body2">Consultation: {selectedAppointment.consultationId ? "Started" : "Not started"}</Typography>
+                    <PatientJourneyTracker context={{ status: selectedAppointment.status, paymentStatus: selectedAppointmentFee?.feeStatus, billDueAmount: selectedAppointmentFee?.dueAmount }} compact />
                     <Stack direction="row" gap={0.75} flexWrap="wrap">
-                      {!isDoctor && canCollect && selectedAppointmentFee?.consultationFee != null && selectedAppointmentFee.consultationFee > 0 && selectedAppointmentFee.feeStatus !== "PAID" ? (
-                        <Button size="small" variant="outlined" onClick={() => setFeeDialog({ appointment: selectedAppointment, action: "collect" })}>Collect Fee</Button>
+                      {canCollect && selectedAppointmentFee?.consultationFee != null && selectedAppointmentFee.consultationFee > 0 && selectedAppointmentFee.feeStatus !== "PAID" ? (
+                        <Button size="small" variant={getNextWorkflowAction({ status: selectedAppointment.status, paymentStatus: selectedAppointmentFee?.feeStatus, billDueAmount: selectedAppointmentFee?.dueAmount }).key === "collect-fee" ? "contained" : "outlined"} onClick={() => setFeeDialog({ appointment: selectedAppointment, action: "collect" })}>Collect Fee</Button>
                       ) : null}
-                      {!isDoctor && selectedAppointmentFee?.bill ? (
+                      {selectedAppointmentFee?.bill ? (
                         <Button size="small" variant="outlined" onClick={() => navigate(`/billing?appointmentId=${selectedAppointment.id}`)}>View Payment</Button>
                       ) : null}
                       {!isDoctor ? (
                         <>
-                          <Button size="small" variant="contained" disabled={!canManage} onClick={() => void checkInAppointment(selectedAppointment)}>Check-in</Button>
+                          <Button size="small" variant={getNextWorkflowAction({ status: selectedAppointment.status, paymentStatus: selectedAppointmentFee?.feeStatus, billDueAmount: selectedAppointmentFee?.dueAmount }).key === "check-in" ? "contained" : "outlined"} disabled={!canManage} onClick={() => void checkInAppointment(selectedAppointment)}>Check-in</Button>
                           <Button size="small" variant="outlined" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "NO_SHOW")}>No-show</Button>
                           <Button size="small" variant="outlined" disabled={!canManage} onClick={() => void transitionStatus(selectedAppointment.id, "CANCELLED")}>Cancel</Button>
                         </>
@@ -1807,8 +1826,13 @@ export default function DayBoardPage() {
                       {!isDoctor && selectedAppointment.status === "BOOKED" ? (
                         <Button size="small" variant="outlined" onClick={() => openReschedule(selectedAppointment)}>Reschedule</Button>
                       ) : null}
+                      {isDoctor && canStartConsultation && (selectedAppointment.status === "WAITING" || selectedAppointment.status === "IN_CONSULTATION") ? (
+                        <Button size="small" variant={getNextWorkflowAction({ status: selectedAppointment.status, paymentStatus: selectedAppointmentFee?.feeStatus }).key === "continue-consultation" ? "contained" : "outlined"} disabled={!canStartConsultation} onClick={() => void startConsultation(selectedAppointment.id)}>
+                          {selectedAppointment.consultationId ? "Continue consultation" : "Start consultation"}
+                        </Button>
+                      ) : null}
                       {!isDoctor && canStartConsultation ? (
-                        <Button size="small" variant="outlined" disabled={!canStartConsultation} onClick={() => void startConsultation(selectedAppointment.id)}>Start consultation</Button>
+                        <Button size="small" variant={getNextWorkflowAction({ status: selectedAppointment.status, paymentStatus: selectedAppointmentFee?.feeStatus }).key === "start-consultation" ? "contained" : "outlined"} disabled={!canStartConsultation} onClick={() => void startConsultation(selectedAppointment.id)}>Start consultation</Button>
                       ) : null}
                       <Button size="small" onClick={() => navigate(`/patients/${selectedAppointment.patientId}`)}>Open patient</Button>
                       {canOpenWorkspace && selectedAppointment.consultationId ? (

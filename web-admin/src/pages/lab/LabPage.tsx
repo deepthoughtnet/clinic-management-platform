@@ -18,7 +18,9 @@ import {
   Grid,
   IconButton,
   InputLabel,
+  Menu,
   MenuItem,
+  Tooltip,
   Select,
   Stack,
   Tab,
@@ -34,6 +36,7 @@ import {
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
+import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
 import PaidRoundedIcon from "@mui/icons-material/PaidRounded";
 import ScienceRoundedIcon from "@mui/icons-material/ScienceRounded";
 import { firstZodError, labDoctorReviewSchema, labOrderCreateSchema, labPaymentSchema, labResultEntrySchema, labTestMasterSchema } from "@deepthoughtnet/form-validation-kit";
@@ -67,6 +70,7 @@ import {
   getLabTestImportTemplate,
   getLabTestConfig,
   getLabOrderPdf,
+  getLabOrderAttachmentBlob,
   getLabOrders,
   getLabTests,
   getReceiptPdf,
@@ -76,6 +80,7 @@ import {
   receiveLabSample,
   rejectLabSample,
   publishLabOrderReport,
+  recordLabOrderReportDeliveryAction,
   sendReceipt,
   searchPatients,
   updateLabTest,
@@ -87,6 +92,7 @@ import {
   type LabTestCsvImportResult,
   type Patient,
   type LabOrder,
+  type LabReportDeliveryEvent,
   type LabOrderOrigin,
   type LabOrderResult,
   type LabSample,
@@ -171,6 +177,7 @@ type SampleCollectionFormRow = {
   containerType: string;
   notes: string;
 };
+type SampleCollectionStatus = (typeof SAMPLE_COLLECTION_STATUS_OPTIONS)[number];
 
 const SAMPLE_REJECTION_REASONS = [
   "Hemolysed sample",
@@ -181,6 +188,23 @@ const SAMPLE_REJECTION_REASONS = [
   "Patient not fasting",
   "Label mismatch",
   "Other",
+] as const;
+const SAMPLE_CONTAINER_TYPE_OPTIONS = [
+  "EDTA",
+  "Plain Tube",
+  "Fluoride",
+  "Citrate",
+  "Urine Container",
+  "Stool Container",
+  "Slide",
+  "Imaging",
+  "Other",
+] as const;
+const SAMPLE_COLLECTION_STATUS_OPTIONS = [
+  "Collected",
+  "Partial Collection",
+  "Sample Not Obtained",
+  "Patient Refused",
 ] as const;
 
 const DIRECT_ORDER_ORIGIN_OPTIONS: LabOrderOrigin[] = ["WALK_IN", "DOCTOR_REFERRAL"];
@@ -231,6 +255,104 @@ function formatDateTime(value: string | null | undefined) {
   return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
+function formatDateChip(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "2-digit" }).format(date);
+}
+
+function formatTimeChip(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+function formatReferenceBadge(value: string | null | undefined) {
+  return value && value.trim() ? value.trim() : "-";
+}
+
+function parseRangeBound(value: string) {
+  const trimmed = value.trim();
+  const normalized = trimmed.replace(/\s+/g, "");
+  const match = normalized.match(/^([<>]=?|=)?(-?\d+(?:\.\d+)?)$/);
+  if (!match) {
+    return null;
+  }
+  return { operator: match[1] || "=", value: Number(match[2]) };
+}
+
+function parseRangeWindow(range: string | null | undefined) {
+  if (!range || !range.trim()) return null;
+  const text = range.trim().replace(/\s+/g, "");
+  const between = text.match(/^(-?\d+(?:\.\d+)?)[:-](-?\d+(?:\.\d+)?)$/);
+  if (between) {
+    const left = Number(between[1]);
+    const right = Number(between[2]);
+    if (Number.isFinite(left) && Number.isFinite(right)) {
+      return { min: Math.min(left, right), max: Math.max(left, right) };
+    }
+  }
+  const values = text.split(/[,/]/).map((part) => part.trim()).filter(Boolean);
+  if (values.length === 2 && values.every((part) => Number.isFinite(Number(part)))) {
+    const first = Number(values[0]);
+    const second = Number(values[1]);
+    return { min: Math.min(first, second), max: Math.max(first, second) };
+  }
+  const bound = parseRangeBound(text);
+  if (bound) {
+    if (bound.operator === ">" || bound.operator === ">=") {
+      return { min: bound.value, max: Number.POSITIVE_INFINITY, inclusiveMin: bound.operator === ">=" };
+    }
+    if (bound.operator === "<" || bound.operator === "<=") {
+      return { min: Number.NEGATIVE_INFINITY, max: bound.value, inclusiveMax: bound.operator === "<=" };
+    }
+    return { min: bound.value, max: bound.value, inclusiveMin: true, inclusiveMax: true };
+  }
+  return null;
+}
+
+function getResultSeverity(value: string, referenceRange: string | null | undefined, criticalRange: string | null | undefined) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "default";
+  const critical = parseRangeWindow(criticalRange);
+  const reference = parseRangeWindow(referenceRange);
+  const inWindow = (window: ReturnType<typeof parseRangeWindow> | null) => {
+    if (!window) return true;
+    const minOk = window.min === Number.NEGATIVE_INFINITY
+      ? true
+      : window.inclusiveMin === false
+        ? numeric > window.min
+        : numeric >= window.min;
+    const maxOk = window.max === Number.POSITIVE_INFINITY
+      ? true
+      : window.inclusiveMax === false
+        ? numeric < window.max
+        : numeric <= window.max;
+    return minOk && maxOk;
+  };
+  if (critical && !inWindow(critical)) return "error";
+  if (reference && !inWindow(reference)) return "warning";
+  return "default";
+}
+
+function resultFieldSx(severity: string) {
+  if (severity === "error") {
+    return {
+      "& .MuiOutlinedInput-root fieldset": { borderColor: "error.main" },
+      "& .MuiInputBase-input": { fontWeight: 700 },
+    };
+  }
+  if (severity === "warning") {
+    return {
+      "& .MuiOutlinedInput-root fieldset": { borderColor: "warning.main" },
+      "& .MuiInputBase-input": { fontWeight: 700 },
+    };
+  }
+  return undefined;
+}
+
 function latestReceiptForBill(receipts: Receipt[], billId: string) {
   return receipts
     .filter((receipt) => receipt.billId === billId)
@@ -241,6 +363,41 @@ function latestReceiptForBill(receipts: Receipt[], billId: string) {
 function paymentForReceipt(payments: Payment[], receipt: Receipt | null) {
   if (!receipt) return null;
   return payments.find((payment) => payment.id === receipt.paymentId) || null;
+}
+
+function buildReceiptPaymentSummary(row: LabOrder) {
+  const receipt = row.paymentReceipt;
+  if (receipt) {
+    return {
+      receiptId: receipt.receiptId,
+      receiptNumber: receipt.receiptNumber,
+      receiptDate: receipt.collectedAt ? receipt.collectedAt.slice(0, 10) : row.receiptDate || null,
+      paymentId: row.paymentId || receipt.receiptId || null,
+      paymentDateTime: receipt.collectedAt || row.paymentDateTime || row.paymentCollectedAt || null,
+      paymentDate: receipt.collectedAt ? receipt.collectedAt.slice(0, 10) : row.paymentDate || row.paymentCollectedAt?.slice(0, 10) || null,
+      paymentAmount: receipt.amount ?? row.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? null,
+      paymentMode: receipt.paymentMode || row.paymentMode || null,
+      referenceNumber: receipt.referenceNumber || row.referenceNumber || null,
+      receivedBy: receipt.collectedBy || row.receivedBy || null,
+    };
+  }
+  if (!row.receiptId || !row.receiptNumber) return null;
+  return {
+    receiptId: row.receiptId,
+    receiptNumber: row.receiptNumber,
+    receiptDate: row.receiptDate || row.paymentDate || row.paymentCollectedAt?.slice(0, 10) || null,
+    paymentId: row.paymentId || null,
+    paymentDateTime: row.paymentDateTime || row.paymentCollectedAt || null,
+    paymentDate: row.paymentDate || row.paymentCollectedAt?.slice(0, 10) || null,
+    paymentAmount: row.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? null,
+    paymentMode: row.paymentMode || null,
+    referenceNumber: row.referenceNumber || null,
+    receivedBy: row.receivedBy || null,
+  };
+}
+
+function receiptTimestampText(row: LabOrder) {
+  return formatDateTime(row.paymentReceipt?.collectedAt || row.paymentDateTime || row.paymentCollectedAt || row.receiptDate || row.paymentDate || null);
 }
 
 function statusTone(status: LabOrderStatus | string) {
@@ -266,6 +423,11 @@ function statusTone(status: LabOrderStatus | string) {
     default:
       return "default";
   }
+}
+
+function receiptActionLabel(row: LabOrder) {
+  if (row.billDueAmount != null && row.billDueAmount > 0) return "Collect";
+  return "View Receipt";
 }
 
 function resultTone(flag: string | null | undefined) {
@@ -401,6 +563,79 @@ function openPdf(blob: Blob) {
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+function reportDeliveryHistorySummary(events: LabReportDeliveryEvent[] | null | undefined) {
+  if (!events || !events.length) return [];
+  return events.slice(0, 4).map((event) => event.label || reportActionHistoryLabel(event.action));
+}
+
+function copyTextToClipboard(value: string) {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(value);
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+  return Promise.resolve();
+}
+
+function reportActionHistoryLabel(action: string) {
+  switch (action) {
+    case "lab_order.report_viewed":
+      return "Portal viewed";
+    case "lab_order.report_printed":
+      return "Printed";
+    case "lab_order.report_downloaded":
+      return "PDF downloaded";
+    case "lab_order.report_email_sent":
+      return "Email sent";
+    case "lab_order.report_whatsapp_sent":
+      return "WhatsApp sent";
+    case "lab_order.report_shared_link":
+      return "Share link copied";
+    default:
+      return action.replaceAll("_", " ");
+  }
+}
+
+function ReportActionMenuButton(props: {
+  row: LabOrder;
+  disabled?: boolean;
+  onViewReport: (row: LabOrder) => void;
+  onPrintReport: (row: LabOrder) => void;
+  onDownloadReport: (row: LabOrder) => void;
+  onEmailReport: (row: LabOrder) => void;
+  onWhatsappReport: (row: LabOrder) => void;
+  onShareLink: (row: LabOrder) => void;
+}) {
+  const { row, disabled, onViewReport, onPrintReport, onDownloadReport, onEmailReport, onWhatsappReport, onShareLink } = props;
+  const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
+  const open = Boolean(anchorEl);
+
+  return (
+    <>
+      <Tooltip title="Report actions">
+        <IconButton size="small" onClick={(event) => setAnchorEl(event.currentTarget)} disabled={disabled}>
+          <MoreVertRoundedIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <Menu anchorEl={anchorEl} open={open} onClose={() => setAnchorEl(null)}>
+        <MenuItem onClick={() => { setAnchorEl(null); onViewReport(row); }}>View Report</MenuItem>
+        <MenuItem onClick={() => { setAnchorEl(null); onPrintReport(row); }}>Print Report</MenuItem>
+        <MenuItem onClick={() => { setAnchorEl(null); onDownloadReport(row); }}>Download PDF</MenuItem>
+        <MenuItem onClick={() => { setAnchorEl(null); onEmailReport(row); }}>Email</MenuItem>
+        <MenuItem onClick={() => { setAnchorEl(null); onWhatsappReport(row); }}>WhatsApp</MenuItem>
+        <MenuItem onClick={() => { setAnchorEl(null); onShareLink(row); }}>Share Link</MenuItem>
+      </Menu>
+    </>
+  );
+}
+
 function defaultResultsForItem(orderItem: LabOrder["items"][number], existingResults: LabOrderResult[]): ResultItemForm {
   const existingForItem = existingResults.filter((row) => row.labOrderItemId === orderItem.id);
   if (existingForItem.length > 0) {
@@ -499,6 +734,7 @@ export default function LabPage() {
   const [clinicProfile, setClinicProfile] = React.useState<ClinicProfile | null>(null);
   const [sampleCollectedBy, setSampleCollectedBy] = React.useState("");
   const [sampleCollectedAt, setSampleCollectedAt] = React.useState(toDatetimeLocal(new Date().toISOString()));
+  const [sampleCollectionStatus, setSampleCollectionStatus] = React.useState<SampleCollectionStatus>("Collected");
   const [sampleRows, setSampleRows] = React.useState<SampleCollectionFormRow[]>([]);
   const [collectedSamples, setCollectedSamples] = React.useState<LabSample[]>([]);
   const [receiveTarget, setReceiveTarget] = React.useState<LabSample | null>(null);
@@ -508,12 +744,22 @@ export default function LabPage() {
   const [recollectionRequired, setRecollectionRequired] = React.useState(false);
   const [resultComments, setResultComments] = React.useState("");
   const [resultItems, setResultItems] = React.useState<ResultItemForm[]>([]);
+  const [resultDraftLoaded, setResultDraftLoaded] = React.useState(false);
+  const [resultSavingDraft, setResultSavingDraft] = React.useState(false);
+  const [resultSaveMessage, setResultSaveMessage] = React.useState<string | null>(null);
+  const [resultAttachmentPreview, setResultAttachmentPreview] = React.useState<{
+    attachment: LabOrder["attachments"][number];
+    blobUrl: string;
+    mediaType: string;
+  } | null>(null);
+  const [resultAttachmentLoading, setResultAttachmentLoading] = React.useState(false);
   const [reviewComments, setReviewComments] = React.useState("");
   const [reviewDecision, setReviewDecision] = React.useState<"APPROVE" | "SEND_BACK">("APPROVE");
   const [reviewReason, setReviewReason] = React.useState("");
   const [publishTarget, setPublishTarget] = React.useState<LabOrder | null>(null);
   const [publishNotes, setPublishNotes] = React.useState("");
   const [publishChannels, setPublishChannels] = React.useState<string[]>(["PATIENT_PORTAL"]);
+  const [publishSuccessTarget, setPublishSuccessTarget] = React.useState<LabOrder | null>(null);
   const [importOpen, setImportOpen] = React.useState(false);
   const [importResult, setImportResult] = React.useState<LabTestCsvImportResult | null>(null);
   const [requestOpen, setRequestOpen] = React.useState(false);
@@ -527,19 +773,21 @@ export default function LabPage() {
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const canManageTests = auth.hasPermission("lab.test.manage");
+  const canUseLabReception = auth.hasPermission("lab.reception.access") || auth.rolesUpper.includes("LAB_FRONT_DESK");
   const canViewOrders = auth.hasPermission("lab.order.read")
+    || canUseLabReception
     || auth.hasPermission("lab.order.collect_payment")
     || auth.hasPermission("lab.order.collect_sample")
     || auth.hasPermission("lab.order.result_entry")
     || auth.hasPermission("lab.order.generate_report")
     || auth.hasPermission("lab.order.create");
   const canCollectPayment = auth.hasPermission("lab.order.collect_payment");
-  const canCollectSample = auth.hasPermission("lab.order.collect_sample");
+  const canCollectSample = canUseLabReception || auth.hasPermission("lab.order.collect_sample");
   const canEnterResults = auth.hasPermission("lab.order.result_entry");
   const canGenerateReport = auth.hasPermission("lab.order.generate_report");
   const canSendReceipt = auth.hasPermission("notification.send") || auth.hasPermission("billing.read") || auth.hasPermission("payment.collect");
   const canReviewReport = auth.hasPermission("lab.order.review");
-  const canCreateOrders = auth.hasPermission("lab.order.create");
+  const canCreateOrders = canUseLabReception || auth.hasPermission("lab.order.create");
   const canQuickRegisterPatient = canCreateOrders && auth.hasPermission("patient.create") && auth.hasPermission("patient.read");
   const enabledModules = React.useMemo(() => resolveEnabledTenantModules(auth), [auth]);
   const consultationEnabled = enabledModules.has("CONSULTATION");
@@ -578,6 +826,20 @@ export default function LabPage() {
   }, [load]);
 
   React.useEffect(() => {
+    orders
+      .filter((row) => row.status === "PAID" || (row.billDueAmount != null && row.billDueAmount <= 0))
+      .filter((row) => !row.paymentReceipt)
+      .forEach((row) => {
+        console.warn("[lab] paid order is missing paymentReceipt metadata", {
+          orderId: row.id,
+          orderNumber: row.orderNumber,
+          billId: row.billId,
+          billNumber: row.billNumber,
+        });
+      });
+  }, [orders]);
+
+  React.useEffect(() => {
     let cancelled = false;
     async function loadClinicProfile() {
       if (!auth.accessToken || !auth.tenantId) return;
@@ -602,6 +864,16 @@ export default function LabPage() {
     }
     return undefined;
   }, [receiptPrintAutoPrint, receiptPrintData, receiptPrintLoading]);
+
+  React.useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!saving) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [saving]);
 
   React.useEffect(() => {
     if (!requestOpen || !auth.accessToken || !auth.tenantId) {
@@ -818,6 +1090,7 @@ export default function LabPage() {
     })));
     setSampleCollectedBy(auth.username || auth.appUserId || "");
     setSampleCollectedAt(toDatetimeLocal(new Date().toISOString()));
+    setSampleCollectionStatus("Collected");
   }, [auth.appUserId, auth.username]);
 
   const openCreate = () => {
@@ -986,9 +1259,9 @@ export default function LabPage() {
     }
   };
 
-  const loadReceiptPrintData = async (autoPrint = false) => {
-    if (!auth.accessToken || !auth.tenantId || !receiptPreview) return;
-    if (!receiptPreview.order.billId) {
+  const loadReceiptPrintDataFromOrder = async (order: LabOrder, autoPrint = false) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    if (!order.billId) {
       setError("Payment completed, but the lab bill is not available yet.");
       return;
     }
@@ -998,7 +1271,7 @@ export default function LabPage() {
     setReceiptPrintData(null);
     setError(null);
     try {
-      const bill: Bill = await getBill(auth.accessToken, auth.tenantId, receiptPreview.order.billId);
+      const bill: Bill = await getBill(auth.accessToken, auth.tenantId, order.billId);
       const [patientDetail, appointment, consultation] = await Promise.all([
         getPatient(auth.accessToken, auth.tenantId, bill.patientId).catch(() => null),
         bill.appointmentId ? getAppointment(auth.accessToken, auth.tenantId, bill.appointmentId).catch(() => null) : Promise.resolve(null),
@@ -1008,11 +1281,44 @@ export default function LabPage() {
         Appointment | null,
         Consultation | null,
       ];
+      const receiptSummary = buildReceiptPaymentSummary(order);
+      const paymentMode = receiptSummary?.paymentMode || order.paymentMode || receiptPreview?.payment.paymentMode || "CASH";
+      const receiptId = receiptSummary?.receiptId || order.receiptId || receiptPreview?.receipt.id || "";
+      const receiptNumber = receiptSummary?.receiptNumber || order.receiptNumber || receiptPreview?.receipt.receiptNumber || "";
+      const receiptDate = receiptSummary?.receiptDate || order.receiptDate || order.paymentDate || order.paymentCollectedAt?.slice(0, 10) || receiptPreview?.receipt.receiptDate || "";
+      const paymentDate = receiptSummary?.paymentDate || order.paymentDate || order.paymentCollectedAt?.slice(0, 10) || receiptDate;
+      const paymentDateTime = receiptSummary?.paymentDateTime || order.paymentDateTime || order.paymentCollectedAt || receiptPreview?.payment.paymentDateTime || null;
+      const paymentAmount = receiptSummary?.paymentAmount ?? order.paymentAmount ?? order.billTotalAmount ?? order.billDueAmount ?? receiptPreview?.receipt.amount ?? 0;
+      const paymentId = receiptSummary?.paymentId || order.paymentId || receiptPreview?.payment.id || receiptId;
       setReceiptPrintData({
         clinicProfile,
         bill,
-        receipt: receiptPreview.receipt,
-        payment: receiptPreview.payment,
+        receipt: {
+          id: receiptId,
+          tenantId: order.tenantId,
+          receiptNumber,
+          billId: order.billId,
+          paymentId,
+          receiptDate,
+          amount: paymentAmount,
+          createdAt: order.updatedAt,
+        },
+        payment: {
+          id: paymentId,
+          tenantId: order.tenantId,
+          billId: order.billId,
+          paymentDate,
+          paymentDateTime,
+          amount: paymentAmount,
+          paymentMode: paymentMode as PaymentMode,
+          referenceNumber: receiptSummary?.referenceNumber || order.referenceNumber || null,
+          notes: null,
+          receivedBy: receiptSummary?.receivedBy || order.receivedBy || null,
+          receiptId,
+          receiptNumber,
+          receiptDate,
+          createdAt: order.updatedAt,
+        },
         patient: patientDetail ? patientDetail.patient : null,
         appointment: appointment ?? null,
         consultation: consultation ?? null,
@@ -1023,6 +1329,11 @@ export default function LabPage() {
     } finally {
       setReceiptPrintLoading(false);
     }
+  };
+
+  const loadReceiptPrintData = async (autoPrint = false) => {
+    if (!receiptPreview) return;
+    await loadReceiptPrintDataFromOrder(receiptPreview.order, autoPrint);
   };
 
   const openReceiptPdf = async () => {
@@ -1037,6 +1348,35 @@ export default function LabPage() {
       const anchor = document.createElement("a");
       anchor.href = objectUrl;
       anchor.download = filename || `${receiptPreview.receipt.receiptNumber || receiptPreview.order.orderNumber}-receipt.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download receipt PDF");
+    } finally {
+      setReceiptActionLoading(false);
+    }
+  };
+
+  const openOrderReceiptPreview = async (order: LabOrder, autoPrint = false) => {
+    await loadReceiptPrintDataFromOrder(order, autoPrint);
+  };
+
+  const downloadOrderReceipt = async (order: LabOrder) => {
+    const receiptSummary = buildReceiptPaymentSummary(order);
+    const receiptId = receiptSummary?.receiptId || order.receiptId;
+    if (!auth.accessToken || !auth.tenantId || !receiptId) return;
+    setReceiptActionLoading(true);
+    try {
+      const { blob, filename } = await getReceiptPdf(auth.accessToken, auth.tenantId, receiptId);
+      if (!blob.size) {
+        throw new Error("Receipt PDF is empty.");
+      }
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = filename || `${receiptSummary?.receiptNumber || order.receiptNumber || order.orderNumber}-receipt.pdf`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -1082,13 +1422,14 @@ export default function LabPage() {
           specimenType: row.specimenType.trim(),
           containerType: row.containerType.trim() || null,
           collectedAt,
-          collectedBy: auth.appUserId || null,
+          collectedBy: sampleCollectedBy.trim() || auth.username || auth.appUserId || null,
           notes: row.notes.trim() || null,
         })),
       });
       setCollectedSamples(savedSamples);
       setSampleCollectedBy("");
       setSampleCollectedAt(toDatetimeLocal(new Date().toISOString()));
+      setSampleCollectionStatus("Collected");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to collect sample");
@@ -1141,10 +1482,71 @@ export default function LabPage() {
     }
   };
 
+  const resultDraftStorageKey = React.useCallback((orderId: string) => {
+    const tenant = auth.tenantId || "unknown-tenant";
+    return `lab.result-entry.draft.${tenant}.${orderId}`;
+  }, [auth.tenantId]);
+
+  const readResultDraft = React.useCallback((orderId: string) => {
+    if (!orderId || typeof window === "undefined") return null;
+    try {
+      const raw = window.localStorage.getItem(resultDraftStorageKey(orderId));
+      if (!raw) return null;
+      return JSON.parse(raw) as { comments: string; items: ResultItemForm[]; updatedAt: string };
+    } catch {
+      return null;
+    }
+  }, [resultDraftStorageKey]);
+
+  const clearResultDraft = React.useCallback((orderId: string) => {
+    if (!orderId || typeof window === "undefined") return;
+    try {
+      window.localStorage.removeItem(resultDraftStorageKey(orderId));
+    } catch {
+      // ignore
+    }
+  }, [resultDraftStorageKey]);
+
+  const saveResultDraft = React.useCallback((order: LabOrder, comments: string, items: ResultItemForm[]) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(resultDraftStorageKey(order.id), JSON.stringify({
+        comments,
+        items,
+        updatedAt: new Date().toISOString(),
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save result draft");
+    }
+  }, [resultDraftStorageKey]);
+
+  const closeAttachmentPreview = React.useCallback(() => {
+    setResultAttachmentPreview((current) => {
+      if (current?.blobUrl) {
+        window.URL.revokeObjectURL(current.blobUrl);
+      }
+      return null;
+    });
+  }, []);
+
+  React.useEffect(() => () => {
+    closeAttachmentPreview();
+  }, [closeAttachmentPreview]);
+
   const openResultsDialog = (row: LabOrder) => {
     setResultTarget(row);
-    setResultComments(row.resultComments || "");
-    setResultItems(row.items.map((item) => defaultResultsForItem(item, row.results)));
+    const draft = readResultDraft(row.id);
+    if (draft) {
+      setResultComments(draft.comments || "");
+      setResultItems(draft.items.length ? draft.items : row.items.map((item) => defaultResultsForItem(item, row.results)));
+      setResultDraftLoaded(true);
+      setResultSaveMessage(`Draft loaded for ${row.orderNumber}.`);
+    } else {
+      setResultComments(row.resultComments || "");
+      setResultItems(row.items.map((item) => defaultResultsForItem(item, row.results)));
+      setResultDraftLoaded(false);
+      setResultSaveMessage(null);
+    }
   };
 
   const openReviewDialog = (row: LabOrder) => {
@@ -1195,14 +1597,71 @@ export default function LabPage() {
           })),
         })),
       });
+      clearResultDraft(resultTarget.id);
       setResultTarget(null);
       setResultComments("");
       setResultItems([]);
+      setResultDraftLoaded(false);
+      setResultSaveMessage("Results saved. Order moved to Pending Lab Review.");
+      setTab(3);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save results");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveResultsDraft = () => {
+    if (!resultTarget) return;
+    setResultSavingDraft(true);
+    try {
+      saveResultDraft(resultTarget, resultComments, resultItems);
+      setResultDraftLoaded(true);
+      setResultSaveMessage(`Draft saved for ${resultTarget.orderNumber}.`);
+    } finally {
+      setResultSavingDraft(false);
+    }
+  };
+
+  const openAttachmentPreview = async (attachment: LabOrder["attachments"][number]) => {
+    if (!resultTarget || !auth.accessToken || !auth.tenantId) return;
+    setResultAttachmentLoading(true);
+    try {
+      const preview = await getLabOrderAttachmentBlob(auth.accessToken, auth.tenantId, resultTarget.id, attachment.id, true);
+      if (resultAttachmentPreview?.blobUrl) {
+        window.URL.revokeObjectURL(resultAttachmentPreview.blobUrl);
+      }
+      const blobUrl = window.URL.createObjectURL(preview.blob);
+      setResultAttachmentPreview({
+        attachment,
+        blobUrl,
+        mediaType: preview.mediaType,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to preview attachment");
+    } finally {
+      setResultAttachmentLoading(false);
+    }
+  };
+
+  const downloadAttachment = async (attachment: LabOrder["attachments"][number]) => {
+    if (!resultTarget || !auth.accessToken || !auth.tenantId) return;
+    setResultAttachmentLoading(true);
+    try {
+      const preview = await getLabOrderAttachmentBlob(auth.accessToken, auth.tenantId, resultTarget.id, attachment.id, false);
+      const objectUrl = window.URL.createObjectURL(preview.blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = preview.filename || attachment.originalFilename || attachment.id;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download attachment");
+    } finally {
+      setResultAttachmentLoading(false);
     }
   };
 
@@ -1251,13 +1710,14 @@ export default function LabPage() {
     setSaving(true);
     setError(null);
     try {
-      await publishLabOrderReport(auth.accessToken, auth.tenantId, publishTarget.id, {
+      const published = await publishLabOrderReport(auth.accessToken, auth.tenantId, publishTarget.id, {
         deliveryChannels: publishChannels,
         publishNotes: publishNotes.trim() || null,
       });
       setPublishTarget(null);
       setPublishNotes("");
       setPublishChannels(["PATIENT_PORTAL"]);
+      setPublishSuccessTarget(published);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to publish lab report");
@@ -1266,16 +1726,85 @@ export default function LabPage() {
     }
   };
 
-  const generateReport = async (row: LabOrder) => {
+  const recordAndOpenLabReport = async (row: LabOrder, action: string, mode: "view" | "print" | "download") => {
     if (!auth.accessToken || !auth.tenantId) return;
     setSaving(true);
     setError(null);
     try {
       const pdf = await getLabOrderPdf(auth.accessToken, auth.tenantId, row.id);
-      openPdf(pdf.blob);
+      await recordLabOrderReportDeliveryAction(auth.accessToken, auth.tenantId, row.id, { action, channel: mode === "print" ? "PRINT" : mode === "download" ? "DOWNLOAD" : "PATIENT_PORTAL" });
+      if (mode === "download") {
+        const anchor = document.createElement("a");
+        const objectUrl = window.URL.createObjectURL(pdf.blob);
+        anchor.href = objectUrl;
+        anchor.download = pdf.filename || `${row.orderNumber}-lab-report.pdf`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
+      } else if (mode === "print") {
+        const objectUrl = window.URL.createObjectURL(pdf.blob);
+        const printWindow = window.open(objectUrl, "_blank");
+        if (printWindow) {
+          printWindow.addEventListener("load", () => {
+            printWindow.focus();
+            printWindow.print();
+          });
+          window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
+        } else {
+          openPdf(pdf.blob);
+        }
+      } else {
+        openPdf(pdf.blob);
+      }
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate lab report");
+      setError(err instanceof Error ? err.message : "Failed to open lab report");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const viewReport = (row: LabOrder) => void recordAndOpenLabReport(row, "lab_order.report_viewed", "view");
+  const printReport = (row: LabOrder) => void recordAndOpenLabReport(row, "lab_order.report_printed", "print");
+  const downloadReport = (row: LabOrder) => void recordAndOpenLabReport(row, "lab_order.report_downloaded", "download");
+  const emailReport = async (row: LabOrder) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await recordLabOrderReportDeliveryAction(auth.accessToken, auth.tenantId, row.id, { action: "lab_order.report_email_sent", channel: "EMAIL" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to record email delivery");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const whatsappReport = async (row: LabOrder) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await recordLabOrderReportDeliveryAction(auth.accessToken, auth.tenantId, row.id, { action: "lab_order.report_whatsapp_sent", channel: "WHATSAPP" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to record WhatsApp delivery");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const shareReportLink = async (row: LabOrder) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const link = `${window.location.origin}/api/lab/orders/${row.id}/pdf`;
+      await copyTextToClipboard(link);
+      await recordLabOrderReportDeliveryAction(auth.accessToken, auth.tenantId, row.id, { action: "lab_order.report_shared_link", channel: "SHARE_LINK", notes: link });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to copy report link");
     } finally {
       setSaving(false);
     }
@@ -1506,6 +2035,7 @@ export default function LabPage() {
       <input ref={fileInputRef} type="file" accept=".csv,text/csv" hidden onChange={handleImportCsv} />
 
       {error ? <Alert severity="error">{error}</Alert> : null}
+      {resultSaveMessage && !resultTarget ? <Alert severity="success">{resultSaveMessage}</Alert> : null}
 
       <LabDashboard
         permissions={{
@@ -1591,12 +2121,16 @@ export default function LabPage() {
             <OrderQueue
               rows={pendingSampleOrders}
               emptySubtitle="Paid lab registrations ready for sample collection will appear here."
+              actionDisabled={saving}
               canCollectPayment={canCollectPayment}
               canCollectSample={canCollectSample}
               canManageSamples={canCollectSample}
               canEnterResults={canEnterResults}
               canGenerateReport={canGenerateReport}
               canReviewReport={canReviewReport}
+              onViewReceipt={(row) => void openOrderReceiptPreview(row)}
+              onPrintReceipt={(row) => void openOrderReceiptPreview(row, true)}
+              onDownloadReceipt={(row) => void downloadOrderReceipt(row)}
               onCollectPayment={(row) => {
                 setPaymentTarget(row);
                 setPaymentMode("CASH");
@@ -1613,19 +2147,28 @@ export default function LabPage() {
               }}
               onEnterResults={openResultsDialog}
               onReview={openReviewDialog}
-              onGenerateReport={generateReport}
               onPublishReport={openPublishDialog}
+              onViewReport={viewReport}
+              onPrintReport={printReport}
+              onDownloadReport={downloadReport}
+              onEmailReport={emailReport}
+              onWhatsappReport={whatsappReport}
+              onShareReportLink={shareReportLink}
             />
           ) : tab === 2 ? (
             <OrderQueue
               rows={pendingResultsOrders}
               emptySubtitle="Collected or received samples ready for technician result entry will appear here."
+              actionDisabled={saving}
               canCollectPayment={canCollectPayment}
               canCollectSample={canCollectSample}
               canManageSamples={canCollectSample}
               canEnterResults={canEnterResults}
               canGenerateReport={canGenerateReport}
               canReviewReport={canReviewReport}
+              onViewReceipt={(row) => void openOrderReceiptPreview(row)}
+              onPrintReceipt={(row) => void openOrderReceiptPreview(row, true)}
+              onDownloadReceipt={(row) => void downloadOrderReceipt(row)}
               onCollectPayment={(row) => {
                 setPaymentTarget(row);
                 setPaymentMode("CASH");
@@ -1642,19 +2185,28 @@ export default function LabPage() {
               }}
               onEnterResults={openResultsDialog}
               onReview={openReviewDialog}
-              onGenerateReport={generateReport}
               onPublishReport={openPublishDialog}
+              onViewReport={viewReport}
+              onPrintReport={printReport}
+              onDownloadReport={downloadReport}
+              onEmailReport={emailReport}
+              onWhatsappReport={whatsappReport}
+              onShareReportLink={shareReportLink}
             />
           ) : tab === 3 ? (
             <OrderQueue
               rows={pendingReviewOrders}
               emptySubtitle="Entered results waiting for lab verification will appear here."
+              actionDisabled={saving}
               canCollectPayment={canCollectPayment}
               canCollectSample={canCollectSample}
               canManageSamples={canCollectSample}
               canEnterResults={canEnterResults}
               canGenerateReport={canGenerateReport}
               canReviewReport={canReviewReport}
+              onViewReceipt={(row) => void openOrderReceiptPreview(row)}
+              onPrintReceipt={(row) => void openOrderReceiptPreview(row, true)}
+              onDownloadReceipt={(row) => void downloadOrderReceipt(row)}
               onCollectPayment={(row) => {
                 setPaymentTarget(row);
                 setPaymentMode("CASH");
@@ -1671,8 +2223,13 @@ export default function LabPage() {
               }}
               onEnterResults={openResultsDialog}
               onReview={openReviewDialog}
-              onGenerateReport={generateReport}
               onPublishReport={openPublishDialog}
+              onViewReport={viewReport}
+              onPrintReport={printReport}
+              onDownloadReport={downloadReport}
+              onEmailReport={emailReport}
+              onWhatsappReport={whatsappReport}
+              onShareReportLink={shareReportLink}
             />
           ) : tab === 4 ? (
             <Stack spacing={2}>
@@ -1767,6 +2324,40 @@ export default function LabPage() {
                             <Stack spacing={0.25}>
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.billNumber || "-"}</Typography>
                               <Typography variant="caption" color="text.secondary">{row.billDueAmount != null ? `Due ${formatMoney(row.billDueAmount)}` : row.billStatus || "-"}</Typography>
+                              {(() => {
+                                const receiptSummary = buildReceiptPaymentSummary(row);
+                                return receiptSummary ? (
+                                <Stack spacing={0.25} sx={{ pt: 0.5 }}>
+                                  <Typography variant="caption" color="text.secondary">
+                                    Receipt: {receiptSummary.receiptNumber || "-"}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    Paid {formatMoney(receiptSummary.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? 0)} • {receiptSummary.paymentMode || "-"}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    Ref: {receiptSummary.referenceNumber || "—"} • By {receiptSummary.receivedBy || "—"}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {receiptSummary.paymentDateTime ? formatDateTime(receiptSummary.paymentDateTime) : receiptTimestampText(row)}
+                                  </Typography>
+                                  <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                                    <Button size="small" variant="text" onClick={() => void openOrderReceiptPreview(row)}>
+                                      View Receipt
+                                    </Button>
+                                    <Button size="small" variant="text" onClick={() => void openOrderReceiptPreview(row, true)}>
+                                      Print Receipt
+                                    </Button>
+                                    <Button size="small" variant="text" onClick={() => void downloadOrderReceipt(row)}>
+                                      Download PDF
+                                    </Button>
+                                  </Stack>
+                                </Stack>
+                                ) : row.status === "PAID" || (row.billDueAmount != null && row.billDueAmount <= 0) ? (
+                                <Typography variant="caption" color="text.secondary">
+                                  Paid - receipt details unavailable
+                                </Typography>
+                                ) : null;
+                              })()}
                             </Stack>
                           </TableCell>
                           <TableCell>
@@ -1820,9 +2411,16 @@ export default function LabPage() {
                                 </Button>
                               ) : null}
                               {canGenerateReport && (row.status === "DOCTOR_REVIEWED" || row.status === "REPORT_GENERATED" || row.status === "DELIVERED") ? (
-                                <Button size="small" variant="outlined" startIcon={<DownloadRoundedIcon />} onClick={() => void generateReport(row)}>
-                                  PDF
-                                </Button>
+                                <ReportActionMenuButton
+                                  row={row}
+                                  disabled={saving}
+                                  onViewReport={viewReport}
+                                  onPrintReport={printReport}
+                                  onDownloadReport={downloadReport}
+                                  onEmailReport={emailReport}
+                                  onWhatsappReport={whatsappReport}
+                                  onShareLink={shareReportLink}
+                                />
                               ) : null}
                               {canReviewReport && row.status === "RESULT_ENTERED" ? (
                                 <Button size="small" variant="outlined" onClick={() => openReviewDialog(row)}>
@@ -1985,12 +2583,12 @@ export default function LabPage() {
           {receiptPreview ? (
             <Stack spacing={2}>
               <Alert severity="success">
-                Payment collected for {receiptPreview.order.orderNumber}. Receipt is ready.
+                Payment successful for {receiptPreview.order.orderNumber}. Receipt is ready.
               </Alert>
               <Card variant="outlined">
                 <CardContent>
                   <Stack spacing={1.25}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Receipt Details</Typography>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Lab Payment Success</Typography>
                     <Grid container spacing={1.25}>
                       <Grid size={{ xs: 12, md: 6 }}>
                         <Typography variant="caption" color="text.secondary">Lab Order Number</Typography>
@@ -2017,7 +2615,7 @@ export default function LabPage() {
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>{receiptPreview.payment.paymentMode}</Typography>
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <Typography variant="caption" color="text.secondary">Reference Number</Typography>
+                        <Typography variant="caption" color="text.secondary">Transaction Reference</Typography>
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>{receiptPreview.payment.referenceNumber || "-"}</Typography>
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
@@ -2025,7 +2623,7 @@ export default function LabPage() {
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>{receiptPreview.payment.receivedBy || "-"}</Typography>
                       </Grid>
                       <Grid size={{ xs: 12, md: 6 }}>
-                        <Typography variant="caption" color="text.secondary">Timestamp</Typography>
+                        <Typography variant="caption" color="text.secondary">Collected Timestamp</Typography>
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>{formatDateTime(receiptPreview.payment.paymentDateTime || receiptPreview.payment.paymentDate || receiptPreview.receipt.receiptDate)}</Typography>
                       </Grid>
                     </Grid>
@@ -2036,7 +2634,7 @@ export default function LabPage() {
           ) : null}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setReceiptPreview(null)}>Continue to Sample Collection</Button>
+          <Button onClick={() => setReceiptPreview(null)}>Proceed to Sample Collection</Button>
           <Button
             variant="outlined"
             onClick={() => void loadReceiptPrintData(false)}
@@ -2050,7 +2648,7 @@ export default function LabPage() {
             disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading}
             startIcon={<DownloadRoundedIcon />}
           >
-            Download Receipt
+            Download PDF
           </Button>
           <Button
             variant="contained"
@@ -2114,10 +2712,16 @@ export default function LabPage() {
                     <Grid size={{ xs: 12, md: 4 }}>
                       <TextField
                         fullWidth
+                        select
                         label="Container Type"
                         value={row.containerType}
-                        onChange={(e) => setSampleRows((current) => current.map((sampleRow, rowIndex) => rowIndex === index ? { ...sampleRow, containerType: e.target.value.slice(0, 128) } : sampleRow))}
-                      />
+                        onChange={(e) => setSampleRows((current) => current.map((sampleRow, rowIndex) => rowIndex === index ? { ...sampleRow, containerType: String(e.target.value).slice(0, 128) } : sampleRow))}
+                      >
+                        <MenuItem value="">Select container type</MenuItem>
+                        {SAMPLE_CONTAINER_TYPE_OPTIONS.map((option) => (
+                          <MenuItem key={option} value={option}>{option}</MenuItem>
+                        ))}
+                      </TextField>
                     </Grid>
                     <Grid size={{ xs: 12, md: 4 }}>
                       <TextField
@@ -2131,14 +2735,34 @@ export default function LabPage() {
                 </CardContent>
               </Card>
             ))}
-            <TextField label="Collected By" value={sampleCollectedBy} onChange={(e) => setSampleCollectedBy(e.target.value.slice(0, 60))} inputProps={{ maxLength: 60 }} />
             <TextField
+              fullWidth
+              label="Collected By"
+              value={sampleCollectedBy}
+              InputProps={{ readOnly: true }}
+              helperText="Auto-populated from the signed-in user."
+            />
+            <TextField
+              fullWidth
               label="Collected At"
               type="datetime-local"
               value={sampleCollectedAt}
               onChange={(e) => setSampleCollectedAt(e.target.value)}
               InputLabelProps={{ shrink: true }}
             />
+            <FormControl fullWidth>
+              <InputLabel id="sample-collection-status-label">Collection Status</InputLabel>
+              <Select
+                labelId="sample-collection-status-label"
+                label="Collection Status"
+                value={sampleCollectionStatus}
+                onChange={(e) => setSampleCollectionStatus(String(e.target.value) as SampleCollectionStatus)}
+              >
+                {SAMPLE_COLLECTION_STATUS_OPTIONS.map((option) => (
+                  <MenuItem key={option} value={option}>{option}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             {collectedSamples.length ? (
               <Alert severity="success">
                 {collectedSamples.map((sample) => `${sample.accessionNumber} • ${sample.barcodeValue}`).join(" | ")}
@@ -2206,13 +2830,27 @@ export default function LabPage() {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={Boolean(resultTarget)} onClose={() => setResultTarget(null)} fullWidth maxWidth="lg">
+      <Dialog
+        open={Boolean(resultTarget)}
+        onClose={() => {
+          setResultTarget(null);
+          setResultComments("");
+          setResultItems([]);
+          setResultDraftLoaded(false);
+          setResultSaveMessage(null);
+          closeAttachmentPreview();
+        }}
+        fullWidth
+        maxWidth="lg"
+      >
         <DialogTitle>Enter Results</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 0.5 }}>
             <Alert severity="info">
               {resultTarget ? `${resultTarget.orderNumber} • ${resultTarget.patientName || "-"} • ${resultTarget.sampleAccessionNumber || "Accession pending"} • ${resultTarget.sampleSummaryStatus || "No sample"}` : ""}
             </Alert>
+            {resultSaveMessage ? <Alert severity="success">{resultSaveMessage}</Alert> : null}
+            {resultDraftLoaded ? <Alert severity="info">Draft restored from your last save.</Alert> : null}
             <TextField label="Comments" value={resultComments} onChange={(e) => setResultComments(e.target.value)} multiline minRows={2} />
             <Stack spacing={1.5}>
               {resultItems.map((item, index) => (
@@ -2247,10 +2885,26 @@ export default function LabPage() {
                               ...row,
                               componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, componentName: e.target.value } : currentComponent),
                             }) : row))} /></Grid>
-                            <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Result Value" value={component.resultValue} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
-                              ...row,
-                              componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, resultValue: e.target.value } : currentComponent),
-                            }) : row))} /></Grid>
+                            <Grid size={{ xs: 12, md: 2 }}>
+                              {(() => {
+                                const severity = getResultSeverity(component.resultValue, component.referenceRange, component.criticalRange);
+                                return (
+                                  <TextField
+                                    fullWidth
+                                    size="small"
+                                    label="Result Value"
+                                    value={component.resultValue}
+                                    onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
+                                      ...row,
+                                      componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, resultValue: e.target.value } : currentComponent),
+                                    }) : row))}
+                                    error={severity === "error"}
+                                    helperText={`Ref ${formatReferenceBadge(component.referenceRange)} • Crit ${formatReferenceBadge(component.criticalRange)}`}
+                                    sx={resultFieldSx(severity)}
+                                  />
+                                );
+                              })()}
+                            </Grid>
                             <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Unit" value={component.unit} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? ({
                               ...row,
                               componentResults: row.componentResults.map((currentComponent, currentIndex) => currentIndex === componentIndex ? { ...currentComponent, unit: e.target.value } : currentComponent),
@@ -2273,7 +2927,23 @@ export default function LabPage() {
                       </Stack>
                     ) : (
                       <Grid container spacing={1}>
-                        <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth size="small" label="Result Value" value={item.resultValue} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, resultValue: e.target.value } : row))} /></Grid>
+                        <Grid size={{ xs: 12, md: 4 }}>
+                          {(() => {
+                            const severity = getResultSeverity(item.resultValue, item.referenceRange, item.criticalRange);
+                            return (
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Result Value"
+                                value={item.resultValue}
+                                onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, resultValue: e.target.value } : row))}
+                                error={severity === "error"}
+                                helperText={`Ref ${formatReferenceBadge(item.referenceRange)} • Crit ${formatReferenceBadge(item.criticalRange)}`}
+                                sx={resultFieldSx(severity)}
+                              />
+                            );
+                          })()}
+                        </Grid>
                         <Grid size={{ xs: 12, md: 2 }}><TextField fullWidth size="small" label="Unit" value={item.unit} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, unit: e.target.value } : row))} /></Grid>
                         <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth size="small" label="Reference Range" value={item.referenceRange} onChange={(e) => setResultItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, referenceRange: e.target.value } : row))} /></Grid>
                         <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth size="small" label="Critical Range" value={item.criticalRange} disabled /></Grid>
@@ -2282,12 +2952,68 @@ export default function LabPage() {
                   </CardContent>
                 </Card>
               ))}
+              {resultTarget?.attachments?.length ? (
+                <Card variant="outlined">
+                  <CardContent sx={{ display: "grid", gap: 1.25 }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Attachments</Typography>
+                    <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                      {resultTarget.attachments.map((attachment) => (
+                        <Chip
+                          key={attachment.id}
+                          variant="outlined"
+                          label={`${attachment.originalFilename} • ${attachment.mediaType}`}
+                          onClick={() => void openAttachmentPreview(attachment)}
+                          onDelete={() => void downloadAttachment(attachment)}
+                          deleteIcon={<DownloadRoundedIcon />}
+                        />
+                      ))}
+                    </Stack>
+                    {resultAttachmentPreview ? (
+                      <Card variant="outlined" sx={{ overflow: "hidden" }}>
+                        <CardContent sx={{ display: "grid", gap: 1 }}>
+                          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                            <Box>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{resultAttachmentPreview.attachment.originalFilename}</Typography>
+                              <Typography variant="caption" color="text.secondary">{resultAttachmentPreview.mediaType}</Typography>
+                            </Box>
+                            <Stack direction="row" spacing={1} flexWrap="wrap">
+                              <Button size="small" variant="outlined" onClick={() => void downloadAttachment(resultAttachmentPreview.attachment)} disabled={resultAttachmentLoading}>
+                                Download
+                              </Button>
+                              <Button size="small" variant="text" onClick={closeAttachmentPreview}>Close preview</Button>
+                            </Stack>
+                          </Box>
+                          {resultAttachmentPreview.mediaType.startsWith("image/") ? (
+                            <Box component="img" alt={resultAttachmentPreview.attachment.originalFilename} src={resultAttachmentPreview.blobUrl} sx={{ maxWidth: "100%", maxHeight: 420, objectFit: "contain", borderRadius: 1 }} />
+                          ) : resultAttachmentPreview.mediaType === "application/pdf" ? (
+                            <Box component="iframe" title={resultAttachmentPreview.attachment.originalFilename} src={resultAttachmentPreview.blobUrl} sx={{ width: "100%", height: 480, border: 0, borderRadius: 1 }} />
+                          ) : (
+                            <Alert severity="info">Preview is available for images and PDF files. Download to view this attachment type.</Alert>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              ) : null}
             </Stack>
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setResultTarget(null)}>Cancel</Button>
-          <Button variant="contained" onClick={() => void saveResults()} disabled={saving || !resultTarget}>Save Results</Button>
+          <Button onClick={() => {
+            setResultTarget(null);
+            setResultComments("");
+            setResultItems([]);
+            setResultDraftLoaded(false);
+            setResultSaveMessage(null);
+            closeAttachmentPreview();
+          }}>Cancel</Button>
+          <Button variant="outlined" onClick={saveResultsDraft} disabled={!resultTarget || resultSavingDraft || saving}>
+            Save Draft
+          </Button>
+          <Button variant="contained" onClick={() => void saveResults()} disabled={saving || !resultTarget}>
+            Save Results
+          </Button>
         </DialogActions>
       </Dialog>
 
@@ -2389,6 +3115,57 @@ export default function LabPage() {
         </DialogActions>
       </Dialog>
 
+      <Dialog open={Boolean(publishSuccessTarget)} onClose={() => setPublishSuccessTarget(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Report Published</DialogTitle>
+        <DialogContent dividers>
+          {publishSuccessTarget ? (
+            <Stack spacing={2} sx={{ pt: 0.5 }}>
+              <Alert severity="success">
+                {publishSuccessTarget.orderNumber} is now published and available to the selected delivery channels.
+              </Alert>
+              <Card variant="outlined">
+                <CardContent>
+                  <Stack spacing={1.25}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Delivery channels</Typography>
+                    <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                      {[
+                        ["Patient Portal", publishSuccessTarget.reportDeliveryChannels.includes("PATIENT_PORTAL")],
+                        ["Doctor Notification", publishSuccessTarget.reportDeliveryChannels.includes("DOCTOR_NOTIFICATION")],
+                        ["Email", publishSuccessTarget.reportDeliveryChannels.includes("EMAIL")],
+                        ["WhatsApp", publishSuccessTarget.reportDeliveryChannels.includes("WHATSAPP")],
+                        ["Print", publishSuccessTarget.reportDeliveryChannels.includes("PRINT")],
+                      ].map(([label, enabled]) => (
+                        <Chip
+                          key={String(label)}
+                          size="small"
+                          label={`${label} • ${enabled ? "Queued" : "Skipped"}`}
+                          color={enabled ? "success" : "default"}
+                          variant="outlined"
+                        />
+                      ))}
+                    </Stack>
+                    <Typography variant="caption" color="text.secondary">
+                      Delivery audit is recorded on the published report record and can be reviewed from the order row.
+                    </Typography>
+                  </Stack>
+                </CardContent>
+              </Card>
+              <Stack direction="row" spacing={1} flexWrap="wrap">
+                <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) viewReport(publishSuccessTarget); }}>View Report</Button>
+                <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) printReport(publishSuccessTarget); }}>Print Report</Button>
+                <Button variant="outlined" startIcon={<DownloadRoundedIcon />} onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) downloadReport(publishSuccessTarget); }}>Download PDF</Button>
+                <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) emailReport(publishSuccessTarget); }}>Email</Button>
+                <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) whatsappReport(publishSuccessTarget); }}>WhatsApp</Button>
+                <Button variant="outlined" onClick={() => { setPublishSuccessTarget(null); if (publishSuccessTarget) shareReportLink(publishSuccessTarget); }}>Share Link</Button>
+              </Stack>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPublishSuccessTarget(null)}>Continue to Sample Collection</Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={importOpen} onClose={() => setImportOpen(false)} fullWidth maxWidth="md">
         <DialogTitle>Lab Test CSV Import Result</DialogTitle>
         <DialogContent dividers>
@@ -2450,13 +3227,13 @@ export default function LabPage() {
             />
             {canQuickRegisterPatient ? (
               <Alert
-                severity={consultationEnabled ? "info" : "success"}
-                action={(
-                  <Button color="inherit" size="small" onClick={() => setQuickRegisterOpen(true)}>
-                    Quick Register Patient
-                  </Button>
-                )}
-              >
+              severity={consultationEnabled ? "info" : "success"}
+              action={(
+                <Button color="inherit" size="small" onClick={() => setQuickRegisterOpen(true)}>
+                    Register New Patient
+                </Button>
+              )}
+            >
                 {consultationEnabled
                   ? "If the patient is not found, quick register and continue the lab order."
                   : "Walk-in lab registration can create and select a patient without leaving this modal."}
@@ -2540,7 +3317,7 @@ export default function LabPage() {
           open={quickRegisterOpen}
           token={auth.accessToken}
           tenantId={auth.tenantId}
-          title="Quick Register Patient"
+          title="Register New Patient"
           subtitle={consultationEnabled
             ? "Create a patient record without leaving laboratory order entry."
             : "Create the patient master record and continue the walk-in lab order."}
@@ -2556,22 +3333,31 @@ export default function LabPage() {
 function OrderQueue(props: {
   rows: LabOrder[];
   emptySubtitle: string;
+  actionDisabled: boolean;
   canCollectPayment: boolean;
   canCollectSample: boolean;
   canManageSamples: boolean;
   canEnterResults: boolean;
   canGenerateReport: boolean;
   canReviewReport: boolean;
+  onViewReceipt: (row: LabOrder) => void;
+  onPrintReceipt: (row: LabOrder) => void;
+  onDownloadReceipt: (row: LabOrder) => void;
   onCollectPayment: (row: LabOrder) => void;
   onCollectSample: (row: LabOrder) => void;
   onReceiveSample: (sample: LabSample) => void;
   onRejectSample: (sample: LabSample) => void;
   onEnterResults: (row: LabOrder) => void;
   onReview: (row: LabOrder) => void;
-  onGenerateReport: (row: LabOrder) => void;
   onPublishReport: (row: LabOrder) => void;
+  onViewReport: (row: LabOrder) => void;
+  onPrintReport: (row: LabOrder) => void;
+  onDownloadReport: (row: LabOrder) => void;
+  onEmailReport: (row: LabOrder) => void;
+  onWhatsappReport: (row: LabOrder) => void;
+  onShareReportLink: (row: LabOrder) => void;
 }) {
-  const { rows, emptySubtitle, canCollectPayment, canCollectSample, canManageSamples, canEnterResults, canGenerateReport, canReviewReport, onCollectPayment, onCollectSample, onReceiveSample, onRejectSample, onEnterResults, onReview, onGenerateReport, onPublishReport } = props;
+  const { rows, emptySubtitle, actionDisabled, canCollectPayment, canCollectSample, canManageSamples, canEnterResults, canGenerateReport, canReviewReport, onViewReceipt, onPrintReceipt, onDownloadReceipt, onCollectPayment, onCollectSample, onReceiveSample, onRejectSample, onEnterResults, onReview, onPublishReport, onViewReport, onPrintReport, onDownloadReport, onEmailReport, onWhatsappReport, onShareReportLink } = props;
 
   if (!rows.length) {
     return <CompactEmptyState title="No lab orders found" subtitle={emptySubtitle} />;
@@ -2636,16 +3422,45 @@ function OrderQueue(props: {
               </TableCell>
               <TableCell>
                 <Stack spacing={0.5}>
-                  <Chip size="small" label={sampleSummaryLabel(row)} color={sampleStatusTone(row.sampleSummaryStatus)} variant="outlined" />
-                  <Typography variant="caption" color="text.secondary">{row.sampleAccessionNumber || "Accession pending"}</Typography>
-                  {row.sampleBarcodeValue ? <Typography variant="caption" color="text.secondary">Barcode: {row.sampleBarcodeValue}</Typography> : null}
-                  {row.sampleCollectedAt ? <Typography variant="caption" color="text.secondary">Collected {new Date(row.sampleCollectedAt).toLocaleString()}</Typography> : null}
-                </Stack>
-              </TableCell>
+                              <Chip size="small" label={sampleSummaryLabel(row)} color={sampleStatusTone(row.sampleSummaryStatus)} variant="outlined" />
+                              <Typography variant="caption" color="text.secondary">{row.sampleAccessionNumber || "Accession pending"}</Typography>
+                              {row.sampleBarcodeValue ? <Typography variant="caption" color="text.secondary">Barcode: {row.sampleBarcodeValue}</Typography> : null}
+                              {(row.sampleCollectedBy || row.sampleCollectedAt) ? (
+                                <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                  <Chip size="small" variant="outlined" label={`Collected by: ${row.sampleCollectedBy || row.sampleCollectedByUserId || "—"}`} />
+                                  <Chip size="small" variant="outlined" label={`Date: ${formatDateChip(row.sampleCollectedAt)}`} />
+                                  <Chip size="small" variant="outlined" label={`Time: ${formatTimeChip(row.sampleCollectedAt)}`} />
+                                </Stack>
+                              ) : null}
+                            </Stack>
+                          </TableCell>
               <TableCell>
                 <Stack spacing={0.25}>
                   <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.billNumber || "-"}</Typography>
                   <Typography variant="caption" color="text.secondary">{row.billDueAmount != null ? `Due ${formatMoney(row.billDueAmount)}` : row.billStatus || "-"}</Typography>
+                  {(() => {
+                    const receiptSummary = buildReceiptPaymentSummary(row);
+                    return receiptSummary ? (
+                    <Stack spacing={0.25} sx={{ pt: 0.5 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        Receipt: {receiptSummary.receiptNumber || "-"}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Paid {formatMoney(receiptSummary.paymentAmount ?? row.billTotalAmount ?? row.billDueAmount ?? 0)} • {receiptSummary.paymentMode || "-"}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Ref: {receiptSummary.referenceNumber || "—"} • By {receiptSummary.receivedBy || "—"}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {receiptSummary.paymentDateTime ? formatDateTime(receiptSummary.paymentDateTime) : receiptTimestampText(row)}
+                      </Typography>
+                    </Stack>
+                    ) : row.status === "PAID" || (row.billDueAmount != null && row.billDueAmount <= 0) ? (
+                    <Typography variant="caption" color="text.secondary">
+                      Paid - receipt details unavailable
+                    </Typography>
+                    ) : null;
+                  })()}
                 </Stack>
               </TableCell>
               <TableCell>
@@ -2655,6 +3470,13 @@ function OrderQueue(props: {
                     <Typography variant="caption" color="text.secondary">
                       Delivery: {row.reportDeliveryStatus.replaceAll("_", " ")}{row.reportDeliveryChannels?.length ? ` • ${deliveryChannelsLabel(row.reportDeliveryChannels)}` : ""}
                     </Typography>
+                  ) : null}
+                  {row.reportDeliveryHistory?.length ? (
+                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                      {reportDeliveryHistorySummary(row.reportDeliveryHistory).map((label, index) => (
+                        <Chip key={`${row.id}-delivery-${index}`} size="small" label={label} variant="outlined" />
+                      ))}
+                    </Stack>
                   ) : null}
                 </Stack>
               </TableCell>
@@ -2685,10 +3507,33 @@ function OrderQueue(props: {
                     </Button>
                   ) : null}
                   {canGenerateReport && APPROVED_REPORT_STATUSES.has(row.status) ? (
-                    <Button size="small" variant="outlined" startIcon={<DownloadRoundedIcon />} onClick={() => onGenerateReport(row)}>
-                      PDF
-                    </Button>
+                    <ReportActionMenuButton
+                      row={row}
+                      disabled={actionDisabled}
+                      onViewReport={onViewReport}
+                      onPrintReport={onPrintReport}
+                      onDownloadReport={onDownloadReport}
+                      onEmailReport={onEmailReport}
+                      onWhatsappReport={onWhatsappReport}
+                      onShareLink={onShareReportLink}
+                    />
                   ) : null}
+                  {(() => {
+                    const receiptSummary = buildReceiptPaymentSummary(row);
+                    return receiptSummary ? (
+                    <>
+                      <Button size="small" variant="outlined" onClick={() => onViewReceipt(row)}>
+                        View Receipt
+                      </Button>
+                      <Button size="small" variant="outlined" onClick={() => onPrintReceipt(row)}>
+                        Print Receipt
+                      </Button>
+                      <Button size="small" variant="outlined" onClick={() => onDownloadReceipt(row)}>
+                        Download PDF
+                      </Button>
+                    </>
+                    ) : null;
+                  })()}
                   {canReviewReport && row.status === "RESULT_ENTERED" ? (
                     <Button size="small" variant="outlined" onClick={() => onReview(row)}>
                       Review

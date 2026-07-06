@@ -11,8 +11,10 @@ function readSource(relPath) {
 test("lab page gates actions with explicit lab permissions", () => {
   const source = readSource("pages/lab/LabPage.tsx");
   assert.ok(source.includes('const canManageTests = auth.hasPermission("lab.test.manage");'));
+  assert.ok(source.includes('const canUseLabReception = auth.hasPermission("lab.reception.access") || auth.rolesUpper.includes("LAB_FRONT_DESK");'));
   assert.ok(source.includes('const canGenerateReport = auth.hasPermission("lab.order.generate_report");'));
   assert.ok(source.includes('const canQuickRegisterPatient = canCreateOrders && auth.hasPermission("patient.create") && auth.hasPermission("patient.read");'));
+  assert.ok(source.includes('Register New Patient'));
 });
 
 test("lab csv template download requests csv text and not json", () => {

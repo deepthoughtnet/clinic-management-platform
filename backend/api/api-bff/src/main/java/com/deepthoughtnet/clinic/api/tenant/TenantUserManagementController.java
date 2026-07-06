@@ -81,7 +81,10 @@ public class TenantUserManagementController {
                         request.username(),
                         joinName(request.firstName(), request.lastName()),
                         role,
-                        request.resolvedTemporaryPassword()
+                        request.resolvedTemporaryPassword(),
+                        request.employeeCode(),
+                        request.mobile(),
+                        request.department()
                 )
         );
         if (!request.active()) {
@@ -189,10 +192,15 @@ public class TenantUserManagementController {
                 record.tenantId() == null ? null : record.tenantId().toString(),
                 record.keycloakSub(),
                 record.email(),
+                record.username(),
+                record.department(),
                 record.displayName(),
                 record.userStatus(),
                 record.membershipRole(),
                 record.membershipStatus(),
+                record.employeeCode(),
+                record.mobile(),
+                record.lastLoginAt(),
                 record.createdAt(),
                 record.updatedAt(),
                 record.provisioningStatus()
@@ -214,8 +222,27 @@ public class TenantUserManagementController {
             String tempPassword,
             @Size(max = 128)
             String temporaryPassword,
+            @Size(max = 64)
+            String employeeCode,
+            @Size(max = 32)
+            String mobile,
+            @Size(max = 128)
+            String department,
             boolean active
     ) {
+        public CreateTenantUserRequest(
+                String email,
+                String username,
+                String firstName,
+                String lastName,
+                String role,
+                String tempPassword,
+                String temporaryPassword,
+                boolean active
+        ) {
+            this(email, username, firstName, lastName, role, tempPassword, temporaryPassword, null, null, null, active);
+        }
+
         public String resolvedTemporaryPassword() {
             return StringUtils.hasText(temporaryPassword) ? temporaryPassword : tempPassword;
         }

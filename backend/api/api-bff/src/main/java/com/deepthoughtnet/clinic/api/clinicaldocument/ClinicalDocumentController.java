@@ -233,7 +233,7 @@ public class ClinicalDocumentController {
         documentService.listByPatient(tenantId, patientId).forEach(doc -> items.add(new PatientTimelineItemResponse(
                 doc.id().toString(),
                 "DOCUMENT",
-                documentTypeLabel(doc.documentType()),
+                documentTimelineTitle(doc),
                 documentTimelineSubtitle(doc),
                 doc.createdAt().toString(),
                 documentTimelineStatus(doc),
@@ -243,10 +243,10 @@ public class ClinicalDocumentController {
                 null
         )));
         consultationService.listByPatient(tenantId, patientId).forEach(row -> items.add(new PatientTimelineItemResponse(
-                row.id().toString(), "CONSULTATION", row.diagnosis() == null || row.diagnosis().isBlank() ? "Consultation" : row.diagnosis(), consultationTimelineSubtitle(row), row.createdAt().toString(), row.status().name(), null, null, row.id().toString(), null
+                row.id().toString(), "CONSULTATION", consultationTimelineTitle(row), consultationTimelineSubtitle(row), row.createdAt().toString(), consultationTimelineStatus(row), null, null, row.id().toString(), null
         )));
         prescriptionService.listByPatient(tenantId, patientId).forEach(row -> items.add(new PatientTimelineItemResponse(
-                row.id().toString(), "PRESCRIPTION", row.prescriptionNumber(), prescriptionTimelineSubtitle(row), row.createdAt().toString(), row.status().name(), "PRESCRIPTION", null, row.consultationId().toString(), row.id().toString()
+                row.id().toString(), "PRESCRIPTION", prescriptionTimelineTitle(row), prescriptionTimelineSubtitle(row), row.createdAt().toString(), prescriptionTimelineStatus(row), "PRESCRIPTION", null, row.consultationId().toString(), row.id().toString()
         )));
         return items.stream().sorted(Comparator.comparing(PatientTimelineItemResponse::occurredAt).reversed()).limit(100).toList();
     }
@@ -340,13 +340,25 @@ public class ClinicalDocumentController {
             subtitle.append(" • ").append(record.uploadSource());
         }
         if (record.sourceModule() != null && !record.sourceModule().isBlank()) {
-            subtitle.append(" • ").append(record.sourceModule());
+            if (!isLaboratorySource(record.sourceModule()) && !"DOCUMENT".equalsIgnoreCase(record.sourceModule())) {
+                subtitle.append(" • ").append(record.sourceModule());
+            }
         }
         String verificationStatus = documentTimelineStatus(record);
         if (verificationStatus != null && !verificationStatus.isBlank()) {
             subtitle.append(" • ").append(verificationStatus);
         }
         return subtitle.toString();
+    }
+
+    private String documentTimelineTitle(ClinicalDocumentRecord record) {
+        if (record == null) {
+            return "Document";
+        }
+        if (isPublishedLabDocument(record)) {
+            return "Laboratory Report Published";
+        }
+        return documentTypeLabel(record.documentType());
     }
 
     private String documentTimelineStatus(ClinicalDocumentRecord record) {
@@ -361,6 +373,26 @@ public class ClinicalDocumentController {
             return verificationStatus;
         }
         return documentBusinessStatusLabel(record.visibility());
+    }
+
+    private String consultationTimelineTitle(com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord record) {
+        if (record == null) {
+            return "Consultation";
+        }
+        return record.status() == com.deepthoughtnet.clinic.consultation.service.model.ConsultationStatus.COMPLETED
+                ? "Consultation Completed"
+                : "Consultation";
+    }
+
+    private String consultationTimelineStatus(com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord record) {
+        if (record == null) {
+            return null;
+        }
+        return switch (record.status()) {
+            case COMPLETED -> "Completed";
+            case DRAFT -> "Draft";
+            case CANCELLED -> "Cancelled";
+        };
     }
 
     private boolean isPublishedLabDocument(ClinicalDocumentRecord record) {
@@ -394,7 +426,7 @@ public class ClinicalDocumentController {
             case "PUBLISHED" -> "Published";
             case "AVAILABLE" -> "Available";
             case "PATIENT_VISIBLE" -> "Available";
-            case "INTERNAL_ONLY" -> "Internal document";
+            case "INTERNAL_ONLY" -> null;
             case "VERIFIED" -> "Verified";
             case "UNVERIFIED" -> "Unverified";
             case "APPROVED" -> "Approved";
@@ -413,6 +445,28 @@ public class ClinicalDocumentController {
             subtitle.append(" | Follow-up ").append(record.followUpDate());
         }
         return subtitle.toString();
+    }
+
+    private String prescriptionTimelineTitle(com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord record) {
+        if (record == null) {
+            return "Prescription";
+        }
+        return record.status() == com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus.FINALIZED
+                ? "Prescription Generated"
+                : "Prescription";
+    }
+
+    private String prescriptionTimelineStatus(com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord record) {
+        if (record == null) {
+            return null;
+        }
+        return switch (record.status()) {
+            case FINALIZED -> "Generated";
+            case DRAFT -> "Draft";
+            case SUPERSEDED -> "Superseded";
+            case CANCELLED -> "Cancelled";
+            default -> record.status().name();
+        };
     }
 
     private String prescriptionTimelineSubtitle(com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord record) {

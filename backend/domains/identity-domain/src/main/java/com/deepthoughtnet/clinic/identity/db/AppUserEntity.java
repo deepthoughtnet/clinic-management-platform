@@ -8,6 +8,8 @@ import java.util.UUID;
 @Table(name = "app_users", indexes = {
         @Index(name = "ix_app_users_tenant", columnList = "tenant_id"),
         @Index(name = "ix_app_users_sub", columnList = "keycloak_sub"),
+        @Index(name = "ix_app_users_username", columnList = "tenant_id,username"),
+        @Index(name = "ix_app_users_employee_code", columnList = "tenant_id,employee_code"),
         @Index(name = "ix_app_users_driver", columnList = "tenant_id,driver_id")
 }, uniqueConstraints = {
         @UniqueConstraint(name = "uq_users_tenant_sub", columnNames = {"tenant_id", "keycloak_sub"})
@@ -27,8 +29,23 @@ public class AppUserEntity {
     @Column(length = 256)
     private String email;
 
+    @Column(length = 128)
+    private String username;
+
     @Column(name = "display_name", length = 256)
     private String displayName;
+
+    @Column(length = 128)
+    private String department;
+
+    @Column(name = "employee_code", length = 64)
+    private String employeeCode;
+
+    @Column(name = "mobile", length = 32)
+    private String mobile;
+
+    @Column(name = "last_login_at")
+    private OffsetDateTime lastLoginAt;
 
     /**
      * ✅ NEW: link AppUser -> Driver (for driver mobile APIs)
@@ -67,7 +84,12 @@ public class AppUserEntity {
     public UUID getTenantId() { return tenantId; }
     public String getKeycloakSub() { return keycloakSub; }
     public String getEmail() { return email; }
+    public String getUsername() { return username; }
     public String getDisplayName() { return displayName; }
+    public String getDepartment() { return department; }
+    public String getEmployeeCode() { return employeeCode; }
+    public String getMobile() { return mobile; }
+    public OffsetDateTime getLastLoginAt() { return lastLoginAt; }
 
     public UUID getDriverId() { return driverId; }
     public UUID getPatientId() { return patientId; }
@@ -91,8 +113,25 @@ public class AppUserEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    public void updateIdentity(String username, String department) {
+        this.username = username;
+        this.department = department;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void updateContactDetails(String employeeCode, String mobile) {
+        this.employeeCode = employeeCode;
+        this.mobile = mobile;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public void setKeycloakSub(String keycloakSub) {
         this.keycloakSub = keycloakSub;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    public void recordLogin(OffsetDateTime lastLoginAt) {
+        this.lastLoginAt = lastLoginAt;
         this.updatedAt = OffsetDateTime.now();
     }
 }

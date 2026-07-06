@@ -9,7 +9,7 @@ import FullscreenExitRoundedIcon from "@mui/icons-material/FullscreenExitRounded
 import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 
 import type { ClinicalDocument } from "../../api/clinicApi";
-import { isPublishedLabDocument } from "./documentTypeOptions";
+import { documentBusinessStatusLabel, isPublishedLabDocument } from "./documentTypeOptions";
 
 type Props = {
   open: boolean;
@@ -35,9 +35,10 @@ export function ClinicalDocumentViewer({ open, document, url, onClose }: Props) 
   const isPdf = document?.mediaType === "application/pdf";
   const isImage = document?.mediaType?.startsWith("image/");
   const publishedLabDocument = isPublishedLabDocument(document);
+  const businessStatus = documentBusinessStatusLabel(document);
   const sizeLabel = formatSize(document?.sizeBytes);
   const metaChips = publishedLabDocument
-    ? ["Lab Report", "Published", "Available"]
+    ? ["Lab Report", "Published"]
     : [
         document?.documentType ? document.documentType.replaceAll("_", " ") : null,
         document?.mediaType || null,
@@ -122,7 +123,7 @@ export function ClinicalDocumentViewer({ open, document, url, onClose }: Props) 
                 {publishedLabDocument ? null : <Typography variant="body2"><b>AI override reason:</b> {document?.aiExtractionOverrideReason || "-"}</Typography>}
                 {publishedLabDocument ? null : <Typography variant="body2"><b>Reviewed by:</b> {document?.aiExtractionReviewedByAppUserId || "-"}</Typography>}
                 {publishedLabDocument ? null : <Typography variant="body2"><b>Reviewed at:</b> {document?.aiExtractionReviewedAt || "-"}</Typography>}
-                {publishedLabDocument ? <Typography variant="body2"><b>Status:</b> Published</Typography> : null}
+                {businessStatus ? <Typography variant="body2"><b>Status:</b> {businessStatus}</Typography> : null}
                 <Typography variant="body2"><b>Checksum:</b> {document?.checksumSha256 || "-"}</Typography>
                 <Typography variant="body2"><b>Storage:</b> {document?.storageBucket ? `${document.storageBucket}/${document.storageKey}` : document?.storageKey || "-"}</Typography>
               </Stack>

@@ -9,6 +9,10 @@ public interface AppUserRepository extends JpaRepository<AppUserEntity, UUID> {
 
     Optional<AppUserEntity> findByTenantIdAndEmailIgnoreCase(UUID tenantId, String email);
 
+    Optional<AppUserEntity> findByTenantIdAndUsernameIgnoreCase(UUID tenantId, String username);
+
+    Optional<AppUserEntity> findByTenantIdAndEmployeeCodeIgnoreCase(UUID tenantId, String employeeCode);
+
     Optional<AppUserEntity> findByTenantIdAndKeycloakSub(UUID tenantId, String keycloakSub);
 
     // ✅ Used by driver APIs (RequestContext gives appUserId)

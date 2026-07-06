@@ -5,6 +5,7 @@ import com.deepthoughtnet.clinic.identity.db.TenantMembershipEntity;
 import com.deepthoughtnet.clinic.identity.db.TenantMembershipRepository;
 import com.deepthoughtnet.clinic.identity.db.TenantPlanRepository;
 import com.deepthoughtnet.clinic.identity.db.TenantRepository;
+import com.deepthoughtnet.clinic.identity.service.TenantOnboardingService;
 import com.deepthoughtnet.clinic.identity.service.keycloak.KeycloakAdminProvisioner;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
 import java.util.Locale;
@@ -19,19 +20,22 @@ public class TenantProvisioningService {
     private final AppUserProvisioner appUserProvisioner;
     private final TenantMembershipRepository membershipRepo;
     private final KeycloakAdminProvisioner keycloak;
+    private final TenantOnboardingService tenantOnboardingService;
 
     public TenantProvisioningService(
             TenantRepository tenantRepo,
             TenantPlanRepository planRepo,
             AppUserProvisioner appUserProvisioner,
             TenantMembershipRepository membershipRepo,
-            KeycloakAdminProvisioner keycloak
+            KeycloakAdminProvisioner keycloak,
+            TenantOnboardingService tenantOnboardingService
     ) {
         this.tenantRepo = tenantRepo;
         this.planRepo = planRepo;
         this.appUserProvisioner = appUserProvisioner;
         this.membershipRepo = membershipRepo;
         this.keycloak = keycloak;
+        this.tenantOnboardingService = tenantOnboardingService;
     }
 
     /**
@@ -51,7 +55,11 @@ public class TenantProvisioningService {
         planRepo.findById(planId).orElseThrow(() -> new IllegalArgumentException("Unknown planId: " + planId));
 
         TenantEntity tenant = tenantRepo.findByCode(code)
-                .orElseGet(() -> tenantRepo.saveAndFlush(TenantEntity.create(code, req.tenantName().trim(), planId)));
+                .orElseGet(() -> {
+                    TenantEntity created = tenantRepo.saveAndFlush(TenantEntity.create(code, req.tenantName().trim(), planId));
+                    tenantOnboardingService.initializeForNewTenant(created.getId());
+                    return created;
+                });
 
         if (!StringUtils.hasText(req.adminEmail())) {
             return new TenantProvisioningResult(

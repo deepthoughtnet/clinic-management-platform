@@ -64,7 +64,8 @@ import CompareArrowsRoundedIcon from "@mui/icons-material/CompareArrowsRounded";
 import { consultationSchema, firstZodError, labConsultationOrderCreateSchema } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { ClinicalAiDraftCard, type ClinicalAiDraftStatus } from "../../components/clinical/ClinicalAiDraftCard";
-import { documentTypeLabel, isPublishedLabDocument } from "../../components/clinical/documentTypeOptions";
+import { documentBusinessStatusLabel, documentTypeLabel, isPublishedLabDocument } from "../../components/clinical/documentTypeOptions";
+import { AppointmentTokenChip, PatientJourneyTracker, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
 import {
   aiClinicalSummary,
   aiConsultationAsk,
@@ -133,6 +134,7 @@ import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocume
 import { ConfirmationDialog } from "../../components/clinical/ConfirmationDialog";
 import { PatientIntelligenceCard } from "../../components/clinical/PatientIntelligenceCard";
 import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDocumentUploadDialog";
+import { formatRelativeBookingTime } from "../../components/workflow/workflowHelpers";
 
 type ConsultationFormState = {
   chiefComplaints: string;
@@ -2101,6 +2103,7 @@ export default function ConsultationWorkspacePage() {
       && !aiBusy,
   );
   const canGenerateClinicalDraft = Boolean(auth.accessToken && auth.tenantId && consultation && patient && aiAvailable && !aiBusy);
+  const aiAssistantEnabled = Boolean(aiAvailable && canRunAi);
   const clinicalDraftEntries = React.useMemo(
     () => (Object.values(clinicalAiDrafts) as ClinicalAiDraftState[]).filter((draft) => draft.generatedAt || draft.error || draft.status !== "DRAFTED" || draft.draftText.trim()),
     [clinicalAiDrafts],
@@ -5838,18 +5841,37 @@ export default function ConsultationWorkspacePage() {
                     {patientRow ? `${patientRow.firstName} ${patientRow.lastName}` : consultation.patientName || consultation.patientId}
                   </Typography>
                   <Chip size="small" label={formatPatientAgeGender(patientRow)} />
-                  <Chip size="small" color={statusColor(consultation.status)} label={consultation.status} />
+                  <WorkflowStatusBadge status={consultation.status} />
+                  {appointment ? <AppointmentTokenChip appointment={appointment} compact /> : null}
                 </Stack>
                 <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
                   Patient summary, timeline, clinical notes, prescriptions, investigations, and AI companion in one workspace.
                 </Typography>
+                {appointment ? (
+                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+                    {formatRelativeBookingTime(appointment.createdAt) || "Booked recently"}
+                  </Typography>
+                ) : null}
+                <PatientJourneyTracker
+                  compact
+                  context={{
+                    status: appointment?.status || consultation.status,
+                    paymentStatus: appointment?.status === "BOOKED" ? "PAYMENT_PENDING" : appointment?.status === "WAITING" ? "PAID" : undefined,
+                    consultationStatus: consultation.status,
+                    prescriptionStatus: prescription?.status,
+                    labStatus: labOrders.some((order) => order.reportPublishedAt ? "PUBLISHED" : order.status)
+                      ? (labOrders.some((order) => !order.reportPublishedAt && order.status !== "CANCELLED") ? "RESULT_PENDING" : "PUBLISHED")
+                      : undefined,
+                    followUpScheduled: Boolean(consultation.followUpDate),
+                  }}
+                />
               </Stack>
             </Stack>
 
             <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" justifyContent="flex-end" sx={{ maxWidth: { xs: "100%", md: 520 } }}>
               <Button type="button" size="small" variant="outlined" onClick={() => void backToQueue()}>Back to Queue</Button>
               {canEditConsultation && !readOnly ? <Button type="button" size="small" disabled={saving} onClick={() => void manualSaveDraft()}>Save Draft</Button> : null}
-              {canRunAi ? <Button type="button" size="small" variant="contained" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void generateConsultationDraft(false)}>Generate Consultation Draft</Button> : null}
+              {aiAssistantEnabled ? <Button type="button" size="small" variant="contained" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!canGenerateClinicalDraft} onClick={() => void generateConsultationDraft(false)}>Generate Consultation Draft</Button> : null}
               {canRunAi && Object.values(clinicalAiDrafts).some((draft) => draft.status === "ACCEPTED" || draft.status === "EDITED") ? (
                 <Button
                   type="button"
@@ -6172,7 +6194,7 @@ export default function ConsultationWorkspacePage() {
               iconPosition="start"
               sx={workspaceTabSx}
             />
-            {canRunAi ? (
+            {aiAssistantEnabled ? (
               <Tab
                 label="AI Assist"
                 icon={<AutoAwesomeRoundedIcon fontSize="small" />}
@@ -6882,7 +6904,7 @@ export default function ConsultationWorkspacePage() {
                               </Stack>
                               <Typography variant="caption" color="text.secondary">Ask anything about this consultation...</Typography>
                             </Box>
-                            <Chip size="small" color={aiAvailable ? "success" : "warning"} variant="outlined" label={aiAvailable ? "AI ready" : "AI unavailable"} />
+                            <Chip size="small" color={aiAssistantEnabled ? "success" : "warning"} variant="outlined" label={aiAssistantEnabled ? "AI ready" : "AI unavailable"} />
                           </Stack>
                         <Alert severity="info" sx={{ py: 0.4 }}>
                           {AI_SAFETY_NOTE}
@@ -6905,14 +6927,14 @@ export default function ConsultationWorkspacePage() {
                                 }}
                                 multiline
                                 minRows={1}
-                                disabled={aiBusy}
+                                disabled={aiBusy || !aiAssistantEnabled}
                                 sx={{ flex: 1, minWidth: 0 }}
                               />
                               <Button
                                 type="button"
                                 size="small"
                                 variant="contained"
-                                disabled={!canAskAiva}
+                                disabled={!aiAssistantEnabled || !canAskAiva}
                                 onClick={() => void runAskAiva()}
                                 sx={{ flexShrink: 0, minWidth: 72 }}
                               >
@@ -6929,22 +6951,22 @@ export default function ConsultationWorkspacePage() {
                             overflow: "visible",
                           }}
                         >
-                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<PsychologyRoundedIcon fontSize="small" />} disabled={!consultation || !patient || aiBusy} onClick={() => void runAiAction("diagnosis")}>
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<PsychologyRoundedIcon fontSize="small" />} disabled={!aiAssistantEnabled || !consultation || !patient || aiBusy} onClick={() => void runAiAction("diagnosis")}>
                             Suggest diagnosis
                           </Button>
-                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<WarningAmberRoundedIcon fontSize="small" />} sx={{ color: "warning.main", borderColor: "warning.light" }} disabled={!consultation || !patient || aiBusy} onClick={() => void runAiAction("diagnosis")}>
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<WarningAmberRoundedIcon fontSize="small" />} sx={{ color: "warning.main", borderColor: "warning.light" }} disabled={!aiAssistantEnabled || !consultation || !patient || aiBusy} onClick={() => void runAiAction("diagnosis")}>
                             Red flags
                           </Button>
-                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<ScienceRoundedIcon fontSize="small" />} sx={{ color: "secondary.main", borderColor: "secondary.light" }} disabled={!consultation || !patient || aiBusy} onClick={() => void runAiAction("diagnosis")}>
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<ScienceRoundedIcon fontSize="small" />} sx={{ color: "secondary.main", borderColor: "secondary.light" }} disabled={!aiAssistantEnabled || !consultation || !patient || aiBusy} onClick={() => void runAiAction("diagnosis")}>
                             Recommended tests
                           </Button>
-                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<HealthAndSafetyRoundedIcon fontSize="small" />} sx={{ color: "error.main", borderColor: "error.light" }} disabled={!consultation || !patient || aiBusy} onClick={() => void applyAiPrescriptionTemplate()}>
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<HealthAndSafetyRoundedIcon fontSize="small" />} sx={{ color: "error.main", borderColor: "error.light" }} disabled={!aiAssistantEnabled || !consultation || !patient || aiBusy} onClick={() => void applyAiPrescriptionTemplate()}>
                             Drug interaction
                           </Button>
-                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<TipsAndUpdatesRoundedIcon fontSize="small" />} sx={{ color: "success.main", borderColor: "success.light" }} disabled={!consultation || !patient || aiBusy} onClick={() => void runAiAction("instructions")}>
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<TipsAndUpdatesRoundedIcon fontSize="small" />} sx={{ color: "success.main", borderColor: "success.light" }} disabled={!aiAssistantEnabled || !consultation || !patient || aiBusy} onClick={() => void runAiAction("instructions")}>
                             Patient advice
                           </Button>
-                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<DescriptionRoundedIcon fontSize="small" />} sx={{ color: "info.main", borderColor: "info.light" }} disabled={!consultation || !patient || aiBusy} onClick={() => void runAiAction("notes")}>
+                          <Button type="button" size="small" variant="outlined" fullWidth startIcon={<DescriptionRoundedIcon fontSize="small" />} sx={{ color: "info.main", borderColor: "info.light" }} disabled={!aiAssistantEnabled || !consultation || !patient || aiBusy} onClick={() => void runAiAction("notes")}>
                             SOAP notes
                           </Button>
                         </Box>
@@ -7635,7 +7657,7 @@ export default function ConsultationWorkspacePage() {
                             </Stack>
                             <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                               <Chip size="small" variant="outlined" label={aiPrescriptionItems.length ? `${aiPrescriptionItems.length} suggestion${aiPrescriptionItems.length === 1 ? "" : "s"}` : "No suggestions"} />
-                              <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!consultation || !patient || aiBusy} onClick={() => void applyAiPrescriptionTemplate()}>
+                              <Button type="button" size="small" variant="outlined" startIcon={<AutoAwesomeRoundedIcon fontSize="small" />} disabled={!aiAssistantEnabled || !consultation || !patient || aiBusy} onClick={() => void applyAiPrescriptionTemplate()}>
                                 Suggest medicines with AIVA
                               </Button>
                             </Stack>
@@ -8513,12 +8535,12 @@ export default function ConsultationWorkspacePage() {
                                       {row.title || row.originalFilename}
                                     </Typography>
                                     <Typography variant="caption" color="text.secondary" noWrap>
-                                      {documentTypeLabel(row.documentType)} • {row.reportDate || compactDate(row.createdAt)} • {isPublishedLabDocument(row) ? "Published" : row.uploadSource}
+                                      {documentTypeLabel(row.documentType)} • {row.reportDate || compactDate(row.createdAt)} • {isPublishedLabDocument(row) ? (documentBusinessStatusLabel(row) || "Published") : row.uploadSource}
                                     </Typography>
                                   </Box>
                                   <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                                     <Chip size="small" variant="outlined" label={isPublishedLabDocument(row) ? "Published" : row.visibility} />
-                                    <Chip size="small" variant="outlined" label={isPublishedLabDocument(row) ? "Available" : row.verificationStatus} />
+                                    {isPublishedLabDocument(row) ? null : <Chip size="small" variant="outlined" label={row.verificationStatus} />}
                                   </Stack>
                                 </Stack>
                                 <Typography variant="caption" color="text.secondary" noWrap title={row.description || row.originalFilename}>
@@ -8899,15 +8921,22 @@ export default function ConsultationWorkspacePage() {
                         <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
                         <Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Chat</Typography>
                       </Stack>
-                      <Chip size="small" variant="outlined" color={aiAvailable ? "success" : "warning"} label={aiAvailable ? "AI ready" : "AI unavailable"} />
+                      <Chip size="small" variant="outlined" color={aiAssistantEnabled ? "success" : "warning"} label={aiAssistantEnabled ? "AI ready" : "AI unavailable"} />
                     </Stack>
                     <Typography variant="body2" color="text.secondary">
                       Ask anything about this consultation...
                     </Typography>
-                    {!aiAvailable ? (
-                      <Alert severity="info">
-                        AIVA Clinical Assist is not enabled for this clinic.
-                      </Alert>
+                    {!aiAssistantEnabled ? (
+                      <Box sx={{ p: 1.5, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+                        <Stack spacing={0.35}>
+                          <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                            AI assistant is not enabled for this clinic.
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            Ask clinic administrator to enable AIVA clinical assistance.
+                          </Typography>
+                        </Stack>
+                      </Box>
                     ) : null}
                     <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
                       <CardContent sx={{ p: 1 }}>
@@ -8989,7 +9018,7 @@ export default function ConsultationWorkspacePage() {
                             label="Ask anything about this consultation"
                             placeholder="Ask anything about this consultation..."
                             value={aivaClinicalQuestion}
-                            disabled={aiBusy || aivaQuestionSubmitting || readOnly || !aiAvailable}
+                            disabled={aiBusy || aivaQuestionSubmitting || readOnly || !aiAssistantEnabled}
                             multiline
                             minRows={2}
                             onChange={(event) => setAivaClinicalQuestion(event.target.value)}
@@ -9001,7 +9030,7 @@ export default function ConsultationWorkspacePage() {
                             }}
                           />
                           <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                            <Button type="button" size="small" variant="contained" disabled={!canAskAiva || aivaQuestionSubmitting || aiBusy} onClick={() => void submitAivaQuestion()}>
+                            <Button type="button" size="small" variant="contained" disabled={!aiAssistantEnabled || !canAskAiva || aivaQuestionSubmitting || aiBusy} onClick={() => void submitAivaQuestion()}>
                               Ask
                             </Button>
                             <Button type="button" size="small" variant="outlined" disabled={!aivaChatMessages.length} onClick={() => setAivaChatDetailsOpen((current) => !current)}>
@@ -9016,10 +9045,10 @@ export default function ConsultationWorkspacePage() {
                             </Stack>
                           </Collapse>
                           <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
-                            <Chip size="small" icon={<PsychologyRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAvailable} disabled={aiBusy || !aiAvailable} variant="outlined" label="Suggest diagnosis" onClick={() => void runAiAction("diagnosis")} />
-                            <Chip size="small" icon={<DescriptionRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAvailable} disabled={aiBusy || !aiAvailable} variant="outlined" label="Structure SOAP notes" onClick={() => void runAiAction("notes")} />
-                            <Chip size="small" icon={<MedicationRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAvailable} disabled={aiBusy || !aiAvailable} variant="outlined" label="Prescription template" onClick={() => void applyAiPrescriptionTemplate()} />
-                            <Chip size="small" icon={<TipsAndUpdatesRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAvailable} disabled={aiBusy || !aiAvailable} variant="outlined" label="Patient instructions" onClick={() => void runAiAction("instructions")} />
+                            <Chip size="small" icon={<PsychologyRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Suggest diagnosis" onClick={() => void runAiAction("diagnosis")} />
+                            <Chip size="small" icon={<DescriptionRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Structure SOAP notes" onClick={() => void runAiAction("notes")} />
+                            <Chip size="small" icon={<MedicationRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Prescription template" onClick={() => void applyAiPrescriptionTemplate()} />
+                            <Chip size="small" icon={<TipsAndUpdatesRoundedIcon fontSize="small" />} clickable={!aiBusy && aiAssistantEnabled} disabled={aiBusy || !aiAssistantEnabled} variant="outlined" label="Patient instructions" onClick={() => void runAiAction("instructions")} />
                           </Stack>
                           {aiBusy ? <Typography variant="caption" color="text.secondary">AI assistance is preparing suggestions...</Typography> : null}
                         </Stack>
@@ -9038,7 +9067,7 @@ export default function ConsultationWorkspacePage() {
                     <Typography variant="body2" color="text.secondary">
                       Previous visit summary, chronic history, and recent consultation summary are generated as assistive context only.
                     </Typography>
-                    <Button type="button" variant="contained" disabled={aiBusy || !aiAvailable} onClick={() => void generateClinicalSummary()}>Generate summary</Button>
+                    <Button type="button" variant="contained" disabled={aiBusy || !aiAssistantEnabled} onClick={() => void generateClinicalSummary()}>Generate summary</Button>
                     {aiSummaryText || clinicalSummary ? (
                       <Stack spacing={1}>
                         <Card variant="outlined" sx={{ boxShadow: "none" }}>

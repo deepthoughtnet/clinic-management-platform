@@ -27,11 +27,14 @@ import {
 import { useAuth } from "../../auth/useAuth";
 import AutocompleteTextInput from "../../components/forms/AutocompleteTextInput";
 import RequiredLabel from "../../components/forms/RequiredLabel";
+import TenantOnboardingWizardDialog from "../../components/onboarding/TenantOnboardingWizardDialog";
 import {
   getClinicProfile,
   getPrescriptionTemplate,
   getPrescriptionTemplateHistory,
+  getTenantOnboardingStatus,
   previewPrescriptionTemplate,
+  type TenantOnboardingStatus,
   type ClinicProfileInput,
   type PrescriptionTemplateConfig,
   type PrescriptionTemplateInput,
@@ -181,6 +184,8 @@ export default function ClinicProfilePage() {
   const [form, setForm] = React.useState<ClinicProfileFormState>(emptyForm);
   const [templateForm, setTemplateForm] = React.useState<TemplateFormState>(emptyTemplate);
   const [templateHistory, setTemplateHistory] = React.useState<PrescriptionTemplateConfig[]>([]);
+  const [onboardingStatus, setOnboardingStatus] = React.useState<TenantOnboardingStatus | null>(null);
+  const [wizardOpen, setWizardOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -199,15 +204,17 @@ export default function ClinicProfilePage() {
       setLoading(true);
       setError(null);
       try {
-        const [profile, template, history] = await Promise.all([
-          getClinicProfile(auth.accessToken, auth.tenantId),
+        const [profile, template, history, onboarding] = await Promise.all([
+          getClinicProfile(auth.accessToken, auth.tenantId).catch(() => null),
           getPrescriptionTemplate(auth.accessToken, auth.tenantId),
           getPrescriptionTemplateHistory(auth.accessToken, auth.tenantId),
+          getTenantOnboardingStatus(auth.accessToken, auth.tenantId).catch(() => null),
         ]);
         if (!cancelled) {
-          setForm(toFormState(profile));
+          setForm(profile ? toFormState(profile) : emptyForm());
           setTemplateForm(templateToForm(template));
           setTemplateHistory(history);
+          setOnboardingStatus(onboarding);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to load clinic profile";
@@ -231,6 +238,12 @@ export default function ClinicProfilePage() {
       cancelled = true;
     };
   }, [auth.accessToken, auth.tenantId]);
+
+  React.useEffect(() => {
+    if (!loading && onboardingStatus && !onboardingStatus.completed && canEdit) {
+      setWizardOpen(true);
+    }
+  }, [canEdit, loading, onboardingStatus]);
 
   const updateTextField =
     (field: Exclude<keyof ClinicProfileFormState, "active">) =>
@@ -338,6 +351,11 @@ export default function ClinicProfilePage() {
       {error ? <Alert severity="error">{error}</Alert> : null}
       {success ? <Alert severity="success">{success}</Alert> : null}
       {!canEdit ? <Alert severity="info">You have read-only access to this profile.</Alert> : null}
+      {onboardingStatus && !onboardingStatus.completed ? (
+        <Alert severity="info" action={<Button color="inherit" size="small" onClick={() => setWizardOpen(true)}>Resume setup</Button>}>
+          Clinic onboarding is incomplete. You can continue the setup wizard from here.
+        </Alert>
+      ) : null}
 
       <Card>
         <CardContent>
@@ -530,6 +548,17 @@ export default function ClinicProfilePage() {
           </Stack>
         </CardContent>
       </Card>
+      {canEdit ? (
+        <TenantOnboardingWizardDialog
+          open={wizardOpen}
+          auth={auth}
+          onClose={() => setWizardOpen(false)}
+          onCompleted={(next) => {
+            setOnboardingStatus(next);
+            setWizardOpen(false);
+          }}
+        />
+      ) : null}
     </Stack>
   );
 }

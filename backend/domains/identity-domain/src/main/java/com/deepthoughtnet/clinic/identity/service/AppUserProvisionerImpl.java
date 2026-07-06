@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.identity.service;
 import com.deepthoughtnet.clinic.identity.db.AppUserEntity;
 import com.deepthoughtnet.clinic.identity.db.AppUserRepository;
 import com.deepthoughtnet.clinic.platform.core.security.AppUserProvisioner;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
@@ -71,5 +72,14 @@ public class AppUserProvisionerImpl implements AppUserProvisioner {
             }
             throw ex;
         }
+    }
+
+    @Override
+    @Transactional
+    public void recordLogin(UUID tenantId, UUID appUserId, OffsetDateTime loginAt) {
+        if (tenantId == null || appUserId == null || loginAt == null) {
+            return;
+        }
+        repo.findByTenantIdAndId(tenantId, appUserId).ifPresent(user -> user.recordLogin(loginAt));
     }
 }

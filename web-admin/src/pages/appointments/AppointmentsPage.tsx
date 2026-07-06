@@ -42,7 +42,9 @@ import {
 import { alpha } from "@mui/material/styles";
 
 import { useAuth } from "../../auth/useAuth";
+import { AppointmentTokenChip, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
 import PatientQuickRegisterDialog, { patientSummary } from "../../components/patients/PatientQuickRegisterDialog";
+import { patientDisplayName, patientIdentitySummary, patientNumberLine, patientMobileLine } from "../../components/patients/patientQuickRegister";
 import {
   createAppointment,
   createWaitlist,
@@ -67,6 +69,7 @@ import {
   type PatientGender,
   type WaitlistStatus,
 } from "../../api/clinicApi";
+import { getNextWorkflowAction } from "../../components/workflow/workflowHelpers";
 import {
   formatClinicClockLabel,
   getClinicDateKey,
@@ -85,21 +88,6 @@ type AppointmentPageState = {
 const appointmentTypes: AppointmentType[] = ["SCHEDULED", "FOLLOW_UP", "VACCINATION", "WALK_IN"];
 const appointmentPriorities: AppointmentPriority[] = ["NORMAL", "URGENT", "ELDERLY", "CHILD", "FOLLOW_UP", "MANUAL_PRIORITY"];
 
-function statusColor(status: Appointment["status"]) {
-  switch (status) {
-    case "COMPLETED":
-      return "success";
-    case "IN_CONSULTATION":
-      return "info";
-    case "WAITING":
-    case "BOOKED":
-      return "warning";
-    case "CANCELLED":
-    case "NO_SHOW":
-      return "default";
-  }
-}
-
 function priorityColor(priority: Appointment["priority"]) {
   switch (priority) {
     case "URGENT":
@@ -117,13 +105,6 @@ function priorityColor(priority: Appointment["priority"]) {
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function patientLabel(patient: Patient | null) {
-  if (!patient) return "";
-  const age = patient.ageYears !== null ? `${patient.ageYears}y` : null;
-  const label = `${patient.firstName} ${patient.lastName || ""}`.trim();
-  return [label, age, patient.gender].filter(Boolean).join(" • ");
 }
 
 function arrivalLabel(appointment: Appointment) {
@@ -162,6 +143,69 @@ function formatDate(value: string) {
 
 function appointmentReference(appointment: Appointment) {
   return appointment.displayReference || (appointment.tokenNumber != null ? `APT-${appointment.tokenNumber}` : "Pending");
+}
+
+function workflowNextActionLabel(appointment: Appointment) {
+  const action = getNextWorkflowAction({ status: appointment.status, paymentStatus: appointment.consultationFeeStatus, billDueAmount: appointment.consultationFeeDueAmount });
+  return action.label;
+}
+
+function slotGridEmptyState({
+  selectedDoctorId,
+  appointmentDate,
+  clinicDate,
+  slots,
+  bookableSlots,
+  hidePastSlots,
+}: {
+  selectedDoctorId: string;
+  appointmentDate: string;
+  clinicDate: string;
+  slots: DoctorAvailabilitySlot[];
+  bookableSlots: DoctorAvailabilitySlot[];
+  hidePastSlots: boolean;
+}) {
+  if (!selectedDoctorId) {
+    return {
+      title: "Select a doctor and date to view available slots.",
+      subtitle: "Pick a doctor first, then choose a date to load configured availability.",
+    };
+  }
+  if (appointmentDate < clinicDate) {
+    return {
+      title: "Past dates cannot be booked. Select today or a future date.",
+      subtitle: "The selected date is already in the past for the clinic calendar.",
+    };
+  }
+  if (slots.length === 0) {
+    return {
+      title: "No availability configured for this doctor on the selected date.",
+      subtitle: "Use Doctor Availability to add sessions or choose another date.",
+    };
+  }
+  if (hidePastSlots && slots.some((slot) => slot.past)) {
+    return {
+      title: "No current or future slots are available.",
+      subtitle: "Turn off Hide past slots to review historical slots.",
+    };
+  }
+  const onlyUnavailable = slots.every((slot) => ["BREAK", "LEAVE", "HOLIDAY", "UNAVAILABLE", "CONFLICTED"].includes(slot.status));
+  if (onlyUnavailable) {
+    return {
+      title: "Doctor is unavailable on this date.",
+      subtitle: "The schedule is blocked by break, leave, holiday, or another unavailability.",
+    };
+  }
+  if (bookableSlots.length === 0) {
+    return {
+      title: "All slots are booked for this doctor. Try another date.",
+      subtitle: "The schedule is full for the selected date. Check another day or doctor.",
+    };
+  }
+  return {
+    title: "No schedule loaded",
+    subtitle: "Select a doctor and date to load configured availability.",
+  };
 }
 
 function toFive(time: string | null | undefined) {
@@ -486,8 +530,8 @@ export default function AppointmentsPage() {
     async function hydrateHandoff() {
       if (!auth.accessToken || !auth.tenantId) return;
       if (statePatient) {
-        setSelectedPatient((current) => current ?? statePatient);
-        setPatientQuery((current) => current || patientSummary(statePatient));
+        setSelectedPatient(statePatient);
+        setPatientQuery(patientSummary(statePatient));
         if (searchParams.get("type") === "WALK_IN") {
           setType("WALK_IN");
         }
@@ -994,13 +1038,13 @@ export default function AppointmentsPage() {
 
                   <TextField
                     size="small"
-                    label="Search patient"
+                    label="Search patient (Name / Mobile / Patient No)"
                     value={patientQuery}
                     onChange={(event) => {
                       setSelectedPatient(null);
                       setPatientQuery(event.target.value);
                     }}
-                    helperText="Search by patient ID, patient number, mobile, or name"
+                    helperText="Search by name, mobile, or patient number"
                   />
 
                 {selectedPatient ? (
@@ -1008,8 +1052,9 @@ export default function AppointmentsPage() {
                     <CardContent sx={{ py: 1.25 }}>
                       <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
                         <Box>
-                          <Typography sx={{ fontWeight: 800, lineHeight: 1.2 }}>{patientLabel(selectedPatient)}</Typography>
-                          <Typography variant="body2" color="text.secondary">{patientSummary(selectedPatient)}</Typography>
+                          <Typography sx={{ fontWeight: 800, lineHeight: 1.2 }}>{patientDisplayName(selectedPatient)}</Typography>
+                          <Typography variant="body2" color="text.secondary">{patientMobileLine(selectedPatient)}</Typography>
+                          <Typography variant="body2" color="text.secondary">{patientNumberLine(selectedPatient)}</Typography>
                         </Box>
                         <Button size="small" onClick={() => setSelectedPatient(null)}>Change</Button>
                       </Stack>
@@ -1026,7 +1071,7 @@ export default function AppointmentsPage() {
                             setPatientQuery(patientSummary(patient));
                             setQuickRegisterOpen(false);
                           }}>
-                            <ListItemText primary={patientLabel(patient)} secondary={patientSummary(patient)} />
+                            <ListItemText primary={patientDisplayName(patient)} secondary={patientIdentitySummary(patient)} />
                           </ListItemButton>
                         ))}
                       </List>
@@ -1036,7 +1081,7 @@ export default function AppointmentsPage() {
                   {searchingPatients ? (
                     <Alert severity="info">Searching for matching patients...</Alert>
                   ) : canQuickRegisterPatient && patientResults.length === 0 && patientQuery.trim().length >= 2 && !selectedPatient ? (
-                    <Alert severity="info" action={<Button color="inherit" size="small" onClick={openQuickRegister}>Quick Register Patient</Button>}>
+                    <Alert severity="info" action={<Button color="inherit" size="small" onClick={openQuickRegister}>Register New Patient</Button>}>
                       No matching patient found. Quick register and continue.
                     </Alert>
                   ) : null}
@@ -1178,14 +1223,7 @@ export default function AppointmentsPage() {
                 ) : null}
 
                 {visibleSlots.length === 0 ? (
-                  <CompactEmptyState
-                    title={slots.length === 0 ? "No schedule loaded" : "No current or future slots"}
-                    subtitle={slots.length === 0
-                      ? "Select a doctor and date to load configured availability."
-                      : hidePastSlots
-                        ? "No current or future slots are available. Turn off Hide past slots to review historical slots."
-                        : "Past slots remain visible but read-only. Select a current or future slot, or use emergency booking for a manual time."}
-                  />
+                  <CompactEmptyState {...slotGridEmptyState({ selectedDoctorId, appointmentDate, clinicDate: today, slots, bookableSlots, hidePastSlots })} />
                 ) : (
                   <Box
                     sx={{
@@ -1197,12 +1235,13 @@ export default function AppointmentsPage() {
                       },
                     }}
                   >
-                    {visibleSlots.map(({ slot, presentation }) => {
+                      {visibleSlots.map(({ slot, presentation }) => {
                       const timeLabel = toFive(slot.slotTime);
                       const selected = appointmentTime === timeLabel;
                       const current = presentation.isCurrent;
                       const past = presentation.isPast;
                       const bookable = presentation.bookable;
+                      const isBreak = slot.status === "BREAK";
                       return (
                         <Tooltip key={`${slot.slotTime}-${slot.slotEndTime}`} title={presentation.tooltip} arrow>
                           <span>
@@ -1231,6 +1270,14 @@ export default function AppointmentsPage() {
                                   {slot.slotEndTime.slice(0, 5)} • {slot.bookedCount}/{slot.maxPatientsPerSlot}
                                 </Typography>
                                 <Chip size="small" label={presentation.state.replace(/_/g, " ")} color={slotChipTone(presentation.state)} variant="outlined" sx={compactChipSx} />
+                                {isBreak ? (
+                                  <Chip
+                                    size="small"
+                                    label={`${slot.reason || "Break"} ${slot.slotTime.slice(0, 5)}–${slot.slotEndTime.slice(0, 5)}`}
+                                    variant="outlined"
+                                    sx={compactChipSx}
+                                  />
+                                ) : null}
                               </Stack>
                             </Button>
                           </span>
@@ -1358,10 +1405,15 @@ export default function AppointmentsPage() {
                         <TableCell>{appointment.doctorName || appointment.doctorUserId}</TableCell>
                         <TableCell>{formatDate(appointment.appointmentDate)}</TableCell>
                         <TableCell>{appointment.appointmentTime || "-"}</TableCell>
-                        <TableCell>{appointment.displayReference || appointment.tokenNumber || "-"}</TableCell>
+                        <TableCell><AppointmentTokenChip appointment={appointment} compact hidden={!appointment.displayReference && appointment.tokenNumber == null} /></TableCell>
                         <TableCell><Chip size="small" label={appointment.priority || "NORMAL"} color={priorityColor(appointment.priority)} variant="outlined" sx={compactChipSx} /></TableCell>
                         <TableCell>{arrivalLabel(appointment)}</TableCell>
-                        <TableCell><Chip size="small" label={appointment.status} color={statusColor(appointment.status)} sx={compactChipSx} /></TableCell>
+                        <TableCell>
+                          <Stack spacing={0.4}>
+                            <WorkflowStatusBadge status={appointment.status} compact />
+                            <Chip size="small" label={`Next: ${workflowNextActionLabel(appointment)}`} variant="outlined" sx={compactChipSx} />
+                          </Stack>
+                        </TableCell>
                         <TableCell align="right" sx={{ minWidth: 180 }}>
                           <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
                             <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)}>Patient</Button>
@@ -1408,7 +1460,7 @@ export default function AppointmentsPage() {
           open={quickRegisterOpen}
           token={auth.accessToken}
           tenantId={auth.tenantId}
-          title="Quick Register Patient"
+          title="Register New Patient"
           subtitle="Create the patient in master and continue the appointment flow without leaving the page."
           initialMobile={patientQuery}
           onClose={() => setQuickRegisterOpen(false)}

@@ -27,6 +27,7 @@ import {
 import { useAuth } from "../../auth/useAuth";
 import { CompactTableFrame, WorkflowStrip } from "../../components/compact/CompactUi";
 import { searchPatients, type Patient } from "../../api/clinicApi";
+import { patientDisplayName, patientMobileLine, patientNumberLine } from "../../components/patients/patientQuickRegister";
 
 const activeOptions = [
   { label: "All", value: "" },
@@ -35,11 +36,17 @@ const activeOptions = [
 ];
 
 const PATIENTS_WORKFLOW_STEPS = [
-  { label: "Register" },
-  { label: "Search" },
-  { label: "Profile" },
-  { label: "History" },
-  { label: "Billing / Clinical Links" },
+  { label: "Registration" },
+  { label: "Appointment Booked" },
+  { label: "Payment" },
+  { label: "Check-in" },
+  { label: "Waiting" },
+  { label: "Consultation" },
+  { label: "Prescription" },
+  { label: "Laboratory" },
+  { label: "Pharmacy" },
+  { label: "Billing Complete" },
+  { label: "Visit Completed" },
 ] as const;
 
 export default function PatientsPage() {
@@ -126,7 +133,7 @@ export default function PatientsPage() {
             </Typography>
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, md: 3 }}>
-                <TextField fullWidth label="Patient number" value={filters.patientNumber} onChange={(e) => setFilters((c) => ({ ...c, patientNumber: e.target.value }))} />
+                <TextField fullWidth label="Patient No" value={filters.patientNumber} onChange={(e) => setFilters((c) => ({ ...c, patientNumber: e.target.value }))} />
               </Grid>
               <Grid size={{ xs: 12, md: 3 }}>
                 <TextField fullWidth label="Mobile" value={filters.mobile} onChange={(e) => setFilters((c) => ({ ...c, mobile: e.target.value }))} />
@@ -189,11 +196,10 @@ export default function PatientsPage() {
                     <TableCell>
                       <Stack spacing={0.25}>
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                          {patient.firstName} {patient.lastName}
+                          {patientDisplayName(patient)}
                         </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {patient.patientNumber}
-                        </Typography>
+                        <Typography variant="caption" color="text.secondary">{patientMobileLine(patient)}</Typography>
+                        <Typography variant="caption" color="text.secondary">{patientNumberLine(patient)}</Typography>
                       </Stack>
                     </TableCell>
                     <TableCell>{patient.mobile}</TableCell>

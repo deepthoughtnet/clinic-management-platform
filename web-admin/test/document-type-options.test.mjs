@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildDocumentTypeOptions, documentTypeLabel } from "../src/components/clinical/documentTypeOptions.js";
+import { buildDocumentTypeOptions, documentBusinessStatusLabel, documentTypeLabel, isPublishedLabDocument } from "../src/components/clinical/documentTypeOptions.js";
 
 test("document type options keep the preferred standard order exactly once", () => {
   const options = buildDocumentTypeOptions();
@@ -63,4 +63,23 @@ test("document type label resolves legacy and custom values", () => {
   assert.equal(documentTypeLabel("LAB_REPORT"), "External Lab Report");
   assert.equal(documentTypeLabel("  referral_letter "), "Referral Letter");
   assert.equal(documentTypeLabel("EMPLOYER_MEDICAL_CERTIFICATE"), "EMPLOYER MEDICAL CERTIFICATE");
+});
+
+test("published lab documents reuse business-friendly status labels", () => {
+  const document = {
+    documentType: "LAB_REPORT",
+    sourceModule: "LAB",
+    displayStatus: "Published",
+    businessStatus: "Available",
+    verificationStatus: "PUBLISHED",
+    status: "PATIENT_VISIBLE",
+  };
+
+  assert.equal(isPublishedLabDocument(document), true);
+  assert.equal(documentBusinessStatusLabel(document), "Published • Available");
+});
+
+test("non published documents keep internal status mapping but hide internal only labels", () => {
+  assert.equal(documentBusinessStatusLabel({ status: "INTERNAL_ONLY" }), null);
+  assert.equal(documentBusinessStatusLabel({ status: "PROCESSING" }), "In progress");
 });

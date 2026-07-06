@@ -9,6 +9,7 @@ import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -38,6 +39,9 @@ public class DoctorProfileEntity {
     @Column(length = 128)
     private String specialization;
 
+    @Column(name = "specializations_json", columnDefinition = "text")
+    private String specializationsJson;
+
     @Column(length = 256)
     private String qualification;
 
@@ -49,6 +53,15 @@ public class DoctorProfileEntity {
 
     @Column(name = "consultation_fee", precision = 12, scale = 2)
     private BigDecimal consultationFee;
+
+    @Column(name = "opd_fee", precision = 12, scale = 2)
+    private BigDecimal opdFee;
+
+    @Column(name = "follow_up_fee", precision = 12, scale = 2)
+    private BigDecimal followUpFee;
+
+    @Column(name = "emergency_fee", precision = 12, scale = 2)
+    private BigDecimal emergencyFee;
 
     @Column(name = "years_of_experience")
     private Integer yearsOfExperience;
@@ -64,6 +77,18 @@ public class DoctorProfileEntity {
 
     @Column(name = "slug", length = 192)
     private String slug;
+
+    @Column(name = "photo_storage_key", length = 512)
+    private String photoStorageKey;
+
+    @Column(name = "photo_content_type", length = 128)
+    private String photoContentType;
+
+    @Column(name = "photo_size_bytes")
+    private Long photoSizeBytes;
+
+    @Column(name = "photo_original_filename", length = 256)
+    private String photoOriginalFilename;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
@@ -91,10 +116,14 @@ public class DoctorProfileEntity {
     public void update(
             String mobile,
             String specialization,
+            List<String> specializations,
             String qualification,
             String registrationNumber,
             String consultationRoom,
             BigDecimal consultationFee,
+            BigDecimal opdFee,
+            BigDecimal followUpFee,
+            BigDecimal emergencyFee,
             Integer yearsOfExperience,
             Integer age,
             Boolean active,
@@ -103,10 +132,14 @@ public class DoctorProfileEntity {
     ) {
         this.mobile = mobile;
         this.specialization = specialization;
+        this.specializationsJson = serializeSpecializations(specializations, specialization);
         this.qualification = qualification;
         this.registrationNumber = registrationNumber;
         this.consultationRoom = consultationRoom;
         this.consultationFee = consultationFee;
+        this.opdFee = opdFee != null ? opdFee : consultationFee;
+        this.followUpFee = followUpFee;
+        this.emergencyFee = emergencyFee;
         this.yearsOfExperience = yearsOfExperience;
         this.age = age;
         if (active != null) {
@@ -119,20 +152,46 @@ public class DoctorProfileEntity {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    public void updatePhoto(String storageKey, String contentType, Long sizeBytes, String originalFilename) {
+        this.photoStorageKey = storageKey;
+        this.photoContentType = contentType;
+        this.photoSizeBytes = sizeBytes;
+        this.photoOriginalFilename = originalFilename;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public UUID getId() { return id; }
     public UUID getTenantId() { return tenantId; }
     public UUID getDoctorUserId() { return doctorUserId; }
     public String getMobile() { return mobile; }
     public String getSpecialization() { return specialization; }
+    public String getSpecializationsJson() { return specializationsJson; }
     public String getQualification() { return qualification; }
     public String getRegistrationNumber() { return registrationNumber; }
     public String getConsultationRoom() { return consultationRoom; }
     public BigDecimal getConsultationFee() { return consultationFee; }
+    public BigDecimal getOpdFee() { return opdFee; }
+    public BigDecimal getFollowUpFee() { return followUpFee; }
+    public BigDecimal getEmergencyFee() { return emergencyFee; }
     public Integer getYearsOfExperience() { return yearsOfExperience; }
     public Integer getAge() { return age; }
     public boolean isActive() { return active; }
     public boolean isPublicListingEnabled() { return publicListingEnabled; }
     public String getSlug() { return slug; }
+    public String getPhotoStorageKey() { return photoStorageKey; }
+    public String getPhotoContentType() { return photoContentType; }
+    public Long getPhotoSizeBytes() { return photoSizeBytes; }
+    public String getPhotoOriginalFilename() { return photoOriginalFilename; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
+
+    private String serializeSpecializations(List<String> specializations, String fallback) {
+        List<String> values = specializations == null || specializations.isEmpty()
+                ? (fallback == null || fallback.isBlank() ? List.of() : List.of(fallback.trim()))
+                : specializations.stream().filter(value -> value != null && !value.isBlank()).map(String::trim).toList();
+        if (values.isEmpty()) {
+            return null;
+        }
+        return String.join("|", values);
+    }
 }

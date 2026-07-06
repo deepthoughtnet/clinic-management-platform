@@ -143,24 +143,7 @@ class BillingServicePaymentTest {
                 OffsetDateTime.now(),
                 OffsetDateTime.now()
         ));
-        when(doctorProfileService.findByDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(new DoctorProfileRecord(
-                UUID.randomUUID(),
-                tenantId,
-                doctorUserId,
-                null,
-                null,
-                null,
-                null,
-                null,
-                new BigDecimal("900.00"),
-                null,
-                null,
-                true,
-                false,
-                null,
-                OffsetDateTime.now(),
-                OffsetDateTime.now()
-        )));
+        when(doctorProfileService.findByDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(doctorProfileRecord(new BigDecimal("900.00"))));
     }
 
     @Test
@@ -726,24 +709,7 @@ class BillingServicePaymentTest {
 
     @Test
     void consultationFeeStatusReturnsUnpaidWhenFeeIsPending() {
-        when(doctorProfileService.findByDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(new DoctorProfileRecord(
-                UUID.randomUUID(),
-                tenantId,
-                doctorUserId,
-                null,
-                null,
-                null,
-                null,
-                null,
-                new BigDecimal("800.00"),
-                null,
-                null,
-                true,
-                false,
-                null,
-                OffsetDateTime.now(),
-                OffsetDateTime.now()
-        )));
+        when(doctorProfileService.findByDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(doctorProfileRecord(new BigDecimal("800.00"))));
         BillEntity bill = consultationBill(appointmentId, new BigDecimal("800.00"));
         when(billRepository.findByTenantIdAndAppointmentIdOrderByCreatedAtDesc(tenantId, appointmentId)).thenReturn(List.of(bill));
         when(billLineRepository.findByTenantIdAndBillIdOrderBySortOrderAsc(tenantId, bill.getId()))
@@ -760,24 +726,7 @@ class BillingServicePaymentTest {
 
     @Test
     void consultationFeeStatusReturnsNotConfiguredWhenDoctorHasNoFee() {
-        when(doctorProfileService.findByDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(new DoctorProfileRecord(
-                UUID.randomUUID(),
-                tenantId,
-                doctorUserId,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                true,
-                false,
-                null,
-                OffsetDateTime.now(),
-                OffsetDateTime.now()
-        )));
+        when(doctorProfileService.findByDoctorUserId(tenantId, doctorUserId)).thenReturn(Optional.of(doctorProfileRecord(null)));
 
         var status = service.consultationFeeStatus(tenantId, appointmentId);
 
@@ -829,5 +778,34 @@ class BillingServicePaymentTest {
 
     private PaymentCommand payment(String amount) {
         return new PaymentCommand(LocalDate.now(), null, new BigDecimal(amount), PaymentMode.CASH, null, null, null);
+    }
+
+    private DoctorProfileRecord doctorProfileRecord(BigDecimal fee) {
+        return new DoctorProfileRecord(
+                UUID.randomUUID(),
+                tenantId,
+                doctorUserId,
+                null,
+                null,
+                List.of(),
+                null,
+                null,
+                null,
+                fee,
+                fee,
+                null,
+                null,
+                null,
+                null,
+                true,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                OffsetDateTime.now(),
+                OffsetDateTime.now()
+        );
     }
 }

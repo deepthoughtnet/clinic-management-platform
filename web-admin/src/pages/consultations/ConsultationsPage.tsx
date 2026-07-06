@@ -33,11 +33,17 @@ function statusColor(status: Consultation["status"]) {
 }
 
 const CONSULTATIONS_WORKFLOW_STEPS = [
-  { label: "Draft" },
-  { label: "Clinical Notes" },
-  { label: "Prescription / Lab" },
-  { label: "Complete" },
-  { label: "Timeline" },
+  { label: "Appointment Booked" },
+  { label: "Registration" },
+  { label: "Payment" },
+  { label: "Check-in" },
+  { label: "Waiting" },
+  { label: "Consultation" },
+  { label: "Prescription" },
+  { label: "Laboratory" },
+  { label: "Pharmacy" },
+  { label: "Billing Complete" },
+  { label: "Visit Completed" },
 ] as const;
 
 export default function ConsultationsPage() {

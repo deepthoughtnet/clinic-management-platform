@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.config;
 import com.deepthoughtnet.clinic.identity.service.keycloak.KeycloakAdminProvisioner;
 import com.deepthoughtnet.clinic.identity.service.keycloak.KeycloakAdminProvisionerImpl;
 import com.deepthoughtnet.clinic.identity.service.keycloak.NoopKeycloakAdminProvisioner;
+import com.deepthoughtnet.clinic.identity.service.TenantOnboardingService;
 import com.deepthoughtnet.clinic.identity.service.provisioning.TenantProvisioningService;
 import com.deepthoughtnet.clinic.identity.db.TenantRepository;
 import com.deepthoughtnet.clinic.identity.db.TenantPlanRepository;
@@ -107,14 +108,16 @@ public class ControlPlaneWiringConfig {
             TenantPlanRepository tenantPlanRepository,
             AppUserProvisioner appUserProvisioner,
             TenantMembershipRepository tenantMembershipRepository,
-            KeycloakAdminProvisioner keycloakAdminProvisioner
+            KeycloakAdminProvisioner keycloakAdminProvisioner,
+            TenantOnboardingService tenantOnboardingService
     ) {
         return new TenantProvisioningService(
                 tenantRepository,
                 tenantPlanRepository,
                 appUserProvisioner,
                 tenantMembershipRepository,
-                keycloakAdminProvisioner
+                keycloakAdminProvisioner,
+                tenantOnboardingService
         );
     }
 }

@@ -1,5 +1,7 @@
+import * as React from "react";
 import type { Patient, PatientGender, PatientInput } from "../../api/clinicApi";
 import { normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
+import { searchPatients } from "../../api/clinicApi";
 
 export type QuickRegisterForm = {
   mobile: string;
@@ -22,22 +24,25 @@ export function emptyQuickRegisterForm(mobile = ""): QuickRegisterForm {
 }
 
 export function calculateAge(dateOfBirth: string) {
+  return calculateAgeFromDob(dateOfBirth);
+}
+
+export function calculateAgeFromDob(dateOfBirth: string, now = new Date()) {
   if (!dateOfBirth) return "";
   const dob = new Date(`${dateOfBirth}T00:00:00`);
   if (Number.isNaN(dob.getTime())) return "";
-  const today = new Date();
-  let age = today.getFullYear() - dob.getFullYear();
-  const monthDiff = today.getMonth() - dob.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+  let age = now.getFullYear() - dob.getFullYear();
+  const monthDiff = now.getMonth() - dob.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < dob.getDate())) {
     age -= 1;
   }
   return age >= 0 && age <= 130 ? String(age) : "";
 }
 
-export function approximateDobFromAge(ageYears: string) {
+export function approximateDobFromAge(ageYears: string | number | null | undefined, now = new Date()) {
   const parsed = Number(ageYears);
-  if (!ageYears || Number.isNaN(parsed) || parsed < 0 || parsed > 130) return "";
-  return `${new Date().getFullYear() - parsed}-01-01`;
+  if (ageYears === null || ageYears === undefined || ageYears === "" || Number.isNaN(parsed) || parsed < 0 || parsed > 130) return "";
+  return `${now.getFullYear() - parsed}-01-01`;
 }
 
 export function toPatientInput(form: QuickRegisterForm): PatientInput {
@@ -46,7 +51,7 @@ export function toPatientInput(form: QuickRegisterForm): PatientInput {
     lastName: form.lastName.trim(),
     gender: form.gender,
     dateOfBirth: form.dateOfBirth || null,
-    ageYears: form.ageYears ? Number(form.ageYears) : null,
+    ageYears: form.ageYears === "" ? null : Number(form.ageYears),
     mobile: normalizeIndianMobileInput(form.mobile) as string,
     email: null,
     addressLine1: null,
@@ -82,9 +87,97 @@ export function patientSummary(patient: Patient) {
   return `${patient.patientNumber} • ${patient.mobile}`;
 }
 
+export function patientDisplayName(patient: Patient | null) {
+  if (!patient) return "";
+  return `${patient.firstName} ${patient.lastName || ""}`.trim();
+}
+
+export function patientMobileLine(patient: Patient | null) {
+  return patient?.mobile ? `Mobile: ${patient.mobile}` : "Mobile: Not set";
+}
+
+export function patientNumberLine(patient: Patient | null) {
+  return patient?.patientNumber ? `Patient No: ${patient.patientNumber}` : "Patient No: Not assigned";
+}
+
+export function patientIdentitySummary(patient: Patient | null) {
+  if (!patient) return "";
+  return [patientDisplayName(patient), patientMobileLine(patient), patientNumberLine(patient)].filter(Boolean).join(" • ");
+}
+
 export function patientLabel(patient: Patient | null) {
   if (!patient) return "";
   const age = patient.ageYears !== null ? `${patient.ageYears}y` : null;
-  const label = `${patient.firstName} ${patient.lastName || ""}`.trim();
+  const label = patientDisplayName(patient);
   return [label, age, patient.gender].filter(Boolean).join(" • ");
+}
+
+export function useDuplicatePatientLookup({
+  accessToken,
+  tenantId,
+  mobile,
+  enabled = true,
+  debounceMs = 500,
+}: {
+  accessToken: string | null;
+  tenantId: string | null;
+  mobile: string;
+  enabled?: boolean;
+  debounceMs?: number;
+}) {
+  const [duplicates, setDuplicates] = React.useState<Patient[]>([]);
+  const [checking, setChecking] = React.useState(false);
+  const [continueNew, setContinueNew] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const normalizedMobile = String(normalizeIndianMobileInput(mobile) || "").trim();
+    const shouldLookup = enabled && !continueNew && Boolean(accessToken) && Boolean(tenantId) && normalizedMobile.length >= 6;
+    if (!shouldLookup) {
+      setDuplicates([]);
+      setChecking(false);
+      if (!mobile.trim()) {
+        setContinueNew(false);
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setChecking(true);
+    const handle = window.setTimeout(async () => {
+      try {
+        const rows = await searchPatients(accessToken as string, tenantId as string, { mobile: normalizedMobile, active: true });
+        if (!cancelled) {
+          setDuplicates(rows.slice(0, 5));
+        }
+      } catch {
+        if (!cancelled) {
+          setDuplicates([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setChecking(false);
+        }
+      }
+    }, debounceMs);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [accessToken, continueNew, debounceMs, enabled, mobile, tenantId]);
+
+  React.useEffect(() => {
+    if (mobile.trim()) {
+      setContinueNew(false);
+    }
+  }, [mobile]);
+
+  return {
+    duplicates,
+    checking,
+    continueNew,
+    setContinueNew,
+  };
 }

@@ -341,7 +341,14 @@ class PublicCatalogFacadeTest {
                 doctorUserId,
                 null,
                 specialization,
+                Arrays.stream(specialization == null ? new String[0] : specialization.split(","))
+                        .map(String::trim)
+                        .filter(value -> !value.isBlank())
+                        .toList(),
                 "MBBS",
+                null,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -350,6 +357,10 @@ class PublicCatalogFacadeTest {
                 active,
                 publicListingEnabled,
                 slug,
+                null,
+                null,
+                null,
+                null,
                 OffsetDateTime.now(),
                 OffsetDateTime.now()
         );

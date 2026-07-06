@@ -43,6 +43,7 @@ import {
 } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
 import { CompactEmptyState, CompactTableFrame, compactChipSx } from "../../components/compact/CompactUi";
+import { AppointmentTokenChip, PatientJourneyTracker, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
 import {
   InvoicePrintDialog,
   ReceiptPrintDialog,
@@ -105,6 +106,7 @@ import {
   type Refund,
   type Stock,
 } from "../../api/clinicApi";
+import { formatRelativeBookingTime } from "../../components/workflow/workflowHelpers";
 
 type BillItemCategory = BillItemType | "SERVICE" | "PACKAGE";
 
@@ -151,6 +153,7 @@ type QuickChargePreset = {
 type DoctorOption = {
   appUserId: string;
   displayName: string;
+  opdFee: number | null;
   consultationFee: number | null;
 };
 
@@ -655,7 +658,7 @@ export default function BillsPage() {
     () => consultationCollectionRequested && Boolean(consultationAppointmentId),
     [consultationCollectionRequested, consultationAppointmentId],
   );
-  const resolvedConsultationFee = consultationFeeAmount ?? consultationDoctorProfile?.consultationFee ?? null;
+  const resolvedConsultationFee = consultationFeeAmount ?? consultationDoctorProfile?.opdFee ?? consultationDoctorProfile?.consultationFee ?? null;
   const consultationPatientLabel = consultationAppointment
     ? [
         consultationAppointment.patientName || consultationAppointment.patientNumber || "Patient",
@@ -689,6 +692,7 @@ export default function BillsPage() {
         return {
           appUserId: user.appUserId,
           displayName: profile?.doctorName || fallbackLabel,
+          opdFee: profile?.opdFee ?? profile?.consultationFee ?? null,
           consultationFee: profile?.consultationFee ?? null,
         } satisfies DoctorOption;
       })
@@ -699,7 +703,7 @@ export default function BillsPage() {
     () => doctorOptions.find((doctor) => doctor.appUserId === consultationDoctorUserIdForDraft) || null,
     [consultationDoctorUserIdForDraft, doctorOptions],
   );
-  const consultationFeeQuickAmount = consultationFeeAmount ?? selectedConsultationDoctor?.consultationFee ?? consultationDoctorProfile?.consultationFee ?? null;
+  const consultationFeeQuickAmount = consultationFeeAmount ?? selectedConsultationDoctor?.opdFee ?? selectedConsultationDoctor?.consultationFee ?? consultationDoctorProfile?.opdFee ?? consultationDoctorProfile?.consultationFee ?? null;
   const consultationDraftHasLine = React.useMemo(
     () => form.lines.some((line) => isConsultationDraftLine(line)),
     [form.lines],
@@ -762,7 +766,7 @@ export default function BillsPage() {
   const consultationCatalogHint = React.useMemo(
     () => doctorOptions.slice(0, 5).map((doctor) => ({
       title: `Consultation Fee - ${doctor.displayName}`,
-      subtitle: `Consultation • ${doctor.consultationFee != null ? formatAmount(doctor.consultationFee) : "Fee unavailable"}`,
+      subtitle: `Consultation • ${(doctor.opdFee ?? doctor.consultationFee) != null ? formatAmount(doctor.opdFee ?? doctor.consultationFee) : "Fee unavailable"}`,
       doctorUserId: doctor.appUserId,
     })),
     [doctorOptions],
@@ -1972,7 +1976,7 @@ export default function BillsPage() {
                   ) : null}
                 </Box>
                 <Stack direction="row" spacing={1} flexWrap="wrap">
-                  {consultationAppointmentLabel ? <Chip size="small" label={consultationAppointmentLabel} variant="outlined" /> : null}
+                  {consultationAppointment ? <AppointmentTokenChip appointment={consultationAppointment} /> : (consultationAppointmentLabel ? <Chip size="small" label={consultationAppointmentLabel} variant="outlined" /> : null)}
                   {consultationPatientLabel ? <Chip size="small" label={`Patient: ${consultationPatientLabel}`} variant="outlined" /> : null}
                   {consultationDoctorLabel ? <Chip size="small" label={`Doctor: ${consultationDoctorLabel}`} variant="outlined" /> : null}
                   {consultationContextLoading
@@ -1981,6 +1985,19 @@ export default function BillsPage() {
                       ? <Chip size="small" label={`Consultation fee: ${formatAmount(resolvedConsultationFee)}`} color="warning" variant="outlined" />
                       : <Chip size="small" label="Consultation fee missing" color="default" variant="outlined" />}
                 </Stack>
+                {consultationAppointment ? (
+                  <Typography variant="caption" color="text.secondary">
+                    {consultationAppointment.appointmentDate} {consultationAppointment.appointmentTime ? consultationAppointment.appointmentTime.slice(0, 5) : "—"} • {formatRelativeBookingTime(consultationAppointment.createdAt) || "Booked recently"}
+                  </Typography>
+                ) : null}
+                  <PatientJourneyTracker
+                    compact
+                    context={{
+                      status: consultationAppointment?.status,
+                    paymentStatus: consultationPaymentState.paid ? "PAID" : (consultationPaymentState.due ?? 0) > 0 ? "PAYMENT_PENDING" : undefined,
+                      billDueAmount: consultationPaymentState.due,
+                    }}
+                  />
                 {consultationContextError ? <Alert severity="warning">{consultationContextError}</Alert> : null}
                 {consultationExistingBill ? (
                   <Alert severity={(consultationPaymentState.due ?? 0) > 0 ? "warning" : "success"}>
@@ -2777,8 +2794,9 @@ export default function BillsPage() {
                           <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{selectedBill.billNumber}</Typography>
                           <Typography variant="body2" color="text.secondary">{selectedBill.patientName || selectedBill.patientNumber || selectedBill.patientId}</Typography>
                         </Box>
-                        <Chip label={selectedBill.status} color={statusColor(selectedBill.status)} sx={compactChipSx} />
+                        <WorkflowStatusBadge status={selectedBill.status} compact />
                       </Box>
+                      <PatientJourneyTracker compact context={{ status: billEffectiveDueAmount(selectedBill) > 0 ? "PAYMENT_PENDING" : "PAID" }} />
                       <Stack direction="row" spacing={0.75} flexWrap="wrap">
                         <Chip size="small" label={`Due: ${formatAmount(billEffectiveDueAmount(selectedBill))}`} color="warning" variant="outlined" sx={compactChipSx} />
                         <Chip size="small" label={`Net paid: ${formatAmount(billNetPaidAmount(selectedBill))}`} variant="outlined" sx={compactChipSx} />

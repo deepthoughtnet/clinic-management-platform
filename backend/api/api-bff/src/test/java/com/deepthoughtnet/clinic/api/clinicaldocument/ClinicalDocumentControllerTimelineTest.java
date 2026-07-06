@@ -104,10 +104,16 @@ class ClinicalDocumentControllerTimelineTest {
 
         assertThat(timeline).hasSize(5);
         assertThat(timeline.get(0).itemType()).isEqualTo("PRESCRIPTION");
+        assertThat(timeline.get(0).title()).isEqualTo("Prescription Generated");
+        assertThat(timeline.get(0).status()).isEqualTo("Generated");
         assertThat(timeline.get(0).subtitle()).contains("v2", "FINALIZED", "Same-day correction", "Follow-up 2026-05-16");
         assertThat(timeline.get(1).itemType()).isEqualTo("CONSULTATION");
+        assertThat(timeline.get(1).title()).isEqualTo("Consultation Completed");
+        assertThat(timeline.get(1).status()).isEqualTo("Completed");
         assertThat(timeline.get(1).subtitle()).contains("COMPLETED", "Follow-up 2026-05-15");
         assertThat(timeline.get(2).itemType()).isEqualTo("DOCUMENT");
+        assertThat(timeline.get(2).title()).isEqualTo("External Lab Report");
+        assertThat(timeline.get(2).status()).isEqualTo("Verified");
         assertThat(timeline.get(2).subtitle()).contains("lab.pdf", "DOCTOR", "Verified");
         assertThat(timeline.get(2).subtitle()).doesNotContain("AI", "OCR");
         assertThat(timeline.get(3).itemType()).isEqualTo("DOCUMENT");
@@ -130,7 +136,7 @@ class ClinicalDocumentControllerTimelineTest {
 
         assertThat(timeline).hasSize(1);
         assertThat(timeline.get(0).itemType()).isEqualTo("DOCUMENT");
-        assertThat(timeline.get(0).title()).isEqualTo("Lab Report");
+        assertThat(timeline.get(0).title()).isEqualTo("Laboratory Report Published");
         assertThat(timeline.get(0).subtitle()).isEqualTo("Published • Available");
         assertThat(timeline.get(0).status()).isEqualTo("Published");
     }

@@ -1,18 +1,21 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Alert, Box, Button, Card, CardContent, Chip, CircularProgress, FormControlLabel, Grid, Stack, Switch, TextField, Typography } from "@mui/material";
+import { Alert, Autocomplete, Avatar, Box, Button, Card, CardContent, Chip, CircularProgress, FormControlLabel, Grid, Stack, Switch, TextField, Typography } from "@mui/material";
 
 import { doctorUpdateSchema, normalizeIndianMobileInput } from "@deepthoughtnet/form-validation-kit";
 import { useAuth } from "../../auth/useAuth";
-import { getDoctorProfile, updateDoctorProfile, type DoctorProfile } from "../../api/clinicApi";
+import { getDoctorProfile, updateDoctorProfile, updateDoctorProfileWithPhoto, type DoctorProfile } from "../../api/clinicApi";
 
 type FormState = {
   mobile: string;
-  specialization: string;
+  specializations: string[];
   qualification: string;
   registrationNumber: string;
   consultationRoom: string;
   consultationFee: string;
+  opdFee: string;
+  followUpFee: string;
+  emergencyFee: string;
   yearsOfExperience: string;
   age: string;
   active: boolean;
@@ -21,13 +24,20 @@ type FormState = {
 };
 
 function toForm(profile: DoctorProfile): FormState {
+  const specializations = profile.specializations?.length
+    ? profile.specializations
+    : (profile.specialization ? [profile.specialization] : []);
+  const opdFee = profile.opdFee ?? profile.consultationFee;
   return {
     mobile: profile.mobile || "",
-    specialization: profile.specialization || "",
+    specializations,
     qualification: profile.qualification || "",
     registrationNumber: profile.registrationNumber || "",
     consultationRoom: profile.consultationRoom || "",
-    consultationFee: profile.consultationFee == null ? "" : String(profile.consultationFee),
+    consultationFee: opdFee == null ? "" : String(opdFee),
+    opdFee: opdFee == null ? "" : String(opdFee),
+    followUpFee: profile.followUpFee == null ? "" : String(profile.followUpFee),
+    emergencyFee: profile.emergencyFee == null ? "" : String(profile.emergencyFee),
     yearsOfExperience: profile.yearsOfExperience == null ? "" : String(profile.yearsOfExperience),
     age: profile.age == null ? "" : String(profile.age),
     active: profile.active,
@@ -44,6 +54,8 @@ export default function DoctorDetailPage() {
   const [saving, setSaving] = React.useState(false);
   const [profile, setProfile] = React.useState<DoctorProfile | null>(null);
   const [form, setForm] = React.useState<FormState | null>(null);
+  const [photoFile, setPhotoFile] = React.useState<File | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
 
@@ -67,6 +79,8 @@ export default function DoctorDetailPage() {
         if (!cancelled) {
           setProfile(loaded);
           setForm(toForm(loaded));
+          setPhotoFile(null);
+          setPhotoPreviewUrl(loaded.photoUrl || null);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load doctor profile");
@@ -79,6 +93,26 @@ export default function DoctorDetailPage() {
       cancelled = true;
     };
   }, [auth.accessToken, auth.tenantId, id]);
+
+  React.useEffect(() => {
+    return () => {
+      if (photoPreviewUrl && photoPreviewUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(photoPreviewUrl);
+      }
+    };
+  }, [photoPreviewUrl]);
+
+  React.useEffect(() => {
+    if (!saving) {
+      return;
+    }
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [saving]);
 
   if (!auth.tenantId) return <Alert severity="warning">No tenant is selected for this session.</Alert>;
   if (loading) return <Box sx={{ display: "grid", placeItems: "center", minHeight: 220 }}><CircularProgress /></Box>;
@@ -93,11 +127,15 @@ export default function DoctorDetailPage() {
     if (!auth.accessToken || !auth.tenantId) return;
     const parsed = doctorUpdateSchema.safeParse({
       mobile: form.mobile,
-      specialization: form.specialization,
+      specialization: form.specializations[0] || null,
+      specializations: form.specializations,
       qualification: form.qualification,
       registrationNumber: form.registrationNumber,
       consultationRoom: form.consultationRoom,
-      consultationFee: form.consultationFee,
+      consultationFee: form.opdFee,
+      opdFee: form.opdFee,
+      followUpFee: form.followUpFee,
+      emergencyFee: form.emergencyFee,
       yearsOfExperience: form.yearsOfExperience,
       age: form.age,
       active: form.active,
@@ -105,27 +143,40 @@ export default function DoctorDetailPage() {
       slug: form.slug,
     });
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message || "Failed to save doctor profile");
+      const fieldMessages = parsed.error.issues.map((issue) => {
+        const field = issue.path.length > 0 ? `${issue.path.join(".")}: ` : "";
+        return `${field}${issue.message}`;
+      });
+      setError(fieldMessages.join(", ") || "Failed to save doctor profile");
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      const saved = await updateDoctorProfile(auth.accessToken, auth.tenantId, profile.doctorUserId, {
+      const payload = {
         mobile: parsed.data.mobile ? (normalizeIndianMobileInput(parsed.data.mobile) as string) : null,
         specialization: parsed.data.specialization?.trim() || null,
+        specializations: parsed.data.specializations?.map((value) => value.trim()).filter(Boolean) || [],
         qualification: parsed.data.qualification?.trim() || null,
         registrationNumber: parsed.data.registrationNumber?.trim() || null,
         consultationRoom: parsed.data.consultationRoom?.trim() || null,
-        consultationFee: parsed.data.consultationFee == null ? null : Number(parsed.data.consultationFee),
+        consultationFee: parsed.data.opdFee == null ? null : Number(parsed.data.opdFee),
+        opdFee: parsed.data.opdFee == null ? null : Number(parsed.data.opdFee),
+        followUpFee: parsed.data.followUpFee == null ? null : Number(parsed.data.followUpFee),
+        emergencyFee: parsed.data.emergencyFee == null ? null : Number(parsed.data.emergencyFee),
         yearsOfExperience: parsed.data.yearsOfExperience == null ? null : Number(parsed.data.yearsOfExperience),
         age: parsed.data.age == null ? null : Number(parsed.data.age),
         active: parsed.data.active ?? form.active,
         publicListingEnabled: parsed.data.publicListingEnabled ?? form.publicListingEnabled,
         slug: parsed.data.slug?.trim() || null,
-      });
-      setProfile(saved);
-      setForm(toForm(saved));
+      };
+      const nextProfile = photoFile
+        ? await updateDoctorProfileWithPhoto(auth.accessToken, auth.tenantId, profile.doctorUserId, payload, photoFile)
+        : await updateDoctorProfile(auth.accessToken, auth.tenantId, profile.doctorUserId, payload);
+      setProfile(nextProfile);
+      setForm(toForm(nextProfile));
+      setPhotoFile(null);
+      setPhotoPreviewUrl(nextProfile.photoUrl || null);
       setInfo("Doctor profile saved");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save doctor profile");
@@ -133,6 +184,8 @@ export default function DoctorDetailPage() {
       setSaving(false);
     }
   };
+
+  const photoSrc = photoPreviewUrl || profile.photoUrl || null;
 
   return (
     <Stack spacing={2}>
@@ -153,14 +206,68 @@ export default function DoctorDetailPage() {
       <Card>
         <CardContent>
           <Grid container spacing={2}>
+            <Grid size={{ xs: 12 }}>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "flex-start", sm: "center" }}>
+                <Avatar
+                  src={photoSrc || undefined}
+                  alt={profile.doctorName || "Doctor profile"}
+                  sx={{ width: 72, height: 72, fontWeight: 800 }}
+                >
+                  {(profile.doctorName || profile.email || "D").slice(0, 2).toUpperCase()}
+                </Avatar>
+                <Stack spacing={1} sx={{ flex: 1 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Profile Photo</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Upload a JPG, PNG, or WEBP image for doctor lists and selectors.
+                  </Typography>
+                  {canEdit ? (
+                    <Button variant="outlined" component="label" disabled={saving || formReadOnly}>
+                      {photoFile ? "Change Photo" : "Upload Photo"}
+                      <input
+                        hidden
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0] || null;
+                          setPhotoFile(file);
+                          if (photoPreviewUrl && photoPreviewUrl.startsWith("blob:")) {
+                            URL.revokeObjectURL(photoPreviewUrl);
+                          }
+                          setPhotoPreviewUrl(file ? URL.createObjectURL(file) : (profile.photoUrl || null));
+                        }}
+                      />
+                    </Button>
+                  ) : null}
+                  {photoFile ? <Chip size="small" label={photoFile.name} /> : null}
+                </Stack>
+              </Stack>
+            </Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Name" value={profile.doctorName || ""} disabled /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Email" value={profile.email || ""} disabled /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Mobile" value={form.mobile} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, mobile: e.target.value } : c)} inputProps={{ inputMode: "tel" }} /></Grid>
-            <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Specialization" value={form.specialization} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, specialization: e.target.value } : c)} /></Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <Autocomplete
+                multiple
+                freeSolo
+                options={[] as string[]}
+                value={form.specializations}
+                onChange={(_, value) => setForm((c) => c ? { ...c, specializations: value.map((item) => String(item).trim()).filter(Boolean) } : c)}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Specializations"
+                    helperText="Enter one or more specializations."
+                    disabled={formReadOnly}
+                  />
+                )}
+              />
+            </Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Qualification" value={form.qualification} disabled={formReadOnly || receptionistReadOnlyFields} onChange={(e) => setForm((c) => c ? { ...c, qualification: e.target.value } : c)} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Registration Number" value={form.registrationNumber} disabled={formReadOnly || receptionistReadOnlyFields} onChange={(e) => setForm((c) => c ? { ...c, registrationNumber: e.target.value } : c)} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}><TextField fullWidth label="Consultation Room/Location" value={form.consultationRoom} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, consultationRoom: e.target.value } : c)} /></Grid>
-            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Consultation Fee" value={form.consultationFee} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, consultationFee: e.target.value } : c)} inputProps={{ min: 0, step: "0.01" }} /></Grid>
+            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="OPD Fee" value={form.opdFee} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, opdFee: e.target.value, consultationFee: e.target.value } : c)} inputProps={{ min: 0, step: "0.01" }} /></Grid>
+            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Follow-up Fee" value={form.followUpFee} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, followUpFee: e.target.value } : c)} inputProps={{ min: 0, step: "0.01" }} /></Grid>
+            <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Emergency Fee" value={form.emergencyFee} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, emergencyFee: e.target.value } : c)} inputProps={{ min: 0, step: "0.01" }} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Years of Experience" value={form.yearsOfExperience} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, yearsOfExperience: e.target.value } : c)} inputProps={{ min: 0, step: 1 }} /></Grid>
             <Grid size={{ xs: 12, md: 4 }}><TextField fullWidth type="number" label="Age" value={form.age} disabled={formReadOnly} onChange={(e) => setForm((c) => c ? { ...c, age: e.target.value } : c)} inputProps={{ min: 0, max: 120, step: 1 }} /></Grid>
             <Grid size={{ xs: 12, md: 6 }}>

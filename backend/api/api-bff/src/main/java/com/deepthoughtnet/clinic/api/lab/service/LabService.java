@@ -34,6 +34,7 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabResultFlag;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabPaymentReceiptRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderSampleCollectionCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderStatusRecord;
@@ -62,6 +63,7 @@ import com.deepthoughtnet.clinic.billing.service.model.DiscountType;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentCommand;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
+import com.deepthoughtnet.clinic.billing.service.model.ReceiptRecord;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.consultation.service.model.ConsultationRecord;
 import com.deepthoughtnet.clinic.identity.service.TenantUserManagementService;
@@ -99,6 +101,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.PDPageContentStream.AppendMode;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
@@ -337,6 +340,31 @@ public class LabService {
         return labOrderRepository.findByTenantIdAndOrderNumber(tenantId, orderNumber.trim()).map(order -> toRecord(tenantId, order));
     }
 
+    @Transactional(readOnly = true)
+    public Optional<LabOrderAttachmentRecord> findAttachment(UUID tenantId, UUID orderId, UUID attachmentId) {
+        requireTenant(tenantId);
+        requireId(orderId, "orderId");
+        requireId(attachmentId, "attachmentId");
+        return labOrderAttachmentRepository.findByTenantIdAndLabOrderIdOrderByCreatedAtDesc(tenantId, orderId).stream()
+                .filter(attachment -> attachment.getId().equals(attachmentId))
+                .findFirst()
+                .map(this::toRecord);
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] downloadAttachmentBytes(UUID tenantId, UUID orderId, UUID attachmentId) {
+        LabOrderAttachmentRecord attachment = findAttachment(tenantId, orderId, attachmentId)
+                .orElseThrow(() -> new IllegalArgumentException("Lab order attachment not found"));
+        if (!StringUtils.hasText(attachment.storageKey())) {
+            throw new IllegalArgumentException("Lab order attachment storage key is missing");
+        }
+        byte[] bytes = objectStorageService.getObjectBytes(attachment.storageKey());
+        if (bytes == null || bytes.length == 0) {
+            throw new IllegalArgumentException("Lab order attachment file is empty");
+        }
+        return bytes;
+    }
+
     @Transactional
     public LabOrderRecord createOrderFromConsultation(UUID tenantId, UUID consultationId, LabOrderCreateCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
@@ -438,6 +466,40 @@ public class LabService {
         LabOrderEntity saved = labOrderRepository.save(order);
         auditOrder(tenantId, saved, "lab_order.payment_collected", actorAppUserId, "Collected lab order payment");
         return new LabOrderPaymentRecord(toRecord(tenantId, saved), payment);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<LabPaymentReceiptRecord> resolvePaymentReceipt(UUID tenantId, UUID billId) {
+        requireTenant(tenantId);
+        requireId(billId, "billId");
+        List<ReceiptRecord> receipts = billingService.listReceipts(tenantId, billId);
+        if (receipts.isEmpty()) {
+            return Optional.empty();
+        }
+        ReceiptRecord receipt = receipts.get(0);
+        PaymentRecord payment = billingService.listPayments(tenantId, billId).stream()
+                .filter(row -> receipt.id().equals(row.receiptId()))
+                .findFirst()
+                .orElse(null);
+        BillRecord bill = billingService.findById(tenantId, billId)
+                .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
+        OffsetDateTime collectedAt = payment != null && payment.paymentDateTime() != null
+                ? payment.paymentDateTime()
+                : receipt.createdAt();
+        String printUrl = "/api/receipts/" + receipt.id() + "/pdf";
+        return Optional.of(new LabPaymentReceiptRecord(
+                receipt.id(),
+                receipt.receiptNumber(),
+                receipt.billId(),
+                bill.billNumber(),
+                receipt.amount(),
+                payment == null ? null : payment.paymentMode(),
+                payment == null ? null : payment.referenceNumber(),
+                payment == null || payment.receivedBy() == null ? null : payment.receivedBy().toString(),
+                collectedAt,
+                printUrl,
+                printUrl
+        ));
     }
 
     @Transactional
@@ -785,6 +847,7 @@ public class LabService {
         );
         LabOrderEntity saved = labOrderRepository.save(order);
         auditOrder(tenantId, saved, "lab_order.report_published", actorAppUserId, "Published lab report");
+        recordDeliveryChannelAudits(tenantId, saved, command == null ? List.of() : normalizeDeliveryChannels(command.deliveryChannels()), actorAppUserId);
 
         clinicalDocumentService.publishLabReport(new ClinicalDocumentUploadCommand(
                 tenantId,
@@ -817,6 +880,21 @@ public class LabService {
         );
         notifyRequestingDoctor(tenantId, saved, actorAppUserId);
         return toRecord(tenantId, saved);
+    }
+
+    @Transactional
+    public LabOrderRecord recordReportDeliveryAction(UUID tenantId, UUID orderId, String action, String channel, String notes, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireId(orderId, "orderId");
+        if (!StringUtils.hasText(action)) {
+            throw new IllegalArgumentException("action is required");
+        }
+        LabOrderEntity order = labOrderRepository.findByTenantIdAndId(tenantId, orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
+        String normalizedAction = normalizeNullable(action);
+        String message = buildReportDeliveryMessage(normalizedAction, channel, notes);
+        auditOrder(tenantId, order, normalizedAction, actorAppUserId, message);
+        return toRecord(tenantId, order);
     }
 
     @Transactional
@@ -1106,11 +1184,11 @@ public class LabService {
                 .filter(StringUtils::hasText)
                 .collect(Collectors.joining(", "));
         BufferedImage logo = loadClinicLogo(tenantId, clinic);
+        float margin = 28f;
         try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             PDPage page = new PDPage(PDRectangle.A4);
             document.addPage(page);
             try (PDPageContentStream content = new PDPageContentStream(document, page)) {
-                float margin = 28f;
                 float width = page.getMediaBox().getWidth() - (margin * 2);
                 float y = page.getMediaBox().getHeight() - margin;
                 drawReportBorder(content, page, margin);
@@ -1118,8 +1196,10 @@ public class LabService {
                 y = drawMetaBlock(tenantId, content, record, page, margin, width, y);
                 y = drawResultsTable(content, record, page, margin, width, y);
                 y = drawNotesBlock(content, record, margin, width, y);
+                y = drawSignatureBlock(tenantId, content, page, record, margin, width, y);
                 drawFooter(content, "Generated by Jeevanam Healthcare | Powered by AIVA", margin, y, width);
             }
+            drawPageNumbers(document, margin);
             document.save(output);
             return new LabOrderResultPdf(safeFilename(record.orderNumber()) + "-lab-report.pdf", output.toByteArray());
         } catch (IOException ex) {
@@ -1174,9 +1254,12 @@ public class LabService {
                 new MetaPair("Sample By", record.sampleCollectedBy()),
                 new MetaPair("Reviewed By", record.doctorReviewedBy()),
                 new MetaPair("Reviewed At", formatDateTime(record.doctorReviewedAt())),
-                new MetaPair("Delivered By", resolveUserDisplayName(tenantId, record.deliveredByUserId()).orElse(null)),
-                new MetaPair("Delivered At", formatDateTime(record.deliveredAt())),
-                new MetaPair("Status", String.valueOf(record.status()))
+                new MetaPair("Approved By", firstText(record.labVerifiedByName(), resolveUserDisplayName(tenantId, record.labVerifiedBy()).orElse(null), record.doctorReviewedBy())),
+                new MetaPair("Approved At", formatDateTime(record.labVerifiedAt())),
+                new MetaPair("Published By", resolveUserDisplayName(tenantId, record.reportPublishedByUserId()).orElse(null)),
+                new MetaPair("Published At", formatDateTime(record.reportPublishedAt())),
+                new MetaPair("Status", String.valueOf(record.status())),
+                new MetaPair("QR / Verification URL", verificationUrl(record))
         );
         float columnWidth = width / 2f;
         for (int i = 0; i < pairs.size(); i += 2) {
@@ -1189,6 +1272,18 @@ public class LabService {
             y -= rowHeight;
         }
         return y - 12;
+    }
+
+    private float drawSignatureBlock(UUID tenantId, PDPageContentStream content, PDPage page, LabOrderRecord record, float margin, float width, float y) throws IOException {
+        float blockHeight = 54f;
+        ensureSpace(page, margin, y, blockHeight + 8);
+        content.addRect(margin, y - blockHeight, width, blockHeight);
+        content.stroke();
+        writeLine(content, "Digital signature", 9.2f, margin + 6, y - 12, new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD));
+        writeLine(content, "Verified and approved for patient delivery", 8.5f, margin + 6, y - 24, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        writeLine(content, "Approved by: " + safe(firstText(record.labVerifiedByName(), record.doctorReviewedBy())), 8.7f, margin + 6, y - 36, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        writeLine(content, "Published by: " + safe(firstText(resolveUserDisplayName(tenantId, record.reportPublishedByUserId()).orElse(null), record.reportGeneratedBy())), 8.7f, margin + 6, y - 48, new PDType1Font(Standard14Fonts.FontName.HELVETICA));
+        return y - blockHeight - 10;
     }
 
     private void drawMetaCell(PDPageContentStream content, float x, float y, float width, float height, MetaPair pair) throws IOException {
@@ -1372,6 +1467,21 @@ public class LabService {
         }
     }
 
+    private void drawPageNumbers(PDDocument document, float margin) throws IOException {
+        int totalPages = document.getNumberOfPages();
+        PDType1Font font = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+        for (int i = 0; i < totalPages; i++) {
+            PDPage page = document.getPage(i);
+            try (PDPageContentStream content = new PDPageContentStream(document, page, AppendMode.APPEND, true, true)) {
+                String pageLabel = "Page " + (i + 1) + " of " + totalPages;
+                float fontSize = 8f;
+                float pageWidth = page.getMediaBox().getWidth();
+                float textWidth = textWidth(font, fontSize, pageLabel);
+                writeLine(content, pageLabel, fontSize, pageWidth - margin - textWidth, margin - 8, font);
+            }
+        }
+    }
+
     private float measureMetaCellHeight(MetaPair pair, float width) throws IOException {
         List<String> lines = wrap(safe(pair.value()), new PDType1Font(Standard14Fonts.FontName.HELVETICA), 9f, width - 12f);
         return Math.max(28f, 14f + Math.max(1, lines.size()) * 10f);
@@ -1404,6 +1514,55 @@ public class LabService {
     private boolean isCriticalInterpretation(String label) {
         return StringUtils.hasText(label) && label.trim().toUpperCase().startsWith("CRITICAL");
     }
+
+    private void recordDeliveryChannelAudits(UUID tenantId, LabOrderEntity order, List<String> channels, UUID actorAppUserId) {
+        if (order == null || channels == null || channels.isEmpty()) {
+            return;
+        }
+        for (String channel : channels) {
+            String normalized = channel == null ? "" : channel.trim().toUpperCase(java.util.Locale.ROOT);
+            switch (normalized) {
+                case "PATIENT_PORTAL" -> auditOrder(tenantId, order, "lab_order.report_portal_published", actorAppUserId, "Published report to patient portal");
+                case "DOCTOR_NOTIFICATION" -> auditOrder(tenantId, order, "lab_order.report_doctor_notified", actorAppUserId, "Doctor notified of published report");
+                case "EMAIL" -> auditOrder(tenantId, order, "lab_order.report_email_queued", actorAppUserId, "Queued email delivery for published report");
+                case "WHATSAPP" -> auditOrder(tenantId, order, "lab_order.report_whatsapp_queued", actorAppUserId, "Queued WhatsApp delivery for published report");
+                case "PRINT" -> auditOrder(tenantId, order, "lab_order.report_print_ready", actorAppUserId, "Prepared report for printing");
+                default -> {
+                }
+            }
+        }
+    }
+
+    private String buildReportDeliveryMessage(String action, String channel, String notes) {
+        String label = reportDeliveryActionLabel(action, channel);
+        if (StringUtils.hasText(notes)) {
+            return label + ": " + notes.trim();
+        }
+        return label;
+    }
+
+    private String reportDeliveryActionLabel(String action, String channel) {
+        String normalized = action == null ? "" : action.trim().toLowerCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case "lab_order.report_viewed", "view" -> "Portal viewed";
+            case "lab_order.report_downloaded", "download" -> "PDF downloaded";
+            case "lab_order.report_printed", "print" -> "Printed";
+            case "lab_order.report_email_sent", "email" -> "Email sent";
+            case "lab_order.report_whatsapp_sent", "whatsapp" -> "WhatsApp sent";
+            case "lab_order.report_shared_link", "share_link" -> "Share link copied";
+            default -> {
+                if (StringUtils.hasText(channel)) {
+                    yield channel.trim() + " action recorded";
+                }
+                yield "Report delivery action recorded";
+            }
+        };
+    }
+
+    private String verificationUrl(LabOrderRecord record) {
+        return "/lab/reports/" + safe(record.orderNumber()) + "/verify";
+    }
+
 
     private BufferedImage loadClinicLogo(UUID tenantId, com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord clinic) {
         if (clinic == null || clinic.logoDocumentId() == null) {

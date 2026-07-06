@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -8,8 +8,14 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Divider,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   Grid,
+  Collapse,
   InputLabel,
   MenuItem,
   Select,
@@ -26,14 +32,21 @@ import {
 import { useAuth } from "../auth/useAuth";
 import { dashboardFilterSchema, firstZodError } from "@deepthoughtnet/form-validation-kit";
 import { WorkflowStrip } from "../components/compact/CompactUi";
+import TenantOnboardingWizardDialog from "../components/onboarding/TenantOnboardingWizardDialog";
+import { AppointmentTokenChip, PatientJourneyTracker, WorkflowStatusBadge } from "../components/workflow/WorkflowUx";
 import {
+  getClinicProfile,
   getClinicDashboard,
   getClinicUsers,
+  getTenantOnboardingStatus,
   getPlatformPlans,
   getPlatformTenants,
   type ClinicDashboard,
+  type ClinicProfile,
   type ClinicUser,
+  type TenantOnboardingStatus,
 } from "../api/clinicApi";
+import { formatRelativeBookingTime, getNextWorkflowAction } from "../components/workflow/workflowHelpers";
 
 type DatePreset = "TODAY" | "YESTERDAY" | "LAST_7_DAYS" | "LAST_30_DAYS" | "THIS_MONTH" | "CUSTOM";
 
@@ -96,6 +109,40 @@ function displayNameForUser(user: ClinicUser | undefined, fallback: string) {
   return user.displayName || user.email || fallback;
 }
 
+type SetupGuidePreference = {
+  hidden: boolean;
+  collapsed: boolean;
+};
+
+function setupGuidePreferenceKey(tenantId: string | null | undefined, userId: string | null | undefined) {
+  if (!tenantId || !userId) return null;
+  return `dashboard.setup-guide.${tenantId}.${userId}`;
+}
+
+function readSetupGuidePreference(key: string | null, fallback: SetupGuidePreference): SetupGuidePreference {
+  if (!key || typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<SetupGuidePreference>;
+    return {
+      hidden: Boolean(parsed.hidden),
+      collapsed: typeof parsed.collapsed === "boolean" ? parsed.collapsed : fallback.collapsed,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveSetupGuidePreference(key: string | null, preference: SetupGuidePreference) {
+  if (!key || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(preference));
+  } catch {
+    // Ignore localStorage failures and keep the dashboard usable.
+  }
+}
+
 const DASHBOARD_CHIP_SX = {
   height: 24,
   borderRadius: 999,
@@ -107,12 +154,17 @@ const DASHBOARD_CHIP_SX = {
 } as const;
 
 const DASHBOARD_WORKFLOW_STEPS = [
-  { label: "Appointment" },
+  { label: "Appointment Booked" },
+  { label: "Registration" },
+  { label: "Payment" },
   { label: "Check-in" },
-  { label: "Queue" },
+  { label: "Waiting" },
   { label: "Consultation" },
-  { label: "Billing" },
-  { label: "Follow-up" },
+  { label: "Prescription" },
+  { label: "Laboratory" },
+  { label: "Pharmacy" },
+  { label: "Billing Complete" },
+  { label: "Visit Completed" },
 ] as const;
 
 function KpiCard({
@@ -193,6 +245,8 @@ export default function DashboardPage() {
 
   const [dashboard, setDashboard] = React.useState<ClinicDashboard | null>(null);
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
+  const [clinicProfile, setClinicProfile] = React.useState<ClinicProfile | null>(null);
+  const [onboardingStatus, setOnboardingStatus] = React.useState<TenantOnboardingStatus | null>(null);
   const [doctorUserId, setDoctorUserId] = React.useState("");
   const [preset, setPreset] = React.useState<DatePreset>("TODAY");
   const initialRange = dateRangeForPreset("TODAY");
@@ -201,10 +255,16 @@ export default function DashboardPage() {
   const [dateFieldErrors, setDateFieldErrors] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [setupWizardOpen, setSetupWizardOpen] = React.useState(false);
+  const [setupWizardDismissed, setSetupWizardDismissed] = React.useState(false);
+  const [setupHideConfirmOpen, setSetupHideConfirmOpen] = React.useState(false);
+  const setupPreferenceKey = React.useMemo(() => setupGuidePreferenceKey(auth.tenantId, auth.appUserId || auth.username || null), [auth.appUserId, auth.username, auth.tenantId]);
 
   const [platformTenants, setPlatformTenants] = React.useState(0);
   const [platformActiveTenants, setPlatformActiveTenants] = React.useState(0);
   const [platformPlans, setPlatformPlans] = React.useState(0);
+  const location = useLocation();
+  const setupRequested = React.useMemo(() => new URLSearchParams(location.search).get("setup") === "1", [location.search]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -293,15 +353,23 @@ export default function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await getClinicDashboard(auth.accessToken, auth.tenantId, {
-        startDate,
-        endDate,
-        doctorUserId: isDoctor ? undefined : (doctorUserId || undefined),
-      });
+      const [data, onboarding, profile] = await Promise.all([
+        getClinicDashboard(auth.accessToken, auth.tenantId, {
+          startDate,
+          endDate,
+          doctorUserId: isDoctor ? undefined : (doctorUserId || undefined),
+        }),
+        getTenantOnboardingStatus(auth.accessToken, auth.tenantId),
+        getClinicProfile(auth.accessToken, auth.tenantId).catch(() => null),
+      ]);
       setDashboard(data);
+      setOnboardingStatus(onboarding);
+      setClinicProfile(profile);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load clinic dashboard");
       setDashboard(null);
+      setOnboardingStatus(null);
+      setClinicProfile(null);
     } finally {
       setLoading(false);
     }
@@ -310,6 +378,24 @@ export default function DashboardPage() {
   React.useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  React.useEffect(() => {
+    if (!auth.tenantId || !onboardingStatus || setupWizardDismissed) return;
+    if (isClinicAdmin && (!onboardingStatus.completed || setupRequested)) {
+      setSetupWizardOpen(true);
+    }
+    if (!isClinicAdmin) {
+      setSetupWizardOpen(false);
+    }
+  }, [auth.tenantId, isClinicAdmin, onboardingStatus, setupRequested, setupWizardDismissed]);
+
+  const closeSetupWizard = React.useCallback(() => {
+    setSetupWizardOpen(false);
+    setSetupWizardDismissed(true);
+    if (setupRequested) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [navigate, setupRequested]);
 
   if (!auth.tenantId && isPlatformAdmin) {
     return (
@@ -348,6 +434,53 @@ export default function DashboardPage() {
   }, [dashboard?.currentWaitingList]);
   const showOperational = Boolean(appt || queue || consult || rx || followUp);
   const showBilling = Boolean(billing) && canSeeFinancialDashboard;
+  const isZeroDashboard = Boolean(dashboard)
+    && (appt?.totalToday || 0) === 0
+    && (queue?.waiting || 0) === 0
+    && (appt?.checkedIn || 0) === 0
+    && (queue?.inConsultation || 0) === 0
+    && (consult?.completed || 0) === 0
+    && (billing?.pendingBills || 0) === 0
+    && (billing?.totalPaid || 0) === 0
+    && (rx?.prescriptionsGenerated || 0) === 0;
+  const showSetupGuide = Boolean(!loading && isClinicAdmin && onboardingStatus && (!onboardingStatus.completed || setupRequested || isZeroDashboard));
+  const setupChecklist = React.useMemo(() => [
+    { label: "Clinic basics configured", done: Boolean(clinicProfile?.clinicName && clinicProfile?.addressLine1), helper: clinicProfile?.clinicName || "Add clinic profile and contact details." },
+    { label: "Doctors added", done: users.some((user) => (user.membershipRole || "").toUpperCase() === "DOCTOR"), helper: "Add at least one doctor user." },
+    { label: "Reception users added", done: users.some((user) => (user.membershipRole || "").toUpperCase() === "RECEPTIONIST"), helper: "Add front-desk users for operations." },
+    { label: "Services / billing ready", done: Boolean(clinicProfile?.registrationNumber), helper: clinicProfile?.registrationNumber || "Review fees and receipt settings." },
+    { label: "Pharmacy enabled", done: Boolean(auth.enabledTenantModules?.INVENTORY || auth.enabledTenantModules?.PRESCRIPTION), helper: "Enable pharmacy when the clinic dispenses medicines." },
+    { label: "Laboratory enabled", done: Boolean(auth.enabledTenantModules?.LABORATORY), helper: "Enable laboratory when the clinic runs lab workflows." },
+    { label: "First appointment booked", done: (appt?.totalToday || 0) > 0, helper: "Book the first appointment to begin the clinic journey." },
+  ], [appt?.totalToday, auth.enabledTenantModules?.INVENTORY, auth.enabledTenantModules?.LABORATORY, auth.enabledTenantModules?.PRESCRIPTION, clinicProfile?.addressLine1, clinicProfile?.clinicName, clinicProfile?.registrationNumber, users]);
+  const setupProgress = React.useMemo(() => {
+    const total = setupChecklist.length;
+    const completed = setupChecklist.filter((item) => item.done).length;
+    return {
+      total,
+      completed,
+      percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+      complete: total > 0 && completed === total,
+      partiallyComplete: completed > 0 && completed < total,
+      pendingSummary: setupChecklist.filter((item) => !item.done).slice(0, 2).map((item) => item.label).join(" · "),
+    };
+  }, [setupChecklist]);
+  const setupDefaultCollapsed = setupProgress.complete || setupProgress.partiallyComplete;
+  const [setupGuidePreference, setSetupGuidePreference] = React.useState<SetupGuidePreference>(() => readSetupGuidePreference(setupPreferenceKey, { hidden: false, collapsed: setupDefaultCollapsed }));
+  React.useEffect(() => {
+    const storedPreference = readSetupGuidePreference(setupPreferenceKey, { hidden: false, collapsed: setupDefaultCollapsed });
+    setSetupGuidePreference(setupProgress.complete
+      ? { hidden: storedPreference.hidden, collapsed: true }
+      : storedPreference);
+  }, [setupDefaultCollapsed, setupPreferenceKey, setupProgress.complete]);
+  React.useEffect(() => {
+    if (!setupPreferenceKey) return;
+    saveSetupGuidePreference(setupPreferenceKey, {
+      hidden: setupGuidePreference.hidden,
+      collapsed: setupProgress.complete ? true : (setupGuidePreference.hidden ? true : setupGuidePreference.collapsed),
+    });
+  }, [setupGuidePreference.collapsed, setupGuidePreference.hidden, setupPreferenceKey, setupProgress.complete]);
+  const setupGuideCollapsed = setupGuidePreference.hidden ? true : setupGuidePreference.collapsed;
   const withDoctorFilter = React.useCallback((path: string) => {
     if (isDoctor || !doctorUserId) return path;
     return `${path}${path.includes("?") ? "&" : "?"}doctorUserId=${encodeURIComponent(doctorUserId)}`;
@@ -414,6 +547,33 @@ export default function DashboardPage() {
     { label: "Pending Invoices", value: billing?.pendingBills || 0, tone: "error" as const, onClick: () => openDashboardSection("billing") },
   ] : [];
 
+  const setupActions = [
+    { label: "Add Doctor", description: "Create the first doctor user.", action: () => navigate("/settings/users-roles"), tone: "primary" as const },
+    { label: "Add Receptionist", description: "Create front-desk access for appointments and queues.", action: () => navigate("/settings/users-roles"), tone: "secondary" as const },
+    { label: "Configure Availability", description: "Set working hours and breaks.", action: () => navigate("/doctors/availability"), tone: "info" as const },
+    { label: "Add Services / Fees", description: "Review clinic profile and billing settings.", action: () => navigate("/settings/clinic-profile"), tone: "info" as const },
+    { label: "Import Medicines", description: "Open the medicine master workspace.", action: () => navigate("/pharmacy/medicines"), tone: "success" as const },
+    { label: "Import Lab Tests", description: "Open the laboratory workspace.", action: () => navigate("/lab"), tone: "success" as const },
+    { label: "Book First Appointment", description: "Create the first appointment booking.", action: () => navigate("/appointments"), tone: "primary" as const },
+  ];
+  const roleEmptyStateActions = isDoctor
+    ? [
+        { label: "Open Day Board", action: () => navigate("/appointments/day-board") },
+        { label: "Open Queue", action: () => navigate("/queue") },
+        { label: "View Consultations", action: () => navigate("/consultations") },
+      ]
+    : isReceptionist
+      ? [
+          { label: "Book Appointment", action: () => navigate("/appointments") },
+          { label: "Open Queue", action: () => navigate("/queue") },
+          { label: "View Patients", action: () => navigate("/patients") },
+        ]
+      : [
+          { label: "Open Appointments", action: () => navigate("/appointments") },
+          { label: "Open Day Board", action: () => navigate("/appointments/day-board") },
+          { label: "Open Queue", action: () => navigate("/queue") },
+        ];
+
   return (
     <Stack spacing={1.75}>
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap", alignItems: "flex-start" }}>
@@ -427,6 +587,212 @@ export default function DashboardPage() {
       </Box>
 
       <WorkflowStrip steps={DASHBOARD_WORKFLOW_STEPS} />
+
+      {isClinicAdmin ? (
+        showSetupGuide && setupGuidePreference.hidden ? (
+          <Card variant="outlined">
+            <CardContent sx={{ py: 1, "&:last-child": { pb: 1 } }}>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "center" }} justifyContent="space-between">
+                <Box>
+                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Clinic setup</Typography>
+                    <Chip size="small" color={setupProgress.complete ? "success" : "primary"} label={setupProgress.complete ? "Setup complete" : `${setupProgress.percent}% complete`} />
+                    <Chip size="small" variant="outlined" label={`${setupProgress.completed}/${setupProgress.total} steps`} />
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">
+                    {setupProgress.complete ? "Setup complete. You can reopen the guide anytime." : setupProgress.pendingSummary || "Use the setup guide to complete your clinic configuration."}
+                  </Typography>
+                </Box>
+                <Stack direction="row" spacing={1}>
+                  <Button size="small" variant="outlined" onClick={() => setSetupGuidePreference({ hidden: false, collapsed: setupDefaultCollapsed })}>Show setup guide</Button>
+                  <Button size="small" variant="text" onClick={() => setSetupWizardOpen(true)}>Setup wizard</Button>
+                </Stack>
+              </Stack>
+            </CardContent>
+          </Card>
+        ) : showSetupGuide ? (
+          <Card variant="outlined">
+            <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
+              <Stack spacing={1.15}>
+                <Box
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSetupGuidePreference((current) => ({ ...current, collapsed: !current.collapsed }))}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSetupGuidePreference((current) => ({ ...current, collapsed: !current.collapsed }));
+                    }
+                  }}
+                  sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 1.25,
+                    alignItems: "flex-start",
+                    cursor: "pointer",
+                    borderRadius: 1.25,
+                    px: 0.25,
+                    py: 0.1,
+                    "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: 2 },
+                  }}
+                >
+                  <Box>
+                    <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                      <Typography variant="h6" sx={{ fontWeight: 900, lineHeight: 1.1 }}>Clinic setup</Typography>
+                      <Chip size="small" color={setupProgress.complete ? "success" : "primary"} label={setupProgress.complete ? "Setup complete" : `${setupProgress.percent}% complete`} />
+                      <Chip size="small" variant="outlined" label={`${setupProgress.completed}/${setupProgress.total} steps`} />
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary">
+                      {setupProgress.complete ? "Setup complete. Keep this compact card available from Dashboard → Setup Guide." : setupProgress.pendingSummary || "Complete the remaining clinic setup steps."}
+                    </Typography>
+                  </Box>
+                  <Stack direction="row" spacing={0.75} alignItems="center">
+                    <Button size="small" variant="outlined" onClick={(event) => { event.stopPropagation(); setSetupGuidePreference((current) => ({ ...current, collapsed: !current.collapsed })); }}>
+                      {setupGuideCollapsed ? "Expand" : "Collapse"}
+                    </Button>
+                    <Button size="small" variant="text" color="inherit" onClick={(event) => { event.stopPropagation(); setSetupHideConfirmOpen(true); }}>
+                      Hide setup guide
+                    </Button>
+                  </Stack>
+                </Box>
+
+                <Collapse in={!setupGuideCollapsed} timeout={180}>
+                  <Stack spacing={1.35}>
+                    <Grid container spacing={1.25}>
+                      {setupActions.map((action) => (
+                        <Grid key={action.label} size={{ xs: 12, sm: 6, lg: 4 }}>
+                          <Card
+                            variant="outlined"
+                            sx={{
+                              minHeight: 112,
+                              cursor: "pointer",
+                              transition: "transform 0.2s ease, box-shadow 0.2s ease",
+                              borderColor: action.tone === "primary" ? "primary.main" : action.tone === "success" ? "success.main" : action.tone === "info" ? "info.main" : "divider",
+                              "&:hover": { transform: "translateY(-2px)", boxShadow: 2 },
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            onClick={action.action}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                action.action();
+                              }
+                            }}
+                          >
+                            <CardContent>
+                              <Stack spacing={0.75}>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{action.label}</Typography>
+                                <Typography variant="caption" color="text.secondary">{action.description}</Typography>
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                      ))}
+                    </Grid>
+                    <Divider />
+                    <Grid container spacing={1.25}>
+                      {setupChecklist.map((item) => (
+                        <Grid key={item.label} size={{ xs: 12, sm: 6, lg: 4 }}>
+                          <Card variant="outlined" sx={{ borderColor: item.done ? "success.main" : "divider" }}>
+                            <CardContent sx={{ py: 1.1, "&:last-child": { pb: 1.1 } }}>
+                              <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                                <Box>
+                                  <Typography variant="body2" sx={{ fontWeight: 800 }}>{item.label}</Typography>
+                                  <Typography variant="caption" color="text.secondary">{item.helper}</Typography>
+                                </Box>
+                                <Chip size="small" color={item.done ? "success" : "default"} label={item.done ? "Done" : "Pending"} />
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                      ))}
+                    </Grid>
+                    {onboardingStatus && !onboardingStatus.completed ? (
+                      <Alert severity="info" action={<Button color="inherit" size="small" onClick={() => setSetupWizardOpen(true)}>Resume setup</Button>}>
+                        Setup is incomplete. You can continue the wizard now or later from Settings.
+                      </Alert>
+                    ) : null}
+                  </Stack>
+                </Collapse>
+              </Stack>
+            </CardContent>
+          </Card>
+        ) : setupProgress.complete ? (
+          <Card variant="outlined">
+            <CardContent sx={{ py: 1, "&:last-child": { pb: 1 } }}>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "center" }} justifyContent="space-between">
+                <Box>
+                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                    <Typography variant="subtitle2" sx={{ fontWeight: 900 }}>Clinic setup</Typography>
+                    <Chip size="small" color="success" label="Setup complete" />
+                    <Chip size="small" variant="outlined" label={`${setupProgress.completed}/${setupProgress.total} steps`} />
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">
+                    All required setup steps are complete.
+                  </Typography>
+                </Box>
+                <Stack direction="row" spacing={1}>
+                  <Button size="small" variant="outlined" onClick={() => setSetupGuidePreference((current) => ({ ...current, hidden: false, collapsed: true }))}>Show setup guide</Button>
+                  <Button size="small" variant="text" onClick={() => setSetupWizardOpen(true)}>Setup wizard</Button>
+                </Stack>
+              </Stack>
+            </CardContent>
+          </Card>
+        ) : null
+      ) : null}
+
+      {dashboard && isZeroDashboard && !isClinicAdmin ? (
+        <Card variant="outlined">
+          <CardContent sx={{ p: 1.75, "&:last-child": { pb: 1.75 } }}>
+            <Stack spacing={1.25}>
+              <Box>
+                <Typography variant="h6" sx={{ fontWeight: 900 }}>
+                  {isDoctor ? "Consultation workspace is ready." : isReceptionist ? "Operational dashboard is empty." : "No activity yet."}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {isDoctor
+                    ? "Check the day board and queue to begin consultations."
+                    : isReceptionist
+                      ? "Start with appointments, queue management, and patient registration."
+                      : "Use the available actions to begin operations."}
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                {roleEmptyStateActions.map((action) => (
+                  <Button key={action.label} variant="outlined" size="small" onClick={action.action}>
+                    {action.label}
+                  </Button>
+                ))}
+              </Stack>
+            </Stack>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Dialog open={setupHideConfirmOpen} onClose={() => setSetupHideConfirmOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Hide setup guide?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            This only hides the setup guide for your dashboard. It does not mark onboarding complete.
+          </Typography>
+          <Typography variant="body2" sx={{ mt: 1 }}>
+            You can reopen this from Dashboard → Setup Guide.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSetupHideConfirmOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setSetupGuidePreference((current) => ({ ...current, hidden: true, collapsed: true }));
+              setSetupHideConfirmOpen(false);
+            }}
+          >
+            Hide setup guide
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {error ? <Alert severity="error">{error}</Alert> : null}
 
@@ -474,7 +840,7 @@ export default function DashboardPage() {
       {loading ? (
         <Box sx={{ minHeight: 220, display: "grid", placeItems: "center" }}><CircularProgress /></Box>
       ) : !dashboard ? (
-        <Alert severity="info">No dashboard data available for the selected filters.</Alert>
+        <Alert severity="info">{isClinicAdmin ? "No dashboard data available yet. Use the setup actions above to start operations." : "No dashboard data available for the selected filters."}</Alert>
       ) : (
         <Stack spacing={1.5}>
           <Box
@@ -548,11 +914,21 @@ export default function DashboardPage() {
                             <Box>
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>{item.patientName || item.patientNumber || item.patientId}</Typography>
                               <Typography variant="caption" color="text.secondary">
-                                {item.doctorName || item.doctorUserId || "Unassigned"} • Token {item.tokenNumber ?? "-"} • {formatTime(item.appointmentTime)}
+                                {item.doctorName || item.doctorUserId || "Unassigned"} • {formatTime(item.appointmentTime)} • {(item.waitingSince ? formatRelativeBookingTime(item.waitingSince)?.replace(/^Booked /, "Waiting since ") : null) || "Booked recently"}
                               </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {item.patientNumber ? `Patient No: ${item.patientNumber}` : "Patient No: Not assigned"}
+                              </Typography>
+                              <Stack direction="row" spacing={0.5} sx={{ mt: 0.65 }} flexWrap="wrap">
+                                <AppointmentTokenChip appointment={item} compact />
+                                <WorkflowStatusBadge status={item.status} compact />
+                                <Chip size="small" variant="outlined" label={`Next: ${getNextWorkflowAction({ status: item.status, paymentStatus: item.status === "BOOKED" ? "PAYMENT_PENDING" : item.status === "WAITING" ? "PAID" : undefined }).label}`} sx={{ height: 20, "& .MuiChip-label": { px: 0.7 } }} />
+                              </Stack>
+                              <Box sx={{ mt: 0.75 }}>
+                                <PatientJourneyTracker context={{ status: item.status }} compact title="Journey" />
+                              </Box>
                             </Box>
                             <Stack direction="row" spacing={0.75} flexWrap="wrap" alignItems="center">
-                              <Chip size="small" label={friendlyStatusLabel(item.status)} color={item.status === "WAITING" ? "warning" : "info"} />
                               <Button size="small" variant="outlined" onClick={() => navigate(`/patients/${item.patientId}`)}>Open patient</Button>
                             </Stack>
                           </Box>
@@ -672,6 +1048,15 @@ export default function DashboardPage() {
           {!showOperational && !showBilling ? <Alert severity="info">No report sections are available for your current access level.</Alert> : null}
         </Stack>
       )}
+
+      {isClinicAdmin ? (
+        <TenantOnboardingWizardDialog
+          open={setupWizardOpen}
+          auth={auth}
+          onClose={closeSetupWizard}
+          onCompleted={() => void loadDashboard()}
+        />
+      ) : null}
     </Stack>
   );
 }

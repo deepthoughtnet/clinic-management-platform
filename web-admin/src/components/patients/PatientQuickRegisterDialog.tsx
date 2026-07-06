@@ -1,6 +1,9 @@
 import * as React from "react";
 import {
   Alert,
+  Box,
+  Card,
+  CardContent,
   Button,
   Dialog,
   DialogActions,
@@ -14,11 +17,24 @@ import {
   Stack,
   TextField,
   Typography,
+  List,
+  ListItemButton,
+  ListItemText,
 } from "@mui/material";
 import { mapZodErrors, patientQuickRegisterSchema } from "@deepthoughtnet/form-validation-kit";
 
 import { createPatient, type Patient, type PatientGender } from "../../api/clinicApi";
-import { approximateDobFromAge, calculateAge, emptyQuickRegisterForm, patientLabel, patientSummary, seedQuickRegisterMobile, toPatientInput, type QuickRegisterForm } from "./patientQuickRegister";
+import {
+  approximateDobFromAge,
+  calculateAgeFromDob,
+  emptyQuickRegisterForm,
+  patientLabel,
+  patientSummary,
+  seedQuickRegisterMobile,
+  toPatientInput,
+  useDuplicatePatientLookup,
+  type QuickRegisterForm,
+} from "./patientQuickRegister";
 
 type Props = {
   open: boolean;
@@ -48,7 +64,7 @@ export default function PatientQuickRegisterDialog({
   open,
   token,
   tenantId,
-  title = "Quick Register Patient",
+  title = "Register New Patient",
   subtitle,
   initialMobile = "",
   saveLabel = "Save patient",
@@ -58,13 +74,28 @@ export default function PatientQuickRegisterDialog({
   const [form, setForm] = React.useState<QuickRegisterForm>(emptyQuickRegisterForm(seedQuickRegisterMobile(initialMobile)));
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [dobEstimatedFromAge, setDobEstimatedFromAge] = React.useState(false);
+  const mobileRef = React.useRef<HTMLInputElement | null>(null);
+  const firstNameRef = React.useRef<HTMLInputElement | null>(null);
+  const lastNameRef = React.useRef<HTMLInputElement | null>(null);
+  const ageRef = React.useRef<HTMLInputElement | null>(null);
+  const dobRef = React.useRef<HTMLInputElement | null>(null);
 
   React.useEffect(() => {
     if (!open) return;
     setForm(emptyQuickRegisterForm(seedQuickRegisterMobile(initialMobile)));
     setError(null);
     setSaving(false);
+    setDobEstimatedFromAge(false);
   }, [initialMobile, open]);
+
+  const { duplicates, checking, setContinueNew } = useDuplicatePatientLookup({
+    accessToken: token,
+    tenantId,
+    mobile: form.mobile,
+    enabled: open,
+    debounceMs: 500,
+  });
 
   const preview = React.useMemo(
     () => patientQuickRegisterSchema.safeParse(toPatientInput(form)),
@@ -90,6 +121,16 @@ export default function PatientQuickRegisterDialog({
     }
   };
 
+  const advance = (event: React.KeyboardEvent<HTMLElement>, next: { current: HTMLInputElement | HTMLButtonElement | null } | "save") => {
+    if (event.key !== "Enter" || event.shiftKey) return;
+    event.preventDefault();
+    if (next === "save") {
+      void save();
+      return;
+    }
+    next.current?.focus();
+  };
+
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle>{title}</DialogTitle>
@@ -99,25 +140,78 @@ export default function PatientQuickRegisterDialog({
           {error ? <Alert severity="error">{error}</Alert> : null}
           <TextField
             fullWidth
+            inputRef={mobileRef}
             label="Mobile"
             value={form.mobile}
-            onChange={(event) => setForm((current) => ({ ...current, mobile: event.target.value }))}
+            onChange={(event) => {
+              setContinueNew(false);
+              setForm((current) => ({ ...current, mobile: event.target.value }));
+            }}
+            onKeyDown={(event) => advance(event, firstNameRef)}
             inputProps={{ inputMode: "tel" }}
             error={Boolean(fieldErrors.mobile)}
-            helperText={fieldErrors.mobile || " "}
+            helperText={fieldErrors.mobile || (checking ? "Checking for existing patients..." : duplicates.length > 0 ? "Existing patients found below." : "Primary lookup and duplicate check")}
           />
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="First name" value={form.firstName} onChange={(event) => setForm((current) => ({ ...current, firstName: event.target.value }))} error={Boolean(fieldErrors.firstName)} helperText={fieldErrors.firstName || " "} />
+              <TextField
+                fullWidth
+                inputRef={firstNameRef}
+                label="First name"
+                value={form.firstName}
+                onChange={(event) => setForm((current) => ({ ...current, firstName: event.target.value }))}
+                onKeyDown={(event) => advance(event, lastNameRef)}
+                error={Boolean(fieldErrors.firstName)}
+                helperText={fieldErrors.firstName || " "}
+              />
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth label="Last name" value={form.lastName} onChange={(event) => setForm((current) => ({ ...current, lastName: event.target.value }))} error={Boolean(fieldErrors.lastName)} helperText={fieldErrors.lastName || " "} />
+              <TextField
+                fullWidth
+                inputRef={lastNameRef}
+                label="Last name"
+                value={form.lastName}
+                onChange={(event) => setForm((current) => ({ ...current, lastName: event.target.value }))}
+                onKeyDown={(event) => advance(event, ageRef)}
+                error={Boolean(fieldErrors.lastName)}
+                helperText={fieldErrors.lastName || " "}
+              />
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth type="number" label="Age" value={form.ageYears} onChange={(event) => setForm((current) => ({ ...current, ageYears: event.target.value, dateOfBirth: approximateDobFromAge(event.target.value) }))} inputProps={{ min: 0, max: 130 }} error={Boolean(fieldErrors.ageYears)} helperText={fieldErrors.ageYears || " "}/>
+              <TextField
+                fullWidth
+                inputRef={ageRef}
+                type="number"
+                label="Age"
+                value={form.ageYears}
+                onChange={(event) => {
+                  const ageYears = event.target.value;
+                  setDobEstimatedFromAge(ageYears.trim() !== "");
+                  setForm((current) => ({ ...current, ageYears, dateOfBirth: approximateDobFromAge(ageYears) }));
+                }}
+                onKeyDown={(event) => advance(event, dobRef)}
+                inputProps={{ min: 0, max: 130 }}
+                error={Boolean(fieldErrors.ageYears)}
+                helperText={fieldErrors.ageYears || " "}
+              />
             </Grid>
             <Grid size={{ xs: 12, md: 6 }}>
-              <TextField fullWidth type="date" label="Date of birth" value={form.dateOfBirth} onChange={(event) => setForm((current) => ({ ...current, dateOfBirth: event.target.value, ageYears: calculateAge(event.target.value) }))} InputLabelProps={{ shrink: true }} error={Boolean(fieldErrors.dateOfBirth)} helperText={fieldErrors.dateOfBirth || " "}/>
+              <TextField
+                fullWidth
+                inputRef={dobRef}
+                type="date"
+                label="Date of birth"
+                value={form.dateOfBirth}
+                onChange={(event) => {
+                  const dateOfBirth = event.target.value;
+                  setDobEstimatedFromAge(false);
+                  setForm((current) => ({ ...current, dateOfBirth, ageYears: calculateAgeFromDob(dateOfBirth) }));
+                }}
+                onKeyDown={(event) => advance(event, "save")}
+                InputLabelProps={{ shrink: true }}
+                error={Boolean(fieldErrors.dateOfBirth)}
+                helperText={fieldErrors.dateOfBirth || (dobEstimatedFromAge ? "DOB estimated from age" : " ")}
+              />
             </Grid>
             <Grid size={{ xs: 12 }}>
               <FormControl fullWidth error={Boolean(fieldErrors.gender)}>
@@ -137,6 +231,29 @@ export default function PatientQuickRegisterDialog({
               </FormControl>
             </Grid>
           </Grid>
+          {duplicates.length > 0 ? (
+            <Card variant="outlined" sx={{ bgcolor: "warning.50", borderColor: "warning.light" }}>
+              <CardContent sx={{ py: 1.25 }}>
+                <Stack spacing={1}>
+                  <Box>
+                    <Typography sx={{ fontWeight: 800 }}>Existing patient found</Typography>
+                    <Typography variant="body2" color="text.secondary">Open the existing patient record or continue creating a new one if this is a genuinely new registration.</Typography>
+                  </Box>
+                      <List dense disablePadding>
+                        {duplicates.map((patient) => (
+                      <ListItemButton key={patient.id} divider onClick={() => onCreated(patient)}>
+                        <ListItemText
+                          primary={patientLabel(patient)}
+                          secondary={patientSummary(patient)}
+                        />
+                      </ListItemButton>
+                    ))}
+                  </List>
+                  <Button type="button" size="small" onClick={() => setContinueNew(true)}>Continue registration</Button>
+                </Stack>
+              </CardContent>
+            </Card>
+          ) : null}
         </Stack>
       </DialogContent>
       <DialogActions>

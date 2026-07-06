@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.time.OffsetDateTime;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -109,6 +110,22 @@ public class TenantUserManagementService {
         String email = normalizeNullable(command.email());
         String username = normalizeNullable(command.username());
         String displayName = normalizeNullable(command.displayName());
+        String employeeCode = normalizeNullable(command.employeeCode());
+        String mobile = normalizeNullable(command.mobile());
+        String department = normalizeNullable(command.department());
+
+        UUID existingUserId = null;
+        if (StringUtils.hasText(email)) {
+            existingUserId = appUserRepository.findByTenantIdAndEmailIgnoreCase(command.tenantId(), email)
+                    .map(AppUserEntity::getId)
+                    .orElse(null);
+        }
+        if (existingUserId == null && StringUtils.hasText(username)) {
+            existingUserId = appUserRepository.findByTenantIdAndUsernameIgnoreCase(command.tenantId(), username)
+                    .map(AppUserEntity::getId)
+                    .orElse(null);
+        }
+        validateSupplementalUniqueness(command.tenantId(), existingUserId, username, employeeCode);
 
         String keycloakSub = keycloakAdminProvisioner.createOrGetTenantUserId(
                 command.tenantId(),
@@ -119,7 +136,7 @@ public class TenantUserManagementService {
                 StringUtils.hasText(email)
         );
 
-        AppUserEntity user = upsertTenantUser(command.tenantId(), keycloakSub, email, username, displayName);
+        AppUserEntity user = upsertTenantUser(command.tenantId(), keycloakSub, email, username, displayName, employeeCode, mobile, department);
 
         TenantMembershipEntity membership = membershipRepository.findByTenantIdAndAppUserId(
                         command.tenantId(),
@@ -203,10 +220,15 @@ public class TenantUserManagementService {
                 user.getTenantId(),
                 user.getKeycloakSub(),
                 user.getEmail(),
+                user.getUsername(),
+                user.getDepartment(),
                 user.getDisplayName(),
                 user.getStatus(),
                 membership == null ? null : membership.getRole(),
                 membership == null ? null : membership.getStatus(),
+                user.getEmployeeCode(),
+                user.getMobile(),
+                user.getLastLoginAt(),
                 user.getCreatedAt(),
                 membership == null ? user.getUpdatedAt() : membership.getUpdatedAt(),
                 provisioningStatus
@@ -255,7 +277,7 @@ public class TenantUserManagementService {
         return username == null ? "User" : username.trim();
     }
 
-    private AppUserEntity upsertTenantUser(UUID tenantId, String keycloakSub, String email, String username, String displayName) {
+    private AppUserEntity upsertTenantUser(UUID tenantId, String keycloakSub, String email, String username, String displayName, String employeeCode, String mobile, String department) {
         String resolvedName = displayNameFor(email, username, displayName);
         String normalizedSub = StringUtils.hasText(keycloakSub) ? keycloakSub.trim() : null;
 
@@ -264,6 +286,8 @@ public class TenantUserManagementService {
             if (bySub.isPresent()) {
                 AppUserEntity existing = bySub.get();
                 existing.updateProfile(email, resolvedName);
+                validateSupplementalUniqueness(tenantId, existing.getId(), username, employeeCode);
+                applySupplementalUpdates(existing, username, employeeCode, mobile, department);
                 return existing;
             }
         }
@@ -276,18 +300,24 @@ public class TenantUserManagementService {
                     existing.setKeycloakSub(normalizedSub);
                 }
                 existing.updateProfile(email, resolvedName);
+                validateSupplementalUniqueness(tenantId, existing.getId(), username, employeeCode);
+                applySupplementalUpdates(existing, username, employeeCode, mobile, department);
                 return existing;
             }
         }
 
         try {
-            return appUserRepository.save(AppUserEntity.create(tenantId, normalizedSub, email, resolvedName));
+            AppUserEntity created = AppUserEntity.create(tenantId, normalizedSub, email, resolvedName);
+            validateSupplementalUniqueness(tenantId, null, username, employeeCode);
+            applySupplementalUpdates(created, username, employeeCode, mobile, department);
+            return appUserRepository.save(created);
         } catch (DataIntegrityViolationException ex) {
             if (normalizedSub != null) {
                 var existingBySub = appUserRepository.findByTenantIdAndKeycloakSub(tenantId, normalizedSub);
                 if (existingBySub.isPresent()) {
                     AppUserEntity existing = existingBySub.get();
                     existing.updateProfile(email, resolvedName);
+                    applySupplementalUpdates(existing, username, employeeCode, mobile, department);
                     return existing;
                 }
             }
@@ -299,10 +329,37 @@ public class TenantUserManagementService {
                         existing.setKeycloakSub(normalizedSub);
                     }
                     existing.updateProfile(email, resolvedName);
+                    applySupplementalUpdates(existing, username, employeeCode, mobile, department);
                     return existing;
                 }
             }
             throw ex;
+        }
+    }
+
+    private void applySupplementalUpdates(AppUserEntity user, String username, String employeeCode, String mobile, String department) {
+        if (StringUtils.hasText(username) || StringUtils.hasText(department)) {
+            user.updateIdentity(StringUtils.hasText(username) ? username : user.getUsername(), StringUtils.hasText(department) ? department : user.getDepartment());
+        }
+        if (StringUtils.hasText(employeeCode) || StringUtils.hasText(mobile)) {
+            user.updateContactDetails(StringUtils.hasText(employeeCode) ? employeeCode : user.getEmployeeCode(), StringUtils.hasText(mobile) ? mobile : user.getMobile());
+        }
+    }
+
+    private void validateSupplementalUniqueness(UUID tenantId, UUID currentUserId, String username, String employeeCode) {
+        if (StringUtils.hasText(username)) {
+            appUserRepository.findByTenantIdAndUsernameIgnoreCase(tenantId, username)
+                    .filter(existing -> currentUserId == null || !currentUserId.equals(existing.getId()))
+                    .ifPresent(existing -> {
+                        throw new IllegalArgumentException("Username already exists for this clinic.");
+                    });
+        }
+        if (StringUtils.hasText(employeeCode)) {
+            appUserRepository.findByTenantIdAndEmployeeCodeIgnoreCase(tenantId, employeeCode)
+                    .filter(existing -> currentUserId == null || !currentUserId.equals(existing.getId()))
+                    .ifPresent(existing -> {
+                        throw new IllegalArgumentException("Employee code already exists for this clinic.");
+                    });
         }
     }
 }

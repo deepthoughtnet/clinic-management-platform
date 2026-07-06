@@ -1,4 +1,4 @@
-import { httpDelete, httpGet, httpGetText, httpPatch, httpPost, httpPostForm, httpPut } from "./restClient";
+import { httpDelete, httpGet, httpGetText, httpPatch, httpPost, httpPostForm, httpPut, httpPutForm } from "./restClient";
 import { buildHelpRequestOptions } from "./helpClient";
 
 export type PatientGender = "MALE" | "FEMALE" | "OTHER" | "UNKNOWN";
@@ -590,10 +590,15 @@ export type ClinicUser = {
   tenantId: string;
   keycloakSub: string | null;
   email: string | null;
+  username: string | null;
+  department: string | null;
   displayName: string | null;
   userStatus: string;
   membershipRole: string | null;
   membershipStatus: string | null;
+  employeeCode: string | null;
+  mobile: string | null;
+  lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
   provisioningStatus: string | null;
@@ -606,25 +611,37 @@ export type DoctorProfile = {
   membershipRole: string | null;
   mobile: string | null;
   specialization: string | null;
+  specializations: string[];
   qualification: string | null;
   registrationNumber: string | null;
   consultationRoom: string | null;
   consultationFee: number | null;
+  opdFee: number | null;
+  followUpFee: number | null;
+  emergencyFee: number | null;
   yearsOfExperience: number | null;
   age: number | null;
   active: boolean;
   publicListingEnabled: boolean;
   slug: string | null;
+  photoUrl: string | null;
+  photoFileName: string | null;
+  photoMimeType: string | null;
+  photoSizeBytes: number | null;
   updatedAt: string | null;
 };
 
 export type DoctorProfileInput = {
   mobile: string | null;
   specialization: string | null;
+  specializations?: string[] | null;
   qualification: string | null;
   registrationNumber: string | null;
   consultationRoom: string | null;
   consultationFee: number | null;
+  opdFee?: number | null;
+  followUpFee?: number | null;
+  emergencyFee?: number | null;
   yearsOfExperience: number | null;
   age: number | null;
   active: boolean | null;
@@ -636,6 +653,17 @@ export type ClinicRole = {
   role: string;
   displayName: string;
   permissions: string[];
+};
+
+export type TenantOnboardingStatus = {
+  tenantId: string;
+  completed: boolean;
+  skipped: boolean;
+  completedAt: string | null;
+  skippedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  requiresSetup: boolean;
 };
 
 export type Patient = {
@@ -1064,6 +1092,20 @@ export type Payment = {
   receiptNumber: string | null;
   receiptDate: string | null;
   createdAt: string;
+};
+
+export type LabOrderPaymentReceipt = {
+  receiptId: string | null;
+  receiptNumber: string | null;
+  billId: string | null;
+  billNumber: string | null;
+  amount: number | null;
+  paymentMode: PaymentMode | null;
+  referenceNumber: string | null;
+  collectedBy: string | null;
+  collectedAt: string | null;
+  printUrl: string | null;
+  downloadUrl: string | null;
 };
 
 export type Refund = {
@@ -1639,6 +1681,7 @@ export type LabOrder = {
   reportDeliveryStatus: string | null;
   reportDeliveryChannels: string[];
   reportDeliveryNotes: string | null;
+  reportDeliveryHistory: LabReportDeliveryEvent[];
   doctorReviewedAt: string | null;
   doctorReviewedByUserId: string | null;
   doctorReviewedBy: string | null;
@@ -1661,12 +1704,28 @@ export type LabOrder = {
   paymentMode?: PaymentMode | null;
   referenceNumber?: string | null;
   receivedBy?: string | null;
+  paymentReceipt?: LabOrderPaymentReceipt | null;
   attachments: LabOrderAttachment[];
   items: LabOrderItem[];
   samples: LabSample[];
   results: LabOrderResult[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type LabReportDeliveryEvent = {
+  action: string;
+  label: string;
+  channel: string | null;
+  occurredAt: string;
+  actorAppUserId: string | null;
+  summary: string | null;
+};
+
+export type LabOrderReportDeliveryActionInput = {
+  action: string;
+  channel?: string | null;
+  notes?: string | null;
 };
 
 export type PatientVaccination = {
@@ -2490,12 +2549,43 @@ export async function getClinicRoles(token: string, tenantId: string) {
   return httpGet<ClinicRole[]>("/api/clinic/roles", { token, tenantId });
 }
 
+export async function getTenantOnboardingStatus(token: string, tenantId: string) {
+  return httpGet<TenantOnboardingStatus>("/api/clinic/onboarding", { token, tenantId });
+}
+
+export async function completeTenantOnboarding(token: string, tenantId: string) {
+  return httpPost<TenantOnboardingStatus>("/api/clinic/onboarding/complete", {}, { token, tenantId });
+}
+
+export async function skipTenantOnboarding(token: string, tenantId: string) {
+  return httpPost<TenantOnboardingStatus>("/api/clinic/onboarding/skip", {}, { token, tenantId });
+}
+
 export async function getDoctorProfile(token: string, tenantId: string, doctorUserId: string) {
   return httpGet<DoctorProfile>(`/api/doctors/${doctorUserId}/profile`, { token, tenantId });
 }
 
 export async function updateDoctorProfile(token: string, tenantId: string, doctorUserId: string, body: DoctorProfileInput) {
   return httpPut<DoctorProfile>(`/api/doctors/${doctorUserId}/profile`, body, { token, tenantId });
+}
+
+export async function updateDoctorProfileWithPhoto(
+  token: string,
+  tenantId: string,
+  doctorUserId: string,
+  body: DoctorProfileInput,
+  file: File,
+) {
+  const formData = new FormData();
+  formData.append("doctor", new Blob([JSON.stringify(body)], { type: "application/json" }));
+  formData.append("photo", file);
+  return httpPutForm<DoctorProfile>(`/api/doctors/${doctorUserId}/profile`, formData, { token, tenantId });
+}
+
+export async function uploadDoctorProfilePhoto(token: string, tenantId: string, doctorUserId: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return httpPostForm<DoctorProfile>(`/api/doctors/${doctorUserId}/photo`, formData, { token, tenantId });
 }
 
 export async function createTenantUser(token: string, tenantId: string, body: {
@@ -2505,6 +2595,9 @@ export async function createTenantUser(token: string, tenantId: string, body: {
   lastName?: string | null;
   role: string;
   temporaryPassword?: string | null;
+  employeeCode?: string | null;
+  mobile?: string | null;
+  department?: string | null;
   active: boolean;
 }) {
   return httpPost<ClinicUser>("/api/tenant/users", {
@@ -2514,6 +2607,9 @@ export async function createTenantUser(token: string, tenantId: string, body: {
     lastName: body.lastName ?? null,
     role: body.role,
     temporaryPassword: body.temporaryPassword ?? null,
+    employeeCode: body.employeeCode ?? null,
+    mobile: body.mobile ?? null,
+    department: body.department ?? null,
     active: body.active,
   }, { token, tenantId });
 }
@@ -3321,6 +3417,14 @@ export async function publishLabOrderReport(token: string, tenantId: string, id:
   }, { token, tenantId });
 }
 
+export async function recordLabOrderReportDeliveryAction(token: string, tenantId: string, id: string, body: LabOrderReportDeliveryActionInput) {
+  return httpPost<LabOrder>(`/api/lab/orders/${id}/report-delivery-actions`, {
+    action: body.action,
+    channel: body.channel ?? null,
+    notes: body.notes ?? null,
+  }, { token, tenantId });
+}
+
 export async function getLabOrderPdf(token: string, tenantId: string, id: string) {
   const res = await fetch(`${(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "")}/api/lab/orders/${id}/pdf`, {
     method: "GET",
@@ -3356,6 +3460,41 @@ export async function getLabOrderPdf(token: string, tenantId: string, id: string
   return {
     blob,
     filename: match?.[1] || `lab-order-${id}.pdf`,
+  };
+}
+
+export async function getLabOrderAttachmentBlob(token: string, tenantId: string, orderId: string, attachmentId: string, inline = true) {
+  const res = await fetch(`${(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "")}/api/lab/orders/${orderId}/attachments/${attachmentId}/${inline ? "view" : "download"}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Tenant-Id": tenantId,
+      Accept: "*/*",
+    },
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}: ${res.statusText}`;
+    try {
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const body = await res.json() as { message?: string };
+        if (body?.message) message = body.message;
+      } else {
+        const text = (await res.text()).trim();
+        if (text) message = text;
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  return {
+    blob,
+    filename: match?.[1] || `lab-order-attachment-${attachmentId}`,
+    mediaType: res.headers.get("content-type") || "application/octet-stream",
   };
 }
 

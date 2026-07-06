@@ -60,6 +60,7 @@ public record LabOrderResponse(
         String reportDeliveryStatus,
         List<String> reportDeliveryChannels,
         String reportDeliveryNotes,
+        List<ReportDeliveryAuditResponse> reportDeliveryHistory,
         OffsetDateTime doctorReviewedAt,
         String doctorReviewedByUserId,
         String doctorReviewedBy,
@@ -87,8 +88,34 @@ public record LabOrderResponse(
         BigDecimal paymentAmount,
         PaymentMode paymentMode,
         String referenceNumber,
-        String receivedBy
+        String receivedBy,
+        PaymentReceiptResponse paymentReceipt
 ) {
+    public record PaymentReceiptResponse(
+            String receiptId,
+            String receiptNumber,
+            String billId,
+            String billNumber,
+            BigDecimal amount,
+            PaymentMode paymentMode,
+            String referenceNumber,
+            String collectedBy,
+            OffsetDateTime collectedAt,
+            String printUrl,
+            String downloadUrl
+    ) {
+    }
+
+    public record ReportDeliveryAuditResponse(
+            String action,
+            String label,
+            String channel,
+            OffsetDateTime occurredAt,
+            String actorAppUserId,
+            String summary
+    ) {
+    }
+
     public record LabOrderAttachmentResponse(
             String id,
             String labOrderId,

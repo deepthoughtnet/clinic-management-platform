@@ -15,7 +15,9 @@ import {
   FormControl,
   Grid,
   InputLabel,
+  IconButton,
   MenuItem,
+  Menu,
   Select,
   Stack,
   Table,
@@ -26,26 +28,37 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
 
 import ConsultationFeeDialog, { type ConsultationFeeDialogValue } from "../../components/ConsultationFeeDialog";
 import { ClinicalIntakeDialog } from "../../components/clinical/ClinicalIntakeDialog";
 import { CompactEmptyState, CompactStatCard, CompactTableFrame, compactChipSx, WorkflowStrip } from "../../components/compact/CompactUi";
+import { ReceiptPrintDialog, type ReceiptPrintData } from "../../components/finance/PrintableBillingDocuments";
+import { AppointmentTokenChip, PatientJourneyTracker, WorkflowStatusBadge } from "../../components/workflow/WorkflowUx";
 import { useAuth } from "../../auth/useAuth";
 import {
   collectConsultationFee,
+  getClinicProfile,
+  getReceiptPdf,
   getClinicUsers,
+  listBillPayments,
   reorderDoctorQueueToday,
   searchAppointments,
   searchBills,
   startConsultationFromAppointment,
+  sendReceipt,
   updateAppointmentPriority,
   updateAppointmentStatus,
   type Appointment,
   type AppointmentPriority,
   type Bill,
   type ClinicUser,
+  type ClinicProfile,
+  type Payment,
   type PaymentMode,
+  type Receipt,
 } from "../../api/clinicApi";
+import { formatRelativeBookingTime, getNextWorkflowAction, getWorkflowStatusLabel } from "../../components/workflow/workflowHelpers";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -66,19 +79,19 @@ function formatMoney(value: number | null | undefined) {
   return value.toFixed(2);
 }
 
-function statusColor(status: Appointment["status"]) {
-  switch (status) {
-    case "COMPLETED":
-      return "success";
-    case "IN_CONSULTATION":
-      return "info";
-    case "WAITING":
-    case "BOOKED":
-      return "warning";
-    case "CANCELLED":
-    case "NO_SHOW":
-      return "default";
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
   }
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function priorityColor(priority: AppointmentPriority | null | undefined) {
@@ -93,26 +106,6 @@ function priorityColor(priority: AppointmentPriority | null | undefined) {
       return "info";
     default:
       return "default";
-  }
-}
-
-function friendlyStatusLabel(value: string | null | undefined) {
-  if (!value) return "-";
-  switch (value.toUpperCase()) {
-    case "BOOKED":
-      return "Booked";
-    case "WAITING":
-      return "Waiting";
-    case "IN_CONSULTATION":
-      return "In consultation";
-    case "COMPLETED":
-      return "Completed";
-    case "CANCELLED":
-      return "Cancelled";
-    case "NO_SHOW":
-      return "No-show";
-    default:
-      return value.replace(/_/g, " ").toLowerCase().replace(/(^|\s)\S/g, (match) => match.toUpperCase());
   }
 }
 
@@ -237,6 +230,21 @@ type FeeDialogState = {
   action: "collect" | "collect-and-check-in";
 };
 
+type QueueReceiptRecord = {
+  billId: string;
+  billNumber: string;
+  payment: Payment;
+};
+
+type QueueReceiptPanelState = {
+  appointment: QueueViewRow;
+  action: FeeDialogState["action"];
+  receipt: Receipt;
+  payment: Payment;
+  bill: Bill;
+  receiptPrintData: ReceiptPrintData;
+};
+
 type CheckInBypassReason =
   | "EMERGENCY"
   | "DOCTOR_APPROVED"
@@ -266,12 +274,17 @@ const CHECK_IN_BYPASS_REASON_OPTIONS: Array<{ value: CheckInBypassReason; label:
 ];
 
 const QUEUE_WORKFLOW_STEPS = [
-  { label: "Booked" },
-  { label: "Payment Pending" },
-  { label: "Ready" },
-  { label: "Checked-in" },
-  { label: "In Consultation" },
-  { label: "Completed" },
+  { label: "Appointment Booked" },
+  { label: "Registration" },
+  { label: "Payment" },
+  { label: "Check-in" },
+  { label: "Waiting" },
+  { label: "Consultation" },
+  { label: "Prescription" },
+  { label: "Laboratory" },
+  { label: "Pharmacy" },
+  { label: "Billing Complete" },
+  { label: "Visit Completed" },
 ] as const;
 
 export default function QueuePage() {
@@ -293,6 +306,15 @@ export default function QueuePage() {
   const [bypassDialog, setBypassDialog] = React.useState<CheckInBypassDialogState | null>(null);
   const [cancellationDialog, setCancellationDialog] = React.useState<CancellationDialogState | null>(null);
   const [clinicalIntakeAppointment, setClinicalIntakeAppointment] = React.useState<QueueViewRow | null>(null);
+  const [clinicProfile, setClinicProfile] = React.useState<ClinicProfile | null>(null);
+  const [receiptRecordsByAppointmentId, setReceiptRecordsByAppointmentId] = React.useState<Record<string, QueueReceiptRecord>>({});
+  const [receiptPanel, setReceiptPanel] = React.useState<QueueReceiptPanelState | null>(null);
+  const [receiptPreview, setReceiptPreview] = React.useState<ReceiptPrintData | null>(null);
+  const [receiptPreviewLoading, setReceiptPreviewLoading] = React.useState(false);
+  const [receiptAutoPrint, setReceiptAutoPrint] = React.useState(false);
+  const [rowMenuAnchor, setRowMenuAnchor] = React.useState<HTMLElement | null>(null);
+  const [rowMenuAppointmentId, setRowMenuAppointmentId] = React.useState<string | null>(null);
+  const [receiptActionLoading, setReceiptActionLoading] = React.useState(false);
 
   const today = React.useMemo(() => localDateKey(), []);
   const tenantRole = (auth.tenantRole || "").toUpperCase();
@@ -301,6 +323,7 @@ export default function QueuePage() {
   const isReceptionist = tenantRole === "RECEPTIONIST";
   const canCollectFee = !isDoctor && (auth.hasPermission("billing.create") || auth.hasPermission("payment.collect"));
   const canViewBillingData = !isDoctor && (auth.hasPermission("billing.read") || canCollectFee);
+  const canSendReceipt = !isDoctor && (auth.hasPermission("payment.collect") || auth.hasPermission("notification.send"));
   const canBypassPaymentCheckIn = auth.hasPermission("appointment.checkin.payment_bypass");
   const canStartConsultation = isDoctor && auth.hasPermission("consultation.create");
   const canManageDeskStatus = (isClinicAdmin || isReceptionist) && auth.hasPermission("appointment.manage");
@@ -347,16 +370,23 @@ export default function QueuePage() {
     return queueRows.map((appointment) => {
       const consultationBills = appointment.id ? consultationBillsByAppointment(bills, appointment.id) : [];
       const feeSummary = consultationFeeSummary(appointment, consultationBills);
+      const receiptRecord = receiptRecordsByAppointmentId[appointment.id] || null;
+      const feeStatus: FeeStatus = receiptRecord?.payment.receiptId
+        ? "PAID"
+        : feeSummary.feeStatus;
+      const feeAmount = receiptRecord?.payment.receiptId
+        ? receiptRecord.payment.amount
+        : feeSummary.consultationFee;
       return {
         ...appointment,
         consultationBill: feeSummary.consultationBill,
-        consultationFeeAmount: feeSummary.consultationFee,
-        feeStatus: feeSummary.feeStatus,
-        feeDueAmount: feeSummary.feeDueAmount,
-        feePaidAmount: feeSummary.feePaidAmount,
+        consultationFeeAmount: feeAmount,
+        feeStatus,
+        feeDueAmount: receiptRecord?.payment.receiptId ? 0 : feeSummary.feeDueAmount,
+        feePaidAmount: receiptRecord?.payment.receiptId ? receiptRecord.payment.amount : feeSummary.feePaidAmount,
       };
     });
-  }, [bills, queueRows]);
+  }, [bills, queueRows, receiptRecordsByAppointmentId]);
 
   const visibleRows = React.useMemo(() => {
     const term = queueSearch.trim().toLowerCase();
@@ -371,7 +401,7 @@ export default function QueuePage() {
         appointment.reason,
         appointment.status,
         appointment.priority,
-        friendlyStatusLabel(appointment.status),
+        getWorkflowStatusLabel(appointment.status),
         appointment.appointmentTime,
         appointment.consultationBill?.billNumber,
       ].filter(Boolean).some((value) => String(value).toLowerCase().includes(term));
@@ -393,6 +423,15 @@ export default function QueuePage() {
 
   React.useEffect(() => {
     let cancelled = false;
+    async function loadClinicProfile() {
+      if (!auth.accessToken || !auth.tenantId) return;
+      try {
+        const profile = await getClinicProfile(auth.accessToken, auth.tenantId);
+        if (!cancelled) setClinicProfile(profile);
+      } catch {
+        if (!cancelled) setClinicProfile(null);
+      }
+    }
     async function loadUsers() {
       if (!auth.accessToken || !auth.tenantId || !tenantReady) {
         setLoadingDoctors(false);
@@ -419,6 +458,7 @@ export default function QueuePage() {
         }
       }
     }
+    void loadClinicProfile();
     void loadUsers();
     return () => {
       cancelled = true;
@@ -454,6 +494,27 @@ export default function QueuePage() {
         if (cancelled) return;
         setAppointments(rows);
         setBills(billRows);
+        if (canViewBillingData && billRows.length > 0) {
+          const receiptEntries = await Promise.all(billRows
+            .filter((bill) => Boolean(bill.appointmentId) && (bill.netPaidAmount > 0 || bill.dueAmount <= 0 || bill.status === "PAID"))
+            .map(async (bill) => {
+              try {
+                const payments = await listBillPayments(auth.accessToken!, auth.tenantId!, bill.id);
+                const payment = [...payments]
+                  .sort((left, right) => `${right.paymentDateTime || right.paymentDate || right.createdAt}|${right.createdAt}`.localeCompare(`${left.paymentDateTime || left.paymentDate || left.createdAt}|${left.createdAt}`))
+                  .find((row) => Boolean(row.receiptId)) || payments[0] || null;
+                if (!payment || !payment.receiptId || !bill.appointmentId) return null;
+                return [bill.appointmentId, { billId: bill.id, billNumber: bill.billNumber, payment }] as const;
+              } catch (err) {
+                console.error("Queue receipt load failed", err);
+                return null;
+              }
+            }));
+          if (!cancelled) {
+            const nextRecords = Object.fromEntries(receiptEntries.filter((entry): entry is readonly [string, QueueReceiptRecord] => Boolean(entry)));
+            setReceiptRecordsByAppointmentId((current) => ({ ...nextRecords, ...current }));
+          }
+        }
       } catch (err) {
         if (!cancelled) {
           setError("Unable to load queue. Please verify clinic selection and network connection.");
@@ -653,17 +714,55 @@ export default function QueuePage() {
     }
     const action = feeDialog.action;
     const current = feeDialog.appointment;
-    await collectConsultationFee(auth.accessToken, auth.tenantId, {
+    const payment = await collectConsultationFee(auth.accessToken, auth.tenantId, {
       appointmentId: current.id,
       paymentMode: value.paymentMode,
       referenceNumber: value.referenceNumber || null,
       notes: value.notes || null,
     });
+    const bill = current.consultationBill;
+    if (bill) {
+      const receipt: Receipt = {
+        id: payment.receiptId || payment.id,
+        tenantId: payment.tenantId,
+        receiptNumber: payment.receiptNumber || `RCPT-${payment.id.slice(0, 8).toUpperCase()}`,
+        billId: bill.id,
+        paymentId: payment.id,
+        receiptDate: payment.receiptDate || payment.paymentDate,
+        amount: payment.amount,
+        createdAt: payment.createdAt,
+      };
+      const receiptPrintData: ReceiptPrintData = {
+        clinicProfile,
+        bill,
+        receipt,
+        payment,
+        patient: null,
+        appointment: current,
+        consultation: null,
+      };
+      setReceiptRecordsByAppointmentId((currentMap) => ({
+        ...currentMap,
+        [current.id]: {
+          billId: bill.id,
+          billNumber: bill.billNumber,
+          payment,
+        },
+      }));
+      setReceiptPanel({
+        appointment: current,
+        action,
+        receipt,
+        payment,
+        bill,
+        receiptPrintData,
+      });
+    }
     setFeeDialog(null);
-    await refreshQueue();
-    if (action === "collect-and-check-in") {
-      await updateAppointmentStatus(auth.accessToken, auth.tenantId, current.id, "WAITING", null);
+    try {
       await refreshQueue();
+    } catch (err) {
+      console.error("Queue refresh after fee collection failed", err);
     }
   };
 
@@ -704,29 +803,118 @@ export default function QueuePage() {
 
   const openConsultationBilling = (appointmentId: string) => {
     const row = queueRowsWithFee.find((item) => item.id === appointmentId);
-    if (!row) {
-      navigate(`/billing?appointmentId=${appointmentId}`);
+    if (!row) return;
+    if (row.feeStatus === "NOT_CONFIGURED") {
+      setError("Doctor consultation fee is not configured.");
       return;
     }
-    const params = new URLSearchParams();
-    params.set("appointmentId", row.id);
-    params.set("patientId", row.patientId);
-    if (row.doctorUserId) {
-      params.set("doctorUserId", row.doctorUserId);
-    }
-    if (row.consultationFeeAmount != null && row.consultationFeeAmount > 0) {
-      params.set("consultationFee", row.consultationFeeAmount.toFixed(2));
-    }
-    params.set("collectConsultationFee", "1");
-    params.set("returnTo", "/queue");
-    navigate(`/billing?${params.toString()}`);
+    openFeeDialog(row, "collect");
   };
 
   const openBillHistory = (appointmentId: string) => {
     navigate(`/billing?appointmentId=${appointmentId}`);
   };
 
+  const getQueueReceiptRecord = React.useCallback((row: QueueViewRow) => receiptRecordsByAppointmentId[row.id] || null, [receiptRecordsByAppointmentId]);
+  const buildReceiptPrintData = React.useCallback((row: QueueViewRow, record: QueueReceiptRecord): ReceiptPrintData | null => {
+    if (!row.consultationBill) return null;
+    const receipt: Receipt = {
+      id: record.payment.receiptId || record.payment.id,
+      tenantId: record.payment.tenantId,
+      receiptNumber: record.payment.receiptNumber || `RCPT-${record.payment.id.slice(0, 8).toUpperCase()}`,
+      billId: row.consultationBill.id,
+      paymentId: record.payment.id,
+      receiptDate: record.payment.receiptDate || record.payment.paymentDate,
+      amount: record.payment.amount,
+      createdAt: record.payment.createdAt,
+    };
+    return {
+      clinicProfile,
+      bill: row.consultationBill,
+      receipt,
+      payment: record.payment,
+      patient: null,
+      appointment: row,
+      consultation: null,
+    };
+  }, [clinicProfile]);
+
+  const openReceiptPreview = React.useCallback((row: QueueViewRow) => {
+    const record = getQueueReceiptRecord(row);
+    if (!record) return;
+    const data = buildReceiptPrintData(row, record);
+    if (!data) return;
+    setReceiptPreview(data);
+    setReceiptAutoPrint(false);
+  }, [buildReceiptPrintData, getQueueReceiptRecord]);
+
+  const openReceiptPrintPreview = React.useCallback((row: QueueViewRow, autoPrint = false) => {
+    const record = getQueueReceiptRecord(row);
+    if (!record) return;
+    const data = buildReceiptPrintData(row, record);
+    if (!data) return;
+    setReceiptPreview(data);
+    setReceiptAutoPrint(autoPrint);
+  }, [buildReceiptPrintData, getQueueReceiptRecord]);
+
+  const handleReceiptDownload = React.useCallback(async (row: QueueViewRow) => {
+    const record = getQueueReceiptRecord(row);
+    if (!auth.accessToken || !auth.tenantId || !record?.payment.receiptId) return;
+    setReceiptActionLoading(true);
+    setError(null);
+    try {
+      const file = await getReceiptPdf(auth.accessToken, auth.tenantId, record.payment.receiptId);
+      const url = URL.createObjectURL(file.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = file.filename || `${record.payment.receiptNumber || row.consultationBill?.billNumber || row.id}-receipt.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download receipt PDF");
+    } finally {
+      setReceiptActionLoading(false);
+    }
+  }, [auth.accessToken, auth.tenantId, getQueueReceiptRecord]);
+
+  const handleReceiptSend = React.useCallback(async (row: QueueViewRow, channel: "EMAIL" | "WHATSAPP") => {
+    const record = getQueueReceiptRecord(row);
+    if (!auth.accessToken || !auth.tenantId || !record?.payment.receiptId) return;
+    setReceiptActionLoading(true);
+    setError(null);
+    try {
+      await sendReceipt(auth.accessToken, auth.tenantId, record.payment.receiptId, channel);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send receipt");
+    } finally {
+      setReceiptActionLoading(false);
+    }
+  }, [auth.accessToken, auth.tenantId, getQueueReceiptRecord]);
+
   const renderFeeStatus = (row: QueueViewRow) => {
+    const record = getQueueReceiptRecord(row);
+    if (record?.payment.receiptId) {
+      const payment = record.payment;
+      return (
+        <Stack spacing={0.35}>
+          <Chip size="small" label={`Paid • ${formatMoney(payment.amount)}`} color="success" variant="outlined" />
+          <Typography variant="caption" color="text.secondary">
+            Receipt: {payment.receiptNumber || "—"}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Paid {formatMoney(payment.amount)} • {payment.paymentMode}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Ref: {payment.referenceNumber || "—"} • By {payment.receivedBy || "—"}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {formatDateTime(payment.paymentDateTime || payment.paymentDate || payment.receiptDate || payment.createdAt)}
+          </Typography>
+        </Stack>
+      );
+    }
     const paymentChip = (() => {
       switch (row.feeStatus) {
         case "PAID":
@@ -741,7 +929,14 @@ export default function QueuePage() {
       }
     })();
     if (!row.paymentBypassedAt) {
-      return paymentChip;
+      return (
+        <Stack spacing={0.35}>
+          {paymentChip}
+          {row.feeStatus === "PAID" ? (
+            <Typography variant="caption" color="text.secondary">Paid - receipt details unavailable</Typography>
+          ) : null}
+        </Stack>
+      );
     }
     const bypassDueLabel = row.feeDueAmount != null && row.feeDueAmount > 0
       ? `Pay later • Due ${formatMoney(row.feeDueAmount)}`
@@ -755,6 +950,13 @@ export default function QueuePage() {
   };
 
   const queueTitle = effectiveDoctorId ? displayDoctorName(users, effectiveDoctorId) : "All Doctors";
+
+  React.useEffect(() => {
+    if (!receiptPreview || !receiptAutoPrint || receiptPreviewLoading) return;
+    const handle = window.setTimeout(() => window.print(), 60);
+    setReceiptAutoPrint(false);
+    return () => window.clearTimeout(handle);
+  }, [receiptAutoPrint, receiptPreview, receiptPreviewLoading]);
 
   return (
     <Stack spacing={2.25}>
@@ -859,6 +1061,11 @@ export default function QueuePage() {
                     {visibleRows.map((appointment) => {
                       const isActive = appointment.status === "BOOKED" || appointment.status === "WAITING";
                       const checkInBlocked = appointment.consultationFeeAmount != null && appointment.consultationFeeAmount > 0 && appointment.feeStatus !== "PAID";
+                      const nextAction = getNextWorkflowAction({
+                        status: appointment.status,
+                        paymentStatus: appointment.feeStatus,
+                        billDueAmount: appointment.consultationFeeDueAmount,
+                      });
                       return (
                         <TableRow
                           key={appointment.id}
@@ -886,16 +1093,22 @@ export default function QueuePage() {
                           {!effectiveDoctorId ? (
                             <TableCell>{appointment.doctorName || displayDoctorName(users, appointment.doctorUserId)}</TableCell>
                           ) : null}
-                          <TableCell>{appointment.tokenNumber ?? "-"}</TableCell>
+                          <TableCell><AppointmentTokenChip appointment={appointment} compact /></TableCell>
                           <TableCell>
                             <Stack spacing={0.25}>
                               <Button size="small" onClick={() => navigate(`/patients/${appointment.patientId}`)} sx={{ justifyContent: "flex-start", p: 0, minWidth: 0 }}>
                                 {appointment.patientName || appointment.patientNumber || appointment.patientId}
                               </Button>
+                              <Typography variant="caption" color="text.secondary">{appointment.patientNumber ? `Patient No: ${appointment.patientNumber}` : "Patient No: Not assigned"}</Typography>
                               <Typography variant="caption" color="text.secondary">{appointment.patientMobile || "—"}</Typography>
                             </Stack>
                           </TableCell>
-                          <TableCell>{toFive(appointment.appointmentTime)}</TableCell>
+                          <TableCell>
+                            <Stack spacing={0.15}>
+                              <Typography variant="body2" sx={{ fontWeight: 700 }}>{toFive(appointment.appointmentTime)}</Typography>
+                              <Typography variant="caption" color="text.secondary">{formatRelativeBookingTime(appointment.createdAt) || "Booked recently"}</Typography>
+                            </Stack>
+                          </TableCell>
                           <TableCell>
                             {canManageDeskStatus ? (
                               <FormControl size="small" fullWidth sx={{ minWidth: 150 }}>
@@ -918,7 +1131,13 @@ export default function QueuePage() {
                           </TableCell>
                           <TableCell>
                             <Stack spacing={0.4}>
-                              <Chip size="small" label={friendlyStatusLabel(appointment.status)} color={statusColor(appointment.status)} sx={compactChipSx} />
+                              <WorkflowStatusBadge status={appointment.status} compact />
+                              <Chip
+                                size="small"
+                                variant="outlined"
+                                label={`Next: ${getNextWorkflowAction({ status: appointment.status, paymentStatus: appointment.feeStatus, billDueAmount: appointment.consultationFeeDueAmount }).label}`}
+                                sx={compactChipSx}
+                              />
                               {appointment.clinicalIntakeStatus ? (
                                 <Chip
                                   size="small"
@@ -931,13 +1150,13 @@ export default function QueuePage() {
                             </Stack>
                           </TableCell>
                           <TableCell>{formatMoney(appointment.consultationFeeAmount)}</TableCell>
-                          <TableCell sx={{ minWidth: 150 }}>{renderFeeStatus(appointment)}</TableCell>
+                          <TableCell sx={{ minWidth: 220 }}>{renderFeeStatus(appointment)}</TableCell>
                           <TableCell sx={{ minWidth: 180 }}>
                             <Stack spacing={0.35}>
                               <Button
                                 size="small"
-                                variant="contained"
-                                disabled={!canManageDeskStatus || appointment.status !== "BOOKED" || savingId === appointment.id || appointment.feeStatus !== "PAID"}
+                                variant={nextAction.key === "check-in" ? "contained" : "outlined"}
+                                disabled={!canManageDeskStatus || appointment.status !== "BOOKED" || savingId === appointment.id || (appointment.feeStatus !== "PAID" && !getQueueReceiptRecord(appointment))}
                                 onClick={() => void updateStatus(appointment.id, "WAITING")}
                               >
                                 Check-in
@@ -954,14 +1173,14 @@ export default function QueuePage() {
                           <TableCell align="right" sx={{ minWidth: 300 }}>
                             <Stack direction="row" spacing={0.75} justifyContent="flex-end" flexWrap="wrap" useFlexGap sx={{ "& .MuiButton-root": { whiteSpace: "nowrap" } }}>
                               {!isDoctor && canShowCollectFee(appointment) ? (
-                                <Button size="small" variant="outlined" disabled={savingId === appointment.id} onClick={() => openConsultationBilling(appointment.id)}>
-                                  {appointment.feeStatus === "NOT_CONFIGURED" ? "Open Billing" : "Collect Fee"}
+                                <Button size="small" variant={nextAction.key === "collect-fee" ? "contained" : "outlined"} disabled={savingId === appointment.id || appointment.feeStatus === "NOT_CONFIGURED"} onClick={() => openConsultationBilling(appointment.id)}>
+                                  Collect Fee
                                 </Button>
                               ) : null}
                               <Button size="small" variant="text" onClick={() => navigate(`/patients/${appointment.patientId}`)}>
                                 Open Patient
                               </Button>
-                              {!isDoctor && canShowViewBilling(appointment, canViewBillingData) ? (
+                              {!isDoctor && canShowViewBilling(appointment, canViewBillingData) && !isReceptionist ? (
                                 <Button size="small" variant="outlined" onClick={() => openBillHistory(appointment.id)}>
                                   {appointment.consultationBill ? "View Billing" : "Open Billing"}
                                 </Button>
@@ -972,12 +1191,12 @@ export default function QueuePage() {
                                 </Button>
                               ) : null}
                               {canStartConsultation && appointment.status === "WAITING" ? (
-                                <Button size="small" disabled={savingId === appointment.id} onClick={() => void startConsultation(appointment.id)}>
+                                <Button size="small" variant={nextAction.key === "start-consultation" ? "contained" : "outlined"} disabled={savingId === appointment.id} onClick={() => void startConsultation(appointment.id)}>
                                   Start Consultation
                                 </Button>
                               ) : null}
                               {canStartConsultation && appointment.status === "IN_CONSULTATION" ? (
-                                <Button size="small" disabled={savingId === appointment.id} onClick={() => void startConsultation(appointment.id)}>
+                                <Button size="small" variant={nextAction.key === "continue-consultation" ? "contained" : "outlined"} disabled={savingId === appointment.id} onClick={() => void startConsultation(appointment.id)}>
                                   Continue Consultation
                                 </Button>
                               ) : null}
@@ -996,6 +1215,16 @@ export default function QueuePage() {
                                   Clinical Intake
                                 </Button>
                               ) : null}
+                              <IconButton
+                                size="small"
+                                aria-label={`Open actions for ${appointment.patientName || appointment.patientNumber || appointment.id}`}
+                                onClick={(event) => {
+                                  setRowMenuAnchor(event.currentTarget);
+                                  setRowMenuAppointmentId(appointment.id);
+                                }}
+                              >
+                                <MoreVertRoundedIcon fontSize="small" />
+                              </IconButton>
                               {!(
                                 (canStartConsultation && (appointment.status === "WAITING" || appointment.status === "IN_CONSULTATION")) ||
                                 (canManageDeskStatus && (appointment.status === "BOOKED" || appointment.status === "WAITING"))
@@ -1150,6 +1379,99 @@ export default function QueuePage() {
           }}
         />
       ) : null}
+
+      <Menu
+        open={Boolean(rowMenuAnchor && rowMenuAppointmentId)}
+        anchorEl={rowMenuAnchor}
+        onClose={() => {
+          setRowMenuAnchor(null);
+          setRowMenuAppointmentId(null);
+        }}
+      >
+        {rowMenuAppointmentId ? (() => {
+          const row = queueRowsWithFee.find((item) => item.id === rowMenuAppointmentId) || null;
+          if (!row) return null;
+          const record = getQueueReceiptRecord(row);
+          return [
+            <MenuItem key="view-patient" onClick={() => { navigate(`/patients/${row.patientId}`); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>View Patient</MenuItem>,
+            ...(!isReceptionist && canViewBillingData ? [<MenuItem key="open-billing" onClick={() => { openBillHistory(row.id); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Open Billing</MenuItem>] : []),
+            ...(record?.payment.receiptId ? [
+              <MenuItem key="view-receipt" onClick={() => { openReceiptPreview(row); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>View Receipt</MenuItem>,
+              <MenuItem key="print-receipt" onClick={() => { openReceiptPrintPreview(row, true); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Print Receipt</MenuItem>,
+              <MenuItem key="download-receipt" disabled={receiptActionLoading} onClick={() => { void handleReceiptDownload(row); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Download Receipt PDF</MenuItem>,
+              ...(canSendReceipt ? [
+                <MenuItem key="email-receipt" disabled={receiptActionLoading} onClick={() => { void handleReceiptSend(row, "EMAIL"); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Email Receipt</MenuItem>,
+                <MenuItem key="whatsapp-receipt" disabled={receiptActionLoading} onClick={() => { void handleReceiptSend(row, "WHATSAPP"); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>WhatsApp Receipt</MenuItem>,
+              ] : []),
+            ] : []),
+            canManageDeskStatus && (row.status === "BOOKED" || row.status === "WAITING") ? <MenuItem key="cancel" onClick={() => { void updateStatus(row.id, "CANCELLED"); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>Cancel</MenuItem> : null,
+            canManageDeskStatus && (row.status === "BOOKED" || row.status === "WAITING") ? <MenuItem key="no-show" onClick={() => { void updateStatus(row.id, "NO_SHOW"); setRowMenuAnchor(null); setRowMenuAppointmentId(null); }}>No Show</MenuItem> : null,
+          ].filter(Boolean);
+        })() : null}
+      </Menu>
+
+      <Dialog open={Boolean(receiptPanel)} onClose={() => setReceiptPanel(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Payment successful</DialogTitle>
+        <DialogContent>
+          {receiptPanel ? (
+            <Stack spacing={1.25} sx={{ pt: 0.5 }}>
+              <Alert severity="success">Receipt ready for {receiptPanel.appointment.patientName || receiptPanel.appointment.patientNumber || receiptPanel.appointment.patientId}.</Alert>
+              <Grid container spacing={1}>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Receipt number</Typography><Typography variant="body2">{receiptPanel.payment.receiptNumber || "-"}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Bill number</Typography><Typography variant="body2">{receiptPanel.bill.billNumber}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Amount</Typography><Typography variant="body2">₹{formatMoney(receiptPanel.payment.amount)}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Payment mode</Typography><Typography variant="body2">{receiptPanel.payment.paymentMode}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Reference number</Typography><Typography variant="body2">{receiptPanel.payment.referenceNumber || "—"}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Collected by</Typography><Typography variant="body2">{receiptPanel.payment.receivedBy || "—"}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Timestamp</Typography><Typography variant="body2">{formatDateTime(receiptPanel.payment.paymentDateTime || receiptPanel.payment.paymentDate || receiptPanel.payment.receiptDate || receiptPanel.payment.createdAt)}</Typography></Grid>
+              </Grid>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions sx={{ flexWrap: "wrap" }}>
+          <Button onClick={() => setReceiptPanel(null)}>Close</Button>
+          <Button variant="outlined" onClick={() => { if (receiptPanel) openReceiptPreview(receiptPanel.appointment); setReceiptPanel(null); }}>View Receipt</Button>
+          <Button variant="outlined" onClick={() => { if (receiptPanel) openReceiptPrintPreview(receiptPanel.appointment, true); setReceiptPanel(null); }}>Print Receipt</Button>
+          <Button variant="outlined" onClick={() => { if (receiptPanel) void handleReceiptDownload(receiptPanel.appointment); }}>Download Receipt PDF</Button>
+          {canSendReceipt ? (
+            <>
+              <Button variant="outlined" onClick={() => { if (receiptPanel) void handleReceiptSend(receiptPanel.appointment, "EMAIL"); }}>Email Receipt</Button>
+              <Button variant="outlined" onClick={() => { if (receiptPanel) void handleReceiptSend(receiptPanel.appointment, "WHATSAPP"); }}>WhatsApp Receipt</Button>
+            </>
+          ) : null}
+          <Button
+            variant="contained"
+            disabled={!receiptPanel || receiptPanel.appointment.status !== "BOOKED" || savingId === receiptPanel.appointment.id}
+            onClick={async () => {
+              if (!receiptPanel || !auth.accessToken || !auth.tenantId) return;
+              setSavingId(receiptPanel.appointment.id);
+              try {
+                await updateAppointmentStatus(auth.accessToken, auth.tenantId, receiptPanel.appointment.id, "WAITING", null);
+                setReceiptPanel(null);
+                await refreshQueue();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Unable to check in the patient.");
+              } finally {
+                setSavingId(null);
+              }
+            }}
+          >
+            Continue to Check-in
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <ReceiptPrintDialog
+        open={Boolean(receiptPreview || receiptPreviewLoading)}
+        loading={receiptPreviewLoading}
+        data={receiptPreview}
+        onClose={() => {
+          setReceiptPreview(null);
+          setReceiptPreviewLoading(false);
+          setReceiptAutoPrint(false);
+        }}
+        onPrint={() => window.print()}
+      />
     </Stack>
   );
 }

@@ -65,11 +65,17 @@ const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"
 const WEEKDAY_DAYS = DAYS.slice(0, 5);
 const WEEKEND_DAYS = DAYS.slice(5);
 const DOCTOR_AVAILABILITY_WORKFLOW_STEPS = [
-  { label: "Schedule" },
-  { label: "Slots" },
-  { label: "Booking" },
-  { label: "Waitlist" },
-  { label: "Leave / Block" },
+  { label: "Appointment Booked" },
+  { label: "Registration" },
+  { label: "Payment" },
+  { label: "Check-in" },
+  { label: "Waiting" },
+  { label: "Consultation" },
+  { label: "Prescription" },
+  { label: "Laboratory" },
+  { label: "Pharmacy" },
+  { label: "Billing Complete" },
+  { label: "Visit Completed" },
 ] as const;
 type ViewMode = "day" | "week";
 type StatusFilters = Record<DoctorAvailabilitySlotStatus | "WAITLIST", boolean>;
@@ -1603,7 +1609,11 @@ export default function DoctorAvailabilityPage() {
                                         }}
                                       >
                                         <TableCell sx={{ whiteSpace: "nowrap", fontWeight: 700, py: 0.75 }}>{row.startTime} - {row.endTime}</TableCell>
-                                        <TableCell sx={{ whiteSpace: "nowrap", py: 0.75 }}>{row.breakStartTime && row.breakEndTime ? `${row.breakStartTime} - ${row.breakEndTime}` : "—"}</TableCell>
+                                        <TableCell sx={{ whiteSpace: "nowrap", py: 0.75 }}>
+                                          {row.breakStartTime && row.breakEndTime ? (
+                                            <Chip size="small" label={`Break ${row.breakStartTime}–${row.breakEndTime}`} variant="outlined" sx={COMPACT_CHIP_SX} />
+                                          ) : "—"}
+                                        </TableCell>
                                         <TableCell sx={{ whiteSpace: "nowrap", py: 0.75 }}>{row.consultationDurationMinutes} min</TableCell>
                                         <TableCell sx={{ whiteSpace: "nowrap", py: 0.75 }}>{row.maxPatientsPerSlot || 1}</TableCell>
                                         <TableCell sx={{ py: 0.75 }}>
@@ -1666,7 +1676,11 @@ export default function DoctorAvailabilityPage() {
                                               }}
                                             >
                                               <TableCell sx={{ whiteSpace: "nowrap", fontWeight: 700, py: 0.75 }}>{row.startTime} - {row.endTime}</TableCell>
-                                              <TableCell sx={{ whiteSpace: "nowrap", py: 0.75 }}>{row.breakStartTime && row.breakEndTime ? `${row.breakStartTime} - ${row.breakEndTime}` : "—"}</TableCell>
+                                              <TableCell sx={{ whiteSpace: "nowrap", py: 0.75 }}>
+                                                {row.breakStartTime && row.breakEndTime ? (
+                                                  <Chip size="small" label={`Break ${row.breakStartTime}–${row.breakEndTime}`} variant="outlined" sx={COMPACT_CHIP_SX} />
+                                                ) : "—"}
+                                              </TableCell>
                                               <TableCell sx={{ whiteSpace: "nowrap", py: 0.75 }}>{row.consultationDurationMinutes} min</TableCell>
                                               <TableCell sx={{ whiteSpace: "nowrap", py: 0.75 }}>{row.maxPatientsPerSlot || 1}</TableCell>
                                               <TableCell sx={{ py: 0.75 }}>

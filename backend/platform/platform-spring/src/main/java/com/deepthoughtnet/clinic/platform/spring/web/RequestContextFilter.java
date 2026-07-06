@@ -14,6 +14,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.UUID;
@@ -133,6 +134,7 @@ public class RequestContextFilter extends OncePerRequestFilter implements Ordere
                     tenantRole,
                     corr
             ));
+            provisioner.recordLogin(tenantId.value(), appUserId, OffsetDateTime.now());
 
             chain.doFilter(request, response);
 

@@ -226,6 +226,16 @@ export async function httpPut<T>(path: string, body: unknown, opts?: ApiOpts): P
   return parseResponse<T>(res);
 }
 
+export async function httpPutForm<T>(path: string, formData: FormData, opts?: ApiOpts): Promise<T> {
+  const res = await fetch(`${baseUrl(opts?.apiBase)}${path}`, {
+    method: "PUT",
+    headers: buildMultipartHeaders(path, opts),
+    body: formData,
+    signal: opts?.signal,
+  });
+  return parseResponse<T>(res);
+}
+
 export async function httpPatch<T>(path: string, body?: unknown, opts?: ApiOpts): Promise<T> {
   const res = await fetch(`${baseUrl(opts?.apiBase)}${path}`, {
     method: "PATCH",

@@ -35,12 +35,18 @@ import {
   createPatient,
   deactivatePatient,
   getPatient,
-  searchPatients,
   updatePatient,
   type Patient,
   type PatientGender,
   type PatientInput,
 } from "../../api/clinicApi";
+import {
+  approximateDobFromAge,
+  calculateAgeFromDob,
+  patientDisplayName,
+  patientIdentitySummary,
+  useDuplicatePatientLookup,
+} from "../../components/patients/patientQuickRegister";
 
 type FormState = {
   firstName: string;
@@ -166,25 +172,6 @@ function fromCsv(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-function calculateAge(dateOfBirth: string) {
-  if (!dateOfBirth) return null;
-  const dob = new Date(`${dateOfBirth}T00:00:00`);
-  if (Number.isNaN(dob.getTime())) return null;
-  const today = new Date();
-  let age = today.getFullYear() - dob.getFullYear();
-  const monthDiff = today.getMonth() - dob.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
-    age -= 1;
-  }
-  return age >= 0 && age <= 120 ? age : null;
-}
-
-function approximateDobFromAge(age: number | null) {
-  if (age === null || Number.isNaN(age) || age < 0 || age > 120) return "";
-  const year = new Date().getFullYear() - age;
-  return `${year}-01-01`;
-}
-
 function friendlyError(err: unknown) {
   const message = err instanceof Error ? err.message : "Unable to save patient. Please check the details and try again.";
   if (message.includes("mobile is required")) return "Mobile number is required.";
@@ -196,11 +183,6 @@ function friendlyError(err: unknown) {
   if (message.includes("firstName")) return "First name is required.";
   if (message.includes("Patient details can be edited by Clinic Admin after registration day.")) return "Patient details can be edited by Clinic Admin after registration day.";
   return "Unable to save patient. Please check the details and try again.";
-}
-
-function patientLabel(patient: Patient) {
-  const ageGender = [patient.ageYears !== null ? `${patient.ageYears}y` : null, patient.gender].filter(Boolean).join(" / ");
-  return `${patient.firstName} ${patient.lastName || ""}`.trim() + (ageGender ? ` • ${ageGender}` : "");
 }
 
 export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
@@ -215,17 +197,28 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
-  const [duplicates, setDuplicates] = React.useState<Patient[]>([]);
-  const [checkingDuplicates, setCheckingDuplicates] = React.useState(false);
-  const [continueNew, setContinueNew] = React.useState(false);
   const [loadedPatient, setLoadedPatient] = React.useState<Patient | null>(null);
+  const [dobEstimatedFromAge, setDobEstimatedFromAge] = React.useState(false);
   const mobileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const firstNameInputRef = React.useRef<HTMLInputElement | null>(null);
+  const lastNameInputRef = React.useRef<HTMLInputElement | null>(null);
+  const ageInputRef = React.useRef<HTMLInputElement | null>(null);
+  const dobInputRef = React.useRef<HTMLInputElement | null>(null);
+  const genderInputRef = React.useRef<HTMLDivElement | null>(null);
+  const saveButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const validationSchema = mode === "create" ? patientQuickRegisterSchema : patientRegistrationSchema;
   const validationPreview = React.useMemo(
     () => validationSchema.safeParse(formToInput({ ...form, mobile: normalizeIndianMobileInput(form.mobile) as string })),
     [form, validationSchema],
   );
   const liveFieldErrors: Record<string, string> = validationPreview.success ? {} : mapZodErrors(validationPreview.error);
+  const { duplicates, checking, setContinueNew } = useDuplicatePatientLookup({
+    accessToken: auth.accessToken,
+    tenantId: auth.tenantId,
+    mobile: form.mobile,
+    enabled: mode === "create",
+    debounceMs: 500,
+  });
 
   const clearFieldError = (field: string) => {
     setFieldErrors((current) => {
@@ -237,9 +230,10 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
   };
 
   React.useEffect(() => {
-    if (mode === "create") {
-      window.setTimeout(() => mobileInputRef.current?.focus(), 50);
-    }
+      if (mode === "create") {
+        window.setTimeout(() => mobileInputRef.current?.focus(), 50);
+      }
+      setDobEstimatedFromAge(false);
   }, [mode]);
 
   React.useEffect(() => {
@@ -255,6 +249,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
         if (!cancelled) {
           setLoadedPatient(detail.patient);
           setForm(patientToForm(detail.patient));
+          setDobEstimatedFromAge(false);
         }
       } catch (err) {
         if (!cancelled) {
@@ -271,43 +266,6 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
       cancelled = true;
     };
   }, [auth.accessToken, auth.tenantId, id, mode]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    const handle = window.setTimeout(async () => {
-      const mobile = normalizeIndianMobileInput(form.mobile) as string;
-      const name = `${form.firstName} ${form.lastName}`.trim();
-      if (mode !== "create" || continueNew || !auth.accessToken || !auth.tenantId) {
-        setDuplicates([]);
-        setCheckingDuplicates(false);
-        return;
-      }
-      if (mobile.length < 6 && name.length < 2) {
-        setDuplicates([]);
-        setCheckingDuplicates(false);
-        return;
-      }
-      setCheckingDuplicates(true);
-      try {
-        const rows = await searchPatients(auth.accessToken, auth.tenantId, mobile.length >= 6 ? { mobile, active: true } : { name, active: true });
-        if (!cancelled) {
-          setDuplicates(rows.slice(0, 5));
-        }
-      } catch {
-        if (!cancelled) {
-          setDuplicates([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setCheckingDuplicates(false);
-        }
-      }
-    }, 350);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
-  }, [auth.accessToken, auth.tenantId, continueNew, form.firstName, form.lastName, form.mobile, mode]);
 
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
@@ -327,9 +285,9 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
     };
 
   const updateMobile = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setContinueNew(false);
     clearFieldError("mobile");
     setError(null);
+    setContinueNew(false);
     setForm((current) => ({ ...current, mobile: event.target.value }));
   };
 
@@ -337,14 +295,56 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
     const dateOfBirth = event.target.value;
     clearFieldError("dateOfBirth");
     setError(null);
-    setForm((current) => ({ ...current, dateOfBirth, ageYears: calculateAge(dateOfBirth) }));
+    setDobEstimatedFromAge(false);
+    const calculatedAge = calculateAgeFromDob(dateOfBirth);
+    setForm((current) => ({ ...current, dateOfBirth, ageYears: calculatedAge ? Number(calculatedAge) : null }));
   };
 
   const updateAge = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const value = event.target.value === "" ? null : Number(event.target.value);
     clearFieldError("ageYears");
     setError(null);
+    setDobEstimatedFromAge(value !== null);
     setForm((current) => ({ ...current, ageYears: value, dateOfBirth: approximateDobFromAge(value) }));
+  };
+
+  const focusFirstInvalidField = () => {
+    const invalidFieldOrder = ["mobile", "firstName", "lastName", "gender", "ageYears", "dateOfBirth"];
+    const errorFields = [...invalidFieldOrder, ...Object.keys(fieldErrors), ...Object.keys(liveFieldErrors)];
+    const firstError = errorFields.find((field) => fieldErrors[field] || liveFieldErrors[field]);
+    switch (firstError) {
+      case "mobile":
+        mobileInputRef.current?.focus();
+        break;
+      case "firstName":
+        firstNameInputRef.current?.focus();
+        break;
+      case "lastName":
+        lastNameInputRef.current?.focus();
+        break;
+      case "gender":
+        genderInputRef.current?.focus();
+        break;
+      case "ageYears":
+        ageInputRef.current?.focus();
+        break;
+      case "dateOfBirth":
+        dobInputRef.current?.focus();
+        break;
+      default:
+        mobileInputRef.current?.focus();
+        break;
+    }
+  };
+
+  const advance = (event: React.KeyboardEvent<HTMLElement>, next: { current: HTMLInputElement | HTMLButtonElement | null } | "save") => {
+    if (event.key !== "Enter" || event.shiftKey) return;
+    event.preventDefault();
+    if (next === "save") {
+      saveButtonRef.current?.click();
+      return;
+    }
+    next.current?.focus();
   };
 
   const savePatient = async (next: "detail" | "appointment" | "queue" = "detail") => {
@@ -355,6 +355,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
       setSuccess(null);
       setFieldErrors(mapZodErrors(parsed.error));
       setError("Please correct the highlighted fields.");
+      focusFirstInvalidField();
       if (import.meta.env.DEV) {
         // eslint-disable-next-line no-console
         console.debug("Patient form validation errors", mapZodErrors(parsed.error));
@@ -423,6 +424,11 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
           <Typography variant="body2" color="text.secondary">
             Fast family registration. Start with mobile number to check for existing family members.
           </Typography>
+          {loadedPatient ? (
+            <Typography variant="caption" color="text.secondary">
+              {patientIdentitySummary(loadedPatient)}
+            </Typography>
+          ) : null}
         </Box>
         <Button type="button" variant="outlined" onClick={() => navigate("/patients")}>Back to Patients</Button>
       </Box>
@@ -447,7 +453,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
             <Stack spacing={2.5}>
               <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
                 <Box>
-                  <Typography variant="h6" sx={{ fontWeight: 900 }}>Quick Registration</Typography>
+                  <Typography variant="h6" sx={{ fontWeight: 900 }}>Register New Patient</Typography>
                   <Typography variant="body2" color="text.secondary">Required for walk-in intake: mobile, name, gender, and age or DOB.</Typography>
                 </Box>
                 <Chip color="primary" label="Mobile-first lookup" />
@@ -464,14 +470,16 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     onChange={updateMobile}
                     disabled={disabled}
                     error={Boolean(fieldErrors.mobile) || Boolean(liveFieldErrors.mobile)}
-                    helperText={fieldErrors.mobile || liveFieldErrors.mobile || "Primary lookup and duplicate check"}
+                    helperText={fieldErrors.mobile || liveFieldErrors.mobile || (checking ? "Checking for existing patients..." : duplicates.length > 0 ? "Existing patients found below." : "Primary lookup and duplicate check")}
                     inputProps={{ inputMode: "tel", autoComplete: "tel" }}
+                    onKeyDown={(event) => advance(event, firstNameInputRef)}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
                   <TextField
                     fullWidth
                     required
+                    inputRef={firstNameInputRef}
                     label="First name *"
                     value={form.firstName}
                     onChange={updateField("firstName")}
@@ -479,13 +487,14 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     error={Boolean(fieldErrors.firstName) || Boolean(liveFieldErrors.firstName)}
                     helperText={fieldErrors.firstName || liveFieldErrors.firstName || ""}
                     inputProps={{ autoComplete: "given-name" }}
+                    onKeyDown={(event) => advance(event, lastNameInputRef)}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField fullWidth label="Last name" value={form.lastName} onChange={updateField("lastName")} disabled={disabled} inputProps={{ autoComplete: "family-name" }} />
+                  <TextField fullWidth inputRef={lastNameInputRef} label="Last name" value={form.lastName} onChange={updateField("lastName")} disabled={disabled} inputProps={{ autoComplete: "family-name" }} onKeyDown={(event) => advance(event, ageInputRef)} />
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }}>
-                  <FormControl fullWidth required error={Boolean(fieldErrors.gender)}>
+                  <FormControl fullWidth required error={Boolean(fieldErrors.gender)} ref={genderInputRef} tabIndex={-1}>
                     <InputLabel id="patient-gender-label">Gender *</InputLabel>
                     <Select
                       labelId="patient-gender-label"
@@ -506,6 +515,7 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                 <Grid size={{ xs: 12, md: 3 }}>
                   <TextField
                     fullWidth
+                    inputRef={ageInputRef}
                     type="number"
                     required
                     label="Age *"
@@ -513,13 +523,15 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     onChange={updateAge}
                     disabled={disabled}
                     error={Boolean(fieldErrors.ageYears) || Boolean(liveFieldErrors.ageYears)}
-                    helperText={fieldErrors.ageYears || liveFieldErrors.ageYears || "DOB auto-filled approximately"}
+                    helperText={fieldErrors.ageYears || liveFieldErrors.ageYears || (dobEstimatedFromAge ? "DOB estimated from age" : "DOB auto-filled approximately")}
                     inputProps={{ min: 0, max: 120 }}
+                    onKeyDown={(event) => advance(event, dobInputRef)}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }}>
                   <TextField
                     fullWidth
+                    inputRef={dobInputRef}
                     type="date"
                     required
                     label="Date of birth *"
@@ -529,16 +541,18 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                     error={Boolean(fieldErrors.dateOfBirth) || Boolean(liveFieldErrors.dateOfBirth)}
                     helperText={fieldErrors.dateOfBirth || liveFieldErrors.dateOfBirth || "Age updates automatically"}
                     InputLabelProps={{ shrink: true }}
+                    onKeyDown={(event) => advance(event, saveButtonRef)}
                   />
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }} sx={{ display: "flex", alignItems: "center", justifyContent: { xs: "stretch", md: "flex-end" }, gap: 1 }}>
-                  <Button type="submit" fullWidth variant="contained" size="large" disabled={disabled || checkingDuplicates || !validationPreview.success}>
-                    {saving ? "Saving..." : mode === "create" ? "Register" : "Save"}
+                  <Button ref={saveButtonRef} type="submit" fullWidth variant="contained" size="large" disabled={disabled || checking || !validationPreview.success}>
+                    {saving ? "Saving..." : mode === "create" ? "Register New Patient" : "Save"}
                   </Button>
                 </Grid>
               </Grid>
 
-              {checkingDuplicates ? <Alert severity="info">Checking for existing patients...</Alert> : null}
+              {checking ? <Alert severity="info">Checking for existing patients...</Alert> : null}
+              {!checking && form.mobile.trim().length >= 6 && duplicates.length === 0 ? <Alert severity="info">No existing patient found.</Alert> : null}
               {duplicates.length > 0 ? (
                 <Card variant="outlined" sx={{ bgcolor: "warning.50", borderColor: "warning.light" }}>
                   <CardContent sx={{ py: 1.5 }}>
@@ -548,16 +562,29 @@ export default function PatientFormPage({ mode }: { mode: "create" | "edit" }) {
                           <Typography sx={{ fontWeight: 800 }}>Possible existing patients found</Typography>
                           <Typography variant="body2" color="text.secondary">Open an existing record if this is a repeat visit.</Typography>
                         </Box>
-                        <Button type="button" size="small" onClick={() => setContinueNew(true)}>Continue creating new patient</Button>
+                        <Button type="button" size="small" onClick={() => setContinueNew(true)}>Continue registration</Button>
                       </Box>
                       <List dense disablePadding>
                         {duplicates.map((patient) => (
-                          <ListItemButton key={patient.id} divider onClick={() => navigate(`/patients/${patient.id}`)}>
+                          <ListItemButton
+                            key={patient.id}
+                            divider
+                            onClick={() => navigate(`/patients/${patient.id}`)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                navigate(`/patients/${patient.id}`);
+                              }
+                            }}
+                          >
                             <ListItemText
-                              primary={`${patientLabel(patient)} • ${patient.patientNumber}`}
-                              secondary={`Mobile ${patient.mobile}`}
+                              primary={patientDisplayName(patient)}
+                              secondary={`${patient.patientNumber || "Patient No: Not assigned"} • Mobile ${patient.mobile}`}
                             />
-                            <Button type="button" size="small" variant="outlined">Open</Button>
+                            <Stack direction="row" spacing={0.75}>
+                              <Button type="button" size="small" variant="outlined" onClick={(event) => { event.stopPropagation(); navigate(`/patients/${patient.id}`); }}>Open Patient</Button>
+                              <Button type="button" size="small" variant="outlined" onClick={(event) => { event.stopPropagation(); navigate(`/appointments?patientId=${patient.id}`, { state: { patient } }); }}>Book Appointment</Button>
+                            </Stack>
                           </ListItemButton>
                         ))}
                       </List>

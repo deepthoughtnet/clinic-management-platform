@@ -19,3 +19,13 @@ export declare function isPublishedLabDocument(document: {
     displayStatus?: string | null;
     businessStatus?: string | null;
 } | null | undefined): boolean;
+export declare function documentBusinessStatusLabel(document: {
+    documentType?: string | null;
+    type?: string | null;
+    category?: string | null;
+    sourceModule?: string | null;
+    status?: string | null;
+    displayStatus?: string | null;
+    businessStatus?: string | null;
+    verificationStatus?: string | null;
+} | null | undefined): string | null;

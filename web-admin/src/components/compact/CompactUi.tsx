@@ -61,45 +61,113 @@ export const compactFormGridSx = {
 export type WorkflowStripStep = {
   label: React.ReactNode;
   tone?: ChipProps["color"];
+  helper?: React.ReactNode;
+  state?: "completed" | "current" | "future";
 };
 
 type WorkflowStripProps = {
   steps: readonly WorkflowStripStep[];
   label?: React.ReactNode;
+  currentStepIndex?: number;
 };
 
-export function WorkflowStrip({ steps, label = "Workflow" }: WorkflowStripProps) {
+function stepState(index: number, currentStepIndex: number | undefined, explicitState?: WorkflowStripStep["state"]) {
+  if (explicitState) return explicitState;
+  if (currentStepIndex === undefined) return index === 0 ? "current" : "future";
+  if (index < currentStepIndex) return "completed";
+  if (index === currentStepIndex) return "current";
+  return "future";
+}
+
+function stepColors(state: "completed" | "current" | "future", tone?: ChipProps["color"]) {
+  if (state === "completed") {
+    return { bgcolor: "success.main", color: "success.contrastText", borderColor: "success.main" } as const;
+  }
+  if (state === "current") {
+    return tone === "success"
+      ? { bgcolor: "success.main", color: "success.contrastText", borderColor: "success.main" } as const
+      : tone === "error"
+        ? { bgcolor: "error.main", color: "error.contrastText", borderColor: "error.main" } as const
+        : tone === "warning"
+          ? { bgcolor: "warning.main", color: "warning.contrastText", borderColor: "warning.main" } as const
+          : { bgcolor: "primary.main", color: "primary.contrastText", borderColor: "primary.main" } as const;
+  }
+  return { bgcolor: "background.paper", color: "text.secondary", borderColor: "divider" } as const;
+}
+
+export function WorkflowStrip({ steps, label = "Workflow", currentStepIndex }: WorkflowStripProps) {
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.45 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.6 }}>
       <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase" }}>
         {label}
       </Typography>
-      <Stack
-        direction="row"
-        spacing={0.6}
-        useFlexGap
-        flexWrap="wrap"
-        alignItems="center"
+      <Box
         sx={{
-          py: 0.1,
+          display: "grid",
+          gridAutoFlow: "column",
+          gridAutoColumns: "minmax(104px, 1fr)",
+          gap: 0.75,
           overflowX: "auto",
           scrollbarWidth: "thin",
-          "&::-webkit-scrollbar": {
-            height: 6,
-          },
+          pb: 0.25,
+          "&::-webkit-scrollbar": { height: 6 },
         }}
       >
-        {steps.map((step, index) => (
-          <React.Fragment key={typeof step.label === "string" ? `${step.label}-${index}` : index}>
-            {index > 0 ? (
-              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, px: 0.1, flexShrink: 0 }}>
-                →
+        {steps.map((step, index) => {
+          const state = stepState(index, currentStepIndex, step.state);
+          const colors = stepColors(state, step.tone);
+          return (
+            <Box
+              key={typeof step.label === "string" ? `${step.label}-${index}` : index}
+              sx={{
+                position: "relative",
+                minWidth: 104,
+                display: "grid",
+                justifyItems: "center",
+                gap: 0.35,
+                textAlign: "center",
+                opacity: state === "future" ? 0.92 : 1,
+              }}
+            >
+              <Box
+                sx={{
+                  position: "absolute",
+                  top: 14,
+                  left: "calc(50% + 18px)",
+                  right: "-50%",
+                  height: 2,
+                  bgcolor: state === "completed" ? "success.main" : "divider",
+                  display: index === steps.length - 1 ? "none" : "block",
+                }}
+              />
+              <Box
+                sx={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  border: "2px solid",
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: 12,
+                  fontWeight: 900,
+                  zIndex: 1,
+                  ...colors,
+                }}
+              >
+                {state === "completed" ? "✓" : index + 1}
+              </Box>
+              <Typography variant="body2" sx={{ fontWeight: state === "current" ? 800 : 600, lineHeight: 1.1 }}>
+                {step.label}
               </Typography>
-            ) : null}
-            <Chip size="small" label={step.label} color={step.tone || "default"} variant="outlined" sx={compactChipSx} />
-          </React.Fragment>
-        ))}
-      </Stack>
+              {step.helper ? (
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.15 }}>
+                  {step.helper}
+                </Typography>
+              ) : null}
+            </Box>
+          );
+        })}
+      </Box>
     </Box>
   );
 }
@@ -119,25 +187,10 @@ type WorkflowGuideProps = {
 export function WorkflowGuide({ title, subtitle, steps }: WorkflowGuideProps) {
   return (
     <CompactFilterCard title={title} subtitle={subtitle}>
-      <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" alignItems="center">
-        {steps.map((step, index) => (
-          <React.Fragment key={typeof step.label === "string" ? `${step.label}-${index}` : index}>
-            {index > 0 ? (
-              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, px: 0.25 }}>
-                →
-              </Typography>
-            ) : null}
-            <Box sx={{ display: "grid", justifyItems: "center", gap: 0.25 }}>
-              <Chip size="small" label={step.label} color={step.tone || "default"} variant="outlined" sx={compactChipSx} />
-              {step.helper ? (
-                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.1, textAlign: "center" }}>
-                  {step.helper}
-                </Typography>
-              ) : null}
-            </Box>
-          </React.Fragment>
-        ))}
-      </Stack>
+      <WorkflowStrip
+        steps={steps.map((step) => ({ label: step.label, tone: step.tone, helper: step.helper }))}
+        currentStepIndex={Math.max(0, steps.findIndex((step) => step.tone === "primary"))}
+      />
     </CompactFilterCard>
   );
 }

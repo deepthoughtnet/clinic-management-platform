@@ -32,6 +32,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import jakarta.validation.ConstraintViolationException;
 import java.util.regex.Pattern;
 
@@ -109,6 +110,11 @@ public class GlobalRestExceptionHandler {
     @ExceptionHandler(MultipartException.class)
     public ResponseEntity<?> handleMultipart(MultipartException ex, HttpServletRequest req) {
         return build(HttpStatus.BAD_REQUEST, "invalid_multipart", "Invalid multipart upload request", req);
+    }
+
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<?> handleMissingMultipartPart(MissingServletRequestPartException ex, HttpServletRequest req) {
+        return build(HttpStatus.BAD_REQUEST, "missing_part", "Missing required multipart part: " + ex.getRequestPartName(), req);
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

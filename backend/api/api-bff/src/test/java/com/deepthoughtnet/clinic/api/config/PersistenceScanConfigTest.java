@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.deepthoughtnet.clinic.api.reliability.db.IdempotencyKeyEntity;
 import com.deepthoughtnet.clinic.api.reliability.db.IdempotencyKeyRepository;
 import com.deepthoughtnet.clinic.api.clinicaldocument.ai.db.ClinicalAiJobRepository;
+import com.deepthoughtnet.clinic.identity.db.TenantOnboardingEntity;
+import com.deepthoughtnet.clinic.identity.db.TenantOnboardingRepository;
 import com.deepthoughtnet.clinic.identity.db.TenantPlanEntity;
 import com.deepthoughtnet.clinic.identity.db.TenantPlanRepository;
 import com.deepthoughtnet.clinic.inventory.db.PharmacySalePrescriptionRepository;
@@ -40,6 +42,9 @@ class PersistenceScanConfigTest {
     private PharmacySalePrescriptionRepository pharmacySalePrescriptionRepository;
 
     @Autowired
+    private TenantOnboardingRepository tenantOnboardingRepository;
+
+    @Autowired
     private TestEntityManager entityManager;
 
     @Test
@@ -55,6 +60,11 @@ class PersistenceScanConfigTest {
     @Test
     void pharmacySalePrescriptionRepositoryIsRegistered() {
         assertThat(pharmacySalePrescriptionRepository).isNotNull();
+    }
+
+    @Test
+    void tenantOnboardingRepositoryIsRegistered() {
+        assertThat(tenantOnboardingRepository).isNotNull();
     }
 
     @Test
@@ -87,5 +97,17 @@ class PersistenceScanConfigTest {
         assertThat(reloaded.getName()).isEqualTo("Trial");
         assertThat(reloaded.getFeatures()).containsEntry("clinicalAutomation", true);
         assertThat(reloaded.getFeatures()).containsKey("limits");
+    }
+
+    @Test
+    void tenantOnboardingRoundTripWorks() {
+        UUID tenantId = UUID.randomUUID();
+        tenantOnboardingRepository.saveAndFlush(TenantOnboardingEntity.create(tenantId, false));
+        entityManager.clear();
+
+        TenantOnboardingEntity reloaded = tenantOnboardingRepository.findByTenantId(tenantId).orElseThrow();
+        assertThat(reloaded.isCompleted()).isFalse();
+        assertThat(reloaded.isSkipped()).isFalse();
+        assertThat(reloaded.getTenantId()).isEqualTo(tenantId);
     }
 }

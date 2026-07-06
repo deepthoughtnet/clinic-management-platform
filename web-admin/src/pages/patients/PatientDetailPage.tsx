@@ -51,7 +51,8 @@ import {
 } from "../../api/clinicApi";
 import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocumentViewer";
 import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDocumentUploadDialog";
-import { documentTypeLabel, isPublishedLabDocument } from "../../components/clinical/documentTypeOptions";
+import { documentBusinessStatusLabel, documentTypeLabel, isPublishedLabDocument } from "../../components/clinical/documentTypeOptions";
+import { patientDisplayName, patientMobileLine, patientNumberLine } from "../../components/patients/patientQuickRegister";
 
 function statusColor(status: Appointment["status"]) {
   switch (status) {
@@ -319,10 +320,13 @@ export default function PatientDetailPage() {
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 900, mb: 1 }}>
-            {patient.firstName} {patient.lastName}
+            {patientDisplayName(patient)}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {patient.patientNumber} • {patient.mobile}
+            {patientMobileLine(patient)}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {patientNumberLine(patient)}
           </Typography>
         </Box>
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
@@ -487,18 +491,17 @@ export default function PatientDetailPage() {
                       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5, flexWrap: "wrap" }}>
                         <Chip size="small" label={documentTypeLabel(document.documentType)} color={documentFilterKey(document.documentType) === "REFERRAL" ? "secondary" : "default"} />
                         <Chip size="small" variant="outlined" label={isPublishedLabDocument(document) ? "Published" : document.uploadSource} />
-                        {isPublishedLabDocument(document) ? <Chip size="small" variant="outlined" color="success" label="Available" /> : null}
                         <Typography variant="caption" color="text.secondary">{new Date(document.createdAt).toLocaleString()}</Typography>
                       </Stack>
                       <Typography variant="body2" sx={{ fontWeight: 800 }}>{document.title || document.originalFilename}</Typography>
                       <Typography variant="caption" color="text.secondary" display="block">
                         {document.description || "No notes"}
                         {isPublishedLabDocument(document)
-                          ? ""
+                          ? ` · ${documentBusinessStatusLabel(document) || "Published"}`
                           : ` · OCR ${document.ocrStatus || "NOT_STARTED"} · AI ${document.aiExtractionStatus || "NOT_STARTED"}${document.aiExtractionConfidence != null ? ` · ${(document.aiExtractionConfidence * 100).toFixed(0)}%` : ""}`}
                       </Typography>
                       <Typography variant="caption" color="text.secondary" display="block">
-                        {document.uploadedByName}{document.reportDate ? ` • Report date ${document.reportDate}` : ""}{isPublishedLabDocument(document) ? " • Published" : document.visibility ? ` • ${document.visibility}` : ""}
+                        {document.uploadedByName}{document.reportDate ? ` • Report date ${document.reportDate}` : ""}{isPublishedLabDocument(document) ? ` • ${documentBusinessStatusLabel(document) || "Published"}` : document.visibility ? ` • ${document.visibility}` : ""}
                       </Typography>
                     </Box>
                     <Stack direction="row" spacing={1} alignItems="center">

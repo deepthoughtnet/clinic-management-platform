@@ -7,6 +7,7 @@ import com.deepthoughtnet.clinic.api.lab.dto.LabCsvImportResponse;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderItemResponse;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderPaymentRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderPublishReportRequest;
+import com.deepthoughtnet.clinic.api.lab.dto.LabOrderReportDeliveryActionRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderResultRequest;
 import com.deepthoughtnet.clinic.api.lab.dto.LabOrderResultResponse;
 import com.deepthoughtnet.clinic.api.lab.dto.LabCategoryConfigDtos.LabCategoryConfigResponse;
@@ -36,6 +37,7 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultItemCommand
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderResultPdf;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPaymentRecord;
+import com.deepthoughtnet.clinic.api.lab.service.model.LabPaymentReceiptRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderPublishReportCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderSampleCollectionCommand;
@@ -49,6 +51,8 @@ import com.deepthoughtnet.clinic.api.lab.service.model.LabTestRecord;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestParameterUpsertCommand;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabTestUpsertCommand;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventQueryService;
+import com.deepthoughtnet.clinic.platform.audit.AuditEventRecord;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import java.util.Collections;
 import java.util.List;
@@ -76,6 +80,7 @@ import jakarta.validation.Valid;
 import org.springframework.util.StringUtils;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @Validated
@@ -84,11 +89,13 @@ public class LabController {
     private final LabService labService;
     private final LabCsvService labCsvService;
     private final LabCatalogueConfigService labCatalogueConfigService;
+    private final AuditEventQueryService auditEventQueryService;
 
-    public LabController(LabService labService, LabCsvService labCsvService, LabCatalogueConfigService labCatalogueConfigService) {
+    public LabController(LabService labService, LabCsvService labCsvService, LabCatalogueConfigService labCatalogueConfigService, AuditEventQueryService auditEventQueryService) {
         this.labService = labService;
         this.labCsvService = labCsvService;
         this.labCatalogueConfigService = labCatalogueConfigService;
+        this.auditEventQueryService = auditEventQueryService;
     }
 
     @GetMapping("/categories")
@@ -188,7 +195,9 @@ public class LabController {
     ) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID effectiveDoctorUserId = resolveDoctorScope(doctorUserId);
-        return labService.listOrders(tenantId, consultationId, patientId, effectiveDoctorUserId, parseStatus(status), search).stream().map(this::toResponse).toList();
+        return labService.listOrders(tenantId, consultationId, patientId, effectiveDoctorUserId, parseStatus(status), search).stream()
+                .map(order -> toResponse(order, null, order.billId() == null ? null : labService.resolvePaymentReceipt(order.tenantId(), order.billId()).orElse(null)))
+                .toList();
     }
 
     @GetMapping("/orders/{id}")
@@ -197,7 +206,19 @@ public class LabController {
         UUID tenantId = RequestContextHolder.requireTenantId();
         LabOrderRecord order = labService.findOrder(tenantId, id).orElseThrow(() -> new IllegalArgumentException("Lab order not found"));
         ensureDoctorCanAccess(order);
-        return toResponse(order);
+        return toResponse(order, null, order.billId() == null ? null : labService.resolvePaymentReceipt(order.tenantId(), order.billId()).orElse(null));
+    }
+
+    @GetMapping("/orders/{id}/attachments/{attachmentId}/view")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.order.read') or @permissionChecker.hasPermission('lab.order.collect_sample') or @permissionChecker.hasPermission('lab.order.result_entry') or @permissionChecker.hasPermission('lab.order.generate_report')")
+    public ResponseEntity<byte[]> viewAttachment(@PathVariable UUID id, @PathVariable UUID attachmentId) {
+        return streamedAttachment(id, attachmentId, true);
+    }
+
+    @GetMapping("/orders/{id}/attachments/{attachmentId}/download")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.order.read') or @permissionChecker.hasPermission('lab.order.collect_sample') or @permissionChecker.hasPermission('lab.order.result_entry') or @permissionChecker.hasPermission('lab.order.generate_report')")
+    public ResponseEntity<byte[]> downloadAttachment(@PathVariable UUID id, @PathVariable UUID attachmentId) {
+        return streamedAttachment(id, attachmentId, false);
     }
 
     @PostMapping("/consultations/{consultationId}/orders")
@@ -242,7 +263,7 @@ public class LabController {
                 request.notes(),
                 request.receivedBy()
         ), actorAppUserId);
-        return toResponse(result.order(), result.payment());
+        return toResponse(result.order(), result.payment(), null);
     }
 
     @PostMapping("/orders/{id}/sample-collection")
@@ -369,6 +390,21 @@ public class LabController {
         ), actorAppUserId));
     }
 
+    @PostMapping("/orders/{id}/report-delivery-actions")
+    @PreAuthorize("@permissionChecker.hasPermission('lab.order.generate_report')")
+    public LabOrderResponse recordReportDeliveryAction(@PathVariable UUID id, @Valid @RequestBody LabOrderReportDeliveryActionRequest request) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toResponse(labService.recordReportDeliveryAction(
+                tenantId,
+                id,
+                request.action(),
+                request.channel(),
+                request.notes(),
+                actorAppUserId
+        ));
+    }
+
     private LabTestUpsertCommand toCommand(LabTestRequest request) {
         return new LabTestUpsertCommand(
                 request.testCode(),
@@ -419,6 +455,22 @@ public class LabController {
         );
     }
 
+    private ResponseEntity<byte[]> streamedAttachment(UUID orderId, UUID attachmentId, boolean inline) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        LabOrderRecord order = labService.findOrder(tenantId, orderId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Lab order not found"));
+        ensureDoctorCanAccess(order);
+        var attachment = labService.findAttachment(tenantId, orderId, attachmentId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Lab order attachment not found"));
+        byte[] bytes = labService.downloadAttachmentBytes(tenantId, orderId, attachmentId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(StringUtils.hasText(attachment.mediaType()) ? attachment.mediaType() : "application/octet-stream"));
+        headers.setContentLength(bytes.length);
+        headers.setContentDisposition(ContentDisposition.builder(inline ? "inline" : "attachment")
+                .filename(attachment.originalFilename() == null || attachment.originalFilename().isBlank() ? "attachment" : attachment.originalFilename())
+                .build());
+        return ResponseEntity.ok().headers(headers).body(bytes);
+    }
+
     private ResponseEntity<Resource> csvResponse(String filename, String csv) {
         byte[] bytes = csv == null ? new byte[0] : csv.getBytes(StandardCharsets.UTF_8);
         return ResponseEntity.ok()
@@ -464,10 +516,33 @@ public class LabController {
     }
 
     private LabOrderResponse toResponse(LabOrderRecord record) {
-        return toResponse(record, null);
+        return toResponse(record, null, null);
     }
 
     private LabOrderResponse toResponse(LabOrderRecord record, PaymentRecord payment) {
+        return toResponse(record, payment, null);
+    }
+
+    private LabOrderResponse toResponse(LabOrderRecord record, PaymentRecord payment, LabPaymentReceiptRecord paymentReceipt) {
+        LabPaymentReceiptRecord receiptSummary = paymentReceipt;
+        if (receiptSummary == null && payment != null && payment.receiptId() != null) {
+            receiptSummary = new LabPaymentReceiptRecord(
+                    payment.receiptId(),
+                    payment.receiptNumber(),
+                    record.billId(),
+                    record.billNumber(),
+                    payment.amount(),
+                    payment.paymentMode(),
+                    payment.referenceNumber(),
+                    payment.receivedBy() == null ? null : payment.receivedBy().toString(),
+                    payment.paymentDateTime() != null ? payment.paymentDateTime() : payment.receiptDate() == null ? null : payment.receiptDate().atStartOfDay().atOffset(java.time.ZoneOffset.UTC),
+                    "/api/receipts/" + payment.receiptId() + "/pdf",
+                    "/api/receipts/" + payment.receiptId() + "/pdf"
+            );
+        }
+        if (receiptSummary == null && record.billId() != null) {
+            receiptSummary = labService.resolvePaymentReceipt(record.tenantId(), record.billId()).orElse(null);
+        }
         return new LabOrderResponse(
                 record.id() == null ? null : record.id().toString(),
                 record.tenantId() == null ? null : record.tenantId().toString(),
@@ -518,6 +593,7 @@ public class LabController {
                 record.reportDeliveryStatus(),
                 record.reportDeliveryChannels(),
                 record.reportDeliveryNotes(),
+                buildReportDeliveryHistory(record.tenantId(), record.id()),
                 record.doctorReviewedAt(),
                 record.doctorReviewedByUserId() == null ? null : record.doctorReviewedByUserId().toString(),
                 record.doctorReviewedBy(),
@@ -559,8 +635,86 @@ public class LabController {
                 payment == null ? null : payment.amount(),
                 payment == null ? null : payment.paymentMode(),
                 payment == null ? null : payment.referenceNumber(),
-                payment == null || payment.receivedBy() == null ? null : payment.receivedBy().toString()
+                payment == null || payment.receivedBy() == null ? null : payment.receivedBy().toString(),
+                receiptSummary == null ? null : new LabOrderResponse.PaymentReceiptResponse(
+                        receiptSummary.receiptId() == null ? null : receiptSummary.receiptId().toString(),
+                        receiptSummary.receiptNumber(),
+                        receiptSummary.billId() == null ? null : receiptSummary.billId().toString(),
+                        receiptSummary.billNumber(),
+                        receiptSummary.amount(),
+                        receiptSummary.paymentMode(),
+                        receiptSummary.referenceNumber(),
+                        receiptSummary.collectedBy(),
+                        receiptSummary.collectedAt(),
+                        receiptSummary.printUrl(),
+                        receiptSummary.downloadUrl()
+                )
         );
+    }
+
+    private List<LabOrderResponse.ReportDeliveryAuditResponse> buildReportDeliveryHistory(UUID tenantId, UUID orderId) {
+        if (tenantId == null || orderId == null || auditEventQueryService == null) {
+            return List.of();
+        }
+        List<AuditEventRecord> events = auditEventQueryService.listForEntity(tenantId, "LAB_ORDER", orderId);
+        if (events == null || events.isEmpty()) {
+            return List.of();
+        }
+        return events.stream()
+                .filter(event -> isReportDeliveryAction(event.action()))
+                .map(event -> new LabOrderResponse.ReportDeliveryAuditResponse(
+                        event.action(),
+                        reportDeliveryLabel(event.action()),
+                        reportDeliveryChannel(event.action()),
+                        event.occurredAt(),
+                        event.actorAppUserId() == null ? null : event.actorAppUserId().toString(),
+                        event.summary()
+                ))
+                .toList();
+    }
+
+    private boolean isReportDeliveryAction(String action) {
+        if (!StringUtils.hasText(action)) {
+            return false;
+        }
+        String normalized = action.trim().toLowerCase(java.util.Locale.ROOT);
+        return normalized.startsWith("lab_order.report_")
+                || normalized.startsWith("lab_order.delivery_")
+                || normalized.equals("lab_order.report_published");
+    }
+
+    private String reportDeliveryLabel(String action) {
+        if (!StringUtils.hasText(action)) {
+            return "Report delivery action";
+        }
+        return switch (action.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "lab_order.report_published" -> "Published";
+            case "lab_order.report_portal_published" -> "Patient Portal";
+            case "lab_order.report_doctor_notified" -> "Doctor Notification";
+            case "lab_order.report_email_queued", "lab_order.report_email_sent" -> "Email sent";
+            case "lab_order.report_whatsapp_queued", "lab_order.report_whatsapp_sent" -> "WhatsApp sent";
+            case "lab_order.report_print_ready", "lab_order.report_printed" -> "Printed";
+            case "lab_order.report_downloaded" -> "PDF downloaded";
+            case "lab_order.report_viewed" -> "Portal viewed";
+            case "lab_order.report_shared_link" -> "Share link copied";
+            default -> action;
+        };
+    }
+
+    private String reportDeliveryChannel(String action) {
+        if (!StringUtils.hasText(action)) {
+            return null;
+        }
+        return switch (action.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "lab_order.report_portal_published", "lab_order.report_viewed" -> "PATIENT_PORTAL";
+            case "lab_order.report_doctor_notified" -> "DOCTOR_NOTIFICATION";
+            case "lab_order.report_email_queued", "lab_order.report_email_sent" -> "EMAIL";
+            case "lab_order.report_whatsapp_queued", "lab_order.report_whatsapp_sent" -> "WHATSAPP";
+            case "lab_order.report_print_ready", "lab_order.report_printed" -> "PRINT";
+            case "lab_order.report_downloaded" -> "DOWNLOAD";
+            case "lab_order.report_shared_link" -> "SHARE_LINK";
+            default -> null;
+        };
     }
 
     private LabSampleResponse toResponse(LabSampleRecord record) {
