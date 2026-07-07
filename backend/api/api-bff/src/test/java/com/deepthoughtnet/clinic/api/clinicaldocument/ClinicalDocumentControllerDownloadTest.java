@@ -11,6 +11,7 @@ import com.deepthoughtnet.clinic.api.security.DoctorAssignmentSecurityService;
 import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
+import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -51,6 +52,9 @@ class ClinicalDocumentControllerDownloadTest {
     private PrescriptionService prescriptionService;
 
     @Mock
+    private VaccinationService vaccinationService;
+
+    @Mock
     private DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
     private ClinicalDocumentController controller;
@@ -63,6 +67,7 @@ class ClinicalDocumentControllerDownloadTest {
                 patientService,
                 consultationService,
                 prescriptionService,
+                vaccinationService,
                 doctorAssignmentSecurityService
         );
         RequestContextHolder.set(new RequestContext(TenantId.of(UUID.randomUUID()), UUID.randomUUID(), null, null, null, "download-test"));

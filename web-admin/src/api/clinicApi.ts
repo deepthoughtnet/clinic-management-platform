@@ -1410,8 +1410,30 @@ export type VaccineMaster = {
   tenantId: string;
   vaccineName: string;
   description: string | null;
+  manufacturer: string | null;
+  brandName: string | null;
+  vaccineGroup: string | null;
+  doseNumber: number | null;
+  route: string | null;
+  administrationSite: string | null;
+  storageTemperature: string | null;
+  ndcBarcode: string | null;
+  scheduleType: string | null;
   ageGroup: string | null;
+  minAgeDays: number | null;
+  recommendedAgeDays: number | null;
+  maxAgeDays: number | null;
   recommendedGapDays: number | null;
+  gapDays: number | null;
+  boosterGapDays: number | null;
+  boosterRules: string | null;
+  recurring: boolean;
+  recurrenceDays: number | null;
+  recommendationPolicy: string | null;
+  catchUpPolicy: string | null;
+  catchUpMaxAgeDays: number | null;
+  applicableAgeGroup: string | null;
+  clinicalIndications: string | null;
   defaultPrice: number | null;
   active: boolean;
   createdAt: string;
@@ -1421,10 +1443,76 @@ export type VaccineMaster = {
 export type VaccineInput = {
   vaccineName: string;
   description: string | null;
+  manufacturer: string | null;
+  brandName: string | null;
+  vaccineGroup: string | null;
+  doseNumber: number | null;
+  route: string | null;
+  administrationSite: string | null;
+  storageTemperature: string | null;
+  ndcBarcode: string | null;
+  scheduleType: string | null;
   ageGroup: string | null;
+  minAgeDays: number | null;
+  recommendedAgeDays: number | null;
+  maxAgeDays: number | null;
+  gapDays: number | null;
   recommendedGapDays: number | null;
+  boosterGapDays: number | null;
+  boosterRules: string | null;
+  recurring: boolean;
+  recurrenceDays: number | null;
+  recommendationPolicy: string | null;
+  catchUpPolicy: string | null;
+  catchUpMaxAgeDays: number | null;
+  applicableAgeGroup: string | null;
+  clinicalIndications: string | null;
   defaultPrice: number | null;
   active: boolean;
+};
+
+export type VaccinationRecommendation = {
+  vaccineId: string;
+  vaccineName: string;
+  brandName: string | null;
+  manufacturer: string | null;
+  vaccineGroup: string | null;
+  doseNumber: number | null;
+  route: string | null;
+  administrationSite: string | null;
+  scheduleType: string | null;
+  dueDate: string | null;
+  status: "DUE" | "OVERDUE" | "UPCOMING" | "COMPLETED" | "NOT_APPLICABLE" | "OPTIONAL_RISK_BASED";
+  overdueDays: number | null;
+  recommendedAgeDays: number | null;
+  patientAgeDays: number | null;
+  reasonText: string;
+  completedDate: string | null;
+};
+
+export type VaccinationRecommendationSummary = {
+  patientId: string;
+  scheduleType: string;
+  recommendedToday: VaccinationRecommendation[];
+  overdue: VaccinationRecommendation[];
+  upcoming: VaccinationRecommendation[];
+  completed: VaccinationRecommendation[];
+  optionalRiskBased: VaccinationRecommendation[];
+  notApplicable: VaccinationRecommendation[];
+};
+
+export type VaccineCsvImportRowResult = {
+  rowNumber: number;
+  vaccineName: string;
+  status: string;
+  message: string;
+};
+
+export type VaccineCsvImportResponse = {
+  totalRows: number;
+  createdCount: number;
+  failedCount: number;
+  rows: VaccineCsvImportRowResult[];
 };
 
 export type LabTestCategory =
@@ -1739,6 +1827,10 @@ export type PatientVaccination = {
   patientId: string;
   patientNumber: string | null;
   patientName: string | null;
+  patientMobile?: string | null;
+  patientAgeYears?: number | null;
+  patientGender?: string | null;
+  patientAllergies?: string | null;
   vaccineId: string | null;
   vaccineName: string;
   doseNumber: number | null;
@@ -1748,6 +1840,26 @@ export type PatientVaccination = {
   notes: string | null;
   administeredByUserId: string | null;
   administeredByUserName: string | null;
+  createdByUserId?: string | null;
+  createdByUserName?: string | null;
+  updatedByUserId?: string | null;
+  updatedByUserName?: string | null;
+  updatedAt?: string;
+  billId?: string | null;
+  billNumber?: string | null;
+  billStatus?: string | null;
+  billLineId?: string | null;
+  inventoryTransactionId?: string | null;
+  inventoryStockBatchId?: string | null;
+  inventoryBatchNumber?: string | null;
+  inventoryBatchManufacturer?: string | null;
+  inventoryBatchExpiryDate?: string | null;
+  reminderNotificationId?: string | null;
+  reminderQueuedAt?: string | null;
+  reminderStatus?: string | null;
+  workflowWarnings?: string[] | null;
+  recordedByUserId?: string | null;
+  recordedByUserName?: string | null;
   createdAt: string;
 };
 
@@ -3220,8 +3332,35 @@ export async function getVaccines(token: string, tenantId: string) {
   return httpGet<VaccineMaster[]>("/api/vaccines", { token, tenantId });
 }
 
+export async function getVaccinationRecommendations(
+  token: string,
+  tenantId: string,
+  patientId: string,
+  scheduleType?: string | null,
+) {
+  const query = new URLSearchParams({ patientId });
+  if (scheduleType) {
+    query.set("scheduleType", scheduleType);
+  }
+  return httpGet<VaccinationRecommendationSummary>(`/api/vaccinations/recommendations?${query.toString()}`, { token, tenantId });
+}
+
 export async function createVaccine(token: string, tenantId: string, body: VaccineInput) {
   return httpPost<VaccineMaster>("/api/vaccines", body, { token, tenantId });
+}
+
+export async function getVaccineImportTemplate(token: string, tenantId: string) {
+  return httpGetText("/api/vaccines/import-template", { token, tenantId, accept: "text/csv, */*" });
+}
+
+export async function exportVaccinesCsv(token: string, tenantId: string) {
+  return httpGetText("/api/vaccines/export", { token, tenantId, accept: "text/csv, */*" });
+}
+
+export async function importVaccinesCsv(token: string, tenantId: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return httpPostForm<VaccineCsvImportResponse>("/api/vaccines/import-csv", formData, { token, tenantId });
 }
 
 export async function getLabCategories(token: string, tenantId: string) {
@@ -3543,6 +3682,27 @@ export async function getDueVaccinations(token: string, tenantId: string) {
 
 export async function getOverdueVaccinations(token: string, tenantId: string) {
   return httpGet<PatientVaccination[]>("/api/vaccinations/overdue", { token, tenantId });
+}
+
+export async function getVaccinationHistory(
+  token: string,
+  tenantId: string,
+  params: {
+    patientId?: string | null;
+    vaccineId?: string | null;
+    fromDate?: string | null;
+    toDate?: string | null;
+    dueStatus?: "ALL" | "DUE" | "OVERDUE" | "NOT_DUE" | null;
+  } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.patientId) query.set("patientId", params.patientId);
+  if (params.vaccineId) query.set("vaccineId", params.vaccineId);
+  if (params.fromDate) query.set("fromDate", params.fromDate);
+  if (params.toDate) query.set("toDate", params.toDate);
+  if (params.dueStatus) query.set("dueStatus", params.dueStatus);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return httpGet<PatientVaccination[]>(`/api/vaccinations/history${suffix}`, { token, tenantId });
 }
 
 export async function getNotifications(

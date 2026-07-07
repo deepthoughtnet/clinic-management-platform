@@ -540,14 +540,81 @@ class CarePilotReminderTriggerServiceTest {
         verify(executionService, never()).create(eq(tenantId), any());
     }
 
+    private PatientVaccinationRecord vaccinationRecord(
+            UUID id,
+            UUID tenantId,
+            UUID patientId,
+            String patientNumber,
+            String patientName,
+            String patientMobile,
+            Integer patientAgeYears,
+            String patientGender,
+            String patientAllergies,
+            UUID vaccineId,
+            String vaccineName,
+            Integer doseNumber,
+            LocalDate givenDate,
+            LocalDate nextDueDate,
+            String batchNumber,
+            String notes,
+            UUID administeredByUserId,
+            String administeredByUserName,
+            UUID recordedByUserId,
+            String recordedByUserName,
+            OffsetDateTime createdAt
+    ) {
+        return new PatientVaccinationRecord(
+                id,
+                tenantId,
+                patientId,
+                patientNumber,
+                patientName,
+                patientMobile,
+                patientAgeYears,
+                patientGender,
+                patientAllergies,
+                vaccineId,
+                vaccineName,
+                doseNumber,
+                givenDate,
+                nextDueDate,
+                batchNumber,
+                notes,
+                administeredByUserId,
+                administeredByUserName,
+                recordedByUserId,
+                recordedByUserName,
+                recordedByUserId,
+                recordedByUserName,
+                createdAt,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                List.of(),
+                recordedByUserId,
+                recordedByUserName,
+                createdAt
+        );
+    }
+
     @Test
     void vaccinationReminderCreatesExecutionForUpcomingDueRecord() {
         when(appointmentService.search(eq(tenantId), any())).thenReturn(List.of());
         when(prescriptionService.list(tenantId)).thenReturn(List.of());
         when(billingService.list(eq(tenantId), any())).thenReturn(List.of());
-        when(vaccinationService.listDue(tenantId)).thenReturn(List.of(new PatientVaccinationRecord(
-                UUID.randomUUID(), tenantId, UUID.randomUUID(), "PAT-1", "John Doe", UUID.randomUUID(), "Influenza",
-                1, LocalDate.now().minusDays(20), LocalDate.now().plusDays(1), null, null, null, null, OffsetDateTime.now()
+        when(vaccinationService.listDue(tenantId)).thenReturn(List.of(vaccinationRecord(
+                UUID.randomUUID(), tenantId, UUID.randomUUID(), "PAT-1", "John Doe", null, null, null, null,
+                UUID.randomUUID(), "Influenza", 1, LocalDate.now().minusDays(20), LocalDate.now().plusDays(1), null, null,
+                UUID.randomUUID(), "Dr. Admin", UUID.randomUUID(), "Dr. Admin", OffsetDateTime.now()
         )));
         when(vaccinationService.listOverdue(tenantId)).thenReturn(List.of());
 
@@ -566,9 +633,10 @@ class CarePilotReminderTriggerServiceTest {
         when(prescriptionService.list(tenantId)).thenReturn(List.of());
         when(billingService.list(eq(tenantId), any())).thenReturn(List.of());
         when(vaccinationService.listDue(tenantId)).thenReturn(List.of());
-        when(vaccinationService.listOverdue(tenantId)).thenReturn(List.of(new PatientVaccinationRecord(
-                UUID.randomUUID(), tenantId, UUID.randomUUID(), "PAT-1", "John Doe", UUID.randomUUID(), "Hepatitis",
-                2, LocalDate.now().minusDays(90), LocalDate.now().minusDays(2), null, null, null, null, OffsetDateTime.now()
+        when(vaccinationService.listOverdue(tenantId)).thenReturn(List.of(vaccinationRecord(
+                UUID.randomUUID(), tenantId, UUID.randomUUID(), "PAT-1", "John Doe", null, null, null, null,
+                UUID.randomUUID(), "Hepatitis", 2, LocalDate.now().minusDays(90), LocalDate.now().minusDays(2), null, null,
+                UUID.randomUUID(), "Dr. Admin", UUID.randomUUID(), "Dr. Admin", OffsetDateTime.now()
         )));
 
         service.queueDueReminders();
@@ -584,9 +652,10 @@ class CarePilotReminderTriggerServiceTest {
         when(appointmentService.search(eq(tenantId), any())).thenReturn(List.of());
         when(prescriptionService.list(tenantId)).thenReturn(List.of());
         when(billingService.list(eq(tenantId), any())).thenReturn(List.of());
-        when(vaccinationService.listDue(tenantId)).thenReturn(List.of(new PatientVaccinationRecord(
-                UUID.randomUUID(), tenantId, UUID.randomUUID(), "PAT-1", "John Doe", UUID.randomUUID(), "Tetanus",
-                1, LocalDate.now().minusDays(30), LocalDate.now(), null, null, null, null, OffsetDateTime.now()
+        when(vaccinationService.listDue(tenantId)).thenReturn(List.of(vaccinationRecord(
+                UUID.randomUUID(), tenantId, UUID.randomUUID(), "PAT-1", "John Doe", null, null, null, null,
+                UUID.randomUUID(), "Tetanus", 1, LocalDate.now().minusDays(30), LocalDate.now(), null, null,
+                UUID.randomUUID(), "Dr. Admin", UUID.randomUUID(), "Dr. Admin", OffsetDateTime.now()
         )));
         when(vaccinationService.listOverdue(tenantId)).thenReturn(List.of());
 

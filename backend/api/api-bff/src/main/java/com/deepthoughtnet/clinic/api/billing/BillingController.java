@@ -60,10 +60,12 @@ import jakarta.validation.Valid;
 @RequestMapping("/api/bills")
 public class BillingController {
     private final BillingService billingService;
+    private final BillingAccessChecker billingAccessChecker;
     private final NotificationActionService notificationActionService;
 
-    public BillingController(BillingService billingService, NotificationActionService notificationActionService) {
+    public BillingController(BillingService billingService, BillingAccessChecker billingAccessChecker, NotificationActionService notificationActionService) {
         this.billingService = billingService;
+        this.billingAccessChecker = billingAccessChecker;
         this.notificationActionService = notificationActionService;
     }
 
@@ -111,7 +113,7 @@ public class BillingController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('billing.create') or @permissionChecker.hasPermission('payment.collect')")
+    @PreAuthorize("@billingAccessChecker.canAccessBill(#id)")
     public BillResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toResponse(billingService.findById(tenantId, id).orElseThrow(() -> new IllegalArgumentException("Bill not found")));
@@ -180,7 +182,7 @@ public class BillingController {
     }
 
     @GetMapping("/{billId}/payments")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect')")
+    @PreAuthorize("@billingAccessChecker.canAccessBill(#billId)")
     public List<PaymentResponse> listPayments(@PathVariable UUID billId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return billingService.listPayments(tenantId, billId).stream().map(this::toPaymentResponse).toList();
@@ -220,7 +222,7 @@ public class BillingController {
     }
 
     @GetMapping("/{billId}/receipts")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.receipt') or @permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect')")
+    @PreAuthorize("@billingAccessChecker.canAccessBill(#billId)")
     public List<ReceiptResponse> listReceipts(@PathVariable UUID billId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return billingService.listReceipts(tenantId, billId).stream().map(this::toReceiptResponse).toList();

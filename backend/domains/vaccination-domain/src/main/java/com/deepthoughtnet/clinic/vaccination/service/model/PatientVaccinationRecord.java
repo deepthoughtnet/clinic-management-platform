@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.vaccination.service.model;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 public record PatientVaccinationRecord(
@@ -10,6 +11,10 @@ public record PatientVaccinationRecord(
         UUID patientId,
         String patientNumber,
         String patientName,
+        String patientMobile,
+        Integer patientAgeYears,
+        String patientGender,
+        String patientAllergies,
         UUID vaccineId,
         String vaccineName,
         Integer doseNumber,
@@ -19,6 +24,26 @@ public record PatientVaccinationRecord(
         String notes,
         UUID administeredByUserId,
         String administeredByUserName,
+        UUID createdByUserId,
+        String createdByUserName,
+        UUID updatedByUserId,
+        String updatedByUserName,
+        OffsetDateTime updatedAt,
+        UUID billId,
+        String billNumber,
+        String billStatus,
+        UUID billLineId,
+        UUID inventoryTransactionId,
+        UUID inventoryStockBatchId,
+        String inventoryBatchNumber,
+        String inventoryBatchManufacturer,
+        LocalDate inventoryBatchExpiryDate,
+        UUID reminderNotificationId,
+        OffsetDateTime reminderQueuedAt,
+        String reminderStatus,
+        List<String> workflowWarnings,
+        UUID recordedByUserId,
+        String recordedByUserName,
         OffsetDateTime createdAt
 ) {
 }

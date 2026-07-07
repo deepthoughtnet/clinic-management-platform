@@ -22,6 +22,7 @@ import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionMedicine
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionRecord;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionStatus;
 import com.deepthoughtnet.clinic.prescription.service.model.PrescriptionTestRecord;
+import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
 import com.deepthoughtnet.clinic.platform.core.context.RequestContext;
 import com.deepthoughtnet.clinic.platform.core.context.TenantId;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
@@ -62,6 +63,9 @@ class ClinicalDocumentControllerTimelineTest {
     private PrescriptionService prescriptionService;
 
     @Mock
+    private VaccinationService vaccinationService;
+
+    @Mock
     private DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
     private ClinicalDocumentController controller;
@@ -74,6 +78,7 @@ class ClinicalDocumentControllerTimelineTest {
                 patientService,
                 consultationService,
                 prescriptionService,
+                vaccinationService,
                 doctorAssignmentSecurityService
         );
         RequestContextHolder.set(new RequestContext(TenantId.of(TENANT_ID), ACTOR_ID, null, null, null, "timeline-test"));
@@ -99,6 +104,7 @@ class ClinicalDocumentControllerTimelineTest {
                 prescription(OffsetDateTime.parse("2026-05-08T11:15:00Z"), 2, PrescriptionStatus.FINALIZED, "FOLLOW_UP", "Same-day correction", LocalDate.of(2026, 5, 16)),
                 prescription(OffsetDateTime.parse("2026-05-07T07:45:00Z"), 1, PrescriptionStatus.SUPERSEDED, null, null, LocalDate.of(2026, 5, 10))
         ));
+        when(vaccinationService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of());
 
         List<com.deepthoughtnet.clinic.api.clinicaldocument.dto.PatientTimelineItemResponse> timeline = controller.patientTimeline(PATIENT_ID);
 
@@ -131,6 +137,7 @@ class ClinicalDocumentControllerTimelineTest {
         ));
         when(consultationService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of());
         when(prescriptionService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of());
+        when(vaccinationService.listByPatient(TENANT_ID, PATIENT_ID)).thenReturn(List.of());
 
         List<com.deepthoughtnet.clinic.api.clinicaldocument.dto.PatientTimelineItemResponse> timeline = controller.patientTimeline(PATIENT_ID);
 

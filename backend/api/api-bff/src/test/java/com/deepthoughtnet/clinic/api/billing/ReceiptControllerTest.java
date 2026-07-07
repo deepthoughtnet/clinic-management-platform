@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
+import com.deepthoughtnet.clinic.api.billing.BillingAccessChecker;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
 import com.deepthoughtnet.clinic.billing.service.model.ReceiptRecord;
@@ -37,8 +38,9 @@ class ReceiptControllerTest {
         UUID paymentId = UUID.randomUUID();
         UUID receivedBy = UUID.randomUUID();
         BillingService billingService = mock(BillingService.class);
+        BillingAccessChecker billingAccessChecker = mock(BillingAccessChecker.class);
         NotificationActionService notificationActionService = mock(NotificationActionService.class);
-        ReceiptController controller = new ReceiptController(billingService, notificationActionService);
+        ReceiptController controller = new ReceiptController(billingService, billingAccessChecker, notificationActionService);
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actor, "sub", Set.of("BILLING_USER"), "BILLING_USER", "cid"));
 
         when(billingService.findReceipt(tenantId, receiptId)).thenReturn(Optional.of(new ReceiptRecord(

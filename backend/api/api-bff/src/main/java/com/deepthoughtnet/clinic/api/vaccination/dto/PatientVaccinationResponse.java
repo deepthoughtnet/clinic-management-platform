@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.vaccination.dto;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.List;
 
 public record PatientVaccinationResponse(
         String id,
@@ -9,6 +10,10 @@ public record PatientVaccinationResponse(
         String patientId,
         String patientNumber,
         String patientName,
+        String patientMobile,
+        Integer patientAgeYears,
+        String patientGender,
+        String patientAllergies,
         String vaccineId,
         String vaccineName,
         Integer doseNumber,
@@ -18,6 +23,26 @@ public record PatientVaccinationResponse(
         String notes,
         String administeredByUserId,
         String administeredByUserName,
+        String createdByUserId,
+        String createdByUserName,
+        String updatedByUserId,
+        String updatedByUserName,
+        OffsetDateTime updatedAt,
+        String billId,
+        String billNumber,
+        String billStatus,
+        String billLineId,
+        String inventoryTransactionId,
+        String inventoryStockBatchId,
+        String inventoryBatchNumber,
+        String inventoryBatchManufacturer,
+        LocalDate inventoryBatchExpiryDate,
+        String reminderNotificationId,
+        OffsetDateTime reminderQueuedAt,
+        String reminderStatus,
+        List<String> workflowWarnings,
+        String recordedByUserId,
+        String recordedByUserName,
         OffsetDateTime createdAt
 ) {
 }

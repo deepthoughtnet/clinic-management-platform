@@ -15,6 +15,8 @@ import com.deepthoughtnet.clinic.consultation.service.ConsultationService;
 import com.deepthoughtnet.clinic.patient.service.PatientService;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.deepthoughtnet.clinic.prescription.service.PrescriptionService;
+import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
+import com.deepthoughtnet.clinic.vaccination.service.model.PatientVaccinationRecord;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -54,6 +56,7 @@ public class ClinicalDocumentController {
     private final PatientService patientService;
     private final ConsultationService consultationService;
     private final PrescriptionService prescriptionService;
+    private final VaccinationService vaccinationService;
     private final DoctorAssignmentSecurityService doctorAssignmentSecurityService;
 
     public ClinicalDocumentController(
@@ -62,6 +65,7 @@ public class ClinicalDocumentController {
             PatientService patientService,
             ConsultationService consultationService,
             PrescriptionService prescriptionService,
+            VaccinationService vaccinationService,
             DoctorAssignmentSecurityService doctorAssignmentSecurityService
     ) {
         this.documentService = documentService;
@@ -69,6 +73,7 @@ public class ClinicalDocumentController {
         this.patientService = patientService;
         this.consultationService = consultationService;
         this.prescriptionService = prescriptionService;
+        this.vaccinationService = vaccinationService;
         this.doctorAssignmentSecurityService = doctorAssignmentSecurityService;
     }
 
@@ -247,6 +252,18 @@ public class ClinicalDocumentController {
         )));
         prescriptionService.listByPatient(tenantId, patientId).forEach(row -> items.add(new PatientTimelineItemResponse(
                 row.id().toString(), "PRESCRIPTION", prescriptionTimelineTitle(row), prescriptionTimelineSubtitle(row), row.createdAt().toString(), prescriptionTimelineStatus(row), "PRESCRIPTION", null, row.consultationId().toString(), row.id().toString()
+        )));
+        vaccinationService.listByPatient(tenantId, patientId).forEach(row -> items.add(new PatientTimelineItemResponse(
+                row.id().toString(),
+                "VACCINATION",
+                vaccinationTimelineTitle(row),
+                vaccinationTimelineSubtitle(row),
+                row.createdAt().toString(),
+                "RECORDED",
+                "VACCINATION",
+                null,
+                null,
+                null
         )));
         return items.stream().sorted(Comparator.comparing(PatientTimelineItemResponse::occurredAt).reversed()).limit(100).toList();
     }
@@ -479,6 +496,28 @@ public class ClinicalDocumentController {
             subtitle.append(" | Follow-up ").append(record.followUpDate());
         }
         return subtitle.toString();
+    }
+
+    private String vaccinationTimelineTitle(PatientVaccinationRecord record) {
+        String vaccine = record.vaccineName() == null || record.vaccineName().isBlank() ? "Vaccination" : record.vaccineName();
+        return record.doseNumber() == null ? vaccine : vaccine + " dose " + record.doseNumber();
+    }
+
+    private String vaccinationTimelineSubtitle(PatientVaccinationRecord record) {
+        List<String> parts = new ArrayList<>();
+        if (record.givenDate() != null) {
+            parts.add("Given " + record.givenDate());
+        }
+        if (record.nextDueDate() != null) {
+            parts.add("Next due " + record.nextDueDate());
+        }
+        if (record.batchNumber() != null && !record.batchNumber().isBlank()) {
+            parts.add("Batch " + record.batchNumber());
+        }
+        if (record.inventoryBatchManufacturer() != null && !record.inventoryBatchManufacturer().isBlank()) {
+            parts.add(record.inventoryBatchManufacturer());
+        }
+        return parts.isEmpty() ? "Vaccination recorded" : String.join(" • ", parts);
     }
 
     private ClinicalDocumentResponse toResponse(ClinicalDocumentRecord record) {

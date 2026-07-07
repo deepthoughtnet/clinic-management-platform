@@ -23,15 +23,17 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/receipts")
 public class ReceiptController {
     private final BillingService billingService;
+    private final BillingAccessChecker billingAccessChecker;
     private final NotificationActionService notificationActionService;
 
-    public ReceiptController(BillingService billingService, NotificationActionService notificationActionService) {
+    public ReceiptController(BillingService billingService, BillingAccessChecker billingAccessChecker, NotificationActionService notificationActionService) {
         this.billingService = billingService;
+        this.billingAccessChecker = billingAccessChecker;
         this.notificationActionService = notificationActionService;
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("@permissionChecker.hasPermission('billing.receipt') or @permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect')")
+    @PreAuthorize("@billingAccessChecker.canAccessReceipt(#id)")
     public ReceiptResponse get(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         return toResponse(billingService.findReceipt(tenantId, id)
@@ -39,7 +41,7 @@ public class ReceiptController {
     }
 
     @GetMapping(value = "/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
-    @PreAuthorize("@permissionChecker.hasPermission('billing.receipt') or @permissionChecker.hasPermission('billing.read') or @permissionChecker.hasPermission('payment.collect')")
+    @PreAuthorize("@billingAccessChecker.canAccessReceipt(#id)")
     public ResponseEntity<byte[]> downloadPdf(@PathVariable UUID id) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();

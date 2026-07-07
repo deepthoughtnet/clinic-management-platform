@@ -13,9 +13,49 @@ import { dateString, optionalString, timeString } from "../validators/common.js"
 export const vaccinationMasterSchema = z.object({
   vaccineName: requiredText(60, "Vaccine name is required and must contain a letter or number."),
   description: optionalText(250, "Description must be 250 characters or fewer."),
+  manufacturer: optionalText(250, "Manufacturer must be 250 characters or fewer."),
+  brandName: optionalText(250, "Brand name must be 250 characters or fewer."),
+  vaccineGroup: optionalText(128, "Vaccine group must be 128 characters or fewer."),
+  doseNumber: optionalNonNegativeInteger(999, "Dose number must be 0 or greater."),
+  route: z.preprocess(
+    (value) => (value == null || value === "" ? undefined : value),
+    z.enum(["IM", "SC", "ORAL", "NASAL", "ID"]).optional(),
+  ),
+  administrationSite: optionalText(128, "Administration site must be 128 characters or fewer."),
+  storageTemperature: optionalText(128, "Storage temperature must be 128 characters or fewer."),
+  ndcBarcode: optionalText(128, "NDC barcode must be 128 characters or fewer."),
+  scheduleType: z.preprocess(
+    (value) => (value == null || value === "" ? undefined : value),
+    z.enum(["UIP", "IAP", "CLINIC_CUSTOM", "TRAVEL", "ADULT"]).optional(),
+  ),
   ageGroup: optionalText(60, "Age group must be 60 characters or fewer."),
+  minAgeDays: optionalNonNegativeInteger(3650, "Minimum age days must be 0 or greater."),
+  recommendedAgeDays: optionalNonNegativeInteger(3650, "Recommended age days must be 0 or greater."),
+  maxAgeDays: optionalNonNegativeInteger(3650, "Maximum age days must be 0 or greater."),
+  gapDays: optionalNonNegativeInteger(3650, "Gap days must be 0 or greater."),
   recommendedGapDays: optionalNonNegativeInteger(3650, "Gap days must be 0 or greater."),
-  defaultPrice: money(999999, "Default price must be zero or greater and use at most 2 decimals."),
+  boosterGapDays: optionalNonNegativeInteger(3650, "Booster gap days must be 0 or greater."),
+  boosterRules: optionalText(500, "Booster rules must be 500 characters or fewer."),
+  recurring: z.boolean(),
+  recurrenceDays: optionalNonNegativeInteger(3650, "Recurrence days must be 0 or greater."),
+  recommendationPolicy: z.preprocess(
+    (value) => (value == null || value === "" ? undefined : value),
+    z.enum(["STANDARD_CHILDHOOD", "CHILDHOOD_CATCHUP", "ADULT_ROUTINE", "ADULT_RISK_BASED", "PREGNANCY", "TRAVEL", "OCCUPATIONAL", "RECURRING", "CLINIC_CUSTOM"]).optional(),
+  ),
+  catchUpPolicy: z.preprocess(
+    (value) => (value == null || value === "" ? undefined : value),
+    z.enum(["NONE", "ALLOWED_UNTIL_AGE", "LIFETIME", "CLINICIAN_DECISION"]).optional(),
+  ),
+  catchUpMaxAgeDays: optionalNonNegativeInteger(3650, "Catch-up max age days must be 0 or greater."),
+  applicableAgeGroup: z.preprocess(
+    (value) => (value == null || value === "" ? undefined : value),
+    z.enum(["NEWBORN", "INFANT", "TODDLER", "CHILD", "ADOLESCENT", "ADULT", "OLDER_ADULT", "ALL"]).optional(),
+  ),
+  clinicalIndications: optionalText(500, "Clinical indications must be 500 characters or fewer."),
+  defaultPrice: z.preprocess(
+    (value) => (value == null || value === "" ? undefined : value),
+    money(999999, "Default price must be zero or greater and use at most 2 decimals.").optional(),
+  ),
   active: z.boolean(),
 });
 

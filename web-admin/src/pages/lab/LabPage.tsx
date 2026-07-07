@@ -56,10 +56,6 @@ import CommentSuggestions from "../../shared/components/comment-suggestions/Comm
 import {
   getLabCategoryConfig,
   getClinicProfile,
-  getBill,
-  getPatient,
-  getAppointment,
-  getConsultation,
   collectLabOrderSamples,
   collectLabOrderPayment,
   createLabTest,
@@ -103,8 +99,8 @@ import {
   type LabTestParameterInput,
   type Appointment,
   type Bill,
+  type BillLine,
   type ClinicProfile,
-  type Consultation,
   type PaymentMode,
   type Payment,
   type Receipt,
@@ -394,6 +390,51 @@ function buildReceiptPaymentSummary(row: LabOrder) {
     paymentMode: row.paymentMode || null,
     referenceNumber: row.referenceNumber || null,
     receivedBy: staffDisplayName(null, row.receivedBy),
+  };
+}
+
+function buildLabReceiptBill(row: LabOrder): Bill {
+  const lines: BillLine[] = row.items.map((item, index) => ({
+    id: item.id,
+    itemType: "TEST",
+    itemName: item.testName,
+    quantity: 1,
+    unitPrice: item.price || 0,
+    totalPrice: item.price || 0,
+    referenceId: item.labTestId,
+    sortOrder: item.sortOrder ?? index + 1,
+  }));
+  const subtotalAmount = lines.reduce((sum, line) => sum + line.totalPrice, 0);
+  const totalAmount = row.billTotalAmount ?? subtotalAmount;
+  const dueAmount = row.billDueAmount ?? Math.max(0, totalAmount - (row.paymentAmount ?? 0));
+  const paidAmount = row.paymentAmount ?? Math.max(0, totalAmount - dueAmount);
+  return {
+    id: row.billId || row.id,
+    tenantId: row.tenantId,
+    billNumber: row.billNumber || row.orderNumber,
+    patientId: row.patientId,
+    patientNumber: row.patientNumber,
+    patientName: row.patientName,
+    consultationId: row.consultationId,
+    appointmentId: null,
+    billDate: row.paymentDate || row.paymentCollectedAt?.slice(0, 10) || row.orderedAt.slice(0, 10),
+    status: (row.billStatus || (row.billDueAmount != null && row.billDueAmount > 0 ? "PARTIALLY_PAID" : "PAID")) as Bill["status"],
+    subtotalAmount,
+    discountType: "NONE",
+    discountValue: 0,
+    discountAmount: 0,
+    discountReason: null,
+    taxAmount: 0,
+    totalAmount,
+    paidAmount,
+    refundedAmount: 0,
+    netPaidAmount: paidAmount,
+    invoiceEmailedAt: null,
+    dueAmount,
+    notes: row.notes,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    lines,
   };
 }
 
@@ -728,6 +769,7 @@ export default function LabPage() {
   const [paymentNotes, setPaymentNotes] = React.useState("");
   const [receiptPreview, setReceiptPreview] = React.useState<{ order: LabOrder; receipt: Receipt; payment: Payment } | null>(null);
   const [receiptActionLoading, setReceiptActionLoading] = React.useState(false);
+  const [receiptActionError, setReceiptActionError] = React.useState<string | null>(null);
   const [receiptPrintLoading, setReceiptPrintLoading] = React.useState(false);
   const [receiptPrintOpen, setReceiptPrintOpen] = React.useState(false);
   const [receiptPrintAutoPrint, setReceiptPrintAutoPrint] = React.useState(false);
@@ -787,6 +829,14 @@ export default function LabPage() {
   const canEnterResults = auth.hasPermission("lab.order.result_entry");
   const canGenerateReport = auth.hasPermission("lab.order.generate_report");
   const canSendReceipt = auth.hasPermission("notification.send") || auth.hasPermission("billing.read") || auth.hasPermission("payment.collect");
+  const canAccessLabReceipts = canUseLabReception
+    || canCollectPayment
+    || auth.hasPermission("billing.read")
+    || auth.hasPermission("billing.receipt")
+    || auth.rolesUpper.includes("CLINIC_ADMIN")
+    || auth.rolesUpper.includes("BILLING_USER")
+    || auth.rolesUpper.includes("LAB_APPROVER")
+    || (auth.rolesUpper.includes("PLATFORM_ADMIN") && Boolean(auth.tenantId));
   const canReviewReport = auth.hasPermission("lab.order.review");
   const canCreateOrders = canUseLabReception || auth.hasPermission("lab.order.create");
   const canQuickRegisterPatient = canCreateOrders && auth.hasPermission("patient.create") && auth.hasPermission("patient.read");
@@ -1263,25 +1313,16 @@ export default function LabPage() {
   const loadReceiptPrintDataFromOrder = async (order: LabOrder, autoPrint = false) => {
     if (!auth.accessToken || !auth.tenantId) return;
     if (!order.billId) {
-      setError("Payment completed, but the lab bill is not available yet.");
+      setReceiptActionError("Payment completed, but the lab bill is not available yet.");
       return;
     }
     setReceiptPrintLoading(true);
     setReceiptPrintAutoPrint(autoPrint);
     setReceiptPrintOpen(true);
     setReceiptPrintData(null);
-    setError(null);
+    setReceiptActionError(null);
     try {
-      const bill: Bill = await getBill(auth.accessToken, auth.tenantId, order.billId);
-      const [patientDetail, appointment, consultation] = await Promise.all([
-        getPatient(auth.accessToken, auth.tenantId, bill.patientId).catch(() => null),
-        bill.appointmentId ? getAppointment(auth.accessToken, auth.tenantId, bill.appointmentId).catch(() => null) : Promise.resolve(null),
-        bill.consultationId ? getConsultation(auth.accessToken, auth.tenantId, bill.consultationId).catch(() => null) : Promise.resolve(null),
-      ]) as [
-        { patient: Patient } | null,
-        Appointment | null,
-        Consultation | null,
-      ];
+      const bill = buildLabReceiptBill(order);
       const receiptSummary = buildReceiptPaymentSummary(order);
       const paymentMode = receiptSummary?.paymentMode || order.paymentMode || receiptPreview?.payment.paymentMode || "CASH";
       const receiptId = receiptSummary?.receiptId || order.receiptId || receiptPreview?.receipt.id || "";
@@ -1321,13 +1362,13 @@ export default function LabPage() {
           receiptDate,
           createdAt: order.updatedAt,
         },
-        patient: patientDetail ? patientDetail.patient : null,
-        appointment: appointment ?? null,
-        consultation: consultation ?? null,
+        patient: null,
+        appointment: null,
+        consultation: null,
       });
     } catch (err) {
       setReceiptPrintOpen(false);
-      setError(err instanceof Error ? err.message : "Failed to load receipt preview");
+      setReceiptActionError(err instanceof Error ? err.message : "Failed to load receipt preview");
     } finally {
       setReceiptPrintLoading(false);
     }
@@ -1341,6 +1382,7 @@ export default function LabPage() {
   const openReceiptPdf = async () => {
     if (!auth.accessToken || !auth.tenantId || !receiptPreview) return;
     setReceiptActionLoading(true);
+    setReceiptActionError(null);
     try {
       const { blob, filename } = await getReceiptPdf(auth.accessToken, auth.tenantId, receiptPreview.receipt.id);
       if (!blob.size) {
@@ -1355,7 +1397,7 @@ export default function LabPage() {
       anchor.remove();
       window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to download receipt PDF");
+      setReceiptActionError(err instanceof Error ? err.message : "Failed to download receipt PDF");
     } finally {
       setReceiptActionLoading(false);
     }
@@ -1370,6 +1412,7 @@ export default function LabPage() {
     const receiptId = receiptSummary?.receiptId || order.receiptId;
     if (!auth.accessToken || !auth.tenantId || !receiptId) return;
     setReceiptActionLoading(true);
+    setReceiptActionError(null);
     try {
       const { blob, filename } = await getReceiptPdf(auth.accessToken, auth.tenantId, receiptId);
       if (!blob.size) {
@@ -1384,7 +1427,7 @@ export default function LabPage() {
       anchor.remove();
       window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to download receipt PDF");
+      setReceiptActionError(err instanceof Error ? err.message : "Failed to download receipt PDF");
     } finally {
       setReceiptActionLoading(false);
     }
@@ -2130,6 +2173,7 @@ export default function LabPage() {
               canEnterResults={canEnterResults}
               canGenerateReport={canGenerateReport}
               canReviewReport={canReviewReport}
+              canAccessLabReceipts={canAccessLabReceipts}
               onViewReceipt={(row) => void openOrderReceiptPreview(row)}
               onPrintReceipt={(row) => void openOrderReceiptPreview(row, true)}
               onDownloadReceipt={(row) => void downloadOrderReceipt(row)}
@@ -2168,6 +2212,7 @@ export default function LabPage() {
               canEnterResults={canEnterResults}
               canGenerateReport={canGenerateReport}
               canReviewReport={canReviewReport}
+              canAccessLabReceipts={canAccessLabReceipts}
               onViewReceipt={(row) => void openOrderReceiptPreview(row)}
               onPrintReceipt={(row) => void openOrderReceiptPreview(row, true)}
               onDownloadReceipt={(row) => void downloadOrderReceipt(row)}
@@ -2206,6 +2251,7 @@ export default function LabPage() {
               canEnterResults={canEnterResults}
               canGenerateReport={canGenerateReport}
               canReviewReport={canReviewReport}
+              canAccessLabReceipts={canAccessLabReceipts}
               onViewReceipt={(row) => void openOrderReceiptPreview(row)}
               onPrintReceipt={(row) => void openOrderReceiptPreview(row, true)}
               onDownloadReceipt={(row) => void downloadOrderReceipt(row)}
@@ -2328,7 +2374,7 @@ export default function LabPage() {
                               <Typography variant="caption" color="text.secondary">{row.billDueAmount != null ? `Due ${formatMoney(row.billDueAmount)}` : row.billStatus || "-"}</Typography>
                               {(() => {
                                 const receiptSummary = buildReceiptPaymentSummary(row);
-                                return receiptSummary ? (
+                                return canAccessLabReceipts && receiptSummary ? (
                                 <Stack spacing={0.25} sx={{ pt: 0.5 }}>
                                   <Typography variant="caption" color="text.secondary">
                                     Receipt: {receiptSummary.receiptNumber || "-"}
@@ -2576,6 +2622,7 @@ export default function LabPage() {
           setReceiptPrintLoading(false);
           setReceiptPrintAutoPrint(false);
           setReceiptPrintData(null);
+          setReceiptActionError(null);
         }}
         fullWidth
         maxWidth="sm"
@@ -2584,6 +2631,7 @@ export default function LabPage() {
         <DialogContent dividers>
           {receiptPreview ? (
             <Stack spacing={2}>
+              {receiptActionError ? <Alert severity="error">{receiptActionError}</Alert> : null}
               <Alert severity="success">
                 Payment successful for {receiptPreview.order.orderNumber}. Receipt is ready.
               </Alert>
@@ -2637,29 +2685,33 @@ export default function LabPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setReceiptPreview(null)}>Proceed to Sample Collection</Button>
-          <Button
-            variant="outlined"
-            onClick={() => void loadReceiptPrintData(false)}
-            disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading}
-          >
-            View Receipt
-          </Button>
-          <Button
-            variant="outlined"
-            onClick={() => void openReceiptPdf()}
-            disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading}
-            startIcon={<DownloadRoundedIcon />}
-          >
-            Download PDF
-          </Button>
-          <Button
-            variant="contained"
-            onClick={() => void loadReceiptPrintData(true)}
-            disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading}
-            startIcon={<PaidRoundedIcon />}
-          >
-            Print Receipt
-          </Button>
+          {canAccessLabReceipts ? (
+            <>
+              <Button
+                variant="outlined"
+                onClick={() => void loadReceiptPrintData(false)}
+                disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading}
+              >
+                View Receipt
+              </Button>
+              <Button
+                variant="outlined"
+                onClick={() => void openReceiptPdf()}
+                disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading}
+                startIcon={<DownloadRoundedIcon />}
+              >
+                Download PDF
+              </Button>
+              <Button
+                variant="contained"
+                onClick={() => void loadReceiptPrintData(true)}
+                disabled={!receiptPreview || receiptActionLoading || receiptPrintLoading}
+                startIcon={<PaidRoundedIcon />}
+              >
+                Print Receipt
+              </Button>
+            </>
+          ) : null}
           <Button
             variant="outlined"
             onClick={() => void sendReceiptAction("email")}
@@ -3342,6 +3394,7 @@ function OrderQueue(props: {
   canEnterResults: boolean;
   canGenerateReport: boolean;
   canReviewReport: boolean;
+  canAccessLabReceipts: boolean;
   onViewReceipt: (row: LabOrder) => void;
   onPrintReceipt: (row: LabOrder) => void;
   onDownloadReceipt: (row: LabOrder) => void;
@@ -3359,7 +3412,7 @@ function OrderQueue(props: {
   onWhatsappReport: (row: LabOrder) => void;
   onShareReportLink: (row: LabOrder) => void;
 }) {
-  const { rows, emptySubtitle, actionDisabled, canCollectPayment, canCollectSample, canManageSamples, canEnterResults, canGenerateReport, canReviewReport, onViewReceipt, onPrintReceipt, onDownloadReceipt, onCollectPayment, onCollectSample, onReceiveSample, onRejectSample, onEnterResults, onReview, onPublishReport, onViewReport, onPrintReport, onDownloadReport, onEmailReport, onWhatsappReport, onShareReportLink } = props;
+  const { rows, emptySubtitle, actionDisabled, canCollectPayment, canCollectSample, canManageSamples, canEnterResults, canGenerateReport, canReviewReport, canAccessLabReceipts, onViewReceipt, onPrintReceipt, onDownloadReceipt, onCollectPayment, onCollectSample, onReceiveSample, onRejectSample, onEnterResults, onReview, onPublishReport, onViewReport, onPrintReport, onDownloadReport, onEmailReport, onWhatsappReport, onShareReportLink } = props;
 
   if (!rows.length) {
     return <CompactEmptyState title="No lab orders found" subtitle={emptySubtitle} />;
@@ -3440,10 +3493,10 @@ function OrderQueue(props: {
                 <Stack spacing={0.25}>
                   <Typography variant="body2" sx={{ fontWeight: 700 }}>{row.billNumber || "-"}</Typography>
                   <Typography variant="caption" color="text.secondary">{row.billDueAmount != null ? `Due ${formatMoney(row.billDueAmount)}` : row.billStatus || "-"}</Typography>
-                  {(() => {
-                    const receiptSummary = buildReceiptPaymentSummary(row);
-                    return receiptSummary ? (
-                    <Stack spacing={0.25} sx={{ pt: 0.5 }}>
+                              {canAccessLabReceipts && (() => {
+                                const receiptSummary = buildReceiptPaymentSummary(row);
+                                return receiptSummary ? (
+                                <Stack spacing={0.25} sx={{ pt: 0.5 }}>
                       <Typography variant="caption" color="text.secondary">
                         Receipt: {receiptSummary.receiptNumber || "-"}
                       </Typography>
@@ -3457,12 +3510,12 @@ function OrderQueue(props: {
                         {receiptSummary.paymentDateTime ? formatDateTime(receiptSummary.paymentDateTime) : receiptTimestampText(row)}
                       </Typography>
                     </Stack>
-                    ) : row.status === "PAID" || (row.billDueAmount != null && row.billDueAmount <= 0) ? (
-                    <Typography variant="caption" color="text.secondary">
-                      Paid - receipt details unavailable
-                    </Typography>
-                    ) : null;
-                  })()}
+                                ) : row.status === "PAID" || (row.billDueAmount != null && row.billDueAmount <= 0) ? (
+                                <Typography variant="caption" color="text.secondary">
+                                  Paid - receipt details unavailable
+                                </Typography>
+                                ) : null;
+                              })()}
                 </Stack>
               </TableCell>
               <TableCell>
@@ -3520,7 +3573,7 @@ function OrderQueue(props: {
                       onShareLink={onShareReportLink}
                     />
                   ) : null}
-                  {(() => {
+                  {canAccessLabReceipts && (() => {
                     const receiptSummary = buildReceiptPaymentSummary(row);
                     return receiptSummary ? (
                     <>

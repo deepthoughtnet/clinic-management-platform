@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.deepthoughtnet.clinic.api.notifications.NotificationActionService;
+import com.deepthoughtnet.clinic.api.billing.BillingAccessChecker;
 import com.deepthoughtnet.clinic.billing.service.BillingService;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentMode;
 import com.deepthoughtnet.clinic.billing.service.model.PaymentRecord;
@@ -38,8 +39,9 @@ class BillingControllerTest {
         UUID actor = UUID.randomUUID();
         UUID billId = UUID.randomUUID();
         BillingService billingService = mock(BillingService.class);
+        BillingAccessChecker billingAccessChecker = mock(BillingAccessChecker.class);
         NotificationActionService notificationActionService = mock(NotificationActionService.class);
-        BillingController controller = new BillingController(billingService, notificationActionService);
+        BillingController controller = new BillingController(billingService, billingAccessChecker, notificationActionService);
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actor, "sub", Set.of("BILLING_USER"), "BILLING_USER", "cid"));
         when(notificationActionService.sendInvoiceEmail(tenantId, billId, actor)).thenReturn(
                 new NotificationActionService.InvoiceEmailResult(true, "Invoice email sent", "patient@example.com", OffsetDateTime.now())
@@ -57,8 +59,9 @@ class BillingControllerTest {
         UUID actor = UUID.randomUUID();
         UUID billId = UUID.randomUUID();
         BillingService billingService = mock(BillingService.class);
+        BillingAccessChecker billingAccessChecker = mock(BillingAccessChecker.class);
         NotificationActionService notificationActionService = mock(NotificationActionService.class);
-        BillingController controller = new BillingController(billingService, notificationActionService);
+        BillingController controller = new BillingController(billingService, billingAccessChecker, notificationActionService);
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actor, "sub", Set.of("BILLING_USER"), "BILLING_USER", "cid"));
         when(notificationActionService.sendInvoiceEmail(tenantId, billId, actor)).thenThrow(new IllegalArgumentException("Bill not found"));
 
@@ -73,8 +76,9 @@ class BillingControllerTest {
         UUID actor = UUID.randomUUID();
         UUID patientId = UUID.randomUUID();
         BillingService billingService = mock(BillingService.class);
+        BillingAccessChecker billingAccessChecker = mock(BillingAccessChecker.class);
         NotificationActionService notificationActionService = mock(NotificationActionService.class);
-        BillingController controller = new BillingController(billingService, notificationActionService);
+        BillingController controller = new BillingController(billingService, billingAccessChecker, notificationActionService);
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actor, "sub", Set.of("BILLING_USER"), "BILLING_USER", "cid"));
         when(billingService.patientContext(tenantId, patientId)).thenReturn(new PatientBillingContextRecord(
                 patientId,
@@ -112,8 +116,9 @@ class BillingControllerTest {
         UUID billId = UUID.randomUUID();
         UUID receivedBy = UUID.randomUUID();
         BillingService billingService = mock(BillingService.class);
+        BillingAccessChecker billingAccessChecker = mock(BillingAccessChecker.class);
         NotificationActionService notificationActionService = mock(NotificationActionService.class);
-        BillingController controller = new BillingController(billingService, notificationActionService);
+        BillingController controller = new BillingController(billingService, billingAccessChecker, notificationActionService);
         RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actor, "sub", Set.of("BILLING_USER"), "BILLING_USER", "cid"));
         PaymentRecord payment = new PaymentRecord(
                 UUID.randomUUID(),
