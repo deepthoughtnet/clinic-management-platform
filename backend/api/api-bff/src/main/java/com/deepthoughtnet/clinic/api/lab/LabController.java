@@ -273,7 +273,6 @@ public class LabController {
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
         return toResponse(labService.collectSample(tenantId, id, new LabOrderSampleCollectionCommand(
                 request.sampleType(),
-                request.collectedBy(),
                 request.collectedAt(),
                 request.notes()
         ), actorAppUserId));
@@ -450,7 +449,6 @@ public class LabController {
                 request.specimenType(),
                 request.containerType(),
                 request.collectedAt(),
-                parseUuid(request.collectedBy(), "collectedBy"),
                 request.notes()
         );
     }

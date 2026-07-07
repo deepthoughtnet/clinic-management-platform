@@ -1137,8 +1137,8 @@ export default function LabPage() {
       testName: "testName" in item ? item.testName : "Sample",
       specimenType: ("specimenType" in item ? item.specimenType : item.sampleType) || row.sampleType || "",
       containerType: "containerType" in item ? (item.containerType || "") : "",
-      notes: ("notes" in item ? item.notes : row.sampleCollectionNotes) || "",
-    })));
+        notes: ("notes" in item ? item.notes : row.sampleCollectionNotes) || "",
+      })));
     setSampleCollectedBy(auth.username || auth.appUserId || "");
     setSampleCollectedAt(toDatetimeLocal(new Date().toISOString()));
     setSampleCollectionStatus("Collected");
@@ -1467,7 +1467,6 @@ export default function LabPage() {
           specimenType: row.specimenType.trim(),
           containerType: row.containerType.trim() || null,
           collectedAt,
-          collectedBy: sampleCollectedBy.trim() || auth.username || auth.appUserId || null,
           notes: row.notes.trim() || null,
         })),
       });
@@ -2794,7 +2793,7 @@ export default function LabPage() {
               label="Collected By"
               value={sampleCollectedBy}
               InputProps={{ readOnly: true }}
-              helperText="Auto-populated from the signed-in user."
+              helperText="Auto-populated from the signed-in user and sent by the server audit trail."
             />
             <TextField
               fullWidth

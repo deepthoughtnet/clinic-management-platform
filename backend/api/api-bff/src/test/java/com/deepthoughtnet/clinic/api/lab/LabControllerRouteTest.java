@@ -8,6 +8,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.deepthoughtnet.clinic.api.errors.GlobalRestExceptionHandler;
 import com.deepthoughtnet.clinic.api.lab.dto.LabCategoryConfigDtos.LabCategoryConfigResponse;
 import com.deepthoughtnet.clinic.api.lab.service.model.LabOrderAttachmentRecord;
@@ -34,6 +36,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.hamcrest.Matchers;
+import org.mockito.ArgumentCaptor;
 
 class LabControllerRouteTest {
 
@@ -181,6 +184,50 @@ class LabControllerRouteTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"paymentMode\":\"CASH\"")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"paymentReceipt\"")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"receiptNumber\":\"REC-0001\"")));
+    }
+
+    @Test
+    void collectSamplesIgnoresClientCollectorEmailAndUsesAuthenticatedUser() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        UUID orderItemId = UUID.randomUUID();
+        LabService labService = mock(LabService.class);
+        when(labService.collectSamples(
+                org.mockito.ArgumentMatchers.eq(tenantId),
+                org.mockito.ArgumentMatchers.eq(orderId),
+                org.mockito.ArgumentMatchers.anyList(),
+                org.mockito.ArgumentMatchers.eq(actorId)
+        )).thenReturn(List.of());
+        RequestContextHolder.set(new RequestContext(TenantId.of(tenantId), actorId, "sub", Set.of("LAB_TECHNICIAN"), "LAB_TECHNICIAN", "cid"));
+        MockMvc mockMvc = MockMvcBuilders
+                .standaloneSetup(controller(labService, mock(LabCsvService.class), mock(LabCatalogueConfigService.class)))
+                .setControllerAdvice(new GlobalRestExceptionHandler())
+                .build();
+
+        mockMvc.perform(post("/api/lab/orders/{orderId}/samples/collect", orderId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(new ObjectMapper().writeValueAsString(Map.of(
+                                "samples", List.of(Map.of(
+                                        "labOrderItemId", orderItemId,
+                                        "specimenType", "Blood",
+                                        "containerType", "EDTA",
+                                        "collectedAt", "2026-07-05T10:15:30Z",
+                                        "collectedBy", "rohit.nair@jfcuat.local",
+                                        "notes", "Collected at reception"
+                                ))
+                        ))))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<List<com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand>> captor = ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(labService).collectSamples(
+                org.mockito.ArgumentMatchers.eq(tenantId),
+                org.mockito.ArgumentMatchers.eq(orderId),
+                captor.capture(),
+                org.mockito.ArgumentMatchers.eq(actorId)
+        );
+        assertThat(captor.getValue()).hasSize(1);
+        assertThat(captor.getValue().getFirst().specimenType()).isEqualTo("Blood");
     }
 
     @Test

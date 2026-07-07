@@ -73,12 +73,8 @@ public class VaccinationRecommendationService {
                 .filter(vaccine -> scheduleType == null || scheduleType.equals(normalizeScheduleTypeValue(vaccine.getScheduleType())))
                 .toList();
 
-        Map<UUID, VaccineMasterEntity> vaccineById = vaccines.stream()
-                .collect(Collectors.toMap(VaccineMasterEntity::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
         List<PatientVaccinationEntity> history = patientVaccinationRepository.findByTenantIdAndPatientIdOrderByGivenDateDesc(tenantId, patientId);
-
-        Map<String, List<PatientVaccinationEntity>> historyByKey = history.stream()
-                .collect(Collectors.groupingBy(entity -> historyKey(entity, vaccineById), LinkedHashMap::new, Collectors.toList()));
+        RecommendationHistoryIndex historyIndex = buildHistoryIndex(vaccines, history);
 
         List<VaccinationRecommendationRecord> recommendedToday = new ArrayList<>();
         List<VaccinationRecommendationRecord> overdue = new ArrayList<>();
@@ -93,7 +89,7 @@ public class VaccinationRecommendationService {
                     patientAgeDays,
                     patientAgeGroup,
                     today,
-                    historyByKey.getOrDefault(masterKey(vaccine), List.of())
+                    historyIndex.forVaccine(vaccine)
             );
             switch (recommendation.status()) {
                 case "DUE" -> recommendedToday.add(recommendation);
@@ -132,7 +128,7 @@ public class VaccinationRecommendationService {
             Integer patientAgeDays,
             String patientAgeGroup,
             LocalDate today,
-            List<PatientVaccinationEntity> history
+            RecommendationHistory recommendationHistory
     ) {
         String recommendationPolicy = resolveRecommendationPolicy(vaccine);
         String catchUpPolicy = resolveCatchUpPolicy(vaccine);
@@ -143,16 +139,24 @@ public class VaccinationRecommendationService {
         Integer dueAgeDays = recommendedAgeDays != null ? recommendedAgeDays : minAgeDays;
         Integer overdueDays = null;
 
-        PatientVaccinationEntity latestHistory = latest(history);
-        LocalDate latestGivenDate = latestHistory == null ? null : latestHistory.getGivenDate();
+        PatientVaccinationEntity latestExactHistory = recommendationHistory.latestExactHistory();
+        LocalDate latestGivenDate = latestExactHistory == null ? null : latestExactHistory.getGivenDate();
         LocalDate completedDate = latestGivenDate;
+        PatientVaccinationEntity latestPreviousDoseHistory = recommendationHistory.latestPreviousDoseHistory();
+        LocalDate latestPreviousDoseDate = latestPreviousDoseHistory == null ? null : latestPreviousDoseHistory.getGivenDate();
+        PatientVaccinationEntity latestSeriesHistory = recommendationHistory.latestSeriesHistory();
+        LocalDate latestSeriesDate = latestSeriesHistory == null ? null : latestSeriesHistory.getGivenDate();
         boolean recurring = "RECURRING".equals(recommendationPolicy) || (vaccine.isRecurring() && vaccine.getRecurrenceDays() != null && vaccine.getRecurrenceDays() >= 0);
         boolean boosterEligible = !recurring && vaccine.getBoosterGapDays() != null && vaccine.getBoosterGapDays() >= 0;
         boolean ageGroupEligible = isApplicableAgeGroup(applicableAgeGroup, patientAgeGroup);
         boolean adult = isAdult(patientAgeGroup);
         boolean olderAdult = "OLDER_ADULT".equals(patientAgeGroup);
-        boolean completedByGroupDose = hasCompletedDose(history, vaccine);
-        boolean completedByVaccine = latestHistory != null;
+        boolean completedByGroupDose = latestExactHistory != null;
+        boolean completedByVaccine = latestExactHistory != null;
+
+        if (completedByGroupDose && !recurring && !boosterEligible) {
+            return base(vaccine, patientAgeDays, latestGivenDate, "COMPLETED", null, latestGivenDate, patientAgeGroup, "Completed on " + formatDate(latestGivenDate));
+        }
 
         if ("PREGNANCY".equals(recommendationPolicy)) {
             return base(vaccine, patientAgeDays, null, "NOT_APPLICABLE", null, null, patientAgeGroup, "Pregnancy vaccines require a pregnancy context");
@@ -166,6 +170,10 @@ public class VaccinationRecommendationService {
                     ? "Risk-based vaccine"
                     : recommendationPolicy.toLowerCase(Locale.ROOT).replace('_', ' ') + " vaccine";
             return base(vaccine, patientAgeDays, dueDateForOptional(latestGivenDate, vaccine), "OPTIONAL_RISK_BASED", null, completedDate, patientAgeGroup, reason);
+        }
+
+        if (requiresSeriesPreviousDose(vaccine)) {
+            return seriesDoseRecommendation(vaccine, patientAgeDays, patientAgeGroup, today, latestPreviousDoseDate, latestSeriesDate);
         }
 
         if ("STANDARD_CHILDHOOD".equals(recommendationPolicy)) {
@@ -215,11 +223,11 @@ public class VaccinationRecommendationService {
         }
 
         if (recurring) {
-            return recurringRecommendation(vaccine, patientAgeDays, patientAgeGroup, today, latestGivenDate, completedByVaccine);
+            return recurringRecommendation(vaccine, patientAgeDays, patientAgeGroup, today, latestSeriesDate, latestSeriesHistory != null);
         }
 
         if (boosterEligible) {
-            return boosterRecommendation(vaccine, patientAgeDays, patientAgeGroup, today, latestGivenDate, completedByVaccine);
+            return boosterRecommendation(vaccine, patientAgeDays, patientAgeGroup, today, latestSeriesDate, latestSeriesHistory != null);
         }
 
         if (!ageGroupEligible) {
@@ -352,6 +360,49 @@ public class VaccinationRecommendationService {
         return base(vaccine, patientAgeDays, nextDue, overdueDays > 0 ? "OVERDUE" : "DUE", overdueDays > 0 ? overdueDays : null, latestGivenDate, patientAgeGroup, boosterReason(vaccine, nextDue));
     }
 
+    private VaccinationRecommendationRecord seriesDoseRecommendation(
+            VaccineMasterEntity vaccine,
+            Integer patientAgeDays,
+            String patientAgeGroup,
+            LocalDate today,
+            LocalDate latestPreviousDoseDate,
+            LocalDate latestSeriesDate
+    ) {
+        if (latestPreviousDoseDate == null) {
+            return base(vaccine, patientAgeDays, null, "NOT_APPLICABLE", null, latestSeriesDate, patientAgeGroup, "Previous dose not completed");
+        }
+        Integer intervalDays = firstNonNull(vaccine.getGapDays(), vaccine.getRecommendedGapDays(), vaccine.getBoosterGapDays());
+        if (intervalDays == null || intervalDays < 0) {
+            return ageBasedRecommendation(
+                    vaccine,
+                    patientAgeDays,
+                    patientAgeGroup,
+                    today,
+                    firstNonNull(vaccine.getRecommendedAgeDays(), vaccine.getMinAgeDays()),
+                    vaccine.getMinAgeDays(),
+                    vaccine.getMaxAgeDays(),
+                    latestSeriesDate,
+                    false,
+                    false
+            );
+        }
+        LocalDate dueDate = latestPreviousDoseDate.plusDays(intervalDays);
+        if (today.isBefore(dueDate)) {
+            return base(vaccine, patientAgeDays, dueDate, "UPCOMING", null, latestSeriesDate, patientAgeGroup, "Due after " + intervalDays + " days from previous dose");
+        }
+        int overdueDays = Math.toIntExact(ChronoUnit.DAYS.between(dueDate, today));
+        return base(
+                vaccine,
+                patientAgeDays,
+                dueDate,
+                overdueDays > 0 ? "OVERDUE" : "DUE",
+                overdueDays > 0 ? overdueDays : null,
+                latestSeriesDate,
+                patientAgeGroup,
+                overdueDays > 0 ? "Overdue by " + overdueDays + " days" : "Due after " + intervalDays + " days from previous dose"
+        );
+    }
+
     private VaccinationRecommendationRecord ageBasedRecommendation(
             VaccineMasterEntity vaccine,
             Integer patientAgeDays,
@@ -428,8 +479,8 @@ public class VaccinationRecommendationService {
         return false;
     }
 
-    private boolean hasCompletedDose(List<PatientVaccinationEntity> history, VaccineMasterEntity vaccine) {
-        return latest(history) != null;
+    private boolean requiresSeriesPreviousDose(VaccineMasterEntity vaccine) {
+        return vaccine.getDoseNumber() != null && vaccine.getDoseNumber() > 1;
     }
 
     private PatientVaccinationEntity latest(List<PatientVaccinationEntity> history) {
@@ -440,6 +491,30 @@ public class VaccinationRecommendationService {
                 .max(Comparator.comparing(PatientVaccinationEntity::getGivenDate, Comparator.nullsLast(Comparator.naturalOrder()))
                         .thenComparing(PatientVaccinationEntity::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
                 .orElse(null);
+    }
+
+    private RecommendationHistoryIndex buildHistoryIndex(List<VaccineMasterEntity> vaccines, List<PatientVaccinationEntity> history) {
+        Map<UUID, VaccineMasterEntity> vaccineById = vaccines.stream()
+                .collect(Collectors.toMap(VaccineMasterEntity::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
+        Map<String, List<VaccineMasterEntity>> vaccineAliases = new LinkedHashMap<>();
+        for (VaccineMasterEntity vaccine : vaccines) {
+            for (String alias : vaccineAliases(vaccine)) {
+                vaccineAliases.computeIfAbsent(alias, ignored -> new ArrayList<>()).add(vaccine);
+            }
+        }
+
+        Map<String, List<PatientVaccinationEntity>> historyByMaster = new LinkedHashMap<>();
+        Map<String, List<PatientVaccinationEntity>> historyBySeries = new LinkedHashMap<>();
+        for (PatientVaccinationEntity entry : history) {
+            ResolvedHistory resolvedHistory = resolveHistory(entry, vaccineById, vaccineAliases);
+            if (resolvedHistory.masterKey() != null) {
+                historyByMaster.computeIfAbsent(resolvedHistory.masterKey(), ignored -> new ArrayList<>()).add(entry);
+            }
+            if (resolvedHistory.seriesKey() != null) {
+                historyBySeries.computeIfAbsent(resolvedHistory.seriesKey(), ignored -> new ArrayList<>()).add(entry);
+            }
+        }
+        return new RecommendationHistoryIndex(historyByMaster, historyBySeries);
     }
 
     private String masterKey(VaccineMasterEntity vaccine) {
@@ -454,14 +529,112 @@ public class VaccinationRecommendationService {
         );
     }
 
-    private String historyKey(PatientVaccinationEntity entry, Map<UUID, VaccineMasterEntity> vaccineById) {
+    private String seriesKey(VaccineMasterEntity vaccine) {
+        String group = normalize(vaccine.getVaccineGroup());
+        String name = normalize(vaccine.getVaccineName());
+        String scheduleType = safeScheduleTypeValue(vaccine.getScheduleType());
+        return String.join("|",
+                group == null ? name : group,
+                scheduleType == null ? "" : scheduleType
+        );
+    }
+
+    private ResolvedHistory resolveHistory(
+            PatientVaccinationEntity entry,
+            Map<UUID, VaccineMasterEntity> vaccineById,
+            Map<String, List<VaccineMasterEntity>> vaccineAliases
+    ) {
         if (entry.getVaccineId() != null) {
             VaccineMasterEntity vaccine = vaccineById.get(entry.getVaccineId());
             if (vaccine != null) {
-                return masterKey(vaccine);
+                return new ResolvedHistory(masterKey(vaccine), seriesKey(vaccine));
             }
         }
-        return String.join("|", normalize(entry.getVaccineNameSnapshot()), "", "");
+        VaccineMasterEntity matchedVaccine = matchHistoryAlias(entry, vaccineAliases);
+        if (matchedVaccine != null) {
+            return new ResolvedHistory(masterKey(matchedVaccine), seriesKey(matchedVaccine));
+        }
+        String normalizedSnapshot = normalizeHistoryAlias(entry.getVaccineNameSnapshot());
+        String scheduleType = "";
+        String dose = entry.getDoseNumber() == null ? "" : entry.getDoseNumber().toString();
+        return new ResolvedHistory(
+                normalizedSnapshot == null ? null : String.join("|", normalizedSnapshot, dose, scheduleType),
+                normalizedSnapshot == null ? null : String.join("|", normalizedSnapshot, scheduleType)
+        );
+    }
+
+    private VaccineMasterEntity matchHistoryAlias(PatientVaccinationEntity entry, Map<String, List<VaccineMasterEntity>> vaccineAliases) {
+        for (String alias : historyAliases(entry.getVaccineNameSnapshot())) {
+            List<VaccineMasterEntity> matches = vaccineAliases.get(alias);
+            if (matches == null || matches.isEmpty()) {
+                continue;
+            }
+            if (entry.getDoseNumber() != null) {
+                Optional<VaccineMasterEntity> doseMatch = matches.stream()
+                        .filter(candidate -> entry.getDoseNumber().equals(candidate.getDoseNumber()))
+                        .findFirst();
+                if (doseMatch.isPresent()) {
+                    return doseMatch.get();
+                }
+            }
+            if (matches.size() == 1) {
+                return matches.getFirst();
+            }
+            Optional<VaccineMasterEntity> groupMatch = matches.stream()
+                    .filter(candidate -> normalize(candidate.getVaccineGroup()) != null)
+                    .findFirst();
+            if (groupMatch.isPresent()) {
+                return groupMatch.get();
+            }
+            return matches.getFirst();
+        }
+        return null;
+    }
+
+    private List<String> vaccineAliases(VaccineMasterEntity vaccine) {
+        List<String> aliases = new ArrayList<>();
+        addAlias(aliases, vaccine.getVaccineName());
+        addAlias(aliases, vaccine.getBrandName());
+        addAlias(aliases, vaccine.getVaccineGroup());
+        if (StringUtils.hasText(vaccine.getVaccineGroup()) && vaccine.getDoseNumber() != null) {
+            addAlias(aliases, vaccine.getVaccineGroup() + "-" + vaccine.getDoseNumber());
+            addAlias(aliases, vaccine.getVaccineGroup() + " dose " + vaccine.getDoseNumber());
+        }
+        return aliases.stream().filter(StringUtils::hasText).distinct().toList();
+    }
+
+    private List<String> historyAliases(String value) {
+        List<String> aliases = new ArrayList<>();
+        addAlias(aliases, value);
+        String normalized = normalizeHistoryAlias(value);
+        if (normalized != null) {
+            aliases.add(normalized);
+            aliases.add(stripTrailingDoseToken(normalized));
+        }
+        return aliases.stream().filter(StringUtils::hasText).distinct().toList();
+    }
+
+    private void addAlias(List<String> aliases, String value) {
+        String normalized = normalizeHistoryAlias(value);
+        if (normalized != null) {
+            aliases.add(normalized);
+            aliases.add(stripTrailingDoseToken(normalized));
+        }
+    }
+
+    private String normalizeHistoryAlias(String value) {
+        String normalized = normalize(value);
+        if (normalized == null) {
+            return null;
+        }
+        return normalized.replaceAll("[^a-z0-9]+", " ").trim().replaceAll("\\s+", " ");
+    }
+
+    private String stripTrailingDoseToken(String value) {
+        if (!StringUtils.hasText(value)) {
+            return value;
+        }
+        return value.replaceFirst("(?:\\s+dose)?\\s+\\d+$", "").trim();
     }
 
     private VaccinationRecommendationRecord base(
@@ -753,5 +926,45 @@ public class VaccinationRecommendationService {
 
     private boolean isChildhoodPolicy(String recommendationPolicy) {
         return "STANDARD_CHILDHOOD".equals(recommendationPolicy) || "CHILDHOOD_CATCHUP".equals(recommendationPolicy) || "CLINIC_CUSTOM".equals(recommendationPolicy);
+    }
+
+    private record ResolvedHistory(String masterKey, String seriesKey) {
+    }
+
+    private record RecommendationHistory(
+            List<PatientVaccinationEntity> exactHistory,
+            PatientVaccinationEntity latestExactHistory,
+            PatientVaccinationEntity latestPreviousDoseHistory,
+            PatientVaccinationEntity latestSeriesHistory
+    ) {
+    }
+
+    private class RecommendationHistoryIndex {
+        private final Map<String, List<PatientVaccinationEntity>> historyByMaster;
+        private final Map<String, List<PatientVaccinationEntity>> historyBySeries;
+
+        private RecommendationHistoryIndex(
+                Map<String, List<PatientVaccinationEntity>> historyByMaster,
+                Map<String, List<PatientVaccinationEntity>> historyBySeries
+        ) {
+            this.historyByMaster = historyByMaster;
+            this.historyBySeries = historyBySeries;
+        }
+
+        private RecommendationHistory forVaccine(VaccineMasterEntity vaccine) {
+            List<PatientVaccinationEntity> exactHistory = historyByMaster.getOrDefault(masterKey(vaccine), List.of());
+            PatientVaccinationEntity latestExact = latest(exactHistory);
+            PatientVaccinationEntity latestPreviousDose = null;
+            if (vaccine.getDoseNumber() != null && vaccine.getDoseNumber() > 1) {
+                String previousDoseKey = String.join("|",
+                        normalize(vaccine.getVaccineGroup()) == null ? normalize(vaccine.getVaccineName()) : normalize(vaccine.getVaccineGroup()),
+                        Integer.toString(vaccine.getDoseNumber() - 1),
+                        safeScheduleTypeValue(vaccine.getScheduleType()) == null ? "" : safeScheduleTypeValue(vaccine.getScheduleType())
+                );
+                latestPreviousDose = latest(historyByMaster.getOrDefault(previousDoseKey, List.of()));
+            }
+            PatientVaccinationEntity latestSeries = latest(historyBySeries.getOrDefault(seriesKey(vaccine), List.of()));
+            return new RecommendationHistory(exactHistory, latestExact, latestPreviousDose, latestSeries);
+        }
     }
 }

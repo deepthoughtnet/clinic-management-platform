@@ -15,9 +15,9 @@ test("lab sample collection auto-fills collected by and offers configured contai
   assert.ok(source.includes('const [sampleCollectionStatus, setSampleCollectionStatus] = React.useState<SampleCollectionStatus>("Collected");'));
   assert.ok(source.includes('setSampleCollectedBy(auth.username || auth.appUserId || "");'));
   assert.ok(source.includes('setSampleCollectionStatus("Collected");'));
-  assert.ok(source.includes('collectedBy: sampleCollectedBy.trim() || auth.username || auth.appUserId || null,'));
+  assert.ok(!source.includes('collectedBy: sampleCollectedBy.trim() || auth.username || auth.appUserId || null,'));
   assert.ok(source.includes('InputProps={{ readOnly: true }}'));
-  assert.ok(source.includes('Auto-populated from the signed-in user.'));
+  assert.ok(source.includes('Auto-populated from the signed-in user and sent by the server audit trail.'));
   assert.ok(source.includes('<MenuItem value="">Select container type</MenuItem>'));
   assert.ok(source.includes('label="Collection Status"'));
 });

@@ -9,8 +9,9 @@ import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 public record PatientVaccinationRequest(
-        @NotNull
         UUID vaccineId,
+        @Size(max = 256)
+        String vaccineName,
         @PositiveOrZero
         Integer doseNumber,
         @NotNull
@@ -20,6 +21,13 @@ public record PatientVaccinationRequest(
         String batchNumber,
         @Size(max = 250)
         String notes,
+        @Size(max = 16)
+        String source,
+        @Size(max = 256)
+        String externalPlace,
+        UUID proofDocumentId,
+        @Size(max = 32)
+        String verifiedStatus,
         UUID administeredByUserId,
         UUID billId,
         boolean addToBill,

@@ -6,11 +6,16 @@ import java.util.UUID;
 
 public record PatientVaccinationCommand(
         UUID vaccineId,
+        String vaccineName,
         Integer doseNumber,
         LocalDate givenDate,
         LocalDate nextDueDate,
         String batchNumber,
         String notes,
+        String source,
+        String externalPlace,
+        UUID proofDocumentId,
+        String verifiedStatus,
         UUID administeredByUserId,
         UUID billId,
         boolean addToBill,

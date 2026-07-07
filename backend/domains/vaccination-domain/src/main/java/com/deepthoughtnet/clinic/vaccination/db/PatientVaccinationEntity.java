@@ -34,6 +34,24 @@ public class PatientVaccinationEntity {
     @Column(name = "vaccine_name_snapshot", nullable = false, length = 256)
     private String vaccineNameSnapshot;
 
+    @Column(name = "source", nullable = false, length = 16)
+    private String source = "INTERNAL";
+
+    @Column(name = "external_place", length = 256)
+    private String externalPlace;
+
+    @Column(name = "proof_document_id")
+    private UUID proofDocumentId;
+
+    @Column(name = "verified_status", nullable = false, length = 32)
+    private String verifiedStatus = "VERIFIED";
+
+    @Column(name = "verified_by_user_id")
+    private UUID verifiedByUserId;
+
+    @Column(name = "verified_at")
+    private OffsetDateTime verifiedAt;
+
     @Column(name = "dose_number")
     private Integer doseNumber;
 
@@ -108,6 +126,12 @@ public class PatientVaccinationEntity {
             UUID patientId,
             UUID vaccineId,
             String vaccineNameSnapshot,
+            String source,
+            String externalPlace,
+            UUID proofDocumentId,
+            String verifiedStatus,
+            UUID verifiedByUserId,
+            OffsetDateTime verifiedAt,
             Integer doseNumber,
             LocalDate givenDate,
             LocalDate nextDueDate,
@@ -122,6 +146,12 @@ public class PatientVaccinationEntity {
         entity.patientId = patientId;
         entity.vaccineId = vaccineId;
         entity.vaccineNameSnapshot = vaccineNameSnapshot;
+        entity.source = source == null || source.isBlank() ? "INTERNAL" : source;
+        entity.externalPlace = externalPlace;
+        entity.proofDocumentId = proofDocumentId;
+        entity.verifiedStatus = verifiedStatus == null || verifiedStatus.isBlank() ? ("EXTERNAL".equalsIgnoreCase(entity.source) ? "UNVERIFIED" : "VERIFIED") : verifiedStatus;
+        entity.verifiedByUserId = verifiedByUserId;
+        entity.verifiedAt = verifiedAt;
         entity.doseNumber = doseNumber;
         entity.givenDate = givenDate == null ? LocalDate.now() : givenDate;
         entity.nextDueDate = nextDueDate;
@@ -140,6 +170,12 @@ public class PatientVaccinationEntity {
     public UUID getPatientId() { return patientId; }
     public UUID getVaccineId() { return vaccineId; }
     public String getVaccineNameSnapshot() { return vaccineNameSnapshot; }
+    public String getSource() { return source; }
+    public String getExternalPlace() { return externalPlace; }
+    public UUID getProofDocumentId() { return proofDocumentId; }
+    public String getVerifiedStatus() { return verifiedStatus; }
+    public UUID getVerifiedByUserId() { return verifiedByUserId; }
+    public OffsetDateTime getVerifiedAt() { return verifiedAt; }
     public Integer getDoseNumber() { return doseNumber; }
     public LocalDate getGivenDate() { return givenDate; }
     public LocalDate getNextDueDate() { return nextDueDate; }
@@ -191,6 +227,17 @@ public class PatientVaccinationEntity {
         this.reminderNotificationId = reminderNotificationId;
         this.reminderStatus = reminderStatus;
         this.reminderQueuedAt = reminderQueuedAt;
+        touch(updatedByUserId);
+    }
+
+    public void updateExternalDetails(String externalPlace, UUID proofDocumentId, String verifiedStatus, UUID verifiedByUserId, OffsetDateTime verifiedAt, UUID updatedByUserId) {
+        this.externalPlace = externalPlace;
+        this.proofDocumentId = proofDocumentId;
+        if (verifiedStatus != null && !verifiedStatus.isBlank()) {
+            this.verifiedStatus = verifiedStatus;
+        }
+        this.verifiedByUserId = verifiedByUserId;
+        this.verifiedAt = verifiedAt;
         touch(updatedByUserId);
     }
 

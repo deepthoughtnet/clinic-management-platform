@@ -8,7 +8,6 @@ public record LabSampleCollectionCommand(
         String specimenType,
         String containerType,
         OffsetDateTime collectedAt,
-        UUID collectedBy,
         String notes
 ) {
 }

@@ -62,6 +62,7 @@ export const vaccinationMasterSchema = z.object({
 export const vaccinationRecordSchema = z.object({
   patientId: requiredText(60, "Patient is required."),
   vaccineId: requiredText(60, "Vaccine is required."),
+  vaccineName: optionalText(256, "Vaccine name must be 256 characters or fewer."),
   doseNumber: optionalNonNegativeInteger(99, "Dose number must be 0 or greater."),
   givenDate: dateString("Given date is required."),
   nextDueDate: z.preprocess(
@@ -70,6 +71,16 @@ export const vaccinationRecordSchema = z.object({
   ),
   batchNumber: optionalText(60, "Batch number must be 60 characters or fewer."),
   notes: optionalText(250, "Notes must be 250 characters or fewer."),
+  source: z.preprocess(
+    (value) => (value == null || value === "" ? undefined : value),
+    z.enum(["INTERNAL", "EXTERNAL"]).optional(),
+  ),
+  externalPlace: optionalText(256, "External place must be 256 characters or fewer."),
+  proofDocumentId: optionalText(60, "Proof document ID must be 60 characters or fewer."),
+  verifiedStatus: z.preprocess(
+    (value) => (value == null || value === "" ? undefined : value),
+    z.enum(["UNVERIFIED", "VERIFIED", "REJECTED"]).optional(),
+  ),
   administeredByUserId: optionalText(60, "Administered by must be 60 characters or fewer."),
   addToBill: z.boolean().optional(),
   billId: optionalText(60, "Bill ID must be 60 characters or fewer."),

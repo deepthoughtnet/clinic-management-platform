@@ -39,25 +39,44 @@ import { fileUploadSchema, firstZodError, mapZodErrors, vaccinationMasterSchema,
 import { useAuth } from "../../auth/useAuth";
 import { resolveEnabledTenantModules } from "../../modules/moduleRegistry";
 import { CompactEmptyState, CompactTableFrame, compactChipSx } from "../../components/compact/CompactUi";
+import ConsultationFeeDialog, { type ConsultationFeeDialogValue } from "../../components/ConsultationFeeDialog";
 import RequiredLabel from "../../components/forms/RequiredLabel";
+import { ReceiptPrintDialog, type ReceiptPrintData } from "../../components/finance/PrintableBillingDocuments";
 import {
+  addBillPayment,
   createVaccine,
   deactivateVaccine,
   exportVaccinesCsv,
   getDueVaccinations,
+  getBill,
+  getClinicProfile,
   getClinicUsers,
   getOverdueVaccinations,
+  getReceiptPdf,
   getVaccinationHistory,
   getVaccinationRecommendations,
   getVaccineImportTemplate,
   getVaccines,
+  getPatientDocuments,
+  getPatientDocumentViewUrl,
+  getPatientVaccinations,
   importVaccinesCsv,
+  uploadPatientDocument,
+  searchBills,
   recordPatientVaccination,
+  listBillPayments,
+  listBillReceipts,
+  sendReceipt,
   searchPatients,
   updateVaccine,
+  type ClinicalDocument,
+  type Bill,
+  type ClinicProfile,
   type ClinicUser,
   type Patient,
   type PatientVaccination,
+  type Payment,
+  type Receipt,
   type VaccineCsvImportResponse,
   type VaccineInput,
   type VaccineMaster,
@@ -65,6 +84,7 @@ import {
   type VaccinationRecommendationSummary,
 } from "../../api/clinicApi";
 import { buildVaccineExportCsv, buildVaccineTemplateCsv, parseVaccineImportPreview, type VaccineImportPreview } from "./vaccinationCsv";
+import { staffDisplayName } from "../../utils/staffDisplay";
 
 type VaccineFormState = VaccineInput;
 
@@ -89,8 +109,23 @@ type VaccinationFormState = {
   route: string;
   administrationSite: string;
   addToBill: boolean;
-  billId: string;
   billItemUnitPrice: string;
+};
+
+type ExternalVaccinationFormState = {
+  vaccineName: string;
+  vaccineId: string;
+  doseNumber: string;
+  givenDate: string;
+  externalPlace: string;
+  batchNumber: string;
+  brandName: string;
+  manufacturer: string;
+  notes: string;
+  proofDocumentId: string;
+  proofFile: File | null;
+  source: "EXTERNAL";
+  verifiedStatus: "UNVERIFIED" | "VERIFIED" | "REJECTED";
 };
 
 function emptyVaccineForm(): VaccineFormState {
@@ -182,8 +217,90 @@ function emptyVaccinationForm(): VaccinationFormState {
     route: "",
     administrationSite: "",
     addToBill: false,
-    billId: "",
     billItemUnitPrice: "",
+  };
+}
+
+function billEffectiveDueAmount(bill: Bill) {
+  return Math.max(0, bill.dueAmount ?? (bill.totalAmount - bill.paidAmount));
+}
+
+function billHasCollectableDue(bill: Bill) {
+  return billEffectiveDueAmount(bill) > 0;
+}
+
+function billCountsAsSettled(bill: Bill) {
+  return bill.status === "PAID" || bill.status === "PARTIALLY_REFUNDED" || bill.status === "REFUNDED" || bill.status === "CANCELLED_REFUNDED";
+}
+
+function billStatusLabel(status: Bill["status"]) {
+  switch (status) {
+    case "DRAFT":
+      return "Bill Created";
+    case "UNPAID":
+      return "Unbilled";
+    case "ISSUED":
+      return "Bill Created";
+    case "PARTIALLY_PAID":
+      return "Bill Created";
+    case "PAID":
+      return "Paid";
+    case "REFUND_PENDING":
+      return "Refund Pending";
+    case "PARTIALLY_REFUNDED":
+      return "Partially Refunded";
+    case "REFUNDED":
+      return "Refunded";
+    case "CANCELLED":
+      return "Cancelled";
+    case "CANCELLED_REFUNDED":
+      return "Cancelled";
+    default:
+      return status;
+  }
+}
+
+function billStatusColor(status: Bill["status"]) {
+  switch (status) {
+    case "PAID":
+      return "success";
+    case "PARTIALLY_PAID":
+    case "UNPAID":
+    case "DRAFT":
+    case "ISSUED":
+      return "warning";
+    case "REFUND_PENDING":
+    case "PARTIALLY_REFUNDED":
+      return "secondary";
+    case "REFUNDED":
+      return "info";
+    case "CANCELLED":
+    case "CANCELLED_REFUNDED":
+      return "default";
+    default:
+      return "default";
+  }
+}
+
+function latestReceiptForBill(receipts: Receipt[]) {
+  return receipts.slice().sort((left, right) => `${right.receiptDate}|${right.createdAt}`.localeCompare(`${left.receiptDate}|${left.createdAt}`))[0] || null;
+}
+
+function emptyExternalVaccinationForm(): ExternalVaccinationFormState {
+  return {
+    vaccineName: "",
+    vaccineId: "",
+    doseNumber: "",
+    givenDate: new Date().toISOString().slice(0, 10),
+    externalPlace: "",
+    batchNumber: "",
+    brandName: "",
+    manufacturer: "",
+    notes: "",
+    proofDocumentId: "",
+    proofFile: null,
+    source: "EXTERNAL",
+    verifiedStatus: "UNVERIFIED",
   };
 }
 
@@ -277,15 +394,21 @@ export default function VaccinationsPage() {
   const [dueRows, setDueRows] = React.useState<PatientVaccination[]>([]);
   const [overdueRows, setOverdueRows] = React.useState<PatientVaccination[]>([]);
   const [historyRows, setHistoryRows] = React.useState<PatientVaccination[]>([]);
+  const [patientBills, setPatientBills] = React.useState<Bill[]>([]);
   const [users, setUsers] = React.useState<ClinicUser[]>([]);
   const [patients, setPatients] = React.useState<Patient[]>([]);
+  const [clinicProfile, setClinicProfile] = React.useState<ClinicProfile | null>(null);
   const [patientQuery, setPatientQuery] = React.useState("");
   const [patientSearchResults, setPatientSearchResults] = React.useState<Patient[]>([]);
   const [selectedPatient, setSelectedPatient] = React.useState<Patient | null>(null);
+  const [patientHistoryRows, setPatientHistoryRows] = React.useState<PatientVaccination[]>([]);
+  const [patientDocuments, setPatientDocuments] = React.useState<ClinicalDocument[]>([]);
   const [vaccineForm, setVaccineForm] = React.useState<VaccineFormState>(emptyVaccineForm());
   const [vaccinationForm, setVaccinationForm] = React.useState<VaccinationFormState>(emptyVaccinationForm());
+  const [externalVaccinationForm, setExternalVaccinationForm] = React.useState<ExternalVaccinationFormState>(emptyExternalVaccinationForm());
   const [vaccineFieldErrors, setVaccineFieldErrors] = React.useState<Record<string, string>>({});
   const [vaccinationFieldErrors, setVaccinationFieldErrors] = React.useState<Record<string, string>>({});
+  const [externalFieldErrors, setExternalFieldErrors] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -305,19 +428,33 @@ export default function VaccinationsPage() {
   const [recommendations, setRecommendations] = React.useState<VaccinationRecommendationSummary | null>(null);
   const [recommendationsLoading, setRecommendationsLoading] = React.useState(false);
   const [recommendationsError, setRecommendationsError] = React.useState<string | null>(null);
+  const [externalPromptOpen, setExternalPromptOpen] = React.useState(false);
+  const [externalPromptSeenPatientId, setExternalPromptSeenPatientId] = React.useState<string | null>(null);
+  const [noHistoryConfirmOpen, setNoHistoryConfirmOpen] = React.useState(false);
+  const [externalDialogOpen, setExternalDialogOpen] = React.useState(false);
+  const [autoOpenCardUpload, setAutoOpenCardUpload] = React.useState(false);
+  const [pendingVaccinationSubmit, setPendingVaccinationSubmit] = React.useState<null | { body: Parameters<typeof recordPatientVaccination>[3] }>(null);
+  const [vaccinationPaymentDialog, setVaccinationPaymentDialog] = React.useState<null | { bill: Bill; patientLabel: string; vaccineName: string }>(null);
+  const [vaccinationReceiptPanel, setVaccinationReceiptPanel] = React.useState<null | { patientName: string; vaccineName: string; bill: Bill; receipt: Receipt; payment: Payment; receiptPrintData: ReceiptPrintData }>(null);
+  const [receiptPreview, setReceiptPreview] = React.useState<ReceiptPrintData | null>(null);
+  const [receiptPreviewLoading, setReceiptPreviewLoading] = React.useState(false);
+  const [receiptAutoPrint, setReceiptAutoPrint] = React.useState(false);
+  const [receiptActionLoading, setReceiptActionLoading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const externalCardFileRef = React.useRef<HTMLInputElement | null>(null);
 
   const loadAll = React.useCallback(async () => {
     if (!auth.accessToken || !auth.tenantId) {
       return;
     }
-    const [vaccineRows, due, overdue, history, userRows, patientRows] = await Promise.all([
+    const [vaccineRows, due, overdue, history, userRows, patientRows, clinic] = await Promise.all([
       getVaccines(auth.accessToken, auth.tenantId),
       getDueVaccinations(auth.accessToken, auth.tenantId),
       getOverdueVaccinations(auth.accessToken, auth.tenantId),
       getVaccinationHistory(auth.accessToken, auth.tenantId),
       getClinicUsers(auth.accessToken, auth.tenantId),
       searchPatients(auth.accessToken, auth.tenantId, { active: true }),
+      getClinicProfile(auth.accessToken, auth.tenantId),
     ]);
     setVaccines(vaccineRows);
     setDueRows(due);
@@ -325,6 +462,19 @@ export default function VaccinationsPage() {
     setHistoryRows(history);
     setUsers(userRows);
     setPatients(patientRows);
+    setClinicProfile(clinic);
+  }, [auth.accessToken, auth.tenantId]);
+
+  const refreshPatientBilling = React.useCallback(async (patientId: string) => {
+    if (!auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    try {
+      const bills = await searchBills(auth.accessToken, auth.tenantId, { patientId });
+      setPatientBills(bills);
+    } catch {
+      setPatientBills([]);
+    }
   }, [auth.accessToken, auth.tenantId]);
 
   React.useEffect(() => {
@@ -406,37 +556,124 @@ export default function VaccinationsPage() {
     };
   }, [auth.accessToken, auth.tenantId, patientQuery]);
 
+  const refreshRecommendations = React.useCallback(async (patientId: string, options?: { silent?: boolean }) => {
+    if (!auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    if (!options?.silent) {
+      setRecommendationsLoading(true);
+    }
+    setRecommendationsError(null);
+    try {
+      const summary = await getVaccinationRecommendations(auth.accessToken, auth.tenantId, patientId);
+      setRecommendations(summary);
+    } catch (err) {
+      setRecommendations(null);
+      setRecommendationsError(err instanceof Error ? err.message : "Failed to load vaccination recommendations");
+    } finally {
+      if (!options?.silent) {
+        setRecommendationsLoading(false);
+      }
+    }
+  }, [auth.accessToken, auth.tenantId]);
+
+  const refreshSelectedPatientContext = React.useCallback(async (patientId: string) => {
+    if (!auth.accessToken || !auth.tenantId) {
+      return;
+    }
+    try {
+      const [vaccinations, documents] = await Promise.all([
+        getPatientVaccinations(auth.accessToken, auth.tenantId, patientId),
+        getPatientDocuments(auth.accessToken, auth.tenantId, patientId, { documentType: "VACCINATION" }),
+      ]);
+      setPatientHistoryRows(vaccinations);
+      setPatientDocuments(documents);
+      await refreshPatientBilling(patientId);
+    } catch {
+      setPatientHistoryRows([]);
+      setPatientDocuments([]);
+      setPatientBills([]);
+    }
+  }, [auth.accessToken, auth.tenantId, refreshPatientBilling]);
+
   React.useEffect(() => {
     let cancelled = false;
     async function loadRecommendations() {
-      if (!auth.accessToken || !auth.tenantId || !selectedPatient?.id) {
+      if (!selectedPatient?.id) {
         setRecommendations(null);
         setRecommendationsError(null);
         return;
       }
-      setRecommendationsLoading(true);
-      setRecommendationsError(null);
-      try {
-        const summary = await getVaccinationRecommendations(auth.accessToken, auth.tenantId, selectedPatient.id);
-        if (!cancelled) {
-          setRecommendations(summary);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setRecommendations(null);
-          setRecommendationsError(err instanceof Error ? err.message : "Failed to load vaccination recommendations");
-        }
-      } finally {
-        if (!cancelled) {
-          setRecommendationsLoading(false);
-        }
+      if (cancelled) {
+        return;
       }
+      await refreshRecommendations(selectedPatient.id);
     }
     void loadRecommendations();
     return () => {
       cancelled = true;
     };
-  }, [auth.accessToken, auth.tenantId, selectedPatient?.id]);
+  }, [refreshRecommendations, selectedPatient?.id]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadSelectedPatientContext() {
+      if (!selectedPatient?.id) {
+        setPatientHistoryRows([]);
+        setPatientDocuments([]);
+        setPatientBills([]);
+        return;
+      }
+      if (cancelled) {
+        return;
+      }
+      await refreshSelectedPatientContext(selectedPatient.id);
+    }
+    void loadSelectedPatientContext();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshSelectedPatientContext, selectedPatient?.id]);
+
+  React.useEffect(() => {
+    if (!selectedPatient?.id) {
+      setExternalPromptOpen(false);
+      return;
+    }
+    if (externalPromptSeenPatientId !== selectedPatient.id) {
+      setExternalPromptOpen(true);
+    }
+  }, [externalPromptSeenPatientId, selectedPatient?.id]);
+
+  React.useEffect(() => {
+    if (externalDialogOpen && autoOpenCardUpload) {
+      window.setTimeout(() => externalCardFileRef.current?.click(), 0);
+      setAutoOpenCardUpload(false);
+    }
+  }, [autoOpenCardUpload, externalDialogOpen]);
+
+  React.useEffect(() => {
+    if (!receiptPreview || !receiptAutoPrint || receiptPreviewLoading) {
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      window.print();
+      setReceiptAutoPrint(false);
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [receiptAutoPrint, receiptPreview, receiptPreviewLoading]);
+
+  const selectedPatientSummary = React.useMemo(() => {
+    if (!selectedPatient) return null;
+    return patients.find((patient) => patient.id === selectedPatient.id) || selectedPatient;
+  }, [patients, selectedPatient]);
+
+  const selectedPatientBill = React.useMemo(() => {
+    return patientBills.find((bill) => billHasCollectableDue(bill))
+      || patientBills.find((bill) => !billCountsAsSettled(bill))
+      || patientBills[0]
+      || null;
+  }, [patientBills]);
 
   if (!auth.tenantId) {
     return <Alert severity="warning">No tenant is selected for this session.</Alert>;
@@ -568,6 +805,35 @@ export default function VaccinationsPage() {
     }
   };
 
+  const submitVaccination = React.useCallback(async (body: Parameters<typeof recordPatientVaccination>[3]) => {
+    if (!auth.accessToken || !auth.tenantId || !selectedPatient) {
+      return null;
+    }
+    const patientId = selectedPatient.id;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    setWorkflowNotice(null);
+    setVaccinationFieldErrors({});
+    try {
+      const recorded = await recordPatientVaccination(auth.accessToken, auth.tenantId, patientId, body);
+      setVaccinationForm(emptyVaccinationForm());
+      await Promise.all([
+        loadAll(),
+        refreshSelectedPatientContext(patientId),
+        refreshRecommendations(patientId, { silent: true }),
+      ]);
+      setSuccess(body.source === "EXTERNAL" ? "External vaccination history saved" : "Vaccination recorded");
+      setWorkflowNotice(recorded.workflowWarnings?.length ? recorded.workflowWarnings.join(" ") : null);
+      return recorded;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to record vaccination");
+      return null;
+    } finally {
+      setSaving(false);
+    }
+  }, [auth.accessToken, auth.tenantId, loadAll, refreshRecommendations, refreshSelectedPatientContext, selectedPatient]);
+
   const recordVaccination = async () => {
     if (!auth.accessToken || !auth.tenantId || !selectedPatient) {
       return;
@@ -580,8 +846,12 @@ export default function VaccinationsPage() {
       nextDueDate: vaccinationForm.nextDueDate || null,
       batchNumber: vaccinationForm.batchNumber,
       notes: vaccinationForm.notes,
+      source: "INTERNAL",
+      externalPlace: null,
+      proofDocumentId: null,
+      verifiedStatus: null,
       administeredByUserId: vaccinationForm.administeredByUserId || null,
-      billId: vaccinationForm.addToBill && vaccinationForm.billId.trim() ? vaccinationForm.billId.trim() : null,
+      billId: null,
       addToBill: vaccinationForm.addToBill,
       billItemUnitPrice: vaccinationForm.billItemUnitPrice.trim() ? Number(vaccinationForm.billItemUnitPrice) : null,
     });
@@ -595,35 +865,295 @@ export default function VaccinationsPage() {
       }, 0);
       return;
     }
+    const body = {
+      vaccineId: parsed.data.vaccineId,
+      vaccineName: null,
+      doseNumber: parsed.data.doseNumber ?? null,
+      givenDate: parsed.data.givenDate ?? null,
+      nextDueDate: parsed.data.nextDueDate ?? null,
+      batchNumber: parsed.data.batchNumber ?? null,
+      notes: parsed.data.notes ?? null,
+      source: "INTERNAL" as const,
+      externalPlace: null,
+      proofDocumentId: null,
+      verifiedStatus: null,
+      administeredByUserId: parsed.data.administeredByUserId ?? null,
+      billId: null,
+      addToBill: parsed.data.addToBill ?? false,
+      billItemUnitPrice: parsed.data.billItemUnitPrice ?? null,
+    };
+    if (!noHistoryConfirmOpen && patientHistoryRows.length === 0) {
+      setPendingVaccinationSubmit({ body });
+      setNoHistoryConfirmOpen(true);
+      return;
+    }
+    const recorded = await submitVaccination(body);
+    if (recorded?.billId && body.addToBill) {
+      try {
+        const bill = await getBill(auth.accessToken, auth.tenantId, recorded.billId);
+        if (billHasCollectableDue(bill)) {
+          setVaccinationPaymentDialog({
+            bill,
+            patientLabel: selectedPatientSummary ? `${selectedPatientSummary.firstName} ${selectedPatientSummary.lastName}`.trim() : selectedPatient.patientNumber || "Patient",
+            vaccineName: vaccines.find((item) => item.id === recorded.vaccineId)?.vaccineName || recorded.vaccineName || "Vaccine",
+          });
+        }
+      } catch {
+        // Keep the vaccination record saved even if the follow-up billing lookup fails.
+      }
+    }
+  };
+
+  const buildVaccinationReceiptPrintData = React.useCallback((
+    bill: Bill,
+    receipt: Receipt,
+    payment: Payment,
+  ): ReceiptPrintData => ({
+    clinicProfile,
+    bill,
+    receipt,
+    payment,
+    patient: selectedPatientSummary,
+    appointment: null,
+    consultation: null,
+  }), [clinicProfile, selectedPatientSummary]);
+
+  const submitVaccinationPayment = async (value: ConsultationFeeDialogValue) => {
+    if (!auth.accessToken || !auth.tenantId || !vaccinationPaymentDialog) {
+      return;
+    }
+    const patientId = selectedPatient?.id;
+    if (!patientId) {
+      return;
+    }
     setSaving(true);
     setError(null);
-    setSuccess(null);
-    setWorkflowNotice(null);
-    setVaccinationFieldErrors({});
     try {
-      const recorded = await recordPatientVaccination(auth.accessToken, auth.tenantId, selectedPatient.id, {
-        vaccineId: parsed.data.vaccineId,
-        doseNumber: parsed.data.doseNumber ?? null,
-        givenDate: parsed.data.givenDate ?? null,
-        nextDueDate: parsed.data.nextDueDate ?? null,
-        batchNumber: parsed.data.batchNumber ?? null,
-        notes: parsed.data.notes ?? null,
-        administeredByUserId: parsed.data.administeredByUserId ?? null,
-        billId: parsed.data.billId ?? null,
-        addToBill: parsed.data.addToBill ?? false,
-        billItemUnitPrice: parsed.data.billItemUnitPrice ?? null,
+      const bill = vaccinationPaymentDialog.bill;
+      const payment = await addBillPayment(auth.accessToken, auth.tenantId, bill.id, {
+        paymentDate: new Date().toISOString().slice(0, 10),
+        amount: billEffectiveDueAmount(bill),
+        paymentMode: value.paymentMode,
+        referenceNumber: value.referenceNumber || null,
+        notes: value.notes || null,
       });
-      setVaccinationForm(emptyVaccinationForm());
-      setPatientQuery("");
-      setSelectedPatient(null);
-      await loadAll();
-      setSuccess("Vaccination recorded");
-      setWorkflowNotice(recorded.workflowWarnings?.length ? recorded.workflowWarnings.join(" ") : null);
+      const updatedBill = await getBill(auth.accessToken, auth.tenantId, bill.id);
+      const receipt: Receipt = {
+        id: payment.receiptId || payment.id,
+        tenantId: payment.tenantId,
+        receiptNumber: payment.receiptNumber || `RCPT-${payment.id.slice(0, 8).toUpperCase()}`,
+        billId: updatedBill.id,
+        paymentId: payment.id,
+        receiptDate: payment.receiptDate || payment.paymentDate,
+        amount: payment.amount,
+        createdAt: payment.createdAt,
+      };
+      const patientName = vaccinationPaymentDialog.patientLabel || (selectedPatientSummary ? `${selectedPatientSummary.firstName} ${selectedPatientSummary.lastName}`.trim() : selectedPatient?.patientNumber || "Patient");
+      const vaccineName = vaccinationPaymentDialog.vaccineName || "Vaccine";
+      const receiptPrintData = buildVaccinationReceiptPrintData(updatedBill, receipt, payment);
+      setVaccinationReceiptPanel({
+        patientName,
+        vaccineName,
+        bill: updatedBill,
+        receipt,
+        payment,
+        receiptPrintData,
+      });
+      setVaccinationPaymentDialog(null);
+      await Promise.all([
+        loadAll(),
+        refreshSelectedPatientContext(patientId),
+        refreshRecommendations(patientId, { silent: true }),
+      ]);
+      setSuccess("Payment collected");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to record vaccination");
+      setError(err instanceof Error ? err.message : "Failed to collect vaccination payment");
     } finally {
       setSaving(false);
     }
+  };
+
+  const saveExternalVaccination = async () => {
+    if (!auth.accessToken || !auth.tenantId || !selectedPatient) {
+      return;
+    }
+    const patientId = selectedPatient.id;
+    const errors: Record<string, string> = {};
+    if (!externalVaccinationForm.vaccineName.trim()) {
+      errors.vaccineName = "Vaccine name is required.";
+    }
+    if (!externalVaccinationForm.givenDate.trim()) {
+      errors.givenDate = "Given date is required.";
+    }
+    if (externalVaccinationForm.doseNumber.trim() && Number.isNaN(Number(externalVaccinationForm.doseNumber))) {
+      errors.doseNumber = "Dose number must be a number.";
+    }
+    if (Object.keys(errors).length > 0) {
+      setExternalFieldErrors(errors);
+      setError(Object.values(errors)[0]);
+      window.setTimeout(() => {
+        const firstField = ["vaccineName", "doseNumber", "givenDate", "externalPlace", "batchNumber", "notes", "proofDocumentId"].find((field) => errors[field]);
+        document.getElementById(firstField ? `external-vaccination-${firstField}` : "external-vaccination-vaccineName")?.focus();
+      }, 0);
+      return;
+    }
+    const matchedVaccine = vaccines.find((item) => item.vaccineName.trim().toLowerCase() === externalVaccinationForm.vaccineName.trim().toLowerCase());
+    await submitVaccination({
+      vaccineId: matchedVaccine?.id ?? null,
+      vaccineName: externalVaccinationForm.vaccineName.trim(),
+      doseNumber: externalVaccinationForm.doseNumber.trim() ? Number(externalVaccinationForm.doseNumber) : null,
+      givenDate: externalVaccinationForm.givenDate || null,
+      nextDueDate: null,
+      batchNumber: externalVaccinationForm.batchNumber.trim() || null,
+      notes: externalVaccinationForm.notes.trim() || null,
+      source: "EXTERNAL",
+      externalPlace: externalVaccinationForm.externalPlace.trim() || null,
+      proofDocumentId: externalVaccinationForm.proofDocumentId.trim() || null,
+      verifiedStatus: externalVaccinationForm.verifiedStatus,
+      administeredByUserId: vaccinationForm.administeredByUserId || null,
+      billId: null,
+      addToBill: false,
+      billItemUnitPrice: null,
+    });
+    setExternalVaccinationForm(emptyExternalVaccinationForm());
+    setExternalDialogOpen(false);
+    setExternalPromptOpen(false);
+    setExternalPromptSeenPatientId(patientId);
+    setNoHistoryConfirmOpen(false);
+    setPendingVaccinationSubmit(null);
+  };
+
+  const continueWithoutHistory = async () => {
+    if (!pendingVaccinationSubmit) {
+      return;
+    }
+    const patientId = selectedPatient?.id || null;
+    setNoHistoryConfirmOpen(false);
+    await submitVaccination(pendingVaccinationSubmit.body);
+    setPendingVaccinationSubmit(null);
+    if (patientId) {
+      setExternalPromptSeenPatientId(patientId);
+    }
+  };
+
+  const openVaccinationReceiptPreview = React.useCallback((autoPrint = false) => {
+    if (!vaccinationReceiptPanel) {
+      return;
+    }
+    setReceiptPreview(vaccinationReceiptPanel.receiptPrintData);
+    setReceiptAutoPrint(autoPrint);
+  }, [vaccinationReceiptPanel]);
+
+  const handleVaccinationReceiptDownload = React.useCallback(async () => {
+    if (!auth.accessToken || !auth.tenantId || !vaccinationReceiptPanel?.receipt.id) {
+      return;
+    }
+    setReceiptActionLoading(true);
+    setError(null);
+    try {
+      const file = await getReceiptPdf(auth.accessToken, auth.tenantId, vaccinationReceiptPanel.receipt.id);
+      const url = URL.createObjectURL(file.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = file.filename || `${vaccinationReceiptPanel.receipt.receiptNumber || vaccinationReceiptPanel.bill.billNumber}-receipt.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download receipt PDF");
+    } finally {
+      setReceiptActionLoading(false);
+    }
+  }, [auth.accessToken, auth.tenantId, vaccinationReceiptPanel]);
+
+  const handleVaccinationReceiptSend = React.useCallback(async (channel: "EMAIL" | "WHATSAPP") => {
+    if (!auth.accessToken || !auth.tenantId || !vaccinationReceiptPanel?.receipt.id) {
+      return;
+    }
+    setReceiptActionLoading(true);
+    setError(null);
+    try {
+      await sendReceipt(auth.accessToken, auth.tenantId, vaccinationReceiptPanel.receipt.id, channel);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send receipt");
+    } finally {
+      setReceiptActionLoading(false);
+    }
+  }, [auth.accessToken, auth.tenantId, vaccinationReceiptPanel]);
+
+  const openSelectedPatientBillReceipt = React.useCallback(async (autoPrint = false) => {
+    if (!auth.accessToken || !auth.tenantId || !selectedPatientBill || !selectedPatientSummary) {
+      return;
+    }
+    setReceiptActionLoading(true);
+    setError(null);
+    try {
+      const [payments, receipts, bill] = await Promise.all([
+        listBillPayments(auth.accessToken, auth.tenantId, selectedPatientBill.id),
+        listBillReceipts(auth.accessToken, auth.tenantId, selectedPatientBill.id),
+        getBill(auth.accessToken, auth.tenantId, selectedPatientBill.id),
+      ]);
+      const payment = payments[0] || null;
+      const receipt = latestReceiptForBill(receipts) || (payment ? {
+        id: payment.receiptId || payment.id,
+        tenantId: payment.tenantId,
+        receiptNumber: payment.receiptNumber || `RCPT-${payment.id.slice(0, 8).toUpperCase()}`,
+        billId: payment.billId,
+        paymentId: payment.id,
+        receiptDate: payment.receiptDate || payment.paymentDate,
+        amount: payment.amount,
+        createdAt: payment.createdAt,
+      } : null);
+      if (!receipt || !payment) {
+        throw new Error("Receipt not available yet.");
+      }
+      const patientName = `${selectedPatientSummary.firstName} ${selectedPatientSummary.lastName}`.trim();
+      const receiptPrintData = buildVaccinationReceiptPrintData(bill, receipt, payment);
+      setReceiptPreview(receiptPrintData);
+      setReceiptAutoPrint(autoPrint);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to open receipt");
+    } finally {
+      setReceiptActionLoading(false);
+    }
+  }, [auth.accessToken, auth.tenantId, buildVaccinationReceiptPrintData, selectedPatientBill, selectedPatientSummary]);
+
+  const uploadVaccinationCard = async (file: File) => {
+    if (!auth.accessToken || !auth.tenantId || !selectedPatient) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const document = await uploadPatientDocument(auth.accessToken, auth.tenantId, selectedPatient.id, {
+        file,
+        documentType: "VACCINATION",
+        title: `Vaccination card - ${selectedPatient.firstName} ${selectedPatient.lastName}`,
+        notes: "Vaccination card uploaded for external history review.",
+        uploadSource: "RECEPTION",
+        sourceModule: "VACCINATION",
+        sourceEntityId: selectedPatient.id,
+        visibility: "INTERNAL_ONLY",
+      });
+      setExternalVaccinationForm((current) => ({ ...current, proofDocumentId: document.id }));
+      setSuccess("Vaccination card uploaded for review");
+      setWorkflowNotice("Vaccination card uploaded but not yet mapped to vaccine history.");
+      const documents = await getPatientDocuments(auth.accessToken, auth.tenantId, selectedPatient.id, { documentType: "VACCINATION" });
+      setPatientDocuments(documents);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload vaccination card");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleExternalCardFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    await uploadVaccinationCard(file);
+    event.target.value = "";
   };
 
   const deactivate = async (id: string) => {
@@ -714,11 +1244,6 @@ export default function VaccinationsPage() {
     }
   };
 
-  const selectedPatientSummary = React.useMemo(() => {
-    if (!selectedPatient) return null;
-    return patients.find((patient) => patient.id === selectedPatient.id) || selectedPatient;
-  }, [patients, selectedPatient]);
-
   const filteredHistoryRows = React.useMemo(() => {
     const patientFilter = historyPatientFilter.trim().toLowerCase();
     const vaccineFilter = historyVaccineFilter.trim().toLowerCase();
@@ -740,6 +1265,11 @@ export default function VaccinationsPage() {
     });
   }, [historyRows, historyPatientFilter, historyVaccineFilter, historyFromDate, historyToDate, historyDueStatus]);
 
+  const unmappedVaccinationCards = React.useMemo(() => {
+    const linkedProofIds = new Set(patientHistoryRows.map((row) => row.proofDocumentId).filter(Boolean));
+    return patientDocuments.filter((document) => !linkedProofIds.has(document.id));
+  }, [patientDocuments, patientHistoryRows]);
+
   const handleRecordFromRow = React.useCallback((row: PatientVaccination) => {
     const patient = patients.find((entry) => entry.id === row.patientId);
     if (patient) {
@@ -759,6 +1289,7 @@ export default function VaccinationsPage() {
         route: item.route ?? current.route,
         administrationSite: item.administrationSite ?? current.administrationSite,
         nextDueDate: item.dueDate ?? current.nextDueDate,
+        billItemUnitPrice: current.billItemUnitPrice || "",
       }));
       return;
     }
@@ -769,6 +1300,7 @@ export default function VaccinationsPage() {
       route: vaccine.route ?? item.route ?? current.route,
       administrationSite: vaccine.administrationSite ?? item.administrationSite ?? current.administrationSite,
       nextDueDate: item.dueDate ?? current.nextDueDate,
+      billItemUnitPrice: vaccine.defaultPrice != null ? vaccine.defaultPrice.toFixed(2) : current.billItemUnitPrice,
     }));
     setWorkflowNotice(`Selected ${vaccine.vaccineName} from recommendations. Recommendations are assistive. Verify against clinic protocol.`);
     window.setTimeout(() => document.getElementById("vaccination-vaccineId")?.focus(), 0);
@@ -794,6 +1326,42 @@ export default function VaccinationsPage() {
     navigate(`/appointments?patientId=${row.patientId}`, { state: { patient: patients.find((entry) => entry.id === row.patientId) || null } });
   }, [navigate, patients]);
 
+  const openVaccinationProof = React.useCallback(async (row: PatientVaccination) => {
+    if (!auth.accessToken || !auth.tenantId || !row.proofDocumentId) {
+      return;
+    }
+    try {
+      const response = await getPatientDocumentViewUrl(auth.accessToken, auth.tenantId, row.patientId, row.proofDocumentId);
+      const url = URL.createObjectURL(response.blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to open vaccination card");
+    }
+  }, [auth.accessToken, auth.tenantId]);
+
+  const openExternalVaccinationDialog = React.useCallback(() => {
+    setExternalVaccinationForm(emptyExternalVaccinationForm());
+    setExternalFieldErrors({});
+    setExternalDialogOpen(true);
+    setExternalPromptOpen(false);
+    if (selectedPatient?.id) {
+      setExternalPromptSeenPatientId(selectedPatient.id);
+    }
+  }, [selectedPatient?.id]);
+
+  const openExternalVaccinationCardUpload = React.useCallback(() => {
+    openExternalVaccinationDialog();
+    setAutoOpenCardUpload(true);
+  }, [openExternalVaccinationDialog]);
+
+  const skipExternalPrompt = React.useCallback(() => {
+    if (selectedPatient?.id) {
+      setExternalPromptSeenPatientId(selectedPatient.id);
+    }
+    setExternalPromptOpen(false);
+  }, [selectedPatient?.id]);
+
   return (
     <Stack spacing={3}>
       <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
@@ -813,6 +1381,173 @@ export default function VaccinationsPage() {
       {error ? <Alert severity="error">{error}</Alert> : null}
       {success ? <Alert severity="success">{success}</Alert> : null}
       {workflowNotice ? <Alert severity="warning">{workflowNotice}</Alert> : null}
+      {selectedPatient && unmappedVaccinationCards.length > 0 ? (
+        <Alert severity="warning">
+          Vaccination card uploaded but not yet mapped to vaccine history.
+        </Alert>
+      ) : null}
+
+      <Dialog open={externalPromptOpen && Boolean(selectedPatient)} onClose={skipExternalPrompt} maxWidth="sm" fullWidth>
+        <DialogTitle>External vaccination history</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={1.25}>
+            <Typography variant="body2">
+              Has this patient taken any vaccines outside this clinic?
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Adding external history helps recommendations avoid repeating vaccines already taken elsewhere.
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={skipExternalPrompt}>Skip for now</Button>
+          <Button onClick={openExternalVaccinationDialog}>Add External Vaccination</Button>
+          <Button variant="contained" onClick={openExternalVaccinationCardUpload}>
+            Upload Vaccination Card
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={noHistoryConfirmOpen} onClose={() => setNoHistoryConfirmOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>No vaccination history recorded</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2">
+            No previous vaccination history is recorded. Continue with today&apos;s vaccination?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            setNoHistoryConfirmOpen(false);
+            openExternalVaccinationDialog();
+          }}>
+            Add External History First
+          </Button>
+          <Button variant="contained" onClick={() => void continueWithoutHistory()}>
+            Continue
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={externalDialogOpen} onClose={() => setExternalDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Add external vaccination</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Alert severity="info">Source = EXTERNAL. Add completed doses taken at another clinic, hospital, or pharmacy.</Alert>
+            <Grid container spacing={1}>
+              <Grid size={{ xs: 12, md: 8 }}>
+                <TextField
+                  id="external-vaccination-vaccineName"
+                  fullWidth
+                  size="small"
+                  label="Vaccine name"
+                  value={externalVaccinationForm.vaccineName}
+                  onChange={(e) => setExternalVaccinationForm((current) => ({ ...current, vaccineName: e.target.value }))}
+                  error={Boolean(externalFieldErrors.vaccineName)}
+                  helperText={externalFieldErrors.vaccineName || "Required."}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <TextField
+                  id="external-vaccination-doseNumber"
+                  fullWidth
+                  size="small"
+                  label="Dose number"
+                  value={externalVaccinationForm.doseNumber}
+                  onChange={(e) => setExternalVaccinationForm((current) => ({ ...current, doseNumber: e.target.value }))}
+                  error={Boolean(externalFieldErrors.doseNumber)}
+                  helperText={externalFieldErrors.doseNumber || "Optional."}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  id="external-vaccination-givenDate"
+                  fullWidth
+                  size="small"
+                  type="date"
+                  label="Given date"
+                  value={externalVaccinationForm.givenDate}
+                  onChange={(e) => setExternalVaccinationForm((current) => ({ ...current, givenDate: e.target.value }))}
+                  InputLabelProps={{ shrink: true }}
+                  error={Boolean(externalFieldErrors.givenDate)}
+                  helperText={externalFieldErrors.givenDate || "Required."}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  id="external-vaccination-externalPlace"
+                  fullWidth
+                  size="small"
+                  label="Place / clinic / hospital"
+                  value={externalVaccinationForm.externalPlace}
+                  onChange={(e) => setExternalVaccinationForm((current) => ({ ...current, externalPlace: e.target.value }))}
+                  error={Boolean(externalFieldErrors.externalPlace)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  id="external-vaccination-batchNumber"
+                  fullWidth
+                  size="small"
+                  label="Batch number"
+                  value={externalVaccinationForm.batchNumber}
+                  onChange={(e) => setExternalVaccinationForm((current) => ({ ...current, batchNumber: e.target.value }))}
+                  error={Boolean(externalFieldErrors.batchNumber)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  id="external-vaccination-brandName"
+                  fullWidth
+                  size="small"
+                  label="Brand name"
+                  value={externalVaccinationForm.brandName}
+                  onChange={(e) => setExternalVaccinationForm((current) => ({ ...current, brandName: e.target.value }))}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  id="external-vaccination-manufacturer"
+                  fullWidth
+                  size="small"
+                  label="Manufacturer"
+                  value={externalVaccinationForm.manufacturer}
+                  onChange={(e) => setExternalVaccinationForm((current) => ({ ...current, manufacturer: e.target.value }))}
+                />
+              </Grid>
+              <Grid size={12}>
+                <TextField
+                  id="external-vaccination-notes"
+                  fullWidth
+                  size="small"
+                  multiline
+                  minRows={2}
+                  label="Notes"
+                  value={externalVaccinationForm.notes}
+                  onChange={(e) => setExternalVaccinationForm((current) => ({ ...current, notes: e.target.value }))}
+                />
+              </Grid>
+              <Grid size={12}>
+                <Stack direction="row" spacing={1} flexWrap="wrap" alignItems="center">
+                  <Button variant="outlined" onClick={() => externalCardFileRef.current?.click()}>
+                    Upload Vaccination Card
+                  </Button>
+                  <Typography variant="caption" color="text.secondary">
+                    PDF, JPG, or PNG stored as a clinical document.
+                  </Typography>
+                  {externalVaccinationForm.proofDocumentId ? (
+                    <Chip size="small" label="Uploaded for review" color="warning" variant="outlined" />
+                  ) : null}
+                </Stack>
+                <input ref={externalCardFileRef} hidden type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" onChange={(e) => void handleExternalCardFile(e)} />
+              </Grid>
+            </Grid>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setExternalDialogOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={() => void saveExternalVaccination()}>Save External History</Button>
+        </DialogActions>
+      </Dialog>
 
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, lg: 5 }}>
@@ -920,9 +1655,11 @@ export default function VaccinationsPage() {
                                     </Box>
                                     <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap">
                                       <Chip size="small" label={recommendationStatusLabel(item.status)} color={recommendationStatusColor(item.status)} variant="outlined" />
-                                      <Button size="small" variant="outlined" onClick={() => handleSelectRecommendation(item)}>
-                                        Select Vaccine
-                                      </Button>
+                                      {item.status !== "COMPLETED" ? (
+                                        <Button size="small" variant="outlined" onClick={() => handleSelectRecommendation(item)}>
+                                          Select Vaccine
+                                        </Button>
+                                      ) : null}
                                     </Stack>
                                   </Box>
                                 ))}
@@ -951,7 +1688,15 @@ export default function VaccinationsPage() {
                     label="Vaccine"
                     value={vaccinationForm.vaccineId}
                     disabled={!vaccines.length}
-                    onChange={(e) => setVaccinationForm((current) => ({ ...current, vaccineId: String(e.target.value) }))}
+                    onChange={(e) => {
+                      const vaccineId = String(e.target.value);
+                      const vaccine = vaccines.find((item) => item.id === vaccineId);
+                      setVaccinationForm((current) => ({
+                        ...current,
+                        vaccineId,
+                        billItemUnitPrice: vaccine?.defaultPrice != null ? vaccine.defaultPrice.toFixed(2) : current.billItemUnitPrice,
+                      }));
+                    }}
                     error={Boolean(vaccinationFieldErrors.vaccineId)}
                   >
                     {vaccines.map((vaccine) => (
@@ -1007,9 +1752,6 @@ export default function VaccinationsPage() {
                     </FormControl>
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField size="small" fullWidth id="vaccination-billId" label="Bill ID" value={vaccinationForm.billId} onChange={(e) => setVaccinationForm((current) => ({ ...current, billId: e.target.value }))} disabled={!vaccinationForm.addToBill} error={Boolean(vaccinationFieldErrors.billId)} helperText={vaccinationForm.addToBill ? (vaccinationFieldErrors.billId || "Optional when bill linking is enabled.") : ""} />
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>
                     <TextField size="small" fullWidth id="vaccination-billItemUnitPrice" label={<RequiredLabel text="Bill item unit price" required={vaccinationForm.addToBill} />} value={vaccinationForm.billItemUnitPrice} onChange={(e) => setVaccinationForm((current) => ({ ...current, billItemUnitPrice: e.target.value }))} disabled={!vaccinationForm.addToBill} error={Boolean(vaccinationFieldErrors.billItemUnitPrice)} helperText={vaccinationForm.addToBill ? (vaccinationFieldErrors.billItemUnitPrice || "Required when adding to bill.") : ""} />
                   </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
@@ -1017,12 +1759,62 @@ export default function VaccinationsPage() {
                       control={
                         <Switch
                           checked={vaccinationForm.addToBill}
-                          onChange={(e) => setVaccinationForm((current) => ({ ...current, addToBill: e.target.checked }))}
+                          onChange={(e) => setVaccinationForm((current) => ({
+                            ...current,
+                            addToBill: e.target.checked,
+                            billItemUnitPrice: e.target.checked
+                              ? current.billItemUnitPrice || vaccines.find((item) => item.id === current.vaccineId)?.defaultPrice?.toFixed(2) || ""
+                              : current.billItemUnitPrice,
+                          }))}
                         />
                       }
                       label="Add to bill"
                     />
                   </Grid>
+                  {selectedPatientBill ? (
+                    <Grid size={12}>
+                      <Card variant="outlined" sx={{ bgcolor: "background.default" }}>
+                        <CardContent sx={{ p: 1 }}>
+                          <Stack spacing={0.75}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>Current billing status</Typography>
+                            <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                              <Chip size="small" label={billStatusLabel(selectedPatientBill.status)} color={billStatusColor(selectedPatientBill.status)} variant="outlined" />
+                              <Chip size="small" label={selectedPatientBill.billNumber} variant="outlined" />
+                              <Chip size="small" label={`Due: ₹${selectedPatientBill.dueAmount.toFixed(2)}`} color={billHasCollectableDue(selectedPatientBill) ? "warning" : "success"} variant="outlined" />
+                              {billCountsAsSettled(selectedPatientBill) ? <Chip size="small" label="Receipt ready" color="success" variant="outlined" /> : null}
+                            </Stack>
+                            {billHasCollectableDue(selectedPatientBill) ? (
+                              <Button size="small" variant="outlined" onClick={() => setVaccinationPaymentDialog({
+                                bill: selectedPatientBill,
+                                patientLabel: selectedPatientSummary ? `${selectedPatientSummary.firstName} ${selectedPatientSummary.lastName}`.trim() : selectedPatient?.patientNumber || "Patient",
+                                vaccineName: vaccines.find((item) => item.id === vaccinationForm.vaccineId)?.vaccineName || "Vaccine",
+                              })}>
+                                Collect Payment
+                              </Button>
+                            ) : billCountsAsSettled(selectedPatientBill) ? (
+                              <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                                <Button size="small" variant="outlined" onClick={() => void openSelectedPatientBillReceipt(false)} disabled={receiptActionLoading}>
+                                  View Receipt
+                                </Button>
+                                <Button size="small" variant="outlined" onClick={() => void openSelectedPatientBillReceipt(true)} disabled={receiptActionLoading}>
+                                  Print Receipt
+                                </Button>
+                                <Button size="small" variant="outlined" onClick={() => void handleVaccinationReceiptDownload()} disabled={receiptActionLoading}>
+                                  Download Receipt PDF
+                                </Button>
+                                <Button size="small" variant="outlined" onClick={() => void handleVaccinationReceiptSend("EMAIL")} disabled={receiptActionLoading}>
+                                  Email Receipt
+                                </Button>
+                                <Button size="small" variant="outlined" onClick={() => void handleVaccinationReceiptSend("WHATSAPP")} disabled={receiptActionLoading}>
+                                  WhatsApp Receipt
+                                </Button>
+                              </Stack>
+                            ) : null}
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  ) : null}
                 </Grid>
 
                 <Button variant="contained" size="small" onClick={() => void recordVaccination()} disabled={saving}>
@@ -1323,12 +2115,16 @@ export default function VaccinationsPage() {
                             <TableCell>Date</TableCell>
                             <TableCell>Patient</TableCell>
                             <TableCell>Vaccine</TableCell>
+                            <TableCell>Source</TableCell>
                             <TableCell>Dose</TableCell>
                             <TableCell>Batch number</TableCell>
                             <TableCell>Expiry</TableCell>
                             <TableCell>Manufacturer</TableCell>
                             <TableCell>Administered by</TableCell>
+                            <TableCell>Proof</TableCell>
+                            <TableCell>Verification</TableCell>
                             <TableCell>Next due date</TableCell>
+                            <TableCell>Bill number</TableCell>
                             <TableCell>Bill status</TableCell>
                             <TableCell>Recorded by</TableCell>
                           </TableRow>
@@ -1350,13 +2146,32 @@ export default function VaccinationsPage() {
                                 </Stack>
                               </TableCell>
                               <TableCell>{row.vaccineName}</TableCell>
+                              <TableCell>
+                                <Chip size="small" label={row.source || "INTERNAL"} color={row.source === "EXTERNAL" ? "secondary" : "default"} variant="outlined" />
+                              </TableCell>
                               <TableCell>{row.doseNumber ?? "-"}</TableCell>
                               <TableCell>{row.inventoryBatchNumber || row.batchNumber || "-"}</TableCell>
                               <TableCell>{row.inventoryBatchExpiryDate || "-"}</TableCell>
                               <TableCell>{row.inventoryBatchManufacturer || "-"}</TableCell>
                               <TableCell>{row.administeredByUserName || "-"}</TableCell>
+                              <TableCell>
+                                {row.proofDocumentId ? (
+                                  <Button size="small" onClick={() => void openVaccinationProof(row)}>View Card</Button>
+                                ) : (
+                                  "-"
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <Chip size="small" label={row.verifiedStatus || "-"} color={row.verifiedStatus === "VERIFIED" ? "success" : row.verifiedStatus === "REJECTED" ? "error" : "warning"} variant="outlined" />
+                              </TableCell>
                               <TableCell><Chip size="small" label={row.nextDueDate || "-"} color={statusColor(row.nextDueDate)} /></TableCell>
-                              <TableCell>{row.billStatus || "-"}</TableCell>
+                              <TableCell>{row.billNumber || "-"}</TableCell>
+                              <TableCell>
+                                <Stack spacing={0.5}>
+                                  <Chip size="small" label={row.billStatus || "Unbilled"} color={row.billStatus === "PAID" ? "success" : row.billStatus ? "warning" : "default"} variant="outlined" />
+                                  {row.billStatus === "PAID" ? <Chip size="small" label="Receipt ready" color="success" variant="outlined" /> : null}
+                                </Stack>
+                              </TableCell>
                               <TableCell>{row.recordedByUserName || row.administeredByUserName || "-"}</TableCell>
                             </TableRow>
                           ))}
@@ -1528,6 +2343,61 @@ export default function VaccinationsPage() {
           <Button onClick={closeImportDialogs}>Close</Button>
         </DialogActions>
       </Dialog>
+
+      {vaccinationPaymentDialog ? (
+        <ConsultationFeeDialog
+          open
+          title="Collect vaccination payment"
+          reasonLabel="Vaccination billing"
+          appointmentLabel={`Bill: ${vaccinationPaymentDialog.bill.billNumber}`}
+          doctorLabel={`Vaccine: ${vaccinationPaymentDialog.vaccineName}`}
+          patientLabel={`Patient: ${vaccinationPaymentDialog.patientLabel}`}
+          feeLabel={`Amount due: ₹${billEffectiveDueAmount(vaccinationPaymentDialog.bill).toFixed(2)}`}
+          submitLabel="Collect Payment"
+          onClose={() => setVaccinationPaymentDialog(null)}
+          onSubmit={submitVaccinationPayment}
+        />
+      ) : null}
+
+      <Dialog open={Boolean(vaccinationReceiptPanel)} onClose={() => setVaccinationReceiptPanel(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Payment successful</DialogTitle>
+        <DialogContent>
+          {vaccinationReceiptPanel ? (
+            <Stack spacing={1.25} sx={{ pt: 0.5 }}>
+              <Alert severity="success">Receipt ready for {vaccinationReceiptPanel.patientName}.</Alert>
+              <Grid container spacing={1}>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Receipt number</Typography><Typography variant="body2">{vaccinationReceiptPanel.receipt.receiptNumber}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Bill number</Typography><Typography variant="body2">{vaccinationReceiptPanel.bill.billNumber}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Vaccine</Typography><Typography variant="body2">{vaccinationReceiptPanel.vaccineName}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Amount</Typography><Typography variant="body2">₹{vaccinationReceiptPanel.payment.amount.toFixed(2)}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Payment mode</Typography><Typography variant="body2">{vaccinationReceiptPanel.payment.paymentMode}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Collected by</Typography><Typography variant="body2">{staffDisplayName(vaccinationReceiptPanel.payment.receivedByLabel, vaccinationReceiptPanel.payment.receivedBy)}</Typography></Grid>
+                <Grid size={{ xs: 12, sm: 6 }}><Typography variant="body2" sx={{ fontWeight: 800 }}>Timestamp</Typography><Typography variant="body2">{vaccinationReceiptPanel.payment.paymentDateTime || vaccinationReceiptPanel.payment.paymentDate || vaccinationReceiptPanel.payment.receiptDate || vaccinationReceiptPanel.payment.createdAt}</Typography></Grid>
+              </Grid>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions sx={{ flexWrap: "wrap" }}>
+          <Button onClick={() => setVaccinationReceiptPanel(null)}>Close</Button>
+          <Button variant="outlined" onClick={() => { if (vaccinationReceiptPanel) openVaccinationReceiptPreview(false); setVaccinationReceiptPanel(null); }}>View Receipt</Button>
+          <Button variant="outlined" onClick={() => { if (vaccinationReceiptPanel) openVaccinationReceiptPreview(true); setVaccinationReceiptPanel(null); }}>Print Receipt</Button>
+          <Button variant="outlined" onClick={() => { void handleVaccinationReceiptDownload(); }}>Download Receipt PDF</Button>
+          <Button variant="outlined" onClick={() => { void handleVaccinationReceiptSend("EMAIL"); }}>Email Receipt</Button>
+          <Button variant="outlined" onClick={() => { void handleVaccinationReceiptSend("WHATSAPP"); }}>WhatsApp Receipt</Button>
+        </DialogActions>
+      </Dialog>
+
+      <ReceiptPrintDialog
+        open={Boolean(receiptPreview || receiptPreviewLoading)}
+        loading={receiptPreviewLoading}
+        data={receiptPreview}
+        onClose={() => {
+          setReceiptPreview(null);
+          setReceiptPreviewLoading(false);
+          setReceiptAutoPrint(false);
+        }}
+        onPrint={() => window.print()}
+      />
 
       <input ref={fileInputRef} type="file" accept=".csv,text/csv" hidden onChange={(event) => void handleImportFile(event)} />
     </Stack>

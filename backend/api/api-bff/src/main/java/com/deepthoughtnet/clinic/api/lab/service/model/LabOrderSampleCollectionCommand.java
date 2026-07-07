@@ -4,7 +4,6 @@ import java.time.OffsetDateTime;
 
 public record LabOrderSampleCollectionCommand(
         String sampleType,
-        String collectedBy,
         OffsetDateTime collectedAt,
         String notes
 ) {

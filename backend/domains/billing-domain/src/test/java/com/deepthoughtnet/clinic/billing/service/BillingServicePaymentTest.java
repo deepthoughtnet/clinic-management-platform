@@ -281,6 +281,22 @@ class BillingServicePaymentTest {
     }
 
     @Test
+    void recordPaymentDefaultsReceivedByToActorWhenMissing() {
+        List<PaymentEntity> payments = new ArrayList<>();
+        BillEntity bill = billWithTotal(new BigDecimal("100.00"), payments);
+        when(paymentRepository.save(any(PaymentEntity.class))).thenAnswer(invocation -> {
+            PaymentEntity payment = invocation.getArgument(0);
+            payments.add(payment);
+            return payment;
+        });
+
+        service.recordPayment(tenantId, bill.getId(), payment("25.00"), actorId);
+
+        assertThat(payments).hasSize(1);
+        assertThat(payments.get(0).getReceivedBy()).isEqualTo(actorId);
+    }
+
+    @Test
     void recordPaymentRequiresReferenceForNonCash() {
         List<PaymentEntity> payments = new ArrayList<>();
         BillEntity bill = billWithTotal(new BigDecimal("100.00"), payments);

@@ -1833,6 +1833,13 @@ export type PatientVaccination = {
   patientAllergies?: string | null;
   vaccineId: string | null;
   vaccineName: string;
+  source?: "INTERNAL" | "EXTERNAL" | string;
+  externalPlace?: string | null;
+  proofDocumentId?: string | null;
+  verifiedStatus?: "UNVERIFIED" | "VERIFIED" | "REJECTED" | string;
+  verifiedByUserId?: string | null;
+  verifiedByUserName?: string | null;
+  verifiedAt?: string | null;
   doseNumber: number | null;
   givenDate: string;
   nextDueDate: string | null;
@@ -1864,12 +1871,17 @@ export type PatientVaccination = {
 };
 
 export type PatientVaccinationInput = {
-  vaccineId: string;
+  vaccineId: string | null;
+  vaccineName?: string | null;
   doseNumber: number | null;
   givenDate: string | null;
   nextDueDate: string | null;
   batchNumber: string | null;
   notes: string | null;
+  source?: "INTERNAL" | "EXTERNAL" | string | null;
+  externalPlace?: string | null;
+  proofDocumentId?: string | null;
+  verifiedStatus?: "UNVERIFIED" | "VERIFIED" | "REJECTED" | string | null;
   administeredByUserId: string | null;
   billId: string | null;
   addToBill: boolean;
@@ -3482,13 +3494,11 @@ export async function collectLabOrderPayment(token: string, tenantId: string, id
 
 export async function collectLabOrderSample(token: string, tenantId: string, id: string, body: {
   sampleType?: string | null;
-  collectedBy?: string | null;
   collectedAt?: string | null;
   notes?: string | null;
 }) {
   return httpPost<LabOrder>(`/api/lab/orders/${id}/sample-collection`, {
     sampleType: body.sampleType ?? null,
-    collectedBy: body.collectedBy ?? null,
     collectedAt: body.collectedAt ?? null,
     notes: body.notes ?? null,
   }, { token, tenantId });
@@ -3504,7 +3514,6 @@ export async function collectLabOrderSamples(token: string, tenantId: string, or
     specimenType: string;
     containerType?: string | null;
     collectedAt?: string | null;
-    collectedBy?: string | null;
     notes?: string | null;
   }>;
 }) {
@@ -3514,7 +3523,6 @@ export async function collectLabOrderSamples(token: string, tenantId: string, or
       specimenType: sample.specimenType,
       containerType: sample.containerType ?? null,
       collectedAt: sample.collectedAt ?? null,
-      collectedBy: sample.collectedBy ?? null,
       notes: sample.notes ?? null,
     })),
   }, { token, tenantId });

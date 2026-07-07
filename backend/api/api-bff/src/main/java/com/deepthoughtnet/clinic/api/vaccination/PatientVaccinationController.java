@@ -2,6 +2,7 @@ package com.deepthoughtnet.clinic.api.vaccination;
 
 import com.deepthoughtnet.clinic.api.vaccination.dto.PatientVaccinationRequest;
 import com.deepthoughtnet.clinic.api.vaccination.dto.PatientVaccinationResponse;
+import com.deepthoughtnet.clinic.api.vaccination.dto.PatientVaccinationUpdateRequest;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
 import com.deepthoughtnet.clinic.vaccination.service.model.PatientVaccinationCommand;
@@ -44,14 +45,39 @@ public class PatientVaccinationController {
         return toResponse(vaccinationService.recordVaccination(tenantId, patientId, toCommand(request), actorAppUserId));
     }
 
+    @PostMapping("/{vaccinationId}/verify")
+    @PreAuthorize("@permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('TENANT_ADMIN') or @doctorAssignmentSecurityService.isDoctor()")
+    public PatientVaccinationResponse verifyExternalHistory(
+            @PathVariable UUID patientId,
+            @PathVariable UUID vaccinationId,
+            @Valid @RequestBody PatientVaccinationUpdateRequest request
+    ) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toResponse(vaccinationService.updateExternalVaccination(
+                tenantId,
+                patientId,
+                vaccinationId,
+                request.externalPlace(),
+                request.proofDocumentId(),
+                request.verifiedStatus(),
+                actorAppUserId
+        ));
+    }
+
     private PatientVaccinationCommand toCommand(PatientVaccinationRequest request) {
         return new PatientVaccinationCommand(
                 request.vaccineId(),
+                request.vaccineName(),
                 request.doseNumber(),
                 request.givenDate(),
                 request.nextDueDate(),
                 request.batchNumber(),
                 request.notes(),
+                request.source(),
+                request.externalPlace(),
+                request.proofDocumentId(),
+                request.verifiedStatus(),
                 request.administeredByUserId(),
                 request.billId(),
                 request.addToBill(),
@@ -72,6 +98,13 @@ public class PatientVaccinationController {
                 record.patientAllergies(),
                 record.vaccineId() == null ? null : record.vaccineId().toString(),
                 record.vaccineName(),
+                record.source(),
+                record.externalPlace(),
+                record.proofDocumentId() == null ? null : record.proofDocumentId().toString(),
+                record.verifiedStatus(),
+                record.verifiedByUserId() == null ? null : record.verifiedByUserId().toString(),
+                record.verifiedByUserName(),
+                record.verifiedAt(),
                 record.doseNumber(),
                 record.givenDate(),
                 record.nextDueDate(),

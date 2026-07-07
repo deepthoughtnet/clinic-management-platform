@@ -222,7 +222,7 @@ class LabServiceValidationTest {
     void rejectsSampleCollectionBeforeReadyState() {
         when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(sampleOrder(LabOrderStatus.ORDERED)));
 
-        assertThatThrownBy(() -> service.collectSample(TENANT_ID, ORDER_ID, new LabOrderSampleCollectionCommand("Blood", "Tech", OffsetDateTime.now(), null), ACTOR_ID))
+        assertThatThrownBy(() -> service.collectSample(TENANT_ID, ORDER_ID, new LabOrderSampleCollectionCommand("Blood", OffsetDateTime.now(), null), ACTOR_ID))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("ready for sample collection");
     }
@@ -238,7 +238,6 @@ class LabServiceValidationTest {
                 "Blood",
                 "EDTA",
                 OffsetDateTime.now().minusMinutes(5),
-                ACTOR_ID,
                 null
         )), ACTOR_ID);
 
@@ -263,7 +262,6 @@ class LabServiceValidationTest {
                 "Blood",
                 "EDTA",
                 OffsetDateTime.now().minusMinutes(5),
-                ACTOR_ID,
                 null
         )), ACTOR_ID);
 
@@ -282,8 +280,8 @@ class LabServiceValidationTest {
                 .thenReturn(Optional.of(existing));
 
         var samples = service.collectSamples(TENANT_ID, ORDER_ID, List.of(
-                new com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand(null, "Blood", "EDTA", OffsetDateTime.now(), ACTOR_ID, null),
-                new com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand(null, "Blood", "EDTA", OffsetDateTime.now(), ACTOR_ID, null)
+                new com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand(null, "Blood", "EDTA", OffsetDateTime.now(), null),
+                new com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand(null, "Blood", "EDTA", OffsetDateTime.now(), null)
         ), ACTOR_ID);
 
         assertThat(samples).extracting("accessionNumber").containsExactly(
@@ -313,7 +311,6 @@ class LabServiceValidationTest {
                 "Blood",
                 "EDTA",
                 OffsetDateTime.now(),
-                ACTOR_ID,
                 null
         )), ACTOR_ID);
         var tenantTwoSamples = service.collectSamples(otherTenant, ORDER_ID, List.of(new com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand(
@@ -321,7 +318,6 @@ class LabServiceValidationTest {
                 "Blood",
                 "EDTA",
                 OffsetDateTime.now(),
-                ACTOR_ID,
                 null
         )), ACTOR_ID);
 
@@ -347,11 +343,29 @@ class LabServiceValidationTest {
                 "Blood",
                 "EDTA",
                 OffsetDateTime.now(),
-                ACTOR_ID,
                 null
         )), ACTOR_ID);
 
         assertThat(samples.getFirst().accessionNumber()).isEqualTo("LAB-" + datePortion + "-0002");
+    }
+
+    @Test
+    void collectSamplesDerivesCollectorFromAuthenticatedUser() {
+        var order = sampleOrder(LabOrderStatus.READY_FOR_COLLECTION);
+        setOrderId(order, ORDER_ID);
+        when(labOrderRepository.findByTenantIdAndId(TENANT_ID, ORDER_ID)).thenReturn(Optional.of(order));
+
+        var samples = service.collectSamples(TENANT_ID, ORDER_ID, List.of(new com.deepthoughtnet.clinic.api.lab.service.model.LabSampleCollectionCommand(
+                null,
+                "Blood",
+                "EDTA",
+                OffsetDateTime.now(),
+                null
+        )), ACTOR_ID);
+
+        assertThat(samples).hasSize(1);
+        assertThat(samples.getFirst().collectedBy()).isEqualTo(ACTOR_ID);
+        assertThat(order.getSampleCollectedByUserId()).isEqualTo(ACTOR_ID);
     }
 
     @Test

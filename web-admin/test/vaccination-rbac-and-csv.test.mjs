@@ -35,6 +35,25 @@ test("vaccinations page hides vaccine master for non-managers and keeps operatio
   assert.ok(source.includes("No overdue vaccinations. Missed vaccine follow-ups will appear here."));
 });
 
+test("vaccinations page keeps billing and receipt flow inline", () => {
+  const source = readSource("pages/vaccinations/VaccinationsPage.tsx");
+
+  assert.ok(source.includes("Collect Payment"));
+  assert.ok(source.includes("Collect vaccination payment"));
+  assert.ok(source.includes("Current billing status"));
+  assert.ok(source.includes("Bill number"));
+  assert.ok(source.includes("Payment successful"));
+  assert.ok(source.includes("View Receipt"));
+  assert.ok(source.includes("Print Receipt"));
+  assert.ok(source.includes("Download Receipt PDF"));
+  assert.ok(source.includes("Email Receipt"));
+  assert.ok(source.includes("WhatsApp Receipt"));
+  assert.ok(source.includes("listBillPayments"));
+  assert.ok(source.includes("listBillReceipts"));
+  assert.ok(source.includes("getReceiptPdf"));
+  assert.ok(source.includes("sendReceipt"));
+});
+
 test("vaccination CSV helpers include template, preview and export support", () => {
   const source = readSource("pages/vaccinations/vaccinationCsv.ts");
 

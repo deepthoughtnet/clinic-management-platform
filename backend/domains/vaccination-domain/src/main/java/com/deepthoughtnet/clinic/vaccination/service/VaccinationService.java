@@ -5,6 +5,7 @@ import com.deepthoughtnet.clinic.billing.service.model.BillItemType;
 import com.deepthoughtnet.clinic.billing.service.model.BillLineCommand;
 import com.deepthoughtnet.clinic.billing.service.model.BillRecord;
 import com.deepthoughtnet.clinic.billing.service.model.BillStatus;
+import com.deepthoughtnet.clinic.billing.service.model.BillUpsertCommand;
 import com.deepthoughtnet.clinic.billing.service.model.BillingSearchCriteria;
 import com.deepthoughtnet.clinic.clinic.service.ClinicProfileService;
 import com.deepthoughtnet.clinic.clinic.service.model.ClinicProfileRecord;
@@ -42,6 +43,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -232,24 +234,42 @@ public class VaccinationService {
         validateRecord(command);
         PatientEntity patient = patientRepository.findByTenantIdAndId(tenantId, patientId)
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
-        VaccineMasterEntity vaccine = vaccineMasterRepository.findByTenantIdAndId(tenantId, command.vaccineId())
-                .orElseThrow(() -> new IllegalArgumentException("Vaccine not found"));
-        if (!vaccine.isActive()) {
-            throw new IllegalArgumentException("Vaccine is inactive");
+        String source = normalizeSource(command.source());
+        VaccineMasterEntity vaccine = null;
+        if (command.vaccineId() != null) {
+            vaccine = vaccineMasterRepository.findByTenantIdAndId(tenantId, command.vaccineId())
+                    .orElseThrow(() -> new IllegalArgumentException("Vaccine not found"));
+            if (!vaccine.isActive()) {
+                throw new IllegalArgumentException("Vaccine is inactive");
+            }
+        }
+        if ("EXTERNAL".equals(source) && vaccine == null && StringUtils.hasText(command.vaccineName())) {
+            vaccine = vaccineMasterRepository.findByTenantIdOrderByVaccineNameAsc(tenantId).stream()
+                    .filter(candidate -> candidate.isActive() && candidate.getVaccineName() != null && candidate.getVaccineName().trim().equalsIgnoreCase(command.vaccineName().trim()))
+                    .findFirst()
+                    .orElse(null);
         }
 
         UUID administeredBy = command.administeredByUserId() == null ? actorAppUserId : command.administeredByUserId();
         LocalDate givenDate = command.givenDate() == null ? LocalDate.now() : command.givenDate();
         LocalDate nextDueDate = command.nextDueDate();
-        if (nextDueDate == null && vaccine.getRecommendedGapDays() != null) {
+        if (!"EXTERNAL".equals(source) && nextDueDate == null && vaccine != null && vaccine.getRecommendedGapDays() != null) {
             nextDueDate = givenDate.plusDays(vaccine.getRecommendedGapDays());
         }
+        String vaccineNameSnapshot = resolveVaccineNameSnapshot(command, vaccine);
+        String verifiedStatus = normalizeVerifiedStatus(command.verifiedStatus(), source);
 
         PatientVaccinationEntity entity = PatientVaccinationEntity.create(
                 tenantId,
                 patientId,
-                vaccine.getId(),
-                vaccine.getVaccineName(),
+                vaccine == null ? null : vaccine.getId(),
+                vaccineNameSnapshot,
+                source,
+                normalizeNullable(command.externalPlace()),
+                command.proofDocumentId(),
+                verifiedStatus,
+                "VERIFIED".equalsIgnoreCase(verifiedStatus) ? actorAppUserId : null,
+                "VERIFIED".equalsIgnoreCase(verifiedStatus) ? OffsetDateTime.now() : null,
                 command.doseNumber(),
                 givenDate,
                 nextDueDate,
@@ -261,9 +281,9 @@ public class VaccinationService {
         PatientVaccinationEntity saved = patientVaccinationRepository.save(entity);
 
         List<String> warnings = new ArrayList<>();
-        BillLinkResult billLink = linkBillIfNeeded(tenantId, saved, vaccine, command, actorAppUserId);
-        InventoryLinkResult inventoryLink = linkInventoryIfAvailable(tenantId, saved, patient, vaccine, command, actorAppUserId, warnings);
-        ReminderLinkResult reminderLink = queueReminderIfNeeded(tenantId, saved, patient, actorAppUserId);
+        BillLinkResult billLink = "EXTERNAL".equals(source) ? null : linkBillIfNeeded(tenantId, saved, vaccine, command, actorAppUserId);
+        InventoryLinkResult inventoryLink = "EXTERNAL".equals(source) ? null : linkInventoryIfAvailable(tenantId, saved, patient, vaccine, command, actorAppUserId, warnings);
+        ReminderLinkResult reminderLink = "EXTERNAL".equals(source) ? null : queueReminderIfNeeded(tenantId, saved, patient, actorAppUserId);
 
         if (billLink != null) {
             saved.linkBill(billLink.billId(), billLink.billLineId(), billLink.billNumber(), billLink.billStatus(), actorAppUserId);
@@ -307,27 +327,67 @@ public class VaccinationService {
                 .toList(), billHistoryByVaccination(tenantId));
     }
 
-    private BillLinkResult linkBillIfNeeded(UUID tenantId, PatientVaccinationEntity saved, VaccineMasterEntity vaccine, PatientVaccinationCommand command, UUID actorAppUserId) {
-        if (!command.addToBill() || command.billId() == null) {
-            return null;
+    @Transactional
+    public PatientVaccinationRecord updateExternalVaccination(
+            UUID tenantId,
+            UUID patientId,
+            UUID vaccinationId,
+            String externalPlace,
+            UUID proofDocumentId,
+            String verifiedStatus,
+            UUID actorAppUserId
+    ) {
+        requireTenant(tenantId);
+        requireId(patientId, "patientId");
+        requireId(vaccinationId, "vaccinationId");
+        PatientVaccinationEntity entity = patientVaccinationRepository.findByTenantIdAndId(tenantId, vaccinationId)
+                .orElseThrow(() -> new IllegalArgumentException("Vaccination record not found"));
+        if (!patientId.equals(entity.getPatientId())) {
+            throw new IllegalArgumentException("Vaccination record does not belong to patient");
         }
-        BillRecord bill = billingService.findById(tenantId, command.billId())
-                .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
-        boolean alreadyLinked = bill.lines().stream()
-                .anyMatch(line -> line.itemType() == BillItemType.VACCINATION && saved.getId().equals(line.referenceId()));
-        if (alreadyLinked) {
-            return bill.lines().stream()
-                    .filter(entry -> entry.itemType() == BillItemType.VACCINATION && saved.getId().equals(entry.referenceId()))
-                    .findFirst()
-                    .map(line -> new BillLinkResult(bill.id(), line.id(), bill.billNumber(), bill.status().name()))
-                    .orElse(null);
+        String source = normalizeSource(entity.getSource());
+        String normalizedStatus = normalizeVerifiedStatus(verifiedStatus, source);
+        UUID verifiedBy = "VERIFIED".equalsIgnoreCase(normalizedStatus) ? actorAppUserId : null;
+        OffsetDateTime verifiedAt = "VERIFIED".equalsIgnoreCase(normalizedStatus) ? OffsetDateTime.now() : null;
+        entity.updateExternalDetails(
+                normalizeNullable(externalPlace),
+                proofDocumentId,
+                normalizedStatus,
+                verifiedBy,
+                verifiedAt,
+                actorAppUserId
+        );
+        PatientVaccinationEntity saved = patientVaccinationRepository.save(entity);
+        auditRecord(tenantId, saved, "vaccination.external.updated", actorAppUserId, "Updated external vaccination history");
+        return toRecord(saved, tenantData(tenantId), billHistoryByVaccination(tenantId).get(saved.getId()));
+    }
+
+    private BillLinkResult linkBillIfNeeded(UUID tenantId, PatientVaccinationEntity saved, VaccineMasterEntity vaccine, PatientVaccinationCommand command, UUID actorAppUserId) {
+        if (!command.addToBill()) {
+            return null;
         }
         BigDecimal price = command.billItemUnitPrice() != null
                 ? normalizeMoney(command.billItemUnitPrice())
                 : normalizeMoney(vaccine.getDefaultPrice() == null ? BigDecimal.ZERO : vaccine.getDefaultPrice());
+        BillRecord linkedBill;
+        if (command.billId() != null) {
+            linkedBill = addVaccinationLineToBill(tenantId, command.billId(), saved, vaccine, price, actorAppUserId);
+        } else {
+            linkedBill = findReusableVaccinationBill(tenantId, saved.getPatientId())
+                    .map(bill -> addVaccinationLineToBill(tenantId, bill.id(), saved, vaccine, price, actorAppUserId))
+                    .orElseGet(() -> createVaccinationBill(tenantId, saved, vaccine, price, actorAppUserId));
+        }
+        return linkedBill.lines().stream()
+                .filter(line -> line.itemType() == BillItemType.VACCINATION && saved.getId().equals(line.referenceId()))
+                .findFirst()
+                .map(line -> new BillLinkResult(linkedBill.id(), line.id(), linkedBill.billNumber(), linkedBill.status().name()))
+                .orElse(new BillLinkResult(linkedBill.id(), null, linkedBill.billNumber(), linkedBill.status().name()));
+    }
+
+    private BillRecord addVaccinationLineToBill(UUID tenantId, UUID billId, PatientVaccinationEntity saved, VaccineMasterEntity vaccine, BigDecimal price, UUID actorAppUserId) {
         billingService.addLineItem(
                 tenantId,
-                command.billId(),
+                billId,
                 new BillLineCommand(
                         BillItemType.VACCINATION,
                         vaccine.getVaccineName(),
@@ -336,18 +396,58 @@ public class VaccinationService {
                         saved.getId(),
                         null,
                         BigDecimal.ZERO,
-                        normalizeNullable(command.batchNumber()),
+                        normalizeNullable(saved.getBatchNumber()),
                         null
                 ),
                 actorAppUserId
         );
-        BillRecord linkedBill = billingService.findById(tenantId, command.billId())
+        return billingService.findById(tenantId, billId)
                 .orElseThrow(() -> new IllegalArgumentException("Bill not found"));
-        return linkedBill.lines().stream()
-                .filter(line -> line.itemType() == BillItemType.VACCINATION && saved.getId().equals(line.referenceId()))
+    }
+
+    private BillRecord createVaccinationBill(UUID tenantId, PatientVaccinationEntity saved, VaccineMasterEntity vaccine, BigDecimal price, UUID actorAppUserId) {
+        BillRecord created = billingService.createDraft(tenantId, new BillUpsertCommand(
+                saved.getPatientId(),
+                null,
+                null,
+                saved.getGivenDate(),
+                com.deepthoughtnet.clinic.billing.service.model.DiscountType.NONE,
+                BigDecimal.ZERO,
+                null,
+                null,
+                null,
+                BigDecimal.ZERO,
+                "Vaccination billing",
+                List.of(new BillLineCommand(
+                        BillItemType.VACCINATION,
+                        vaccine.getVaccineName(),
+                        1,
+                        price,
+                        saved.getId(),
+                        1,
+                        BigDecimal.ZERO,
+                        normalizeNullable(saved.getBatchNumber()),
+                        null
+                ))
+        ), actorAppUserId);
+        return created;
+    }
+
+    private Optional<BillRecord> findReusableVaccinationBill(UUID tenantId, UUID patientId) {
+        List<BillRecord> bills = billingService.listByPatient(tenantId, patientId);
+        return bills.stream()
+                .filter(bill -> !isClosedBillStatus(bill.status()))
+                .filter(bill -> bill.dueAmount() != null && bill.dueAmount().compareTo(BigDecimal.ZERO) > 0)
                 .findFirst()
-                .map(line -> new BillLinkResult(linkedBill.id(), line.id(), linkedBill.billNumber(), linkedBill.status().name()))
-                .orElse(new BillLinkResult(linkedBill.id(), null, linkedBill.billNumber(), linkedBill.status().name()));
+                .or(() -> bills.stream().filter(bill -> !isClosedBillStatus(bill.status())).findFirst());
+    }
+
+    private boolean isClosedBillStatus(BillStatus status) {
+        return status == BillStatus.CANCELLED
+                || status == BillStatus.REFUND_PENDING
+                || status == BillStatus.CANCELLED_REFUNDED
+                || status == BillStatus.PAID
+                || status == BillStatus.REFUNDED;
     }
 
     private InventoryLinkResult linkInventoryIfAvailable(UUID tenantId, PatientVaccinationEntity saved, PatientEntity patient, VaccineMasterEntity vaccine, PatientVaccinationCommand command, UUID actorAppUserId, List<String> warnings) {
@@ -537,6 +637,7 @@ public class VaccinationService {
         TenantUserRecord admin = data.users().get(entity.getAdministeredByUserId());
         TenantUserRecord createdBy = data.users().get(entity.getCreatedByUserId());
         TenantUserRecord updatedBy = data.users().get(entity.getUpdatedByUserId());
+        TenantUserRecord verifiedBy = data.users().get(entity.getVerifiedByUserId());
         return new PatientVaccinationRecord(
                 entity.getId(),
                 entity.getTenantId(),
@@ -549,6 +650,13 @@ public class VaccinationService {
                 patient == null ? null : patient.getAllergies(),
                 entity.getVaccineId(),
                 entity.getVaccineNameSnapshot(),
+                entity.getSource(),
+                entity.getExternalPlace(),
+                entity.getProofDocumentId(),
+                entity.getVerifiedStatus(),
+                entity.getVerifiedByUserId(),
+                verifiedBy == null ? null : verifiedBy.displayName(),
+                entity.getVerifiedAt(),
                 entity.getDoseNumber(),
                 entity.getGivenDate(),
                 entity.getNextDueDate(),
@@ -641,7 +749,14 @@ public class VaccinationService {
         if (command == null) {
             throw new IllegalArgumentException("command is required");
         }
-        requireId(command.vaccineId(), "vaccineId");
+        String source = normalizeSource(command.source());
+        if (!"EXTERNAL".equals(source)) {
+            requireId(command.vaccineId(), "vaccineId");
+        }
+        if ("EXTERNAL".equals(source) && !StringUtils.hasText(command.vaccineName()) && command.vaccineId() == null) {
+            throw new IllegalArgumentException("vaccineName is required for external vaccination history");
+        }
+        normalizeVerifiedStatus(command.verifiedStatus(), source);
     }
 
     private void ensureUniqueName(UUID tenantId, String vaccineName, UUID currentId) {
@@ -743,6 +858,40 @@ public class VaccinationService {
 
     private String normalizeNullable(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private String normalizeSource(String value) {
+        String normalized = normalizeNullable(value);
+        if (!StringUtils.hasText(normalized)) {
+            return "INTERNAL";
+        }
+        String upper = normalized.toUpperCase(java.util.Locale.ROOT);
+        if (!"INTERNAL".equals(upper) && !"EXTERNAL".equals(upper)) {
+            throw new IllegalArgumentException("source must be INTERNAL or EXTERNAL");
+        }
+        return upper;
+    }
+
+    private String normalizeVerifiedStatus(String value, String source) {
+        String normalized = normalizeNullable(value);
+        if (!StringUtils.hasText(normalized)) {
+            return "EXTERNAL".equals(source) ? "UNVERIFIED" : "VERIFIED";
+        }
+        String upper = normalized.toUpperCase(java.util.Locale.ROOT);
+        if (!Set.of("UNVERIFIED", "VERIFIED", "REJECTED").contains(upper)) {
+            throw new IllegalArgumentException("verifiedStatus must be UNVERIFIED, VERIFIED, or REJECTED");
+        }
+        return upper;
+    }
+
+    private String resolveVaccineNameSnapshot(PatientVaccinationCommand command, VaccineMasterEntity vaccine) {
+        if (StringUtils.hasText(command.vaccineName())) {
+            return command.vaccineName().trim();
+        }
+        if (vaccine != null && StringUtils.hasText(vaccine.getVaccineName())) {
+            return vaccine.getVaccineName();
+        }
+        throw new IllegalArgumentException("vaccineName is required");
     }
 
     private void applyVaccineMetadata(VaccineMasterEntity entity, VaccineUpsertCommand command) {

@@ -349,6 +349,7 @@ public class BillingService {
     }
 
     private PaymentRecord persistPayment(UUID tenantId, BillEntity bill, PaymentCommand command, UUID actorAppUserId) {
+        UUID receivedBy = command.receivedBy() == null ? actorAppUserId : command.receivedBy();
         PaymentEntity payment = paymentRepository.save(PaymentEntity.create(
                 tenantId,
                 bill.getId(),
@@ -357,7 +358,7 @@ public class BillingService {
                 normalizeMoney(command.amount()),
                 command.paymentMode(),
                 normalizeNullable(command.referenceNumber()),
-                command.receivedBy(),
+                receivedBy,
                 normalizeNullable(command.notes())
         ));
         refreshFinancials(bill);

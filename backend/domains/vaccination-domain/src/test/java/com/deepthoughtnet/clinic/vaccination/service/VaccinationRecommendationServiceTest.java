@@ -116,6 +116,48 @@ class VaccinationRecommendationServiceTest {
     }
 
     @Test
+    void completedDoseDoesNotRepeatAndNextSeriesDoseWaitsForGap() {
+        PatientEntity patient = mockPatient(LocalDate.now().minusYears(22), 22);
+        VaccineMasterEntity hpvDose1 = vaccine("HPV Dose 1", "HPV", 1, 0, null, "CLINIC_CUSTOM", "NONE", null, "ADULT", false, null, null, 1, "IAP", "Gardasil 9");
+        VaccineMasterEntity hpvDose2 = vaccine("HPV Dose 2", "HPV", 1, 0, null, "CLINIC_CUSTOM", "NONE", null, "ADULT", false, null, null, 2, "IAP", null);
+        when(hpvDose2.getRecommendedGapDays()).thenReturn(60);
+        when(hpvDose2.getGapDays()).thenReturn(60);
+        PatientVaccinationEntity completedDose = vaccinationAlias(hpvDose1, "Gardasil 9", LocalDate.now(), 1);
+
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(vaccineMasterRepository.findByTenantIdOrderByVaccineNameAsc(TENANT_ID)).thenReturn(List.of(hpvDose1, hpvDose2));
+        when(patientVaccinationRepository.findByTenantIdAndPatientIdOrderByGivenDateDesc(TENANT_ID, PATIENT_ID)).thenReturn(List.of(completedDose));
+
+        VaccinationRecommendationSummary summary = service.recommend(TENANT_ID, PATIENT_ID, "IAP");
+
+        assertThat(summary.completed()).extracting("vaccineName").contains("HPV Dose 1");
+        assertThat(summary.upcoming()).extracting("vaccineName").contains("HPV Dose 2");
+        assertThat(summary.upcoming()).extracting("vaccineName").doesNotContain("HPV Dose 1");
+        assertThat(summary.recommendedToday()).extracting("vaccineName").doesNotContain("HPV Dose 1", "HPV Dose 2");
+        assertThat(summary.overdue()).extracting("vaccineName").doesNotContain("HPV Dose 1", "HPV Dose 2");
+    }
+
+    @Test
+    void nextDoseBecomesDueOnlyAfterConfiguredGap() {
+        PatientEntity patient = mockPatient(LocalDate.now().minusYears(22), 22);
+        VaccineMasterEntity hpvDose1 = vaccine("HPV Dose 1", "HPV", 1, 0, null, "CLINIC_CUSTOM", "NONE", null, "ADULT", false, null, null, 1, "IAP", "HPV-1");
+        VaccineMasterEntity hpvDose2 = vaccine("HPV Dose 2", "HPV", 1, 0, null, "CLINIC_CUSTOM", "NONE", null, "ADULT", false, null, null, 2, "IAP", null);
+        when(hpvDose2.getRecommendedGapDays()).thenReturn(60);
+        when(hpvDose2.getGapDays()).thenReturn(60);
+        PatientVaccinationEntity completedDose = vaccinationAlias(hpvDose1, "HPV-1", LocalDate.now().minusDays(60), 1);
+
+        when(patientRepository.findByTenantIdAndId(TENANT_ID, PATIENT_ID)).thenReturn(Optional.of(patient));
+        when(vaccineMasterRepository.findByTenantIdOrderByVaccineNameAsc(TENANT_ID)).thenReturn(List.of(hpvDose1, hpvDose2));
+        when(patientVaccinationRepository.findByTenantIdAndPatientIdOrderByGivenDateDesc(TENANT_ID, PATIENT_ID)).thenReturn(List.of(completedDose));
+
+        VaccinationRecommendationSummary summary = service.recommend(TENANT_ID, PATIENT_ID, "IAP");
+
+        assertThat(summary.completed()).extracting("vaccineName").contains("HPV Dose 1");
+        assertThat(summary.recommendedToday()).extracting("vaccineName").contains("HPV Dose 2");
+        assertThat(summary.upcoming()).extracting("vaccineName").doesNotContain("HPV Dose 2");
+    }
+
+    @Test
     void optionalRiskBasedVaccinesRenderSeparately() {
         PatientEntity patient = mockPatient(LocalDate.now().minusYears(44), 44);
         VaccineMasterEntity travel = vaccine("Typhoid", "TYPHOID", 0, 0, null, "TRAVEL", "NONE", null, "ADULT", false, null, null);
@@ -186,14 +228,36 @@ class VaccinationRecommendationServiceTest {
             Integer recurrenceDays,
             Integer boosterGapDays
     ) {
+        return vaccine(name, group, minAgeDays, recommendedAgeDays, maxAgeDays, recommendationPolicy, catchUpPolicy, catchUpMaxAgeDays, applicableAgeGroup, recurring, recurrenceDays, boosterGapDays, 1, "CLINIC_CUSTOM", null);
+    }
+
+    private VaccineMasterEntity vaccine(
+            String name,
+            String group,
+            Integer minAgeDays,
+            Integer recommendedAgeDays,
+            Integer maxAgeDays,
+            String recommendationPolicy,
+            String catchUpPolicy,
+            Integer catchUpMaxAgeDays,
+            String applicableAgeGroup,
+            boolean recurring,
+            Integer recurrenceDays,
+            Integer boosterGapDays,
+            Integer doseNumber,
+            String scheduleType,
+            String brandName
+    ) {
         VaccineMasterEntity vaccine = mock(VaccineMasterEntity.class);
         when(vaccine.getId()).thenReturn(UUID.nameUUIDFromBytes((name + group).getBytes()));
         when(vaccine.getVaccineName()).thenReturn(name);
         when(vaccine.getVaccineGroup()).thenReturn(group);
-        when(vaccine.getDoseNumber()).thenReturn(1);
+        when(vaccine.getDoseNumber()).thenReturn(doseNumber);
         when(vaccine.getRoute()).thenReturn("IM");
         when(vaccine.getAdministrationSite()).thenReturn("Deltoid");
-        when(vaccine.getScheduleType()).thenReturn("CLINIC_CUSTOM");
+        when(vaccine.getScheduleType()).thenReturn(scheduleType);
+        when(vaccine.getBrandName()).thenReturn(brandName);
+        when(vaccine.getManufacturer()).thenReturn("Test Manufacturer");
         when(vaccine.getMinAgeDays()).thenReturn(minAgeDays);
         when(vaccine.getRecommendedAgeDays()).thenReturn(recommendedAgeDays);
         when(vaccine.getMaxAgeDays()).thenReturn(maxAgeDays);
@@ -213,11 +277,14 @@ class VaccinationRecommendationServiceTest {
     }
 
     private PatientVaccinationEntity vaccination(VaccineMasterEntity vaccine, LocalDate givenDate, Integer doseNumber) {
+        return vaccinationAlias(vaccine, vaccine.getVaccineName(), givenDate, doseNumber);
+    }
+
+    private PatientVaccinationEntity vaccinationAlias(VaccineMasterEntity vaccine, String alias, LocalDate givenDate, Integer doseNumber) {
         PatientVaccinationEntity vaccination = mock(PatientVaccinationEntity.class);
         UUID vaccineId = vaccine.getId();
-        String vaccineNameSnapshot = vaccine.getVaccineName();
         when(vaccination.getVaccineId()).thenReturn(vaccineId);
-        when(vaccination.getVaccineNameSnapshot()).thenReturn(vaccineNameSnapshot == null ? null : vaccineNameSnapshot.toUpperCase(Locale.ROOT));
+        when(vaccination.getVaccineNameSnapshot()).thenReturn(alias == null ? null : alias.toUpperCase(Locale.ROOT));
         when(vaccination.getDoseNumber()).thenReturn(doseNumber);
         when(vaccination.getGivenDate()).thenReturn(givenDate);
         when(vaccination.getCreatedAt()).thenReturn(null);

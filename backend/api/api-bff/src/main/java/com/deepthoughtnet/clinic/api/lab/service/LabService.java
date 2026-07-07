@@ -511,7 +511,6 @@ public class LabService {
                 specimenType,
                 null,
                 command.collectedAt(),
-                actorAppUserId,
                 command.notes()
         )), actorAppUserId);
         if (samples.isEmpty()) {
@@ -563,7 +562,6 @@ public class LabService {
                 String accessionNumber = generateAccessionNumber(tenantId, reservedAccessions);
                 String barcodeValue = generateBarcodeValue(accessionNumber);
                 OffsetDateTime collectedAt = command.collectedAt() == null ? OffsetDateTime.now() : command.collectedAt();
-                UUID collectedBy = command.collectedBy() == null ? actorAppUserId : command.collectedBy();
                 LabOrderSampleEntity entity = LabOrderSampleEntity.create(
                         tenantId,
                         orderId,
@@ -573,7 +571,7 @@ public class LabService {
                         specimenType,
                         normalizeNullable(command.containerType()),
                         collectedAt,
-                        collectedBy,
+                        actorAppUserId,
                         normalizeNullable(command.notes()),
                         actorAppUserId
                 );
@@ -2117,9 +2115,6 @@ public class LabService {
         validateSampleTimestamp(command.collectedAt(), "collectedAt");
         if (StringUtils.hasText(command.sampleType()) && command.sampleType().trim().length() > 60) {
             throw new IllegalArgumentException("sampleType must be 60 characters or fewer");
-        }
-        if (StringUtils.hasText(command.collectedBy()) && command.collectedBy().trim().length() > 60) {
-            throw new IllegalArgumentException("collectedBy must be 60 characters or fewer");
         }
         if (StringUtils.hasText(command.notes()) && command.notes().trim().length() > 250) {
             throw new IllegalArgumentException("notes must be 250 characters or fewer");
