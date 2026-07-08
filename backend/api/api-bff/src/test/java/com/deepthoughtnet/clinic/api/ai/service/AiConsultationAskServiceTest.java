@@ -112,9 +112,10 @@ class AiConsultationAskServiceTest {
                         "Reception Desk",
                         "2026-07-04T09:00:00Z"
                 ),
-                new ClinicalContextResponse.LabIntelligence("2026-07-01 - CBC", List.of(), List.of(), List.of(), null, null, null),
+                new ClinicalContextResponse.LabIntelligence("2026-07-01 - CBC", List.of(), List.of(), List.of(), null, null, null, null, null, null, null),
                 new ClinicalContextResponse.DocumentIntelligence(List.of(), List.of(), List.of(), List.of()),
                 new ClinicalContextResponse.TimelineSummary(List.of(), "2026-07-01 - Consultation"),
+                new ClinicalContextResponse.LongitudinalMemory(List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), null),
                 "Sample summary",
                 "Patient snapshot: Sample Patient",
                 "{\"patientSummary\":{\"patientName\":\"Sample Patient\"}}",

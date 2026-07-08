@@ -8,6 +8,9 @@ import com.deepthoughtnet.clinic.api.ai.dto.ClinicalContextResponse;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentRepository;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentType;
+import com.deepthoughtnet.clinic.api.clinicalmemory.model.LongitudinalConceptSnapshot;
+import com.deepthoughtnet.clinic.api.clinicalmemory.model.PatientLongitudinalMemoryProfile;
+import com.deepthoughtnet.clinic.api.clinicalmemory.service.PatientLongitudinalMemoryService;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderResultEntity;
@@ -50,7 +53,7 @@ class ClinicalContextServiceTest {
         UUID intakeId = UUID.randomUUID();
 
         PatientEntity patient = PatientEntity.create(tenantId, "PAT-1");
-        patient.update("Asha", "Khan", PatientGender.FEMALE, null, 34, "9999999999", null, null, null, null, null, null, null, null, null, null, "Penicillin", "Diabetes", "Metformin", null, "Uses inhaler", true);
+        patient.update("Asha", "Khan", PatientGender.FEMALE, null, 34, "9999999999", null, null, null, null, null, null, null, null, null, null, "Penicillin", null, null, null, "Uses inhaler", true);
 
         ConsultationEntity currentConsultation = ConsultationEntity.create(tenantId, patientId, UUID.randomUUID(), null);
         currentConsultation.update("Fever and cough", "Fever", "Viral fever", "Stable", "Rest", null, null, null, null, null, null, null, null, null, null);
@@ -146,6 +149,7 @@ class ClinicalContextServiceTest {
         PatientClinicalIntakeRepository patientClinicalIntakeRepository = mock(PatientClinicalIntakeRepository.class);
         LabOrderRepository labOrderRepository = mock(LabOrderRepository.class);
         LabOrderResultRepository labOrderResultRepository = mock(LabOrderResultRepository.class);
+        PatientLongitudinalMemoryService longitudinalMemoryService = mock(PatientLongitudinalMemoryService.class);
 
         when(patientRepository.findByTenantIdAndId(tenantId, patientId)).thenReturn(java.util.Optional.of(patient));
         when(consultationRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(currentConsultation, previousConsultation));
@@ -158,6 +162,26 @@ class ClinicalContextServiceTest {
         when(patientClinicalIntakeRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(intake));
         when(labOrderRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId)).thenReturn(List.of(labOrder));
         when(labOrderResultRepository.findByTenantIdAndLabOrderIdOrderBySortOrderAscCreatedAtAsc(tenantId, labOrder.getId())).thenReturn(List.of(abnormalResult));
+        when(longitudinalMemoryService.buildProfile(tenantId, patientId)).thenReturn(new PatientLongitudinalMemoryProfile(
+                List.of(new LongitudinalConceptSnapshot("CONDITION", "diabetes_mellitus", "Diabetes Mellitus", "Diabetes Mellitus", null, "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "HbA1c 8.4")),
+                List.of(),
+                new LongitudinalConceptSnapshot("LAB_RESULT", "hba1c", "HbA1c", "8.4", "%", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "HbA1c 8.4"),
+                new LongitudinalConceptSnapshot("LAB_RESULT", "blood_sugar", "Blood Sugar", "198", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Random Blood Sugar 198 mg/dL"),
+                List.of(
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "cholesterol", "Total Cholesterol", "228", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Total Cholesterol 228 mg/dL"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "ldl", "LDL Cholesterol", "152", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "LDL 152 mg/dL"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "triglycerides", "Triglycerides", "238", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Triglycerides 238 mg/dL"),
+                        new LongitudinalConceptSnapshot("LAB_RESULT", "hdl", "HDL Cholesterol", "39", "mg/dL", "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "HDL 39 mg/dL")
+                ),
+                null,
+                null,
+                List.of(
+                        new LongitudinalConceptSnapshot("RISK_FLAG", "diabetes_risk", "Diabetes", "Diabetes", null, "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "Known diabetic"),
+                        new LongitudinalConceptSnapshot("RISK_FLAG", "lipid_risk", "Dyslipidemia", "Dyslipidemia", null, "Diabetes Follow-up Lab Report", "EXTERNAL_LAB_REPORT", document.getId(), java.time.LocalDate.of(2026, 1, 8), new java.math.BigDecimal("0.96"), "PENDING_REVIEW", "High cholesterol")
+                ),
+                List.of(),
+                "HbA1c 8.4%, Random Blood Sugar 198 mg/dL"
+        ));
 
         ClinicalContextService service = new ClinicalContextService(
                 patientRepository,
@@ -169,6 +193,7 @@ class ClinicalContextServiceTest {
                 patientClinicalIntakeRepository,
                 labOrderRepository,
                 labOrderResultRepository,
+                longitudinalMemoryService,
                 new ObjectMapper()
         );
 
@@ -182,8 +207,17 @@ class ClinicalContextServiceTest {
         assertThat(context.intakeSummary().abnormalVitalsAlerts()).isNotEmpty();
         assertThat(context.intakeSummary().uploadedDocumentSummary()).isNotNull();
         assertThat(context.labIntelligence().abnormalValues()).isNotEmpty();
+        assertThat(context.labIntelligence().lastHbA1c()).contains("8.4");
+        assertThat(context.labIntelligence().latestBloodSugar()).contains("198");
+        assertThat(context.labIntelligence().latestLipidSummary()).contains("Total Cholesterol", "LDL Cholesterol", "Triglycerides", "HDL Cholesterol");
         assertThat(context.documentIntelligence().radiology()).hasSize(1);
         assertThat(context.timelineSummary().events()).isNotEmpty();
+        assertThat(context.longitudinalMemory()).isNotNull();
+        assertThat(context.longitudinalMemory().knownConditions()).isNotEmpty();
+        assertThat(context.patientSummary().chronicConditions()).contains("Diabetes Mellitus");
+        assertThat(context.longitudinalMemory().latestHbA1c()).isNotNull();
+        assertThat(context.longitudinalMemory().latestHbA1c().verificationStatus()).isEqualTo("PENDING_REVIEW");
+        assertThat(context.longitudinalMemory().riskFlags()).extracting(ClinicalContextResponse.LongitudinalConcept::label).contains("Diabetes", "Dyslipidemia");
         assertThat(context.aiSummary()).contains("Medication alerts");
         assertThat(context.aiPromptContext()).contains("Patient snapshot");
         assertThat(context.clinicalContextJson()).contains("patientSummary");

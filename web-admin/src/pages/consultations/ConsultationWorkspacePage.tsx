@@ -33,6 +33,7 @@ import {
   Typography,
 } from "@mui/material";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
+import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
 import PersonRoundedIcon from "@mui/icons-material/PersonRounded";
@@ -84,6 +85,7 @@ import {
   finalizePrescription,
   getConsultation,
   getConsultationAiSummary,
+  getClinicalDocument,
   getLabOrders,
   getLabTests,
   getConsultationPrescription,
@@ -103,6 +105,7 @@ import {
   previewPrescription,
   uploadPatientDocument,
   saveConsultationAiSummary,
+  reprocessClinicalDocumentExtraction,
   sendPrescription,
   startConsultationFromAppointment,
   updateConsultation,
@@ -1621,6 +1624,7 @@ export default function ConsultationWorkspacePage() {
   const [consultationPackageGenerating, setConsultationPackageGenerating] = React.useState(false);
   const [completionValidationOpen, setCompletionValidationOpen] = React.useState(false);
   const [consultationAuditShareLog, setConsultationAuditShareLog] = React.useState<string[]>([]);
+  const [documentRowBusyId, setDocumentRowBusyId] = React.useState<string | null>(null);
   const [workspaceConfirmation, setWorkspaceConfirmation] = React.useState<PrescriptionDialogState>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [info, setInfo] = React.useState<string | null>(null);
@@ -1654,6 +1658,109 @@ export default function ConsultationWorkspacePage() {
   React.useEffect(() => {
     prescriptionRef.current = prescription;
   }, [prescription]);
+
+  const refreshClinicalArtifacts = React.useCallback(async (
+    patientId: string,
+    consultationValue: Consultation | null,
+    options?: { includeContext?: boolean; keepLoadingState?: boolean },
+  ) => {
+    if (!auth.accessToken || !auth.tenantId || !patientId) {
+      return;
+    }
+    const includeContext = options?.includeContext ?? true;
+    if (options?.keepLoadingState !== false) {
+      setClinicalContextLoading(true);
+    }
+    try {
+      const [documents, timelineRows, context] = await Promise.all([
+        getPatientDocuments(auth.accessToken, auth.tenantId, patientId),
+        getPatientTimeline(auth.accessToken, auth.tenantId, patientId),
+        includeContext
+          ? getClinicalContext(auth.accessToken, auth.tenantId, patientId, consultationValue?.id || null).catch((contextError) => {
+              setClinicalContextError(contextError instanceof Error ? contextError.message : "Clinical context unavailable");
+              return null;
+            })
+          : Promise.resolve(null),
+      ]);
+      setClinicalDocuments(documents);
+      setPatientTimeline(timelineRows);
+      if (includeContext) {
+        setClinicalContext(context);
+        if (context) {
+          setClinicalContextError(null);
+        }
+      }
+    } finally {
+      if (options?.keepLoadingState !== false) {
+        setClinicalContextLoading(false);
+      }
+    }
+  }, [auth.accessToken, auth.tenantId]);
+
+  const upsertClinicalDocumentRow = React.useCallback((updated: ClinicalDocument) => {
+    setClinicalDocuments((current) => current.map((row) => (row.id === updated.id ? updated : row)));
+    setViewerDocument((current) => (current && current.id === updated.id ? updated : current));
+  }, []);
+
+  const refreshClinicalDocumentRow = React.useCallback(async (documentId: string) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    try {
+      const updated = await getClinicalDocument(auth.accessToken, auth.tenantId, documentId);
+      upsertClinicalDocumentRow(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refresh document status");
+    }
+  }, [auth.accessToken, auth.tenantId, upsertClinicalDocumentRow]);
+
+  const reprocessClinicalDocumentRow = React.useCallback(async (documentId: string) => {
+    if (!auth.accessToken || !auth.tenantId || !consultation) return;
+    if (!window.confirm("Reprocess OCR/AI for this document?")) {
+      return;
+    }
+    setDocumentRowBusyId(documentId);
+    setInfo("AI reprocessing started.");
+    setError(null);
+    try {
+      const updated = await reprocessClinicalDocumentExtraction(auth.accessToken, auth.tenantId, documentId);
+      upsertClinicalDocumentRow(updated);
+      void refreshClinicalArtifacts(consultation.patientId, consultation, { includeContext: true, keepLoadingState: false });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reprocess AI extraction");
+      setDocumentRowBusyId((current) => (current === documentId ? null : current));
+    }
+  }, [auth.accessToken, auth.tenantId, consultation, refreshClinicalArtifacts, upsertClinicalDocumentRow]);
+
+  const longitudinalSnapshotLabel = React.useCallback((concept: {
+    label: string;
+    verificationStatus?: string | null;
+  } | null | undefined) => {
+    if (!concept?.label) {
+      return null;
+    }
+    return concept.verificationStatus === "PENDING_REVIEW"
+      ? `${concept.label} (Pending Review)`
+      : concept.label;
+  }, []);
+
+  const documentNeedsClinicalRefresh = React.useCallback((document: ClinicalDocument) => {
+    const ocrStatus = String(document.ocrStatus || "").trim().toUpperCase();
+    const aiStatus = String(document.aiExtractionStatus || "").trim().toUpperCase();
+    return (ocrStatus !== "" && !["COMPLETED", "FAILED"].includes(ocrStatus))
+      || ["QUEUED", "PROCESSING", "PENDING", "UNDER_REVIEW"].includes(aiStatus);
+  }, []);
+
+  React.useEffect(() => {
+    if (!documentRowBusyId) {
+      return;
+    }
+    const current = clinicalDocuments.find((row) => row.id === documentRowBusyId) || null;
+    if (current && !documentNeedsClinicalRefresh(current)) {
+      const aiStatus = String(current.aiExtractionStatus || "").trim().toUpperCase();
+      const ocrStatus = String(current.ocrStatus || "").trim().toUpperCase();
+      setInfo(aiStatus === "FAILED" || ocrStatus === "FAILED" ? "AI processing failed." : "AI processing completed.");
+      setDocumentRowBusyId(null);
+    }
+  }, [clinicalDocuments, documentNeedsClinicalRefresh, documentRowBusyId]);
 
   React.useEffect(() => {
     const headerElement = consultationHeaderRef.current;
@@ -1798,31 +1905,32 @@ export default function ConsultationWorkspacePage() {
       if (custom.detail?.patientId && custom.detail.patientId !== consultationSnapshot.patientId) {
         return;
       }
-      setClinicalContextLoading(true);
-      Promise.all([
-        getPatientDocuments(auth.accessToken, auth.tenantId, consultationSnapshot.patientId),
-        getPatientTimeline(auth.accessToken, auth.tenantId, consultationSnapshot.patientId),
-        getClinicalContext(auth.accessToken, auth.tenantId, consultationSnapshot.patientId, consultationSnapshot.id),
-      ])
-        .then(([documents, timelineRows, context]) => {
-          setClinicalDocuments(documents);
-          setPatientTimeline(timelineRows);
-          setClinicalContext(context);
+      refreshClinicalArtifacts(consultationSnapshot.patientId, consultationSnapshot)
+        .then(() => {
           setClinicalContextError(null);
         })
         .catch((err) => {
           console.error("Clinical context refresh failed", err);
           setClinicalContextError(err instanceof Error ? err.message : "Clinical context unavailable");
-        })
-        .finally(() => {
-          setClinicalContextLoading(false);
         });
     };
     window.addEventListener("clinic:clinical-intake-updated", listener as EventListener);
     return () => {
       window.removeEventListener("clinic:clinical-intake-updated", listener as EventListener);
     };
-  }, [auth.accessToken, auth.tenantId]);
+  }, [auth.accessToken, auth.tenantId, refreshClinicalArtifacts]);
+
+  React.useEffect(() => {
+    if (!consultation || !clinicalDocuments.some(documentNeedsClinicalRefresh)) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      void refreshClinicalArtifacts(consultation.patientId, consultation, { includeContext: true, keepLoadingState: false });
+    }, 6000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [clinicalDocuments, consultation, documentNeedsClinicalRefresh, refreshClinicalArtifacts]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -2394,7 +2502,15 @@ export default function ConsultationWorkspacePage() {
   );
   const aiVitalsSummary = `BP:${consultationForm.bloodPressureSystolic}/${consultationForm.bloodPressureDiastolic}, Pulse:${consultationForm.pulseRate}, Resp:${consultationForm.respiratoryRate}, Temp:${consultationForm.temperature}, BMI:${currentBmi ? currentBmi.toFixed(1) : "-"}`;
   const aiAllergiesSummary = patientRow?.allergies?.trim() || null;
-  const aiChronicConditionsSummary = patientRow?.existingConditions?.trim() || null;
+  const aiChronicConditionsSummary = clinicalContext?.patientSummary.chronicConditions?.trim() || patientRow?.existingConditions?.trim() || null;
+  const verifiedClinicalConditions = clinicalContext?.longitudinalMemory?.knownConditions || [];
+  const verifiedLongTermMedications = clinicalContext?.longitudinalMemory?.longTermMedications || [];
+  const clinicalSnapshotConditions = verifiedClinicalConditions.length
+    ? verifiedClinicalConditions.map((concept) => longitudinalSnapshotLabel(concept) || concept.label).join(", ")
+    : patientRow?.existingConditions || "Not recorded";
+  const clinicalSnapshotMedications = verifiedLongTermMedications.length
+    ? verifiedLongTermMedications.map((concept) => longitudinalSnapshotLabel(concept) || concept.label).join(", ")
+    : patientRow?.longTermMedications || "Not recorded";
   const currentMedicineRows = prescriptionForm.medicines.filter((row) => medicineRowHasAnyContent(row));
   const latestPreviousPrescription = previousPrescriptions[0] || null;
   const latestPreviousMedicineRows = latestPreviousPrescription?.medicines || [];
@@ -2639,7 +2755,7 @@ export default function ConsultationWorkspacePage() {
     { label: "Phone", value: patientPhone },
     { label: "Blood group", value: patientBloodGroup || "Not recorded" },
     { label: "Allergies", value: patientRow?.allergies || "None recorded" },
-    { label: "Chronic conditions", value: patientRow?.existingConditions || "None recorded" },
+    { label: "Chronic conditions", value: clinicalSnapshotConditions === "Not recorded" ? "None recorded" : clinicalSnapshotConditions },
     { label: "Last visit", value: compactDate(lastConsultation?.createdAt) },
     { label: "Next follow-up", value: nextFollowUpLabel ? compactDate(nextFollowUpLabel) : "None recorded" },
     { label: "Appointment", value: currentAppointment ? `${currentAppointment.status.replaceAll("_", " ")} • ${compactDate(currentAppointment.appointmentDate)}` : "No current appointment" },
@@ -2831,6 +2947,8 @@ export default function ConsultationWorkspacePage() {
     }
     return savedAiSummary?.summary?.trim() || "";
   }, [clinicalSummary, savedAiSummary?.summary]);
+  const aiSummaryHasContent = Boolean(aiSummaryText);
+  const aiSummaryHasState = Boolean(clinicalSummary || savedAiSummary);
 
   const aiSummaryProviderLabel = clinicalSummary?.provider || savedAiSummary?.provider || null;
   const aiSummaryModelLabel = clinicalSummary?.model || savedAiSummary?.model || null;
@@ -3340,6 +3458,17 @@ export default function ConsultationWorkspacePage() {
       setError(err instanceof Error ? err.message : "Failed to open clinical document");
     }
   };
+
+  const openClinicalDocumentById = React.useCallback(async (documentId: string) => {
+    if (!auth.accessToken || !auth.tenantId || !consultation) return;
+    const cachedDocument = clinicalDocuments.find((document) => document.id === documentId) || null;
+    try {
+      const document = cachedDocument || await getClinicalDocument(auth.accessToken, auth.tenantId, documentId);
+      await openClinicalDocument(document);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to open clinical document");
+    }
+  }, [auth.accessToken, auth.tenantId, clinicalDocuments, consultation, openClinicalDocument]);
 
   const createCorrectionDraft = async (flowType: "SAME_DAY_CORRECTION" | "FOLLOW_UP") => {
     if (!auth.accessToken || !auth.tenantId || !consultation || !prescription) return;
@@ -4163,12 +4292,7 @@ export default function ConsultationWorkspacePage() {
         notes: draft.notes,
         visibility: "INTERNAL_ONLY",
       });
-      const [documents, timelineRows] = await Promise.all([
-        getPatientDocuments(auth.accessToken, auth.tenantId, consultation.patientId),
-        getPatientTimeline(auth.accessToken, auth.tenantId, consultation.patientId),
-      ]);
-      setClinicalDocuments(documents);
-      setPatientTimeline(timelineRows);
+      await refreshClinicalArtifacts(consultation.patientId, consultation);
       return generated;
     } finally {
       setConsultationDocumentationSaving(false);
@@ -4523,12 +4647,7 @@ export default function ConsultationWorkspacePage() {
         anchor.rel = "noopener noreferrer";
         anchor.click();
       }
-      const [documents, timelineRows] = await Promise.all([
-        getPatientDocuments(auth.accessToken, auth.tenantId, consultation.patientId),
-        getPatientTimeline(auth.accessToken, auth.tenantId, consultation.patientId),
-      ]);
-      setClinicalDocuments(documents);
-      setPatientTimeline(timelineRows);
+      await refreshClinicalArtifacts(consultation.patientId, consultation);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to generate consultation package";
       setError(message);
@@ -6897,7 +7016,12 @@ export default function ConsultationWorkspacePage() {
                     maxHeight: { xl: "calc(100vh - 32px)" },
                   }}
                 >
-                  <PatientIntelligenceCard context={clinicalContext} loading={clinicalContextLoading} error={clinicalContextError} />
+                  <PatientIntelligenceCard
+                    context={clinicalContext}
+                    loading={clinicalContextLoading}
+                    error={clinicalContextError}
+                    onViewSourceDocument={(documentId) => void openClinicalDocumentById(documentId)}
+                  />
                   <Card variant="outlined" sx={{ boxShadow: "none", overflow: "visible", height: "auto", minHeight: "auto" }}>
                     <CardContent sx={{ p: 0.95, "&:last-child": { pb: 0.95 } }}>
                         <Stack spacing={0.85}>
@@ -8178,7 +8302,7 @@ export default function ConsultationWorkspacePage() {
             <WorkflowStrip text="Timeline → Previous Visits → Reports → Documents" />
           </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
-            <Card><CardContent><Stack spacing={0.75}><Stack direction="row" spacing={0.75} alignItems="center"><InsightsRoundedIcon fontSize="small" color="primary" /><Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Snapshot</Typography></Stack><Typography variant="body2"><b>Last diagnosis:</b> {lastConsultation?.diagnosis || "-"}</Typography><Typography variant="body2"><b>Last vitals:</b> {lastConsultation ? `BP ${lastConsultation.bloodPressureSystolic || "-"} / ${lastConsultation.bloodPressureDiastolic || "-"}, Pulse ${lastConsultation.pulseRate || "-"}, Temp ${lastConsultation.temperature || "-"}, Resp ${lastConsultation.respiratoryRate || "-"}` : "Not recorded"}</Typography><Typography variant="body2"><b>Last BMI:</b> {lastBmi ? `${lastBmi.toFixed(1)} (${lastBmiCategory || "n/a"})` : "Not recorded"}</Typography><Typography variant="body2"><b>Chronic:</b> {patientRow?.existingConditions || "Not recorded"}</Typography><Typography variant="body2" color={patientRow?.allergies ? "error" : "text.primary"}><b>Allergies:</b> {patientRow?.allergies || "Not recorded"}</Typography><Typography variant="body2"><b>Long-term meds:</b> {patientRow?.longTermMedications || "Not recorded"}</Typography><Typography variant="body2"><b>History:</b> {patientRow?.surgicalHistory || "Not recorded"}</Typography></Stack></CardContent></Card>
+            <Card><CardContent><Stack spacing={0.75}><Stack direction="row" spacing={0.75} alignItems="center"><InsightsRoundedIcon fontSize="small" color="primary" /><Typography variant="h6" sx={{ fontWeight: 900 }}>Clinical Snapshot</Typography></Stack><Typography variant="body2"><b>Last diagnosis:</b> {lastConsultation?.diagnosis || "-"}</Typography><Typography variant="body2"><b>Last vitals:</b> {lastConsultation ? `BP ${lastConsultation.bloodPressureSystolic || "-"} / ${lastConsultation.bloodPressureDiastolic || "-"}, Pulse ${lastConsultation.pulseRate || "-"}, Temp ${lastConsultation.temperature || "-"}, Resp ${lastConsultation.respiratoryRate || "-"}` : "Not recorded"}</Typography><Typography variant="body2"><b>Last BMI:</b> {lastBmi ? `${lastBmi.toFixed(1)} (${lastBmiCategory || "n/a"})` : "Not recorded"}</Typography><Typography variant="body2"><b>Chronic:</b> {clinicalSnapshotConditions}</Typography><Typography variant="body2" color={patientRow?.allergies ? "error" : "text.primary"}><b>Allergies:</b> {patientRow?.allergies || "Not recorded"}</Typography><Typography variant="body2"><b>Long-term meds:</b> {clinicalSnapshotMedications}</Typography><Typography variant="body2"><b>History:</b> {patientRow?.surgicalHistory || "Not recorded"}</Typography></Stack></CardContent></Card>
           </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
             <Card><CardContent><Stack spacing={0.75}><Stack direction="row" spacing={0.75} alignItems="center"><HistoryEduRoundedIcon fontSize="small" color="primary" /><Typography variant="h6" sx={{ fontWeight: 900 }}>Previous Consultations</Typography></Stack>{!patient?.previousConsultations?.length ? <Alert severity="info">No previous consultations.</Alert> : <List dense>{patient.previousConsultations.slice(0, 8).map((row) => <ListItemButton key={row.id} onClick={() => navigate(`/consultations/${row.id}`)}><ListItemText primary={row.diagnosis || "No diagnosis"} secondary={`${compactDate(row.createdAt)} • ${row.status}`} /></ListItemButton>)}</List>}</Stack></CardContent></Card>
@@ -8234,6 +8358,19 @@ export default function ConsultationWorkspacePage() {
                           </Box>
                           <Stack direction="row" spacing={1} alignItems="center">
                             <Button size="small" onClick={() => void openClinicalDocument(row)}>View</Button>
+                            <IconButton size="small" onClick={() => void refreshClinicalDocumentRow(row.id)}>
+                              <RefreshRoundedIcon fontSize="small" />
+                            </IconButton>
+                            {canEditConsultation ? (
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={() => void reprocessClinicalDocumentRow(row.id)}
+                                disabled={documentRowBusyId === row.id}
+                              >
+                                Retry AI
+                              </Button>
+                            ) : null}
                           </Stack>
                         </Box>
                       ))}
@@ -9093,7 +9230,7 @@ export default function ConsultationWorkspacePage() {
                       Previous visit summary, chronic history, and recent consultation summary are generated as assistive context only.
                     </Typography>
                     <Button type="button" variant="contained" disabled={aiBusy || !aiAssistantEnabled} onClick={() => void generateClinicalSummary()}>Generate summary</Button>
-                    {aiSummaryText || clinicalSummary ? (
+                    {aiSummaryHasState ? (
                       <Stack spacing={1}>
                         <Card variant="outlined" sx={{ boxShadow: "none" }}>
                           <CardContent sx={{ p: 1 }}>
@@ -9108,11 +9245,15 @@ export default function ConsultationWorkspacePage() {
                               <Alert severity="info">
                                 AI suggestions are assistive only. Doctor must verify before use.
                               </Alert>
-                              {aiSummaryText ? (
+                              {aiSummaryHasContent ? (
                                 <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 1, bgcolor: "background.paper", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                                   <Typography variant="body2" sx={{ lineHeight: 1.55 }}>{aiSummaryText}</Typography>
                                 </Box>
-                              ) : null}
+                              ) : (
+                                <Alert severity="info" sx={{ py: 0.5 }}>
+                                  No AI summary available yet.
+                                </Alert>
+                              )}
                               <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                                 <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText} onClick={() => void copyAiSummaryToClipboard()}>Copy to Summary</Button>
                                 <Button type="button" size="small" variant="outlined" disabled={!aiSummaryText || readOnly} onClick={applyAiSummaryToConsultationNotes}>Apply to Consultation Notes</Button>
@@ -9564,15 +9705,17 @@ export default function ConsultationWorkspacePage() {
             sourceModule: "CONSULTATION",
             sourceEntityId: consultation.id,
           });
-          const [documents, timelineRows] = await Promise.all([
-            getPatientDocuments(auth.accessToken, auth.tenantId, consultation.patientId),
-            getPatientTimeline(auth.accessToken, auth.tenantId, consultation.patientId),
-          ]);
-          setClinicalDocuments(documents);
-          setPatientTimeline(timelineRows);
+          await refreshClinicalArtifacts(consultation.patientId, consultation);
         }}
       />
-      <ClinicalDocumentViewer open={!!viewerDocument} document={viewerDocument} url={viewerUrl} onClose={() => { setViewerDocument(null); setViewerUrl(null); }} />
+      <ClinicalDocumentViewer
+        open={!!viewerDocument}
+        document={viewerDocument}
+        url={viewerUrl}
+        onClose={() => { setViewerDocument(null); setViewerUrl(null); }}
+        onReprocess={viewerDocument && canEditConsultation ? () => void reprocessClinicalDocumentRow(viewerDocument.id) : undefined}
+        reprocessBusy={Boolean(viewerDocument && documentRowBusyId === viewerDocument.id)}
+      />
     </Stack>
   );
 }

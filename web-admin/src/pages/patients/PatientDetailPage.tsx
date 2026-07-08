@@ -11,10 +11,12 @@ import {
   Divider,
   FormControl,
   Grid,
+  IconButton,
   InputLabel,
   MenuItem,
   Select,
   Stack,
+  Snackbar,
   Tooltip,
   Table,
   TableBody,
@@ -24,6 +26,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 
 import { useAuth } from "../../auth/useAuth";
 import { documentUploadSchema, firstZodError } from "@deepthoughtnet/form-validation-kit";
@@ -32,6 +35,7 @@ import {
   getPatientVaccinations,
   getPatientNotifications,
   getPatientDocuments,
+  getClinicalDocument,
   getPatientDocumentDownloadUrl,
   getPatientDocumentViewUrl,
   getPatientTimeline,
@@ -123,14 +127,18 @@ export default function PatientDetailPage() {
   const [uploadDialogOpen, setUploadDialogOpen] = React.useState(false);
   const [documentFilter, setDocumentFilter] = React.useState<"ALL" | "LAB" | "RADIOLOGY" | "REFERRAL" | "PRESCRIPTION" | "DISCHARGE" | "OTHER">("ALL");
   const [reviewBusy, setReviewBusy] = React.useState(false);
+  const [rowActionBusyDocumentId, setRowActionBusyDocumentId] = React.useState<string | null>(null);
+  const [pollingDocumentId, setPollingDocumentId] = React.useState<string | null>(null);
   const [reviewNotes, setReviewNotes] = React.useState("");
   const [reviewOverrideReason, setReviewOverrideReason] = React.useState("");
   const [reviewAcceptedJson, setReviewAcceptedJson] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [toast, setToast] = React.useState<string | null>(null);
   const canUploadClinicalDocument = auth.hasPermission("clinic.document.upload");
   const canReviewAiExtraction = auth.hasPermission("consultation.update") || auth.hasPermission("consultation.complete");
   const canOpenConsultationWorkspace = (auth.tenantRole || "").toUpperCase() === "DOCTOR" && auth.hasPermission("consultation.read");
+  const currentUserRole = (auth.tenantRole || auth.rolesUpper[0] || "").toUpperCase();
 
   React.useEffect(() => {
     if (!viewerDocument) {
@@ -206,7 +214,92 @@ export default function PatientDetailPage() {
     ]);
     setDocuments(documentRows);
     setTimeline(timelineRows);
+    if (viewerDocument) {
+      setViewerDocument(documentRows.find((row) => row.id === viewerDocument.id) || viewerDocument);
+    }
   };
+
+  const upsertDocumentRow = React.useCallback((updated: ClinicalDocument) => {
+    setDocuments((current) => current.map((row) => (row.id === updated.id ? updated : row)));
+    setViewerDocument((current) => (current && current.id === updated.id ? updated : current));
+  }, []);
+
+  const documentNeedsReprocessRefresh = React.useCallback((document: ClinicalDocument | null) => {
+    if (!document) return false;
+    const aiStatus = String(document.aiExtractionStatus || "").trim().toUpperCase();
+    const ocrStatus = String(document.ocrStatus || "").trim().toUpperCase();
+    return ["QUEUED", "PROCESSING", "RETRY_SCHEDULED"].includes(aiStatus) || ["QUEUED", "PROCESSING", "PENDING"].includes(ocrStatus);
+  }, []);
+
+  const documentHasFriendlyFailure = React.useCallback((document: ClinicalDocument | null) => {
+    if (!document) return false;
+    const summary = String(document.aiExtractionSummary || "").trim().toLowerCase();
+    return summary.includes("ai processing could not complete") || summary.includes("please retry");
+  }, []);
+
+  const computeDocumentAiActions = React.useCallback((document: ClinicalDocument) => {
+    const aiStatus = String(document.aiExtractionStatus || "").trim().toUpperCase();
+    const ocrStatus = String(document.ocrStatus || "").trim().toUpperCase();
+    const aiSummary = String(document.aiExtractionSummary || "").trim().toUpperCase();
+    const canRetryAi =
+      aiStatus === "FAILED"
+      || aiStatus === "AI_FAILED"
+      || aiSummary.includes("AI FAILED")
+      || aiSummary.includes("FAILED")
+      || ocrStatus === "FAILED"
+      || documentHasFriendlyFailure(document);
+    const canReprocessAi = aiStatus === "REVIEW_REQUIRED" || aiSummary.includes("AI REVIEW_REQUIRED");
+    const canSeeAction = canRetryAi || canReprocessAi;
+    const allowedByRole = canUploadClinicalDocument || canReviewAiExtraction || currentUserRole === "RECEPTIONIST" || currentUserRole === "DOCTOR";
+    const showRetry = allowedByRole && canRetryAi;
+    const showReprocess = allowedByRole && canReprocessAi;
+    return { aiStatus, ocrStatus, canRetryAi, canReprocessAi, showRetry, showReprocess };
+  }, [canReviewAiExtraction, canUploadClinicalDocument, currentUserRole, documentHasFriendlyFailure]);
+
+  const documentIsTerminal = React.useCallback((document: ClinicalDocument | null) => {
+    if (!document) return true;
+    return !documentNeedsReprocessRefresh(document);
+  }, [documentNeedsReprocessRefresh]);
+
+  React.useEffect(() => {
+    if (!viewerDocument || !documentNeedsReprocessRefresh(viewerDocument)) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      void refreshDocuments();
+    }, 6000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [viewerDocument, documentNeedsReprocessRefresh]);
+
+  React.useEffect(() => {
+    const documentId = pollingDocumentId;
+    if (!documentId || !auth.accessToken || !auth.tenantId || !id) {
+      return;
+    }
+    const activeDocumentId: string = documentId;
+    const accessToken: string = auth.accessToken;
+    const tenantId: string = auth.tenantId;
+    const intervalId = window.setInterval(async () => {
+      try {
+        const updated = await getClinicalDocument(accessToken, tenantId, activeDocumentId);
+        upsertDocumentRow(updated);
+        if (documentIsTerminal(updated)) {
+          window.clearInterval(intervalId);
+          setPollingDocumentId(null);
+          setRowActionBusyDocumentId((current) => (current === activeDocumentId ? null : current));
+          await refreshDocuments();
+          const aiStatus = String(updated.aiExtractionStatus || "").trim().toUpperCase();
+          const ocrStatus = String(updated.ocrStatus || "").trim().toUpperCase();
+          setToast(aiStatus === "FAILED" || ocrStatus === "FAILED" ? "AI processing failed." : "AI processing completed.");
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to refresh document status");
+      }
+    }, 4000);
+    return () => window.clearInterval(intervalId);
+  }, [auth.accessToken, auth.tenantId, documentIsTerminal, id, pollingDocumentId, refreshDocuments, upsertDocumentRow]);
 
   const uploadDocument = async () => {
     if (!canUploadClinicalDocument) {
@@ -285,18 +378,32 @@ export default function PatientDetailPage() {
     }
   };
 
-  const reprocessDocument = async () => {
-    if (!auth.accessToken || !auth.tenantId || !viewerDocument) return;
-    setReviewBusy(true);
+  const refreshDocumentRow = async (documentId: string) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    try {
+      const updated = await getClinicalDocument(auth.accessToken, auth.tenantId, documentId);
+      upsertDocumentRow(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refresh document status");
+    }
+  };
+
+  const reprocessDocument = async (documentId: string) => {
+    if (!auth.accessToken || !auth.tenantId) return;
+    if (!window.confirm("Reprocess OCR/AI for this document?")) {
+      return;
+    }
+    setRowActionBusyDocumentId(documentId);
     setError(null);
     try {
-      const updated = await reprocessClinicalDocumentExtraction(auth.accessToken, auth.tenantId, viewerDocument.id);
-      setViewerDocument(updated);
-      await refreshDocuments();
+      const updated = await reprocessClinicalDocumentExtraction(auth.accessToken, auth.tenantId, documentId);
+      upsertDocumentRow(updated);
+      setToast("AI reprocessing started.");
+      setPollingDocumentId(documentId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reprocess AI extraction");
+      setRowActionBusyDocumentId((current) => (current === documentId ? null : current));
     } finally {
-      setReviewBusy(false);
     }
   };
 
@@ -451,7 +558,6 @@ export default function PatientDetailPage() {
               <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                 {canReviewAiExtraction ? <Button variant="contained" disabled={reviewBusy || viewerDocument.aiExtractionStatus === "APPROVED"} onClick={() => void reviewDocument(true)}>Approve & Save</Button> : null}
                 {canReviewAiExtraction ? <Button variant="outlined" color="error" disabled={reviewBusy || viewerDocument.aiExtractionStatus === "REJECTED"} onClick={() => void reviewDocument(false)}>Reject</Button> : null}
-                {canReviewAiExtraction ? <Button variant="outlined" disabled={reviewBusy} onClick={() => void reprocessDocument()}>Reprocess</Button> : null}
               </Stack>
               {!canReviewAiExtraction ? <Alert severity="info">You can view the extraction, but approval and reprocessing are restricted by role.</Alert> : null}
               <Typography variant="caption" color="text.secondary">
@@ -497,30 +603,57 @@ export default function PatientDetailPage() {
               ) : documents
                 .filter((document) => documentFilter === "ALL" || documentFilterKey(document.documentType) === documentFilter)
                 .slice(0, 12)
-                .map((document) => (
-                  <Box key={document.id} sx={{ p: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 2, display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", bgcolor: "background.paper" }}>
-                    <Box sx={{ minWidth: 0 }}>
-                      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5, flexWrap: "wrap" }}>
-                        <Chip size="small" label={documentTypeLabel(document.documentType)} color={documentFilterKey(document.documentType) === "REFERRAL" ? "secondary" : "default"} />
-                        <Chip size="small" variant="outlined" label={isPublishedLabDocument(document) ? "Published" : document.uploadSource} />
-                        <Typography variant="caption" color="text.secondary">{new Date(document.createdAt).toLocaleString()}</Typography>
+                .map((document) => {
+                  const documentActions = computeDocumentAiActions(document);
+                  console.debug("[JEEV-LONG-MEM-TRACE]", {
+                    documentId: document.id,
+                    ocrStatus: document.ocrStatus,
+                    aiStatus: document.aiExtractionStatus,
+                    computedCanRetryAi: documentActions.canRetryAi,
+                    currentUserRole,
+                  });
+                  return (
+                    <Box key={document.id} sx={{ p: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 2, display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", bgcolor: "background.paper" }}>
+                      <Box sx={{ minWidth: 0 }}>
+                        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5, flexWrap: "wrap" }}>
+                          <Chip size="small" label={documentTypeLabel(document.documentType)} color={documentFilterKey(document.documentType) === "REFERRAL" ? "secondary" : "default"} />
+                          <Chip size="small" variant="outlined" label={isPublishedLabDocument(document) ? "Published" : document.uploadSource} />
+                          <Typography variant="caption" color="text.secondary">{new Date(document.createdAt).toLocaleString()}</Typography>
+                        </Stack>
+                        <Typography variant="body2" sx={{ fontWeight: 800 }}>{document.title || document.originalFilename}</Typography>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          {document.description || "No notes"}
+                          {isPublishedLabDocument(document)
+                            ? ` · ${documentBusinessStatusLabel(document) || "Published"}`
+                            : ` · OCR ${document.ocrStatus || "NOT_STARTED"} · AI ${document.aiExtractionStatus || "NOT_STARTED"}${document.aiExtractionConfidence != null ? ` · ${(document.aiExtractionConfidence * 100).toFixed(0)}%` : ""}`}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          {document.uploadedByName}{document.reportDate ? ` • Report date ${document.reportDate}` : ""}{isPublishedLabDocument(document) ? ` • ${documentBusinessStatusLabel(document) || "Published"}` : document.visibility ? ` • ${document.visibility}` : ""}
+                        </Typography>
+                      </Box>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Button size="small" onClick={() => void openDocument(document)}>View</Button>
+                        <Tooltip title="Refresh status">
+                          <span>
+                            <IconButton size="small" onClick={() => void refreshDocumentRow(document.id)}>
+                              <RefreshRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        {documentActions.showRetry || documentActions.showReprocess ? (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => void reprocessDocument(document.id)}
+                            disabled={rowActionBusyDocumentId === document.id || pollingDocumentId === document.id}
+                          >
+                            {documentActions.showReprocess ? "Reprocess AI" : "Retry AI"}
+                          </Button>
+                        ) : null}
                       </Stack>
-                      <Typography variant="body2" sx={{ fontWeight: 800 }}>{document.title || document.originalFilename}</Typography>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        {document.description || "No notes"}
-                        {isPublishedLabDocument(document)
-                          ? ` · ${documentBusinessStatusLabel(document) || "Published"}`
-                          : ` · OCR ${document.ocrStatus || "NOT_STARTED"} · AI ${document.aiExtractionStatus || "NOT_STARTED"}${document.aiExtractionConfidence != null ? ` · ${(document.aiExtractionConfidence * 100).toFixed(0)}%` : ""}`}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        {document.uploadedByName}{document.reportDate ? ` • Report date ${document.reportDate}` : ""}{isPublishedLabDocument(document) ? ` • ${documentBusinessStatusLabel(document) || "Published"}` : document.visibility ? ` • ${document.visibility}` : ""}
-                      </Typography>
                     </Box>
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <Button size="small" onClick={() => void openDocument(document)}>View</Button>
-                    </Stack>
-                  </Box>
-                ))}
+                  );
+                })}
             </Stack>
             <Divider />
             <Box>
@@ -774,7 +907,15 @@ export default function PatientDetailPage() {
           await refreshDocuments();
         }}
       />
-      <ClinicalDocumentViewer open={!!viewerDocument} document={viewerDocument} url={viewerUrl} onClose={() => { setViewerDocument(null); setViewerUrl(null); }} />
+      <ClinicalDocumentViewer
+        open={!!viewerDocument}
+        document={viewerDocument}
+        url={viewerUrl}
+        onClose={() => { setViewerDocument(null); setViewerUrl(null); }}
+        onReprocess={viewerDocument && canReviewAiExtraction ? () => void reprocessDocument(viewerDocument.id) : undefined}
+        reprocessBusy={Boolean(viewerDocument && (rowActionBusyDocumentId === viewerDocument.id || pollingDocumentId === viewerDocument.id))}
+      />
+      <Snackbar open={Boolean(toast)} autoHideDuration={3500} onClose={() => setToast(null)} message={toast || ""} />
     </Stack>
   );
 }

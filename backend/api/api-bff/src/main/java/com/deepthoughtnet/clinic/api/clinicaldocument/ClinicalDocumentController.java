@@ -213,9 +213,15 @@ public class ClinicalDocumentController {
     @PostMapping("/patient-documents/{documentId}/ai-extraction/reprocess")
     @PreAuthorize("@permissionChecker.hasPermission('consultation.update') or @permissionChecker.hasPermission('consultation.complete')")
     public ClinicalDocumentResponse reprocessAiExtraction(@PathVariable UUID documentId) {
+        return reprocessClinicalDocumentAi(documentId);
+    }
+
+    @PostMapping("/clinical-documents/{documentId}/ai/reprocess")
+    @PreAuthorize("@permissionChecker.hasPermission('consultation.update') or @permissionChecker.hasPermission('consultation.complete')")
+    public ClinicalDocumentResponse reprocessClinicalDocumentAi(@PathVariable UUID documentId) {
         UUID tenantId = RequestContextHolder.requireTenantId();
         UUID actorAppUserId = RequestContextHolder.require().appUserId();
-        aiExtractionService.queueExtraction(tenantId, documentId, actorAppUserId);
+        aiExtractionService.reprocessExtraction(tenantId, documentId, actorAppUserId);
         ClinicalDocumentRecord record = documentService.get(tenantId, documentId);
         return toResponse(record);
     }

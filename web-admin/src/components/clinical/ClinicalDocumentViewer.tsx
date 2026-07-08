@@ -16,9 +16,11 @@ type Props = {
   document: ClinicalDocument | null;
   url: string | null;
   onClose: () => void;
+  onReprocess?: () => void;
+  reprocessBusy?: boolean;
 };
 
-export function ClinicalDocumentViewer({ open, document, url, onClose }: Props) {
+export function ClinicalDocumentViewer({ open, document, url, onClose, onReprocess, reprocessBusy }: Props) {
   const [zoom, setZoom] = React.useState(1);
   const [pan, setPan] = React.useState({ x: 0, y: 0 });
   const [fullScreen, setFullScreen] = React.useState(false);
@@ -36,6 +38,9 @@ export function ClinicalDocumentViewer({ open, document, url, onClose }: Props) 
   const isImage = document?.mediaType?.startsWith("image/");
   const publishedLabDocument = isPublishedLabDocument(document);
   const businessStatus = documentBusinessStatusLabel(document);
+  const aiStatus = String(document?.aiExtractionStatus || "").trim().toUpperCase();
+  const ocrStatus = String(document?.ocrStatus || "").trim().toUpperCase();
+  const canReprocess = Boolean(onReprocess) && (aiStatus === "FAILED" || aiStatus === "REVIEW_REQUIRED" || aiStatus === "PROCESSING" || aiStatus === "QUEUED" || ocrStatus === "FAILED");
   const sizeLabel = formatSize(document?.sizeBytes);
   const metaChips = publishedLabDocument
     ? ["Lab Report", "Published"]
@@ -135,6 +140,7 @@ export function ClinicalDocumentViewer({ open, document, url, onClose }: Props) 
         <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
           {url ? <Button startIcon={<DownloadRoundedIcon />} component="a" href={url} download target="_blank" rel="noreferrer">Download</Button> : null}
           {url ? <Button startIcon={<OpenInNewRoundedIcon />} onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>Open</Button> : null}
+          {canReprocess ? <Button variant="outlined" onClick={onReprocess} disabled={reprocessBusy}>Retry AI Processing</Button> : null}
         </Stack>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>

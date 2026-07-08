@@ -15,6 +15,9 @@ import com.deepthoughtnet.clinic.api.clinicalintake.db.PatientClinicalIntakeEnti
 import com.deepthoughtnet.clinic.api.clinicalintake.db.PatientClinicalIntakeRepository;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentEntity;
 import com.deepthoughtnet.clinic.api.clinicaldocument.db.ClinicalDocumentRepository;
+import com.deepthoughtnet.clinic.api.clinicalmemory.model.LongitudinalConceptSnapshot;
+import com.deepthoughtnet.clinic.api.clinicalmemory.model.PatientLongitudinalMemoryProfile;
+import com.deepthoughtnet.clinic.api.clinicalmemory.service.PatientLongitudinalMemoryService;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderEntity;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderRepository;
 import com.deepthoughtnet.clinic.api.lab.db.LabOrderResultEntity;
@@ -49,6 +52,8 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -56,6 +61,7 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 @Service
 public class ClinicalContextService {
+    private static final Logger log = LoggerFactory.getLogger(ClinicalContextService.class);
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE;
     private static final List<String> ANTIBIOTIC_HINTS = List.of(
             "amox",
@@ -89,6 +95,7 @@ public class ClinicalContextService {
     private final PatientClinicalIntakeRepository patientClinicalIntakeRepository;
     private final LabOrderRepository labOrderRepository;
     private final LabOrderResultRepository labOrderResultRepository;
+    private final PatientLongitudinalMemoryService longitudinalMemoryService;
     private final ObjectMapper objectMapper;
 
     public ClinicalContextService(PatientRepository patientRepository,
@@ -100,6 +107,7 @@ public class ClinicalContextService {
                                   PatientClinicalIntakeRepository patientClinicalIntakeRepository,
                                   LabOrderRepository labOrderRepository,
                                   LabOrderResultRepository labOrderResultRepository,
+                                  PatientLongitudinalMemoryService longitudinalMemoryService,
                                   ObjectMapper objectMapper) {
         this.patientRepository = patientRepository;
         this.consultationRepository = consultationRepository;
@@ -110,12 +118,14 @@ public class ClinicalContextService {
         this.patientClinicalIntakeRepository = patientClinicalIntakeRepository;
         this.labOrderRepository = labOrderRepository;
         this.labOrderResultRepository = labOrderResultRepository;
+        this.longitudinalMemoryService = longitudinalMemoryService;
         this.objectMapper = objectMapper;
     }
 
     public ClinicalContextResponse buildClinicalContext(UUID tenantId, UUID patientId, UUID consultationId) {
         PatientEntity patient = patientRepository.findByTenantIdAndId(tenantId, patientId)
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Patient not found"));
+        PatientLongitudinalMemoryProfile longitudinalProfile = longitudinalMemoryService.buildProfile(tenantId, patientId);
 
         List<ConsultationEntity> consultations = consultationRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId);
         List<PrescriptionEntity> prescriptions = prescriptionRepository.findByTenantIdAndPatientIdOrderByCreatedAtDesc(tenantId, patientId);
@@ -150,18 +160,18 @@ public class ClinicalContextService {
                 .limit(5)
                 .toList();
 
-        LabIntelligence labIntelligence = buildLabIntelligence(tenantId, labOrders);
+        LabIntelligence labIntelligence = buildLabIntelligence(tenantId, labOrders, longitudinalProfile);
         DocumentIntelligence documentIntelligence = buildDocumentIntelligence(documents);
         IntakeSummary intakeSummary = buildIntakeSummary(clinicalIntakes, documents);
-        TimelineSummary timelineSummary = buildTimelineSummary(consultations, prescriptions, clinicalIntakes, documents, labOrders);
+        TimelineSummary timelineSummary = buildTimelineSummary(consultations, prescriptions, clinicalIntakes, documents, labOrders, longitudinalMemoryService.buildTimelineEvents(tenantId, patientId, 8));
 
         PatientSnapshot patientSnapshot = new PatientSnapshot(
                 buildPatientName(patient),
                 patient.getAgeYears(),
                 patient.getGender() == null ? null : patient.getGender().name(),
-                compactText(patient.getExistingConditions()),
+                mergeText(patient.getExistingConditions(), longitudinalProfile.knownConditions()),
                 compactText(patient.getAllergies()),
-                activeMedications,
+                mergeTextList(activeMedications, longitudinalProfile.longTermMedications()),
                 consultations.isEmpty() ? null : formatDate(consultations.get(0).getCreatedAt())
         );
 
@@ -169,7 +179,9 @@ public class ClinicalContextService {
         String aiSummary = buildAiSummary(patientSnapshot, medicationAlerts, labIntelligence, documentIntelligence, timelineSummary);
         String aiPromptContext = buildPromptContext(patientSnapshot, previousVisits, diagnosisSummary, medicationAlerts, intakeSummary, labIntelligence, documentIntelligence, timelineSummary);
         MedicationSummary medicationSummary = new MedicationSummary(activeMedications, discontinuedMedications, recentAntibiotics, duplicateMedicines, medicationAlerts);
-        String clinicalContextJson = buildClinicalContextJson(patientSnapshot, previousVisits, medicationSummary, diagnosisSummary, intakeSummary, labIntelligence, documentIntelligence, timelineSummary);
+        ClinicalContextResponse.LongitudinalMemory longitudinalMemory = toLongitudinalMemory(longitudinalProfile);
+        String clinicalContextJson = buildClinicalContextJson(patientSnapshot, previousVisits, medicationSummary, diagnosisSummary, intakeSummary, labIntelligence, documentIntelligence, timelineSummary, longitudinalMemory);
+        traceClinicalContext(tenantId, patientId, consultationId, patientSnapshot, labIntelligence, documentIntelligence, longitudinalMemory);
 
         return new ClinicalContextResponse(
                 tenantId,
@@ -183,6 +195,7 @@ public class ClinicalContextService {
                 labIntelligence,
                 documentIntelligence,
                 timelineSummary,
+                longitudinalMemory,
                 aiSummary,
                 aiPromptContext,
                 clinicalContextJson,
@@ -336,7 +349,7 @@ public class ClinicalContextService {
         );
     }
 
-    private LabIntelligence buildLabIntelligence(UUID tenantId, List<LabOrderEntity> labOrders) {
+    private LabIntelligence buildLabIntelligence(UUID tenantId, List<LabOrderEntity> labOrders, PatientLongitudinalMemoryProfile longitudinalProfile) {
         List<LabOrderEntity> recentOrders = labOrders.stream().limit(8).toList();
         List<LabOrderResultEntity> allResults = new ArrayList<>();
         for (LabOrderEntity order : recentOrders) {
@@ -366,7 +379,11 @@ public class ClinicalContextService {
                 .map(order -> order.getOrderNumber() + (hasText(order.getNotes()) ? " - " + compactText(order.getNotes(), 80) : ""))
                 .toList();
 
-        String latestHbA1c = findLatestLabValue(allResults, "HBA1C");
+        String latestHbA1c = longitudinalProfile.latestHbA1c() == null ? findLatestLabValue(allResults, "HBA1C") : formatLongitudinalConcept(longitudinalProfile.latestHbA1c());
+        String latestBloodSugar = longitudinalProfile.latestBloodSugar() == null ? null : formatLongitudinalConcept(longitudinalProfile.latestBloodSugar());
+        String latestLipidSummary = longitudinalProfile.latestLipidSummary().isEmpty() ? null : longitudinalProfile.latestLipidSummary().stream().map(this::formatLongitudinalConcept).collect(Collectors.joining(" • "));
+        String latestBloodPressure = longitudinalProfile.latestBloodPressure() == null ? null : formatLongitudinalConcept(longitudinalProfile.latestBloodPressure());
+        String latestBmi = longitudinalProfile.latestBmi() == null ? null : formatLongitudinalConcept(longitudinalProfile.latestBmi());
         String latestCbc = findLatestLabValue(allResults, "CBC");
         String latestCreatinine = findLatestLabValue(allResults, "CREATININE");
 
@@ -384,7 +401,11 @@ public class ClinicalContextService {
                 pendingInvestigations,
                 latestHbA1c,
                 latestCbc,
-                latestCreatinine
+                latestCreatinine,
+                latestBloodSugar,
+                latestLipidSummary,
+                latestBloodPressure,
+                latestBmi
         );
     }
 
@@ -415,7 +436,8 @@ public class ClinicalContextService {
                                                  List<PrescriptionEntity> prescriptions,
                                                  List<PatientClinicalIntakeEntity> clinicalIntakes,
                                                  List<ClinicalDocumentEntity> documents,
-                                                 List<LabOrderEntity> labOrders) {
+                                                 List<LabOrderEntity> labOrders,
+                                                 List<ClinicalContextResponse.TimelineEvent> longitudinalEvents) {
         List<TimelineEvent> events = new ArrayList<>();
         clinicalIntakes.stream().limit(5).forEach(intake ->
                 events.add(new TimelineEvent(
@@ -451,6 +473,13 @@ public class ClinicalContextService {
                         "Lab Order",
                         compactText(firstNonBlank(order.getOrderNumber(), order.getNotes(), order.getStatus() == null ? null : order.getStatus().name())),
                         "LAB_ORDER"
+                )));
+        longitudinalEvents.stream().limit(12).forEach(event ->
+                events.add(new TimelineEvent(
+                        event.occurredOn(),
+                        event.title(),
+                        event.detail(),
+                        event.type()
                 )));
 
         events.sort(Comparator.comparing((TimelineEvent event) -> parseDateValue(event.occurredOn())).reversed());
@@ -622,6 +651,13 @@ public class ClinicalContextService {
         if (hasText(labIntelligence.latestLabReport()) || !labIntelligence.abnormalValues().isEmpty()) {
             parts.add("Lab: " + joinSegments(segments(labIntelligence.latestLabReport(), labIntelligence.abnormalValues().isEmpty() ? null : "Abnormal: " + joinCompact(labIntelligence.abnormalValues(), 3))));
         }
+        if (hasText(labIntelligence.lastHbA1c()) || hasText(labIntelligence.latestBloodSugar()) || hasText(labIntelligence.latestLipidSummary())) {
+            parts.add("Longitudinal labs: " + joinSegments(segments(
+                    hasText(labIntelligence.lastHbA1c()) ? "HbA1c: " + labIntelligence.lastHbA1c() : null,
+                    hasText(labIntelligence.latestBloodSugar()) ? "Blood sugar: " + labIntelligence.latestBloodSugar() : null,
+                    hasText(labIntelligence.latestLipidSummary()) ? "Lipid profile: " + labIntelligence.latestLipidSummary() : null
+            )));
+        }
         if (!documentIntelligence.recentReports().isEmpty()) {
             parts.add("Documents: " + joinCompact(documentIntelligence.recentReports(), 3));
         }
@@ -676,6 +712,10 @@ public class ClinicalContextService {
                     labIntelligence.previousTrends().isEmpty() ? null : "Trends: " + joinCompact(labIntelligence.previousTrends(), 3),
                     labIntelligence.pendingInvestigations().isEmpty() ? null : "Pending: " + joinCompact(labIntelligence.pendingInvestigations(), 4),
                     hasText(labIntelligence.lastHbA1c()) ? "HbA1c: " + labIntelligence.lastHbA1c() : null,
+                    hasText(labIntelligence.latestBloodSugar()) ? "Blood sugar: " + labIntelligence.latestBloodSugar() : null,
+                    hasText(labIntelligence.latestLipidSummary()) ? "Lipid summary: " + labIntelligence.latestLipidSummary() : null,
+                    hasText(labIntelligence.latestBloodPressure()) ? "Blood pressure: " + labIntelligence.latestBloodPressure() : null,
+                    hasText(labIntelligence.latestBmi()) ? "BMI: " + labIntelligence.latestBmi() : null,
                     hasText(labIntelligence.lastCbc()) ? "CBC: " + labIntelligence.lastCbc() : null,
                     hasText(labIntelligence.lastCreatinine()) ? "Creatinine: " + labIntelligence.lastCreatinine() : null
             )));
@@ -704,7 +744,8 @@ public class ClinicalContextService {
                                             IntakeSummary intakeSummary,
                                             LabIntelligence labIntelligence,
                                             DocumentIntelligence documentIntelligence,
-                                            TimelineSummary timelineSummary) {
+                                            TimelineSummary timelineSummary,
+                                            ClinicalContextResponse.LongitudinalMemory longitudinalMemory) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("patientSummary", patientSnapshot);
         payload.put("previousVisits", previousVisits);
@@ -714,6 +755,7 @@ public class ClinicalContextService {
         payload.put("labIntelligence", labIntelligence);
         payload.put("documentIntelligence", documentIntelligence);
         payload.put("timelineSummary", timelineSummary);
+        payload.put("longitudinalMemory", longitudinalMemory);
         payload.put("aiSummary", buildAiSummary(patientSnapshot, medicationSnapshot.alerts(), labIntelligence, documentIntelligence, timelineSummary));
         payload.put("aiPromptContext", buildPromptContext(patientSnapshot, previousVisits, diagnosisSummary, medicationSnapshot.alerts(), intakeSummary, labIntelligence, documentIntelligence, timelineSummary));
         try {
@@ -721,6 +763,104 @@ public class ClinicalContextService {
         } catch (JsonProcessingException ex) {
             return payload.toString();
         }
+    }
+
+    private ClinicalContextResponse.LongitudinalMemory toLongitudinalMemory(PatientLongitudinalMemoryProfile profile) {
+        if (profile == null) {
+            return new ClinicalContextResponse.LongitudinalMemory(List.of(), List.of(), null, null, List.of(), null, null, List.of(), List.of(), null);
+        }
+        return new ClinicalContextResponse.LongitudinalMemory(
+                toConceptDtos(profile.knownConditions()),
+                toConceptDtos(profile.longTermMedications()),
+                toConceptDto(profile.latestHbA1c()),
+                toConceptDto(profile.latestBloodSugar()),
+                toConceptDtos(profile.latestLipidSummary()),
+                toConceptDto(profile.latestBloodPressure()),
+                toConceptDto(profile.latestBmi()),
+                toConceptDtos(profile.riskFlags()),
+                toConceptDtos(profile.history()),
+                profile.mostRecentLaboratorySummary()
+        );
+    }
+
+    private List<ClinicalContextResponse.LongitudinalConcept> toConceptDtos(List<LongitudinalConceptSnapshot> concepts) {
+        return concepts == null ? List.of() : concepts.stream().map(this::toConceptDto).toList();
+    }
+
+    private ClinicalContextResponse.LongitudinalConcept toConceptDto(LongitudinalConceptSnapshot concept) {
+        if (concept == null) {
+            return null;
+        }
+        return new ClinicalContextResponse.LongitudinalConcept(
+                concept.conceptFamily(),
+                concept.conceptKey(),
+                concept.label(),
+                concept.valueText(),
+                concept.valueUnit(),
+                concept.sourceDocumentTitle(),
+                concept.sourceDocumentType(),
+                concept.sourceDocumentId() == null ? null : concept.sourceDocumentId().toString(),
+                concept.observedOn() == null ? null : concept.observedOn().toString(),
+                concept.confidence(),
+                concept.verificationStatus(),
+                concept.evidenceText()
+        );
+    }
+
+    private String mergeText(String raw, List<LongitudinalConceptSnapshot> concepts) {
+        LinkedHashSet<String> parts = new LinkedHashSet<>();
+        if (hasText(raw)) {
+            parts.add(compactText(raw));
+        }
+        if (concepts != null) {
+            concepts.stream().map(LongitudinalConceptSnapshot::label).filter(this::hasText).forEach(parts::add);
+        }
+        return parts.isEmpty() ? null : String.join(", ", parts);
+    }
+
+    private List<String> mergeTextList(List<String> raw, List<LongitudinalConceptSnapshot> concepts) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        if (raw != null) {
+            raw.stream().filter(this::hasText).map(this::compactText).forEach(merged::add);
+        }
+        if (concepts != null) {
+            concepts.stream().map(LongitudinalConceptSnapshot::label).filter(this::hasText).forEach(merged::add);
+        }
+        return new ArrayList<>(merged);
+    }
+
+    private void traceClinicalContext(UUID tenantId,
+                                      UUID patientId,
+                                      UUID consultationId,
+                                      PatientSnapshot patientSnapshot,
+                                      LabIntelligence labIntelligence,
+                                      DocumentIntelligence documentIntelligence,
+                                      ClinicalContextResponse.LongitudinalMemory longitudinalMemory) {
+        if (!log.isInfoEnabled()) {
+            return;
+        }
+        log.info(
+                "[JEEV-LONG-MEM-TRACE] clinical-context tenantId={} patientId={} consultationId={} existingConditions={} latestHbA1c={} latestBloodSugar={} latestLipidSummary={} riskFlags={} recentReportsCount={}",
+                tenantId,
+                patientId,
+                consultationId,
+                patientSnapshot == null ? null : patientSnapshot.chronicConditions(),
+                labIntelligence == null ? null : labIntelligence.lastHbA1c(),
+                labIntelligence == null ? null : labIntelligence.latestBloodSugar(),
+                labIntelligence == null ? null : labIntelligence.latestLipidSummary(),
+                longitudinalMemory == null ? null : longitudinalMemory.riskFlags(),
+                documentIntelligence == null || documentIntelligence.recentReports() == null ? 0 : documentIntelligence.recentReports().size()
+        );
+    }
+
+    private String formatLongitudinalConcept(LongitudinalConceptSnapshot concept) {
+        if (concept == null) {
+            return null;
+        }
+        String value = joinSegments(segments(concept.label(), concept.valueText() == null ? null : concept.valueText() + (hasText(concept.valueUnit()) ? " " + concept.valueUnit() : "")));
+        String source = hasText(concept.sourceDocumentTitle()) ? "Source: " + concept.sourceDocumentTitle() : null;
+        String date = concept.observedOn() == null ? null : concept.observedOn().toString();
+        return joinSegments(segments(value, date, source));
     }
 
     private boolean isPendingLabOrderStatus(com.deepthoughtnet.clinic.api.lab.db.LabOrderStatus status) {

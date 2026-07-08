@@ -68,6 +68,9 @@ test("appointment booking and patient management show human-friendly patient ide
 
   assert.ok(patientDetail.includes("patientMobileLine(patient)"));
   assert.ok(patientDetail.includes("patientNumberLine(patient)"));
+  assert.ok(patientDetail.includes("Retry AI Processing"));
+  assert.ok(patientDetail.includes("AI reprocessing started."));
+  assert.ok(patientDetail.includes("/api/clinical-documents/${documentId}/ai/reprocess"));
 
   assert.ok(doctorAvailability.includes("Break ${row.breakStartTime}–${row.breakEndTime}"));
   assert.ok(doctorAvailability.includes("No availability sessions for the selected scope. Add a session or choose All Doctors to see the full schedule."));

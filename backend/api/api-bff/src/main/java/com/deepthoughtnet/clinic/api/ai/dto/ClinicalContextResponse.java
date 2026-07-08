@@ -16,6 +16,7 @@ public record ClinicalContextResponse(
         LabIntelligence labIntelligence,
         DocumentIntelligence documentIntelligence,
         TimelineSummary timelineSummary,
+        LongitudinalMemory longitudinalMemory,
         String aiSummary,
         String aiPromptContext,
         String clinicalContextJson,
@@ -87,7 +88,11 @@ public record ClinicalContextResponse(
             List<String> pendingInvestigations,
             String lastHbA1c,
             String lastCbc,
-            String lastCreatinine
+            String lastCreatinine,
+            String latestBloodSugar,
+            String latestLipidSummary,
+            String latestBloodPressure,
+            String latestBmi
     ) {}
 
     public record DocumentIntelligence(
@@ -107,5 +112,33 @@ public record ClinicalContextResponse(
             String title,
             String detail,
             String type
+    ) {}
+
+    public record LongitudinalMemory(
+            List<LongitudinalConcept> knownConditions,
+            List<LongitudinalConcept> longTermMedications,
+            LongitudinalConcept latestHbA1c,
+            LongitudinalConcept latestBloodSugar,
+            List<LongitudinalConcept> latestLipidSummary,
+            LongitudinalConcept latestBloodPressure,
+            LongitudinalConcept latestBmi,
+            List<LongitudinalConcept> riskFlags,
+            List<LongitudinalConcept> history,
+            String mostRecentLaboratorySummary
+    ) {}
+
+    public record LongitudinalConcept(
+            String conceptFamily,
+            String conceptKey,
+            String label,
+            String valueText,
+            String valueUnit,
+            String sourceDocumentTitle,
+            String sourceDocumentType,
+            String sourceDocumentId,
+            String observedOn,
+            java.math.BigDecimal confidence,
+            String verificationStatus,
+            String evidenceText
     ) {}
 }

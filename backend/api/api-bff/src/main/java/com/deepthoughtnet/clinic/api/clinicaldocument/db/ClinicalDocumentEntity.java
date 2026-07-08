@@ -398,7 +398,22 @@ public class ClinicalDocumentEntity {
     }
 
     public void markAiExtractionQueued() {
+        markAiExtractionQueued("NOT_STARTED");
+    }
+
+    public void markAiExtractionQueued(String ocrStatus) {
+        this.ocrStatus = ocrStatus == null ? "NOT_STARTED" : ocrStatus;
         this.aiExtractionStatus = "QUEUED";
+        this.aiExtractionProvider = null;
+        this.aiExtractionModel = null;
+        this.aiExtractionConfidence = null;
+        this.aiExtractionSummary = null;
+        this.aiExtractionStructuredJson = null;
+        this.aiExtractionReviewNotes = null;
+        this.aiExtractionAcceptedJson = null;
+        this.aiExtractionOverrideReason = null;
+        this.aiExtractionReviewedByUserId = null;
+        this.aiExtractionReviewedAt = null;
         this.updatedAt = OffsetDateTime.now();
     }
 

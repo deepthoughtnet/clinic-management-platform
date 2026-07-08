@@ -183,6 +183,135 @@ export type ClinicalContextResponse = {
   tenantId: string;
   patientId: string;
   consultationId: string | null;
+  longitudinalMemory: {
+    knownConditions: Array<{
+      conceptFamily: string;
+      conceptKey: string;
+      label: string;
+      valueText: string | null;
+      valueUnit: string | null;
+      sourceDocumentTitle: string | null;
+      sourceDocumentType: string | null;
+      sourceDocumentId: string | null;
+      observedOn: string | null;
+      confidence: number | null;
+      verificationStatus: string | null;
+      evidenceText: string | null;
+    }>;
+    longTermMedications: Array<{
+      conceptFamily: string;
+      conceptKey: string;
+      label: string;
+      valueText: string | null;
+      valueUnit: string | null;
+      sourceDocumentTitle: string | null;
+      sourceDocumentType: string | null;
+      sourceDocumentId: string | null;
+      observedOn: string | null;
+      confidence: number | null;
+      verificationStatus: string | null;
+      evidenceText: string | null;
+    }>;
+    latestHbA1c: {
+      conceptFamily: string;
+      conceptKey: string;
+      label: string;
+      valueText: string | null;
+      valueUnit: string | null;
+      sourceDocumentTitle: string | null;
+      sourceDocumentType: string | null;
+      sourceDocumentId: string | null;
+      observedOn: string | null;
+      confidence: number | null;
+      verificationStatus: string | null;
+      evidenceText: string | null;
+    } | null;
+    latestBloodSugar: {
+      conceptFamily: string;
+      conceptKey: string;
+      label: string;
+      valueText: string | null;
+      valueUnit: string | null;
+      sourceDocumentTitle: string | null;
+      sourceDocumentType: string | null;
+      sourceDocumentId: string | null;
+      observedOn: string | null;
+      confidence: number | null;
+      verificationStatus: string | null;
+      evidenceText: string | null;
+    } | null;
+    latestLipidSummary: Array<{
+      conceptFamily: string;
+      conceptKey: string;
+      label: string;
+      valueText: string | null;
+      valueUnit: string | null;
+      sourceDocumentTitle: string | null;
+      sourceDocumentType: string | null;
+      sourceDocumentId: string | null;
+      observedOn: string | null;
+      confidence: number | null;
+      verificationStatus: string | null;
+      evidenceText: string | null;
+    }>;
+    latestBloodPressure: {
+      conceptFamily: string;
+      conceptKey: string;
+      label: string;
+      valueText: string | null;
+      valueUnit: string | null;
+      sourceDocumentTitle: string | null;
+      sourceDocumentType: string | null;
+      sourceDocumentId: string | null;
+      observedOn: string | null;
+      confidence: number | null;
+      verificationStatus: string | null;
+      evidenceText: string | null;
+    } | null;
+    latestBmi: {
+      conceptFamily: string;
+      conceptKey: string;
+      label: string;
+      valueText: string | null;
+      valueUnit: string | null;
+      sourceDocumentTitle: string | null;
+      sourceDocumentType: string | null;
+      sourceDocumentId: string | null;
+      observedOn: string | null;
+      confidence: number | null;
+      verificationStatus: string | null;
+      evidenceText: string | null;
+    } | null;
+    riskFlags: Array<{
+      conceptFamily: string;
+      conceptKey: string;
+      label: string;
+      valueText: string | null;
+      valueUnit: string | null;
+      sourceDocumentTitle: string | null;
+      sourceDocumentType: string | null;
+      sourceDocumentId: string | null;
+      observedOn: string | null;
+      confidence: number | null;
+      verificationStatus: string | null;
+      evidenceText: string | null;
+    }>;
+    history: Array<{
+      conceptFamily: string;
+      conceptKey: string;
+      label: string;
+      valueText: string | null;
+      valueUnit: string | null;
+      sourceDocumentTitle: string | null;
+      sourceDocumentType: string | null;
+      sourceDocumentId: string | null;
+      observedOn: string | null;
+      confidence: number | null;
+      verificationStatus: string | null;
+      evidenceText: string | null;
+    }>;
+    mostRecentLaboratorySummary: string | null;
+  };
   patientSummary: {
     patientName: string | null;
     ageYears: number | null;
@@ -243,6 +372,10 @@ export type ClinicalContextResponse = {
     lastHbA1c: string | null;
     lastCbc: string | null;
     lastCreatinine: string | null;
+    latestBloodSugar: string | null;
+    latestLipidSummary: string | null;
+    latestBloodPressure: string | null;
+    latestBmi: string | null;
   };
   documentIntelligence: {
     recentReports: string[];
@@ -914,7 +1047,7 @@ export type Consultation = {
 
 export type ConsultationAiSummary = {
   consultationId: string;
-  summary: string;
+  summary: string | null;
   provider: string | null;
   model: string | null;
   generatedAt: string | null;
@@ -4035,7 +4168,7 @@ export async function reviewClinicalDocumentExtraction(token: string, tenantId: 
 }
 
 export async function reprocessClinicalDocumentExtraction(token: string, tenantId: string, documentId: string) {
-  return httpPost<ClinicalDocument>(`/api/patient-documents/${documentId}/ai-extraction/reprocess`, undefined, { token, tenantId });
+  return httpPost<ClinicalDocument>(`/api/clinical-documents/${documentId}/ai/reprocess`, undefined, { token, tenantId });
 }
 
 export async function getRecentAiRequests(token: string, tenantId: string) {
@@ -4596,6 +4729,10 @@ function buildPatientDocumentFilters(filters?: PatientDocumentListFilters): stri
 
 export async function getPatientDocuments(token: string, tenantId: string, patientId: string, filters?: PatientDocumentListFilters) {
   return httpGet<ClinicalDocument[]>(`/api/patients/${patientId}/documents${buildPatientDocumentFilters(filters)}`, { token, tenantId });
+}
+
+export async function getClinicalDocument(token: string, tenantId: string, documentId: string) {
+  return httpGet<ClinicalDocument>(`/api/patient-documents/${documentId}`, { token, tenantId });
 }
 
 export async function uploadPatientDocument(token: string, tenantId: string, patientId: string, body: {

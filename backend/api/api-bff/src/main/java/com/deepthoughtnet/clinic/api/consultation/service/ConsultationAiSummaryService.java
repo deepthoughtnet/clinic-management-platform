@@ -24,9 +24,9 @@ public class ConsultationAiSummaryService {
     @Transactional(readOnly = true)
     public ConsultationAiSummaryResponse get(UUID tenantId, UUID consultationId) {
         requireConsultation(tenantId, consultationId);
-        ConsultationAiSummaryEntity entity = repository.findByTenantIdAndConsultationId(tenantId, consultationId)
-                .orElseThrow(() -> new IllegalArgumentException("AI summary not found"));
-        return toResponse(entity);
+        return repository.findByTenantIdAndConsultationId(tenantId, consultationId)
+                .map(this::toResponse)
+                .orElseGet(() -> emptyResponse(consultationId));
     }
 
     @Transactional
@@ -60,6 +60,19 @@ public class ConsultationAiSummaryService {
                 entity.getGeneratedAt(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
+        );
+    }
+
+    private ConsultationAiSummaryResponse emptyResponse(UUID consultationId) {
+        OffsetDateTime now = OffsetDateTime.now();
+        return new ConsultationAiSummaryResponse(
+                consultationId == null ? null : consultationId.toString(),
+                null,
+                null,
+                null,
+                null,
+                now,
+                now
         );
     }
 
