@@ -11,6 +11,7 @@ public record PatientVaccinationCommand(
         LocalDate givenDate,
         LocalDate nextDueDate,
         String batchNumber,
+        UUID stockBatchId,
         String notes,
         String source,
         String externalPlace,
@@ -19,6 +20,7 @@ public record PatientVaccinationCommand(
         UUID administeredByUserId,
         UUID billId,
         boolean addToBill,
-        BigDecimal billItemUnitPrice
+        BigDecimal billItemUnitPrice,
+        boolean inventoryOverride
 ) {
 }

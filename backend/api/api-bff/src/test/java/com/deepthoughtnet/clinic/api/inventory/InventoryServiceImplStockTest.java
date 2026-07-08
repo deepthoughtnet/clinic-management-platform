@@ -3,6 +3,7 @@ package com.deepthoughtnet.clinic.api.inventory;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -39,6 +40,7 @@ class InventoryServiceImplStockTest {
 
     private MedicineRepository medicineRepository;
     private StockRepository stockRepository;
+    private InventoryTransactionRepository transactionRepository;
     private InventoryLocationRepository locationRepository;
     private AuditEventPublisher auditEventPublisher;
     private List<InventoryTransactionEntity> savedTransactions;
@@ -49,7 +51,7 @@ class InventoryServiceImplStockTest {
     void setUp() {
         medicineRepository = mock(MedicineRepository.class);
         stockRepository = mock(StockRepository.class);
-        InventoryTransactionRepository transactionRepository = mock(InventoryTransactionRepository.class);
+        transactionRepository = mock(InventoryTransactionRepository.class);
         locationRepository = mock(InventoryLocationRepository.class);
         auditEventPublisher = mock(AuditEventPublisher.class);
         savedTransactions = new ArrayList<>();
@@ -221,7 +223,7 @@ class InventoryServiceImplStockTest {
 
         assertThat(savedStocks.get(created.id()).getQuantityOnHand()).isEqualTo(100);
         assertThat(savedTransactions).singleElement().satisfies(tx -> {
-            assertThat(tx.getTransactionType()).isEqualTo("PURCHASE");
+            assertThat(tx.getTransactionType()).isEqualTo("STOCK_IN");
             assertThat(tx.getBeforeQuantity()).isEqualTo(0);
             assertThat(tx.getAfterQuantity()).isEqualTo(100);
             assertThat(tx.getQuantity()).isEqualTo(100);
@@ -238,7 +240,7 @@ class InventoryServiceImplStockTest {
 
         assertThat(savedStocks.get(existing.getId()).getQuantityOnHand()).isEqualTo(100);
         assertThat(savedTransactions).singleElement().satisfies(tx -> {
-            assertThat(tx.getTransactionType()).isEqualTo("PURCHASE");
+            assertThat(tx.getTransactionType()).isEqualTo("STOCK_IN");
             assertThat(tx.getBeforeQuantity()).isEqualTo(25);
             assertThat(tx.getAfterQuantity()).isEqualTo(100);
             assertThat(tx.getQuantity()).isEqualTo(75);
@@ -413,6 +415,70 @@ class InventoryServiceImplStockTest {
         ), ACTOR_ID))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("stockBatchId is required");
+    }
+
+    @Test
+    void vaccinationAdministrationDeductsStockOnlyOnceOnRetry() {
+        StockEntity existing = StockEntity.create(TENANT_ID, MEDICINE_ID, LOCATION_ID);
+        existing.update(LOCATION_ID, "890100000500", null, null, "B500", "VAC-500", LocalDate.now().plusDays(30), null, "Acme Pharma", 10, 10, 5, new BigDecimal("10.00"), new BigDecimal("10.00"), new BigDecimal("12.00"), true);
+        savedStocks.put(existing.getId(), existing);
+
+        UUID vaccinationId = UUID.randomUUID();
+        when(transactionRepository.findFirstByTenantIdAndReferenceTypeAndReferenceIdAndStockBatchIdAndTransactionTypeOrderByCreatedAtDesc(
+                eq(TENANT_ID),
+                eq("VACCINATION"),
+                eq(vaccinationId),
+                eq(existing.getId()),
+                eq("VACCINATION_ADMINISTERED")
+        )).thenAnswer(invocation -> savedTransactions.stream()
+                .filter(tx -> "VACCINATION".equals(tx.getReferenceType())
+                        && vaccinationId.equals(tx.getReferenceId())
+                        && existing.getId().equals(tx.getStockBatchId())
+                        && "VACCINATION_ADMINISTERED".equals(tx.getTransactionType()))
+                .findFirst());
+
+        com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand command = new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand(
+                MEDICINE_ID,
+                existing.getId(),
+                LOCATION_ID,
+                null,
+                com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.VACCINATION_ADMINISTERED,
+                1,
+                "Vaccination administered",
+                "VACCINATION",
+                vaccinationId,
+                ACTOR_ID,
+                "Routine immunization"
+        );
+
+        service.createTransaction(TENANT_ID, command, ACTOR_ID);
+        service.createTransaction(TENANT_ID, command, ACTOR_ID);
+
+        assertThat(savedTransactions).hasSize(1);
+        assertThat(savedStocks.get(existing.getId()).getQuantityOnHand()).isEqualTo(9);
+    }
+
+    @Test
+    void vaccinationAdministrationRejectsExpiredBatch() {
+        StockEntity expired = StockEntity.create(TENANT_ID, MEDICINE_ID, LOCATION_ID);
+        expired.update(LOCATION_ID, "890100000501", null, null, "B501", "VAC-501", LocalDate.now().minusDays(1), null, "Acme Pharma", 10, 10, 5, new BigDecimal("10.00"), new BigDecimal("10.00"), new BigDecimal("12.00"), true);
+        when(stockRepository.findByTenantIdAndId(TENANT_ID, expired.getId())).thenReturn(Optional.of(expired));
+
+        assertThatThrownBy(() -> service.createTransaction(TENANT_ID, new com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionCommand(
+                MEDICINE_ID,
+                expired.getId(),
+                LOCATION_ID,
+                null,
+                com.deepthoughtnet.clinic.inventory.service.model.InventoryTransactionType.VACCINATION_ADMINISTERED,
+                1,
+                "Vaccination administered",
+                "VACCINATION",
+                UUID.randomUUID(),
+                ACTOR_ID,
+                "Routine immunization"
+        ), ACTOR_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Batch expired and cannot be sold or dispensed.");
     }
 
     @Test

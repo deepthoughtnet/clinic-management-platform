@@ -265,6 +265,20 @@ public class ClinicalDocumentController {
                 null,
                 null
         )));
+        vaccinationService.listByPatient(tenantId, patientId).stream()
+                .filter(row -> row.adverseEventStatus() != null && !"NONE".equalsIgnoreCase(row.adverseEventStatus()))
+                .forEach(row -> items.add(new PatientTimelineItemResponse(
+                        row.id().toString() + "-AEFI",
+                        "VACCINATION_AEFI",
+                        "Adverse Event Following Immunization",
+                        vaccinationAefiTimelineSubtitle(row),
+                        (row.adverseEventEventDateTime() == null ? row.createdAt() : row.adverseEventEventDateTime()).toString(),
+                        row.adverseEventSeverity(),
+                        "VACCINATION",
+                        null,
+                        null,
+                        null
+                )));
         return items.stream().sorted(Comparator.comparing(PatientTimelineItemResponse::occurredAt).reversed()).limit(100).toList();
     }
 
@@ -518,6 +532,20 @@ public class ClinicalDocumentController {
             parts.add(record.inventoryBatchManufacturer());
         }
         return parts.isEmpty() ? "Vaccination recorded" : String.join(" • ", parts);
+    }
+
+    private String vaccinationAefiTimelineSubtitle(PatientVaccinationRecord record) {
+        List<String> parts = new ArrayList<>();
+        if (record.adverseEventSeverity() != null && !record.adverseEventSeverity().isBlank()) {
+            parts.add(record.adverseEventSeverity());
+        }
+        if (record.adverseEventOutcome() != null && !record.adverseEventOutcome().isBlank()) {
+            parts.add(record.adverseEventOutcome());
+        }
+        if (Boolean.TRUE.equals(record.adverseEventFollowUpRequired()) && record.adverseEventFollowUpDate() != null) {
+            parts.add("Follow-up " + record.adverseEventFollowUpDate());
+        }
+        return parts.isEmpty() ? "Adverse event recorded" : String.join(" • ", parts);
     }
 
     private ClinicalDocumentResponse toResponse(ClinicalDocumentRecord record) {

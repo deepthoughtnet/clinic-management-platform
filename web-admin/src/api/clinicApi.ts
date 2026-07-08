@@ -85,6 +85,17 @@ export type ConsultationGeneratedDocumentResponse = {
   documentType: ClinicalDocumentType;
 };
 
+export type GeneratedVaccinationDocumentResponse = {
+  documentId: string;
+  downloadUrl: string;
+  expiresInSeconds: string;
+  filename: string;
+  title: string;
+  documentNumber: string;
+  generatedAt: string;
+  generatedBy: string;
+};
+
 export type ClinicalDocument = {
   id: string;
   patientId: string;
@@ -1418,6 +1429,9 @@ export type VaccineMaster = {
   administrationSite: string | null;
   storageTemperature: string | null;
   ndcBarcode: string | null;
+  inventoryItemId: string | null;
+  inventoryItemCode: string | null;
+  stockTrackingEnabled: boolean;
   scheduleType: string | null;
   ageGroup: string | null;
   minAgeDays: number | null;
@@ -1451,6 +1465,9 @@ export type VaccineInput = {
   administrationSite: string | null;
   storageTemperature: string | null;
   ndcBarcode: string | null;
+  inventoryItemId: string | null;
+  inventoryItemCode: string | null;
+  stockTrackingEnabled: boolean;
   scheduleType: string | null;
   ageGroup: string | null;
   minAgeDays: number | null;
@@ -1486,6 +1503,7 @@ export type VaccinationRecommendation = {
   overdueDays: number | null;
   recommendedAgeDays: number | null;
   patientAgeDays: number | null;
+  patientAgeGroup?: string | null;
   reasonText: string;
   completedDate: string | null;
 };
@@ -1844,6 +1862,7 @@ export type PatientVaccination = {
   givenDate: string;
   nextDueDate: string | null;
   batchNumber: string | null;
+  stockBatchId?: string | null;
   notes: string | null;
   administeredByUserId: string | null;
   administeredByUserName: string | null;
@@ -1858,12 +1877,30 @@ export type PatientVaccination = {
   billLineId?: string | null;
   inventoryTransactionId?: string | null;
   inventoryStockBatchId?: string | null;
+  inventoryItemId?: string | null;
+  inventoryItemCode?: string | null;
   inventoryBatchNumber?: string | null;
   inventoryBatchManufacturer?: string | null;
   inventoryBatchExpiryDate?: string | null;
   reminderNotificationId?: string | null;
   reminderQueuedAt?: string | null;
   reminderStatus?: string | null;
+  adverseEventStatus?: "NONE" | "OBSERVED" | "REPORTED" | "RESOLVED" | string | null;
+  adverseEventEventDateTime?: string | null;
+  adverseEventOnsetTimeAfterVaccination?: string | null;
+  adverseEventSeverity?: "MILD" | "MODERATE" | "SEVERE" | "SERIOUS" | string | null;
+  adverseEventSymptoms?: string[] | null;
+  adverseEventOtherSymptoms?: string | null;
+  adverseEventActionTaken?: string | null;
+  adverseEventTreatmentNotes?: string | null;
+  adverseEventOutcome?: "ONGOING" | "RECOVERED" | "RECOVERED_WITH_SEQUELAE" | "UNKNOWN" | string | null;
+  adverseEventFollowUpRequired?: boolean | null;
+  adverseEventFollowUpDate?: string | null;
+  adverseEventReportedToAuthority?: boolean | null;
+  adverseEventReportReferenceNumber?: string | null;
+  adverseEventNotes?: string | null;
+  adverseEventFollowUpNotificationId?: string | null;
+  adverseEventFollowUpQueuedAt?: string | null;
   workflowWarnings?: string[] | null;
   recordedByUserId?: string | null;
   recordedByUserName?: string | null;
@@ -1886,6 +1923,45 @@ export type PatientVaccinationInput = {
   billId: string | null;
   addToBill: boolean;
   billItemUnitPrice: number | null;
+  inventoryOverride?: boolean;
+};
+
+export type PatientVaccinationAefiInput = {
+  adverseEventStatus: "NONE" | "OBSERVED" | "REPORTED" | "RESOLVED" | string;
+  eventDateTime: string | null;
+  onsetTimeAfterVaccination: string | null;
+  severity: "MILD" | "MODERATE" | "SEVERE" | "SERIOUS" | string | null;
+  symptoms: string[];
+  otherSymptoms: string | null;
+  actionTaken: string | null;
+  treatmentNotes: string | null;
+  outcome: "ONGOING" | "RECOVERED" | "RECOVERED_WITH_SEQUELAE" | "UNKNOWN" | string | null;
+  followUpRequired: boolean | null;
+  followUpDate: string | null;
+  reportedToAuthority: boolean | null;
+  reportReferenceNumber: string | null;
+  notes: string | null;
+};
+
+export type PatientVaccinationBillInput = {
+  billId: string | null;
+  createNewBill: boolean;
+  billItemUnitPrice: number | null;
+};
+
+export type PatientVaccinationUpdateInput = {
+  externalPlace: string | null;
+  proofDocumentId: string | null;
+  verifiedStatus: "UNVERIFIED" | "VERIFIED" | "REJECTED";
+};
+
+export type VaccinationCertificateInput = {
+  certificateType: "CHILD_IMMUNIZATION" | "SCHOOL_VACCINATION" | "TRAVEL_VACCINATION" | "SINGLE_VACCINATION" | string;
+  vaccinationId?: string | null;
+};
+
+export type VaccinationDocumentSendInput = {
+  channel: "EMAIL" | "WHATSAPP" | "SMS" | string;
 };
 
 export type MedicineInput = {
@@ -3680,8 +3756,51 @@ export async function getPatientVaccinations(token: string, tenantId: string, pa
   return httpGet<PatientVaccination[]>(`/api/patients/${patientId}/vaccinations`, { token, tenantId });
 }
 
+export async function generateVaccinationPassport(token: string, tenantId: string, patientId: string) {
+  return httpPost<GeneratedVaccinationDocumentResponse>(`/api/patients/${patientId}/vaccination-documents/passport`, undefined, { token, tenantId });
+}
+
+export async function generateVaccinationCertificate(token: string, tenantId: string, patientId: string, body: VaccinationCertificateInput) {
+  return httpPost<GeneratedVaccinationDocumentResponse>(`/api/patients/${patientId}/vaccination-documents/certificates`, body, { token, tenantId });
+}
+
+export async function sendVaccinationDocument(token: string, tenantId: string, patientId: string, documentId: string, body: VaccinationDocumentSendInput) {
+  return httpPost<void>(`/api/patients/${patientId}/vaccination-documents/${documentId}/send`, body, { token, tenantId });
+}
+
+export async function getVaccinationDocumentPdf(token: string, tenantId: string, patientId: string, documentId: string, mode: "VIEW" | "PRINT" | "DOWNLOAD" = "DOWNLOAD") {
+  const response = await fetch(`${(import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "")}/api/patients/${patientId}/vaccination-documents/${documentId}/pdf?mode=${encodeURIComponent(mode)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Tenant-Id": tenantId,
+      Accept: "application/pdf",
+    },
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
+  }
+  return { blob: await response.blob(), mediaType: response.headers.get("content-type") || "application/pdf" };
+}
+
+export async function queueVaccinationReminders(token: string, tenantId: string, patientId: string) {
+  return httpPost<number>(`/api/patients/${patientId}/vaccination-documents/reminders/queue`, undefined, { token, tenantId });
+}
+
 export async function recordPatientVaccination(token: string, tenantId: string, patientId: string, body: PatientVaccinationInput) {
   return httpPost<PatientVaccination>(`/api/patients/${patientId}/vaccinations`, body, { token, tenantId });
+}
+
+export async function billPatientVaccination(token: string, tenantId: string, patientId: string, vaccinationId: string, body: PatientVaccinationBillInput) {
+  return httpPost<PatientVaccination>(`/api/patients/${patientId}/vaccinations/${vaccinationId}/bill`, body, { token, tenantId });
+}
+
+export async function verifyPatientVaccination(token: string, tenantId: string, patientId: string, vaccinationId: string, body: PatientVaccinationUpdateInput) {
+  return httpPost<PatientVaccination>(`/api/patients/${patientId}/vaccinations/${vaccinationId}/verify`, body, { token, tenantId });
+}
+
+export async function updatePatientVaccinationAefi(token: string, tenantId: string, patientId: string, vaccinationId: string, body: PatientVaccinationAefiInput) {
+  return httpPost<PatientVaccination>(`/api/patients/${patientId}/vaccinations/${vaccinationId}/aefi`, body, { token, tenantId });
 }
 
 export async function getDueVaccinations(token: string, tenantId: string) {

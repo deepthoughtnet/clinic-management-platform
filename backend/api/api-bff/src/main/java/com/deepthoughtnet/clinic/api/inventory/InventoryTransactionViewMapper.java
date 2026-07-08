@@ -133,6 +133,7 @@ public class InventoryTransactionViewMapper {
             case "PHARMACY_SALE_RETURN" -> labeled("Return", referenceId == null ? null : returnNumberBySaleId.get(referenceId));
             case "GRN" -> labeled("GRN", referenceId == null ? null : receiptNumber(goodsReceiptById.get(referenceId)));
             case "RECONCILIATION" -> labeled("Reconciliation", referenceId == null ? null : reconciliationLabel(reconciliationById.get(referenceId)));
+            case "VACCINATION" -> "Vaccination stock movement";
             case "PRESCRIPTION" -> "Prescription dispensing";
             case "STOCK_INWARD" -> sanitizeNotes(row.notes());
             default -> StringUtils.hasText(sanitizeNotes(row.notes())) ? sanitizeNotes(row.notes()) : prettifyReferenceType(referenceType);

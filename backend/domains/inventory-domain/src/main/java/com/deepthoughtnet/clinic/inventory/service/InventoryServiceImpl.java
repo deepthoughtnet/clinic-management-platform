@@ -222,6 +222,24 @@ public class InventoryServiceImpl implements InventoryService {
     public InventoryTransactionRecord createTransaction(UUID tenantId, InventoryTransactionCommand command, UUID actorAppUserId) {
         requireTenant(tenantId);
         validateTransaction(tenantId, command);
+        String normalizedReferenceType = normalizeNullable(command.referenceType());
+        String transactionType = normalizeTransactionType(command.transactionType()).name();
+        if (normalizedReferenceType != null && command.referenceId() != null && command.stockBatchId() != null) {
+            return transactionRepository
+                    .findFirstByTenantIdAndReferenceTypeAndReferenceIdAndStockBatchIdAndTransactionTypeOrderByCreatedAtDesc(
+                            tenantId,
+                            normalizedReferenceType,
+                            command.referenceId(),
+                            command.stockBatchId(),
+                            transactionType
+                    )
+                    .map(this::toRecord)
+                    .orElseGet(() -> createTransactionInternal(tenantId, command, actorAppUserId, transactionType, normalizedReferenceType));
+        }
+        return createTransactionInternal(tenantId, command, actorAppUserId, transactionType, normalizedReferenceType);
+    }
+
+    private InventoryTransactionRecord createTransactionInternal(UUID tenantId, InventoryTransactionCommand command, UUID actorAppUserId, String transactionType, String normalizedReferenceType) {
         MedicineEntity medicine = medicineRepository.findByTenantIdAndId(tenantId, command.medicineId())
                 .orElseThrow(() -> new IllegalArgumentException("Medicine not found"));
         StockEntity stock = command.stockBatchId() == null ? null : stockRepository.findByTenantIdAndId(tenantId, command.stockBatchId())
@@ -232,16 +250,16 @@ public class InventoryServiceImpl implements InventoryService {
         Integer beforeQuantity = null;
         Integer afterQuantity = null;
         if (stock != null) {
-            InventoryTransactionType normalizedType = normalizeTransactionType(command.transactionType());
-            if ((normalizedType == InventoryTransactionType.SALE || normalizedType == InventoryTransactionType.DISPENSED) && !stock.isActive()) {
+            InventoryTransactionType normalizedType = InventoryTransactionType.valueOf(transactionType);
+            if ((normalizedType == InventoryTransactionType.SALE || normalizedType == InventoryTransactionType.DISPENSED || normalizedType == InventoryTransactionType.VACCINATION_ADMINISTERED) && !stock.isActive()) {
                 throw new IllegalArgumentException("Inactive batch cannot be sold or dispensed.");
             }
-            if (isExpired(stock) && (normalizedType == InventoryTransactionType.SALE || normalizedType == InventoryTransactionType.DISPENSED)) {
+            if (isExpired(stock) && (normalizedType == InventoryTransactionType.SALE || normalizedType == InventoryTransactionType.DISPENSED || normalizedType == InventoryTransactionType.VACCINATION_ADMINISTERED)) {
                 throw new IllegalArgumentException("Batch expired and cannot be sold or dispensed.");
             }
             int current = stock.getQuantityOnHand();
             int nextQuantity = switch (normalizedType) {
-                case DISPENSED, ADJUSTMENT_OUT, EXPIRED, SALE, VENDOR_RETURN_OUT, WRITE_OFF -> current - delta;
+                case DISPENSED, VACCINATION_ADMINISTERED, ADJUSTMENT_OUT, EXPIRED, SALE, VENDOR_RETURN_OUT, WRITE_OFF -> current - delta;
                 case CUSTOMER_RETURN_NON_SELLABLE -> current;
                 case ADJUSTMENT -> current + delta;
                 default -> current + delta;
@@ -261,11 +279,11 @@ public class InventoryServiceImpl implements InventoryService {
                 stock == null ? null : stock.getId(),
                 locationId,
                 command.targetLocationId(),
-                command.transactionType().name(),
+                transactionType,
                 delta,
                 beforeQuantity,
                 afterQuantity,
-                normalizeNullable(command.referenceType()),
+                normalizedReferenceType,
                 command.referenceId(),
                 command.createdBy() == null ? actorAppUserId : command.createdBy(),
                 normalizeNullable(command.reason()),
@@ -647,14 +665,14 @@ public class InventoryServiceImpl implements InventoryService {
 
     private boolean requiresReason(InventoryTransactionType type) {
         return switch (type) {
-            case ADJUSTMENT_IN, ADJUSTMENT_OUT, ADJUSTMENT, RETURN, CUSTOMER_RETURN_IN, CUSTOMER_RETURN_NON_SELLABLE, VENDOR_RETURN_OUT, WRITE_OFF, EXPIRED, DISPENSED, SALE -> true;
+            case ADJUSTMENT_IN, ADJUSTMENT_OUT, ADJUSTMENT, RETURN, CUSTOMER_RETURN_IN, CUSTOMER_RETURN_NON_SELLABLE, VENDOR_RETURN_OUT, WRITE_OFF, EXPIRED, DISPENSED, VACCINATION_ADMINISTERED, SALE -> true;
             default -> false;
         };
     }
 
     private boolean requiresBatch(InventoryTransactionType type) {
         return switch (type) {
-            case CUSTOMER_RETURN_IN, CUSTOMER_RETURN_NON_SELLABLE, VENDOR_RETURN_OUT, WRITE_OFF, DISPENSED, SALE, RETURN, EXPIRED, ADJUSTMENT_IN, ADJUSTMENT_OUT, ADJUSTMENT -> true;
+            case CUSTOMER_RETURN_IN, CUSTOMER_RETURN_NON_SELLABLE, VENDOR_RETURN_OUT, WRITE_OFF, DISPENSED, VACCINATION_ADMINISTERED, SALE, RETURN, EXPIRED, ADJUSTMENT_IN, ADJUSTMENT_OUT, ADJUSTMENT -> true;
             default -> false;
         };
     }

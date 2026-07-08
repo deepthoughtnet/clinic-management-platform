@@ -1,0 +1,17 @@
+alter table if exists patient_vaccinations
+    add column if not exists aefi_status varchar(32),
+    add column if not exists aefi_event_datetime timestamptz,
+    add column if not exists aefi_onset_time_after_vaccination varchar(128),
+    add column if not exists aefi_severity varchar(32),
+    add column if not exists aefi_symptoms text,
+    add column if not exists aefi_other_symptoms text,
+    add column if not exists aefi_action_taken varchar(128),
+    add column if not exists aefi_treatment_notes text,
+    add column if not exists aefi_outcome varchar(64),
+    add column if not exists aefi_follow_up_required boolean,
+    add column if not exists aefi_follow_up_date date,
+    add column if not exists aefi_reported_to_authority boolean,
+    add column if not exists aefi_report_reference_number varchar(128),
+    add column if not exists aefi_notes text,
+    add column if not exists aefi_follow_up_notification_id uuid,
+    add column if not exists aefi_follow_up_queued_at timestamptz;

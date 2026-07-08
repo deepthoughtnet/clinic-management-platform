@@ -58,6 +58,15 @@ public class VaccineMasterEntity {
     @Column(name = "ndc_barcode", length = 128)
     private String ndcBarcode;
 
+    @Column(name = "inventory_item_id")
+    private UUID inventoryItemId;
+
+    @Column(name = "inventory_item_code", length = 128)
+    private String inventoryItemCode;
+
+    @Column(name = "stock_tracking_enabled", nullable = false)
+    private boolean stockTrackingEnabled = false;
+
     @Column(name = "schedule_type", length = 32)
     private String scheduleType;
 
@@ -139,6 +148,9 @@ public class VaccineMasterEntity {
             String administrationSite,
             String storageTemperature,
             String ndcBarcode,
+            UUID inventoryItemId,
+            String inventoryItemCode,
+            boolean stockTrackingEnabled,
             String scheduleType,
             String ageGroup,
             Integer minAgeDays,
@@ -167,6 +179,9 @@ public class VaccineMasterEntity {
         this.administrationSite = administrationSite;
         this.storageTemperature = storageTemperature;
         this.ndcBarcode = ndcBarcode;
+        this.inventoryItemId = inventoryItemId;
+        this.inventoryItemCode = inventoryItemCode;
+        this.stockTrackingEnabled = stockTrackingEnabled;
         this.scheduleType = scheduleType;
         this.ageGroup = ageGroup;
         this.minAgeDays = minAgeDays;
@@ -199,6 +214,9 @@ public class VaccineMasterEntity {
     public String getAdministrationSite() { return administrationSite; }
     public String getStorageTemperature() { return storageTemperature; }
     public String getNdcBarcode() { return ndcBarcode; }
+    public UUID getInventoryItemId() { return inventoryItemId; }
+    public String getInventoryItemCode() { return inventoryItemCode; }
+    public boolean isStockTrackingEnabled() { return stockTrackingEnabled; }
     public String getScheduleType() { return scheduleType; }
     public String getAgeGroup() { return ageGroup; }
     public Integer getMinAgeDays() { return minAgeDays; }

@@ -97,6 +97,12 @@ public class PatientVaccinationEntity {
     @Column(name = "inventory_stock_batch_id")
     private UUID inventoryStockBatchId;
 
+    @Column(name = "inventory_item_id")
+    private UUID inventoryItemId;
+
+    @Column(name = "inventory_item_code", length = 128)
+    private String inventoryItemCode;
+
     @Column(name = "inventory_batch_number_snapshot", length = 128)
     private String inventoryBatchNumberSnapshot;
 
@@ -114,6 +120,54 @@ public class PatientVaccinationEntity {
 
     @Column(name = "reminder_status", length = 32)
     private String reminderStatus;
+
+    @Column(name = "aefi_status", length = 32)
+    private String aefiStatus;
+
+    @Column(name = "aefi_event_datetime")
+    private OffsetDateTime aefiEventDateTime;
+
+    @Column(name = "aefi_onset_time_after_vaccination", length = 128)
+    private String aefiOnsetTimeAfterVaccination;
+
+    @Column(name = "aefi_severity", length = 32)
+    private String aefiSeverity;
+
+    @Column(name = "aefi_symptoms", columnDefinition = "text")
+    private String aefiSymptoms;
+
+    @Column(name = "aefi_other_symptoms", columnDefinition = "text")
+    private String aefiOtherSymptoms;
+
+    @Column(name = "aefi_action_taken", length = 128)
+    private String aefiActionTaken;
+
+    @Column(name = "aefi_treatment_notes", columnDefinition = "text")
+    private String aefiTreatmentNotes;
+
+    @Column(name = "aefi_outcome", length = 64)
+    private String aefiOutcome;
+
+    @Column(name = "aefi_follow_up_required")
+    private Boolean aefiFollowUpRequired;
+
+    @Column(name = "aefi_follow_up_date")
+    private LocalDate aefiFollowUpDate;
+
+    @Column(name = "aefi_reported_to_authority")
+    private Boolean aefiReportedToAuthority;
+
+    @Column(name = "aefi_report_reference_number", length = 128)
+    private String aefiReportReferenceNumber;
+
+    @Column(name = "aefi_notes", columnDefinition = "text")
+    private String aefiNotes;
+
+    @Column(name = "aefi_follow_up_notification_id")
+    private UUID aefiFollowUpNotificationId;
+
+    @Column(name = "aefi_follow_up_queued_at")
+    private OffsetDateTime aefiFollowUpQueuedAt;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
@@ -137,6 +191,8 @@ public class PatientVaccinationEntity {
             LocalDate nextDueDate,
             String batchNumber,
             String notes,
+            UUID inventoryItemId,
+            String inventoryItemCode,
             UUID administeredByUserId,
             UUID createdByUserId
     ) {
@@ -157,6 +213,8 @@ public class PatientVaccinationEntity {
         entity.nextDueDate = nextDueDate;
         entity.batchNumber = batchNumber;
         entity.notes = notes;
+        entity.inventoryItemId = inventoryItemId;
+        entity.inventoryItemCode = inventoryItemCode;
         entity.administeredByUserId = administeredByUserId;
         entity.createdByUserId = createdByUserId;
         entity.updatedByUserId = createdByUserId;
@@ -191,12 +249,30 @@ public class PatientVaccinationEntity {
     public String getBillStatusSnapshot() { return billStatusSnapshot; }
     public UUID getInventoryTransactionId() { return inventoryTransactionId; }
     public UUID getInventoryStockBatchId() { return inventoryStockBatchId; }
+    public UUID getInventoryItemId() { return inventoryItemId; }
+    public String getInventoryItemCode() { return inventoryItemCode; }
     public String getInventoryBatchNumberSnapshot() { return inventoryBatchNumberSnapshot; }
     public String getInventoryBatchManufacturerSnapshot() { return inventoryBatchManufacturerSnapshot; }
     public LocalDate getInventoryBatchExpiryDate() { return inventoryBatchExpiryDate; }
     public UUID getReminderNotificationId() { return reminderNotificationId; }
     public OffsetDateTime getReminderQueuedAt() { return reminderQueuedAt; }
     public String getReminderStatus() { return reminderStatus; }
+    public String getAefiStatus() { return aefiStatus; }
+    public OffsetDateTime getAefiEventDateTime() { return aefiEventDateTime; }
+    public String getAefiOnsetTimeAfterVaccination() { return aefiOnsetTimeAfterVaccination; }
+    public String getAefiSeverity() { return aefiSeverity; }
+    public String getAefiSymptoms() { return aefiSymptoms; }
+    public String getAefiOtherSymptoms() { return aefiOtherSymptoms; }
+    public String getAefiActionTaken() { return aefiActionTaken; }
+    public String getAefiTreatmentNotes() { return aefiTreatmentNotes; }
+    public String getAefiOutcome() { return aefiOutcome; }
+    public Boolean getAefiFollowUpRequired() { return aefiFollowUpRequired; }
+    public LocalDate getAefiFollowUpDate() { return aefiFollowUpDate; }
+    public Boolean getAefiReportedToAuthority() { return aefiReportedToAuthority; }
+    public String getAefiReportReferenceNumber() { return aefiReportReferenceNumber; }
+    public String getAefiNotes() { return aefiNotes; }
+    public UUID getAefiFollowUpNotificationId() { return aefiFollowUpNotificationId; }
+    public OffsetDateTime getAefiFollowUpQueuedAt() { return aefiFollowUpQueuedAt; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
 
     public void linkBill(UUID billId, UUID billLineId, String billNumberSnapshot, String billStatusSnapshot, UUID updatedByUserId) {
@@ -227,6 +303,44 @@ public class PatientVaccinationEntity {
         this.reminderNotificationId = reminderNotificationId;
         this.reminderStatus = reminderStatus;
         this.reminderQueuedAt = reminderQueuedAt;
+        touch(updatedByUserId);
+    }
+
+    public void updateAefi(
+            String aefiStatus,
+            OffsetDateTime aefiEventDateTime,
+            String aefiOnsetTimeAfterVaccination,
+            String aefiSeverity,
+            String aefiSymptoms,
+            String aefiOtherSymptoms,
+            String aefiActionTaken,
+            String aefiTreatmentNotes,
+            String aefiOutcome,
+            Boolean aefiFollowUpRequired,
+            LocalDate aefiFollowUpDate,
+            Boolean aefiReportedToAuthority,
+            String aefiReportReferenceNumber,
+            String aefiNotes,
+            UUID aefiFollowUpNotificationId,
+            OffsetDateTime aefiFollowUpQueuedAt,
+            UUID updatedByUserId
+    ) {
+        this.aefiStatus = aefiStatus;
+        this.aefiEventDateTime = aefiEventDateTime;
+        this.aefiOnsetTimeAfterVaccination = aefiOnsetTimeAfterVaccination;
+        this.aefiSeverity = aefiSeverity;
+        this.aefiSymptoms = aefiSymptoms;
+        this.aefiOtherSymptoms = aefiOtherSymptoms;
+        this.aefiActionTaken = aefiActionTaken;
+        this.aefiTreatmentNotes = aefiTreatmentNotes;
+        this.aefiOutcome = aefiOutcome;
+        this.aefiFollowUpRequired = aefiFollowUpRequired;
+        this.aefiFollowUpDate = aefiFollowUpDate;
+        this.aefiReportedToAuthority = aefiReportedToAuthority;
+        this.aefiReportReferenceNumber = aefiReportReferenceNumber;
+        this.aefiNotes = aefiNotes;
+        this.aefiFollowUpNotificationId = aefiFollowUpNotificationId;
+        this.aefiFollowUpQueuedAt = aefiFollowUpQueuedAt;
         touch(updatedByUserId);
     }
 

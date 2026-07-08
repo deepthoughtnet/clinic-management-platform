@@ -2,10 +2,13 @@ package com.deepthoughtnet.clinic.api.vaccination;
 
 import com.deepthoughtnet.clinic.api.vaccination.dto.PatientVaccinationRequest;
 import com.deepthoughtnet.clinic.api.vaccination.dto.PatientVaccinationResponse;
+import com.deepthoughtnet.clinic.api.vaccination.dto.PatientVaccinationAefiRequest;
+import com.deepthoughtnet.clinic.api.vaccination.dto.PatientVaccinationBillRequest;
 import com.deepthoughtnet.clinic.api.vaccination.dto.PatientVaccinationUpdateRequest;
 import com.deepthoughtnet.clinic.platform.spring.context.RequestContextHolder;
 import com.deepthoughtnet.clinic.vaccination.service.VaccinationService;
 import com.deepthoughtnet.clinic.vaccination.service.model.PatientVaccinationCommand;
+import com.deepthoughtnet.clinic.vaccination.service.model.PatientVaccinationAefiCommand;
 import com.deepthoughtnet.clinic.vaccination.service.model.PatientVaccinationRecord;
 import java.util.List;
 import java.util.UUID;
@@ -65,6 +68,59 @@ public class PatientVaccinationController {
         ));
     }
 
+    @PostMapping("/{vaccinationId}/aefi")
+    @PreAuthorize("@permissionChecker.hasPermission('vaccination.manage') or @permissionChecker.hasRole('CLINIC_ADMIN') or @permissionChecker.hasRole('TENANT_ADMIN') or @doctorAssignmentSecurityService.isDoctor()")
+    public PatientVaccinationResponse recordAdverseEvent(
+            @PathVariable UUID patientId,
+            @PathVariable UUID vaccinationId,
+            @Valid @RequestBody PatientVaccinationAefiRequest request
+    ) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toResponse(vaccinationService.recordAdverseEvent(
+                tenantId,
+                patientId,
+                vaccinationId,
+                new PatientVaccinationAefiCommand(
+                        request.adverseEventStatus(),
+                        request.eventDateTime(),
+                        request.onsetTimeAfterVaccination(),
+                        request.severity(),
+                        request.symptoms(),
+                        request.otherSymptoms(),
+                        request.actionTaken(),
+                        request.treatmentNotes(),
+                        request.outcome(),
+                        request.followUpRequired(),
+                        request.followUpDate(),
+                        request.reportedToAuthority(),
+                        request.reportReferenceNumber(),
+                        request.notes()
+                ),
+                actorAppUserId
+        ));
+    }
+
+    @PostMapping("/{vaccinationId}/bill")
+    @PreAuthorize("@permissionChecker.hasPermission('vaccination.manage')")
+    public PatientVaccinationResponse billVaccination(
+            @PathVariable UUID patientId,
+            @PathVariable UUID vaccinationId,
+            @RequestBody PatientVaccinationBillRequest request
+    ) {
+        UUID tenantId = RequestContextHolder.requireTenantId();
+        UUID actorAppUserId = RequestContextHolder.require().appUserId();
+        return toResponse(vaccinationService.billVaccination(
+                tenantId,
+                patientId,
+                vaccinationId,
+                request.billId(),
+                request.createNewBill(),
+                request.billItemUnitPrice(),
+                actorAppUserId
+        ));
+    }
+
     private PatientVaccinationCommand toCommand(PatientVaccinationRequest request) {
         return new PatientVaccinationCommand(
                 request.vaccineId(),
@@ -73,6 +129,7 @@ public class PatientVaccinationController {
                 request.givenDate(),
                 request.nextDueDate(),
                 request.batchNumber(),
+                request.stockBatchId(),
                 request.notes(),
                 request.source(),
                 request.externalPlace(),
@@ -81,7 +138,8 @@ public class PatientVaccinationController {
                 request.administeredByUserId(),
                 request.billId(),
                 request.addToBill(),
-                request.billItemUnitPrice()
+                request.billItemUnitPrice(),
+                request.inventoryOverride()
         );
     }
 
@@ -123,12 +181,30 @@ public class PatientVaccinationController {
                 record.billLineId() == null ? null : record.billLineId().toString(),
                 record.inventoryTransactionId() == null ? null : record.inventoryTransactionId().toString(),
                 record.inventoryStockBatchId() == null ? null : record.inventoryStockBatchId().toString(),
+                record.inventoryItemId() == null ? null : record.inventoryItemId().toString(),
+                record.inventoryItemCode(),
                 record.inventoryBatchNumber(),
                 record.inventoryBatchManufacturer(),
                 record.inventoryBatchExpiryDate(),
                 record.reminderNotificationId() == null ? null : record.reminderNotificationId().toString(),
                 record.reminderQueuedAt(),
                 record.reminderStatus(),
+                record.adverseEventStatus(),
+                record.adverseEventEventDateTime(),
+                record.adverseEventOnsetTimeAfterVaccination(),
+                record.adverseEventSeverity(),
+                record.adverseEventSymptoms(),
+                record.adverseEventOtherSymptoms(),
+                record.adverseEventActionTaken(),
+                record.adverseEventTreatmentNotes(),
+                record.adverseEventOutcome(),
+                record.adverseEventFollowUpRequired(),
+                record.adverseEventFollowUpDate(),
+                record.adverseEventReportedToAuthority(),
+                record.adverseEventReportReferenceNumber(),
+                record.adverseEventNotes(),
+                record.adverseEventFollowUpNotificationId() == null ? null : record.adverseEventFollowUpNotificationId().toString(),
+                record.adverseEventFollowUpQueuedAt(),
                 record.workflowWarnings(),
                 record.recordedByUserId() == null ? null : record.recordedByUserId().toString(),
                 record.recordedByUserName(),

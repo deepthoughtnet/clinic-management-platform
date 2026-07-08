@@ -1,6 +1,7 @@
 package com.deepthoughtnet.clinic.api.vaccination.dto;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -28,6 +29,10 @@ public record VaccineRequest(
         String storageTemperature,
         @Size(max = 128)
         String ndcBarcode,
+        UUID inventoryItemId,
+        @Size(max = 128)
+        String inventoryItemCode,
+        boolean stockTrackingEnabled,
         @Size(max = 32)
         String scheduleType,
         @Size(max = 60)

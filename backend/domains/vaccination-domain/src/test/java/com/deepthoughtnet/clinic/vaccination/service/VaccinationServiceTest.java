@@ -130,6 +130,7 @@ class VaccinationServiceTest {
                         LocalDate.of(2026, 7, 7),
                         null,
                         "LOT-1",
+                        null,
                         "Routine vaccination",
                         "INTERNAL",
                         null,
@@ -138,7 +139,8 @@ class VaccinationServiceTest {
                         null,
                         null,
                         true,
-                        null
+                        null,
+                        false
                 ),
                 actorId
         );
@@ -162,6 +164,41 @@ class VaccinationServiceTest {
         assertThat(record.billNumber()).isEqualTo("BILL-0001");
         assertThat(record.billStatus()).isEqualTo(BillStatus.DRAFT.name());
         assertThat(record.billLineId()).isEqualTo(billedVaccinations.getFirst().lines().getFirst().id());
+    }
+
+    @Test
+    void billVaccinationCreatesNewBillWhenRequested() {
+        PatientVaccinationRecord recorded = service.recordVaccination(
+                tenantId,
+                patientId,
+                new PatientVaccinationCommand(
+                        vaccineId,
+                        null,
+                        1,
+                        LocalDate.of(2026, 7, 7),
+                        null,
+                        "LOT-2",
+                        null,
+                        "Routine vaccination",
+                        "INTERNAL",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        null,
+                        false
+                ),
+                actorId
+        );
+
+        PatientVaccinationRecord billed = service.billVaccination(tenantId, patientId, recorded.id(), null, true, null, actorId);
+
+        assertThat(billed.billId()).isNotNull();
+        assertThat(billed.billNumber()).isEqualTo("BILL-0001");
+        assertThat(billed.billStatus()).isEqualTo(BillStatus.DRAFT.name());
+        assertThat(billed.billLineId()).isNotNull();
     }
 
     private PatientEntity patient() {
@@ -207,6 +244,9 @@ class VaccinationServiceTest {
                 null,
                 null,
                 null,
+                null,
+                null,
+                false,
                 null,
                 null,
                 null,

@@ -19,6 +19,7 @@ public record PatientVaccinationRequest(
         LocalDate nextDueDate,
         @Size(max = 60)
         String batchNumber,
+        UUID stockBatchId,
         @Size(max = 250)
         String notes,
         @Size(max = 16)
@@ -32,6 +33,7 @@ public record PatientVaccinationRequest(
         UUID billId,
         boolean addToBill,
         @DecimalMin(value = "0.00", inclusive = true)
-        BigDecimal billItemUnitPrice
+        BigDecimal billItemUnitPrice,
+        boolean inventoryOverride
 ) {
 }

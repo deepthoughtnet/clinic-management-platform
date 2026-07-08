@@ -27,10 +27,12 @@ import com.deepthoughtnet.clinic.vaccination.db.PatientVaccinationRepository;
 import com.deepthoughtnet.clinic.vaccination.db.VaccineMasterEntity;
 import com.deepthoughtnet.clinic.vaccination.db.VaccineMasterRepository;
 import com.deepthoughtnet.clinic.vaccination.service.model.PatientVaccinationCommand;
+import com.deepthoughtnet.clinic.vaccination.service.model.PatientVaccinationAefiCommand;
 import com.deepthoughtnet.clinic.vaccination.service.model.PatientVaccinationRecord;
 import com.deepthoughtnet.clinic.vaccination.service.model.VaccineMasterRecord;
 import com.deepthoughtnet.clinic.vaccination.service.model.VaccineUpsertCommand;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -176,6 +178,9 @@ public class VaccinationService {
                 entity.getAdministrationSite(),
                 entity.getStorageTemperature(),
                 entity.getNdcBarcode(),
+                entity.getInventoryItemId(),
+                entity.getInventoryItemCode(),
+                entity.isStockTrackingEnabled(),
                 entity.getScheduleType(),
                 entity.getAgeGroup(),
                 entity.getMinAgeDays(),
@@ -249,6 +254,7 @@ public class VaccinationService {
                     .findFirst()
                     .orElse(null);
         }
+        Optional<MedicineRecord> mappedMedicine = resolveVaccineMedicine(tenantId, vaccine);
 
         UUID administeredBy = command.administeredByUserId() == null ? actorAppUserId : command.administeredByUserId();
         LocalDate givenDate = command.givenDate() == null ? LocalDate.now() : command.givenDate();
@@ -275,13 +281,15 @@ public class VaccinationService {
                 nextDueDate,
                 normalizeNullable(command.batchNumber()),
                 normalizeNullable(command.notes()),
+                mappedMedicine.map(MedicineRecord::id).orElse(null),
+                mappedMedicine.map(medicine -> medicine.barcode() != null ? medicine.barcode() : medicine.externalCode()).orElse(null),
                 administeredBy,
                 actorAppUserId
         );
         PatientVaccinationEntity saved = patientVaccinationRepository.save(entity);
 
         List<String> warnings = new ArrayList<>();
-        BillLinkResult billLink = "EXTERNAL".equals(source) ? null : linkBillIfNeeded(tenantId, saved, vaccine, command, actorAppUserId);
+        BillLinkResult billLink = "EXTERNAL".equals(source) ? null : linkBillIfNeeded(tenantId, saved, vaccine, command.billId(), false, command.billItemUnitPrice(), command.addToBill(), actorAppUserId);
         InventoryLinkResult inventoryLink = "EXTERNAL".equals(source) ? null : linkInventoryIfAvailable(tenantId, saved, patient, vaccine, command, actorAppUserId, warnings);
         ReminderLinkResult reminderLink = "EXTERNAL".equals(source) ? null : queueReminderIfNeeded(tenantId, saved, patient, actorAppUserId);
 
@@ -305,6 +313,144 @@ public class VaccinationService {
 
         auditRecord(tenantId, saved, "vaccination.recorded", actorAppUserId, "Recorded patient vaccination");
         return toRecord(saved, tenantData(tenantId), billHistoryByVaccination(tenantId).get(saved.getId()), warnings);
+    }
+
+    @Transactional
+    public PatientVaccinationRecord billVaccination(UUID tenantId, UUID patientId, UUID vaccinationId, UUID billId, boolean createNewBill, BigDecimal billItemUnitPrice, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireId(patientId, "patientId");
+        requireId(vaccinationId, "vaccinationId");
+        PatientVaccinationEntity entity = patientVaccinationRepository.findByTenantIdAndId(tenantId, vaccinationId)
+                .orElseThrow(() -> new IllegalArgumentException("Vaccination record not found"));
+        if (!patientId.equals(entity.getPatientId())) {
+            throw new IllegalArgumentException("Vaccination record does not belong to patient");
+        }
+        if (entity.getBillId() != null) {
+            return toRecord(entity, tenantData(tenantId), billHistoryByVaccination(tenantId).get(entity.getId()));
+        }
+        VaccineMasterEntity vaccine = entity.getVaccineId() == null ? null : vaccineMasterRepository.findByTenantIdAndId(tenantId, entity.getVaccineId()).orElse(null);
+        BillLinkResult billLink = linkBillIfNeeded(
+                tenantId,
+                entity,
+                vaccine,
+                billId,
+                createNewBill,
+                billItemUnitPrice,
+                true,
+                actorAppUserId
+        );
+        if (billLink != null) {
+            entity.linkBill(billLink.billId(), billLink.billLineId(), billLink.billNumber(), billLink.billStatus(), actorAppUserId);
+            patientVaccinationRepository.save(entity);
+        }
+        auditRecord(tenantId, entity, "vaccination.bill_linked", actorAppUserId, "Linked vaccination to bill");
+        return toRecord(entity, tenantData(tenantId), billHistoryByVaccination(tenantId).get(entity.getId()));
+    }
+
+    @Transactional
+    public PatientVaccinationRecord recordAdverseEvent(UUID tenantId, UUID patientId, UUID vaccinationId, PatientVaccinationAefiCommand command, UUID actorAppUserId) {
+        requireTenant(tenantId);
+        requireId(patientId, "patientId");
+        requireId(vaccinationId, "vaccinationId");
+        if (command == null) {
+            throw new IllegalArgumentException("command is required");
+        }
+        PatientVaccinationEntity entity = patientVaccinationRepository.findByTenantIdAndId(tenantId, vaccinationId)
+                .orElseThrow(() -> new IllegalArgumentException("Vaccination record not found"));
+        if (!patientId.equals(entity.getPatientId())) {
+            throw new IllegalArgumentException("Vaccination record does not belong to patient");
+        }
+
+        String status = normalizeAefiStatus(command.adverseEventStatus());
+        String severity = normalizeAefiSeverity(command.severity());
+        if ("SEVERE".equals(severity) || "SERIOUS".equals(severity)) {
+            if (!StringUtils.hasText(command.actionTaken())) {
+                throw new IllegalArgumentException("actionTaken is required for severe or serious adverse events");
+            }
+            if (!StringUtils.hasText(command.treatmentNotes())) {
+                throw new IllegalArgumentException("treatmentNotes is required for severe or serious adverse events");
+            }
+            if (command.followUpRequired() == null) {
+                throw new IllegalArgumentException("followUpRequired is required for severe or serious adverse events");
+            }
+        }
+        List<String> symptoms = command.symptoms() == null ? List.of() : command.symptoms().stream()
+                .filter(StringUtils::hasText)
+                .map(this::normalizeNullable)
+                .distinct()
+                .toList();
+        String symptomsJson = serializeSymptoms(symptoms);
+        String normalizedAction = normalizeNullable(command.actionTaken());
+        String normalizedOtherSymptoms = normalizeNullable(command.otherSymptoms());
+        String normalizedTreatmentNotes = normalizeNullable(command.treatmentNotes());
+        String normalizedOutcome = normalizeAefiOutcome(command.outcome());
+        Boolean followUpRequired = command.followUpRequired();
+        LocalDate followUpDate = command.followUpDate();
+        Boolean reportedToAuthority = command.reportedToAuthority();
+        String reportReferenceNumber = normalizeNullable(command.reportReferenceNumber());
+        String notes = normalizeNullable(command.notes());
+        OffsetDateTime eventDateTime = command.eventDateTime() == null ? OffsetDateTime.now() : command.eventDateTime();
+
+        boolean hadExistingAefi = StringUtils.hasText(entity.getAefiStatus())
+                || entity.getAefiEventDateTime() != null
+                || StringUtils.hasText(entity.getAefiSeverity())
+                || StringUtils.hasText(entity.getAefiOutcome())
+                || StringUtils.hasText(entity.getAefiSymptoms())
+                || entity.getAefiFollowUpNotificationId() != null;
+        String previousSeverity = entity.getAefiSeverity();
+        String previousOutcome = entity.getAefiOutcome();
+        Boolean previousReported = entity.getAefiReportedToAuthority();
+        Boolean previousFollowUp = entity.getAefiFollowUpRequired();
+        LocalDate previousFollowUpDate = entity.getAefiFollowUpDate();
+
+        NotificationFollowUpResult followUpResult = null;
+        if (Boolean.TRUE.equals(followUpRequired) && followUpDate != null) {
+            followUpResult = queueAefiFollowUpIfNeeded(tenantId, entity, patientRepository.findByTenantIdAndId(tenantId, patientId).orElse(null), followUpDate, actorAppUserId);
+        }
+
+        entity.updateAefi(
+                status,
+                eventDateTime,
+                normalizeNullable(command.onsetTimeAfterVaccination()),
+                severity,
+                symptomsJson,
+                normalizedOtherSymptoms,
+                normalizedAction,
+                normalizedTreatmentNotes,
+                normalizedOutcome,
+                followUpRequired,
+                followUpDate,
+                reportedToAuthority,
+                reportReferenceNumber,
+                notes,
+                followUpResult == null ? entity.getAefiFollowUpNotificationId() : followUpResult.notificationId(),
+                followUpResult == null ? entity.getAefiFollowUpQueuedAt() : followUpResult.queuedAt(),
+                actorAppUserId
+        );
+        PatientVaccinationEntity saved = patientVaccinationRepository.save(entity);
+
+        if (Boolean.TRUE.equals(entity.getAefiFollowUpRequired()) && entity.getAefiFollowUpDate() != null) {
+            auditRecord(tenantId, saved, "vaccination.aefi.follow_up_scheduled", actorAppUserId, "Scheduled vaccination AEFI follow-up");
+        }
+        if (previousSeverity == null ? severity != null : !previousSeverity.equals(severity)) {
+            auditRecord(tenantId, saved, "vaccination.aefi.severity_changed", actorAppUserId, "Updated vaccination AEFI severity");
+        }
+        if (previousOutcome == null ? normalizedOutcome != null : !previousOutcome.equals(normalizedOutcome)) {
+            auditRecord(tenantId, saved, "vaccination.aefi.outcome_changed", actorAppUserId, "Updated vaccination AEFI outcome");
+        }
+        if (previousReported == null ? reportedToAuthority != null : !previousReported.equals(reportedToAuthority)) {
+            if (Boolean.TRUE.equals(reportedToAuthority)) {
+                auditRecord(tenantId, saved, "vaccination.aefi.reported_to_authority", actorAppUserId, "Marked vaccination AEFI as reported to authority");
+            }
+        }
+        if (previousFollowUp == null ? followUpRequired != null : !previousFollowUp.equals(followUpRequired)) {
+            auditRecord(tenantId, saved, "vaccination.aefi.updated", actorAppUserId, "Updated vaccination AEFI follow-up status");
+        }
+        if (previousFollowUpDate == null ? followUpDate != null : !previousFollowUpDate.equals(followUpDate)) {
+            auditRecord(tenantId, saved, "vaccination.aefi.follow_up_date_changed", actorAppUserId, "Updated vaccination AEFI follow-up date");
+        }
+        auditRecord(tenantId, saved, hadExistingAefi ? "vaccination.aefi.updated" : "vaccination.aefi.created", actorAppUserId, "Recorded vaccination adverse event");
+        return toRecord(saved, tenantData(tenantId), billHistoryByVaccination(tenantId).get(saved.getId()));
     }
 
     @Transactional(readOnly = true)
@@ -362,16 +508,18 @@ public class VaccinationService {
         return toRecord(saved, tenantData(tenantId), billHistoryByVaccination(tenantId).get(saved.getId()));
     }
 
-    private BillLinkResult linkBillIfNeeded(UUID tenantId, PatientVaccinationEntity saved, VaccineMasterEntity vaccine, PatientVaccinationCommand command, UUID actorAppUserId) {
-        if (!command.addToBill()) {
+    private BillLinkResult linkBillIfNeeded(UUID tenantId, PatientVaccinationEntity saved, VaccineMasterEntity vaccine, UUID billId, boolean createNewBill, BigDecimal billItemUnitPrice, boolean addToBill, UUID actorAppUserId) {
+        if (!addToBill && billId == null) {
             return null;
         }
-        BigDecimal price = command.billItemUnitPrice() != null
-                ? normalizeMoney(command.billItemUnitPrice())
-                : normalizeMoney(vaccine.getDefaultPrice() == null ? BigDecimal.ZERO : vaccine.getDefaultPrice());
+        BigDecimal price = billItemUnitPrice != null
+                ? normalizeMoney(billItemUnitPrice)
+                : normalizeMoney(vaccine == null || vaccine.getDefaultPrice() == null ? BigDecimal.ZERO : vaccine.getDefaultPrice());
         BillRecord linkedBill;
-        if (command.billId() != null) {
-            linkedBill = addVaccinationLineToBill(tenantId, command.billId(), saved, vaccine, price, actorAppUserId);
+        if (billId != null) {
+            linkedBill = addVaccinationLineToBill(tenantId, billId, saved, vaccine, price, actorAppUserId);
+        } else if (createNewBill) {
+            linkedBill = createVaccinationBill(tenantId, saved, vaccine, price, actorAppUserId);
         } else {
             linkedBill = findReusableVaccinationBill(tenantId, saved.getPatientId())
                     .map(bill -> addVaccinationLineToBill(tenantId, bill.id(), saved, vaccine, price, actorAppUserId))
@@ -390,7 +538,7 @@ public class VaccinationService {
                 billId,
                 new BillLineCommand(
                         BillItemType.VACCINATION,
-                        vaccine.getVaccineName(),
+                        resolveVaccinationBillItemName(saved, vaccine),
                         1,
                         price,
                         saved.getId(),
@@ -420,7 +568,7 @@ public class VaccinationService {
                 "Vaccination billing",
                 List.of(new BillLineCommand(
                         BillItemType.VACCINATION,
-                        vaccine.getVaccineName(),
+                        resolveVaccinationBillItemName(saved, vaccine),
                         1,
                         price,
                         saved.getId(),
@@ -431,6 +579,13 @@ public class VaccinationService {
                 ))
         ), actorAppUserId);
         return created;
+    }
+
+    private String resolveVaccinationBillItemName(PatientVaccinationEntity saved, VaccineMasterEntity vaccine) {
+        if (vaccine != null && StringUtils.hasText(vaccine.getVaccineName())) {
+            return vaccine.getVaccineName();
+        }
+        return saved.getVaccineNameSnapshot();
     }
 
     private Optional<BillRecord> findReusableVaccinationBill(UUID tenantId, UUID patientId) {
@@ -460,11 +615,20 @@ public class VaccinationService {
                     saved.getInventoryBatchExpiryDate()
             );
         }
-        Optional<MedicineRecord> medicine = resolveVaccineMedicine(tenantId, vaccine);
-        if (medicine.isEmpty()) {
-            warnings.add("No matching inventory medicine was found for vaccine '" + vaccine.getVaccineName() + "'.");
+        if (vaccine == null || !vaccine.isStockTrackingEnabled()) {
             return null;
         }
+
+        Optional<MedicineRecord> medicine = resolveVaccineMedicine(tenantId, vaccine);
+        if (medicine.isEmpty()) {
+            String message = "No matching inventory medicine was found for vaccine '" + vaccine.getVaccineName() + "'.";
+            if (command.inventoryOverride()) {
+                warnings.add(message);
+                return null;
+            }
+            throw new IllegalArgumentException(message);
+        }
+
         List<StockRecord> stocks = inventoryService.listStocks(tenantId).stream()
                 .filter(stock -> medicine.get().id().equals(stock.medicineId()))
                 .filter(stock -> stock.quantityOnHand() > 0)
@@ -473,29 +637,32 @@ public class VaccinationService {
                         .thenComparing(StockRecord::updatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
         if (stocks.isEmpty()) {
-            warnings.add("No available stock was found for vaccine '" + vaccine.getVaccineName() + "'.");
-            return new InventoryLinkResult(
-                    null,
-                    null,
-                    normalizeNullable(command.batchNumber()),
-                    medicine.get().manufacturer(),
-                    null
-            );
+            String message = "No stock available for this vaccine.";
+            if (command.inventoryOverride()) {
+                warnings.add(message);
+                return null;
+            }
+            throw new IllegalArgumentException(message);
         }
 
-        StockRecord selected = selectStock(stocks, command.batchNumber());
+        StockRecord selected = selectStock(stocks, command.stockBatchId(), command.batchNumber());
         if (selected == null) {
-            warnings.add("No available batch could be selected for vaccine '" + vaccine.getVaccineName() + "'.");
-            return new InventoryLinkResult(null, null, normalizeNullable(command.batchNumber()), medicine.get().manufacturer(), null);
+            String message = "No available batch could be selected for vaccine '" + vaccine.getVaccineName() + "'.";
+            if (command.inventoryOverride()) {
+                warnings.add(message);
+                return null;
+            }
+            throw new IllegalArgumentException(message);
         }
 
-        if (selected.expiryDate() != null && selected.expiryDate().isBefore(LocalDate.now())) {
-            warnings.add("Selected stock batch " + selected.batchNumber() + " is expired.");
-            return new InventoryLinkResult(null, null, selected.batchNumber(), medicine.get().manufacturer(), selected.expiryDate());
+        if (selected.expiryDate() != null && selected.expiryDate().isBefore(LocalDate.now()) && !command.inventoryOverride()) {
+            throw new IllegalArgumentException("Selected stock batch " + selected.batchNumber() + " is expired.");
         }
-
-        if (selected.quantityOnHand() <= 0) {
-            return new InventoryLinkResult(null, null, selected.batchNumber(), medicine.get().manufacturer(), selected.expiryDate());
+        if (selected.expiryDate() != null && selected.expiryDate().isAfter(LocalDate.now()) && selected.expiryDate().isBefore(LocalDate.now().plusDays(30))) {
+            warnings.add("Selected stock batch " + selected.batchNumber() + " is nearing expiry.");
+        }
+        if (selected.lowStockThreshold() != null && selected.quantityOnHand() <= selected.lowStockThreshold()) {
+            warnings.add("Selected stock batch " + selected.batchNumber() + " is low on stock.");
         }
 
         InventoryTransactionRecord transaction = inventoryService.createTransaction(
@@ -505,10 +672,10 @@ public class VaccinationService {
                         selected.id(),
                         selected.locationId(),
                         null,
-                        InventoryTransactionType.DISPENSED,
+                        InventoryTransactionType.VACCINATION_ADMINISTERED,
                         1,
-                        "Vaccination recorded for " + patient.getPatientNumber(),
-                        "PATIENT_VACCINATION",
+                        "Vaccination administered for " + patient.getPatientNumber(),
+                        "VACCINATION",
                         saved.getId(),
                         actorAppUserId,
                         command.notes()
@@ -555,6 +722,15 @@ public class VaccinationService {
     }
 
     private Optional<MedicineRecord> resolveVaccineMedicine(UUID tenantId, VaccineMasterEntity vaccine) {
+        if (vaccine == null) {
+            return Optional.empty();
+        }
+        if (vaccine.getInventoryItemId() != null) {
+            Optional<MedicineRecord> mapped = inventoryService.findMedicine(tenantId, vaccine.getInventoryItemId());
+            if (mapped.isPresent()) {
+                return mapped;
+            }
+        }
         String vaccineName = normalizeNullable(vaccine.getVaccineName());
         if (!StringUtils.hasText(vaccineName)) {
             return Optional.empty();
@@ -581,7 +757,13 @@ public class VaccinationService {
         return normalized.equals(needle) || normalized.contains(needle) || needle.contains(normalized);
     }
 
-    private StockRecord selectStock(List<StockRecord> stocks, String preferredBatchNumber) {
+    private StockRecord selectStock(List<StockRecord> stocks, UUID requestedStockBatchId, String preferredBatchNumber) {
+        if (requestedStockBatchId != null) {
+            return stocks.stream()
+                    .filter(stock -> requestedStockBatchId.equals(stock.id()))
+                    .findFirst()
+                    .orElse(null);
+        }
         if (StringUtils.hasText(preferredBatchNumber)) {
             return stocks.stream()
                     .filter(stock -> preferredBatchNumber.trim().equalsIgnoreCase(normalizeNullable(stock.batchNumber())))
@@ -605,6 +787,9 @@ public class VaccinationService {
                 entity.getAdministrationSite(),
                 entity.getStorageTemperature(),
                 entity.getNdcBarcode(),
+                entity.getInventoryItemId(),
+                entity.getInventoryItemCode(),
+                entity.isStockTrackingEnabled(),
                 entity.getScheduleType(),
                 entity.getAgeGroup(),
                 entity.getMinAgeDays(),
@@ -675,12 +860,30 @@ public class VaccinationService {
                 entity.getBillLineId(),
                 entity.getInventoryTransactionId(),
                 entity.getInventoryStockBatchId(),
+                entity.getInventoryItemId(),
+                entity.getInventoryItemCode(),
                 entity.getInventoryBatchNumberSnapshot(),
                 entity.getInventoryBatchManufacturerSnapshot(),
                 entity.getInventoryBatchExpiryDate(),
                 entity.getReminderNotificationId(),
                 entity.getReminderQueuedAt(),
                 entity.getReminderStatus(),
+                entity.getAefiStatus(),
+                entity.getAefiEventDateTime(),
+                entity.getAefiOnsetTimeAfterVaccination(),
+                entity.getAefiSeverity(),
+                parseSymptoms(entity.getAefiSymptoms()),
+                entity.getAefiOtherSymptoms(),
+                entity.getAefiActionTaken(),
+                entity.getAefiTreatmentNotes(),
+                entity.getAefiOutcome(),
+                entity.getAefiFollowUpRequired(),
+                entity.getAefiFollowUpDate(),
+                entity.getAefiReportedToAuthority(),
+                entity.getAefiReportReferenceNumber(),
+                entity.getAefiNotes(),
+                entity.getAefiFollowUpNotificationId(),
+                entity.getAefiFollowUpQueuedAt(),
                 workflowWarnings == null ? List.of() : List.copyOf(workflowWarnings),
                 entity.getCreatedByUserId(),
                 createdBy == null ? null : createdBy.displayName(),
@@ -740,6 +943,9 @@ public class VaccinationService {
         validateRecommendationPolicy(command.recommendationPolicy());
         validateCatchUpPolicy(command.catchUpPolicy());
         validateApplicableAgeGroup(command.applicableAgeGroup());
+        if (command.inventoryItemCode() != null && command.inventoryItemCode().length() > 128) {
+            throw new IllegalArgumentException("inventoryItemCode must be 128 characters or fewer");
+        }
         if (command.defaultPrice() != null && command.defaultPrice().signum() < 0) {
             throw new IllegalArgumentException("defaultPrice must be 0 or greater");
         }
@@ -838,6 +1044,11 @@ public class VaccinationService {
         details.put("inventoryTransactionId", entity.getInventoryTransactionId());
         details.put("inventoryStockBatchId", entity.getInventoryStockBatchId());
         details.put("reminderNotificationId", entity.getReminderNotificationId());
+        details.put("aefiStatus", entity.getAefiStatus());
+        details.put("aefiSeverity", entity.getAefiSeverity());
+        details.put("aefiOutcome", entity.getAefiOutcome());
+        details.put("aefiFollowUpRequired", entity.getAefiFollowUpRequired());
+        details.put("aefiFollowUpDate", entity.getAefiFollowUpDate());
         try {
             return objectMapper.writeValueAsString(details);
         } catch (JsonProcessingException ex) {
@@ -866,8 +1077,8 @@ public class VaccinationService {
             return "INTERNAL";
         }
         String upper = normalized.toUpperCase(java.util.Locale.ROOT);
-        if (!"INTERNAL".equals(upper) && !"EXTERNAL".equals(upper)) {
-            throw new IllegalArgumentException("source must be INTERNAL or EXTERNAL");
+        if (!Set.of("INTERNAL", "EXTERNAL", "MANUAL", "EXTERNAL_SUPPLY").contains(upper)) {
+            throw new IllegalArgumentException("source must be INTERNAL, EXTERNAL, MANUAL, or EXTERNAL_SUPPLY");
         }
         return upper;
     }
@@ -883,6 +1094,90 @@ public class VaccinationService {
         }
         return upper;
     }
+
+    private String normalizeAefiStatus(String value) {
+        String normalized = normalizeNullable(value);
+        if (!StringUtils.hasText(normalized)) {
+            return "NONE";
+        }
+        String upper = normalized.toUpperCase(java.util.Locale.ROOT);
+        if (!Set.of("NONE", "OBSERVED", "REPORTED", "RESOLVED").contains(upper)) {
+            throw new IllegalArgumentException("adverseEventStatus must be NONE, OBSERVED, REPORTED, or RESOLVED");
+        }
+        return upper;
+    }
+
+    private String normalizeAefiSeverity(String value) {
+        String normalized = normalizeNullable(value);
+        if (!StringUtils.hasText(normalized)) {
+            return null;
+        }
+        String upper = normalized.toUpperCase(java.util.Locale.ROOT);
+        if (!Set.of("MILD", "MODERATE", "SEVERE", "SERIOUS").contains(upper)) {
+            throw new IllegalArgumentException("severity must be MILD, MODERATE, SEVERE, or SERIOUS");
+        }
+        return upper;
+    }
+
+    private String normalizeAefiOutcome(String value) {
+        String normalized = normalizeNullable(value);
+        if (!StringUtils.hasText(normalized)) {
+            return null;
+        }
+        String upper = normalized.toUpperCase(java.util.Locale.ROOT);
+        if (!Set.of("ONGOING", "RECOVERED", "RECOVERED_WITH_SEQUELAE", "UNKNOWN").contains(upper)) {
+            throw new IllegalArgumentException("outcome must be ONGOING, RECOVERED, RECOVERED_WITH_SEQUELAE, or UNKNOWN");
+        }
+        return upper;
+    }
+
+    private String serializeSymptoms(List<String> symptoms) {
+        if (symptoms == null || symptoms.isEmpty()) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(symptoms);
+        } catch (JsonProcessingException ex) {
+            return String.join(",", symptoms);
+        }
+    }
+
+    private List<String> parseSymptoms(String symptomsJson) {
+        if (!StringUtils.hasText(symptomsJson)) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(symptomsJson, new TypeReference<List<String>>() {});
+        } catch (Exception ex) {
+            return List.of(symptomsJson);
+        }
+    }
+
+    private NotificationFollowUpResult queueAefiFollowUpIfNeeded(UUID tenantId, PatientVaccinationEntity entity, PatientEntity patient, LocalDate followUpDate, UUID actorAppUserId) {
+        if (patient == null) {
+            return null;
+        }
+        String recipient = StringUtils.hasText(patient.getEmail()) ? patient.getEmail() : patient.getMobile();
+        if (!StringUtils.hasText(recipient)) {
+            return null;
+        }
+        String channel = StringUtils.hasText(patient.getEmail()) ? "email" : "sms";
+        var result = notificationHistoryService.queueDetailed(
+                tenantId,
+                patient.getId(),
+                "FOLLOW_UP_DUE",
+                channel,
+                recipient,
+                "AEFI follow-up due",
+                "Follow-up due for vaccination adverse event on " + followUpDate,
+                "VACCINATION_AEFI_FOLLOW_UP_" + followUpDate,
+                entity.getId(),
+                actorAppUserId
+        );
+        return new NotificationFollowUpResult(result.notification().id(), result.notification().createdAt());
+    }
+
+    private record NotificationFollowUpResult(UUID notificationId, OffsetDateTime queuedAt) {}
 
     private String resolveVaccineNameSnapshot(PatientVaccinationCommand command, VaccineMasterEntity vaccine) {
         if (StringUtils.hasText(command.vaccineName())) {
@@ -906,6 +1201,9 @@ public class VaccinationService {
                 normalizeNullable(command.administrationSite()),
                 normalizeNullable(command.storageTemperature()),
                 normalizeNullable(command.ndcBarcode()),
+                command.inventoryItemId(),
+                normalizeNullable(command.inventoryItemCode()),
+                command.stockTrackingEnabled(),
                 normalizeScheduleTypeValue(command.scheduleType()),
                 normalizeNullable(command.ageGroup()),
                 command.minAgeDays(),

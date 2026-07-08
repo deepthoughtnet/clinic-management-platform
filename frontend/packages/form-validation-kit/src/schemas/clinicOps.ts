@@ -24,6 +24,9 @@ export const vaccinationMasterSchema = z.object({
   administrationSite: optionalText(128, "Administration site must be 128 characters or fewer."),
   storageTemperature: optionalText(128, "Storage temperature must be 128 characters or fewer."),
   ndcBarcode: optionalText(128, "NDC barcode must be 128 characters or fewer."),
+  inventoryItemId: optionalText(60, "Inventory item ID must be 60 characters or fewer."),
+  inventoryItemCode: optionalText(128, "Inventory item code must be 128 characters or fewer."),
+  stockTrackingEnabled: z.boolean(),
   scheduleType: z.preprocess(
     (value) => (value == null || value === "" ? undefined : value),
     z.enum(["UIP", "IAP", "CLINIC_CUSTOM", "TRAVEL", "ADULT"]).optional(),
@@ -70,6 +73,7 @@ export const vaccinationRecordSchema = z.object({
     dateString("Next due date must be a valid date.").optional(),
   ),
   batchNumber: optionalText(60, "Batch number must be 60 characters or fewer."),
+  stockBatchId: optionalText(60, "Stock batch ID must be 60 characters or fewer."),
   notes: optionalText(250, "Notes must be 250 characters or fewer."),
   source: z.preprocess(
     (value) => (value == null || value === "" ? undefined : value),
