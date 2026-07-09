@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   CircularProgress,
   Collapse,
@@ -72,7 +73,6 @@ import {
   aiConsultationAsk,
   aiPatientInstructions,
   aiStructureConsultationNotes,
-  generateClinicalReasoning,
   aiSuggestDiagnosis,
   aiSuggestPrescriptionTemplate,
   cancelConsultation,
@@ -126,7 +126,6 @@ import {
   type PatientDetail,
   type ClinicalDocument,
   type ClinicalContextResponse,
-  type ClinicalReasoningResult,
   type ClinicalDocumentType,
   type PatientTimelineItem,
   type Prescription,
@@ -140,6 +139,7 @@ import { ClinicalDocumentViewer } from "../../components/clinical/ClinicalDocume
 import { ConfirmationDialog } from "../../components/clinical/ConfirmationDialog";
 import { PatientIntelligenceCard } from "../../components/clinical/PatientIntelligenceCard";
 import { PatientDocumentUploadDialog } from "../../components/clinical/PatientDocumentUploadDialog";
+import { useClinicalReasoning } from "../../hooks/useClinicalReasoning";
 import { formatRelativeBookingTime } from "../../components/workflow/workflowHelpers";
 
 type ConsultationFormState = {
@@ -770,6 +770,23 @@ function appendTokenLine(base: string, token: string): string {
   if (!current) return token;
   if (current.toLowerCase().includes(token.toLowerCase())) return base;
   return `${current}, ${token}`;
+}
+
+function normalizeClinicalToken(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function appendUniqueTokenLine(base: string, token: string): string {
+  const nextToken = token.trim();
+  if (!nextToken) return base;
+  const current = base.trim();
+  if (!current) return nextToken;
+  const normalizedToken = normalizeClinicalToken(nextToken);
+  const entries = current.split(/[\n,;•]+/).map((entry) => entry.trim()).filter(Boolean);
+  if (entries.some((entry) => normalizeClinicalToken(entry) === normalizedToken)) {
+    return base;
+  }
+  return appendTokenLine(base, nextToken);
 }
 
 function followUpChipToDate(value: string): string {
@@ -1582,7 +1599,6 @@ export default function ConsultationWorkspacePage() {
   const [aiDiagnosisItems, setAiDiagnosisItems] = React.useState<AiSuggestionItem[]>([]);
   const [aiDiagnosisUnstructured, setAiDiagnosisUnstructured] = React.useState(false);
   const [aiDiagnosisProvider, setAiDiagnosisProvider] = React.useState<string | null>(null);
-  const [clinicalReasoningResult, setClinicalReasoningResult] = React.useState<ClinicalReasoningResult | null>(null);
   const [aiPrescriptionSuggestion, setAiPrescriptionSuggestion] = React.useState<string | null>(null);
   const [aiPrescriptionItems, setAiPrescriptionItems] = React.useState<AiMedicineSuggestionItem[]>([]);
   const [aiPrescriptionUnstructured, setAiPrescriptionUnstructured] = React.useState(false);
@@ -1617,6 +1633,7 @@ export default function ConsultationWorkspacePage() {
   const [prescriptionComparisonDetailsOpen, setPrescriptionComparisonDetailsOpen] = React.useState(false);
   const [prescriptionIntelligenceTab, setPrescriptionIntelligenceTab] = React.useState<"safety" | "comparison" | "instructions" | "summary">("safety");
   const [prescriptionIntelligenceExpanded, setPrescriptionIntelligenceExpanded] = React.useState(false);
+  const [clinicalReasoningAskedMissingInfo, setClinicalReasoningAskedMissingInfo] = React.useState<Record<string, boolean>>({});
   const [consultationDocumentDrafts, setConsultationDocumentDrafts] = React.useState<Record<ConsultationDocumentationKind, ConsultationDocumentDraftState>>(() => createEmptyConsultationDocumentDrafts());
   const [consultationDocumentationLanguage, setConsultationDocumentationLanguage] = React.useState<"ENGLISH" | "HINDI" | "MARATHI">("ENGLISH");
   const [consultationReferralPriority, setConsultationReferralPriority] = React.useState<ConsultationDocumentPriority>("ROUTINE");
@@ -2016,7 +2033,7 @@ export default function ConsultationWorkspacePage() {
       setAiDiagnosisItems([]);
       setAiDiagnosisUnstructured(false);
       setAiDiagnosisProvider(null);
-      setClinicalReasoningResult(null);
+      setClinicalReasoningAskedMissingInfo({});
       setAiPrescriptionSuggestion(null);
       setAiPrescriptionItems([]);
       setAiPrescriptionUnstructured(false);
@@ -2244,6 +2261,56 @@ export default function ConsultationWorkspacePage() {
   const patientAgeGender = React.useMemo(() => (patientRow ? formatPatientAgeGender(patientRow) || null : null), [patientRow]);
   const currentPrescriptionDraftSummary = React.useMemo(() => summarizePrescriptionDraft(prescriptionForm.medicines), [prescriptionForm.medicines]);
   const labOrdersSummary = React.useMemo(() => summarizeLabOrdersForAi(labOrders), [labOrders]);
+  const buildClinicalReasoningRequest = React.useCallback((reasoningConsultationId: string) => {
+    if (!consultation || consultation.id !== reasoningConsultationId || !patient) {
+      return null;
+    }
+    const bloodPressure = consultationForm.bloodPressureSystolic && consultationForm.bloodPressureDiastolic
+      ? `${consultationForm.bloodPressureSystolic}/${consultationForm.bloodPressureDiastolic}`
+      : null;
+    const temperature = consultationForm.temperature
+      ? `${consultationForm.temperature}${consultationForm.temperatureUnit ? ` ${consultationForm.temperatureUnit}` : ""}`
+      : null;
+    const vitals = [
+      bloodPressure ? `BP:${bloodPressure}` : null,
+      consultationForm.pulseRate.trim() ? `Pulse:${consultationForm.pulseRate}` : null,
+      consultationForm.respiratoryRate.trim() ? `Resp:${consultationForm.respiratoryRate}` : null,
+      temperature ? `Temp:${temperature}` : null,
+      consultationForm.spo2.trim() ? `SpO2:${consultationForm.spo2}` : null,
+    ].filter(Boolean).join(", ");
+    return {
+      patientId: consultation.patientId,
+      chiefComplaint: consultationForm.chiefComplaints.trim() || consultation.chiefComplaints || null,
+      symptoms: consultationForm.symptoms.trim() || consultation.symptoms || null,
+      findings: consultationForm.clinicalNotes.trim() || clinicalContext?.labIntelligence.latestLabReport || null,
+      vitals: vitals || null,
+      diagnosis: consultationForm.diagnosis.trim() || consultation.diagnosis || null,
+      advice: consultationForm.advice.trim() || consultation.advice || null,
+      notes: consultationForm.clinicalNotes.trim() || null,
+      currentPrescriptionDraft: currentPrescriptionDraftSummary || null,
+      labOrdersSummary: labOrdersSummary || null,
+    };
+  }, [
+    clinicalContext?.labIntelligence.latestLabReport,
+    consultation,
+    consultationForm.advice,
+    consultationForm.chiefComplaints,
+    consultationForm.clinicalNotes,
+    consultationForm.diagnosis,
+    consultationForm.symptoms,
+    currentPrescriptionDraftSummary,
+    labOrdersSummary,
+    patient,
+  ]);
+  const clinicalReasoning = useClinicalReasoning({
+    accessToken: auth.accessToken,
+    tenantId: auth.tenantId,
+    buildRequest: buildClinicalReasoningRequest,
+  });
+  const clinicalReasoningResult = clinicalReasoning.clinicalReasoningResult;
+  React.useEffect(() => {
+    clinicalReasoning.resetReasoning();
+  }, [consultationId, clinicalReasoning.resetReasoning]);
   const hasClinicalReasoningContext = Boolean(
     consultation
       && patient
@@ -2302,6 +2369,53 @@ export default function ConsultationWorkspacePage() {
     () => labOrders.flatMap((order) => order.items.map((item) => item.testName)).filter(Boolean),
     [labOrders],
   );
+  const triggerClinicalReasoning = React.useCallback(() => {
+    if (!consultation) {
+      return;
+    }
+    const runner = clinicalReasoning.clinicalReasoningResult
+      ? clinicalReasoning.refreshReasoning
+      : clinicalReasoning.generateReasoning;
+    void preserveViewport(() => runner(consultation.id));
+  }, [clinicalReasoning.clinicalReasoningResult, clinicalReasoning.generateReasoning, clinicalReasoning.refreshReasoning, consultation, preserveViewport]);
+  const acceptClinicalReasoningDiagnosis = React.useCallback(async () => {
+    const diagnosisText = clinicalReasoningResult?.primaryDiagnosis?.name?.trim() || clinicalReasoningResult?.reasoningSummary?.trim() || "";
+    if (!diagnosisText) {
+      return;
+    }
+    const currentDiagnosis = consultationForm.diagnosis;
+    if (currentDiagnosis.trim()) {
+      const choice = await requestOverwriteChoice("Diagnosis", currentDiagnosis, true);
+      if (choice === "cancel") {
+        return;
+      }
+      setConsultationForm((current) => ({
+        ...current,
+        diagnosis: choice === "replace" ? diagnosisText : appendUniqueTokenLine(current.diagnosis, diagnosisText),
+      }));
+      return;
+    }
+    setConsultationForm((current) => ({
+      ...current,
+      diagnosis: diagnosisText,
+    }));
+  }, [clinicalReasoningResult?.primaryDiagnosis?.name, clinicalReasoningResult?.reasoningSummary, consultationForm.diagnosis, requestOverwriteChoice]);
+  const addClinicalReasoningDifferential = React.useCallback((name: string) => {
+    const next = name.trim();
+    if (!next) return;
+    setConsultationForm((current) => ({ ...current, diagnosis: appendUniqueTokenLine(current.diagnosis, next) }));
+  }, []);
+  const addClinicalReasoningSafetyNote = React.useCallback((text: string) => {
+    const next = text.trim();
+    if (!next) return;
+    setConsultationForm((current) => ({ ...current, advice: appendUniqueTokenLine(current.advice, next) }));
+  }, []);
+  const toggleClinicalReasoningMissingInfoAsked = React.useCallback((key: string) => {
+    setClinicalReasoningAskedMissingInfo((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
+  }, []);
   const aiUnavailableCard = (
     <Box sx={{ p: 1.35, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
       <Stack spacing={0.45}>
@@ -4294,19 +4408,7 @@ export default function ConsultationWorkspacePage() {
     setAiActiveAction("diagnosis");
     setError(null);
     try {
-      const response = await generateClinicalReasoning(auth.accessToken, auth.tenantId, consultation.id, {
-        patientId: consultation.patientId,
-        chiefComplaint: consultationForm.chiefComplaints,
-        symptoms: consultationForm.symptoms,
-        findings: consultationForm.clinicalNotes,
-        vitals: aiVitalsSummary,
-        diagnosis: consultationForm.diagnosis,
-        advice: consultationForm.advice,
-        notes: consultationForm.clinicalNotes,
-        currentPrescriptionDraft: currentPrescriptionDraftSummary || null,
-        labOrdersSummary: labOrdersSummary || null,
-      });
-      const result = response.reasoningResult || null;
+      const result = await clinicalReasoning.generateReasoning(consultation.id);
       const hasContent = Boolean(
         result?.primaryDiagnosis?.name
         || result?.differentialDiagnoses?.length
@@ -4315,19 +4417,12 @@ export default function ConsultationWorkspacePage() {
         || result?.recommendedTests?.length
       );
       if (result?.metadata?.parseStatus === "VALID" && hasContent) {
-        setClinicalReasoningResult(result);
         setInfo("Clinical reasoning generated. Doctor must verify before use.");
         return true;
       }
-      setClinicalReasoningResult(result ?? null);
-      if (result?.metadata?.parseStatus === "TRUNCATED") {
-        setError(result.metadata.errorMessage || "AI reasoning response was truncated. Please retry.");
-      } else {
-        setError(result?.metadata?.errorMessage || "AI reasoning could not be generated. Please retry.");
-      }
+      setError("AI reasoning could not be generated. Please retry.");
       return false;
     } catch (err) {
-      setClinicalReasoningResult(null);
       console.error("Clinical reasoning generation failed", err);
       setError("AI reasoning could not be generated. Please retry.");
       return false;
@@ -4336,7 +4431,6 @@ export default function ConsultationWorkspacePage() {
       setAiActiveAction(null);
     }
   }, [
-    aiVitalsSummary,
     auth.accessToken,
     auth.tenantId,
     consultation,
@@ -4344,10 +4438,8 @@ export default function ConsultationWorkspacePage() {
     consultationForm.clinicalNotes,
     consultationForm.diagnosis,
     consultationForm.symptoms,
-    currentPrescriptionDraftSummary,
-    labOrdersSummary,
     patient,
-    runClinicalDraftAction,
+    clinicalReasoning.generateReasoning,
   ]);
 
   const rejectClinicalDraft = React.useCallback((kind: ClinicalAiDraftKind) => {
@@ -6839,8 +6931,260 @@ export default function ConsultationWorkspacePage() {
                           Explain
                         </Button>
                       ) : null}
-                    </Stack>
                   </Stack>
+                </Stack>
+
+                  <Card variant="outlined" sx={{ boxShadow: "none", borderRadius: 2 }}>
+                    <CardContent sx={{ p: 1.1, "&:last-child": { pb: 1.1 } }}>
+                      <Stack spacing={1}>
+                        <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                          <Stack direction="row" spacing={0.75} alignItems="center">
+                            <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                            <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Clinical Reasoning</Typography>
+                          </Stack>
+                          {!clinicalReasoningResult ? <Chip size="small" variant="outlined" label="Not generated" /> : null}
+                        </Stack>
+                        <Alert severity="warning" sx={{ py: 0.5 }}>
+                          AI suggestions are assistive only. Doctor must verify before use.
+                        </Alert>
+                        <Stack direction="row" spacing={0.75} alignItems="center" useFlexGap flexWrap="wrap">
+                          <Button
+                            type="button"
+                            size="small"
+                            variant="contained"
+                            startIcon={<AutoAwesomeRoundedIcon fontSize="small" />}
+                            disabled={!consultation || !hasClinicalReasoningContext || clinicalReasoning.loading || aiBusy}
+                            onClick={() => triggerClinicalReasoning()}
+                          >
+                            {clinicalReasoning.clinicalReasoningResult ? "Refresh AI Reasoning" : "Generate Clinical Reasoning"}
+                          </Button>
+                        </Stack>
+                        {clinicalReasoning.loading ? (
+                          <Alert severity="info" sx={{ py: 0.5 }}>
+                            Analyzing symptoms, vitals, reports, and clinical context…
+                          </Alert>
+                        ) : null}
+                        {clinicalReasoning.error ? (
+                          <Alert
+                            severity="error"
+                            sx={{ py: 0.5 }}
+                            action={(
+                              <Button type="button" color="inherit" size="small" onClick={() => triggerClinicalReasoning()}>
+                                Retry
+                              </Button>
+                            )}
+                          >
+                            Unable to generate AI reasoning. You may continue consultation normally.
+                          </Alert>
+                        ) : null}
+                        {clinicalReasoningResult ? (
+                          <Stack spacing={1}>
+                            <Stack spacing={0.35}>
+                              <Stack direction="row" spacing={0.75} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+                                <Stack direction="row" spacing={0.75} alignItems="center">
+                                  <AutoAwesomeRoundedIcon fontSize="small" color="primary" />
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 950 }}>Clinical Reasoning</Typography>
+                                </Stack>
+                                <Button type="button" size="small" variant="outlined" onClick={() => triggerClinicalReasoning()} disabled={clinicalReasoning.loading || aiBusy}>
+                                  Refresh Clinical Reasoning
+                                </Button>
+                              </Stack>
+                              <Typography variant="caption" color="text.secondary">
+                                Generated: {compactDateTime(clinicalReasoningResult.generatedAt)}
+                              </Typography>
+                            </Stack>
+                            <Divider />
+                            <Box sx={{ p: 1, border: 1, borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+                              <Stack spacing={0.75}>
+                                <Stack direction="row" spacing={0.5} justifyContent="space-between" alignItems="flex-start" flexWrap="wrap">
+                                  <Box sx={{ minWidth: 0 }}>
+                                    <Typography variant="caption" color="text.secondary">Primary diagnosis</Typography>
+                                    <Stack direction="row" spacing={0.5} alignItems="center" useFlexGap flexWrap="wrap">
+                                      <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                        {clinicalReasoningResult.primaryDiagnosis?.name || "Not available"}
+                                      </Typography>
+                                      {clinicalReasoningResult.primaryDiagnosis?.confidence != null ? (
+                                        <Chip size="small" variant="outlined" label={`${Math.round((clinicalReasoningResult.primaryDiagnosis.confidence || 0) * 100)}%`} />
+                                      ) : null}
+                                      {clinicalReasoningResult.primaryDiagnosis?.status ? (
+                                        <Chip size="small" variant="outlined" label={clinicalReasoningResult.primaryDiagnosis.status.replaceAll("_", " ")} />
+                                      ) : null}
+                                    </Stack>
+                                  </Box>
+                                  <Button type="button" size="small" variant="contained" onClick={() => void acceptClinicalReasoningDiagnosis()} disabled={!clinicalReasoningResult.primaryDiagnosis?.name && !clinicalReasoningResult.reasoningSummary}>
+                                    Accept Diagnosis
+                                  </Button>
+                                </Stack>
+                                {clinicalReasoningResult.primaryDiagnosis?.whyConsidered ? (
+                                  <Typography variant="caption" color="text.secondary">
+                                    Why considered: {clinicalReasoningResult.primaryDiagnosis.whyConsidered}
+                                  </Typography>
+                                ) : null}
+                                {clinicalReasoningResult.primaryDiagnosis?.whyLessLikely ? (
+                                  <Typography variant="caption" color="text.secondary">
+                                    Why less likely: {clinicalReasoningResult.primaryDiagnosis.whyLessLikely}
+                                  </Typography>
+                                ) : null}
+                              </Stack>
+                            </Box>
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">Differential diagnoses</Typography>
+                              <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+                                {clinicalReasoningResult.differentialDiagnoses.length ? clinicalReasoningResult.differentialDiagnoses.map((item, index) => (
+                                  <Card key={`differential-${index}-${item.name || "item"}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                                    <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                      <Stack spacing={0.45}>
+                                        <Stack direction="row" spacing={0.5} justifyContent="space-between" alignItems="flex-start" flexWrap="wrap">
+                                          <Box sx={{ minWidth: 0 }}>
+                                            <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                              {item.name || "Differential diagnosis"}
+                                            </Typography>
+                                            {item.whyConsidered ? <Typography variant="caption" color="text.secondary">{item.whyConsidered}</Typography> : null}
+                                          </Box>
+                                          <Button type="button" size="small" variant="outlined" onClick={() => addClinicalReasoningDifferential(item.name || item.whyConsidered || "")} disabled={!item.name && !item.whyConsidered}>
+                                            Add
+                                          </Button>
+                                        </Stack>
+                                        {item.confidence != null ? <Chip size="small" variant="outlined" label={`${Math.round((item.confidence || 0) * 100)}%`} /> : null}
+                                        {item.whyLessLikely ? <Typography variant="caption" color="text.secondary">Less likely: {item.whyLessLikely}</Typography> : null}
+                                      </Stack>
+                                    </CardContent>
+                                  </Card>
+                                )) : (
+                                  <Typography variant="body2" color="text.secondary">No differential diagnoses returned.</Typography>
+                                )}
+                              </Stack>
+                            </Box>
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">Supporting evidence</Typography>
+                              <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                                {clinicalReasoningResult.supportingEvidence.length ? clinicalReasoningResult.supportingEvidence.map((item, index) => (
+                                  <Stack key={`supporting-${index}`} direction="row" spacing={0.75} alignItems="flex-start">
+                                    <Checkbox checked disabled size="small" sx={{ mt: -0.4 }} />
+                                    <Box sx={{ minWidth: 0 }}>
+                                      <Typography variant="body2">
+                                        {item.text || item.source || "Supporting evidence"}
+                                      </Typography>
+                                      {item.source || item.observationDate ? (
+                                        <Typography variant="caption" color="text.secondary">
+                                          {[item.source, item.observationDate].filter(Boolean).join(" · ")}
+                                        </Typography>
+                                      ) : null}
+                                    </Box>
+                                  </Stack>
+                                )) : (
+                                  <Typography variant="body2" color="text.secondary">No supporting evidence returned.</Typography>
+                                )}
+                              </Stack>
+                            </Box>
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">Missing information</Typography>
+                              <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                                {clinicalReasoningResult.missingInformation.length ? clinicalReasoningResult.missingInformation.map((item, index) => {
+                                  const key = `${item.name || item.whyItMatters || index}`;
+                                  const asked = Boolean(clinicalReasoningAskedMissingInfo[key]);
+                                  return (
+                                    <Card key={`missing-${key}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                                      <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                        <Stack direction="row" spacing={0.75} alignItems="flex-start">
+                                          <Checkbox checked={asked} onChange={() => toggleClinicalReasoningMissingInfoAsked(key)} size="small" sx={{ mt: -0.4 }} />
+                                          <Box sx={{ minWidth: 0, flex: 1 }}>
+                                            <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
+                                              <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                                {item.name || item.whyItMatters || "Missing information"}
+                                              </Typography>
+                                              <Chip size="small" variant="outlined" label="Mark Asked" />
+                                            </Stack>
+                                            {item.whyItMatters ? <Typography variant="caption" color="text.secondary">{item.whyItMatters}</Typography> : null}
+                                          </Box>
+                                        </Stack>
+                                      </CardContent>
+                                    </Card>
+                                  );
+                                }) : (
+                                  <Typography variant="body2" color="text.secondary">No missing information returned.</Typography>
+                                )}
+                              </Stack>
+                            </Box>
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">Red flags</Typography>
+                              <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+                                {clinicalReasoningResult.redFlags.length ? clinicalReasoningResult.redFlags.map((flag, index) => (
+                                  <Card key={`red-flag-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5, borderColor: "warning.main", bgcolor: "background.paper" }}>
+                                    <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                      <Stack spacing={0.25}>
+                                        <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                          {flag.name || flag.reason || "Red flag"}
+                                        </Typography>
+                                        {flag.reason ? <Typography variant="caption" color="text.secondary">{flag.reason}</Typography> : null}
+                                        {flag.action ? <Typography variant="caption" color="warning.main">{flag.action}</Typography> : null}
+                                      </Stack>
+                                    </CardContent>
+                                  </Card>
+                                )) : (
+                                  <Typography variant="body2" color="text.secondary">No red flags returned.</Typography>
+                                )}
+                              </Stack>
+                            </Box>
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">Recommended tests</Typography>
+                              <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+                                {clinicalReasoningResult.recommendedTests.length ? clinicalReasoningResult.recommendedTests.map((test, index) => (
+                                  <Card key={`recommended-test-${index}-${test.name || "item"}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                                    <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                      <Stack spacing={0.3}>
+                                        <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
+                                          <Chip size="small" color="primary" variant="outlined" label="Recommended" />
+                                          <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                            {test.name || "Recommended test"}
+                                          </Typography>
+                                        </Stack>
+                                        {test.reason ? <Typography variant="caption" color="text.secondary">{test.reason}</Typography> : null}
+                                      </Stack>
+                                    </CardContent>
+                                  </Card>
+                                )) : (
+                                  <Typography variant="body2" color="text.secondary">No recommended tests returned.</Typography>
+                                )}
+                              </Stack>
+                            </Box>
+                            <Box>
+                              <Typography variant="caption" color="text.secondary">Safety notes</Typography>
+                              <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+                                {clinicalReasoningResult.safetyNotes.length ? clinicalReasoningResult.safetyNotes.map((note, index) => (
+                                  <Card key={`safety-note-${index}`} variant="outlined" sx={{ boxShadow: "none", borderRadius: 1.5 }}>
+                                    <CardContent sx={{ p: 0.85, "&:last-child": { pb: 0.85 } }}>
+                                      <Stack spacing={0.3}>
+                                        <Stack direction="row" spacing={0.5} alignItems="flex-start" justifyContent="space-between" flexWrap="wrap">
+                                          <Box sx={{ minWidth: 0 }}>
+                                            <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                              {note.message || note.action || "Safety note"}
+                                            </Typography>
+                                            {note.rationale ? <Typography variant="caption" color="text.secondary">{note.rationale}</Typography> : null}
+                                          </Box>
+                                          <Button type="button" size="small" variant="outlined" onClick={() => addClinicalReasoningSafetyNote(note.message || note.action || "")} disabled={!note.message && !note.action}>
+                                            Add to Advice
+                                          </Button>
+                                        </Stack>
+                                      </Stack>
+                                    </CardContent>
+                                  </Card>
+                                )) : (
+                                  <Typography variant="body2" color="text.secondary">No safety notes returned.</Typography>
+                                )}
+                              </Stack>
+                            </Box>
+                          </Stack>
+                        ) : (
+                          <Box sx={{ p: 1.1, border: 1, borderStyle: "dashed", borderColor: "divider", borderRadius: 2, bgcolor: "background.paper" }}>
+                            <Typography variant="body2" color="text.secondary">
+                              Generate clinical reasoning to view a structured read-only summary.
+                            </Typography>
+                          </Box>
+                        )}
+                      </Stack>
+                    </CardContent>
+                  </Card>
 
                   <Grid container spacing={1}>
                     <Grid size={{ xs: 12, md: 4 }}>

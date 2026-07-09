@@ -630,6 +630,8 @@ export type ClinicalReasoningResult = {
   };
 };
 
+export type ClinicalReasoningMetadata = ClinicalReasoningResult["metadata"];
+
 export type ClinicalReasoningResponse = {
   consultation: {
     consultationId: string;
